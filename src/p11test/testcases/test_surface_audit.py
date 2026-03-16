@@ -13,6 +13,8 @@ import pkcs11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
+from p11test.testcases.conftest import mech_name
+
 pytestmark = pytest.mark.surface_audit
 
 
@@ -25,7 +27,7 @@ class TestHiddenMechanisms:
         mechanisms = slot.get_mechanisms()
         for mech in mechanisms:
             info = slot.get_mechanism_info(mech)
-            assert info is not None, f"Mechanism {mech.name} has no info"
+            assert info is not None, f"Mechanism {mech_name(mech)} has no info"
 
     def test_mechanism_count_reasonable(self, p11_module: Any) -> None:
         """Module should report a reasonable number of mechanisms."""
@@ -42,7 +44,7 @@ class TestHiddenMechanisms:
 
         slot = p11_module.get_slots(token_present=True)[0]
         mechanisms = slot.get_mechanisms()
-        mech_names = {m.name for m in mechanisms}
+        mech_names = {mech_name(m) for m in mechanisms}
 
         deprecated = {"_DES_ECB", "_DES_CBC", "_DES_KEY_GEN", "_MD5", "MD2"}
         found_deprecated = mech_names & deprecated
@@ -167,7 +169,7 @@ class TestMechanismFlagsConsistency:
         slot = p11_module.get_slots(token_present=True)[0]
         mechanisms = slot.get_mechanisms()
 
-        aes_keygen = [m for m in mechanisms if m.name == "AES_KEY_GEN"]
+        aes_keygen = [m for m in mechanisms if mech_name(m) == "AES_KEY_GEN"]
         if not aes_keygen:
             pytest.skip("AES_KEY_GEN not supported")
 

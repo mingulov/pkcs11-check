@@ -5,3 +5,14 @@ is handled in plugin.py's pytest_collection_modifyitems hook.
 """
 
 from __future__ import annotations
+
+from typing import Any
+
+
+def mech_name(m: Any) -> str:
+    """Get mechanism name safely — handles both Mechanism enum and raw int."""
+    if hasattr(m, "name"):
+        return m.name
+    if isinstance(m, int):
+        return f"0x{m:08x}"
+    return str(m)

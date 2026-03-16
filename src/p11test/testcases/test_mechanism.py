@@ -7,6 +7,8 @@ from typing import Any
 import pytest
 from pkcs11 import Mechanism
 
+from p11test.testcases.conftest import mech_name
+
 
 class TestMechanismInfo:
     def test_mechanism_info_has_key_sizes(self, p11_module: Any) -> None:
@@ -55,21 +57,21 @@ class TestMechanismCategories:
         """Module supports at least one symmetric cipher."""
         slot = p11_module.get_slots(token_present=True)[0]
         mechanisms = slot.get_mechanisms()
-        symmetric = [m for m in mechanisms if "AES" in m.name or "DES" in m.name]
+        symmetric = [m for m in mechanisms if "AES" in mech_name(m) or "DES" in mech_name(m)]
         assert len(symmetric) > 0
 
     def test_has_hash_mechanisms(self, p11_module: Any) -> None:
         """Module supports at least one hash mechanism."""
         slot = p11_module.get_slots(token_present=True)[0]
         mechanisms = slot.get_mechanisms()
-        hashes = [m for m in mechanisms if "SHA" in m.name]
+        hashes = [m for m in mechanisms if "SHA" in mech_name(m)]
         assert len(hashes) > 0
 
     def test_has_asymmetric_mechanisms(self, p11_module: Any) -> None:
         """Module supports at least one asymmetric mechanism."""
         slot = p11_module.get_slots(token_present=True)[0]
         mechanisms = slot.get_mechanisms()
-        asymmetric = [m for m in mechanisms if "RSA" in m.name or "EC" in m.name]
+        asymmetric = [m for m in mechanisms if "RSA" in mech_name(m) or "EC" in mech_name(m)]
         assert len(asymmetric) > 0
 
     def test_mechanism_count_reasonable(self, p11_module: Any) -> None:

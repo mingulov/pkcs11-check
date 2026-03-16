@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from p11test.testcases.conftest import mech_name
+
 
 class TestSessionManagement:
     def test_session_is_open(self, p11_session: Any) -> None:
@@ -35,12 +37,12 @@ class TestMechanismDiscovery:
         """AES should be available on any reasonable PKCS#11 module."""
         slot = p11_module.get_slots(token_present=True)[0]
         mechanisms = slot.get_mechanisms()
-        aes_mechs = [m for m in mechanisms if "AES" in m.name]
+        aes_mechs = [m for m in mechanisms if "AES" in mech_name(m)]
         assert len(aes_mechs) > 0, "No AES mechanisms found"
 
     def test_rsa_mechanism_available(self, p11_module: Any) -> None:
         """RSA should be available on any reasonable PKCS#11 module."""
         slot = p11_module.get_slots(token_present=True)[0]
         mechanisms = slot.get_mechanisms()
-        rsa_mechs = [m for m in mechanisms if "RSA" in m.name]
+        rsa_mechs = [m for m in mechanisms if "RSA" in mech_name(m)]
         assert len(rsa_mechs) > 0, "No RSA mechanisms found"
