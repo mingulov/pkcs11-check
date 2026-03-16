@@ -1,31 +1,42 @@
-FROM python:3.12-slim
+# NSS softoken test image
+# Uses Fedora for latest NSS with potential PQC patches
+FROM fedora:41
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libnss3 \
-    libnss3-tools \
-    && rm -rf /var/lib/apt/lists/*
+# Install NSS and tools
+RUN dnf install -y \
+    nss nss-tools nss-softokn \
+    python3.12 python3.12-devel \
+    gcc openssl-devel git \
+    && dnf clean all
 
-# Print NSS version
-RUN nss-config --version 2>/dev/null || pkg-config --modversion nss 2>/dev/null || echo "NSS version unknown"
+# Show NSS version
+RUN nss-config --version 2>/dev/null || rpm -q nss
 
-# Initialize NSS database for softoken
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Initialize NSS database with a token
 ENV NSS_DB_DIR=/var/lib/nss
 RUN mkdir -p $NSS_DB_DIR && \
-    certutil -d sql:$NSS_DB_DIR -N --empty-password
+    certutil -d sql:$NSS_DB_DIR -N --empty-password && \
+    echo "1234" > /tmp/pin.txt && \
+    modutil -dbdir sql:$NSS_DB_DIR -changepw "NSS Certificate DB" -pwfile /dev/null -newpwfile /tmp/pin.txt 2>/dev/null; \
+    rm -f /tmp/pin.txt
 
-# NSS softoken module path
-RUN find /usr/lib -name "libsoftokn3.so" | head -1 > /tmp/module_path
-ENV P11TEST_PIN=""
+# Find the softoken module
+RUN find /usr/lib64 /usr/lib -name "libsoftokn3.so" 2>/dev/null | head -1 > /tmp/module_path && \
+    echo "Module: $(cat /tmp/module_path)"
 
 WORKDIR /app
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
-
+# Copy and install project
 COPY . .
-RUN uv sync --frozen
 
-# NSS softoken — note: initialization and PIN semantics differ from SoftHSM2
-CMD ["sh", "-c", "echo 'NSS softoken at:' && cat /tmp/module_path && uv run pytest src/p11test/testcases/ --p11-module=$(cat /tmp/module_path) -v || echo 'Some tests may fail due to NSS-specific initialization requirements'"]
+# Use python3.12 explicitly on Fedora
+RUN uv python pin 3.12 && uv sync --frozen
+
+# NSS softoken requires the NSS DB directory to be set
+ENV NSS_DEFAULT_DB_DIR=sql:$NSS_DB_DIR
+
+# NSS softoken works without PIN for most operations
+CMD ["sh", "-c", "echo 'NSS version:' && rpm -q nss && echo 'Module:' && cat /tmp/module_path && uv run pytest src/p11test/testcases/ --p11-module=$(cat /tmp/module_path) -q --tb=no"]
