@@ -36,6 +36,36 @@ class TestSHA256KAT:
         assert result == expected
 
 
+class TestSHA512KAT:
+    """SHA-512 known-answer tests from NIST SHAVS."""
+
+    @pytest.mark.parametrize(
+        "vec",
+        load_vectors("sha512.json"),
+        ids=lambda v: v["digest"][:16],
+    )
+    def test_sha512_kat(self, p11_session: Any, vec: dict[str, str]) -> None:
+        msg = bytes.fromhex(vec["msg"])
+        expected = bytes.fromhex(vec["digest"])
+        result = p11_session.digest(msg, mechanism=Mechanism.SHA512)
+        assert result == expected
+
+
+class TestSHA1KAT:
+    """SHA-1 known-answer tests from NIST SHAVS."""
+
+    @pytest.mark.parametrize(
+        "vec",
+        load_vectors("sha1.json"),
+        ids=lambda v: v["digest"][:16],
+    )
+    def test_sha1_kat(self, p11_session: Any, vec: dict[str, str]) -> None:
+        msg = bytes.fromhex(vec["msg"])
+        expected = bytes.fromhex(vec["digest"])
+        result = p11_session.digest(msg, mechanism=Mechanism.SHA_1)
+        assert result == expected
+
+
 class TestAESECBKAT:
     """AES-256-ECB known-answer tests from NIST SP 800-38A."""
 
