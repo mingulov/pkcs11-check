@@ -62,9 +62,9 @@ Static test vectors from NIST CAVP — import key, compute, compare with known a
 - ECDSA: FIPS 186-4 P-256, P-384, P-521 vectors
 - HMAC: FIPS 198-1 vectors
 - AES-KW: RFC 3394 test vectors
-- ML-KEM: NIST PQC Round 3 KAT vectors (key generation, encapsulation, decapsulation)
-- ML-DSA: NIST PQC Round 3 KAT vectors (key generation, sign, verify)
-- SLH-DSA: NIST FIPS 205 draft KAT vectors
+- ML-KEM: NIST FIPS 203 (final, August 2024) KAT vectors (key generation, encapsulation, decapsulation)
+- ML-DSA: NIST FIPS 204 (final, August 2024) KAT vectors (key generation, sign, verify)
+- SLH-DSA: NIST FIPS 205 (final, August 2024) KAT vectors
 
 **Implementation:** JSON files in `src/p11test/testcases/vectors/` loaded via
 `@pytest.mark.parametrize`.
@@ -265,7 +265,17 @@ All require `@pytest.mark.destructive`:
 | Create persistent object | CKA_TOKEN=True → survives session close |
 | Destroy persistent object | CKA_TOKEN=True → destroy → gone after reopen |
 
-Estimated: ~10 tests.
+**PIN and lockout persistence (all `@pytest.mark.destructive`):**
+
+| Operation | Test |
+|-----------|------|
+| PIN retry counter | Wrong PIN N times → verify CKR_PIN_INCORRECT and counter decrements (C_GetTokenInfo.ulMaxPinLen for reference) |
+| Lockout | Exhaust PIN retries → verify CKR_PIN_LOCKED |
+| Lockout persistence | Lock → close session → reopen session → still CKR_PIN_LOCKED |
+| SO reset | SO login → C_InitPIN → user PIN reset → user can log in again |
+| Lockout across Finalize/Initialize | Lock token → C_Finalize → C_Initialize → still CKR_PIN_LOCKED |
+
+Estimated: ~15 tests.
 
 ### 2.9 Object Search & Enumeration (`test_search.py`)
 
@@ -314,6 +324,42 @@ Estimated: ~30 tests.
 | Key size out of range | Below min or above max → must fail |
 
 Estimated: ~10 tests.
+
+### 2.12 Additional PKCS#11 Functions
+
+The following PKCS#11 functions are covered in their respective existing test files:
+
+**C_WaitForSlotEvent (`test_slot.py`):**
+
+| Test | Description |
+|------|-------------|
+| Non-blocking mode | C_WaitForSlotEvent(CKF_DONT_BLOCK) → returns CKR_NO_EVENT when no event pending |
+| Blocking mode (stub) | C_WaitForSlotEvent(0) with stub that fires event → returns event info |
+
+**C_SeedRandom (`test_rng.py`):**
+
+| Test | Description |
+|------|-------------|
+| Seed + generate | C_SeedRandom(seed_bytes) → C_GenerateRandom → verify output differs from pre-seed output |
+| Empty seed | C_SeedRandom(b"") → CKR_OK or CKR_ARGUMENTS_BAD (record behavior) |
+
+**C_SignRecover / C_VerifyRecover (`test_sign.py`):**
+
+| Test | Description |
+|------|-------------|
+| Sign + recover round-trip | C_SignRecoverInit → C_SignRecover → C_VerifyRecoverInit → C_VerifyRecover → recovered data matches original |
+| Unsupported mechanism | If mechanism doesn't support recovery, must return CKR_FUNCTION_NOT_SUPPORTED |
+
+These tests carry `@pytest.mark.needs_mechanism("RSA_PKCS")` as appropriate and are
+skipped when the mechanism is unavailable.
+
+**C_DigestEncryptUpdate / C_DecryptDigestUpdate (`test_multipart.py`):**
+
+These dual-function operations are explicitly tested (see Section 2.6) by verifying
+that the digest output and the encrypt output each independently match their single-function
+equivalents.
+
+Estimated: ~10 additional tests across the named files.
 
 ## 3. v3.x Testing
 
@@ -380,7 +426,8 @@ Estimated: ~10 tests.
 ### 3.3 KEM and Post-Quantum Cryptography (`test_pqc.py`)
 
 v3.2 added KEM operations and PQC algorithm support. KAT vectors are sourced from
-NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), and FIPS 205 (SLH-DSA) test vector sets.
+NIST FIPS 203 (ML-KEM, final August 2024), FIPS 204 (ML-DSA, final August 2024),
+and FIPS 205 (SLH-DSA, final August 2024) test vector sets.
 
 **ML-KEM (C_EncapsulateKey / C_DecapsulateKey):**
 
@@ -418,6 +465,44 @@ NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), and FIPS 205 (SLH-DSA) test vector se
 | Cross-verify with liboqs | Sign in PKCS#11 → verify with liboqs reference |
 
 Estimated: ~30 tests.
+
+### 3.3a C_VerifySignature* Family (v3.2, `test_pqc.py` / `test_sign.py`)
+
+v3.2 introduced a new single-shot and multi-part verification family
+(`C_VerifySignatureInit`, `C_VerifySignature`, `C_VerifySignatureUpdate`,
+`C_VerifySignatureFinal`) that is separate and distinct from the classic
+`C_VerifyInit` / `C_Verify` / `C_VerifyUpdate` / `C_VerifyFinal` family.
+The new family is designed to support PQC signature algorithms (ML-DSA, SLH-DSA)
+where the signature is provided as an input parameter rather than appended after
+the data.
+
+**Functions:**
+
+| Function | Role |
+|----------|------|
+| `C_VerifySignatureInit` | Initialize single-shot or multi-part PQC verification |
+| `C_VerifySignature` | Single-shot verify (analogous to `C_Verify` in the classic family) |
+| `C_VerifySignatureUpdate` | Supply data incrementally for multi-part verification |
+| `C_VerifySignatureFinal` | Finalize multi-part verification |
+
+**Tests:**
+
+| Test | Description |
+|------|-------------|
+| ML-DSA sign + VerifySignature (single-shot) | C_SignInit (ML-DSA) → C_Sign → C_VerifySignatureInit → C_VerifySignature |
+| ML-DSA sign + VerifySignatureUpdate/Final | C_Sign → C_VerifySignatureInit → C_VerifySignatureUpdate × N → C_VerifySignatureFinal |
+| SLH-DSA sign + VerifySignature | Same pattern for SLH-DSA |
+| SLH-DSA multi-part verify | C_VerifySignatureInit → C_VerifySignatureUpdate × N → C_VerifySignatureFinal |
+| Cross-verify with reference impl | Sign in PKCS#11 → verify with liboqs using same key material |
+| VerifySignature with tampered message | Valid signature, different message → CKR_SIGNATURE_INVALID |
+| VerifySignature with tampered signature | Valid message, flipped bit in signature → CKR_SIGNATURE_INVALID |
+| VerifySignature without VerifySignatureInit | → CKR_OPERATION_NOT_INITIALIZED |
+| Classic C_Verify still works for EC/RSA | Verify that C_VerifyInit / C_Verify still operates correctly (not displaced by new family) |
+
+These tests carry `@pytest.mark.requires_v32` and are skipped when the negotiated
+interface is below v3.2.
+
+Estimated: ~10 tests.
 
 ### 3.4 Authenticated Wrap/Unwrap (`test_authwrap.py`)
 
@@ -843,8 +928,25 @@ or runs sequentially if multiple modules are specified.
 | ML-KEM encapsulate (same keypair + randomness) | If derandomized test vector, output identical |
 | Public key export encoding | DER encoding identical across backends |
 
-**Reporting:** Divergence between backends is logged as `SECURITY` severity (it could
-indicate a backend computing incorrectly or using different algorithm variants).
+**Configuration:** Differential testing backends are declared in `p11test.toml`:
+
+```toml
+# p11test.toml
+[differential]
+modules = [
+    { name = "softhsm2", path = "/usr/lib/softhsm/libsofthsm2.so", pin = "1234", env = { SOFTHSM2_CONF = "/tmp/softhsm2.conf" } },
+    { name = "kryoptic", path = "/usr/lib/libkryoptic_pkcs11.so", pin = "1234" },
+]
+```
+
+**CLI:** `p11test test --differential --module-config p11test.toml` or
+`pytest --p11-differential`
+
+**Results:** Per-test matrix showing pass/fail per backend; disagreements between
+backends are flagged as findings.
+
+**Reporting:** Divergence between backends is logged as `SECURITY` finding_level (it
+could indicate a backend computing incorrectly or using different algorithm variants).
 
 Estimated: ~20 tests.
 
@@ -1043,13 +1145,13 @@ use case without manually specifying marker combinations.
 
 | Profile | Included markers | Excluded markers | Target count | Target time |
 |---------|-----------------|-----------------|-------------|-------------|
-| `smoke` | (core only, no marks) | security, fuzz, benchmark, stress, timing, destructive, requires_v30, requires_v32 | ~50 | <30s |
-| `full` | crossverify, kat, wycheproof, keymgmt, multipart, access, search, mechflags, protocol, interop, v30, v32 | benchmark, stress, timing, fuzz, destructive | ~500 | <10m |
+| `smoke` | (tests not marked with any slow/special marker) | fuzz, benchmark, stress, timing, wycheproof, security, destructive, padding_oracle, nonce_quality, regressions, surface_audit, vendor, stateful, differential, metamorphic, fault, boundary | ~50 | <30s |
+| `full` | crossverify, kat, wycheproof, keymgmt, multipart, access, search, mechflags, protocol, interop, v30, v32 | benchmark, stress, timing, fuzz, destructive | ~1,400+ | <10m |
 | `security` | security, padding_oracle, nonce_quality, timing, regressions | benchmark, stress, fuzz, destructive | ~100 | <5m |
-| `lab` | (all) | none | ~2100+ | variable |
+| `lab` | (all) | none | ~2,400+ | variable |
 | `fips` | kat, fips, crossverify | (non-FIPS algorithms) | ~80 | <2m |
 | `v32` | requires_v32 | none | ~80 | <3m |
-| `hardware` | (all except destructive, stress, fuzz) | destructive, stress, fuzz | ~300 | <15m |
+| `hardware` | correctness, crossverify, kat, wycheproof, keymgmt, access, protocol | destructive, stress, fuzz, timing, surface_audit, benchmark | ~300 | <15m |
 | `stateful` | stateful | none | ~15 | <5m |
 | `differential` | differential | none | ~20 | variable |
 
@@ -1076,12 +1178,18 @@ pytest.ini_options.markers = [
 **As CLI option:**
 
 ```
-p11test test --profile smoke      # equivalent to: pytest -m "smoke"
+p11test test --profile smoke      # equivalent to: pytest -m "not (fuzz or benchmark or stress or timing or wycheproof or security or destructive)"
 p11test test --profile full       # equivalent to: pytest -m "not (benchmark or stress or timing or fuzz or destructive)"
 p11test test --profile security   # security-focused subset
 p11test test --profile lab        # everything
-p11test test --profile hardware   # HSM-safe subset
+p11test test --profile hardware   # HSM-safe subset (excludes destructive, stress, fuzz, timing, surface_audit, benchmark)
 ```
+
+Note on `hardware` profile: `surface_audit` is excluded because it brute-forces
+mechanism/slot/handle spaces which may trigger rate limits, alerts, or lockouts on
+real HSMs. The `hardware` profile is safe for production hardware and covers
+correctness, crossverify, kat, wycheproof, keymgmt, access (read-only attribute
+checks only), and protocol tests.
 
 The `--profile` flag can be combined with `--match` and `--category` for further
 filtering. `--profile lab` is required before any `--stress`, `--fuzz`, or `--benchmark`
@@ -1178,7 +1286,7 @@ stats = [
 ```
 
 Statistical tests are skipped with a `SKIP (scipy not installed)` message if
-scipy is unavailable. The `lab` profile automatically installs `stats` extras.
+scipy is unavailable. Install with: `pip install p11test[stats]`.
 
 ### 11.6 Explicit Disclaimer
 
@@ -1236,6 +1344,23 @@ These tests use configurable sample sizes (see Section 11.1) and include warmup.
 | Monobit test | Frequency of 0s vs 1s within tolerance |
 
 Estimated: ~5 tests.
+
+### 12.4 Boundary Suites (`test_boundary.py`)
+
+Tests that probe the limits of PKCS#11 object and operation parameters.
+Marked `@pytest.mark.boundary`.
+
+| Test | Description |
+|------|-------------|
+| Maximum label length (32 bytes) | Create object with 32-byte CKA_LABEL → succeeds, read back matches |
+| Maximum label length (256 bytes) | Create object with 256-byte CKA_LABEL → succeeds or CKR_ATTRIBUTE_VALUE_INVALID |
+| Maximum label length (module max) | Probe module's actual label limit; record result |
+| Maximum attribute template size | C_FindObjectsInit with 100-attribute template → succeeds or CKR_TEMPLATE_INCONSISTENT |
+| Maximum wrapped blob size | Wrap the largest possible key (RSA-4096 private key) → verify unwrap round-trip |
+| Very large multipart stream | C_EncryptUpdate in 64KB chunks for 100MB total → output matches single-shot |
+| Maximum object count | Create objects until CKR_DEVICE_MEMORY or module limit → verify clean error, no crash |
+
+Estimated: ~10 tests.
 
 ## 13. Performance Testing
 
@@ -1583,9 +1708,28 @@ dev = [
 stats = [
     "scipy>=1.12",              # statistical tests (timing, RNG, nonce bias)
 ]
+pqc = [
+    "liboqs-python>=0.11.0",    # cross-verification for ML-KEM, ML-DSA, SLH-DSA
+]
+gost = [
+    "pygost>=5.0",              # cross-verification for GOST R 34.10/34.11 mechanisms
+]
 ```
 
-The `stats` extra is installed automatically when `--profile lab` is used.
+Users must install relevant extras before running tests that require them:
+
+```
+pip install p11test[pqc,gost,stats]
+```
+
+Optional dependency groups:
+- `dev` — development tools (hypothesis, pytest-benchmark, etc.)
+- `pqc` — `liboqs-python` for PQC cross-verification (ML-KEM, ML-DSA, SLH-DSA)
+- `gost` — `pygost` for GOST algorithm cross-verification
+- `stats` — `scipy` for statistical tests (timing side-channel, RNG quality, nonce bias)
+
+Tests requiring an uninstalled extra are skipped with an explanatory message
+(e.g., `SKIP (liboqs-python not installed)`). No extra is installed automatically.
 
 ## 19. New Markers
 
@@ -1605,6 +1749,20 @@ The `stats` extra is installed automatically when `--profile lab` is used.
 @pytest.mark.destructive    # modifies token state (existing)
 @pytest.mark.requires_v30   # skip if interface < 3.0 (existing)
 @pytest.mark.requires_v32   # skip if interface < 3.2 (existing)
+@pytest.mark.v30            # v3.0-specific tests
+@pytest.mark.keymgmt        # key import, export, wrap, unwrap, derive
+@pytest.mark.multipart      # multi-part and dual-function operations
+@pytest.mark.access         # attribute enforcement, session type tests
+@pytest.mark.search         # object search and enumeration
+@pytest.mark.mechflags      # mechanism flags validation
+@pytest.mark.protocol       # TLS/CMS/X.509/JWT integration tests
+@pytest.mark.interop        # encoding corpora, malformed input
+@pytest.mark.padding_oracle # RSA PKCS#1 v1.5 / AES-CBC padding oracle detection
+@pytest.mark.nonce_quality  # ECDSA nonce bias and reuse analysis
+@pytest.mark.regressions    # known CVE regression tests
+@pytest.mark.surface_audit  # hidden mechanism/slot/object probing
+@pytest.mark.vendor         # parametrized vendor mechanism tests
+@pytest.mark.boundary       # boundary condition tests (max label, max template, etc.)
 @pytest.mark.needs_mechanism("AES_GCM")  # mechanism-specific (existing)
 @pytest.mark.smoke          # quick sanity subset
 @pytest.mark.full           # all correctness tests
@@ -1643,13 +1801,24 @@ even if all functional tests pass. This is appropriate for CI gating on HSM cert
 
 ### 18.2 Machine-Readable Evidence Fields
 
-Each test result in JSON output includes structured evidence fields:
+Each test result in JSON output includes structured evidence fields.
+
+Schema notes:
+- `outcome` = the pytest outcome (`passed`/`failed`/`skipped`/`error`). Always
+  reflects the test assertion: a test that checks for a vulnerability and finds the
+  module is safe → `outcome: "passed"`. A test that detects a vulnerability →
+  `outcome: "failed"`.
+- `finding_level` = the security significance (`SECURITY`/`WARNING`/`INFO`/`null`).
+  A passing test has `finding_level: null`. A failing test that detected a security
+  vulnerability has `finding_level: "SECURITY"`.
+
+Example — module prevented the attack (test passes, no finding):
 
 ```json
 {
   "test_id": "test_api_security::test_wrap_decrypt_oracle",
   "outcome": "passed",
-  "severity": "SECURITY",
+  "finding_level": null,
   "duration_s": 0.423,
   "pkcs11_rc": 0,
   "evidence": {
@@ -1658,6 +1827,27 @@ Each test result in JSON output includes structured evidence fields:
     "wrap_mechanism": "CKM_AES_KEY_WRAP",
     "decrypt_mechanism": "CKM_AES_CBC",
     "result": "module_prevented",
+    "vector_source": null
+  },
+  "vector_manifest": null
+}
+```
+
+Example — vulnerability detected (test fails, security finding):
+
+```json
+{
+  "test_id": "test_api_security::test_wrap_decrypt_oracle",
+  "outcome": "failed",
+  "finding_level": "SECURITY",
+  "duration_s": 0.401,
+  "pkcs11_rc": 0,
+  "evidence": {
+    "attack": "wrap-decrypt oracle",
+    "key_handle": 12,
+    "wrap_mechanism": "CKM_AES_KEY_WRAP",
+    "decrypt_mechanism": "CKM_AES_CBC",
+    "result": "key_extracted",
     "vector_source": null
   },
   "vector_manifest": null
@@ -1783,7 +1973,13 @@ Vector manifest files are stored in `src/p11test/testcases/vectors/manifests/`.
 | Vendor mechanisms (8 vendors × ~30) | ~240 |
 | **Total** | **~2,400+** |
 
-## 23. References
+## 23. Future Work Notes
+
+**Cluster and cloud HSM testing (future):** failover during active operations, replica
+consistency after key creation, session invalidation across nodes. Requires multi-node
+test infrastructure not covered in this spec.
+
+## 24. References
 
 - [Google pkcs11test](https://github.com/google/pkcs11test) — archived Jan 2025, v2.2 coverage
 - [Galois Model-Based PKCS#11 Testing](https://galois.com/reports/2020-10-model-based-compliance-testing-of-pkcs11-providers/) — 40,861 auto-generated tests
