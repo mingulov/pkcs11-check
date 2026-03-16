@@ -6,11 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Build Kryoptic from source
-RUN git clone --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
+# Build Kryoptic v1.5.0 from source
+RUN git clone --branch v1.5.0 --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
 WORKDIR /build/kryoptic
-RUN cargo build --release --features fips
-# The output is libkryoptic_pkcs11.so
+RUN cargo build --release
+# Output: target/release/libkryoptic_pkcs11.so
 
 FROM python:3.12-slim
 
@@ -21,10 +21,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy Kryoptic module from builder
 COPY --from=kryoptic-builder /build/kryoptic/target/release/libkryoptic_pkcs11.so /usr/lib/
 
-# Kryoptic configuration
-# See: https://github.com/latchset/kryoptic/blob/main/README.md
-ENV KRYOPTIC_CONF=/etc/kryoptic.conf
-RUN echo '[token]\nlabel = "p11test"\npin = "1234"\nso_pin = "12345678"\n' > $KRYOPTIC_CONF
+# Kryoptic uses a TOML config or env vars for token setup
+# Create token storage directory
+RUN mkdir -p /var/lib/kryoptic
+ENV KRYOPTIC_CONF=/etc/kryoptic/token.conf
+RUN mkdir -p /etc/kryoptic && printf '[token]\n\
+label = "p11test"\n\
+pin = "1234"\n\
+so-pin = "12345678"\n\
+storage = "/var/lib/kryoptic"\n' > $KRYOPTIC_CONF
 
 ENV P11TEST_MODULE=/usr/lib/libkryoptic_pkcs11.so
 ENV P11TEST_PIN=1234
@@ -39,5 +44,5 @@ RUN uv sync --frozen --no-install-project
 COPY . .
 RUN uv sync --frozen
 
-# Run tests — Kryoptic in FIPS mode exposes v3.2 interfaces
+# Kryoptic defaults to PKCS#11 v3.2 interface
 CMD ["uv", "run", "pytest", "src/p11test/testcases/", "--p11-module=/usr/lib/libkryoptic_pkcs11.so", "--p11-pin=1234", "-v"]
