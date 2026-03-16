@@ -17,8 +17,14 @@ app = typer.Typer(
 
 
 @app.callback()
-def callback() -> None:
+def callback(
+    log_level: str = typer.Option("INFO", "--log-level", help="Log level"),
+    trace: bool = typer.Option(False, "--trace", help="Trace PKCS#11 calls"),
+) -> None:
     """CLI-first PKCS#11 test suite."""
+    from p11test.core.logging import setup_logging
+
+    setup_logging(level=log_level, trace=trace)
 
 
 app.command("test")(test_command)
