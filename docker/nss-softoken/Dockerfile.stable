@@ -1,5 +1,5 @@
-# NSS softoken — stable (Fedora 43, latest release)
-# Well-tested NSS with v3.0 support
+# NSS softoken — stable (Fedora 43)
+# Well-tested NSS with v3.0 support, no experimental PQC
 FROM fedora:43
 
 RUN dnf install -y \
@@ -8,7 +8,7 @@ RUN dnf install -y \
     gcc openssl-devel git \
     && dnf clean all
 
-RUN rpm -q nss nss-softokn
+RUN nss-config --version 2>/dev/null || rpm -q nss
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 

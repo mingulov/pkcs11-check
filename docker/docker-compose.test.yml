@@ -5,6 +5,8 @@
 #   docker compose -f docker/docker-compose.test.yml build
 #   docker compose -f docker/docker-compose.test.yml run test-softhsm2
 #   docker compose -f docker/docker-compose.test.yml run test-kryoptic
+#   docker compose -f docker/docker-compose.test.yml run test-nss
+#   docker compose -f docker/docker-compose.test.yml run test-nss-pqc
 #   docker compose -f docker/docker-compose.test.yml up           # run all
 
 services:
@@ -22,7 +24,14 @@ services:
     environment:
       - P11TEST_PIN=1234
 
-  test-nss-softoken:
+  # NSS stable (Fedora 43) — well-tested, v3.0
+  test-nss:
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile
+
+  # NSS bleeding edge (Fedora Rawhide) — v3.2 PQC: ML-KEM, ML-DSA
+  test-nss-pqc:
+    build:
+      context: ..
+      dockerfile: docker/nss-softoken/Dockerfile.rawhide

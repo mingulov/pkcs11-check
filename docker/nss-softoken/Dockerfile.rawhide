@@ -1,6 +1,6 @@
-# NSS softoken — stable (Fedora 43, latest release)
-# Well-tested NSS with v3.0 support
-FROM fedora:43
+# NSS softoken — bleeding edge (Fedora Rawhide)
+# Latest NSS with PKCS#11 v3.2 PQC: ML-KEM, ML-DSA, C_EncapsulateKey
+FROM fedora:rawhide
 
 RUN dnf install -y \
     nss nss-tools nss-softokn \
@@ -22,4 +22,4 @@ WORKDIR /app
 COPY . .
 RUN uv python pin 3.12 && uv sync --frozen
 
-CMD ["sh", "-c", "echo 'NSS (stable):' && rpm -q nss && uv run pytest src/p11test/testcases/ --p11-module=$(cat /tmp/module_path) -q --tb=no"]
+CMD ["sh", "-c", "echo 'NSS (rawhide/PQC):' && rpm -q nss && uv run pytest src/p11test/testcases/ --p11-module=$(cat /tmp/module_path) -q --tb=no"]
