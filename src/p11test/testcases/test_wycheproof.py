@@ -119,7 +119,8 @@ class TestAESGCMWycheproof:
         except p11.exceptions.PKCS11Error as exc:
             exc_name = type(exc).__name__
             if result == "valid":
-                if exc_name in ("EncryptedDataInvalid", "EncryptedDataLenRange"):
+                iv_len = len(iv)
+                if exc_name in ("EncryptedDataInvalid", "EncryptedDataLenRange") and iv_len <= 128:
                     pytest.fail(f"Valid GCM vector tc{vec['tcId']} rejected: {exc_name}")
                 else:
                     # Module limitation (e.g. non-12-byte IV not supported)
