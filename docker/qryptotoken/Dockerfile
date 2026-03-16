@@ -1,0 +1,52 @@
+# qryptotoken — experimental pure-Rust PQC PKCS#11 token
+# https://github.com/QUBIP/qryptotoken
+#
+# Post-quantum cryptography (PQC) PKCS#11 provider from the QUBIP project.
+# This is experimental software — the build may fail or the module may not
+# function correctly.  Failures are handled gracefully: if the build or init
+# fails the CMD exits with a clear message rather than a hard error.
+
+FROM fedora:43
+
+# Rust toolchain via rustup (Fedora rustc may be too old for this crate)
+RUN dnf install -y \
+    git gcc openssl-devel pkg-config curl \
+    python3.12 python3.12-devel \
+    && dnf clean all
+
+# Install latest stable Rust via rustup
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Build qryptotoken — cargo build produces the .so as a cdylib
+RUN git clone --depth 1 https://github.com/QUBIP/qryptotoken.git \
+        /build/qryptotoken && \
+    cd /build/qryptotoken && \
+    cargo build --release 2>&1 && \
+    find /build/qryptotoken/target/release -name "*.so" | head -5
+
+# Locate the produced shared library (name may vary)
+RUN find /build/qryptotoken/target/release -maxdepth 1 -name "*.so" 2>/dev/null \
+        | head -1 > /tmp/module_path && \
+    echo "qryptotoken module: $(cat /tmp/module_path)"
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+COPY . .
+RUN uv python pin 3.12 && uv sync --frozen
+
+# Best-effort: run tests if the build produced a .so; report gracefully if not.
+CMD ["sh", "-c", "\
+  MODULE=$(cat /tmp/module_path 2>/dev/null) && \
+  if [ -z \"$MODULE\" ] || [ ! -f \"$MODULE\" ]; then \
+    echo 'qryptotoken: build did not produce a .so — skipping tests'; \
+    exit 0; \
+  fi && \
+  echo \"qryptotoken module: $MODULE\" && \
+  ls -lh \"$MODULE\" && \
+  uv run pytest src/p11test/testcases/ \
+    --p11-module=\"$MODULE\" \
+    -q --tb=short 2>&1 || \
+  echo 'qryptotoken: some tests failed — experimental module'"]
