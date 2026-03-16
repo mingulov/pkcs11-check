@@ -1,0 +1,28 @@
+---
+# Docker Compose for p11test multi-module testing
+#
+# Usage:
+#   docker compose -f docker/docker-compose.test.yml build
+#   docker compose -f docker/docker-compose.test.yml run test-softhsm2
+#   docker compose -f docker/docker-compose.test.yml run test-kryoptic
+#   docker compose -f docker/docker-compose.test.yml up           # run all
+
+services:
+  test-softhsm2:
+    build:
+      context: ..
+      dockerfile: docker/softhsm2/Dockerfile
+    environment:
+      - P11TEST_PIN=1234
+
+  test-kryoptic:
+    build:
+      context: ..
+      dockerfile: docker/kryoptic/Dockerfile
+    environment:
+      - P11TEST_PIN=1234
+
+  test-nss-softoken:
+    build:
+      context: ..
+      dockerfile: docker/nss-softoken/Dockerfile
