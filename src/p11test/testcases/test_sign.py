@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import pkcs11  # type: ignore[import-untyped]
+import pkcs11
 from pkcs11 import KeyType, Mechanism
 
 
