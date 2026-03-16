@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+# Re-export fixtures so pytest discovers them
+from p11test.fixtures import (  # noqa: F401
+    p11_config,
+    p11_interface_version,
+    p11_module,
+    p11_session,
+)
+
 
 def pytest_addoption(parser: Any) -> None:
     """Register p11test CLI options with pytest."""

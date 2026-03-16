@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -16,8 +15,8 @@ def test_command(
     interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
     sessions: int = typer.Option(1, "--sessions", "-s", help="Concurrent sessions"),
     timeout: int = typer.Option(120, "--timeout", "-t", help="Per-test timeout (seconds)"),
-    category: Optional[str] = typer.Option(None, "--category", "-c", help="Test categories"),
-    match: Optional[str] = typer.Option(None, "--match", help="Test name pattern"),
+    category: str | None = typer.Option(None, "--category", "-c", help="Test categories"),
+    match: str | None = typer.Option(None, "--match", help="Test name pattern"),
     destructive: bool = typer.Option(False, "--destructive", help="Enable destructive tests"),
     output: str = typer.Option("rich", "--output", "-o", help="Output format: rich, json, junit"),
 ) -> None:

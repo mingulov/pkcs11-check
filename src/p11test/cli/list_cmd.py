@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import typer
 from rich.console import Console
 
@@ -26,7 +24,7 @@ TEST_CATEGORIES = {
 
 
 def list_command(
-    category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category"),
+    category: str | None = typer.Option(None, "--category", "-c", help="Filter by category"),
 ) -> None:
     """List available PKCS#11 test categories."""
     for key, desc in TEST_CATEGORIES.items():
