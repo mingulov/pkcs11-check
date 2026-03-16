@@ -57,7 +57,7 @@ packages = ["p11test"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = "pkcs11"
+module = ["pkcs11", "pkcs11.*", "psutil"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

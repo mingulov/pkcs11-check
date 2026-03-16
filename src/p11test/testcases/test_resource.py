@@ -18,7 +18,7 @@ pytestmark = pytest.mark.stress
 
 def _get_rss_mb() -> float:
     """Get current process RSS in megabytes."""
-    return psutil.Process().memory_info().rss / (1024 * 1024)
+    return psutil.Process().memory_info().rss / (1024 * 1024)  # type: ignore[no-any-return]
 
 
 class TestMemoryLeaks:
