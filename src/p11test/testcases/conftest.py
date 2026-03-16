@@ -11,8 +11,11 @@ from typing import Any
 
 def mech_name(m: Any) -> str:
     """Get mechanism name safely — handles both Mechanism enum and raw int."""
-    if hasattr(m, "name"):
-        return m.name
+    name = getattr(m, "name", None)
+    if isinstance(name, str):
+        return name
+    if name is not None:
+        return str(name)
     if isinstance(m, int):
         return f"0x{m:08x}"
     return str(m)
