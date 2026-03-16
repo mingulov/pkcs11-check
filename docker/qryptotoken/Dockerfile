@@ -11,6 +11,7 @@ FROM fedora:43
 # Rust toolchain via rustup (Fedora rustc may be too old for this crate)
 RUN dnf install -y \
     git gcc openssl-devel pkg-config curl \
+    clang-devel sqlite-devel \
     python3.12 python3.12-devel \
     && dnf clean all
 
@@ -26,10 +27,24 @@ RUN git clone --depth 1 https://github.com/QUBIP/qryptotoken.git \
     cargo build --release 2>&1 && \
     find /build/qryptotoken/target/release -name "*.so" | head -5
 
-# Locate the produced shared library (name may vary)
+# Locate the produced shared library
 RUN find /build/qryptotoken/target/release -maxdepth 1 -name "*.so" 2>/dev/null \
         | head -1 > /tmp/module_path && \
     echo "qryptotoken module: $(cat /tmp/module_path)"
+
+# Install opensc for pkcs11-tool (token init)
+RUN dnf install -y opensc && dnf clean all
+
+# Create token DB — qryptotoken needs an empty SQLite file first
+RUN mkdir -p /root/.local/share/qryptotoken && \
+    touch /root/.local/share/qryptotoken/token.sql && \
+    MODULE=$(cat /tmp/module_path) && \
+    if [ -n "$MODULE" ] && [ -f "$MODULE" ]; then \
+      pkcs11-tool --module "$MODULE" \
+        --init-token --label "p11test" --so-pin 12345678 2>&1 && \
+      pkcs11-tool --module "$MODULE" \
+        --init-pin --pin 1234 --so-pin 12345678 2>&1; \
+    fi
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
