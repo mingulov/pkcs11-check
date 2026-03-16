@@ -1,0 +1,56 @@
+"""Tests for PKCS#11 module loader."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from p11test.core.loader import P11Module, load_module
+
+
+class TestLoadModule:
+    def test_load_module_returns_p11module(self, tmp_path: Path) -> None:
+        fake_so = tmp_path / "module.so"
+        fake_so.touch()
+        mock_lib = MagicMock()
+        mock_lib.get_slots.return_value = [MagicMock()]
+        with patch("p11test.core.loader.pkcs11_lib", return_value=mock_lib):
+            module = load_module(fake_so)
+        assert isinstance(module, P11Module)
+        assert module.interface_version == "2.40"
+
+    def test_load_module_file_not_found(self) -> None:
+        with pytest.raises(FileNotFoundError):
+            load_module(Path("/nonexistent/module.so"))
+
+    def test_interface_version_auto(self, tmp_path: Path) -> None:
+        fake_so = tmp_path / "module.so"
+        fake_so.touch()
+        mock_lib = MagicMock()
+        with patch("p11test.core.loader.pkcs11_lib", return_value=mock_lib):
+            module = load_module(fake_so, interface="auto")
+        assert module.interface_version == "2.40"
+
+    def test_forced_interface_not_supported(self, tmp_path: Path) -> None:
+        fake_so = tmp_path / "module.so"
+        fake_so.touch()
+        with pytest.raises(RuntimeError, match="not supported"):
+            load_module(fake_so, interface="3.2")
+
+
+class TestP11Module:
+    def test_get_slots(self) -> None:
+        mock_lib = MagicMock()
+        mock_lib.get_slots.return_value = [MagicMock(), MagicMock()]
+        module = P11Module(path=Path("/fake.so"), lib=mock_lib)
+        slots = module.get_slots()
+        assert len(slots) == 2
+
+    def test_get_token_invalid_slot(self) -> None:
+        mock_lib = MagicMock()
+        mock_lib.get_slots.return_value = [MagicMock()]
+        module = P11Module(path=Path("/fake.so"), lib=mock_lib)
+        with pytest.raises(IndexError, match="Slot 5 not found"):
+            module.get_token(slot_index=5)
