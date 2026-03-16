@@ -6,8 +6,6 @@ from typing import Any
 
 import pytest
 
-from p11test.markers import MARKER_DEFINITIONS, should_skip_for_version
-
 # Re-export fixtures so pytest discovers them
 from p11test.fixtures import (  # noqa: F401
     p11_config,
@@ -15,6 +13,7 @@ from p11test.fixtures import (  # noqa: F401
     p11_module,
     p11_session,
 )
+from p11test.markers import MARKER_DEFINITIONS, should_skip_for_version
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -51,6 +50,13 @@ def pytest_addoption(parser: Any) -> None:
         action="store_true",
         default=False,
         help="Enable destructive tests",
+    )
+    group.addoption(
+        "--p11-skip-unsupported",
+        dest="p11_skip_unsupported",
+        action="store_true",
+        default=True,
+        help="Auto-skip tests for unsupported mechanisms (default: on)",
     )
 
 
@@ -93,3 +99,27 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(
                 pytest.mark.skip(reason="Destructive test (use --p11-destructive to enable)")
             )
+
+    # Skip tests for unsupported mechanisms
+    skip_unsupported = config.getoption("p11_skip_unsupported", default=True)
+    if skip_unsupported and module_path is not None:
+        try:
+            from pathlib import Path
+
+            from p11test.core.loader import load_module
+
+            p11 = load_module(Path(module_path))
+            slot = p11.get_slots(token_present=True)[0]
+            available_mechanisms = {m.name for m in slot.get_mechanisms()}
+        except Exception:
+            available_mechanisms = None
+
+        if available_mechanisms is not None:
+            for item in items:
+                marker = item.get_closest_marker("needs_mechanism")
+                if marker and marker.args:
+                    needed = marker.args[0]
+                    if needed not in available_mechanisms:
+                        item.add_marker(
+                            pytest.mark.skip(reason=f"Mechanism {needed} not supported by module")
+                        )
