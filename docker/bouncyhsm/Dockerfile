@@ -1,52 +1,65 @@
 # BouncyHSM — .NET-based PKCS#11 simulator
 # v3.2 support, 206 mechanisms, PQC, BouncyCastle crypto backend
 #
-# Architecture: native PKCS#11 lib → gRPC → BouncyHsm server
-# The server runs in the background, tests use the native PKCS#11 .so
+# Architecture: PKCS#11 native lib → gRPC → BouncyHsm server (.NET)
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS bouncyhsm-builder
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+RUN apt-get update && apt-get install -y --no-install-recommends git unzip \
     && rm -rf /var/lib/apt/lists/*
 
+# Build BouncyHSM server
 RUN git clone --depth 1 https://github.com/harrison314/BouncyHsm.git /build/bouncyhsm
 WORKDIR /build/bouncyhsm
-RUN dotnet publish src/Src/BouncyHsm/BouncyHsm.csproj -c Release -o /app/bouncyhsm
+RUN dotnet publish src/Src/BouncyHsm/BouncyHsm.csproj -c Release -o /app/server 2>&1 | tail -5
 
-# Build the native PKCS#11 library
-WORKDIR /build/bouncyhsm/src/Src/BouncyHsm.Pkcs11Lib
-RUN dotnet publish -c Release -r linux-x64 -o /app/pkcs11lib 2>/dev/null || true
+# Extract native PKCS#11 lib from NuGet package
+RUN dotnet new console -o /tmp/nuget-extract && \
+    cd /tmp/nuget-extract && \
+    dotnet add package BouncyHsm.Client 2>&1 | tail -3 && \
+    find ~/.nuget -name "BouncyHsm.Pkcs11Lib.so" -o -name "libBouncyHsm*.so" 2>/dev/null | head -5 && \
+    find ~/.nuget -path "*/runtimes/linux*/native/*.so" 2>/dev/null | head -10
 
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git gcc python3-dev libssl-dev curl \
+    git gcc python3-dev libssl-dev curl libicu-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install .NET runtime for BouncyHSM server
+# Install .NET ASP.NET runtime for server
 COPY --from=mcr.microsoft.com/dotnet/aspnet:10.0 /usr/share/dotnet /usr/share/dotnet
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PATH=$PATH:/usr/share/dotnet
 
-COPY --from=bouncyhsm-builder /app/bouncyhsm /opt/bouncyhsm
-COPY --from=bouncyhsm-builder /app/pkcs11lib /opt/pkcs11lib
+# Copy server
+COPY --from=builder /app/server /opt/bouncyhsm
 
-WORKDIR /app
+# Copy native PKCS#11 lib — try multiple possible locations
+COPY --from=builder /root/.nuget/ /tmp/nuget/
+RUN find /tmp/nuget -name "*.so" -path "*/linux*" 2>/dev/null | head -5 && \
+    PKCS11_LIB=$(find /tmp/nuget -name "*.so" -path "*/linux-x64/*" 2>/dev/null | head -1) && \
+    if [ -n "$PKCS11_LIB" ]; then \
+        cp "$PKCS11_LIB" /usr/lib/libbouncyhsm_pkcs11.so && \
+        echo "Found PKCS#11 lib: $PKCS11_LIB"; \
+    else \
+        echo "WARNING: No PKCS#11 native lib found in NuGet"; \
+    fi && \
+    rm -rf /tmp/nuget
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+WORKDIR /app
 COPY . .
 RUN uv sync --frozen
 
-# BouncyHSM needs server running + PKCS#11 native lib pointing to it
-# Start server in background, then run tests
 CMD ["sh", "-c", "\
-  echo 'Starting BouncyHSM server...' && \
-  dotnet /opt/bouncyhsm/BouncyHsm.dll &>/dev/null & \
+  echo 'BouncyHSM server starting...' && \
+  dotnet /opt/bouncyhsm/BouncyHsm.dll --urls http://localhost:5000 &>/dev/null & \
   sleep 3 && \
-  echo 'BouncyHSM ready' && \
-  PKCS11_MODULE=/opt/pkcs11lib/BouncyHsm.Pkcs11Lib.so && \
-  if [ -f $PKCS11_MODULE ]; then \
-    uv run pytest src/p11test/testcases/ --p11-module=$PKCS11_MODULE -q --tb=no; \
+  if [ -f /usr/lib/libbouncyhsm_pkcs11.so ]; then \
+    echo 'PKCS#11 lib found' && \
+    uv run pytest src/p11test/testcases/ \
+      --p11-module=/usr/lib/libbouncyhsm_pkcs11.so -q --tb=no; \
   else \
-    echo 'PKCS#11 native lib not found — BouncyHSM requires platform-specific build'; \
+    echo 'BouncyHSM PKCS#11 native lib not available'; \
   fi"]
