@@ -224,3 +224,62 @@ class TestDigestCrossVerify:
     def test_sha256_large(self, p11_session: Any) -> None:
         data = b"X" * 100_000
         assert p11_session.digest(data, mechanism=Mechanism.SHA256) == hashlib.sha256(data).digest()
+
+    def test_sha224(self, p11_session: Any) -> None:
+        data = b"sha224 cross-verify"
+        assert p11_session.digest(data, mechanism=Mechanism.SHA224) == hashlib.sha224(data).digest()
+
+
+class TestHMACCrossVerify:
+    """Verify PKCS#11 HMAC matches Python hmac module."""
+
+    def test_hmac_sha256(self, p11_session: Any) -> None:
+        """HMAC-SHA256: PKCS#11 vs Python hmac."""
+        import hmac as hmac_mod
+
+        key_bytes = bytes(range(32))
+        data = b"HMAC cross-verification data"
+
+        # Import key for HMAC
+        p11_key = p11_session.create_object(
+            {
+                Attribute.CLASS: ObjectClass.SECRET_KEY,
+                Attribute.KEY_TYPE: KeyType.SHA256_HMAC,
+                Attribute.VALUE: key_bytes,
+                Attribute.SIGN: True,
+                Attribute.VERIFY: True,
+                Attribute.TOKEN: False,
+                Attribute.SENSITIVE: False,
+            }
+        )
+
+        p11_mac = p11_key.sign(data, mechanism=Mechanism.SHA256_HMAC)
+        py_mac = hmac_mod.new(key_bytes, data, "sha256").digest()
+
+        assert p11_mac == py_mac
+
+    def test_hmac_sha1(self, p11_session: Any) -> None:
+        """HMAC-SHA1: PKCS#11 vs Python hmac."""
+        import hmac as hmac_mod
+
+        key_bytes = bytes(range(20))
+
+        try:
+            p11_key = p11_session.create_object(
+                {
+                    Attribute.CLASS: ObjectClass.SECRET_KEY,
+                    Attribute.KEY_TYPE: KeyType.SHA_1_HMAC,
+                    Attribute.VALUE: key_bytes,
+                    Attribute.SIGN: True,
+                    Attribute.TOKEN: False,
+                    Attribute.SENSITIVE: False,
+                }
+            )
+        except (p11.exceptions.PKCS11Error, AttributeError):
+            pytest.skip("SHA-1 HMAC key type not supported")
+
+        data = b"HMAC-SHA1 cross-verify"
+        p11_mac = p11_key.sign(data, mechanism=Mechanism.SHA_1_HMAC)
+        py_mac = hmac_mod.new(key_bytes, data, "sha1").digest()
+
+        assert p11_mac == py_mac

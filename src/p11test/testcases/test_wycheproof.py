@@ -281,3 +281,52 @@ class TestECDSAP256Wycheproof:
 
         # Session must still be usable
         p11_session.generate_random(64)
+
+
+# --- AES-CBC-PKCS5 (padding tests) ---
+
+
+def _load_aes_cbc_pkcs5_vectors() -> list[dict[str, Any]]:
+    if not (WYCHEPROOF_DIR / "aes_cbc_pkcs5_test.json").exists():
+        return []
+    return load_wycheproof("aes_cbc_pkcs5_test.json")
+
+
+class TestAESCBCPKCS5Wycheproof:
+    """Wycheproof AES-CBC-PKCS5 vectors — tests padding correctness."""
+
+    @pytest.mark.parametrize("vec", _load_aes_cbc_pkcs5_vectors(), ids=_vec_id)
+    def test_aes_cbc_pkcs5(self, p11_session: Any, vec: dict[str, Any]) -> None:
+        key_bytes = bytes.fromhex(vec["key"])
+        iv = bytes.fromhex(vec["iv"])
+        msg = bytes.fromhex(vec["msg"])
+        ct_expected = bytes.fromhex(vec["ct"])
+        result = vec["result"]
+
+        try:
+            key = p11_session.create_object(
+                {
+                    Attribute.CLASS: ObjectClass.SECRET_KEY,
+                    Attribute.KEY_TYPE: KeyType.AES,
+                    Attribute.VALUE: key_bytes,
+                    Attribute.ENCRYPT: True,
+                    Attribute.DECRYPT: True,
+                    Attribute.TOKEN: False,
+                    Attribute.SENSITIVE: False,
+                }
+            )
+        except p11.exceptions.PKCS11Error:
+            if result == "invalid":
+                return
+            raise
+
+        # Test decryption (verify padding handling)
+        try:
+            pt = key.decrypt(ct_expected, mechanism_param=iv)
+            if result == "valid" or result == "acceptable":
+                assert pt == msg
+        except p11.exceptions.PKCS11Error:
+            if result == "valid":
+                pytest.fail(f"Valid AES-CBC vector tc{vec['tcId']} failed")
+
+        p11_session.generate_random(64)
