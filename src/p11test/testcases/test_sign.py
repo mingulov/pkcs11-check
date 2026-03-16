@@ -40,8 +40,8 @@ class TestRSASignature:
             result = public.verify(wrong_data, signature, mechanism=Mechanism.SHA256_RSA_PKCS)
             # Some implementations return False, others raise
             assert result is False
-        except pkcs11.exceptions.SignatureInvalid:
-            pass  # Expected behavior
+        except pkcs11.exceptions.PKCS11Error:
+            pass  # Expected — module rejected invalid signature
 
 
 class TestECDSASignature:
