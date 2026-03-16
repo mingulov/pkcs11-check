@@ -9,7 +9,8 @@
 Expand p11test from ~85 basic tests to a comprehensive PKCS#11 test suite covering
 cryptographic correctness, security attack vectors, robustness, performance, compliance,
 and full v3.0/v3.2 coverage including PQC, plus vendor mechanism extensibility
-(8 vendors, 71 vendor-specific mechanisms). Target: ~2,350+ tests that match or exceed
+(8 vendors, 71 vendor-specific mechanisms), and surface audit probing for hidden
+capabilities. Target: ~2,400+ tests that match or exceed
 coverage of Google pkcs11test, Galois model-based testing, and Wycheproof edge-case
 vectors.
 
@@ -1275,7 +1276,65 @@ Estimated: ~25 benchmark tests.
 
 Estimated: ~15 tests.
 
-## 14. Compliance Testing
+## 14. Surface Audit & Hidden Capability Probing (`test_surface_audit.py`)
+
+Systematically probe the PKCS#11 module's entire API surface for undocumented,
+hidden, or inconsistent capabilities. This catches debug mechanisms left in
+production, backdoors, incomplete decommissioning, and access control gaps.
+
+### 14.1 Hidden Mechanism Probing
+
+| Test | Technique |
+|------|-----------|
+| Scan all standard mechanisms | Probe `C_GetMechanismInfo` for all ~600 CKM_ IDs (0x0000–0x1FFF) → flag any that respond but aren't in `C_GetMechanismList` |
+| Scan vendor ranges | Probe known vendor offsets (0x80000000+, 0xCE534350+, 0xD9554200+, 0xDE436972+) → flag hidden vendor mechanisms |
+| Disabled-but-accessible | For every non-advertised mechanism, try `C_EncryptInit`/`C_SignInit` with valid key → flag any that don't return `CKR_MECHANISM_INVALID` |
+| Deprecated mechanisms | If module claims v3.0+, verify deprecated mechanisms (DES, MD2) are truly disabled |
+
+### 14.2 Hidden Slot & Object Probing
+
+| Test | Technique |
+|------|-----------|
+| Shadow slots | Probe slot IDs 0–255 with `C_GetSlotInfo` → flag any beyond `C_GetSlotList` results |
+| Hidden attributes | Call `C_GetAttributeValue` for all ~120 CKA_ IDs on each key → flag unexpected/vendor attributes |
+| Hidden object classes | Search with each CKO_ value + `CKO_VENDOR_DEFINED` offsets → flag undocumented objects |
+| Hidden key types | Try `C_GenerateKey` with unusual CKK_ values → flag any that unexpectedly succeed |
+
+### 14.3 Interface & Function Probing (v3.x)
+
+| Test | Technique |
+|------|-----------|
+| Hidden interfaces | `C_GetInterface` with non-standard names ("DEBUG", "ADMIN", etc.) → flag any that respond |
+| NULL function pointers | In v3.x function list, check every function pointer → flag NULL pointers for supposedly supported functions |
+| All C_* functions callable | Call every PKCS#11 function → must return valid CKR_ code or CKR_FUNCTION_NOT_SUPPORTED, NEVER crash |
+| Hidden v3.x functions | If module reports v2.40, probe v3.0/v3.2 functions via ctypes → verify they fail cleanly |
+
+### 14.4 Access Control Probing
+
+| Test | Technique |
+|------|-----------|
+| PIN bypass | Try crypto operations without login when login should be required |
+| Empty PIN | `C_Login` with empty string and NULL → should fail cleanly |
+| SO privilege escalation | SO session attempts user crypto operations → must fail |
+| User privilege escalation | User session attempts SO-only operations (C_InitPIN) → must fail |
+| Cross-slot handles | Use object handle from slot A in operations on slot B → must fail cleanly |
+| Cross-session handles | Use object handle from session A in different-user session B → must fail |
+| Handle prediction | Generate 100 objects → check if handles are sequential (security concern: predictable handles aid attacks) |
+| Post-logout access | Logout → attempt operation with previously-valid handle → must fail |
+
+### 14.5 Token Info Audit
+
+| Test | Technique |
+|------|-----------|
+| Vendor flag bits | Check `CK_TOKEN_INFO.flags` for vendor-defined bits (0x80000000+) → report any set |
+| Hardware/firmware version | Log and validate version fields are within reasonable ranges |
+| Serial number format | Verify CK_TOKEN_INFO.serialNumber is valid |
+| Free space tracking | Check `ulFreePublicMemory`/`ulFreePrivateMemory` before and after key creation → verify it decrements |
+| Label consistency | Set label → read back → must match exactly (no truncation, encoding issues) |
+
+Estimated: ~50 tests. All results are SECURITY or INFO level — these are audit findings.
+
+## 15. Compliance Testing
 
 ### 14.1 FIPS 140-3 Checks (`test_fips.py`)
 
@@ -1300,7 +1359,7 @@ Estimated: ~5 tests.
 
 Estimated: ~10 tests.
 
-## 15. Vendor Mechanism Extensibility
+## 16. Vendor Mechanism Extensibility
 
 p11test must be extensible for vendor-specific mechanisms (CKM_VENDOR_DEFINED + offset)
 without modifying core test code. This is critical because real-world HSMs expose 70+
@@ -1418,7 +1477,7 @@ p11test test --vendor-profile my-hsm.toml --module /path/to.so
 
 Estimated: ~30 base tests per vendor profile × 8 vendors = ~240 vendor tests.
 
-## 16. Test File Organization
+## 17. Test File Organization
 
 ```
 src/p11test/testcases/
@@ -1507,7 +1566,7 @@ src/p11test/vendors/
 └── test_vendor.py              # Parametrized tests driven by profiles
 ```
 
-## 16. New Dependencies
+## 18. New Dependencies
 
 ```toml
 dependencies = [
@@ -1528,7 +1587,7 @@ stats = [
 
 The `stats` extra is installed automatically when `--profile lab` is used.
 
-## 17. New Markers
+## 19. New Markers
 
 ```python
 @pytest.mark.crossverify    # tests that verify against cryptography lib
@@ -1555,7 +1614,7 @@ The `stats` extra is installed automatically when `--profile lab` is used.
 @pytest.mark.hardware       # safe for real HSMs
 ```
 
-## 18. Test Result Classification
+## 20. Test Result Classification
 
 Not all failures are equal. Tests should report findings at different severity levels:
 
@@ -1621,7 +1680,7 @@ For KAT and Wycheproof tests, `vector_manifest` contains:
 The commit and hash pin the exact vector set used, enabling reproducible audit trails.
 Vector manifest files are stored in `src/p11test/testcases/vectors/manifests/`.
 
-## 19. Phasing
+## 21. Phasing
 
 ### Phase 2a — Cross-Verification & Mechanism Coverage (first)
 - `test_crossverify.py` — ~55 tests
@@ -1679,7 +1738,7 @@ Vector manifest files are stored in `src/p11test/testcases/vectors/manifests/`.
 - `--profile` option and named run profiles
 - Per-device baseline support
 
-## 20. Test Count Summary
+## 22. Test Count Summary
 
 | Category | Count |
 |----------|-------|
@@ -1720,10 +1779,11 @@ Vector manifest files are stored in `src/p11test/testcases/vectors/manifests/`.
 | Stress/concurrency | ~15 |
 | FIPS compliance | ~5 |
 | Protocol integration | ~10 |
+| Surface audit / hidden probing | ~50 |
 | Vendor mechanisms (8 vendors × ~30) | ~240 |
-| **Total** | **~2,350+** |
+| **Total** | **~2,400+** |
 
-## 21. References
+## 23. References
 
 - [Google pkcs11test](https://github.com/google/pkcs11test) — archived Jan 2025, v2.2 coverage
 - [Galois Model-Based PKCS#11 Testing](https://galois.com/reports/2020-10-model-based-compliance-testing-of-pkcs11-providers/) — 40,861 auto-generated tests
