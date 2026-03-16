@@ -30,7 +30,7 @@ class P11Module:
         if slot_index >= len(slots):
             msg = f"Slot {slot_index} not found (available: {len(slots)})"
             raise IndexError(msg)
-        return slots[slot_index]
+        return slots[slot_index].get_token()
 
 
 def load_module(

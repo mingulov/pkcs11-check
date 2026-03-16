@@ -18,10 +18,12 @@ def p11_config(request: pytest.FixtureRequest) -> P11TestConfig:
     module_path = request.config.getoption("p11_module")
     if module_path is None:
         pytest.skip("No --p11-module specified")
+    pin_value = request.config.getoption("p11_pin")
     return P11TestConfig(
         module=Path(module_path),
         interface=request.config.getoption("p11_interface"),
         slot=request.config.getoption("p11_slot"),
+        pin=pin_value,
         destructive=request.config.getoption("p11_destructive"),
     )
 
@@ -43,5 +45,5 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
     """Open PKCS#11 session with login. Yields session, closes after test."""
     token = p11_module.get_token(p11_config.slot)
     pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-    with token.open(user_pin=pin) as session:
+    with token.open(rw=True, user_pin=pin) as session:
         yield session
