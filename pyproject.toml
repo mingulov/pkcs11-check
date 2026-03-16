@@ -17,6 +17,7 @@ dependencies = [
     "psutil>=5.9",
     "pytest>=8.0",
     "pytest-xdist>=3.5",
+    "cryptography>=46.0.5",
 ]
 
 [project.optional-dependencies]
