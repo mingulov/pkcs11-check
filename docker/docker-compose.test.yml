@@ -7,9 +7,13 @@
 #   docker compose -f docker/docker-compose.test.yml run test-kryoptic
 #   docker compose -f docker/docker-compose.test.yml run test-nss
 #   docker compose -f docker/docker-compose.test.yml run test-nss-pqc
-#   docker compose -f docker/docker-compose.test.yml up           # run all
+#   docker compose -f docker/docker-compose.test.yml run test-opencryptoki
+#   docker compose -f docker/docker-compose.test.yml run test-tpm2
+#   docker compose -f docker/docker-compose.test.yml run test-bouncyhsm
 
 services:
+  # --- Software PKCS#11 tokens ---
+
   test-softhsm2:
     build:
       context: ..
@@ -35,3 +39,23 @@ services:
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile.rawhide
+
+  # --- Additional implementations ---
+
+  # OpenCryptoki SWToken (IBM's PKCS#11, OpenSSL backend)
+  test-opencryptoki:
+    build:
+      context: ..
+      dockerfile: docker/opencryptoki/Dockerfile
+
+  # tpm2-pkcs11 with swtpm (software TPM emulator)
+  test-tpm2:
+    build:
+      context: ..
+      dockerfile: docker/tpm2-pkcs11/Dockerfile
+
+  # BouncyHSM (.NET/BouncyCastle backend, v3.2, PQC)
+  test-bouncyhsm:
+    build:
+      context: ..
+      dockerfile: docker/bouncyhsm/Dockerfile
