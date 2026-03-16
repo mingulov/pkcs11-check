@@ -170,37 +170,34 @@ def _load_ecdsa_p256_vectors() -> list[dict[str, Any]]:
 
 
 class TestECDSAP256Wycheproof:
-    """Wycheproof ECDSA P-256/SHA-256 vectors — tests signature verification.
-
-    NOTE: PKCS#11 v2.40 public key import for ECDSA verification is complex
-    and module-specific. Many modules require the full EC_POINT + EC_PARAMS.
-    Tests that can't import the key are skipped gracefully.
-    """
+    """Wycheproof ECDSA P-256/SHA-256 vectors — tests signature verification."""
 
     @pytest.mark.parametrize("vec", _load_ecdsa_p256_vectors(), ids=_vec_id)
     def test_ecdsa_p256_sha256_verify(self, p11_session: Any, vec: dict[str, Any]) -> None:
         import hashlib
+
+        from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
         msg = bytes.fromhex(vec["msg"])
         sig_der = bytes.fromhex(vec["sig"])
         result = vec["result"]
         group = vec["_group"]
 
-        # Try to import the public key using the uncompressed point from keyDer
+        # Get EC public key point from the group's publicKey dict
+        pub_key_info = group.get("publicKey", {})
+        uncompressed_hex = pub_key_info.get("uncompressed", "")
+        if not uncompressed_hex:
+            pytest.skip("No uncompressed point in vector group")
+
+        uncompressed = bytes.fromhex(uncompressed_hex)
+
+        # Wrap in DER OCTET STRING for PKCS#11: 04 || length || point
+        if len(uncompressed) < 128:
+            ec_point_der = bytes([0x04, len(uncompressed)]) + uncompressed
+        else:
+            ec_point_der = bytes([0x04, 0x81, len(uncompressed)]) + uncompressed
+
         try:
-            # Extract EC point from the group's key
-            key_hex = group.get("keyUncompressed", group.get("uncompressed", ""))
-            key_uncompressed = bytes.fromhex(key_hex)
-            if not key_uncompressed:
-                pytest.skip("No uncompressed key in vector group")
-
-            # DER-encode the point as OCTET STRING for PKCS#11
-            # Simple DER: 04 || length || point_bytes
-            if len(key_uncompressed) < 128:
-                ec_point_der = bytes([0x04, len(key_uncompressed)]) + key_uncompressed
-            else:
-                ec_point_der = bytes([0x04, 0x81, len(key_uncompressed)]) + key_uncompressed
-
             pub_key = p11_session.create_object(
                 {
                     Attribute.CLASS: ObjectClass.PUBLIC_KEY,
@@ -211,22 +208,17 @@ class TestECDSAP256Wycheproof:
                     Attribute.VERIFY: True,
                 }
             )
-        except (p11.exceptions.PKCS11Error, KeyError, ValueError):
+        except p11.exceptions.PKCS11Error:
             pytest.skip("Cannot import EC public key on this module")
-            return
 
-        # Convert DER signature to raw r||s (PKCS#11 format)
+        # Convert DER signature to raw r||s (32+32 bytes for P-256)
         try:
-            from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-
             r_int, s_int = decode_dss_signature(sig_der)
             raw_sig = r_int.to_bytes(32, "big") + s_int.to_bytes(32, "big")
         except (ValueError, OverflowError):
-            # Malformed DER — if result is "invalid", this is expected
             if result == "invalid":
-                return
-            pytest.skip(f"Cannot decode DER signature for tc{vec['tcId']}")
-            return
+                return  # Malformed DER is correctly rejected
+            pytest.fail(f"Cannot decode valid DER sig for tc{vec['tcId']}")
 
         digest = hashlib.sha256(msg).digest()
 
@@ -234,10 +226,10 @@ class TestECDSAP256Wycheproof:
             pub_key.verify(digest, raw_sig, mechanism=Mechanism.ECDSA)
             # Verification succeeded
             if result == "invalid":
-                pass  # Some modules accept non-canonical sigs — finding, not crash
+                pass  # Some modules accept non-canonical — security finding
         except p11.exceptions.PKCS11Error:
             if result == "valid":
-                pass  # DER/raw format mismatch — not a real failure
+                pytest.fail(f"Valid ECDSA sig tc{vec['tcId']} rejected by module")
 
         # Session must still be usable
         p11_session.generate_random(64)
