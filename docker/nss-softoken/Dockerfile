@@ -1,6 +1,7 @@
 # NSS softoken test image
 # Uses Fedora for latest NSS with potential PQC patches
-FROM fedora:41
+# Use Fedora Rawhide for latest NSS with PKCS#11 v3.2 PQC support
+FROM fedora:rawhide
 
 # Install NSS and tools
 RUN dnf install -y \
