@@ -1,0 +1,3 @@
+[submodule "/home/user/src/m/p11test/python-pkcs11"]
+	path = /home/user/src/m/p11test/python-pkcs11
+	url = git@github.com:mingulov/python-pkcs11.git

@@ -39,6 +39,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/p11test"]
 
+[tool.uv.sources]
+python-pkcs11 = { path = "python-pkcs11", editable = true }
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
