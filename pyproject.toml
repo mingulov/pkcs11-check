@@ -1,0 +1,57 @@
+[project]
+name = "p11test"
+version = "0.1.0"
+description = "CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin"
+readme = "README.md"
+authors = [
+    { name = "Denis Mingulov", email = "denis@mingulov.com" }
+]
+requires-python = ">=3.11"
+license = "MIT"
+
+dependencies = [
+    "python-pkcs11>=0.9.3",
+    "typer>=0.15",
+    "rich>=13.0",
+    "pydantic-settings>=2.0",
+    "psutil>=5.9",
+    "pytest>=8.0",
+    "pytest-xdist>=3.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest-cov",
+    "mypy",
+    "ruff",
+]
+
+[project.scripts]
+p11test = "p11test.cli.app:main"
+
+[project.entry-points."pytest11"]
+p11test = "p11test.plugin"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/p11test"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["p11test"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
