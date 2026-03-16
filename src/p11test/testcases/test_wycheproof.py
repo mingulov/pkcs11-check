@@ -82,8 +82,18 @@ class TestAESGCMWycheproof:
         # This verifies: given (key, iv, aad, ct, tag) → module accepts valid, rejects invalid
         from pkcs11.mechanisms import GCMParams
 
+        from p11test.compliance import ComplianceLevel, note
+
         tag_bits = len(tag_expected) * 8
         ciphertext_with_tag = ct_expected + tag_expected
+
+        # Track non-recommended IV sizes
+        if len(iv) != 12 and result == "valid":
+            note(
+                f"GCM with {len(iv)}-byte IV (not 96-bit)",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="NIST SP 800-38D §8.2 recommends 96-bit IVs",
+            )
 
         try:
             gcm_params = GCMParams(nonce=iv, aad=aad if aad else None, tag_bits=tag_bits)
@@ -144,6 +154,16 @@ class TestHMACSHA256Wycheproof:
         tag_expected = bytes.fromhex(vec["tag"])
         result = vec["result"]
         tag_size = vec["_group"].get("tagSize", 256) // 8
+
+        # Track non-recommended key sizes
+        if len(key_bytes) < 32 and result == "valid":
+            from p11test.compliance import ComplianceLevel, note
+
+            note(
+                f"HMAC-SHA256 with {len(key_bytes)}-byte key (< hash output)",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="FIPS 198-1 §3 recommends key ≥ hash output length",
+            )
 
         # Try SHA256_HMAC key type first; fall back to GENERIC_SECRET
         # (some modules require min key length for typed HMAC keys)
