@@ -11,6 +11,8 @@ import pkcs11
 # Alias to allow mocking in tests
 pkcs11_lib = pkcs11.lib
 
+SUPPORTED_INTERFACES = ("auto", "2.40", "3.0", "3.1", "3.2")
+
 
 @dataclass
 class P11Module:
@@ -39,21 +41,30 @@ def load_module(
 ) -> P11Module:
     """Load a PKCS#11 module and negotiate the interface version.
 
-    For Phase 1, only v2.40 (C_GetFunctionList) is supported.
-    v3.0/v3.2 negotiation will be added with the python-pkcs11 fork.
+    Supports v2.40 (C_GetFunctionList) and v3.0/v3.1/v3.2 (C_GetInterface).
+    When ``interface="auto"`` (default), tries v3.2, v3.1, v3.0 in descending
+    order, then falls back to v2.40 for modules that do not export
+    ``C_GetInterface``.
+
+    :param path: Path to the PKCS#11 shared library.
+    :param interface: Requested interface version: ``"auto"``, ``"2.40"``,
+        ``"3.0"``, ``"3.1"``, or ``"3.2"``.
+    :raises FileNotFoundError: If the module file does not exist.
+    :raises ValueError: If ``interface`` is not a recognised value.
+    :raises RuntimeError: If the requested interface cannot be negotiated.
     """
     if not path.exists():
         msg = f"Module not found: {path}"
         raise FileNotFoundError(msg)
 
-    if interface not in ("auto", "2.40"):
-        msg = f"Interface v{interface} not supported yet (v2.40 only in Phase 1)"
-        raise RuntimeError(msg)
+    if interface not in SUPPORTED_INTERFACES:
+        msg = f"Unknown interface {interface!r}; must be one of {SUPPORTED_INTERFACES}"
+        raise ValueError(msg)
 
-    lib = pkcs11_lib(str(path))
+    lib = pkcs11_lib(str(path), interface=interface)
 
     return P11Module(
         path=path,
         lib=lib,
-        interface_version="2.40",
+        interface_version=lib.interface_version,
     )

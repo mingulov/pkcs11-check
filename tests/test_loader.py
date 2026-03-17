@@ -15,6 +15,7 @@ class TestLoadModule:
         fake_so = tmp_path / "module.so"
         fake_so.touch()
         mock_lib = MagicMock()
+        mock_lib.interface_version = "2.40"
         mock_lib.get_slots.return_value = [MagicMock()]
         with patch("p11test.core.loader.pkcs11_lib", return_value=mock_lib):
             module = load_module(fake_so)
@@ -29,15 +30,26 @@ class TestLoadModule:
         fake_so = tmp_path / "module.so"
         fake_so.touch()
         mock_lib = MagicMock()
+        mock_lib.interface_version = "3.2"
         with patch("p11test.core.loader.pkcs11_lib", return_value=mock_lib):
             module = load_module(fake_so, interface="auto")
-        assert module.interface_version == "2.40"
+        assert module.interface_version == "3.2"
 
-    def test_forced_interface_not_supported(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("iface", ["2.40", "3.0", "3.1", "3.2", "auto"])
+    def test_supported_interfaces(self, tmp_path: Path, iface: str) -> None:
         fake_so = tmp_path / "module.so"
         fake_so.touch()
-        with pytest.raises(RuntimeError, match="not supported"):
-            load_module(fake_so, interface="3.2")
+        mock_lib = MagicMock()
+        mock_lib.interface_version = iface if iface != "auto" else "3.2"
+        with patch("p11test.core.loader.pkcs11_lib", return_value=mock_lib):
+            module = load_module(fake_so, interface=iface)
+        assert isinstance(module, P11Module)
+
+    def test_unsupported_interface_raises(self, tmp_path: Path) -> None:
+        fake_so = tmp_path / "module.so"
+        fake_so.touch()
+        with pytest.raises(ValueError, match="Unknown interface"):
+            load_module(fake_so, interface="99.9")
 
 
 class TestP11Module:
