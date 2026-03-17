@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-_VERSION_ORDER = {"2.40": 0, "3.0": 1, "3.2": 2}
+_VERSION_ORDER = {"2.40": 0, "3.0": 1, "3.1": 2, "3.2": 3}
 
 _MARKER_MIN_VERSION: dict[str, str] = {
     "requires_v30": "3.0",

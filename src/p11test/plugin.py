@@ -29,7 +29,7 @@ def pytest_addoption(parser: Any) -> None:
         "--p11-interface",
         dest="p11_interface",
         default="auto",
-        help="Force interface version: auto, 2.40, 3.0, 3.2",
+        help="Force interface version: auto, 2.40, 3.0, 3.1, 3.2",
     )
     group.addoption(
         "--p11-slot",
@@ -77,10 +77,23 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 item.add_marker(pytest.mark.skip(reason="No --p11-module specified"))
         return
 
-    # Determine interface version (default to 2.40 for Phase 1)
-    interface_version = "2.40"
+    # Load module once to detect interface version and available mechanisms
+    from pathlib import Path
 
-    # Skip version-gated tests
+    from p11test.core.loader import load_module
+
+    interface_version = "2.40"
+    available_mechanisms: set[str] | None = None
+    try:
+        requested_interface = config.getoption("p11_interface", default="auto")
+        p11 = load_module(Path(module_path), interface=requested_interface)
+        interface_version = p11.interface_version
+        slot = p11.get_slots(token_present=True)[0]
+        available_mechanisms = {m.name for m in slot.get_mechanisms()}
+    except Exception:
+        pass
+
+    # Skip version-gated and destructive tests
     destructive_enabled = config.getoption("p11_destructive", default=False)
     for item in items:
         # Version markers
@@ -102,24 +115,12 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     # Skip tests for unsupported mechanisms
     skip_unsupported = config.getoption("p11_skip_unsupported", default=True)
-    if skip_unsupported and module_path is not None:
-        try:
-            from pathlib import Path
-
-            from p11test.core.loader import load_module
-
-            p11 = load_module(Path(module_path))
-            slot = p11.get_slots(token_present=True)[0]
-            available_mechanisms = {m.name for m in slot.get_mechanisms()}
-        except Exception:
-            available_mechanisms = None
-
-        if available_mechanisms is not None:
-            for item in items:
-                marker = item.get_closest_marker("needs_mechanism")
-                if marker and marker.args:
-                    needed = marker.args[0]
-                    if needed not in available_mechanisms:
-                        item.add_marker(
-                            pytest.mark.skip(reason=f"Mechanism {needed} not supported by module")
-                        )
+    if skip_unsupported and available_mechanisms is not None:
+        for item in items:
+            marker = item.get_closest_marker("needs_mechanism")
+            if marker and marker.args:
+                needed = marker.args[0]
+                if needed not in available_mechanisms:
+                    item.add_marker(
+                        pytest.mark.skip(reason=f"Mechanism {needed} not supported by module")
+                    )

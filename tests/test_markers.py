@@ -27,6 +27,12 @@ class TestVersionSkipLogic:
     def test_v32_test_runs_on_v32(self) -> None:
         assert should_skip_for_version("requires_v32", "3.2") is False
 
+    def test_v30_test_runs_on_v31(self) -> None:
+        assert should_skip_for_version("requires_v30", "3.1") is False
+
+    def test_v32_test_skipped_on_v31(self) -> None:
+        assert should_skip_for_version("requires_v32", "3.1") is True
+
     def test_unknown_marker_never_skips(self) -> None:
         assert should_skip_for_version("unknown", "2.40") is False
 
