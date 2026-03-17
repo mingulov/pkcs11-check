@@ -16,7 +16,7 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 ## Tier 1 — PKCS#11 Compliance Fundamentals
 
 - [x] **1.1** Wrong-PIN / PIN-locked tests — 7 tests: wrong PIN, empty PIN, recovery after bad attempt, no object leak, long/unicode/null PIN edge cases
-- [ ] **1.2** Token (persistent) objects — create with `TOKEN: True`, close session, reopen, verify object persists
+- [x] **1.2** Token (persistent) objects — 6 tests: create, survive session, use across sessions, session obj disappears, destroy, flag check
 - [ ] **1.3** `C_SetAttributeValue` — change CKA_LABEL, CKA_ID on existing objects; verify read-only attrs rejected
 - [ ] **1.4** SO login / `C_InitPIN` / `C_SetPIN` — admin login, PIN change, user PIN init (mark `@destructive`)
 - [ ] **1.5** True multipart streaming — `C_EncryptUpdate`/`C_EncryptFinal` on >1 block of data, cross-verify with single-shot
