@@ -78,6 +78,7 @@ class TestKeyDeriveSoftware:
         assert p11_mac == py_mac
 
 
+@pytest.mark.requires_v30
 class TestHKDF:
     """HKDF tests — requires CKM_HKDF_DERIVE (PKCS#11 v3.0+)."""
 

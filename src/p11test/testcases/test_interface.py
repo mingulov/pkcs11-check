@@ -54,6 +54,15 @@ class TestInterfaceV30:
         """v3.0 module opens a session without error."""
         assert p11_session is not None
 
+    def test_v30_get_interface_list(self, p11_module: Any) -> None:
+        """C_GetInterfaceList returns at least one interface entry."""
+        ifaces = p11_module.lib.get_interface_list()
+        assert len(ifaces) > 0
+        names = [name for name, _maj, _min in ifaces]
+        assert "PKCS 11" in names or any("PKCS" in n for n in names), (
+            f"Expected PKCS 11 interface in list, got {names}"
+        )
+
     def test_v30_encrypt_decrypt_aes(self, p11_session: Any) -> None:
         """v3.0 AES encrypt/decrypt round-trip via v3.0 function list."""
         from pkcs11 import Attribute, KeyType, Mechanism
