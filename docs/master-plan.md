@@ -18,7 +18,7 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 - [x] **1.1** Wrong-PIN / PIN-locked tests — 7 tests: wrong PIN, empty PIN, recovery after bad attempt, no object leak, long/unicode/null PIN edge cases
 - [x] **1.2** Token (persistent) objects — 6 tests: create, survive session, use across sessions, session obj disappears, destroy, flag check
 - [x] **1.3** `C_SetAttributeValue` — 7 tests: change label/ID, keypair labels, reject CKA_CLASS/KEY_TYPE/MODULUS/VALUE (compliance notes for silent ignore)
-- [ ] **1.4** SO login / `C_InitPIN` / `C_SetPIN` — admin login, PIN change, user PIN init (mark `@destructive`)
+- [x] **1.4** SO login / `C_SetPIN` — 3 tests: SO wrong PIN, user+SO coexist rejected, PIN change+restore (@destructive)
 - [ ] **1.5** True multipart streaming — `C_EncryptUpdate`/`C_EncryptFinal` on >1 block of data, cross-verify with single-shot
 - [ ] **1.6** Interface negotiation tests — test v2.40 fallback when v3.x unavailable, test `interface="auto"` vs explicit
 
