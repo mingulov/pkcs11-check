@@ -10,6 +10,14 @@ from rich.table import Table
 
 from p11test.core.loader import load_module
 
+
+def _mech_sort_key(m: object) -> str:
+    """Sort key for mechanisms — handles both Mechanism enum and raw int."""
+    name = getattr(m, "name", None)
+    if isinstance(name, str):
+        return name
+    return f"0x{int(m):08x}" if isinstance(m, int) else str(m)
+
 console = Console()
 
 
@@ -58,9 +66,9 @@ def info_command(
         table.add_column("Mechanism", style="cyan")
         table.add_column("Min Key", justify="right")
         table.add_column("Max Key", justify="right")
-        for mech in sorted(mechanisms, key=lambda m: m.name):
+        for mech in sorted(mechanisms, key=_mech_sort_key):
             info = slot.get_mechanism_info(mech)
             min_key = str(info.min_key_length) if info else ""
             max_key = str(info.max_key_length) if info else ""
-            table.add_row(mech.name, min_key, max_key)
+            table.add_row(_mech_sort_key(mech), min_key, max_key)
         console.print(table)
