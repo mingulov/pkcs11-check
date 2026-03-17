@@ -283,3 +283,43 @@ class TestHMACCrossVerify:
         py_mac = hmac_mod.new(key_bytes, data, "sha1").digest()
 
         assert p11_mac == py_mac
+
+
+class TestRSAKeySizeCrossVerify:
+    """Cross-verify RSA across different key sizes and hash algorithms."""
+
+    def _export_rsa_pubkey(self, pub_p11: Any) -> Any:
+        modulus = int.from_bytes(pub_p11[Attribute.MODULUS], "big")
+        exponent = int.from_bytes(pub_p11[Attribute.PUBLIC_EXPONENT], "big")
+        return rsa.RSAPublicNumbers(exponent, modulus).public_key()
+
+    def test_rsa_3072_sha384(self, p11_session: Any) -> None:
+        """RSA-3072 with SHA-384."""
+        pub_p11, priv_p11 = p11_session.generate_keypair(KeyType.RSA, 3072)
+        data = b"RSA-3072 SHA-384 cross-verify"
+        signature = priv_p11.sign(data, mechanism=Mechanism.SHA384_RSA_PKCS)
+        pub_crypto = self._export_rsa_pubkey(pub_p11)
+        pub_crypto.verify(signature, data, padding.PKCS1v15(), hashes.SHA384())
+
+    def test_rsa_2048_sha1(self, p11_session: Any) -> None:
+        """RSA-2048 with SHA-1 (legacy, still common)."""
+        from p11test.compliance import ComplianceLevel, note
+
+        note(
+            "RSA with SHA-1 signatures",
+            ComplianceLevel.DEPRECATED,
+            reference="NIST SP 800-131A Rev. 2",
+        )
+        pub_p11, priv_p11 = p11_session.generate_keypair(KeyType.RSA, 2048)
+        data = b"RSA SHA-1 cross-verify"
+        signature = priv_p11.sign(data, mechanism=Mechanism.SHA1_RSA_PKCS)
+        pub_crypto = self._export_rsa_pubkey(pub_p11)
+        pub_crypto.verify(signature, data, padding.PKCS1v15(), hashes.SHA1())
+
+    def test_rsa_2048_sha224(self, p11_session: Any) -> None:
+        """RSA-2048 with SHA-224."""
+        pub_p11, priv_p11 = p11_session.generate_keypair(KeyType.RSA, 2048)
+        data = b"RSA SHA-224 cross-verify"
+        signature = priv_p11.sign(data, mechanism=Mechanism.SHA224_RSA_PKCS)
+        pub_crypto = self._export_rsa_pubkey(pub_p11)
+        pub_crypto.verify(signature, data, padding.PKCS1v15(), hashes.SHA224())
