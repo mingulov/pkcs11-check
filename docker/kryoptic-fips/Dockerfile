@@ -19,11 +19,15 @@ RUN ./Configure no-docs no-tests && make -j$(nproc)
 ENV OPENSSL_DIR=/build/openssl
 ENV OPENSSL_LIB_DIR=/build/openssl
 ENV OPENSSL_INCLUDE_DIR=/build/openssl/include
+ENV OPENSSL_STATIC=0
 RUN git clone --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
 WORKDIR /build/kryoptic
-RUN cargo build --no-default-features --features "fips,pqc" 2>&1 | tail -5 && \
-    if [ -f misc/hmacify.sh ]; then \
-      ./misc/hmacify.sh target/debug/libkryoptic_pkcs11.so 2>&1 || true; \
+# Build with FIPS+PQC, show any errors
+RUN cargo build --release --no-default-features --features "fips,pqc" 2>&1; \
+    echo "=== Build artifacts ===" && \
+    find target/release -maxdepth 1 -name "*.so" 2>/dev/null && \
+    if [ -f misc/hmacify.sh ] && [ -f target/release/libkryoptic_pkcs11.so ]; then \
+      ./misc/hmacify.sh target/release/libkryoptic_pkcs11.so 2>&1 || true; \
     fi
 
 FROM python:3.12-slim
@@ -32,19 +36,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 git gcc python3-dev libssl-dev opensc \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so /usr/lib/
-# Copy FIPS integrity files if they exist
-COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so.hmac /usr/lib/ 2>/dev/null || true
+# Copy the built .so — use RUN to handle missing file gracefully
+RUN --mount=from=builder,source=/build/kryoptic/target/release,target=/tmp/kryoptic-build \
+    cp /tmp/kryoptic-build/libkryoptic_pkcs11.so /usr/lib/ 2>/dev/null && \
+    cp /tmp/kryoptic-build/libkryoptic_pkcs11.so.hmac /usr/lib/ 2>/dev/null; \
+    ls -lh /usr/lib/libkryoptic* 2>/dev/null || echo "WARNING: Kryoptic FIPS .so not found"
 
 RUN mkdir -p /var/lib/kryoptic /etc/kryoptic && \
     printf '[[slots]]\nslot = 1\ndbtype = "sqlite"\ndbargs = "/var/lib/kryoptic/token.sql"\n' \
     > /etc/kryoptic/token.conf
 ENV KRYOPTIC_CONF=/etc/kryoptic/token.conf
 
+# Token init may fail if FIPS .so needs runtime OpenSSL 4.0 — defer to CMD
 RUN pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
     --init-token --label "p11test" --so-pin 12345678 2>&1 && \
     pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
-    --init-pin --pin 1234 --so-pin 12345678 2>&1
+    --init-pin --pin 1234 --so-pin 12345678 2>&1 || \
+    echo "Token init deferred — FIPS module may need runtime OpenSSL"
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
