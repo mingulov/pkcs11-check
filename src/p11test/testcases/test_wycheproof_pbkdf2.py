@@ -13,7 +13,7 @@ from typing import Any
 
 import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11 import Attribute, KeyType, Mechanism
 
 from p11test.testcases.conftest import has_mechanism
 
@@ -84,35 +84,21 @@ def test_pbkdf2(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, A
     result = vec["result"]
     prf = vec["_prf"]
 
-    # Import password as a generic secret key for derivation
-    try:
-        base_key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-                Attribute.VALUE: password,
-                Attribute.DERIVE: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
-        )
-    except p11.exceptions.PKCS11Error:
-        if result == "invalid":
-            return
-        pytest.skip("Cannot import password key for PBKDF2")
+    # CKM_PKCS5_PBKD2 is a key generation mechanism (not derivation).
+    # The password is passed in the mechanism params, not as a base key.
+    pbkdf2_params = {
+        "password": password,
+        "salt": salt,
+        "iterations": iterations,
+        "prf": prf,
+    }
 
-    # Derive using CKM_PKCS5_PBKD2
     try:
-        derived = base_key.derive_key(
+        derived = p11_session.generate_key(
             KeyType.GENERIC_SECRET,
             dk_len * 8,  # bits
             mechanism=Mechanism.PKCS5_PBKD2,
-            mechanism_param={
-                "password": password,
-                "salt": salt,
-                "iterations": iterations,
-                "prf": prf,
-            },
+            mechanism_param=pbkdf2_params,
             template={
                 Attribute.SENSITIVE: False,
                 Attribute.EXTRACTABLE: True,
@@ -127,4 +113,4 @@ def test_pbkdf2(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, A
             )
     except p11.exceptions.PKCS11Error:
         if result == "valid":
-            pytest.xfail(f"PBKDF2 derive failed for valid vector {vec_id}")
+            pytest.xfail(f"PBKDF2 generate_key failed for valid vector {vec_id}")
