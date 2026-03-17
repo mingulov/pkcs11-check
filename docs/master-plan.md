@@ -1,0 +1,62 @@
+# p11test Master Plan
+
+Iterative improvement plan for the PKCS#11 test suite.
+Each task should pass on **SoftHSM2** (v2.40) and **Kryoptic** (v3.2) before being marked done.
+
+## Verification targets
+
+- **SoftHSM2 2.7.0**: `SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234 -q --benchmark-disable`
+- **Kryoptic 1.5.0**: `docker compose -f docker/docker-compose.test.yml run --rm test-kryoptic`
+
+---
+
+## Tier 1 — PKCS#11 Compliance Fundamentals
+
+- [ ] **1.1** Wrong-PIN / PIN-locked tests — attempt login with bad PIN, verify CKR_PIN_INCORRECT, verify lockout after N attempts
+- [ ] **1.2** Token (persistent) objects — create with `TOKEN: True`, close session, reopen, verify object persists
+- [ ] **1.3** `C_SetAttributeValue` — change CKA_LABEL, CKA_ID on existing objects; verify read-only attrs rejected
+- [ ] **1.4** SO login / `C_InitPIN` / `C_SetPIN` — admin login, PIN change, user PIN init (mark `@destructive`)
+- [ ] **1.5** True multipart streaming — `C_EncryptUpdate`/`C_EncryptFinal` on >1 block of data, cross-verify with single-shot
+- [ ] **1.6** Interface negotiation tests — test v2.40 fallback when v3.x unavailable, test `interface="auto"` vs explicit
+
+## Tier 2 — Object & Type Coverage
+
+- [ ] **2.1** `CKO_DATA` objects — create, search by label/app, read value, destroy
+- [ ] **2.2** `CKO_CERTIFICATE` — import X.509 DER cert, search by subject/issuer, extract fields
+- [ ] **2.3** Classic DH key agreement — `CKM_DH_PKCS_DERIVE` with parameter generation
+- [ ] **2.4** RSA key wrapping — wrap AES key with RSA-OAEP, unwrap, verify material matches
+
+## Tier 3 — Adversarial & Security Testing
+
+- [ ] **3.1** Concurrent session attacks — two sessions racing on same object (create/destroy/use)
+- [ ] **3.2** Object visibility across sessions — create in session A, find in session B (same token)
+- [ ] **3.3** Attribute sensitivity enforcement — read CKA_VALUE on SENSITIVE=True key, must return error
+- [ ] **3.4** Key usage policy enforcement — use encrypt-only key for signing, must fail
+- [ ] **3.5** Mechanism parameter fuzzing — random bytes as mechanism_param, must not crash (segfault survival)
+- [ ] **3.6** Large object stress — 1MB CKO_DATA, 100KB random generation, very large plaintext encrypt
+- [ ] **3.7** Session exhaustion — open sessions until CKR_SESSION_COUNT, verify graceful error
+- [ ] **3.8** Duplicate label handling — two objects with same label, search returns both
+- [ ] **3.9** Slot re-initialization — C_Finalize + C_Initialize cycle, verify clean state
+- [ ] **3.10** CKR return code coverage — map all standard CKR codes, verify we trigger each reachable one
+
+## Tier 4 — Module Differential & Reporting
+
+- [ ] **4.1** Cross-module differential — same test on SoftHSM2 vs Kryoptic, flag behavioral differences
+- [ ] **4.2** Module mechanism matrix report — generate CSV: module × mechanism × pass/skip/fail/xfail
+- [ ] **4.3** Vendor extension detection — probe CKM_VENDOR_DEFINED range for hidden mechanisms
+- [ ] **4.4** FIPS mode detection — check CKF_FIPS_APPROVED flag, adjust test expectations
+
+## Tier 5 — Infrastructure & Quality
+
+- [ ] **5.1** Add pytest-timeout to Docker images — prevent hangs (OpenCryptoki took 33 min)
+- [ ] **5.2** NSS + NSS-PQC Docker test run — rebuild and test with expanded suite
+- [ ] **5.3** Test result archival — save pytest JSON/JUnit output per module per run
+- [ ] **5.4** Mechanism coverage report — auto-generate docs/test-coverage.md from test metadata
+
+---
+
+## Recommended loop prompt
+
+```
+/using-superpowers Pick the highest-priority unfinished task from docs/master-plan.md, implement it with tests passing on SoftHSM2 and Kryoptic (use Docker for Kryoptic), commit, then update the plan marking it done. If all tasks are done, do a gap analysis and add new tasks. Focus on test quality over quantity — each test should catch real bugs in real PKCS#11 modules.
+```
