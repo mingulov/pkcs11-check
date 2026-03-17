@@ -2,10 +2,12 @@
 
 Basic statistical checks on random output quality. These are sanity checks,
 NOT certification-grade tests (see NIST SP 800-22 for proper RNG testing).
+Includes Shannon entropy estimation and runs test.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pytest
@@ -57,8 +59,7 @@ class TestRNGStatistical:
         ratio = bit_count / total_bits
         # Very generous range: 45%-55%
         assert 0.45 < ratio < 0.55, (
-            f"Bit frequency bias: {ratio:.3%} ones "
-            f"({bit_count}/{total_bits})"
+            f"Bit frequency bias: {ratio:.3%} ones ({bit_count}/{total_bits})"
         )
 
     def test_byte_distribution(self, p11_session: Any) -> None:
@@ -84,6 +85,54 @@ class TestRNGStatistical:
         assert min_count > expected * 0.2, (
             f"Byte 0x{counts.index(min_count):02x} appears {min_count} times "
             f"(expected ~{expected:.0f})"
+        )
+
+    def test_shannon_entropy(self, p11_session: Any) -> None:
+        """Shannon entropy of random bytes should be close to 8.0 bits/byte.
+
+        For truly random data, Shannon entropy = log2(256) = 8.0.
+        We allow down to 7.9 bits/byte (very conservative threshold).
+        """
+        data = p11_session.generate_random(81920)  # 10240 bytes
+        counts = [0] * 256
+        for byte in data:
+            counts[byte] += 1
+
+        total = len(data)
+        entropy = 0.0
+        for count in counts:
+            if count > 0:
+                p = count / total
+                entropy -= p * math.log2(p)
+
+        assert entropy > 7.9, (
+            f"Shannon entropy too low: {entropy:.4f} bits/byte (expected ~8.0 for random data)"
+        )
+
+    def test_runs_test(self, p11_session: Any) -> None:
+        """Runs test: count transitions between 0 and 1 bits.
+
+        For random data, the number of runs should be roughly half
+        the total bits. A very low or high run count suggests patterns.
+        """
+        data = p11_session.generate_random(8192)  # 1024 bytes
+        total_bits = len(data) * 8
+
+        # Count runs (transitions between 0 and 1)
+        runs = 1
+        prev_bit = data[0] >> 7
+        for byte in data:
+            for bit_pos in range(7, -1, -1):
+                current_bit = (byte >> bit_pos) & 1
+                if current_bit != prev_bit:
+                    runs += 1
+                prev_bit = current_bit
+
+        # For random data, expected runs ≈ total_bits/2
+        expected_runs = total_bits / 2
+        ratio = runs / expected_runs
+        assert 0.9 < ratio < 1.1, (
+            f"Runs test: {runs} runs (expected ~{expected_runs:.0f}), ratio={ratio:.3f}"
         )
 
     def test_seed_random(self, p11_session: Any) -> None:
