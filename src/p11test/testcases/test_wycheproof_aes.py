@@ -345,3 +345,57 @@ def test_aes_gmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
     except (p11.exceptions.PKCS11Error, TypeError):
         if result == "valid":
             pytest.xfail(f"AES-GMAC sign failed for valid vector {vec_id}")
+
+
+# --- AES-XTS ---
+
+_AES_XTS_VECTORS = _load_flat("aes_xts_test.json")
+
+
+def _has_aes_xts(p11_module: Any) -> bool:
+    slot = p11_module.get_slots(token_present=True)[0]
+    names = {mech_name(m) for m in slot.get_mechanisms()}
+    return "AES_XTS" in names
+
+
+@pytest.mark.parametrize("vec_id,vec", _AES_XTS_VECTORS, ids=[v[0] for v in _AES_XTS_VECTORS])
+def test_aes_xts(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    """AES-XTS disk encryption mode from Wycheproof vectors.
+
+    XTS uses a double-size key (e.g. 512 bits = two 256-bit keys)
+    and a tweak (IV) for sector-based encryption.
+    """
+    if not _has_aes_xts(p11_module):
+        pytest.skip("AES_XTS not supported")
+
+    key_bytes = bytes.fromhex(vec["key"])
+    iv = bytes.fromhex(vec["iv"])
+    msg = bytes.fromhex(vec["msg"])
+    ct_expected = bytes.fromhex(vec["ct"])
+    result = vec["result"]
+
+    # XTS uses AES_XTS key type with double-size key
+    try:
+        key = p11_session.create_object(
+            {
+                Attribute.CLASS: ObjectClass.SECRET_KEY,
+                Attribute.KEY_TYPE: KeyType.AES_XTS,
+                Attribute.VALUE: key_bytes,
+                Attribute.ENCRYPT: True,
+                Attribute.DECRYPT: True,
+                Attribute.TOKEN: False,
+                Attribute.SENSITIVE: False,
+            }
+        )
+    except (p11.exceptions.PKCS11Error, AttributeError):
+        if result == "invalid":
+            return
+        pytest.skip("Cannot import AES-XTS key")
+
+    try:
+        ct = key.encrypt(msg, mechanism=Mechanism.AES_XTS, mechanism_param=iv)
+        if result == "valid":
+            assert ct == ct_expected
+    except (p11.exceptions.PKCS11Error, TypeError):
+        if result == "valid":
+            pytest.xfail(f"AES-XTS encrypt failed for valid vector {vec_id}")

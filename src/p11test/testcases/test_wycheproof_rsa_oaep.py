@@ -60,6 +60,8 @@ _OAEP_FILES = [
     "rsa_oaep_3072_sha512_mgf1sha1_test.json",
     "rsa_oaep_4096_sha256_mgf1sha1_test.json",
     "rsa_oaep_4096_sha512_mgf1sha1_test.json",
+    # Misc — various parameter combinations in one file
+    "rsa_oaep_misc_test.json",
 ]
 
 
