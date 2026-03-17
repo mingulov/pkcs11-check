@@ -52,9 +52,9 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 ## Tier 5 — Infrastructure & Quality
 
 - [x] **5.1** Add pytest-timeout to Docker images — prevent hangs (OpenCryptoki took 33 min)
-- [ ] **5.2** NSS + NSS-PQC Docker test run — rebuild and test with expanded suite
+- [x] **5.2** NSS + NSS-PQC Docker test run — rebuild and test with expanded suite (20,669 passed)
 - [x] **5.3** Test result archival — save pytest JSON/JUnit output per module per run
-- [ ] **5.4** Mechanism coverage report — auto-generate docs/test-coverage.md from test metadata
+- [x] **5.4** Mechanism coverage report — auto-generate docs/test-coverage.md from test metadata
 
 ## Tier 6 — Gap Analysis (added 2026-03-18)
 
