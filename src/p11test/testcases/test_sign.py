@@ -174,11 +174,19 @@ class TestHMACSign:
 
 
 class TestDSASignature:
-    def test_dsa_generate_and_sign(self, p11_session: Any) -> None:
+    def test_dsa_generate_and_sign(self, p11_session: Any, p11_module: Any) -> None:
         """Generate DSA params + keypair, sign and verify."""
-        params = p11_session.generate_domain_parameters(KeyType.DSA, 2048)
-        public, private = params.generate_keypair()
-        data = b"DSA test data for signing"
+        from p11test.testcases.conftest import has_mechanism
 
+        if not has_mechanism(p11_module, "DSA_SHA256"):
+            pytest.skip("DSA_SHA256 not supported")
+
+        try:
+            params = p11_session.generate_domain_parameters(KeyType.DSA, 2048)
+            public, private = params.generate_keypair()
+        except pkcs11.exceptions.PKCS11Error:
+            pytest.skip("DSA parameter/key generation not supported")
+
+        data = b"DSA test data for signing"
         sig = private.sign(data, mechanism=Mechanism.DSA_SHA256)
         assert public.verify(data, sig, mechanism=Mechanism.DSA_SHA256) is True

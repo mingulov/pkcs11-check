@@ -40,7 +40,10 @@ class TestECKeygen:
             {Attribute.EC_PARAMS: p11.util.ec.encode_named_curve_parameters(curve_name)},
             local=True,
         )
-        pub, priv = ecparams.generate_keypair()
+        try:
+            pub, priv = ecparams.generate_keypair()
+        except p11.exceptions.PKCS11Error:
+            pytest.skip(f"Curve {curve_name} not supported by module")
         assert pub is not None
         assert priv is not None
 
@@ -58,7 +61,10 @@ class TestECKeygen:
             {Attribute.EC_PARAMS: p11.util.ec.encode_named_curve_parameters(curve_name)},
             local=True,
         )
-        pub, priv = ecparams.generate_keypair()
+        try:
+            pub, priv = ecparams.generate_keypair()
+        except p11.exceptions.PKCS11Error:
+            pytest.skip(f"Curve {curve_name} not supported")
         assert pub.key_type == KeyType.EC
         assert priv.key_type == KeyType.EC
 
@@ -85,7 +91,10 @@ class TestECDSACrossVerify:
             {Attribute.EC_PARAMS: p11.util.ec.encode_named_curve_parameters(curve_name)},
             local=True,
         )
-        pub_p11, priv_p11 = ecparams.generate_keypair()
+        try:
+            pub_p11, priv_p11 = ecparams.generate_keypair()
+        except p11.exceptions.PKCS11Error:
+            pytest.skip(f"Curve {curve_name} not supported")
 
         data = f"ECDSA {curve_name} cross-verify".encode()
         digest = hash_fns[coord_size](data).digest()

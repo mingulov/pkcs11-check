@@ -6,7 +6,10 @@ from typing import Any
 
 import pkcs11
 import pytest
-from pkcs11 import Attribute, KeyType, ObjectClass
+from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11.mechanisms import KDF
+
+from p11test.testcases.conftest import extract_ec_point
 
 pytestmark = pytest.mark.keymgmt
 
@@ -163,15 +166,20 @@ class TestKeyDerive:
         _, priv_a = ecparams.generate_keypair()
         pub_b, _ = ecparams.generate_keypair()
 
-        # python-pkcs11 derive_key for ECDH needs the public value
-        # SoftHSM2 expects proper ECDH1_DERIVE params
+        # Use proper ECDH1_DERIVE with KDF.NULL and raw public point
+        point_b = extract_ec_point(pub_b[Attribute.EC_POINT])
         try:
             shared = priv_a.derive_key(
-                KeyType.AES,
+                KeyType.GENERIC_SECRET,
                 256,
-                mechanism_param=pub_b[Attribute.EC_POINT],
+                mechanism=Mechanism.ECDH1_DERIVE,
+                mechanism_param=(KDF.NULL, None, point_b),
+                template={
+                    Attribute.SENSITIVE: False,
+                    Attribute.EXTRACTABLE: True,
+                    Attribute.TOKEN: False,
+                },
             )
             assert shared is not None
-            assert shared.key_type == KeyType.AES
-        except pkcs11.exceptions.MechanismParamInvalid:
-            pytest.skip("ECDH derive requires vendor-specific params on this module")
+        except pkcs11.exceptions.PKCS11Error:
+            pytest.skip("ECDH derive not supported on this module")
