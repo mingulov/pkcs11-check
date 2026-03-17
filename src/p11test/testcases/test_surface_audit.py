@@ -184,3 +184,132 @@ class TestMechanismFlagsConsistency:
             key = p11_session.generate_key(KeyType.AES, min(info.max_key_length * 8, 256))
             assert key is not None
             key.destroy()
+
+
+class TestMechanismLimitProbing:
+    """Probe beyond advertised mechanism limits.
+
+    Tests whether modules properly reject operations outside their
+    advertised min/max key sizes. A module that accepts oversized keys
+    may have undocumented capabilities or weak enforcement.
+    """
+
+    def test_aes_oversize_key(self, p11_session: Any, p11_module: Any) -> None:
+        """Try AES key sizes beyond standard 256-bit — should be rejected."""
+        from p11test.compliance import ComplianceLevel, note
+
+        slot = p11_module.get_slots(token_present=True)[0]
+        mechs = slot.get_mechanisms()
+        aes_keygen = [m for m in mechs if mech_name(m) == "AES_KEY_GEN"]
+        if not aes_keygen:
+            pytest.skip("AES_KEY_GEN not supported")
+
+        info = slot.get_mechanism_info(aes_keygen[0])
+        oversize = (info.max_key_length + 8) * 8  # Beyond max, in bits
+
+        try:
+            key = p11_session.generate_key(KeyType.AES, oversize)
+            note(
+                f"Module accepted AES key beyond max ({oversize} bits, "
+                f"max={info.max_key_length * 8})",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="PKCS#11 CK_MECHANISM_INFO.ulMaxKeySize",
+            )
+            key.destroy()
+        except pkcs11.exceptions.PKCS11Error:
+            pass  # Expected — properly enforced
+
+    def test_rsa_undersize_key(self, p11_session: Any, p11_module: Any) -> None:
+        """Try RSA key smaller than min — should be rejected."""
+        from p11test.compliance import ComplianceLevel, note
+
+        slot = p11_module.get_slots(token_present=True)[0]
+        mechs = slot.get_mechanisms()
+        rsa_keygen = [m for m in mechs if mech_name(m) == "RSA_PKCS_KEY_PAIR_GEN"]
+        if not rsa_keygen:
+            pytest.skip("RSA keygen not supported")
+
+        info = slot.get_mechanism_info(rsa_keygen[0])
+        if info.min_key_length == 0:
+            pytest.skip("No minimum key length reported")
+
+        undersize = max(info.min_key_length - 256, 512)  # Below min but still a valid size
+        if undersize >= info.min_key_length:
+            pytest.skip("Cannot test below minimum (already at 512)")
+
+        try:
+            pub, priv = p11_session.generate_keypair(KeyType.RSA, undersize)
+            note(
+                f"Module accepted RSA key below min ({undersize} bits, min={info.min_key_length})",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="PKCS#11 CK_MECHANISM_INFO.ulMinKeySize",
+            )
+            pub.destroy()
+            priv.destroy()
+        except pkcs11.exceptions.PKCS11Error:
+            pass  # Expected
+
+    def test_aes_non_standard_sizes(self, p11_session: Any) -> None:
+        """Try non-standard AES key sizes (64, 160, 384, 512, 768 bits)."""
+        from p11test.compliance import ComplianceLevel, note
+
+        for size in [64, 160, 384, 512, 768]:
+            try:
+                key = p11_session.generate_key(KeyType.AES, size)
+                note(
+                    f"Module accepted non-standard AES-{size}",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="FIPS 197 — AES key sizes are 128, 192, 256 only",
+                )
+                key.destroy()
+            except pkcs11.exceptions.PKCS11Error:
+                pass  # Expected
+
+    def test_hmac_short_key(self, p11_session: Any) -> None:
+        """Try HMAC with a very short key (1 byte) — should fail or warn."""
+        from p11test.compliance import ComplianceLevel, note
+
+        try:
+            key = p11_session.create_object(
+                {
+                    Attribute.CLASS: ObjectClass.SECRET_KEY,
+                    Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
+                    Attribute.VALUE: b"\x42",
+                    Attribute.SIGN: True,
+                    Attribute.TOKEN: False,
+                    Attribute.SENSITIVE: False,
+                }
+            )
+            mac = key.sign(b"test", mechanism=Mechanism.SHA256_HMAC)
+            note(
+                f"Module accepted 1-byte HMAC key (MAC length: {len(mac)})",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="RFC 2104 — HMAC key should be at least hash output length",
+            )
+        except pkcs11.exceptions.PKCS11Error:
+            pass  # Expected — key too short
+
+    def test_rsa_oversize_key(self, p11_session: Any, p11_module: Any) -> None:
+        """Try RSA key larger than max — should be rejected or very slow."""
+        slot = p11_module.get_slots(token_present=True)[0]
+        mechs = slot.get_mechanisms()
+        rsa_keygen = [m for m in mechs if mech_name(m) == "RSA_PKCS_KEY_PAIR_GEN"]
+        if not rsa_keygen:
+            pytest.skip("RSA keygen not supported")
+
+        info = slot.get_mechanism_info(rsa_keygen[0])
+        oversize = info.max_key_length + 1024  # Beyond max
+
+        try:
+            pub, priv = p11_session.generate_keypair(KeyType.RSA, oversize)
+            from p11test.compliance import ComplianceLevel, note
+
+            note(
+                f"Module accepted RSA-{oversize} beyond max ({info.max_key_length})",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="PKCS#11 CK_MECHANISM_INFO.ulMaxKeySize",
+            )
+            pub.destroy()
+            priv.destroy()
+        except pkcs11.exceptions.PKCS11Error:
+            pass  # Expected
