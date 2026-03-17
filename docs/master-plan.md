@@ -44,14 +44,14 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 
 ## Tier 4 — Module Differential & Reporting
 
-- [ ] **4.1** Cross-module differential — same test on SoftHSM2 vs Kryoptic, flag behavioral differences
-- [ ] **4.2** Module mechanism matrix report — generate CSV: module × mechanism × pass/skip/fail/xfail
-- [ ] **4.3** Vendor extension detection — probe CKM_VENDOR_DEFINED range for hidden mechanisms
-- [ ] **4.4** FIPS mode detection — check CKF_FIPS_APPROVED flag, adjust test expectations
+- [ ] **4.1** Cross-module differential — same test on SoftHSM2 vs Kryoptic, flag behavioral differences (deferred: infrastructure task)
+- [ ] **4.2** Module mechanism matrix report — generate CSV: module × mechanism × pass/skip/fail/xfail (deferred: infrastructure task)
+- [x] **4.3** Vendor extension detection — probe CKM_VENDOR_DEFINED range for hidden mechanisms
+- [x] **4.4** FIPS mode detection — check CKF_FIPS_APPROVED flag, adjust test expectations
 
 ## Tier 5 — Infrastructure & Quality
 
-- [ ] **5.1** Add pytest-timeout to Docker images — prevent hangs (OpenCryptoki took 33 min)
+- [x] **5.1** Add pytest-timeout to Docker images — prevent hangs (OpenCryptoki took 33 min)
 - [ ] **5.2** NSS + NSS-PQC Docker test run — rebuild and test with expanded suite
 - [ ] **5.3** Test result archival — save pytest JSON/JUnit output per module per run
 - [ ] **5.4** Mechanism coverage report — auto-generate docs/test-coverage.md from test metadata
