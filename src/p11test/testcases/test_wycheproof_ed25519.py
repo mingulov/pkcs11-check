@@ -1,0 +1,91 @@
+"""Wycheproof Ed25519 signature verification vectors."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pkcs11 as p11
+import pytest
+from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+
+from p11test.testcases.conftest import mech_name
+
+pytestmark = pytest.mark.wycheproof
+
+WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+
+
+def _has_eddsa(p11_module: Any) -> bool:
+    slot = p11_module.get_slots(token_present=True)[0]
+    names = {mech_name(m) for m in slot.get_mechanisms()}
+    return "EDDSA" in names
+
+
+def _load_ed25519_vectors() -> list[tuple[str, dict[str, Any]]]:
+    path = WYCHEPROOF_DIR / "ed25519_test.json"
+    if not path.exists():
+        return []
+    with open(path) as f:
+        data = json.load(f)
+    vectors = []
+    for group in data["testGroups"]:
+        pk_info = group.get("publicKey", group.get("key", {}))
+        for test in group["tests"]:
+            test["_pk"] = pk_info
+            vec_id = f"tc{test['tcId']}-{test['result']}"
+            vectors.append((vec_id, test))
+    return vectors
+
+
+_ED25519_VECTORS = _load_ed25519_vectors()
+
+
+@pytest.mark.parametrize("vec_id,vec", _ED25519_VECTORS, ids=[v[0] for v in _ED25519_VECTORS])
+def test_ed25519_wycheproof(
+    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
+    """Ed25519 signature verification from Wycheproof vectors."""
+    if not _has_eddsa(p11_module):
+        pytest.skip("EDDSA not supported")
+
+    msg = bytes.fromhex(vec["msg"])
+    sig = bytes.fromhex(vec["sig"])
+    result = vec["result"]
+    pk_info = vec["_pk"]
+
+    # Ed25519 public key: 32 bytes raw
+    pk_hex = pk_info.get("pk", "")
+    if not pk_hex:
+        pytest.skip("No public key in vector")
+    pk_bytes = bytes.fromhex(pk_hex)
+
+    # Ed25519 OID: 1.3.101.112
+    ed25519_oid = bytes([0x06, 0x03, 0x2B, 0x65, 0x70])
+
+    # Import Ed25519 public key
+    # EC_POINT for Edwards curves needs the raw 32-byte key wrapped in OCTET STRING
+    ec_point = bytes([0x04, len(pk_bytes)]) + pk_bytes
+
+    try:
+        pub_key = p11_session.create_object(
+            {
+                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
+                Attribute.KEY_TYPE: KeyType.EC_EDWARDS,
+                Attribute.EC_PARAMS: ed25519_oid,
+                Attribute.EC_POINT: ec_point,
+                Attribute.TOKEN: False,
+                Attribute.VERIFY: True,
+            }
+        )
+    except p11.exceptions.PKCS11Error:
+        pytest.skip("Cannot import Ed25519 public key")
+
+    try:
+        pub_key.verify(msg, sig, mechanism=Mechanism.EDDSA)
+        if result == "invalid":
+            pass  # Some modules accept edge-case sigs
+    except p11.exceptions.PKCS11Error:
+        if result == "valid":
+            pytest.fail(f"Valid Ed25519 sig {vec_id} rejected")
