@@ -47,3 +47,16 @@ def has_mechanism(p11_module: Any, name: str) -> bool:
     slot = p11_module.get_slots(token_present=True)[0]
     names = {mech_name(m) for m in slot.get_mechanisms()}
     return name in names
+
+
+def extract_ec_point(ec_point_der: Any) -> Any:
+    """Extract raw uncompressed EC point from DER OCTET STRING wrapper.
+
+    PKCS#11 EC_POINT attribute is DER-encoded: 0x04 <length> <point_bytes>.
+    Returns the raw point bytes (starting with 0x04 uncompressed prefix).
+    """
+    if ec_point_der[0] == 0x04:
+        if ec_point_der[1] < 128:
+            return ec_point_der[2:]
+        return ec_point_der[3:]
+    return ec_point_der

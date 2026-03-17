@@ -15,7 +15,7 @@ import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.mechanisms import KDF
 
-from p11test.testcases.conftest import has_mechanism
+from p11test.testcases.conftest import extract_ec_point, has_mechanism
 
 pytestmark = pytest.mark.keymgmt
 
@@ -131,12 +131,9 @@ class TestECDHDerive:
         )
         return ecparams.generate_keypair()  # type: ignore[no-any-return]
 
-    def _extract_ec_point(self, pub: Any) -> bytes:
-        """Extract raw uncompressed point from DER OCTET STRING."""
-        ec_point: bytes = pub[Attribute.EC_POINT]
-        if ec_point[0] == 0x04:
-            return ec_point[2:] if ec_point[1] < 128 else ec_point[3:]
-        return ec_point
+    @staticmethod
+    def _extract_ec_point(pub: Any) -> Any:
+        return extract_ec_point(pub[Attribute.EC_POINT])
 
     def test_ecdh_keypair_independence(self, p11_session: Any) -> None:
         """Two independently generated EC keypairs have different public points."""

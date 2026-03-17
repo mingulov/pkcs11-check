@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from pkcs11 import Attribute, KeyType, Mechanism
 from pkcs11.mechanisms import MGF
 
-from p11test.testcases.conftest import import_aes_key
+from p11test.testcases.conftest import extract_ec_point, import_aes_key
 
 pytestmark = pytest.mark.interop
 
@@ -107,16 +107,9 @@ class TestRSAInterop:
 class TestECDSAInterop:
     """ECDSA key interop between PKCS#11 and cryptography."""
 
-    def _extract_ec_point(self, pub_p11: Any) -> Any:
-        """Extract raw uncompressed EC point from PKCS#11 object."""
-        ec_point = pub_p11[Attribute.EC_POINT]
-        # DER OCTET STRING wrapper: 0x04 <len> <point>
-        if ec_point[0] == 0x04:
-            if ec_point[1] < 128:
-                return ec_point[2:]
-            else:
-                return ec_point[3:]
-        return ec_point
+    @staticmethod
+    def _extract_ec_point(pub_p11: Any) -> Any:
+        return extract_ec_point(pub_p11[Attribute.EC_POINT])
 
     def _generate_ec_keypair(self, session: Any, curve: str = "secp256r1") -> tuple[Any, Any]:
         ecparams = session.create_domain_parameters(
