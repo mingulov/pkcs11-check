@@ -23,6 +23,7 @@ WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors
 
 # OIDs for PKCS#11 EC key import (DER-encoded)
 _CURVE_OIDS: dict[str, bytes] = {
+    "secp224r1": bytes.fromhex("06052b81040021"),  # OID 1.3.132.0.33
     "secp256r1": bytes.fromhex("06082a8648ce3d030107"),  # OID 1.2.840.10045.3.1.7
     "secp384r1": bytes.fromhex("06052b81040022"),  # OID 1.3.132.0.34
     "secp521r1": bytes.fromhex("06052b81040023"),  # OID 1.3.132.0.35
@@ -30,12 +31,14 @@ _CURVE_OIDS: dict[str, bytes] = {
 
 # Key sizes in bits for derive_key (python-pkcs11 divides by 8 internally)
 _CURVE_KEY_BITS: dict[str, int] = {
+    "secp224r1": 224,
     "secp256r1": 256,
     "secp384r1": 384,
     "secp521r1": 528,  # 66 bytes = 528 bits (ceil(521/8)*8)
 }
 
 _ECDH_FILES = [
+    ("ecdh_secp224r1_ecpoint_test.json", "secp224r1"),
     ("ecdh_secp256r1_ecpoint_test.json", "secp256r1"),
     ("ecdh_secp384r1_ecpoint_test.json", "secp384r1"),
     ("ecdh_secp521r1_ecpoint_test.json", "secp521r1"),

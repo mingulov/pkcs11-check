@@ -20,6 +20,17 @@ _HMAC_FILES = {
     "hmac_sha256_test.json": (None, None, None),  # already in test_wycheproof.py
     "hmac_sha384_test.json": (KeyType.SHA384_HMAC, Mechanism.SHA384_HMAC, KeyType.GENERIC_SECRET),
     "hmac_sha512_test.json": (KeyType.SHA512_HMAC, Mechanism.SHA512_HMAC, KeyType.GENERIC_SECRET),
+    # SHA-512 truncated variants (PKCS#11 v3.0)
+    "hmac_sha512_224_test.json": (
+        KeyType.SHA512_224_HMAC,
+        Mechanism.SHA512_224_HMAC,
+        KeyType.GENERIC_SECRET,
+    ),
+    "hmac_sha512_256_test.json": (
+        KeyType.SHA512_256_HMAC,
+        Mechanism.SHA512_256_HMAC,
+        KeyType.GENERIC_SECRET,
+    ),
 }
 
 

@@ -32,12 +32,20 @@ _RSA_SIG_FILES = [
     "rsa_signature_2048_sha256_test.json",
     "rsa_signature_2048_sha384_test.json",
     "rsa_signature_2048_sha512_test.json",
+    "rsa_signature_2048_sha512_224_test.json",
+    "rsa_signature_2048_sha512_256_test.json",
     "rsa_signature_3072_sha256_test.json",
     "rsa_signature_3072_sha384_test.json",
     "rsa_signature_3072_sha512_test.json",
+    "rsa_signature_3072_sha512_256_test.json",
     "rsa_signature_4096_sha256_test.json",
     "rsa_signature_4096_sha384_test.json",
     "rsa_signature_4096_sha512_test.json",
+    "rsa_signature_4096_sha512_256_test.json",
+    # 8192-bit RSA (large key, slow)
+    "rsa_signature_8192_sha256_test.json",
+    "rsa_signature_8192_sha384_test.json",
+    "rsa_signature_8192_sha512_test.json",
 ]
 
 
