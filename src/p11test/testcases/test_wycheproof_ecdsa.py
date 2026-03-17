@@ -21,14 +21,22 @@ pytestmark = pytest.mark.wycheproof
 
 WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
 
-# Curve config: (curve_name, coord_size, hash_fn)
+# Curve config: (filename, curve_name, coord_size, hash_fn)
 _ECDSA_CONFIGS = [
     # P-256 with SHA-512
     ("ecdsa_secp256r1_sha512_test.json", "secp256r1", 32, hashlib.sha512),
+    # P-384 with SHA-256
+    ("ecdsa_secp384r1_sha256_test.json", "secp384r1", 48, hashlib.sha256),
     # P-384 with SHA-512
     ("ecdsa_secp384r1_sha512_test.json", "secp384r1", 48, hashlib.sha512),
     # P-521 with SHA-512
     ("ecdsa_secp521r1_sha512_test.json", "secp521r1", 66, hashlib.sha512),
+    # P-224 with SHA-224
+    ("ecdsa_secp224r1_sha224_test.json", "secp224r1", 28, hashlib.sha224),
+    # P-224 with SHA-256
+    ("ecdsa_secp224r1_sha256_test.json", "secp224r1", 28, hashlib.sha256),
+    # P-224 with SHA-512
+    ("ecdsa_secp224r1_sha512_test.json", "secp224r1", 28, hashlib.sha512),
 ]
 
 
