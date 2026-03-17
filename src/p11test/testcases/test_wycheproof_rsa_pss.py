@@ -62,7 +62,6 @@ _PSS_FILES = sorted(
     if f.exists()
     and "params" not in f.name
     and "shake" not in f.name
-    and "misc" not in f.name
     and "mgf1sha" not in f.name  # mixed mgf1sha variants: sha != mgfSha
 )
 
