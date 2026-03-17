@@ -1,0 +1,4 @@
+# file: /home/user/src/m/p11test/src/p11test/plugin.py
+# hypothesis_version: 6.151.9
+
+['--p11-destructive', '--p11-interface', '--p11-module', '--p11-pin', '--p11-slot', '2.40', 'PKCS#11 testing', 'auto', 'destructive', 'markers', 'needs_mechanism', 'p11_destructive', 'p11_interface', 'p11_module', 'p11_pin', 'p11_skip_unsupported', 'p11_slot', 'p11test', 'requires_v30', 'requires_v32', 'store_true', 'testcases']

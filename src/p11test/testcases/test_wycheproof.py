@@ -9,29 +9,16 @@ The test also asserts no session corruption after invalid operations.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
+from p11test.testcases.wycheproof_loader import WYCHEPROOF_DIR  # noqa: F401
+from p11test.testcases.wycheproof_loader import load_vectors as load_wycheproof
+
 pytestmark = pytest.mark.wycheproof
-
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
-
-
-def load_wycheproof(filename: str) -> list[dict[str, Any]]:
-    """Load Wycheproof JSON and flatten test groups into individual vectors."""
-    with open(WYCHEPROOF_DIR / filename) as f:
-        data = json.load(f)
-    vectors = []
-    for group in data["testGroups"]:
-        for test in group["tests"]:
-            test["_group"] = {k: v for k, v in group.items() if k != "tests"}
-            vectors.append(test)
-    return vectors
 
 
 def _vec_id(vec: dict[str, Any]) -> str:

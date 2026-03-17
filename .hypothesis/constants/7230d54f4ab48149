@@ -1,0 +1,4 @@
+# file: /home/user/src/m/p11test/src/p11test/config.py
+# hypothesis_version: 6.151.9
+
+[120, 'INFO', 'P11TEST_', 'auto', 'p11test.toml', 'rich']

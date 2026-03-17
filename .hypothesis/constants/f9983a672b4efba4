@@ -1,0 +1,4 @@
+# file: /home/user/src/m/p11test/src/p11test/fixtures.py
+# hypothesis_version: 6.151.9
+
+['p11_destructive', 'p11_interface', 'p11_module', 'p11_pin', 'p11_slot', 'session']

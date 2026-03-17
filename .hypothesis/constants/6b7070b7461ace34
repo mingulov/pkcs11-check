@@ -1,0 +1,4 @@
+# file: /home/user/src/m/p11test/python-pkcs11/pkcs11/attributes.py
+# hypothesis_version: 6.151.9
+
+['%Y%m%d', '?', 'L', 'ascii', 'utf-8']
