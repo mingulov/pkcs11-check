@@ -33,8 +33,8 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 
 - [x] **3.1** Concurrent session attacks — two sessions racing on same object (create/destroy/use)
 - [x] **3.2** Object visibility across sessions — create in session A, find in session B (same token) [covered by 3.1]
-- [ ] **3.3** Attribute sensitivity enforcement — read CKA_VALUE on SENSITIVE=True key, must return error
-- [ ] **3.4** Key usage policy enforcement — use encrypt-only key for signing, must fail
+- [x] **3.3** Attribute sensitivity enforcement — read CKA_VALUE on SENSITIVE=True key, must return error
+- [x] **3.4** Key usage policy enforcement — use encrypt-only key for signing, must fail
 - [ ] **3.5** Mechanism parameter fuzzing — random bytes as mechanism_param, must not crash (segfault survival)
 - [ ] **3.6** Large object stress — 1MB CKO_DATA, 100KB random generation, very large plaintext encrypt
 - [ ] **3.7** Session exhaustion — open sessions until CKR_SESSION_COUNT, verify graceful error
