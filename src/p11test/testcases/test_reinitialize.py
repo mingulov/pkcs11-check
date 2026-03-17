@@ -11,7 +11,7 @@ from typing import Any
 import pkcs11
 import pytest
 
-pytestmark = pytest.mark.access
+pytestmark = [pytest.mark.access, pytest.mark.destructive]
 
 
 class TestReinitialize:
