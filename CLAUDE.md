@@ -45,15 +45,16 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 - `tests/` — META-TESTS: tests for p11test's own code (config parsing, markers, CLI)
 
 ### Core modules
-- `core/loader.py` — PKCS#11 module loading (v2.40 via python-pkcs11, v3.x planned)
+- `core/loader.py` — PKCS#11 module loading with v2.40/v3.0/v3.1/v3.2 interface negotiation
 - `core/isolation.py` — subprocess-based test execution for segfault survival
 - `core/logging.py` — rich logging with trace mode
 - `config.py` — four-layer config: CLI > env > TOML > defaults
-- `plugin.py` — pytest11 entry point, registers 38 markers, fixtures, collection hooks
+- `plugin.py` — pytest11 entry point, registers markers, fixtures, collection hooks
 - `markers.py` — marker definitions with version-skip logic
 - `compliance.py` — compliance note system (NOT_RECOMMENDED, DEPRECATED tracking)
 - `fixtures.py` — p11_session, p11_module, p11_config, p11_interface_version
 - `cli/app.py` — typer app, routes to test/info/list/version subcommands
+- `testcases/conftest.py` — shared helpers: mech_name(), import_aes_key(), has_mechanism(), extract_ec_point()
 
 ### Test categories
 - Core: interface, slot, object, mechanism, encrypt, sign, digest, errors
@@ -61,14 +62,15 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 - NIST KAT: SHA-1/224/256/384/512, AES-ECB from SP 800-38A
 - Wycheproof edge-case vectors (see docs/test-coverage.md for details):
   ECDSA (P-224/256/384/521 × SHA/SHA-3), RSA PKCS#1/PSS/OAEP,
-  ECDH (P-224/256/384/521), DSA, AES (GCM/CBC/CMAC/CCM/KW/KWP),
-  HMAC (SHA/SHA-3/SHA-512 truncated), Ed25519, ChaCha20-Poly1305,
+  ECDH (P-224/256/384/521), DSA, AES (GCM/CBC/CMAC/CCM/KW/KWP/XTS/GMAC),
+  HMAC (SHA/SHA-3/SHA-512 truncated), Ed25519/Ed448, ChaCha20-Poly1305,
   X25519/X448, HKDF — mechanism availability checked at runtime
-- Key management: import, export, copy, wrap/unwrap, derive
-- Security: API attacks, padding oracle, ECDSA nonce quality, RNG statistics
-- Standards: buffer boundaries, access control, session lifecycle, token flags
+- PQC (PKCS#11 v3.2): ML-KEM encapsulate/decapsulate, ML-DSA sign/verify, SLH-DSA sign/verify
+- Key management: import, export, copy, wrap/unwrap, derive, KEM
+- Security: API attacks, padding oracle, ECDSA nonce quality, RNG statistics (Shannon entropy, runs test)
+- Standards: buffer boundaries, access control, session lifecycle, token flags, CKO_PROFILE
 - Stress: 1000-cycle operations, multi-session, resource safety
-- Fuzz: hypothesis property tests for AES, RSA, SHA roundtrips
+- Fuzz: hypothesis property tests for AES, RSA, SHA, HMAC, ECDSA roundtrips
 
 ### Docker test matrix (12 targets)
 Versioned releases:
@@ -90,12 +92,12 @@ Additional:
 - `test-qryptotoken` — qryptotoken (Rust PQC)
 
 ### Key design decisions
-- python-pkcs11 fork as git submodule (`python-pkcs11/`) with fixes: GCM IV restriction removed, CKM_EC_MONTGOMERY_KEY_PAIR_GEN, CKK_EC_MONTGOMERY, CKM_RSA_AES_KEY_WRAP, v3.0 mechanisms (HKDF, SP800-108, XEDDSA, ChaCha20, Poly1305, Salsa20, DSA-SHA3, ECDSA-SHA3, SHA-512/224, SHA-512/256, AES-XTS, ECDH-AES-KEY-WRAP)
+- python-pkcs11 fork as git submodule (`python-pkcs11/`) with v3.0/3.1/3.2 interface negotiation, PQC mechanisms (ML-KEM, ML-DSA, SLH-DSA), parameter structs (CCM, ChaCha20-Poly1305, HKDF), and 50+ new mechanism/key type enums
 - Test cases are native pytest tests with custom fixtures (p11_session, p11_module)
 - Tests auto-skip when interface version doesn't support them (@pytest.mark.requires_v30)
 - Wycheproof vectors use `xfail` for module limitations (not hard failures)
+- Mechanism availability checked at runtime via `slot.get_mechanisms()` — tests skip cleanly
 - Compliance notes track NOT_RECOMMENDED/DEPRECATED behavior
-- All 38 pytest markers registered in markers.py, with meta-test for drift detection
 - `mech_name()` helper handles both Mechanism enum and raw int (SoftHSM2 2.7.0+ compat)
 
 ## Conventions
@@ -114,3 +116,5 @@ Additional:
 - `docs/superpowers/specs/2026-03-16-p11test-design.md` — Phase 1 architecture
 - `docs/superpowers/specs/2026-03-16-comprehensive-testing-design.md` — Full testing spec (~2,400 tests)
 - `docs/superpowers/specs/2026-03-16-standards-addendum.md` — OASIS standards conformance
+- `docs/test-coverage.md` — Current test coverage summary and mechanism matrix
+- `docs/python-pkcs11-fork.md` — Fork changes and upstream PR plan
