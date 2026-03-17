@@ -1,11 +1,8 @@
 """Wycheproof HKDF vectors.
 
 Tests HKDF (RFC 5869) with SHA-1/SHA-256/SHA-384/SHA-512.
-Requires CKM_HKDF_DERIVE mechanism and CK_HKDF_PARAMS support.
-
-Note: python-pkcs11 does not yet have native CK_HKDF_PARAMS support.
-These tests will skip until the binding is extended. They serve as
-documentation and will activate automatically when support is added.
+Requires CKM_HKDF_DERIVE mechanism with CK_HKDF_PARAMS.
+Skips on modules without HKDF support (e.g., SoftHSM2).
 """
 
 from __future__ import annotations
@@ -103,10 +100,8 @@ def test_hkdf(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any
             return
         pytest.skip("Cannot import IKM key for HKDF")
 
-    # CK_HKDF_PARAMS: bExtract, bExpand, prfHashMechanism, ulSaltType,
-    #                  pSalt, ulSaltLen, hSaltKey, pInfo, ulInfoLen
-    # python-pkcs11 doesn't have native support for this struct yet.
-    # TODO: Add CK_HKDF_PARAMS handling to python-pkcs11 fork
+    # CK_HKDF_PARAMS: (hash_mechanism, salt, info)
+    # Uses extract+expand mode (standard HKDF)
     try:
         derived = ikm_key.derive_key(
             KeyType.GENERIC_SECRET,
