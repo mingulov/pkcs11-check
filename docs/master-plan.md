@@ -40,7 +40,7 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 - [x] **3.7** Session exhaustion — open sessions until CKR_SESSION_COUNT, verify graceful error
 - [x] **3.8** Duplicate label handling — two objects with same label, search returns both
 - [x] **3.9** Slot re-initialization — C_Finalize + C_Initialize cycle, verify clean state
-- [ ] **3.10** CKR return code coverage — map all standard CKR codes, verify we trigger each reachable one
+- [x] **3.10** CKR return code coverage — map all standard CKR codes, verify we trigger each reachable one
 
 ## Tier 4 — Module Differential & Reporting
 
