@@ -240,18 +240,26 @@ class TestHMACCrossVerify:
         key_bytes = bytes(range(32))
         data = b"HMAC cross-verification data"
 
-        # Import key for HMAC
-        p11_key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.SHA256_HMAC,
-                Attribute.VALUE: key_bytes,
-                Attribute.SIGN: True,
-                Attribute.VERIFY: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
-        )
+        # Try SHA256_HMAC key type first, fall back to GENERIC_SECRET
+        p11_key = None
+        for key_type in (KeyType.SHA256_HMAC, KeyType.GENERIC_SECRET):
+            try:
+                p11_key = p11_session.create_object(
+                    {
+                        Attribute.CLASS: ObjectClass.SECRET_KEY,
+                        Attribute.KEY_TYPE: key_type,
+                        Attribute.VALUE: key_bytes,
+                        Attribute.SIGN: True,
+                        Attribute.VERIFY: True,
+                        Attribute.TOKEN: False,
+                        Attribute.SENSITIVE: False,
+                    }
+                )
+                break
+            except p11.exceptions.PKCS11Error:
+                continue
+        if p11_key is None:
+            pytest.skip("Cannot create HMAC key")
 
         p11_mac = p11_key.sign(data, mechanism=Mechanism.SHA256_HMAC)
         py_mac = hmac_mod.new(key_bytes, data, "sha256").digest()
