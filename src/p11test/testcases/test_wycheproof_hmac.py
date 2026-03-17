@@ -10,7 +10,20 @@ import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
+from p11test.testcases.conftest import mech_name
+
 pytestmark = pytest.mark.wycheproof
+
+# Map mechanisms to their name for availability checking
+_MECH_NAMES: dict[Mechanism, str] = {
+    Mechanism.SHA_1_HMAC: "SHA_1_HMAC",
+    Mechanism.SHA224_HMAC: "SHA224_HMAC",
+    Mechanism.SHA256_HMAC: "SHA256_HMAC",
+    Mechanism.SHA384_HMAC: "SHA384_HMAC",
+    Mechanism.SHA512_HMAC: "SHA512_HMAC",
+    Mechanism.SHA512_224_HMAC: "SHA512_224_HMAC",
+    Mechanism.SHA512_256_HMAC: "SHA512_256_HMAC",
+}
 
 WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
 
@@ -60,7 +73,9 @@ _ALL_HMAC_VECTORS = _load_hmac_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_HMAC_VECTORS, ids=[v[0] for v in _ALL_HMAC_VECTORS])
-def test_hmac_wycheproof(p11_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_hmac_wycheproof(
+    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """HMAC verification from Wycheproof vectors."""
     key_bytes = bytes.fromhex(vec["key"])
     msg = bytes.fromhex(vec["msg"])
@@ -68,6 +83,13 @@ def test_hmac_wycheproof(p11_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     result = vec["result"]
     tag_size = vec["_tag_size"]
     mechanism = vec["_mechanism"]
+
+    # Check mechanism availability from the module's mechanism list
+    mech_display = _MECH_NAMES.get(mechanism, str(mechanism))
+    slot = p11_module.get_slots(token_present=True)[0]
+    supported = {mech_name(m) for m in slot.get_mechanisms()}
+    if mech_display not in supported:
+        pytest.skip(f"{mech_display} not supported by module")
 
     # Try typed key, fall back to GENERIC_SECRET
     key = None
