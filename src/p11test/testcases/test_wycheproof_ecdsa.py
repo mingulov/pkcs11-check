@@ -82,7 +82,9 @@ _ECDSA_CONFIGS = [
     ("ecdsa_secp384r1_sha3_384_test.json", "secp384r1", 48, hashlib.sha3_384),
     ("ecdsa_secp384r1_sha3_512_test.json", "secp384r1", 48, hashlib.sha3_512),
     ("ecdsa_secp521r1_sha3_512_test.json", "secp521r1", 66, hashlib.sha3_512),
-    # SHAKE variants — variable-length output truncated to curve order size
+    # SHAKE variants — PKCS#11 has no CKM_ECDSA_SHAKE128/256 mechanism,
+    # so we pre-hash with SHAKE externally and use raw CKM_ECDSA.
+    # Output length truncated to curve order byte size per NIST SP 800-186.
     ("ecdsa_secp224r1_shake128_test.json", "secp224r1", 28, _shake128(28)),
     ("ecdsa_secp256r1_shake128_test.json", "secp256r1", 32, _shake128(32)),
     ("ecdsa_secp384r1_shake256_test.json", "secp384r1", 48, _shake256(48)),
