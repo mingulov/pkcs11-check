@@ -41,7 +41,7 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 ## Architecture
 
 ### Two test directories
-- `src/p11test/testcases/` — the PRODUCT: 18,023 PKCS#11 tests (16,114 passing on SoftHSM2)
+- `src/p11test/testcases/` — the PRODUCT: 25,649 PKCS#11 tests (20,223 passing on SoftHSM2)
 - `tests/` — META-TESTS: 37 tests for p11test's own code (config parsing, markers, CLI)
 
 ### Core modules
@@ -55,7 +55,7 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 - `fixtures.py` — p11_session, p11_module, p11_config, p11_interface_version
 - `cli/app.py` — typer app, routes to test/info/list/version subcommands
 
-### Test categories (48 test files)
+### Test categories (49 test files)
 - Core: interface, slot, object, mechanism, encrypt, sign, digest, errors
 - Cross-verification: AES-ECB/GCM, RSA PKCS/PSS/OAEP, ECDSA P-256/384/521, EdDSA, HMAC, digest
 - NIST KAT: SHA-1/224/256/384/512, AES-ECB from SP 800-38A
