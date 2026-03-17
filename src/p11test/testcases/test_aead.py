@@ -9,28 +9,16 @@ from typing import Any
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11 import KeyType, Mechanism
 from pkcs11.mechanisms import GCMParams
+
+from p11test.testcases.conftest import import_aes_key
 
 pytestmark = pytest.mark.crossverify
 
 
 class TestAESGCMCrossVerify:
     """Cross-verify AES-GCM against Python cryptography."""
-
-    def _import_aes_key(self, session: Any, key_bytes: bytes) -> Any:
-        return session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: key_bytes,
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-            }
-        )
 
     def test_gcm_256_encrypt_crossverify(self, p11_session: Any) -> None:
         """AES-256-GCM: encrypt via PKCS#11, verify with cryptography."""
@@ -39,7 +27,7 @@ class TestAESGCMCrossVerify:
         plaintext = b"GCM cross-verify test data!!"
         aad = b"additional authenticated data"
 
-        p11_key = self._import_aes_key(p11_session, key_bytes)
+        p11_key = import_aes_key(p11_session, key_bytes)
         gcm_params = GCMParams(nonce=nonce, aad=aad, tag_bits=128)
         p11_ct = p11_key.encrypt(plaintext, mechanism=Mechanism.AES_GCM, mechanism_param=gcm_params)
 
@@ -56,7 +44,7 @@ class TestAESGCMCrossVerify:
         nonce = bytes(range(12))
         plaintext = b"GCM-128 test!!"
 
-        p11_key = self._import_aes_key(p11_session, key_bytes)
+        p11_key = import_aes_key(p11_session, key_bytes)
         gcm_params = GCMParams(nonce=nonce, tag_bits=128)
         p11_ct = p11_key.encrypt(plaintext, mechanism=Mechanism.AES_GCM, mechanism_param=gcm_params)
 
@@ -75,7 +63,7 @@ class TestAESGCMCrossVerify:
         aesgcm = AESGCM(key_bytes)
         crypto_ct = aesgcm.encrypt(nonce, plaintext, aad)
 
-        p11_key = self._import_aes_key(p11_session, key_bytes)
+        p11_key = import_aes_key(p11_session, key_bytes)
         gcm_params = GCMParams(nonce=nonce, aad=aad, tag_bits=128)
         p11_pt = p11_key.decrypt(crypto_ct, mechanism=Mechanism.AES_GCM, mechanism_param=gcm_params)
 
@@ -97,7 +85,7 @@ class TestAESGCMCrossVerify:
         tampered = bytearray(crypto_ct)
         tampered[-1] ^= 0xFF
 
-        p11_key = self._import_aes_key(p11_session, key_bytes)
+        p11_key = import_aes_key(p11_session, key_bytes)
         gcm_params = GCMParams(nonce=nonce, aad=aad, tag_bits=128)
 
         with pytest.raises(p11.exceptions.PKCS11Error):
@@ -118,7 +106,7 @@ class TestAESGCMCrossVerify:
         aesgcm = AESGCM(key_bytes)
         crypto_ct = aesgcm.encrypt(nonce, plaintext, b"correct aad")
 
-        p11_key = self._import_aes_key(p11_session, key_bytes)
+        p11_key = import_aes_key(p11_session, key_bytes)
         gcm_params = GCMParams(nonce=nonce, aad=b"wrong aad", tag_bits=128)
 
         with pytest.raises(p11.exceptions.PKCS11Error):

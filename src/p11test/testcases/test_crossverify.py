@@ -13,6 +13,8 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
+from p11test.testcases.conftest import import_aes_key
+
 pytestmark = pytest.mark.crossverify
 
 
@@ -22,26 +24,12 @@ class TestAESCrossVerify:
     Uses AES-ECB for exact comparison (no padding ambiguity).
     """
 
-    def _import_aes_key(self, session: Any, key_bytes: bytes) -> Any:
-        return session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: key_bytes,
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-            }
-        )
-
     def test_aes_256_ecb_encrypt(self, p11_session: Any) -> None:
         """AES-256-ECB: PKCS#11 encrypt must match cryptography."""
         key_bytes = bytes(range(32))
         plaintext = b"cross-verify AES"  # exactly 16 bytes
 
-        p11_key = self._import_aes_key(p11_session, key_bytes)
+        p11_key = import_aes_key(p11_session, key_bytes)
         p11_ct = p11_key.encrypt(plaintext, mechanism=Mechanism.AES_ECB)
 
         cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())
@@ -55,7 +43,7 @@ class TestAESCrossVerify:
         key_bytes = bytes(16)
         plaintext = b"128-bit AES key!"
 
-        p11_key = self._import_aes_key(p11_session, key_bytes)
+        p11_key = import_aes_key(p11_session, key_bytes)
         p11_ct = p11_key.encrypt(plaintext, mechanism=Mechanism.AES_ECB)
 
         cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())
@@ -73,7 +61,7 @@ class TestAESCrossVerify:
         enc = cipher.encryptor()
         ciphertext = enc.update(plaintext) + enc.finalize()
 
-        p11_key = self._import_aes_key(p11_session, key_bytes)
+        p11_key = import_aes_key(p11_session, key_bytes)
         p11_pt = p11_key.decrypt(ciphertext, mechanism=Mechanism.AES_ECB)
 
         assert p11_pt == plaintext
@@ -83,7 +71,7 @@ class TestAESCrossVerify:
         key_bytes = bytes(range(32))
         plaintext = b"A" * 64  # 4 blocks
 
-        p11_key = self._import_aes_key(p11_session, key_bytes)
+        p11_key = import_aes_key(p11_session, key_bytes)
         p11_ct = p11_key.encrypt(plaintext, mechanism=Mechanism.AES_ECB)
 
         cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())

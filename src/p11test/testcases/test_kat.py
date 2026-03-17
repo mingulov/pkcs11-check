@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11 import Mechanism
+
+from p11test.testcases.conftest import import_aes_key
 
 pytestmark = pytest.mark.kat
 
@@ -99,27 +101,13 @@ class TestSHA224KAT:
 class TestAESECBKAT:
     """AES-256-ECB known-answer tests from NIST SP 800-38A."""
 
-    def _import_aes_key(self, session: Any, key_hex: str) -> Any:
-        return session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: bytes.fromhex(key_hex),
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-            }
-        )
-
     @pytest.mark.parametrize(
         "vec",
         load_vectors("aes_ecb.json"),
         ids=lambda v: v["ciphertext"][:16],
     )
     def test_aes_ecb_encrypt_kat(self, p11_session: Any, vec: dict[str, str]) -> None:
-        key = self._import_aes_key(p11_session, vec["key"])
+        key = import_aes_key(p11_session, bytes.fromhex(vec["key"]))
         plaintext = bytes.fromhex(vec["plaintext"])
         expected_ct = bytes.fromhex(vec["ciphertext"])
         result = key.encrypt(plaintext, mechanism=Mechanism.AES_ECB)
@@ -131,7 +119,7 @@ class TestAESECBKAT:
         ids=lambda v: v["plaintext"][:16],
     )
     def test_aes_ecb_decrypt_kat(self, p11_session: Any, vec: dict[str, str]) -> None:
-        key = self._import_aes_key(p11_session, vec["key"])
+        key = import_aes_key(p11_session, bytes.fromhex(vec["key"]))
         ciphertext = bytes.fromhex(vec["ciphertext"])
         expected_pt = bytes.fromhex(vec["plaintext"])
         result = key.decrypt(ciphertext, mechanism=Mechanism.AES_ECB)
