@@ -41,7 +41,7 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 ## Architecture
 
 ### Two test directories
-- `src/p11test/testcases/` — the PRODUCT: 16,406 PKCS#11 tests (14,848 passing on SoftHSM2)
+- `src/p11test/testcases/` — the PRODUCT: 16,426 PKCS#11 tests (14,868 passing on SoftHSM2)
 - `tests/` — META-TESTS: 37 tests for p11test's own code (config parsing, markers, CLI)
 
 ### Core modules
