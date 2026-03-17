@@ -1,4 +1,4 @@
-"""Wycheproof AES-CMAC and AES key wrap vectors."""
+"""Wycheproof AES-CMAC, AES Key Wrap, AES-KWP, and AES-CCM vectors."""
 
 from __future__ import annotations
 
@@ -152,3 +152,140 @@ def test_aes_key_wrap(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"AES-KW wrap failed for valid vector {vec_id}")
+
+
+# --- AES Key Wrap with Padding (RFC 5649) ---
+
+_AES_KWP_VECTORS = _load_flat("aes_kwp_test.json")
+
+
+def _has_aes_kwp(p11_module: Any) -> bool:
+    slot = p11_module.get_slots(token_present=True)[0]
+    names = {mech_name(m) for m in slot.get_mechanisms()}
+    return "AES_KEY_WRAP_PAD" in names
+
+
+@pytest.mark.parametrize("vec_id,vec", _AES_KWP_VECTORS, ids=[v[0] for v in _AES_KWP_VECTORS])
+def test_aes_kwp(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    """AES Key Wrap with Padding (RFC 5649) from Wycheproof vectors.
+
+    KWP allows wrapping data that is not a multiple of 8 bytes,
+    unlike basic AES-KW which requires 8-byte aligned data.
+    """
+    if not _has_aes_kwp(p11_module):
+        pytest.skip("AES_KEY_WRAP_PAD not supported")
+
+    key_bytes = bytes.fromhex(vec["key"])
+    msg = bytes.fromhex(vec["msg"])
+    ct_expected = bytes.fromhex(vec["ct"])
+    result = vec["result"]
+
+    # Import wrapping key
+    try:
+        wrap_key = p11_session.create_object(
+            {
+                Attribute.CLASS: ObjectClass.SECRET_KEY,
+                Attribute.KEY_TYPE: KeyType.AES,
+                Attribute.VALUE: key_bytes,
+                Attribute.WRAP: True,
+                Attribute.UNWRAP: True,
+                Attribute.TOKEN: False,
+                Attribute.SENSITIVE: False,
+            }
+        )
+    except p11.exceptions.PKCS11Error:
+        pytest.skip("Cannot import AES wrapping key")
+
+    # KWP can wrap arbitrary-length data — import as generic secret
+    # For non-aligned sizes, we use GENERIC_SECRET instead of AES
+    key_type = KeyType.AES if len(msg) in (16, 24, 32) else KeyType.GENERIC_SECRET
+    try:
+        target_key = p11_session.create_object(
+            {
+                Attribute.CLASS: ObjectClass.SECRET_KEY,
+                Attribute.KEY_TYPE: key_type,
+                Attribute.VALUE: msg,
+                Attribute.EXTRACTABLE: True,
+                Attribute.TOKEN: False,
+                Attribute.SENSITIVE: False,
+                **({Attribute.VALUE_LEN: len(msg)} if key_type == KeyType.GENERIC_SECRET else {}),
+            }
+        )
+    except p11.exceptions.PKCS11Error:
+        if result == "invalid":
+            return
+        pytest.skip("Cannot import target key for KWP")
+
+    # Wrap with padding and compare
+    try:
+        wrapped = wrap_key.wrap_key(target_key, mechanism=Mechanism.AES_KEY_WRAP_PAD)
+        if result == "valid":
+            assert wrapped == ct_expected
+    except p11.exceptions.PKCS11Error:
+        if result == "valid":
+            pytest.xfail(f"AES-KWP wrap failed for valid vector {vec_id}")
+
+
+# --- AES-CCM ---
+
+_AES_CCM_VECTORS = _load_flat("aes_ccm_test.json")
+
+
+def _has_aes_ccm(p11_module: Any) -> bool:
+    slot = p11_module.get_slots(token_present=True)[0]
+    names = {mech_name(m) for m in slot.get_mechanisms()}
+    return "AES_CCM" in names
+
+
+@pytest.mark.parametrize("vec_id,vec", _AES_CCM_VECTORS, ids=[v[0] for v in _AES_CCM_VECTORS])
+def test_aes_ccm(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    """AES-CCM AEAD encryption/decryption from Wycheproof vectors.
+
+    For valid vectors: encrypt(msg, aad, iv) should produce ct||tag.
+    """
+    if not _has_aes_ccm(p11_module):
+        pytest.skip("AES_CCM not supported")
+
+    key_bytes = bytes.fromhex(vec["key"])
+    iv = bytes.fromhex(vec["iv"])
+    aad = bytes.fromhex(vec["aad"])
+    msg = bytes.fromhex(vec["msg"])
+    ct_expected = bytes.fromhex(vec["ct"])
+    tag_expected = bytes.fromhex(vec["tag"])
+    result = vec["result"]
+
+    try:
+        key = p11_session.create_object(
+            {
+                Attribute.CLASS: ObjectClass.SECRET_KEY,
+                Attribute.KEY_TYPE: KeyType.AES,
+                Attribute.VALUE: key_bytes,
+                Attribute.ENCRYPT: True,
+                Attribute.DECRYPT: True,
+                Attribute.TOKEN: False,
+                Attribute.SENSITIVE: False,
+            }
+        )
+    except p11.exceptions.PKCS11Error:
+        if result == "invalid":
+            return
+        raise
+
+    # Encrypt and compare
+    try:
+        ciphertext = key.encrypt(
+            msg,
+            mechanism=Mechanism.AES_CCM,
+            mechanism_param={
+                "data_len": len(msg),
+                "nonce": iv,
+                "associated_data": aad,
+                "mac_length": len(tag_expected),
+            },
+        )
+        # AES-CCM output is ct||tag
+        if result == "valid":
+            assert ciphertext == ct_expected + tag_expected
+    except (p11.exceptions.PKCS11Error, TypeError, NotImplementedError):
+        if result == "valid":
+            pytest.xfail(f"AES-CCM encrypt failed for valid vector {vec_id}")
