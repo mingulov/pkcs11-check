@@ -19,7 +19,7 @@ from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
 pytestmark = pytest.mark.wycheproof
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof"
+WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
 
 
 def load_wycheproof(filename: str) -> list[dict[str, Any]]:
