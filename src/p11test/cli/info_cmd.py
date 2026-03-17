@@ -32,6 +32,11 @@ def info_command(
     console.print(f"[bold]Interface:[/bold] v{p11.interface_version}")
 
     lib = p11.lib
+    if hasattr(lib, "get_interface_list"):
+        ifaces = lib.get_interface_list()
+        if ifaces:
+            iface_strs = ", ".join(f"{n} v{maj}.{min}" for n, maj, min in ifaces)
+            console.print(f"[bold]Available interfaces:[/bold] {iface_strs}")
     if hasattr(lib, "manufacturer_id"):
         console.print(f"[bold]Manufacturer:[/bold] {lib.manufacturer_id}")
     if hasattr(lib, "library_description"):

@@ -20,7 +20,7 @@ from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
 from p11test.testcases.conftest import mech_name
 
-pytestmark = pytest.mark.wycheproof
+pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v30]
 
 WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
 

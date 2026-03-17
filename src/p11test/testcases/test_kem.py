@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.constants import MechanismFlag
 
 from p11test.testcases.conftest import has_mechanism
 
@@ -30,9 +29,9 @@ def _skip_if_no_ml_kem(p11_module: Any) -> None:
         pytest.skip("ML_KEM mechanism not supported by module")
 
 
-def _generate_ml_kem_keypair(session: Any) -> tuple[Any, Any]:
+def _generate_ml_kem_keypair(session: Any) -> Any:
     """Generate an ML-KEM key pair with encapsulate/decapsulate capabilities."""
-    return session.generate_keypair(
+    pair: Any = session.generate_keypair(
         KeyType.ML_KEM,
         mechanism=Mechanism.ML_KEM_KEY_PAIR_GEN,
         public_template={
@@ -46,6 +45,7 @@ def _generate_ml_kem_keypair(session: Any) -> tuple[Any, Any]:
             Attribute.EXTRACTABLE: False,
         },
     )
+    return pair
 
 
 class TestMLKEMKeyGeneration:
