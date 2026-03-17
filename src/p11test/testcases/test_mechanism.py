@@ -9,6 +9,8 @@ from pkcs11 import Mechanism
 
 from p11test.testcases.conftest import mech_name
 
+pytestmark = pytest.mark.mechflags
+
 
 class TestMechanismInfo:
     def test_mechanism_info_has_key_sizes(self, p11_module: Any) -> None:

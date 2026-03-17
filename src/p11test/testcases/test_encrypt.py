@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from pkcs11 import KeyType
+
+pytestmark = pytest.mark.full
 
 
 class TestAESEncryption:

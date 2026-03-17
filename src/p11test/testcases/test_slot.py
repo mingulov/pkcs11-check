@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from p11test.testcases.conftest import mech_name
+
+pytestmark = pytest.mark.smoke
 
 
 class TestSessionManagement:

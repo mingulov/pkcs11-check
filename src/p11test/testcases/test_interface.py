@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+pytestmark = pytest.mark.smoke
+
 
 class TestLibraryInfo:
     def test_module_loads(self, p11_module: Any) -> None:

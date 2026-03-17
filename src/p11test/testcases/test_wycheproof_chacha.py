@@ -71,7 +71,7 @@ def test_chacha20_poly1305(
     tag_expected = bytes.fromhex(vec["tag"])
     result = vec["result"]
 
-    chacha_key_type = getattr(KeyType, "CHACHA20", KeyType.GENERIC_SECRET)
+    chacha_key_type = KeyType.CHACHA20
     try:
         key = p11_session.create_object(
             {
@@ -82,11 +82,6 @@ def test_chacha20_poly1305(
                 Attribute.DECRYPT: True,
                 Attribute.TOKEN: False,
                 Attribute.SENSITIVE: False,
-                **(
-                    {Attribute.VALUE_LEN: len(key_bytes)}
-                    if chacha_key_type == KeyType.GENERIC_SECRET
-                    else {}
-                ),
             }
         )
     except (p11.exceptions.PKCS11Error, AttributeError):
@@ -94,7 +89,7 @@ def test_chacha20_poly1305(
 
     # CK_SALSA20_CHACHA20_POLY1305_PARAMS contains nonce and AAD
     # Pass as raw bytes: nonce_len(4) + nonce + aad_len(4) + aad
-    mechanism = getattr(Mechanism, "CHACHA20_POLY1305", Mechanism(_CKM_CHACHA20_POLY1305))
+    mechanism = Mechanism.CHACHA20_POLY1305
     raw_params = struct.pack("<I", len(iv)) + iv + struct.pack("<I", len(aad)) + aad
 
     try:

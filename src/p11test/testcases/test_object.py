@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from pkcs11 import Attribute, KeyType, ObjectClass
+
+pytestmark = pytest.mark.keymgmt
 
 
 class TestSessionObjects:

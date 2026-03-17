@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 import pkcs11
+import pytest
 from pkcs11 import KeyType, Mechanism
+
+pytestmark = pytest.mark.full
 
 
 class TestRSASignature:
