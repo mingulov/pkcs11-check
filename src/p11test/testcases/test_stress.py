@@ -30,14 +30,23 @@ class TestMultiSessionConcurrency:
         token = p11_module.get_token(p11_config.slot)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
 
-        # Open first session with login
-        with token.open(rw=True, user_pin=pin) as session1:
+        # Open first session with login (handle already-logged-in)
+        try:
+            session1 = token.open(rw=True, user_pin=pin)
+        except pkcs11.exceptions.UserAlreadyLoggedIn:
+            session1 = token.open(rw=True)
+        try:
             key1 = session1.generate_key(KeyType.AES, 128, label="multi-s1")
-            # Open second session (already logged in)
-            with token.open(rw=True) as session2:
+            # Open second session (already logged in at token level)
+            session2 = token.open(rw=True)
+            try:
                 key2 = session2.generate_key(KeyType.AES, 128, label="multi-s2")
                 key2.destroy()
+            finally:
+                session2.close()
             key1.destroy()
+        finally:
+            session1.close()
 
     def test_sequential_digest_sessions(self, p11_module: Any, p11_config: Any) -> None:
         """Multiple sessions can each compute independent digests."""
@@ -45,12 +54,21 @@ class TestMultiSessionConcurrency:
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
 
         digests = []
-        with token.open(rw=False, user_pin=pin) as session1:
+        try:
+            session1 = token.open(rw=False, user_pin=pin)
+        except pkcs11.exceptions.UserAlreadyLoggedIn:
+            session1 = token.open(rw=False)
+        try:
             d1 = session1.digest(b"session 1 data", mechanism=Mechanism.SHA256)
             digests.append(d1)
-            with token.open(rw=False) as session2:
+            session2 = token.open(rw=False)
+            try:
                 d2 = session2.digest(b"session 2 data", mechanism=Mechanism.SHA256)
                 digests.append(d2)
+            finally:
+                session2.close()
+        finally:
+            session1.close()
 
         assert len(digests) == 2
         assert digests[0] != digests[1]  # Different data → different digest

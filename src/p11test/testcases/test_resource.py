@@ -103,8 +103,12 @@ class TestSessionChurn:
 
         rss_before = _get_rss_mb()
         for _ in range(100):
-            with token.open(rw=True, user_pin=pin):
-                pass
+            try:
+                with token.open(rw=True, user_pin=pin):
+                    pass
+            except pkcs11.exceptions.UserAlreadyLoggedIn:
+                session = token.open(rw=True)
+                session.close()
         rss_after = _get_rss_mb()
         growth = rss_after - rss_before
         assert growth < 50, f"RSS grew by {growth:.1f}MB during 100 session cycles"
