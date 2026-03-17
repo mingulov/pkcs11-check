@@ -24,7 +24,7 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 
 ## Tier 2 — Object & Type Coverage
 
-- [ ] **2.1** `CKO_DATA` objects — create, search by label/app, read value, destroy
+- [x] **2.1** `CKO_DATA` objects — create, search by label/app, read value, destroy
 - [ ] **2.2** `CKO_CERTIFICATE` — import X.509 DER cert, search by subject/issuer, extract fields
 - [ ] **2.3** Classic DH key agreement — `CKM_DH_PKCS_DERIVE` with parameter generation
 - [ ] **2.4** RSA key wrapping — wrap AES key with RSA-OAEP, unwrap, verify material matches
