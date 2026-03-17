@@ -1,4 +1,4 @@
-"""Tests for EdDSA (Ed25519/Ed448) key generation and signing.
+"""Tests for EdDSA (Ed25519/Ed448) key generation, signing, and properties.
 
 EdDSA is available on SoftHSM2 2.7.0+, Kryoptic, and NSS.
 """
@@ -11,128 +11,125 @@ import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism
 
-from p11test.testcases.conftest import mech_name
+from p11test.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.crossverify
 
+ED25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x70])
+
+
+@pytest.fixture()
+def ed25519_keypair(p11_session: Any, p11_module: Any) -> tuple[Any, Any]:
+    """Generate Ed25519 keypair, skip if unsupported."""
+    if not has_mechanism(p11_module, "EDDSA"):
+        pytest.skip("EDDSA mechanism not supported")
+
+    try:
+        pub, priv = p11_session.generate_keypair(
+            KeyType.EC_EDWARDS,
+            mechanism=Mechanism.EC_EDWARDS_KEY_PAIR_GEN,
+            public_template={
+                Attribute.EC_PARAMS: ED25519_OID,
+                Attribute.VERIFY: True,
+                Attribute.TOKEN: False,
+            },
+            private_template={
+                Attribute.SIGN: True,
+                Attribute.TOKEN: False,
+            },
+        )
+        return pub, priv
+    except (p11.exceptions.PKCS11Error, AttributeError):
+        pytest.skip("Ed25519 keygen not available")
+        raise  # unreachable, satisfies mypy
+
 
 class TestEdDSAKeyGeneration:
-    """Test Ed25519/Ed448 key pair generation."""
+    def test_ed25519_keygen(self, ed25519_keypair: tuple[Any, Any]) -> None:
+        """Generate Ed25519 key pair."""
+        pub, priv = ed25519_keypair
+        assert pub is not None
+        assert priv is not None
 
-    def test_ed25519_keygen(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate Ed25519 key pair if supported."""
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechanisms = slot.get_mechanisms()
-        mech_names = {mech_name(m) for m in mechanisms}
+    def test_ed25519_key_type(self, ed25519_keypair: tuple[Any, Any]) -> None:
+        """Ed25519 key should have EC_EDWARDS key type."""
+        pub, priv = ed25519_keypair
+        assert pub.key_type == KeyType.EC_EDWARDS
+        assert priv.key_type == KeyType.EC_EDWARDS
 
-        if "EC_EDWARDS_KEY_PAIR_GEN" not in mech_names and "EDDSA" not in mech_names:
-            pytest.skip("EdDSA not supported by this module")
-
-        # Ed25519 OID: 1.3.101.112
-        ed25519_oid = bytes([0x06, 0x03, 0x2B, 0x65, 0x70])
-
-        try:
-            pub, priv = p11_session.generate_keypair(
-                KeyType.EC_EDWARDS,
-                mechanism=Mechanism.EC_EDWARDS_KEY_PAIR_GEN,
-                public_template={
-                    Attribute.EC_PARAMS: ed25519_oid,
-                    Attribute.VERIFY: True,
-                    Attribute.TOKEN: False,
-                },
-                private_template={
-                    Attribute.SIGN: True,
-                    Attribute.TOKEN: False,
-                },
-            )
-            assert pub is not None
-            assert priv is not None
-            pub.destroy()
-            priv.destroy()
-        except (p11.exceptions.PKCS11Error, AttributeError) as exc:
-            pytest.skip(f"Ed25519 keygen failed: {type(exc).__name__}")
+    def test_ed25519_ec_params(self, ed25519_keypair: tuple[Any, Any]) -> None:
+        """Ed25519 key should have correct EC params (OID)."""
+        pub, _ = ed25519_keypair
+        params = pub[Attribute.EC_PARAMS]
+        assert params == ED25519_OID
 
 
 class TestEdDSASignVerify:
-    """Test EdDSA sign and verify operations."""
-
-    def test_ed25519_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
+    def test_sign_verify_roundtrip(self, ed25519_keypair: tuple[Any, Any]) -> None:
         """Sign and verify with Ed25519."""
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechanisms = slot.get_mechanisms()
-        mech_names = {mech_name(m) for m in mechanisms}
-
-        if "EDDSA" not in mech_names:
-            pytest.skip("EDDSA mechanism not supported")
-
-        ed25519_oid = bytes([0x06, 0x03, 0x2B, 0x65, 0x70])
-
-        try:
-            pub, priv = p11_session.generate_keypair(
-                KeyType.EC_EDWARDS,
-                mechanism=Mechanism.EC_EDWARDS_KEY_PAIR_GEN,
-                public_template={
-                    Attribute.EC_PARAMS: ed25519_oid,
-                    Attribute.VERIFY: True,
-                    Attribute.TOKEN: False,
-                },
-                private_template={
-                    Attribute.SIGN: True,
-                    Attribute.TOKEN: False,
-                },
-            )
-        except (p11.exceptions.PKCS11Error, AttributeError):
-            pytest.skip("Ed25519 keygen not available")
-
+        pub, priv = ed25519_keypair
         data = b"EdDSA sign-verify test data"
 
-        try:
-            signature = priv.sign(data, mechanism=Mechanism.EDDSA)
-            assert len(signature) == 64  # Ed25519 signature = 64 bytes
+        signature = priv.sign(data, mechanism=Mechanism.EDDSA)
+        assert len(signature) == 64  # Ed25519 = 64 bytes
 
-            result = pub.verify(data, signature, mechanism=Mechanism.EDDSA)
-            assert result is True
-        except p11.exceptions.PKCS11Error as exc:
-            pytest.skip(f"EdDSA sign/verify failed: {type(exc).__name__}")
-        finally:
-            pub.destroy()
-            priv.destroy()
+        result = pub.verify(data, signature, mechanism=Mechanism.EDDSA)
+        assert result is True
 
-    def test_ed25519_wrong_data_fails(self, p11_session: Any, p11_module: Any) -> None:
-        """Ed25519: verification with wrong data must fail."""
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechanisms = slot.get_mechanisms()
-        mech_names = {mech_name(m) for m in mechanisms}
-
-        if "EDDSA" not in mech_names:
-            pytest.skip("EDDSA mechanism not supported")
-
-        ed25519_oid = bytes([0x06, 0x03, 0x2B, 0x65, 0x70])
+    def test_wrong_data_fails(self, ed25519_keypair: tuple[Any, Any]) -> None:
+        """Verification with wrong data must fail."""
+        pub, priv = ed25519_keypair
+        sig = priv.sign(b"original data", mechanism=Mechanism.EDDSA)
 
         try:
-            pub, priv = p11_session.generate_keypair(
+            result = pub.verify(b"tampered data", sig, mechanism=Mechanism.EDDSA)
+            assert result is False
+        except p11.exceptions.PKCS11Error:
+            pass  # Expected
+
+    def test_signature_length(self, ed25519_keypair: tuple[Any, Any]) -> None:
+        """Ed25519 signatures are always exactly 64 bytes."""
+        _, priv = ed25519_keypair
+        for data in [b"", b"x", b"a" * 1000]:
+            sig = priv.sign(data, mechanism=Mechanism.EDDSA)
+            assert len(sig) == 64
+
+    def test_different_data_different_signatures(self, ed25519_keypair: tuple[Any, Any]) -> None:
+        """Different messages produce different signatures."""
+        _, priv = ed25519_keypair
+        sig1 = priv.sign(b"message one", mechanism=Mechanism.EDDSA)
+        sig2 = priv.sign(b"message two", mechanism=Mechanism.EDDSA)
+        assert sig1 != sig2
+
+    def test_deterministic_signatures(self, ed25519_keypair: tuple[Any, Any]) -> None:
+        """Ed25519 signatures are deterministic (same key+data → same sig)."""
+        _, priv = ed25519_keypair
+        data = b"determinism test"
+        sig1 = priv.sign(data, mechanism=Mechanism.EDDSA)
+        sig2 = priv.sign(data, mechanism=Mechanism.EDDSA)
+        assert sig1 == sig2
+
+    def test_different_keys_different_signatures(self, p11_session: Any, p11_module: Any) -> None:
+        """Same data signed with different Ed25519 keys gives different sigs."""
+        if not has_mechanism(p11_module, "EDDSA"):
+            pytest.skip("EDDSA not supported")
+        try:
+            _, priv1 = p11_session.generate_keypair(
                 KeyType.EC_EDWARDS,
                 mechanism=Mechanism.EC_EDWARDS_KEY_PAIR_GEN,
-                public_template={
-                    Attribute.EC_PARAMS: ed25519_oid,
-                    Attribute.VERIFY: True,
-                    Attribute.TOKEN: False,
-                },
-                private_template={
-                    Attribute.SIGN: True,
-                    Attribute.TOKEN: False,
-                },
+                public_template={Attribute.EC_PARAMS: ED25519_OID, Attribute.TOKEN: False},
+                private_template={Attribute.SIGN: True, Attribute.TOKEN: False},
+            )
+            _, priv2 = p11_session.generate_keypair(
+                KeyType.EC_EDWARDS,
+                mechanism=Mechanism.EC_EDWARDS_KEY_PAIR_GEN,
+                public_template={Attribute.EC_PARAMS: ED25519_OID, Attribute.TOKEN: False},
+                private_template={Attribute.SIGN: True, Attribute.TOKEN: False},
             )
         except (p11.exceptions.PKCS11Error, AttributeError):
             pytest.skip("Ed25519 keygen not available")
 
-        signature = priv.sign(b"original data", mechanism=Mechanism.EDDSA)
-
-        try:
-            result = pub.verify(b"tampered data", signature, mechanism=Mechanism.EDDSA)
-            assert result is False
-        except p11.exceptions.PKCS11Error:
-            pass  # Expected — invalid signature
-        finally:
-            pub.destroy()
-            priv.destroy()
+        data = b"key independence test"
+        sig1 = priv1.sign(data, mechanism=Mechanism.EDDSA)
+        sig2 = priv2.sign(data, mechanism=Mechanism.EDDSA)
+        assert sig1 != sig2
