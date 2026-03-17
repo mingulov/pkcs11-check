@@ -83,3 +83,72 @@ def test_aes_cmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
             pytest.xfail(f"AES-CMAC failed for valid vector {vec_id}")
 
     p11_session.generate_random(64)
+
+
+# --- AES Key Wrap (RFC 3394) ---
+
+_AES_WRAP_VECTORS = _load_flat("aes_wrap_test.json")
+
+
+def _has_aes_kw(p11_module: Any) -> bool:
+    slot = p11_module.get_slots(token_present=True)[0]
+    names = {mech_name(m) for m in slot.get_mechanisms()}
+    return "AES_KEY_WRAP" in names
+
+
+@pytest.mark.parametrize("vec_id,vec", _AES_WRAP_VECTORS, ids=[v[0] for v in _AES_WRAP_VECTORS])
+def test_aes_key_wrap(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    """AES Key Wrap (RFC 3394) from Wycheproof vectors.
+
+    For valid vectors: wrap(msg) with key should produce ct.
+    We test by importing wrapping key, wrapping a target key, comparing output.
+    """
+    if not _has_aes_kw(p11_module):
+        pytest.skip("AES_KEY_WRAP not supported")
+
+    key_bytes = bytes.fromhex(vec["key"])
+    msg = bytes.fromhex(vec["msg"])
+    ct_expected = bytes.fromhex(vec["ct"])
+    result = vec["result"]
+
+    # Import wrapping key
+    try:
+        wrap_key = p11_session.create_object(
+            {
+                Attribute.CLASS: ObjectClass.SECRET_KEY,
+                Attribute.KEY_TYPE: KeyType.AES,
+                Attribute.VALUE: key_bytes,
+                Attribute.WRAP: True,
+                Attribute.UNWRAP: True,
+                Attribute.TOKEN: False,
+                Attribute.SENSITIVE: False,
+            }
+        )
+    except p11.exceptions.PKCS11Error:
+        pytest.skip("Cannot import AES wrapping key")
+
+    # Import target key (the material being wrapped)
+    try:
+        target_key = p11_session.create_object(
+            {
+                Attribute.CLASS: ObjectClass.SECRET_KEY,
+                Attribute.KEY_TYPE: KeyType.AES,
+                Attribute.VALUE: msg,
+                Attribute.EXTRACTABLE: True,
+                Attribute.TOKEN: False,
+                Attribute.SENSITIVE: False,
+            }
+        )
+    except p11.exceptions.PKCS11Error:
+        if result == "invalid":
+            return
+        pytest.skip("Cannot import target key")
+
+    # Wrap and compare
+    try:
+        wrapped = wrap_key.wrap_key(target_key, mechanism=Mechanism.AES_KEY_WRAP)
+        if result == "valid":
+            assert wrapped == ct_expected
+    except p11.exceptions.PKCS11Error:
+        if result == "valid":
+            pytest.xfail(f"AES-KW wrap failed for valid vector {vec_id}")
