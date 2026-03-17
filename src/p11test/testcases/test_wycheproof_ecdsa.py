@@ -23,6 +23,40 @@ pytestmark = pytest.mark.wycheproof
 
 WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
 
+
+class _ShakeHash:
+    """Wrapper to make SHAKE hashes compatible with the hashlib .digest() API.
+
+    SHAKE produces variable-length output, so .digest(length) is required.
+    This wrapper binds the output length at construction time.
+    """
+
+    def __init__(self, shake_fn: Any, output_len: int, data: bytes = b"") -> None:
+        self._h = shake_fn(data)
+        self._output_len = output_len
+
+    def digest(self) -> bytes:
+        return self._h.digest(self._output_len)  # type: ignore[no-any-return]
+
+
+def _shake128(output_len: int) -> Any:
+    """Return a SHAKE-128 hash factory with fixed output length."""
+
+    def factory(data: bytes = b"") -> _ShakeHash:
+        return _ShakeHash(hashlib.shake_128, output_len, data)
+
+    return factory
+
+
+def _shake256(output_len: int) -> Any:
+    """Return a SHAKE-256 hash factory with fixed output length."""
+
+    def factory(data: bytes = b"") -> _ShakeHash:
+        return _ShakeHash(hashlib.shake_256, output_len, data)
+
+    return factory
+
+
 # Curve config: (filename, curve_name, coord_size, hash_fn)
 _ECDSA_CONFIGS = [
     # P-256 with SHA-512
@@ -48,6 +82,11 @@ _ECDSA_CONFIGS = [
     ("ecdsa_secp384r1_sha3_384_test.json", "secp384r1", 48, hashlib.sha3_384),
     ("ecdsa_secp384r1_sha3_512_test.json", "secp384r1", 48, hashlib.sha3_512),
     ("ecdsa_secp521r1_sha3_512_test.json", "secp521r1", 66, hashlib.sha3_512),
+    # SHAKE variants — variable-length output truncated to curve order size
+    ("ecdsa_secp224r1_shake128_test.json", "secp224r1", 28, _shake128(28)),
+    ("ecdsa_secp256r1_shake128_test.json", "secp256r1", 32, _shake128(32)),
+    ("ecdsa_secp384r1_shake256_test.json", "secp384r1", 48, _shake256(48)),
+    ("ecdsa_secp521r1_shake256_test.json", "secp521r1", 66, _shake256(66)),
 ]
 
 
