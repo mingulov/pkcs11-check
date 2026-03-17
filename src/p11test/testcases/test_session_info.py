@@ -14,6 +14,19 @@ import pytest
 pytestmark = pytest.mark.access
 
 
+def _open_session(token: Any, rw: bool, pin_str: str) -> Any:
+    """Open a session, handling UserAlreadyLoggedIn gracefully."""
+    try:
+        return token.open(rw=rw, user_pin=pin_str)
+    except pkcs11.exceptions.UserAlreadyLoggedIn:
+        session = token.open(rw=rw)
+        try:
+            session.login(pkcs11.UserType.USER, pin_str)
+        except pkcs11.exceptions.UserAlreadyLoggedIn:
+            pass
+        return session
+
+
 class TestSessionInfo:
     """Test C_GetSessionInfo via python-pkcs11 session properties."""
 
@@ -23,8 +36,11 @@ class TestSessionInfo:
         pin = p11_config.pin
         pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
 
-        with token.open(rw=True, user_pin=pin_str) as session:
+        session = _open_session(token, rw=True, pin_str=pin_str)
+        try:
             assert session.rw is True
+        finally:
+            session.close()
 
     def test_ro_session_is_not_rw(self, p11_module: Any, p11_config: Any) -> None:
         """R/O session reports read-only state."""
@@ -32,8 +48,11 @@ class TestSessionInfo:
         pin = p11_config.pin
         pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
 
-        with token.open(rw=False, user_pin=pin_str) as session:
+        session = _open_session(token, rw=False, pin_str=pin_str)
+        try:
             assert session.rw is False
+        finally:
+            session.close()
 
     def test_session_has_token(self, p11_module: Any, p11_config: Any) -> None:
         """Session is associated with a token."""
@@ -41,12 +60,13 @@ class TestSessionInfo:
         pin = p11_config.pin
         pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
 
-        with token.open(rw=True, user_pin=pin_str) as session:
-            # Session should have a valid token reference
+        session = _open_session(token, rw=True, pin_str=pin_str)
+        try:
             assert session is not None
-            # Should be able to generate a key (proves session is functional)
             key = session.generate_key(pkcs11.KeyType.AES, 128)
             assert key is not None
+        finally:
+            session.close()
 
     def test_ro_session_cannot_generate_token_objects(
         self, p11_module: Any, p11_config: Any
@@ -56,15 +76,16 @@ class TestSessionInfo:
         pin = p11_config.pin
         pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
 
-        with token.open(rw=False, user_pin=pin_str) as session:
-            # Session objects should work in R/O
+        session = _open_session(token, rw=False, pin_str=pin_str)
+        try:
             key = session.generate_key(pkcs11.KeyType.AES, 128)
             assert key is not None
 
-            # Token objects should fail in R/O
             with pytest.raises(pkcs11.exceptions.PKCS11Error):
                 session.generate_key(
                     pkcs11.KeyType.AES,
                     128,
                     template={pkcs11.Attribute.TOKEN: True},
                 )
+        finally:
+            session.close()

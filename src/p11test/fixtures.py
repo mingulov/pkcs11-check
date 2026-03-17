@@ -6,6 +6,7 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
+import pkcs11 as _p11
 import pytest
 
 from p11test.config import P11TestConfig
@@ -42,8 +43,25 @@ def p11_interface_version(p11_module: P11Module) -> str:
 
 @pytest.fixture
 def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[Any, None, None]:
-    """Open PKCS#11 session with login. Yields session, closes after test."""
+    """Open PKCS#11 session with login. Yields session, closes after test.
+
+    Handles UserAlreadyLoggedIn gracefully — PKCS#11 login is per-token,
+    so if another test left a login active, we open RW and reuse it.
+    """
     token = p11_module.get_token(p11_config.slot)
     pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-    with token.open(rw=True, user_pin=pin) as session:
-        yield session
+    try:
+        with token.open(rw=True, user_pin=pin) as session:
+            yield session
+    except _p11.exceptions.UserAlreadyLoggedIn:
+        # Token-level login already active from another session;
+        # open RW without login, then manually login (handling the race).
+        session = token.open(rw=True)
+        try:
+            session.login(_p11.UserType.USER, pin)
+        except _p11.exceptions.UserAlreadyLoggedIn:
+            pass  # Expected
+        try:
+            yield session
+        finally:
+            session.close()

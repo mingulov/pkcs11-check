@@ -23,6 +23,7 @@ class TestInterfaceVersion:
         assert isinstance(ver, str)
         assert ver in ("2.40", "3.0", "3.1", "3.2"), f"Unexpected version: {ver}"
 
+    @pytest.mark.destructive  # calls lib.finalize() which breaks shared session
     def test_auto_negotiation(self, p11_config: Any) -> None:
         """interface='auto' picks the highest available version."""
         module_path = p11_config.module
@@ -37,6 +38,7 @@ class TestInterfaceVersion:
         finally:
             lib.finalize()
 
+    @pytest.mark.destructive  # calls lib.finalize()
     def test_explicit_v240_fallback(self, p11_config: Any) -> None:
         """interface='2.40' forces v2.40 even if module supports v3.x."""
         module_path = p11_config.module
@@ -54,6 +56,7 @@ class TestInterfaceVersion:
         finally:
             lib.finalize()
 
+    @pytest.mark.destructive  # calls lib.finalize()
     def test_module_functional_after_negotiation(self, p11_config: Any) -> None:
         """Module works after interface negotiation — can generate keys."""
         module_path = p11_config.module

@@ -8,10 +8,24 @@ from __future__ import annotations
 
 from typing import Any
 
+import pkcs11 as p11
 import pytest
 from pkcs11.exceptions import PKCS11Error, SessionCount
 
 pytestmark = pytest.mark.security
+
+
+def _open_with_login(token: Any, rw: bool, pin_str: str) -> Any:
+    """Open a session, handling UserAlreadyLoggedIn gracefully."""
+    try:
+        return token.open(rw=rw, user_pin=pin_str)
+    except p11.exceptions.UserAlreadyLoggedIn:
+        session = token.open(rw=rw)
+        try:
+            session.login(p11.UserType.USER, pin_str)
+        except p11.exceptions.UserAlreadyLoggedIn:
+            pass
+        return session
 
 
 class TestSessionExhaustion:
@@ -24,18 +38,16 @@ class TestSessionExhaustion:
         pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
 
         sessions = []
-        # First session logs in
-        s0 = token.open(rw=True, user_pin=pin_str)
+        s0 = _open_with_login(token, rw=True, pin_str=pin_str)
         sessions.append(s0)
 
         try:
-            for _ in range(99):  # Try up to 100 total
+            for _ in range(99):
                 s = token.open(rw=True)  # Don't re-login
                 sessions.append(s)
         except (SessionCount, PKCS11Error):
-            pass  # Expected when session limit reached
+            pass
 
-        # Whether or not we hit a limit, close all sessions cleanly
         for s in sessions:
             try:
                 s.close()
@@ -43,12 +55,12 @@ class TestSessionExhaustion:
                 pass
 
         # After closing, should be able to open a new session
-        with token.open(rw=True, user_pin=pin_str) as recovery:
-            # Verify the module still works
-            from pkcs11 import KeyType
-
-            key = recovery.generate_key(KeyType.AES, 128)
+        recovery = _open_with_login(token, rw=True, pin_str=pin_str)
+        try:
+            key = recovery.generate_key(p11.KeyType.AES, 128)
             assert key is not None
+        finally:
+            recovery.close()
 
     def test_session_close_frees_resources(self, p11_module: Any, p11_config: Any) -> None:
         """Opening and closing sessions in a loop doesn't leak."""
@@ -57,5 +69,5 @@ class TestSessionExhaustion:
         pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
 
         for _ in range(50):
-            with token.open(rw=True, user_pin=pin_str):
-                pass  # Just open and close
+            session = _open_with_login(token, rw=True, pin_str=pin_str)
+            session.close()
