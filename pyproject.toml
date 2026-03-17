@@ -72,4 +72,5 @@ addopts = "-v --tb=short"
 [dependency-groups]
 dev = [
     "hypothesis>=6.151.9",
+    "pytest-benchmark>=5.2.3",
 ]
