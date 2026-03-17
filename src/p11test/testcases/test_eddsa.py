@@ -133,3 +133,26 @@ class TestEdDSASignVerify:
         sig1 = priv1.sign(data, mechanism=Mechanism.EDDSA)
         sig2 = priv2.sign(data, mechanism=Mechanism.EDDSA)
         assert sig1 != sig2
+
+
+class TestEdDSACrossVerify:
+    """Cross-verify Ed25519 signatures with Python cryptography."""
+
+    def test_sign_p11_verify_crypto(self, ed25519_keypair: tuple[Any, Any]) -> None:
+        """Sign in PKCS#11, verify with cryptography Ed25519."""
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        pub, priv = ed25519_keypair
+        data = b"Ed25519 cross-verify test"
+        sig = priv.sign(data, mechanism=Mechanism.EDDSA)
+
+        # Export the public key point
+        ec_point = pub[Attribute.EC_POINT]
+        # DER OCTET STRING: 04 <len> <32-byte point>
+        if ec_point[0] == 0x04:
+            raw_key = ec_point[2:] if ec_point[1] < 128 else ec_point[3:]
+        else:
+            raw_key = ec_point
+
+        pub_crypto = Ed25519PublicKey.from_public_bytes(raw_key)
+        pub_crypto.verify(sig, data)  # raises on failure
