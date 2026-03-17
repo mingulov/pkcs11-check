@@ -56,6 +56,14 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 - [x] **5.3** Test result archival — save pytest JSON/JUnit output per module per run
 - [ ] **5.4** Mechanism coverage report — auto-generate docs/test-coverage.md from test metadata
 
+## Tier 6 — Gap Analysis (added 2026-03-18)
+
+- [x] **6.1** EC key import/export round-trip — generate, export EC_POINT, import as new key, verify
+- [x] **6.2** Session info tests — R/W vs R/O state, token reference, R/O cannot create token objects
+- [ ] **6.3** C_GetObjectSize — verify object size is reported correctly
+- [ ] **6.4** C_GetOperationState / C_SetOperationState — multi-part operation suspend/resume
+- [ ] **6.5** AES-GCM authenticated wrapping — wrap/unwrap with AEAD (v3.2)
+
 ---
 
 ## Recommended loop prompt
