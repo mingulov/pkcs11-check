@@ -41,8 +41,8 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 ## Architecture
 
 ### Two test directories
-- `src/p11test/testcases/` — the PRODUCT: 25,649 PKCS#11 tests (20,223 passing on SoftHSM2)
-- `tests/` — META-TESTS: 37 tests for p11test's own code (config parsing, markers, CLI)
+- `src/p11test/testcases/` — the PRODUCT: PKCS#11 tests run against hardware/software modules
+- `tests/` — META-TESTS: tests for p11test's own code (config parsing, markers, CLI)
 
 ### Core modules
 - `core/loader.py` — PKCS#11 module loading (v2.40 via python-pkcs11, v3.x planned)
@@ -55,23 +55,15 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 - `fixtures.py` — p11_session, p11_module, p11_config, p11_interface_version
 - `cli/app.py` — typer app, routes to test/info/list/version subcommands
 
-### Test categories (49 test files)
+### Test categories
 - Core: interface, slot, object, mechanism, encrypt, sign, digest, errors
 - Cross-verification: AES-ECB/GCM, RSA PKCS/PSS/OAEP, ECDSA P-256/384/521, EdDSA, HMAC, digest
 - NIST KAT: SHA-1/224/256/384/512, AES-ECB from SP 800-38A
-- Wycheproof (15,473 vectors across 12 files):
-  - ECDSA: P-224/256/384/521 × SHA-224/256/384/512 (3,579)
-  - RSA PKCS#1 v1.5 signatures: 2048/3072/4096 × SHA-224/256/384/512 (2,588)
-  - RSA-PSS: 2048/3072/4096 × SHA-1/224/256/384/512, proper PSS params (1,153)
-  - ECDH: P-256/384/521 raw key agreement (1,806)
-  - DSA: 2048/3072 × SHA-224/256 DER signatures (1,432)
-  - AES: CMAC (311), Key Wrap (165), KWP (254), CCM (552) (1,282)
-  - General: AES-GCM, AES-CBC, HMAC-SHA256, ECDSA base (1,949)
-  - HMAC: SHA-1/224/384/512 (690)
-  - ChaCha20-Poly1305 (325, module-dependent)
-  - RSA-OAEP: 2048/3072/4096 with proper OAEP params (318)
-  - RSA PKCS#1 v1.5 decryption: padding oracle vectors (201)
-  - Ed25519: signature verification (150)
+- Wycheproof edge-case vectors (see docs/test-coverage.md for details):
+  ECDSA (P-224/256/384/521 × SHA/SHA-3), RSA PKCS#1/PSS/OAEP,
+  ECDH (P-224/256/384/521), DSA, AES (GCM/CBC/CMAC/CCM/KW/KWP),
+  HMAC (SHA/SHA-3/SHA-512 truncated), Ed25519, ChaCha20-Poly1305,
+  X25519/X448, HKDF — mechanism availability checked at runtime
 - Key management: import, export, copy, wrap/unwrap, derive
 - Security: API attacks, padding oracle, ECDSA nonce quality, RNG statistics
 - Standards: buffer boundaries, access control, session lifecycle, token flags
