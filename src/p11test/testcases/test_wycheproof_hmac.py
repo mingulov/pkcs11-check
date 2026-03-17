@@ -23,6 +23,10 @@ _MECH_NAMES: dict[Mechanism, str] = {
     Mechanism.SHA512_HMAC: "SHA512_HMAC",
     Mechanism.SHA512_224_HMAC: "SHA512_224_HMAC",
     Mechanism.SHA512_256_HMAC: "SHA512_256_HMAC",
+    Mechanism.SHA3_224_HMAC: "SHA3_224_HMAC",
+    Mechanism.SHA3_256_HMAC: "SHA3_256_HMAC",
+    Mechanism.SHA3_384_HMAC: "SHA3_384_HMAC",
+    Mechanism.SHA3_512_HMAC: "SHA3_512_HMAC",
 }
 
 WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
@@ -42,6 +46,27 @@ _HMAC_FILES = {
     "hmac_sha512_256_test.json": (
         KeyType.SHA512_256_HMAC,
         Mechanism.SHA512_256_HMAC,
+        KeyType.GENERIC_SECRET,
+    ),
+    # SHA-3 HMAC (PKCS#11 v3.0)
+    "hmac_sha3_224_test.json": (
+        KeyType.SHA3_224_HMAC,
+        Mechanism.SHA3_224_HMAC,
+        KeyType.GENERIC_SECRET,
+    ),
+    "hmac_sha3_256_test.json": (
+        KeyType.SHA3_256_HMAC,
+        Mechanism.SHA3_256_HMAC,
+        KeyType.GENERIC_SECRET,
+    ),
+    "hmac_sha3_384_test.json": (
+        KeyType.SHA3_384_HMAC,
+        Mechanism.SHA3_384_HMAC,
+        KeyType.GENERIC_SECRET,
+    ),
+    "hmac_sha3_512_test.json": (
+        KeyType.SHA3_512_HMAC,
+        Mechanism.SHA3_512_HMAC,
         KeyType.GENERIC_SECRET,
     ),
 }

@@ -37,6 +37,15 @@ _ECDSA_CONFIGS = [
     ("ecdsa_secp224r1_sha256_test.json", "secp224r1", 28, hashlib.sha256),
     # P-224 with SHA-512
     ("ecdsa_secp224r1_sha512_test.json", "secp224r1", 28, hashlib.sha512),
+    # SHA-3 variants (skip on modules without SHA-3 ECDSA support)
+    ("ecdsa_secp224r1_sha3_224_test.json", "secp224r1", 28, hashlib.sha3_224),
+    ("ecdsa_secp224r1_sha3_256_test.json", "secp224r1", 28, hashlib.sha3_256),
+    ("ecdsa_secp224r1_sha3_512_test.json", "secp224r1", 28, hashlib.sha3_512),
+    ("ecdsa_secp256r1_sha3_256_test.json", "secp256r1", 32, hashlib.sha3_256),
+    ("ecdsa_secp256r1_sha3_512_test.json", "secp256r1", 32, hashlib.sha3_512),
+    ("ecdsa_secp384r1_sha3_384_test.json", "secp384r1", 48, hashlib.sha3_384),
+    ("ecdsa_secp384r1_sha3_512_test.json", "secp384r1", 48, hashlib.sha3_512),
+    ("ecdsa_secp521r1_sha3_512_test.json", "secp521r1", 66, hashlib.sha3_512),
 ]
 
 

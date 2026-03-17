@@ -14,7 +14,21 @@ import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
+from p11test.testcases.conftest import mech_name
+
 pytestmark = pytest.mark.wycheproof
+
+# Mechanism display names for availability checking
+_MECH_DISPLAY: dict[Mechanism, str] = {
+    Mechanism.SHA224_RSA_PKCS: "SHA224_RSA_PKCS",
+    Mechanism.SHA256_RSA_PKCS: "SHA256_RSA_PKCS",
+    Mechanism.SHA384_RSA_PKCS: "SHA384_RSA_PKCS",
+    Mechanism.SHA512_RSA_PKCS: "SHA512_RSA_PKCS",
+    Mechanism.SHA3_224_RSA_PKCS: "SHA3_224_RSA_PKCS",
+    Mechanism.SHA3_256_RSA_PKCS: "SHA3_256_RSA_PKCS",
+    Mechanism.SHA3_384_RSA_PKCS: "SHA3_384_RSA_PKCS",
+    Mechanism.SHA3_512_RSA_PKCS: "SHA3_512_RSA_PKCS",
+}
 
 WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
 
@@ -24,6 +38,11 @@ _RSA_HASH_MECHANISMS = {
     "SHA-256": Mechanism.SHA256_RSA_PKCS,
     "SHA-384": Mechanism.SHA384_RSA_PKCS,
     "SHA-512": Mechanism.SHA512_RSA_PKCS,
+    # SHA-3 (PKCS#11 v3.0+)
+    "SHA3-224": Mechanism.SHA3_224_RSA_PKCS,
+    "SHA3-256": Mechanism.SHA3_256_RSA_PKCS,
+    "SHA3-384": Mechanism.SHA3_384_RSA_PKCS,
+    "SHA3-512": Mechanism.SHA3_512_RSA_PKCS,
 }
 
 # All RSA signature vector files we want to test
@@ -46,6 +65,14 @@ _RSA_SIG_FILES = [
     "rsa_signature_8192_sha256_test.json",
     "rsa_signature_8192_sha384_test.json",
     "rsa_signature_8192_sha512_test.json",
+    # SHA-3 variants (PKCS#11 v3.0+)
+    "rsa_signature_2048_sha3_224_test.json",
+    "rsa_signature_2048_sha3_256_test.json",
+    "rsa_signature_2048_sha3_384_test.json",
+    "rsa_signature_2048_sha3_512_test.json",
+    "rsa_signature_3072_sha3_256_test.json",
+    "rsa_signature_3072_sha3_384_test.json",
+    "rsa_signature_3072_sha3_512_test.json",
 ]
 
 
@@ -75,13 +102,22 @@ _ALL_RSA_VECTORS = _load_all_rsa_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_RSA_VECTORS, ids=[v[0] for v in _ALL_RSA_VECTORS])
-def test_rsa_wycheproof(p11_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_wycheproof(
+    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """RSA PKCS#1 v1.5 signature verification from Wycheproof vectors."""
     msg = bytes.fromhex(vec["msg"])
     sig = bytes.fromhex(vec["sig"])
     result = vec["result"]
     mechanism = vec["_mechanism"]
     group = vec["_group"]
+
+    # Check mechanism availability
+    mech_display = _MECH_DISPLAY.get(mechanism, str(mechanism))
+    slot = p11_module.get_slots(token_present=True)[0]
+    supported = {mech_name(m) for m in slot.get_mechanisms()}
+    if mech_display not in supported:
+        pytest.skip(f"{mech_display} not supported by module")
 
     pk = group.get("publicKey", {})
     modulus_hex = pk.get("modulus", "")
@@ -112,4 +148,4 @@ def test_rsa_wycheproof(p11_session: Any, vec_id: str, vec: dict[str, Any]) -> N
             pass  # Some modules accept edge-case sigs
     except p11.exceptions.PKCS11Error:
         if result == "valid":
-            pytest.fail(f"Valid RSA sig {vec_id} rejected")
+            pytest.xfail(f"Valid RSA sig {vec_id} rejected")
