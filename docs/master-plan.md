@@ -20,7 +20,7 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 - [x] **1.3** `C_SetAttributeValue` — 7 tests: change label/ID, keypair labels, reject CKA_CLASS/KEY_TYPE/MODULUS/VALUE (compliance notes for silent ignore)
 - [x] **1.4** SO login / `C_SetPIN` — 3 tests: SO wrong PIN, user+SO coexist rejected, PIN change+restore (@destructive)
 - [x] **1.5** Multipart streaming — 20 tests: AES-ECB/CBC multiblock, SHA-256/512 large data, RSA sign 10KB, HMAC 64KB cross-verify
-- [ ] **1.6** Interface negotiation tests — test v2.40 fallback when v3.x unavailable, test `interface="auto"` vs explicit
+- [x] **1.6** Interface negotiation tests — test v2.40 fallback when v3.x unavailable, test `interface="auto"` vs explicit
 
 ## Tier 2 — Object & Type Coverage
 
