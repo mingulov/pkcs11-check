@@ -37,8 +37,9 @@ _SHA_MGFS: dict[str, MGF] = {
     "SHA-512": MGF.SHA512,
 }
 
-# RSA-OAEP files where hash == mgfSha (standard PKCS#11 CKM_RSA_PKCS_OAEP)
+# RSA-OAEP files — same hash and mixed hash/MGF combinations
 _OAEP_FILES = [
+    # Same hash/MGF
     "rsa_oaep_2048_sha1_mgf1sha1_test.json",
     "rsa_oaep_2048_sha224_mgf1sha224_test.json",
     "rsa_oaep_2048_sha256_mgf1sha256_test.json",
@@ -48,6 +49,15 @@ _OAEP_FILES = [
     "rsa_oaep_3072_sha512_mgf1sha512_test.json",
     "rsa_oaep_4096_sha256_mgf1sha256_test.json",
     "rsa_oaep_4096_sha512_mgf1sha512_test.json",
+    # Mixed hash/MGF (hash != mgfSha)
+    "rsa_oaep_2048_sha224_mgf1sha1_test.json",
+    "rsa_oaep_2048_sha256_mgf1sha1_test.json",
+    "rsa_oaep_2048_sha384_mgf1sha1_test.json",
+    "rsa_oaep_2048_sha512_mgf1sha1_test.json",
+    "rsa_oaep_3072_sha256_mgf1sha1_test.json",
+    "rsa_oaep_3072_sha512_mgf1sha1_test.json",
+    "rsa_oaep_4096_sha256_mgf1sha1_test.json",
+    "rsa_oaep_4096_sha512_mgf1sha1_test.json",
 ]
 
 
