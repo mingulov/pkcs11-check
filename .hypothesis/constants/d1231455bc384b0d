@@ -1,4 +1,0 @@
-# file: /home/user/src/m/p11test/python-pkcs11/pkcs11/types.py
-# hypothesis_version: 6.151.9
-
-[b'\x00', 8192, '%s-bit %s', 'Flags: %s', 'No key matching %s', 'ascii', 'major', 'minor', 'replace', 'utf-8']

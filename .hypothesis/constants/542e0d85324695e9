@@ -1,4 +1,0 @@
-# file: /home/user/src/m/p11test/src/p11test/markers.py
-# hypothesis_version: 6.151.9
-
-['2.40', '3.0', '3.2', 'Key management test', 'Long-running test', 'Quick smoke profile', 'access', 'benchmark', 'boundary', 'crossverify', 'destructive', 'differential', 'fault', 'fips', 'fips186_4_legacy', 'full', 'fuzz', 'hardware', 'hardware_only', 'interop', 'kat', 'keymgmt', 'lab', 'mechflags', 'metamorphic', 'multipart', 'needs_mechanism', 'nonce_quality', 'padding_oracle', 'pqc', 'protocol', 'regressions', 'requires_v30', 'requires_v32', 'search', 'security', 'slow', 'smoke', 'stateful', 'stress', 'surface_audit', 'timing', 'v30', 'v32', 'vendor', 'wycheproof']

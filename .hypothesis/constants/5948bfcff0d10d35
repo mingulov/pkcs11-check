@@ -1,4 +1,0 @@
-# file: /home/user/src/m/p11test/src/p11test/compliance.py
-# hypothesis_version: 6.151.9
-
-['deprecated', 'extended', 'fips_non_approved', 'not_recommended', 'standard', 'vendor']
