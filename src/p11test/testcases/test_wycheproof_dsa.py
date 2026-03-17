@@ -14,6 +14,8 @@ import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
+from p11test.testcases.conftest import mech_name
+
 pytestmark = pytest.mark.wycheproof
 
 WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
@@ -21,6 +23,12 @@ WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors
 _SHA_MECHANISMS: dict[str, Mechanism] = {
     "SHA-224": Mechanism.DSA_SHA224,
     "SHA-256": Mechanism.DSA_SHA256,
+}
+
+# Mechanism display names for availability checking
+_MECH_DISPLAY: dict[Mechanism, str] = {
+    Mechanism.DSA_SHA224: "DSA_SHA224",
+    Mechanism.DSA_SHA256: "DSA_SHA256",
 }
 
 # DSA vector files — DER-encoded (not P1363)
@@ -59,8 +67,15 @@ _ALL_DSA_VECTORS = _load_dsa_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_DSA_VECTORS, ids=[v[0] for v in _ALL_DSA_VECTORS])
-def test_dsa(p11_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_dsa(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """DSA signature verification from Wycheproof vectors."""
+    mechanism = vec["_mechanism"]
+    name = _MECH_DISPLAY.get(mechanism, str(mechanism))
+    slot = p11_module.get_slots(token_present=True)[0]
+    supported = {mech_name(m) for m in slot.get_mechanisms()}
+    if name not in supported:
+        pytest.skip(f"{name} not supported")
+
     msg = bytes.fromhex(vec["msg"])
     sig = bytes.fromhex(vec["sig"])
     result = vec["result"]

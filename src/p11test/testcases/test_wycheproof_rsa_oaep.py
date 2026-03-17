@@ -16,6 +16,8 @@ import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.mechanisms import MGF
 
+from p11test.testcases.conftest import mech_name
+
 pytestmark = pytest.mark.wycheproof
 
 WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
@@ -87,8 +89,13 @@ _ALL_OAEP_VECTORS = _load_oaep_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_OAEP_VECTORS, ids=[v[0] for v in _ALL_OAEP_VECTORS])
-def test_rsa_oaep(p11_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_oaep(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-OAEP decryption from Wycheproof vectors."""
+    slot = p11_module.get_slots(token_present=True)[0]
+    supported = {mech_name(m) for m in slot.get_mechanisms()}
+    if "RSA_PKCS_OAEP" not in supported:
+        pytest.skip("RSA_PKCS_OAEP not supported")
+
     ct = bytes.fromhex(vec["ct"])
     msg_expected = bytes.fromhex(vec["msg"])
     result = vec["result"]

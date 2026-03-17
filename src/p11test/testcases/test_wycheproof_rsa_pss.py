@@ -15,6 +15,8 @@ import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.mechanisms import MGF
 
+from p11test.testcases.conftest import mech_name
+
 pytestmark = pytest.mark.wycheproof
 
 WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
@@ -44,6 +46,15 @@ _SHA_MGFS: dict[str, MGF] = {
     "SHA-512": MGF.SHA512,
 }
 
+# Mechanism display names for availability checking
+_MECH_DISPLAY: dict[Mechanism, str] = {
+    Mechanism.SHA1_RSA_PKCS_PSS: "SHA1_RSA_PKCS_PSS",
+    Mechanism.SHA224_RSA_PKCS_PSS: "SHA224_RSA_PKCS_PSS",
+    Mechanism.SHA256_RSA_PKCS_PSS: "SHA256_RSA_PKCS_PSS",
+    Mechanism.SHA384_RSA_PKCS_PSS: "SHA384_RSA_PKCS_PSS",
+    Mechanism.SHA512_RSA_PKCS_PSS: "SHA512_RSA_PKCS_PSS",
+}
+
 # RSA-PSS vector files — standard test variants (non-params, non-SHAKE)
 _PSS_FILES = sorted(
     f.name
@@ -52,7 +63,7 @@ _PSS_FILES = sorted(
     and "params" not in f.name
     and "shake" not in f.name
     and "misc" not in f.name
-    and "mgf1sha" not in f.name  # mixed mgf1sha variants need special handling
+    and "mgf1sha" not in f.name  # mixed mgf1sha variants: sha != mgfSha
 )
 
 
@@ -90,8 +101,15 @@ _ALL_PSS_VECTORS = _load_pss_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_PSS_VECTORS, ids=[v[0] for v in _ALL_PSS_VECTORS])
-def test_rsa_pss(p11_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_pss(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-PSS signature verification from Wycheproof vectors."""
+    mechanism = vec["_mechanism"]
+    name = _MECH_DISPLAY.get(mechanism, str(mechanism))
+    slot = p11_module.get_slots(token_present=True)[0]
+    supported = {mech_name(m) for m in slot.get_mechanisms()}
+    if name not in supported:
+        pytest.skip(f"{name} not supported")
+
     msg = bytes.fromhex(vec["msg"])
     sig = bytes.fromhex(vec["sig"])
     result = vec["result"]
