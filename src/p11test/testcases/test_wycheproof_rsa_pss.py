@@ -28,6 +28,10 @@ _SHA_MECHANISMS: dict[str, Mechanism] = {
     "SHA-256": Mechanism.SHA256_RSA_PKCS_PSS,
     "SHA-384": Mechanism.SHA384_RSA_PKCS_PSS,
     "SHA-512": Mechanism.SHA512_RSA_PKCS_PSS,
+    "SHA3-224": Mechanism.SHA3_224_RSA_PKCS_PSS,
+    "SHA3-256": Mechanism.SHA3_256_RSA_PKCS_PSS,
+    "SHA3-384": Mechanism.SHA3_384_RSA_PKCS_PSS,
+    "SHA3-512": Mechanism.SHA3_512_RSA_PKCS_PSS,
 }
 
 _SHA_HASH_MECHS: dict[str, Mechanism] = {
@@ -36,6 +40,10 @@ _SHA_HASH_MECHS: dict[str, Mechanism] = {
     "SHA-256": Mechanism.SHA256,
     "SHA-384": Mechanism.SHA384,
     "SHA-512": Mechanism.SHA512,
+    "SHA3-224": Mechanism.SHA3_224,
+    "SHA3-256": Mechanism.SHA3_256,
+    "SHA3-384": Mechanism.SHA3_384,
+    "SHA3-512": Mechanism.SHA3_512,
 }
 
 _SHA_MGFS: dict[str, MGF] = {
@@ -44,6 +52,10 @@ _SHA_MGFS: dict[str, MGF] = {
     "SHA-256": MGF.SHA256,
     "SHA-384": MGF.SHA384,
     "SHA-512": MGF.SHA512,
+    "SHA3-224": MGF.SHA3_224,
+    "SHA3-256": MGF.SHA3_256,
+    "SHA3-384": MGF.SHA3_384,
+    "SHA3-512": MGF.SHA3_512,
 }
 
 # Mechanism display names for availability checking
@@ -53,6 +65,10 @@ _MECH_DISPLAY: dict[Mechanism, str] = {
     Mechanism.SHA256_RSA_PKCS_PSS: "SHA256_RSA_PKCS_PSS",
     Mechanism.SHA384_RSA_PKCS_PSS: "SHA384_RSA_PKCS_PSS",
     Mechanism.SHA512_RSA_PKCS_PSS: "SHA512_RSA_PKCS_PSS",
+    Mechanism.SHA3_224_RSA_PKCS_PSS: "SHA3_224_RSA_PKCS_PSS",
+    Mechanism.SHA3_256_RSA_PKCS_PSS: "SHA3_256_RSA_PKCS_PSS",
+    Mechanism.SHA3_384_RSA_PKCS_PSS: "SHA3_384_RSA_PKCS_PSS",
+    Mechanism.SHA3_512_RSA_PKCS_PSS: "SHA3_512_RSA_PKCS_PSS",
 }
 
 # RSA-PSS vector files — standard test variants (non-params, non-SHAKE)
