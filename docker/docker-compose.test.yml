@@ -1,21 +1,30 @@
 ---
 # Docker Compose for p11test multi-module testing
 #
-# Usage:
-#   docker compose -f docker/docker-compose.test.yml build
+# Versioned releases:
 #   docker compose -f docker/docker-compose.test.yml run test-softhsm2
 #   docker compose -f docker/docker-compose.test.yml run test-kryoptic
 #   docker compose -f docker/docker-compose.test.yml run test-nss
 #   docker compose -f docker/docker-compose.test.yml run test-nss-pqc
 #   docker compose -f docker/docker-compose.test.yml run test-opencryptoki
+#
+# Development branches (latest from main):
+#   docker compose -f docker/docker-compose.test.yml run test-softhsm2-main
+#   docker compose -f docker/docker-compose.test.yml run test-kryoptic-main
+#   docker compose -f docker/docker-compose.test.yml run test-kryoptic-fips
+#
+# Additional/experimental:
 #   docker compose -f docker/docker-compose.test.yml run test-tpm2
 #   docker compose -f docker/docker-compose.test.yml run test-bouncyhsm
 #   docker compose -f docker/docker-compose.test.yml run test-pkcs11-mock
 #   docker compose -f docker/docker-compose.test.yml run test-qryptotoken
 
 services:
-  # --- Software PKCS#11 tokens ---
+  # ==========================================================
+  # Versioned releases — stable, reproducible
+  # ==========================================================
 
+  # SoftHSM2 2.7.0 (v2.40, OpenSSL)
   test-softhsm2:
     build:
       context: ..
@@ -23,6 +32,7 @@ services:
     environment:
       - P11TEST_PIN=1234
 
+  # Kryoptic v1.5.0 (v3.2, Rust)
   test-kryoptic:
     build:
       context: ..
@@ -30,49 +40,76 @@ services:
     environment:
       - P11TEST_PIN=1234
 
-  # NSS stable (Fedora 43) — well-tested, v3.0
+  # NSS stable (Fedora 43, v3.0)
   test-nss:
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile
 
-  # NSS bleeding edge (Fedora Rawhide) — v3.2 PQC: ML-KEM, ML-DSA
+  # NSS PQC (Fedora Rawhide, v3.2 PQC)
   test-nss-pqc:
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile.rawhide
 
-  # --- Additional implementations ---
-
-  # OpenCryptoki SWToken (IBM's PKCS#11, OpenSSL backend)
-  # Requires pkcsslotd daemon; started in CMD, not at build time.
+  # OpenCryptoki 3.25 (IBM, v3.0)
   test-opencryptoki:
     build:
       context: ..
       dockerfile: docker/opencryptoki/Dockerfile
 
-  # tpm2-pkcs11 with swtpm (software TPM emulator)
-  # swtpm socket server started in CMD; token init via tpm2_ptool.
+  # ==========================================================
+  # Development branches — bleeding edge, may break
+  # ==========================================================
+
+  # SoftHSM2 main branch (latest development)
+  test-softhsm2-main:
+    build:
+      context: ..
+      dockerfile: docker/softhsm2-main/Dockerfile
+    environment:
+      - P11TEST_PIN=1234
+
+  # Kryoptic main branch (latest dev, default features)
+  test-kryoptic-main:
+    build:
+      context: ..
+      dockerfile: docker/kryoptic-main/Dockerfile
+    environment:
+      - P11TEST_PIN=1234
+
+  # Kryoptic FIPS (main + simo5/openssl kryoptic_ossl40, --features fips,pqc)
+  # Based on: github.com/parallaxsecond/rust-cryptoki/pull/362
+  test-kryoptic-fips:
+    build:
+      context: ..
+      dockerfile: docker/kryoptic-fips/Dockerfile
+    environment:
+      - P11TEST_PIN=1234
+
+  # ==========================================================
+  # Additional implementations
+  # ==========================================================
+
+  # tpm2-pkcs11 with swtpm + tpm2-abrmd
   test-tpm2:
     build:
       context: ..
       dockerfile: docker/tpm2-pkcs11/Dockerfile
 
-  # BouncyHSM (.NET/BouncyCastle backend, v3.2, PQC)
+  # BouncyHSM (.NET/BouncyCastle, v3.2, 206 mechanisms)
   test-bouncyhsm:
     build:
       context: ..
       dockerfile: docker/bouncyhsm/Dockerfile
 
-  # pkcs11-mock — minimal PKCS#11 v3.1 stub (no token init needed)
-  # Good for testing graceful handling of CKR_FUNCTION_NOT_SUPPORTED.
+  # pkcs11-mock — minimal v3.1 stub
   test-pkcs11-mock:
     build:
       context: ..
       dockerfile: docker/pkcs11-mock/Dockerfile
 
-  # qryptotoken — experimental pure-Rust PQC PKCS#11 token (QUBIP project)
-  # Build may fail; CMD exits gracefully if .so is not produced.
+  # qryptotoken — experimental Rust PQC token (QUBIP)
   test-qryptotoken:
     build:
       context: ..
