@@ -41,7 +41,7 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 ## Architecture
 
 ### Two test directories
-- `src/p11test/testcases/` — the PRODUCT: 16,373 PKCS#11 tests (14,815 passing on SoftHSM2)
+- `src/p11test/testcases/` — the PRODUCT: 16,406 PKCS#11 tests (14,848 passing on SoftHSM2)
 - `tests/` — META-TESTS: 37 tests for p11test's own code (config parsing, markers, CLI)
 
 ### Core modules
@@ -98,7 +98,7 @@ Additional:
 - `test-qryptotoken` — qryptotoken (Rust PQC)
 
 ### Key design decisions
-- python-pkcs11 fork as git submodule (`python-pkcs11/`) with fixes: GCM IV restriction removed, CKM_EC_MONTGOMERY_KEY_PAIR_GEN, CKK_EC_MONTGOMERY, CKM_RSA_AES_KEY_WRAP, v3.0 mechanisms (HKDF, SP800-108, XEDDSA)
+- python-pkcs11 fork as git submodule (`python-pkcs11/`) with fixes: GCM IV restriction removed, CKM_EC_MONTGOMERY_KEY_PAIR_GEN, CKK_EC_MONTGOMERY, CKM_RSA_AES_KEY_WRAP, v3.0 mechanisms (HKDF, SP800-108, XEDDSA, ChaCha20, Poly1305, Salsa20, DSA-SHA3, ECDSA-SHA3, SHA-512/224, SHA-512/256, AES-XTS, ECDH-AES-KEY-WRAP)
 - Test cases are native pytest tests with custom fixtures (p11_session, p11_module)
 - Tests auto-skip when interface version doesn't support them (@pytest.mark.requires_v30)
 - Wycheproof vectors use `xfail` for module limitations (not hard failures)
