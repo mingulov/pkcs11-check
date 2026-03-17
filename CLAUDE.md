@@ -41,8 +41,8 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 ## Architecture
 
 ### Two test directories
-- `src/p11test/testcases/` — the PRODUCT: ~1,400+ PKCS#11 tests run against hardware/software modules
-- `tests/` — META-TESTS: tests for p11test's own code (config parsing, markers, CLI)
+- `src/p11test/testcases/` — the PRODUCT: 15,776 PKCS#11 tests (14,662 passing on SoftHSM2)
+- `tests/` — META-TESTS: 37 tests for p11test's own code (config parsing, markers, CLI)
 
 ### Core modules
 - `core/loader.py` — PKCS#11 module loading (v2.40 via python-pkcs11, v3.x planned)
@@ -55,15 +55,28 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 - `fixtures.py` — p11_session, p11_module, p11_config, p11_interface_version
 - `cli/app.py` — typer app, routes to test/info/list/version subcommands
 
-### Test categories (29 test files)
+### Test categories (46 test files)
 - Core: interface, slot, object, mechanism, encrypt, sign, digest, errors
 - Cross-verification: AES-ECB/GCM, RSA PKCS/PSS/OAEP, ECDSA P-256/384/521, EdDSA, HMAC, digest
 - NIST KAT: SHA-1/224/256/384/512, AES-ECB from SP 800-38A
-- Wycheproof: ~1,200 edge-case vectors (GCM, HMAC, ECDSA, AES-CBC-PKCS5)
+- Wycheproof (15,473 vectors across 12 files):
+  - ECDSA: P-224/256/384/521 × SHA-224/256/384/512 (3,579)
+  - RSA PKCS#1 v1.5 signatures: 2048/3072/4096 × SHA-224/256/384/512 (2,588)
+  - RSA-PSS: 2048/3072/4096 × SHA-1/224/256/384/512, proper PSS params (1,153)
+  - ECDH: P-256/384/521 raw key agreement (1,806)
+  - DSA: 2048/3072 × SHA-224/256 DER signatures (1,432)
+  - AES: CMAC (311), Key Wrap (165), KWP (254), CCM (552) (1,282)
+  - General: AES-GCM, AES-CBC, HMAC-SHA256, ECDSA base (1,949)
+  - HMAC: SHA-1/224/384/512 (690)
+  - ChaCha20-Poly1305 (325, module-dependent)
+  - RSA-OAEP: 2048/3072/4096 with proper OAEP params (318)
+  - RSA PKCS#1 v1.5 decryption: padding oracle vectors (201)
+  - Ed25519: signature verification (150)
 - Key management: import, export, copy, wrap/unwrap, derive
 - Security: API attacks, padding oracle, ECDSA nonce quality, RNG statistics
 - Standards: buffer boundaries, access control, session lifecycle, token flags
 - Stress: 1000-cycle operations, multi-session, resource safety
+- Fuzz: hypothesis property tests for AES, RSA, SHA roundtrips
 
 ### Docker test matrix (12 targets)
 Versioned releases:
@@ -85,7 +98,7 @@ Additional:
 - `test-qryptotoken` — qryptotoken (Rust PQC)
 
 ### Key design decisions
-- python-pkcs11 fork as git submodule (`python-pkcs11/`) with fixes: GCM IV restriction removed, CKM_EC_MONTGOMERY_KEY_PAIR_GEN added
+- python-pkcs11 fork as git submodule (`python-pkcs11/`) with fixes: GCM IV restriction removed, CKM_EC_MONTGOMERY_KEY_PAIR_GEN, CKK_EC_MONTGOMERY, CKM_RSA_AES_KEY_WRAP, v3.0 mechanisms (HKDF, SP800-108, XEDDSA)
 - Test cases are native pytest tests with custom fixtures (p11_session, p11_module)
 - Tests auto-skip when interface version doesn't support them (@pytest.mark.requires_v30)
 - Wycheproof vectors use `xfail` for module limitations (not hard failures)
