@@ -5,8 +5,11 @@ Each task should pass on **SoftHSM2** (v2.40) and **Kryoptic** (v3.2) before bei
 
 ## Verification targets
 
-- **SoftHSM2 2.7.0**: `SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234 -q --benchmark-disable`
-- **Kryoptic 1.5.0**: `docker compose -f docker/docker-compose.test.yml run --rm test-kryoptic`
+- **SoftHSM2 2.6.1** (local, v2.40): `SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234 -q --benchmark-disable`
+- **SoftHSM2 2.7.0** (Docker, v2.40): `docker compose -f docker/docker-compose.test.yml run --rm test-softhsm2`
+- **Kryoptic 1.5.0** (Docker, v3.2): `docker compose -f docker/docker-compose.test.yml run --rm test-kryoptic`
+
+Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source (latest release).
 
 ---
 
