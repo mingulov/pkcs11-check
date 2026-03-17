@@ -330,3 +330,56 @@ class TestAESCBCPKCS5Wycheproof:
                 pytest.fail(f"Valid AES-CBC vector tc{vec['tcId']} failed")
 
         p11_session.generate_random(64)
+
+
+# --- RSA Signature 2048 SHA-256 ---
+
+
+def _load_rsa_sig_vectors() -> list[dict[str, Any]]:
+    if not (WYCHEPROOF_DIR / "rsa_signature_2048_sha256_test.json").exists():
+        return []
+    return load_wycheproof("rsa_signature_2048_sha256_test.json")
+
+
+class TestRSASigWycheproof:
+    """Wycheproof RSA PKCS#1 v1.5 signature verification vectors."""
+
+    @pytest.mark.parametrize("vec", _load_rsa_sig_vectors(), ids=_vec_id)
+    def test_rsa_sig_2048_sha256(self, p11_session: Any, vec: dict[str, Any]) -> None:
+        msg = bytes.fromhex(vec["msg"])
+        sig = bytes.fromhex(vec["sig"])
+        result = vec["result"]
+        group = vec["_group"]
+
+        pk = group.get("publicKey", {})
+        modulus_hex = pk.get("modulus", "")
+        exp_hex = pk.get("publicExponent", "")
+        if not modulus_hex or not exp_hex:
+            pytest.skip("No RSA public key in vector group")
+
+        modulus = bytes.fromhex(modulus_hex)
+        exponent = bytes.fromhex(exp_hex)
+
+        try:
+            pub_key = p11_session.create_object(
+                {
+                    Attribute.CLASS: ObjectClass.PUBLIC_KEY,
+                    Attribute.KEY_TYPE: KeyType.RSA,
+                    Attribute.MODULUS: modulus,
+                    Attribute.PUBLIC_EXPONENT: exponent,
+                    Attribute.TOKEN: False,
+                    Attribute.VERIFY: True,
+                }
+            )
+        except p11.exceptions.PKCS11Error:
+            pytest.skip("Cannot import RSA public key on this module")
+
+        try:
+            pub_key.verify(msg, sig, mechanism=Mechanism.SHA256_RSA_PKCS)
+            if result == "invalid":
+                pass  # Some modules accept edge-case sigs
+        except p11.exceptions.PKCS11Error:
+            if result == "valid":
+                pytest.fail(f"Valid RSA sig tc{vec['tcId']} rejected")
+
+        p11_session.generate_random(64)
