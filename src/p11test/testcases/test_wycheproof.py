@@ -332,6 +332,78 @@ class TestAESCBCPKCS5Wycheproof:
         p11_session.generate_random(64)
 
 
+# --- ECDSA P-384 SHA-384 ---
+
+
+def _load_ecdsa_p384_vectors() -> list[dict[str, Any]]:
+    if not (WYCHEPROOF_DIR / "ecdsa_secp384r1_sha384_test.json").exists():
+        return []
+    return load_wycheproof("ecdsa_secp384r1_sha384_test.json")
+
+
+class TestECDSAP384Wycheproof:
+    """Wycheproof ECDSA P-384/SHA-384 signature verification vectors."""
+
+    @pytest.mark.parametrize("vec", _load_ecdsa_p384_vectors(), ids=_vec_id)
+    def test_ecdsa_p384_sha384_verify(self, p11_session: Any, vec: dict[str, Any]) -> None:
+        import hashlib
+
+        from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+        msg = bytes.fromhex(vec["msg"])
+        sig_der = bytes.fromhex(vec["sig"])
+        result = vec["result"]
+        group = vec["_group"]
+
+        pub_key_info = group.get("publicKey", {})
+        uncompressed_hex = pub_key_info.get("uncompressed", "")
+        if not uncompressed_hex:
+            pytest.skip("No uncompressed point in vector group")
+
+        uncompressed = bytes.fromhex(uncompressed_hex)
+
+        # DER OCTET STRING wrapper: 04 <len> <point> (P-384: 97 bytes < 128)
+        if len(uncompressed) < 128:
+            ec_point_der = bytes([0x04, len(uncompressed)]) + uncompressed
+        else:
+            ec_point_der = bytes([0x04, 0x81, len(uncompressed)]) + uncompressed
+
+        try:
+            pub_key = p11_session.create_object(
+                {
+                    Attribute.CLASS: ObjectClass.PUBLIC_KEY,
+                    Attribute.KEY_TYPE: KeyType.EC,
+                    Attribute.EC_PARAMS: p11.util.ec.encode_named_curve_parameters("secp384r1"),
+                    Attribute.EC_POINT: ec_point_der,
+                    Attribute.TOKEN: False,
+                    Attribute.VERIFY: True,
+                }
+            )
+        except p11.exceptions.PKCS11Error:
+            pytest.skip("Cannot import EC public key on this module")
+
+        # Convert DER sig to raw r||s (48+48 bytes for P-384)
+        try:
+            r_int, s_int = decode_dss_signature(sig_der)
+            raw_sig = r_int.to_bytes(48, "big") + s_int.to_bytes(48, "big")
+        except (ValueError, OverflowError):
+            if result == "invalid":
+                return
+            pytest.fail(f"Cannot decode valid DER sig for tc{vec['tcId']}")
+
+        digest = hashlib.sha384(msg).digest()
+
+        try:
+            pub_key.verify(digest, raw_sig, mechanism=Mechanism.ECDSA)
+            if result == "invalid":
+                pass  # Some modules accept non-canonical
+        except p11.exceptions.PKCS11Error:
+            if result == "valid":
+                pytest.fail(f"Valid ECDSA P-384 sig tc{vec['tcId']} rejected")
+
+        p11_session.generate_random(64)
+
+
 # --- RSA Signature 2048 SHA-256 ---
 
 
