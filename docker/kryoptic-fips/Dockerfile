@@ -36,11 +36,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 git gcc python3-dev libssl-dev opensc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the built .so — use RUN to handle missing file gracefully
+# Copy Kryoptic .so and the custom OpenSSL 4.0 libs it links against
 RUN --mount=from=builder,source=/build/kryoptic/target/release,target=/tmp/kryoptic-build \
-    cp /tmp/kryoptic-build/libkryoptic_pkcs11.so /usr/lib/ 2>/dev/null && \
+    cp /tmp/kryoptic-build/libkryoptic_pkcs11.so /usr/lib/ 2>/dev/null; \
     cp /tmp/kryoptic-build/libkryoptic_pkcs11.so.hmac /usr/lib/ 2>/dev/null; \
-    ls -lh /usr/lib/libkryoptic* 2>/dev/null || echo "WARNING: Kryoptic FIPS .so not found"
+    ls -lh /usr/lib/libkryoptic* 2>/dev/null || echo "WARNING: .so not found"
+# Copy OpenSSL 4.0 libs for FIPS runtime
+RUN --mount=from=builder,source=/build/openssl,target=/tmp/ossl \
+    cp /tmp/ossl/libssl.so* /tmp/ossl/libcrypto.so* /usr/lib/ 2>/dev/null; \
+    ldconfig 2>/dev/null || true
 
 RUN mkdir -p /var/lib/kryoptic /etc/kryoptic && \
     printf '[[slots]]\nslot = 1\ndbtype = "sqlite"\ndbargs = "/var/lib/kryoptic/token.sql"\n' \
