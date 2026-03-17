@@ -35,10 +35,10 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 - [x] **3.2** Object visibility across sessions — create in session A, find in session B (same token) [covered by 3.1]
 - [x] **3.3** Attribute sensitivity enforcement — read CKA_VALUE on SENSITIVE=True key, must return error
 - [x] **3.4** Key usage policy enforcement — use encrypt-only key for signing, must fail
-- [ ] **3.5** Mechanism parameter fuzzing — random bytes as mechanism_param, must not crash (segfault survival)
-- [ ] **3.6** Large object stress — 1MB CKO_DATA, 100KB random generation, very large plaintext encrypt
-- [ ] **3.7** Session exhaustion — open sessions until CKR_SESSION_COUNT, verify graceful error
-- [ ] **3.8** Duplicate label handling — two objects with same label, search returns both
+- [x] **3.5** Mechanism parameter fuzzing — random bytes as mechanism_param, must not crash (segfault survival)
+- [x] **3.6** Large object stress — 1MB CKO_DATA, 100KB random generation, very large plaintext encrypt
+- [x] **3.7** Session exhaustion — open sessions until CKR_SESSION_COUNT, verify graceful error
+- [x] **3.8** Duplicate label handling — two objects with same label, search returns both
 - [ ] **3.9** Slot re-initialization — C_Finalize + C_Initialize cycle, verify clean state
 - [ ] **3.10** CKR return code coverage — map all standard CKR codes, verify we trigger each reachable one
 
