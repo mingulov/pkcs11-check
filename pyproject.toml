@@ -17,6 +17,7 @@ dependencies = [
     "psutil>=5.9",
     "pytest>=8.0",
     "pytest-xdist>=3.5",
+    "pytest-timeout>=2.3",
     "cryptography>=46.0.5",
 ]
 
@@ -68,6 +69,7 @@ ignore_errors = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+timeout = 300
 
 [dependency-groups]
 dev = [
