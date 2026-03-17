@@ -11,7 +11,6 @@ adjustment per-module.
 from __future__ import annotations
 
 import json
-import struct
 from pathlib import Path
 from typing import Any
 
@@ -87,13 +86,13 @@ def test_chacha20_poly1305(
     except (p11.exceptions.PKCS11Error, AttributeError):
         pytest.skip("Cannot import ChaCha20 key")
 
-    # CK_SALSA20_CHACHA20_POLY1305_PARAMS contains nonce and AAD
-    # Pass as raw bytes: nonce_len(4) + nonce + aad_len(4) + aad
-    mechanism = Mechanism.CHACHA20_POLY1305
-    raw_params = struct.pack("<I", len(iv)) + iv + struct.pack("<I", len(aad)) + aad
-
+    # CK_SALSA20_CHACHA20_POLY1305_PARAMS: (nonce, aad)
     try:
-        ciphertext = key.encrypt(msg, mechanism=mechanism, mechanism_param=raw_params)
+        ciphertext = key.encrypt(
+            msg,
+            mechanism=Mechanism.CHACHA20_POLY1305,
+            mechanism_param=(iv, aad),
+        )
         if result == "valid":
             assert ciphertext == ct_expected + tag_expected
     except (p11.exceptions.PKCS11Error, AttributeError, TypeError):
