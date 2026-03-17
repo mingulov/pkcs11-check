@@ -44,8 +44,8 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 
 ## Tier 4 — Module Differential & Reporting
 
-- [ ] **4.1** Cross-module differential — same test on SoftHSM2 vs Kryoptic, flag behavioral differences (deferred: infrastructure task)
-- [ ] **4.2** Module mechanism matrix report — generate CSV: module × mechanism × pass/skip/fail/xfail (deferred: infrastructure task)
+- [x] **4.1** Cross-module differential — same test on SoftHSM2 vs Kryoptic, flag behavioral differences
+- [x] **4.2** Module mechanism matrix report — generate CSV: module × mechanism × pass/skip/fail/xfail
 - [x] **4.3** Vendor extension detection — probe CKM_VENDOR_DEFINED range for hidden mechanisms
 - [x] **4.4** FIPS mode detection — check CKF_FIPS_APPROVED flag, adjust test expectations
 
