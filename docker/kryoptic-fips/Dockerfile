@@ -1,12 +1,11 @@
 # Kryoptic FIPS — main branch with FIPS+PQC features
-# Uses simo5/openssl kryoptic_ossl40 branch (OpenSSL 4.0 fork for Kryoptic)
-# Based on rust-cryptoki CI: github.com/parallaxsecond/rust-cryptoki/pull/362
+# Uses simo5/openssl kryoptic_ossl40 branch (OpenSSL 4.0 fork)
+# Matches: github.com/parallaxsecond/rust-cryptoki/pull/362
 
 FROM rust:latest AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git pkg-config libssl-dev clang make \
-    perl sed \
+    git pkg-config libssl-dev clang make perl \
     && rm -rf /var/lib/apt/lists/*
 
 # Build OpenSSL 4.0 (simo5 fork for Kryoptic FIPS)
@@ -16,51 +15,46 @@ WORKDIR /build/openssl
 RUN ./Configure no-docs no-tests && make -j$(nproc)
 
 # Build Kryoptic from main with FIPS+PQC
-ENV OPENSSL_DIR=/build/openssl
-ENV OPENSSL_LIB_DIR=/build/openssl
-ENV OPENSSL_INCLUDE_DIR=/build/openssl/include
-ENV OPENSSL_STATIC=0
+# Key: KRYOPTIC_OPENSSL_SOURCES is the env var Kryoptic's build.rs uses
+ENV KRYOPTIC_OPENSSL_SOURCES=/build/openssl
 RUN git clone --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
 WORKDIR /build/kryoptic
-# Build with FIPS+PQC, show any errors
-RUN cargo build --release --no-default-features --features "fips,pqc" 2>&1; \
-    echo "=== Build artifacts ===" && \
-    find target/release -maxdepth 1 -name "*.so" 2>/dev/null && \
-    if [ -f misc/hmacify.sh ] && [ -f target/release/libkryoptic_pkcs11.so ]; then \
-      ./misc/hmacify.sh target/release/libkryoptic_pkcs11.so 2>&1 || true; \
+RUN cargo build -vv --no-default-features --features "fips,pqc" 2>&1 | tail -10 && \
+    ls -lh target/debug/libkryoptic_pkcs11.so && \
+    if [ -f misc/hmacify.sh ]; then \
+      ./misc/hmacify.sh target/debug/libkryoptic_pkcs11.so 2>&1; \
     fi
 
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 git gcc python3-dev libssl-dev opensc \
+    git gcc python3-dev libssl-dev opensc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Kryoptic .so and the custom OpenSSL 4.0 libs it links against
-RUN --mount=from=builder,source=/build/kryoptic/target/release,target=/tmp/kryoptic-build \
-    cp /tmp/kryoptic-build/libkryoptic_pkcs11.so /usr/lib/ 2>/dev/null; \
-    cp /tmp/kryoptic-build/libkryoptic_pkcs11.so.hmac /usr/lib/ 2>/dev/null; \
-    ls -lh /usr/lib/libkryoptic* 2>/dev/null || echo "WARNING: .so not found"
-# Copy OpenSSL 4.0 libs for FIPS runtime
-RUN --mount=from=builder,source=/build/openssl,target=/tmp/ossl \
-    cp /tmp/ossl/libssl.so* /tmp/ossl/libcrypto.so* /usr/lib/ 2>/dev/null; \
-    ldconfig 2>/dev/null || true
+# Copy Kryoptic FIPS module + OpenSSL 4.0 runtime libs
+COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so /usr/lib/
+COPY --from=builder /build/openssl/libcrypto.so.4 /usr/lib/
+COPY --from=builder /build/openssl/libssl.so.4 /usr/lib/
+RUN ldconfig
+
+# Copy HMAC file from builder (COPY is byte-exact, so HMAC should match)
+COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so.hmac /usr/lib/
 
 RUN mkdir -p /var/lib/kryoptic /etc/kryoptic && \
     printf '[[slots]]\nslot = 1\ndbtype = "sqlite"\ndbargs = "/var/lib/kryoptic/token.sql"\n' \
     > /etc/kryoptic/token.conf
 ENV KRYOPTIC_CONF=/etc/kryoptic/token.conf
 
-# Token init may fail if FIPS .so needs runtime OpenSSL 4.0 — defer to CMD
-RUN pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
+# Init token — may need LD_LIBRARY_PATH for OpenSSL 4.0
+RUN LD_LIBRARY_PATH=/usr/lib pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
     --init-token --label "p11test" --so-pin 12345678 2>&1 && \
-    pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
+    LD_LIBRARY_PATH=/usr/lib pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
     --init-pin --pin 1234 --so-pin 12345678 2>&1 || \
-    echo "Token init deferred — FIPS module may need runtime OpenSSL"
+    echo "Token init needs runtime fix"
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 COPY . .
 RUN uv sync --frozen
 
-CMD ["sh", "-c", "echo 'Kryoptic FIPS (main + OpenSSL 4.0):' && uv run pytest src/p11test/testcases/ --p11-module=/usr/lib/libkryoptic_pkcs11.so --p11-pin=1234 -q --tb=no"]
+CMD ["sh", "-c", "echo 'Kryoptic FIPS (main + OpenSSL 4.0):' && LD_LIBRARY_PATH=/usr/lib uv run pytest src/p11test/testcases/ --p11-module=/usr/lib/libkryoptic_pkcs11.so --p11-pin=1234 -q --tb=no"]
