@@ -101,9 +101,9 @@ One file per operation family. After each pair, validate on both tokens.
 - [x] **3.1** Add `CKR_KEYGEN` entries. Create `test_ckr_keygen.py` — bad key size, template incomplete, template inconsistent, invalid attribute type/value, attribute read-only, curve not supported, domain params invalid, session read-only. Verify on both tokens.
 - [x] **3.2** Add `CKR_WRAP` entries. Create `test_ckr_wrap.py` — key unextractable, key not wrappable, wrapping key type inconsistent, wrong mechanism, wrapped key invalid on unwrap, wrapped key len range. Verify on both tokens.
 - [x] **3.3** Add `CKR_DERIVE` entries. Create `test_ckr_derive.py` — base key type inconsistent, template incomplete, domain params invalid, mechanism invalid. Verify on both tokens.
-- [ ] **3.4** Add `CKR_KEM` entries. Create `test_ckr_kem.py` — key missing CKA_ENCAPSULATE/DECAPSULATE, key type inconsistent, ciphertext invalid. Mark `@pytest.mark.requires_v32`. **KEM is v3.2 only — verify on Kryoptic only. SoftHSM2 and NSS don't support KEM, skip them for this task.** Use ML-KEM-768 parameter set. See `test_kem.py` for existing KEM test patterns.
+- [x] **3.4** Add `CKR_KEM` entries. Create `test_ckr_kem.py` — key missing CKA_ENCAPSULATE/DECAPSULATE, key type inconsistent, ciphertext invalid. Mark `@pytest.mark.requires_v32`. **KEM is v3.2 only — verify on Kryoptic only. SoftHSM2 and NSS don't support KEM, skip them for this task.** Use ML-KEM-768 parameter set. See `test_kem.py` for existing KEM test patterns.
 - [x] **3.5** Add `CKR_OBJECT` entries. Create `test_ckr_object.py` — missing CKA_CLASS, conflicting attrs, action prohibited (CKA_COPYABLE/MODIFIABLE/DESTROYABLE=False), get sensitive value, set read-only attr, object handle invalid, find not initialized. Verify on both tokens.
-- [ ] **3.6** Validation checkpoint — CKR suite on SoftHSM2 + Kryoptic + NSS softokn + Docker OpenCryptoki. Fix regressions. Update pass counts.
+- [x] **3.6** Validation checkpoint — SoftHSM2: 78p/0f/6s. Kryoptic: 80p/0f/3s/1x. NSS: 72p/5f(expected)/7s. OpenCryptoki: 77p/0f/6s. Zero regressions on all 4 targets.
 
 ## Tier 4 — Session, Slot, Token, General
 
