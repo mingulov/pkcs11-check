@@ -54,8 +54,10 @@ Updated as Docker targets are analyzed.
 | ~7 | EdDSA | Ed25519 signing failures — needs investigation |
 | ~27 | Other | AEAD, key flags, mechanism fuzz, etc. — per-file analysis needed (task 2.3) |
 
-### Compliance deviations
-- **CKR_USER_TYPE_INVALID on re-login**: NSS returns `CKR_USER_TYPE_INVALID` (0x103) instead of `CKR_USER_ALREADY_LOGGED_IN` (0x100) when `C_Login(CKU_USER)` is called while already logged in. Per PKCS#11 v3.0 spec, the correct return is `CKR_USER_ALREADY_LOGGED_IN`.
+### Known quirks
+- **Read-only crypto services token**: NSS's default slot ("NSS Generic Crypto Services") is read-only. Cannot create objects, generate keys, or store tokens. Tests requiring RW access should skip.
+- **No PIN/login on crypto services slot**: The default slot does not support `C_Login` — returns `CKR_USER_TYPE_INVALID` when login is attempted. This is correct behavior for a public token that doesn't have login semantics.
+- **Two slots**: NSS exposes 2 slots. Slot 0 is the crypto services slot (read-only), slot 1 may be an NSS internal database slot.
 
 ---
 
