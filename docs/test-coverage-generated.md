@@ -1,6 +1,6 @@
 # Test Coverage Report (Auto-Generated)
 
-Generated from 88 test files, 604 test functions.
+Generated from 89 test files, 612 test functions.
 
 ## Mechanism Coverage
 
@@ -78,7 +78,7 @@ Generated from 88 test files, 604 test functions.
 
 | Key Type | Test Files |
 |----------|------------|
-| AES | access, access_control, aead, api_security, authenticated_wrap, benchmark, buffers, ckr_codes, concurrent_sessions, dh_key_agreement, duplicate_labels, encrypt, errors, fuzz, interface, interface_negotiation, kem, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, object_size, padding_oracle, pin, reinitialize, resource, rsa_key_wrapping, search, sensitivity, session_exhaustion, session_info, set_attribute, so_pin, stateful, stress, surface_audit, token_objects, wycheproof, wycheproof_aes |
+| AES | access, access_control, aead, api_security, authenticated_wrap, benchmark, buffers, ckr_codes, concurrent_sessions, dh_key_agreement, duplicate_labels, encrypt, errors, fuzz, interface, interface_negotiation, kem, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, object_search_patterns, object_size, padding_oracle, pin, reinitialize, resource, rsa_key_wrapping, search, sensitivity, session_exhaustion, session_info, set_attribute, so_pin, stateful, stress, surface_audit, token_objects, wycheproof, wycheproof_aes |
 | AES_XTS | wycheproof_aes |
 | CHACHA20 | wycheproof_chacha |
 | DH | dh_key_agreement |
@@ -89,7 +89,7 @@ Generated from 88 test files, 604 test functions.
 | GENERIC_SECRET | crossverify, ecdh_known_answer, generic_secret, interop, kdf, kem, keymgmt, sign, surface_audit, wycheproof, wycheproof_aes, wycheproof_ecdh, wycheproof_hkdf, wycheproof_hmac, wycheproof_pbkdf2, wycheproof_x25519 |
 | ML_DSA | pqc_sign, wycheproof_mldsa |
 | ML_KEM | kem |
-| RSA | access, api_security, benchmark, buffers, crossverify, crossverify_extended, encrypt, errors, fuzz, interop, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, keypair_consistency, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, object_size, padding_oracle, resource, rsa_key_import, rsa_key_wrapping, rsa_oaep, search, sensitivity, set_attribute, sign, stress, surface_audit, wycheproof, wycheproof_rsa, wycheproof_rsa_decrypt, wycheproof_rsa_oaep, wycheproof_rsa_pss |
+| RSA | access, api_security, benchmark, buffers, crossverify, crossverify_extended, encrypt, errors, fuzz, interop, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, keypair_consistency, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, object_search_patterns, object_size, padding_oracle, resource, rsa_key_import, rsa_key_wrapping, rsa_oaep, search, sensitivity, set_attribute, sign, stress, surface_audit, wycheproof, wycheproof_rsa, wycheproof_rsa_decrypt, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA224_HMAC | wycheproof_hmac |
 | SHA256_HMAC | crossverify, fuzz, generic_secret, kdf, multipart_streaming, wycheproof |
 | SHA384_HMAC | wycheproof_hmac |
@@ -152,6 +152,7 @@ Generated from 88 test files, 604 test functions.
 | test_multipart_streaming | 7 | multipart |
 | test_nonce_quality | 4 | security |
 | test_object | 16 | keymgmt |
+| test_object_search_patterns | 8 | keymgmt |
 | test_object_size | 3 | keymgmt |
 | test_operation_state | 3 | access |
 | test_padding_oracle | 4 | security |
@@ -196,4 +197,4 @@ Generated from 88 test files, 604 test functions.
 | test_wycheproof_rsa_pss | 1 | wycheproof |
 | test_wycheproof_x25519 | 1 | wycheproof |
 
-**Total: 88 files, 604 test functions**
+**Total: 89 files, 612 test functions**
