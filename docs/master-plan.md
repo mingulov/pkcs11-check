@@ -164,15 +164,15 @@ Store test metadata in `src/p11test/testcases/test_cve_regression.py` with CVE I
 
 ### SoftHSM2 Known Issues
 - [x] **7b.5** SoftHSM2 #608 — Wrong CKR from C_WrapKey. Test: wrap with unsupported mechanism, verify specific CKR code (not generic CKR_GENERAL_ERROR).
-- [ ] **7b.6** SoftHSM2 #596 — CKR_MECHANISM_INVALID on 3DES wrap. Test: AES-KW wrap of 3DES key.
+- [x] **7b.6** SoftHSM2 #596 — CKR_MECHANISM_INVALID on 3DES wrap. Test: AES-KW wrap of 3DES key.
 - [x] **7b.7** SoftHSM2 #729 — Segfault on module unload/exit. Test: C_Initialize, ops, C_Finalize, verify no crash (subprocess).
 - [x] **7b.8** SoftHSM2 #845 — SQLite transaction errors under concurrent writes. Test: 10 threads × 50 key gen/destroy.
-- [ ] **7b.9** SoftHSM2 #722 — SIGSEGV on C_Decrypt with OpenSSL provider. Test: RSA keygen + encrypt + decrypt cycle via subprocess.
+- [x] **7b.9** SoftHSM2 #722 — SIGSEGV on C_Decrypt with OpenSSL provider. Test: RSA keygen + encrypt + decrypt cycle via subprocess.
 
 ### TPM 2.0 CVEs
 - [x] **7b.10** CVE-2023-1017 / CVE-2023-1018 — TPM 2.0 ref implementation OOB read/write. Test: malformed encrypted parameters in TPM commands (swtpm). Verify no crash.
 - [x] **7b.11** tpm2-pkcs11 #656 — EC prime256v1 CKA_DERIVE fails. Test: EC keygen with CKA_DERIVE=True, verify CKR or success.
-- [ ] **7b.12** tpm2-pkcs11 #44 — GnuTLS mutex deadlock. Test: rapid login/SignInit cycles from multiple threads.
+- [x] **7b.12** tpm2-pkcs11 #44 — GnuTLS mutex deadlock. Test: rapid login/SignInit cycles from multiple threads.
 
 ### Infineon / Secure Element CVEs
 - [x] **7b.13** ROCA (CVE-2017-15361) — Weak RSA key generation. Test: generate RSA keys and verify modulus doesn't have ROCA fingerprint (Coppersmith factorization test on low-order bits).

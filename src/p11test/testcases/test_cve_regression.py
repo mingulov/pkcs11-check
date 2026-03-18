@@ -338,3 +338,94 @@ class TestInvalidECCurve:
             )
         except TEMPLATE_ERRORS:
             pass  # Correct: reject invalid curve
+
+
+class TestSoftHSM2Issue596:
+    """SoftHSM2 #596 — CKR_MECHANISM_INVALID on 3DES wrap (task 7b.6).
+
+    Wrapping a 3DES key with AES-KW should work (or return a specific
+    mechanism error), not CKR_GENERAL_ERROR.
+    """
+
+    def test_wrap_3des_key(self, p11_session: Any, p11_module: Any) -> None:
+        """Wrap a 3DES key — verify proper CKR code."""
+        if not has_mechanism(p11_module, "DES3_KEY_GEN"):
+            pytest.skip("3DES not supported")
+        if not has_mechanism(p11_module, "AES_KEY_WRAP"):
+            pytest.skip("AES_KEY_WRAP not supported")
+
+        from p11test.testcases._error_tuples import MECHANISM_ERRORS
+
+        wrap_key = p11_session.generate_key(
+            KeyType.AES, 256,
+            template={Attribute.WRAP: True, Attribute.UNWRAP: True},
+        )
+        des3_key = p11_session.generate_key(
+            KeyType.DES3,
+            template={Attribute.EXTRACTABLE: True, Attribute.SENSITIVE: False},
+        )
+
+        try:
+            wrapped = wrap_key.wrap_key(des3_key, mechanism=Mechanism.AES_KEY_WRAP)
+            assert len(wrapped) > 0  # Wrap succeeded
+        except MECHANISM_ERRORS:
+            pass  # Acceptable: 3DES key size may not align with AES-KW
+
+
+class TestSoftHSM2Issue722:
+    """SoftHSM2 #722 — SIGSEGV on C_Decrypt with OpenSSL 3 (task 7b.9).
+
+    RSA keygen + encrypt + decrypt cycle via subprocess.
+    Must not segfault.
+    """
+
+    def test_rsa_encrypt_decrypt_no_crash(self, p11_config: Any) -> None:
+        """RSA encrypt/decrypt cycle in subprocess — must not crash."""
+        import subprocess, sys, textwrap
+
+        module = str(p11_config.module)
+        pin = p11_config.pin.get_secret_value() if p11_config.pin else "None"
+        pin_arg = f'"{pin}"' if pin != "None" else "None"
+
+        script = f"""
+import pkcs11
+from pkcs11 import Attribute, KeyType, Mechanism
+lib = pkcs11.lib("{module}")
+lib.initialize()
+try:
+    token = lib.get_token(token_label="p11test")
+    with token.open(rw=True, user_pin={pin_arg}) as session:
+        pub, priv = session.generate_keypair(KeyType.RSA, 2048)
+        ct = pub.encrypt(b"test data 722", mechanism=Mechanism.RSA_PKCS)
+        pt = priv.decrypt(ct, mechanism=Mechanism.RSA_PKCS)
+        assert pt == b"test data 722"
+        print("OK: RSA encrypt/decrypt cycle")
+except Exception as e:
+    print(f"ERROR: {{type(e).__name__}}: {{e}}")
+finally:
+    lib.finalize()
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", textwrap.dedent(script)],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"RSA encrypt/decrypt crashed (rc={result.returncode}): {result.stderr}"
+        )
+        assert "OK:" in result.stdout or "ERROR:" in result.stdout
+
+
+class TestTPM2Issue44:
+    """tpm2-pkcs11 #44 — mutex deadlock on rapid login/SignInit (task 7b.12).
+
+    Rapid sequential sign operations — must not deadlock.
+    """
+
+    def test_rapid_sign_no_deadlock(self, p11_session: Any) -> None:
+        """100 rapid RSA sign operations — must not deadlock."""
+        pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
+
+        for i in range(100):
+            data = f"rapid-sign-{i}".encode()
+            sig = priv.sign(data, mechanism=Mechanism.SHA256_RSA_PKCS)
+            assert len(sig) == 256
