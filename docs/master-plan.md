@@ -118,12 +118,12 @@ These tests catch real production crashes and security issues that normal test s
 - [ ] **7.7** Stale session handles — C_CloseSession then reuse handle for C_FindObjects, C_Sign, etc. Must return CKR_SESSION_HANDLE_INVALID.
 - [ ] **7.8** C_CloseAllSessions during active ops — start multipart encrypt, call C_CloseAllSessions, verify no crash and proper cleanup.
 - [ ] **7.9** Multipart CKR_BUFFER_TOO_SMALL — C_EncryptUpdate with too-small output buffer. Verify correct CKR and operation can continue (Kryoptic #179).
-- [ ] **7.10** Default tool templates — test with pkcs11-tool default templates (CKA_WRAP+CKA_DECRYPT together, CKA_SIGN+CKA_VERIFY+CKA_ENCRYPT). Verify no security policy violations.
-- [ ] **7.11** C_FindObjects with concurrent modifications — search while another session creates/destroys objects. Must not crash or return invalid handles.
+- [x] **7.10** Default tool templates — test with pkcs11-tool default templates (CKA_WRAP+CKA_DECRYPT together, CKA_SIGN+CKA_VERIFY+CKA_ENCRYPT). Verify no security policy violations.
+- [x] **7.11** C_FindObjects with concurrent modifications — search while another session creates/destroys objects. Must not crash or return invalid handles.
 
 ### Priority 3 — Robustness & Interop
 
-- [ ] **7.12** DB stress under concurrent writes — 10 threads × 100 key gen+destroy cycles simultaneously. Verify no SQLite transaction errors (SoftHSM #845), no leaked objects.
+- [x] **7.12** DB stress under concurrent writes — 10 threads × 100 key gen+destroy cycles simultaneously. Verify no SQLite transaction errors (SoftHSM #845), no leaked objects.
 - [ ] **7.13** Resource exhaustion — open sessions until CKR_SESSION_COUNT, generate keys until CKR_DEVICE_MEMORY, create objects until storage full. Verify graceful errors, no crash, recovery after cleanup.
 - [ ] **7.14** v2.40 + v3.0 attribute mix — create object with v3.2-only attributes (CKA_ENCAPSULATE, CKA_PARAMETER_SET) on v2.40 module. Verify CKR_ATTRIBUTE_TYPE_INVALID, not crash (BouncyHSM segfault root cause).
 - [x] **7.15** Library reload cycle — dlopen, C_Initialize, ops, C_Finalize, dlclose, dlopen again. 10 cycles. Verify no leak, no crash. Test via subprocess.
