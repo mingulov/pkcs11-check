@@ -10,3 +10,4 @@ build/
 .venv/
 .hypothesis/
 .claude/*.local.md
+results/
