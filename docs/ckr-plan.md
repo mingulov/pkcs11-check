@@ -15,9 +15,10 @@ Each task is designed to be completed in **one iteration** of the Ralph loop.
 ### Quick reference
 
 ```bash
-# Test CKR suite only
+# Test CKR suite only (fast validation — run after every change)
 bash local-builds/test.sh softhsm2 -k "ckr" -v
 bash local-builds/test.sh kryoptic -k "ckr" -v
+bash local-builds/test.sh nss-softokn -k "ckr" -v    # NSS slot 0, no PIN
 
 # Full suite (verify no regressions)
 bash local-builds/test.sh softhsm2 -q
@@ -25,11 +26,33 @@ bash local-builds/test.sh kryoptic -q
 
 # Strict mode
 bash local-builds/test.sh softhsm2 -k "ckr" --ckr-strict -v
+
+# Docker OpenCryptoki — CKR only (slow, run at checkpoints)
+docker compose -f docker/docker-compose.test.yml run --rm test-opencryptoki sh -c \
+  'pkcsslotd && sleep 2 && \
+   echo "p11test" | pkcsconf -I -c 0 -S 87654321 2>&1 || true && \
+   printf "87654321\n1234\n1234\n" | pkcsconf -u -c 0 2>&1 || true && \
+   uv run pytest src/p11test/testcases/ckr/ \
+     --p11-module=/usr/lib64/pkcs11/libopencryptoki.so \
+     --p11-pin=1234 -v --tb=line --timeout=60; \
+   RC=$?; killall pkcsslotd 2>/dev/null; exit $RC'
 ```
 
 ## Completion promise
 
-All tasks marked `[x]` and zero regressions on SoftHSM2 + Kryoptic (local builds).
+All tasks marked `[x]` and zero regressions on SoftHSM2 + Kryoptic + NSS softokn (local builds).
+
+### Validation targets
+
+| Target | Type | When | Command |
+|--------|------|------|---------|
+| SoftHSM2 | Local | Every change | `bash local-builds/test.sh softhsm2 -k "ckr" -v` |
+| Kryoptic | Local | Every change | `bash local-builds/test.sh kryoptic -k "ckr" -v` |
+| NSS softokn | Local | Every change | `bash local-builds/test.sh nss-softokn -k "ckr" -v` |
+| OpenCryptoki | Docker | Checkpoints (3.6, 4.6, 5.3, 8.x) | See quick reference above |
+
+**NSS softokn notes:** Uses slot 0 (crypto services, no PIN). PIN/login tests will skip — this is expected. 72/79 pass baseline.
+**OpenCryptoki notes:** Docker only (needs pkcsslotd). Slow — run only at validation checkpoints. Rebuild image before testing: `docker compose -f docker/docker-compose.test.yml build test-opencryptoki`.
 
 ---
 
@@ -64,25 +87,25 @@ One file per operation family. After each pair, validate on both tokens.
 
 - [x] **3.1** Add `CKR_KEYGEN` entries. Create `test_ckr_keygen.py` — bad key size, template incomplete, template inconsistent, invalid attribute type/value, attribute read-only, curve not supported, domain params invalid, session read-only. Verify on both tokens.
 - [x] **3.2** Add `CKR_WRAP` entries. Create `test_ckr_wrap.py` — key unextractable, key not wrappable, wrapping key type inconsistent, wrong mechanism, wrapped key invalid on unwrap, wrapped key len range. Verify on both tokens.
-- [ ] **3.3** Add `CKR_DERIVE` entries. Create `test_ckr_derive.py` — base key type inconsistent, template incomplete, domain params invalid, mechanism invalid. Verify on both tokens.
+- [x] **3.3** Add `CKR_DERIVE` entries. Create `test_ckr_derive.py` — base key type inconsistent, template incomplete, domain params invalid, mechanism invalid. Verify on both tokens.
 - [ ] **3.4** Add `CKR_KEM` entries. Create `test_ckr_kem.py` — key missing CKA_ENCAPSULATE/DECAPSULATE, key type inconsistent, ciphertext invalid. Mark `@pytest.mark.requires_v32`. Verify on Kryoptic (v3.2 support).
 - [x] **3.5** Add `CKR_OBJECT` entries. Create `test_ckr_object.py` — missing CKA_CLASS, conflicting attrs, action prohibited (CKA_COPYABLE/MODIFIABLE/DESTROYABLE=False), get sensitive value, set read-only attr, object handle invalid, find not initialized. Verify on both tokens.
-- [ ] **3.6** Validation checkpoint — full suite on both tokens. Fix regressions. Update pass counts.
+- [ ] **3.6** Validation checkpoint — CKR suite on SoftHSM2 + Kryoptic + NSS softokn + Docker OpenCryptoki. Fix regressions. Update pass counts.
 
 ## Tier 4 — Session, Slot, Token, General
 
 - [x] **4.1** Add `CKR_SESSION` entries. Create `test_ckr_session.py` — invalid slot ID, session count exhaustion, CKF_SERIAL_SESSION missing, login wrong PIN, login already logged in, login another user, logout not logged in, close invalid handle. Verify on both tokens.
-- [ ] **4.2** Add `CKR_SLOT_TOKEN` entries. Create `test_ckr_slot_token.py` — invalid slot ID for GetSlotInfo/GetTokenInfo/GetMechanismList/GetMechanismInfo, unsupported mechanism in GetMechanismInfo, WaitForSlotEvent non-blocking. Verify on both tokens.
+- [x] **4.2** Add `CKR_SLOT_TOKEN` entries. Create `test_ckr_slot_token.py` — invalid slot ID for GetSlotInfo/GetTokenInfo/GetMechanismList/GetMechanismInfo, unsupported mechanism in GetMechanismInfo, WaitForSlotEvent non-blocking. Verify on both tokens.
 - [ ] **4.3** Add `CKR_GENERAL` entries. Create `test_ckr_general.py` — double C_Initialize, C_Finalize when not initialized, GetInterfaceList. Run in subprocess (post-Finalize calls). Verify on both tokens.
-- [ ] **4.4** Add `CKR_RANDOM` entries. Create `test_ckr_random.py` — SeedRandom support check, GenerateRandom after seed. Verify on both tokens.
+- [x] **4.4** Add `CKR_RANDOM` entries. Create `test_ckr_random.py` — SeedRandom support check, GenerateRandom after seed. Verify on both tokens.
 - [ ] **4.5** Add `CKR_STATE` entries. Create `test_ckr_state.py` — GetOperationState with no active op, SetOperationState with invalid state, key needed/not needed. Verify on both tokens.
-- [ ] **4.6** Validation checkpoint — full suite on both tokens. Fix regressions. Update pass counts.
+- [ ] **4.6** Validation checkpoint — CKR suite on SoftHSM2 + Kryoptic + NSS softokn + Docker OpenCryptoki. Fix regressions. Update pass counts.
 
 ## Tier 5 — State Machine & Priority Tests
 
 - [ ] **5.1** Create `test_ckr_dual.py` — cross-operation state machine conflicts: EncryptInit then SignInit (OPERATION_ACTIVE), Encrypt without EncryptInit (OPERATION_NOT_INITIALIZED), EncryptUpdate after Encrypt (OPERATION_NOT_INITIALIZED), interleaved multipart operations. Verify on both tokens.
 - [ ] **5.2** Create `test_ckr_priority.py` — error priority ordering when 2+ conditions overlap: invalid handle + wrong mechanism (handle takes priority per spec), data len range + data invalid (len range takes priority), session handle invalid + operation not initialized (session takes priority). Verify on both tokens.
-- [ ] **5.3** Validation checkpoint — full CKR suite on both tokens. Record total CKR test count.
+- [ ] **5.3** Validation checkpoint — CKR suite on SoftHSM2 + Kryoptic + NSS softokn + Docker OpenCryptoki. Record total CKR test count.
 
 ## Tier 6 — ctypes NULL Parameter Tests
 
@@ -103,9 +126,11 @@ Run full CKR suite on every available target. Fix issues, document module deviat
 
 - [ ] **8.1** **SoftHSM2 2.7.0** — `bash local-builds/test.sh softhsm2 -k "ckr" -v`. Record results. Fix issues.
 - [ ] **8.2** **Kryoptic 1.5.0+PQC** — `bash local-builds/test.sh kryoptic -k "ckr" -v`. Record results. Fix issues.
-- [ ] **8.3** **pkcs11-mock 2.0.0** — `bash local-builds/test.sh pkcs11-mock -k "ckr" -v`. Record results (mock returns limited CKR set).
-- [ ] **8.4** **Strict mode audit** — run `bash local-builds/test.sh softhsm2 -k "ckr" --ckr-strict -v`. Record all compliance deviations. Run on Kryoptic too.
-- [ ] **8.5** Full suite regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Confirm zero regressions in the entire 29K+ test suite.
+- [ ] **8.3** **NSS softokn** — `bash local-builds/test.sh nss-softokn -k "ckr" -v`. Record results. PIN/login tests expected to skip.
+- [ ] **8.4** **Docker OpenCryptoki** — CKR-only run. Rebuild image, run CKR tests. Record results.
+- [ ] **8.5** **pkcs11-mock 2.0.0** — `bash local-builds/test.sh pkcs11-mock -k "ckr" -v`. Record results (mock returns limited CKR set).
+- [ ] **8.6** **Strict mode audit** — run `--ckr-strict` on SoftHSM2, Kryoptic, NSS softokn. Record all compliance deviations.
+- [ ] **8.7** Full suite regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Confirm zero regressions in the entire 29K+ test suite.
 
 ## Tier 8b — Deep Gap Analysis & Completeness Audit
 
@@ -132,5 +157,5 @@ After per-target validation, audit what's actually covered vs what the spec requ
 ## Recommended loop prompt
 
 ```
-/ralph-loop:ralph-loop "/using-superpowers Pick the highest-priority unfinished task from docs/ckr-plan.md. Implementation rules: (1) Use local builds (local-builds/test.sh) for fast iteration — avoid Docker unless required. (2) Read the OASIS spec (working/doc/spec/ in /tmp/pkcs11/) for exact CKR return values per function. (3) Use _error_tuples.py for compat tuples — NEVER add generic PKCS11Error catches. (4) When a module returns unexpected CKR: document in docs/module-issues.md with compliance.note(), do NOT silently pass. Use xfail for known module bugs. (5) Verify zero regressions: bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q. (6) Commit with descriptive message referencing the task ID, then mark done in the plan." --completion-promise "All tasks in docs/ckr-plan.md are marked done"
+/ralph-loop:ralph-loop "/using-superpowers Pick the highest-priority unfinished task from docs/ckr-plan.md. Implementation rules: (1) Use local builds for fast iteration. (2) Read OASIS spec (working/doc/spec/ in /tmp/pkcs11/) for exact CKR return values. (3) Use _error_tuples.py — NEVER generic PKCS11Error catches. (4) Unexpected CKR: document in module-issues.md with compliance.note(), NOT silent pass. (5) After each new test file: verify on SoftHSM2 + Kryoptic + NSS softokn (all local). (6) At checkpoints (3.6, 4.6, 5.3): also run Docker OpenCryptoki CKR-only (rebuild image first). (7) Commit with task ID, mark done." --completion-promise "All tasks in docs/ckr-plan.md are marked done"
 ```
