@@ -168,6 +168,8 @@ from pkcs11.exceptions import (  # noqa: E402
     ArgumentsBad,
     DataInvalid,
     DataLenRange,
+    EncryptedDataInvalid,
+    EncryptedDataLenRange,
     KeyFunctionNotPermitted,
     KeyHandleInvalid,
     KeySizeRange,
@@ -176,6 +178,8 @@ from pkcs11.exceptions import (  # noqa: E402
     MechanismParamInvalid,
     OperationActive,
     OperationNotInitialized,
+    SignatureInvalid,
+    SignatureLenRange,
 )
 
 CKR_ENCRYPT: dict[str, CkrExpectation] = {
@@ -249,5 +253,73 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.2",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Decrypt family (§5.9)
+# ---------------------------------------------------------------------------
+
+# Decrypt compat tuple: encrypted data errors + universal data errors
+_DECRYPT_DATA_ERRORS = (
+    EncryptedDataInvalid,
+    EncryptedDataLenRange,
+    DataLenRange,
+    DataInvalid,
+    ArgumentsBad,
+    FunctionFailed,
+)
+
+CKR_DECRYPT: dict[str, CkrExpectation] = {
+    # --- C_DecryptInit errors ---
+    "init_mechanism_invalid": CkrExpectation(
+        function="C_DecryptInit",
+        condition="mechanism_not_supported",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.1",
+    ),
+    "init_key_type_inconsistent": CkrExpectation(
+        function="C_DecryptInit",
+        condition="key_type_wrong_for_mechanism",
+        spec_ckr=KeyTypeInconsistent,
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.9.1",
+    ),
+    "init_mechanism_param_invalid": CkrExpectation(
+        function="C_DecryptInit",
+        condition="wrong_mechanism_parameter",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.9.1",
+        mechanisms=["AES_CBC"],
+    ),
+    # --- C_Decrypt errors ---
+    "encrypted_data_len_range": CkrExpectation(
+        function="C_Decrypt",
+        condition="ciphertext_not_block_aligned",
+        spec_ckr=EncryptedDataLenRange,
+        compat_tuple=_DECRYPT_DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.2",
+        priority_note="Higher priority than CKR_ENCRYPTED_DATA_INVALID",
+        mechanisms=["AES_ECB"],
+    ),
+    "encrypted_data_invalid": CkrExpectation(
+        function="C_Decrypt",
+        condition="garbage_ciphertext",
+        spec_ckr=(EncryptedDataInvalid, EncryptedDataLenRange),
+        compat_tuple=_DECRYPT_DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.2",
+        mechanisms=["AES_ECB"],
+    ),
+    "rsa_ciphertext_wrong_length": CkrExpectation(
+        function="C_Decrypt",
+        condition="RSA_ciphertext_wrong_length",
+        spec_ckr=EncryptedDataLenRange,
+        compat_tuple=_DECRYPT_DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.2",
+        mechanisms=["RSA_PKCS"],
+        allow_success=True,  # Kryoptic accepts wrong-length ciphertext (spec deviation)
     ),
 }
