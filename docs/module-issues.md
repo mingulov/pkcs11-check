@@ -49,7 +49,13 @@ Updated as Docker targets are analyzed.
 | Count | Area | Reason |
 |-------|------|--------|
 | 296 | DSA Wycheproof | NSS DSA implementation rejects valid 3072-bit DSA vectors — likely NSS strictness on parameter validation |
-| ~66 | Various | TBD — needs per-file analysis (task 2.3) |
+| ~16 | Session/access tests | NSS returns `CKR_USER_TYPE_INVALID` instead of `CKR_USER_ALREADY_LOGGED_IN` — PKCS#11 spec compliance deviation |
+| ~16 | KEM/PQC | ML-KEM not supported in NSS 3.120.1 (expected skips, showing as errors) |
+| ~7 | EdDSA | Ed25519 signing failures — needs investigation |
+| ~27 | Other | AEAD, key flags, mechanism fuzz, etc. — per-file analysis needed (task 2.3) |
+
+### Compliance deviations
+- **CKR_USER_TYPE_INVALID on re-login**: NSS returns `CKR_USER_TYPE_INVALID` (0x103) instead of `CKR_USER_ALREADY_LOGGED_IN` (0x100) when `C_Login(CKU_USER)` is called while already logged in. Per PKCS#11 v3.0 spec, the correct return is `CKR_USER_ALREADY_LOGGED_IN`.
 
 ---
 
