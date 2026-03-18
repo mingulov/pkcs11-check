@@ -242,7 +242,8 @@ Re-run full suite on every target after Tier 7 security tests are added. Use loc
 - [ ] **8.7** **BouncyHSM 2.0.1** — local build. Fix or document segfault + CKF_TOKEN_PRESENT.
 - [ ] **8.8** **SoftHSM2 main** — local build dev branch. Compare with 2.7.0.
 - [ ] **8.9** **Kryoptic main** — local build dev branch. Compare with 1.5.0.
-- [ ] **8.10** **NSS 3.120.1** — Docker. Analyze remaining 356 failures.
+- [ ] **8.10** **NSS softokn (local)** — `bash local-builds/test.sh nss-softokn -q`. System NSS slot 0 (crypto services, no PIN). Fast validation target.
+- [ ] **8.10b** **NSS 3.120.1** — Docker slot 1 (cert DB). Analyze remaining failures.
 - [ ] **8.11** **OpenCryptoki 3.26** — Docker. Verify PIN lockout fix works.
 - [ ] **8.12** **NSS-PQC (Rawhide)** — Docker. Check ML-KEM/ML-DSA support.
 - [ ] **8.13** **Kryoptic FIPS** — Docker. Analyze FIPS-specific behavior.

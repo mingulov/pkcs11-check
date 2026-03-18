@@ -501,3 +501,32 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 §5.14.2",
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Derive family (§5.14.5)
+# ---------------------------------------------------------------------------
+
+CKR_DERIVE: dict[str, CkrExpectation] = {
+    "mechanism_invalid": CkrExpectation(
+        function="C_DeriveKey",
+        condition="unsupported_mechanism",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
+    "key_type_inconsistent": CkrExpectation(
+        function="C_DeriveKey",
+        condition="base_key_type_wrong_for_mechanism",
+        spec_ckr=KeyTypeInconsistent,
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
+    "mechanism_param_invalid": CkrExpectation(
+        function="C_DeriveKey",
+        condition="wrong_mechanism_parameter",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
+}
