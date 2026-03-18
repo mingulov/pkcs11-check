@@ -8,6 +8,14 @@
 # Architecture: swtpm (TCP) → tpm2-abrmd (D-Bus) → libtpm2_pkcs11.so
 
 PROVIDER_NAME="tpm2-swtpm"
+#
+# STATUS: swtpm 0.7.3 (Ubuntu 24.04) has "out of memory for object contexts"
+# issue during tpm2_ptool addtoken. This is a known swtpm limitation —
+# the Docker image uses Fedora 43 with swtpm 0.8+ which works.
+#
+# For local testing, use the hardware TPM provider (tpm2-pkcs11) instead,
+# or use Docker: docker compose -f docker/docker-compose.test.yml run test-tpm2
+#
 # NOTE: swtpm requires background daemons. Run setup manually first:
 #
 #   # 1. Start swtpm
