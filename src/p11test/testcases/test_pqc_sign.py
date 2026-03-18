@@ -129,7 +129,7 @@ class TestMLDSASignVerify:
         self, p11_session: Any, p11_module: Any
     ) -> None:
         """Tampered message fails ML-DSA verification."""
-        from pkcs11.exceptions import PKCS11Error
+        from pkcs11.exceptions import DeviceError, SignatureInvalid
 
         _skip_if_no(p11_module, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(p11_session)
@@ -141,8 +141,10 @@ class TestMLDSASignVerify:
         try:
             result = pub.verify(tampered, sig, mechanism=Mechanism.ML_DSA)
             assert not result, "Tampered message should fail verification"
-        except PKCS11Error:
-            pass  # Verification failure raised as exception — correct behavior
+        except SignatureInvalid:
+            pass  # Correct PKCS#11 behavior
+        except DeviceError:
+            pytest.xfail("Kryoptic returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
 
     def test_two_signatures_differ(self, p11_session: Any, p11_module: Any) -> None:
         """ML-DSA produces different signatures for the same message (randomized)."""
@@ -222,7 +224,7 @@ class TestSLHDSASignVerify:
         self, p11_session: Any, p11_module: Any
     ) -> None:
         """Tampered message fails SLH-DSA verification."""
-        from pkcs11.exceptions import PKCS11Error
+        from pkcs11.exceptions import DeviceError, SignatureInvalid
 
         _skip_if_no(p11_module, "SLH_DSA")
         try:
@@ -234,5 +236,7 @@ class TestSLHDSASignVerify:
         try:
             result = pub.verify(tampered, sig, mechanism=Mechanism.SLH_DSA)
             assert not result, "Tampered message should fail SLH-DSA verification"
-        except PKCS11Error:
-            pass  # Verification failure raised as exception — correct behavior
+        except SignatureInvalid:
+            pass  # Correct PKCS#11 behavior
+        except DeviceError:
+            pytest.xfail("Kryoptic returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")

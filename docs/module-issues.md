@@ -33,6 +33,9 @@ Updated as Docker targets are analyzed.
 - Primarily RSA-OAEP with non-SHA1 hash/MGF and AES edge cases
 - DH parameter generation not supported (skips, not xfails)
 
+### Known bugs
+- **CKR_DEVICE_ERROR on verify failure**: `C_Verify` returns `CKR_DEVICE_ERROR` (0x30) instead of `CKR_SIGNATURE_INVALID` (0xC0) when signature verification fails. Affects ALL mechanisms (RSA, ECDSA, ML-DSA, SLH-DSA). SoftHSM2 correctly returns `CKR_SIGNATURE_INVALID`. This is a Kryoptic bug — PKCS#11 spec requires `CKR_SIGNATURE_INVALID`.
+
 ### Known quirks
 - v3.2 interface — supports `C_GetInterface`, PQC mechanisms
 - `C_GetObjectSize` works correctly
