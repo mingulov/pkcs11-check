@@ -1,6 +1,6 @@
 # Test Coverage Report (Auto-Generated)
 
-Generated from 86 test files, 597 test functions.
+Generated from 87 test files, 599 test functions.
 
 ## Mechanism Coverage
 
@@ -13,7 +13,7 @@ Generated from 86 test files, 597 test functions.
 | AES_CCM | wycheproof_aes |
 | AES_CMAC | wycheproof_aes |
 | AES_ECB | api_security, benchmark, buffers, ckr_codes, concurrent_sessions, crossverify, dh_key_agreement, encrypt, errors, fuzz, interop, kat, key_lifecycle, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, resource, rsa_key_wrapping, stateful, stress, surface_audit, token_objects, vendor_extensions |
-| AES_GCM | aead, crossverify_extended, interop, wycheproof |
+| AES_GCM | aead, authenticated_wrap, crossverify_extended, interop, wycheproof |
 | AES_GMAC | wycheproof_aes |
 | AES_KEY_GEN | vendor_extensions |
 | AES_KEY_WRAP | key_lifecycle, wycheproof_aes |
@@ -78,7 +78,7 @@ Generated from 86 test files, 597 test functions.
 
 | Key Type | Test Files |
 |----------|------------|
-| AES | access, access_control, aead, api_security, benchmark, buffers, ckr_codes, concurrent_sessions, dh_key_agreement, duplicate_labels, encrypt, errors, fuzz, interface, interface_negotiation, kem, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, object_size, padding_oracle, pin, reinitialize, resource, rsa_key_wrapping, search, sensitivity, session_exhaustion, session_info, set_attribute, so_pin, stateful, stress, surface_audit, token_objects, wycheproof, wycheproof_aes |
+| AES | access, access_control, aead, api_security, authenticated_wrap, benchmark, buffers, ckr_codes, concurrent_sessions, dh_key_agreement, duplicate_labels, encrypt, errors, fuzz, interface, interface_negotiation, kem, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, object_size, padding_oracle, pin, reinitialize, resource, rsa_key_wrapping, search, sensitivity, session_exhaustion, session_info, set_attribute, so_pin, stateful, stress, surface_audit, token_objects, wycheproof, wycheproof_aes |
 | AES_XTS | wycheproof_aes |
 | CHACHA20 | wycheproof_chacha |
 | DH | dh_key_agreement |
@@ -111,6 +111,7 @@ Generated from 86 test files, 597 test functions.
 | test_access_control | 6 | security |
 | test_aead | 7 | crossverify |
 | test_api_security | 12 | security |
+| test_authenticated_wrap | 2 | keymgmt |
 | test_benchmark | 16 | benchmark |
 | test_buffers | 21 | boundary |
 | test_certificate_objects | 13 | keymgmt |
@@ -194,4 +195,4 @@ Generated from 86 test files, 597 test functions.
 | test_wycheproof_rsa_pss | 1 | wycheproof |
 | test_wycheproof_x25519 | 1 | wycheproof |
 
-**Total: 86 files, 597 test functions**
+**Total: 87 files, 599 test functions**

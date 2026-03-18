@@ -62,7 +62,7 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 - [x] **6.2** Session info tests — R/W vs R/O state, token reference, R/O cannot create token objects
 - [x] **6.3** C_GetObjectSize — verify object size is reported correctly (fork updated)
 - [x] **6.4** C_GetOperationState / C_SetOperationState — multi-part operation suspend/resume (fork updated)
-- [ ] **6.5** AES-GCM authenticated wrapping — wrap/unwrap with AEAD (blocked: needs v3.2 wrap_key_authenticated)
+- [x] **6.5** AES-GCM authenticated wrapping — wrap/unwrap with AEAD (v3.2, skips gracefully on v2.40)
 - [x] **6.6** Keypair attribute consistency — pub/priv modulus, EC params match
 - [x] **6.7** Key security flags — NEVER_EXTRACTABLE, LOCAL, ALWAYS_SENSITIVE
 - [x] **6.8** AES-CBC-PAD auto-padding — variable-length plaintext roundtrip
