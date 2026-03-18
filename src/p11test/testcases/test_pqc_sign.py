@@ -24,11 +24,18 @@ def _skip_if_no(p11_module: Any, mech_name: str) -> None:
 
 
 def _generate_ml_dsa_keypair(session: Any, param_set: MLDsaParameterSet | None = None) -> Any:
-    pub_tmpl: dict[Any, Any] = {Attribute.VERIFY: True, Attribute.TOKEN: False}
-    priv_tmpl: dict[Any, Any] = {Attribute.SIGN: True, Attribute.TOKEN: False}
-    if param_set is not None:
-        pub_tmpl[Attribute.PARAMETER_SET] = int(param_set)
-        priv_tmpl[Attribute.PARAMETER_SET] = int(param_set)
+    # Default to ML-DSA-65 (NIST security category 3)
+    effective_param = int(param_set) if param_set is not None else int(MLDsaParameterSet.ML_DSA_65)
+    pub_tmpl: dict[Any, Any] = {
+        Attribute.VERIFY: True,
+        Attribute.PARAMETER_SET: effective_param,
+        Attribute.TOKEN: False,
+    }
+    priv_tmpl: dict[Any, Any] = {
+        Attribute.SIGN: True,
+        Attribute.PARAMETER_SET: effective_param,
+        Attribute.TOKEN: False,
+    }
     return session.generate_keypair(
         KeyType.ML_DSA,
         mechanism=Mechanism.ML_DSA_KEY_PAIR_GEN,
@@ -38,11 +45,18 @@ def _generate_ml_dsa_keypair(session: Any, param_set: MLDsaParameterSet | None =
 
 
 def _generate_slh_dsa_keypair(session: Any, param_set: SlhDsaParameterSet | None = None) -> Any:
-    pub_tmpl: dict[Any, Any] = {Attribute.VERIFY: True, Attribute.TOKEN: False}
-    priv_tmpl: dict[Any, Any] = {Attribute.SIGN: True, Attribute.TOKEN: False}
-    if param_set is not None:
-        pub_tmpl[Attribute.PARAMETER_SET] = int(param_set)
-        priv_tmpl[Attribute.PARAMETER_SET] = int(param_set)
+    # Default to SLH-DSA-SHA2-128s (small signatures, security category 1)
+    effective_param = int(param_set) if param_set is not None else int(SlhDsaParameterSet.SHA2_128S)
+    pub_tmpl: dict[Any, Any] = {
+        Attribute.VERIFY: True,
+        Attribute.PARAMETER_SET: effective_param,
+        Attribute.TOKEN: False,
+    }
+    priv_tmpl: dict[Any, Any] = {
+        Attribute.SIGN: True,
+        Attribute.PARAMETER_SET: effective_param,
+        Attribute.TOKEN: False,
+    }
     return session.generate_keypair(
         KeyType.SLH_DSA,
         mechanism=Mechanism.SLH_DSA_KEY_PAIR_GEN,
@@ -115,6 +129,8 @@ class TestMLDSASignVerify:
         self, p11_session: Any, p11_module: Any
     ) -> None:
         """Tampered message fails ML-DSA verification."""
+        from pkcs11.exceptions import PKCS11Error
+
         _skip_if_no(p11_module, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(p11_session)
         try:
@@ -122,8 +138,11 @@ class TestMLDSASignVerify:
         except Exception:
             pytest.xfail("ML-DSA sign failed")
         tampered = _PLAINTEXT[:-1] + bytes([_PLAINTEXT[-1] ^ 0xFF])
-        result = pub.verify(tampered, sig, mechanism=Mechanism.ML_DSA)
-        assert not result, "Tampered message should fail verification"
+        try:
+            result = pub.verify(tampered, sig, mechanism=Mechanism.ML_DSA)
+            assert not result, "Tampered message should fail verification"
+        except PKCS11Error:
+            pass  # Verification failure raised as exception — correct behavior
 
     def test_two_signatures_differ(self, p11_session: Any, p11_module: Any) -> None:
         """ML-DSA produces different signatures for the same message (randomized)."""
@@ -203,6 +222,8 @@ class TestSLHDSASignVerify:
         self, p11_session: Any, p11_module: Any
     ) -> None:
         """Tampered message fails SLH-DSA verification."""
+        from pkcs11.exceptions import PKCS11Error
+
         _skip_if_no(p11_module, "SLH_DSA")
         try:
             pub, priv = _generate_slh_dsa_keypair(p11_session)
@@ -210,5 +231,8 @@ class TestSLHDSASignVerify:
         except Exception:
             pytest.xfail("SLH-DSA sign failed")
         tampered = _PLAINTEXT[:-1] + bytes([_PLAINTEXT[-1] ^ 0xFF])
-        result = pub.verify(tampered, sig, mechanism=Mechanism.SLH_DSA)
-        assert not result, "Tampered message should fail SLH-DSA verification"
+        try:
+            result = pub.verify(tampered, sig, mechanism=Mechanism.SLH_DSA)
+            assert not result, "Tampered message should fail SLH-DSA verification"
+        except PKCS11Error:
+            pass  # Verification failure raised as exception — correct behavior

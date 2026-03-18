@@ -39,19 +39,20 @@ def _generate_ml_kem_keypair(
     :param param_set: Optional parameter set (ML_KEM_512/768/1024).
         If None, the module uses its default (typically ML-KEM-768).
     """
+    # Default to ML-KEM-768 (NIST security category 3) if no param_set given
+    effective_param = int(param_set) if param_set is not None else int(MLKemParameterSet.ML_KEM_768)
     pub_tmpl: dict[Any, Any] = {
         Attribute.ENCAPSULATE: True,
+        Attribute.PARAMETER_SET: effective_param,
         Attribute.TOKEN: False,
     }
     priv_tmpl: dict[Any, Any] = {
         Attribute.DECAPSULATE: True,
+        Attribute.PARAMETER_SET: effective_param,
         Attribute.TOKEN: False,
         Attribute.SENSITIVE: False,
         Attribute.EXTRACTABLE: False,
     }
-    if param_set is not None:
-        pub_tmpl[Attribute.PARAMETER_SET] = int(param_set)
-        priv_tmpl[Attribute.PARAMETER_SET] = int(param_set)
     pair: Any = session.generate_keypair(
         KeyType.ML_KEM,
         mechanism=Mechanism.ML_KEM_KEY_PAIR_GEN,
