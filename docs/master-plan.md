@@ -117,7 +117,7 @@ These tests catch real production crashes and security issues that normal test s
 
 - [x] **7.7** Stale session handles — C_CloseSession then reuse handle for C_FindObjects, C_Sign, etc. Must return CKR_SESSION_HANDLE_INVALID.
 - [x] **7.8** C_CloseAllSessions during active ops — start multipart encrypt, call C_CloseAllSessions, verify no crash and proper cleanup.
-- [ ] **7.9** Multipart CKR_BUFFER_TOO_SMALL — C_EncryptUpdate with too-small output buffer. Verify correct CKR and operation can continue (Kryoptic #179).
+- [x] **7.9** Multipart CKR_BUFFER_TOO_SMALL — C_EncryptUpdate with too-small output buffer. Verify correct CKR and operation can continue (Kryoptic #179).
 - [x] **7.10** Default tool templates — test with pkcs11-tool default templates (CKA_WRAP+CKA_DECRYPT together, CKA_SIGN+CKA_VERIFY+CKA_ENCRYPT). Verify no security policy violations.
 - [x] **7.11** C_FindObjects with concurrent modifications — search while another session creates/destroys objects. Must not crash or return invalid handles.
 
@@ -131,8 +131,8 @@ These tests catch real production crashes and security issues that normal test s
 
 ### Priority 4 — Interop & Client Testing
 
-- [ ] **7.17** OpenSSL pkcs11-provider interop — install pkcs11-provider, run `openssl req`, `openssl pkeyutl`, `openssl dgst` against local SoftHSM2/Kryoptic. Catches SoftHSM2 #722 (segfault on decrypt) and #729 (exit crash). Test via subprocess.
-- [ ] **7.18** p11-kit proxy testing — load module through p11-kit proxy, run basic ops. Verify transparent proxying works and no crash on proxy unload.
+- [x] **7.17** OpenSSL pkcs11-provider interop — install pkcs11-provider, run `openssl req`, `openssl pkeyutl`, `openssl dgst` against local SoftHSM2/Kryoptic. Catches SoftHSM2 #722 (segfault on decrypt) and #729 (exit crash). Test via subprocess.
+- [x] **7.18** p11-kit proxy testing — load module through p11-kit proxy, run basic ops. Verify transparent proxying works and no crash on proxy unload.
 - [x] **7.19** CKA_TRUSTED certificate handling — create cert with CKA_TRUSTED=True. Verify it's accepted or returns proper CKR (not crash). RedHat bug regression.
 - [x] **7.20** CKA_DERIVE on EC keygen — generate EC key with CKA_DERIVE=True in template. Verify acceptance or proper CKR_ATTRIBUTE_VALUE_INVALID (not crash). tpm2-pkcs11 #656 regression.
 
@@ -144,11 +144,11 @@ These tests catch real production crashes and security issues that normal test s
 
 ### Priority 6 — Advanced Testing Infrastructure
 
-- [ ] **7.24** ASAN/UBSAN integration — add `local-builds/build.sh <token> --sanitize` option to build with AddressSanitizer. Run tests with ASAN-compiled SoftHSM2 and Kryoptic. Catches memory bugs invisible to normal runs.
+- [x] **7.24** ASAN/UBSAN integration — add `local-builds/build.sh <token> --sanitize` option to build with AddressSanitizer. Run tests with ASAN-compiled SoftHSM2 and Kryoptic. Catches memory bugs invisible to normal runs.
 - [x] **7.25** Session objects surviving logout — create objects, C_Logout (not close session), verify session objects are cleaned up per spec. Different from close-session test.
-- [ ] **7.26** Combinatorial attribute template generator — script that generates randomized CK_ATTRIBUTE templates (valid + invalid combinations) and runs C_CreateObject/C_GenerateKey. Collect CKR results into a matrix. Seed for automated fuzz testing.
-- [ ] **7.27** Error validation audit — review ALL `except PKCS11Error: pass` and `except (Error): pass` patterns in test files. Every catch must validate the SPECIFIC error type is expected (e.g., `AttributeTypeInvalid` for bad attr, `MechanismInvalid` for bad mechanism). Generic catches hide real bugs. Replace with specific exception types or log the actual error.
-- [ ] **7.28** Configurable concurrency mode — add `--p11-thread-safe` flag. When enabled, run concurrent same-session tests (that crash SoftHSM2 but may work on Kryoptic). Default: sequential-only for safety.
+- [x] **7.26** Combinatorial attribute template generator — script that generates randomized CK_ATTRIBUTE templates (valid + invalid combinations) and runs C_CreateObject/C_GenerateKey. Collect CKR results into a matrix. Seed for automated fuzz testing.
+- [x] **7.27** Error validation audit — review ALL `except PKCS11Error: pass` and `except (Error): pass` patterns in test files. Every catch must validate the SPECIFIC error type is expected (e.g., `AttributeTypeInvalid` for bad attr, `MechanismInvalid` for bad mechanism). Generic catches hide real bugs. Replace with specific exception types or log the actual error.
+- [x] **7.28** Configurable concurrency mode — add `--p11-thread-safe` flag. When enabled, run concurrent same-session tests (that crash SoftHSM2 but may work on Kryoptic). Default: sequential-only for safety.
 
 ## Tier 7b — CVE & Known-Issue Regression Suite
 
@@ -209,25 +209,25 @@ Store test metadata in `src/p11test/testcases/test_cve_regression.py` with CVE I
 
 Re-run full suite on every target after Tier 7 security tests are added. Use local builds where possible, Docker for the rest. Record pass/fail/skip/xfail. Update `docs/module-matrix.md` and `docs/module-issues.md`.
 
-- [ ] **8.1** **SoftHSM2 2.7.0** — local build full suite. Confirm 0 failures.
-- [ ] **8.2** **Kryoptic 1.5.0+PQC** — local build full suite. Confirm 0 failures.
-- [ ] **8.3** **pkcs11-mock 2.0.0** — local build. Document expected mock failures.
-- [ ] **8.4** **qryptotoken 0.4.1** — local build. Document PQC-only limitations.
-- [ ] **8.5** **tpm2-pkcs11 (hardware)** — `sg tss`. Document TPM limitations.
-- [ ] **8.6** **tpm2-swtpm 0.10.1** — local swtpm build. Full suite with abrmd.
-- [ ] **8.7** **BouncyHSM 2.0.1** — local build. Fix or document segfault + CKF_TOKEN_PRESENT.
-- [ ] **8.8** **SoftHSM2 main** — local build dev branch. Compare with 2.7.0.
-- [ ] **8.9** **Kryoptic main** — local build dev branch. Compare with 1.5.0.
-- [ ] **8.10** **NSS 3.120.1** — Docker. Analyze remaining 356 failures.
-- [ ] **8.11** **OpenCryptoki 3.26** — Docker. Verify PIN lockout fix works.
-- [ ] **8.12** **NSS-PQC (Rawhide)** — Docker. Check ML-KEM/ML-DSA support.
-- [ ] **8.13** **Kryoptic FIPS** — Docker. Analyze FIPS-specific behavior.
+- [x] **8.1** **SoftHSM2 2.7.0** — local build full suite. Confirm 0 failures.
+- [x] **8.2** **Kryoptic 1.5.0+PQC** — local build full suite. Confirm 0 failures.
+- [x] **8.3** **pkcs11-mock 2.0.0** — local build. Document expected mock failures.
+- [x] **8.4** **qryptotoken 0.4.1** — local build. Document PQC-only limitations.
+- [x] **8.5** **tpm2-pkcs11 (hardware)** — `sg tss`. Document TPM limitations.
+- [x] **8.6** **tpm2-swtpm 0.10.1** — local swtpm build. Full suite with abrmd.
+- [x] **8.7** **BouncyHSM 2.0.1** — local build. Fix or document segfault + CKF_TOKEN_PRESENT.
+- [x] **8.8** **SoftHSM2 main** — local build dev branch. Compare with 2.7.0.
+- [x] **8.9** **Kryoptic main** — local build dev branch. Compare with 1.5.0.
+- [x] **8.10** **NSS 3.120.1** — Docker. Analyze remaining 356 failures.
+- [x] **8.11** **OpenCryptoki 3.26** — Docker. Verify PIN lockout fix works.
+- [x] **8.12** **NSS-PQC (Rawhide)** — Docker. Check ML-KEM/ML-DSA support.
+- [x] **8.13** **Kryoptic FIPS** — Docker. Analyze FIPS-specific behavior.
 
 ## Tier 9 — Docker Final Validation
 
 Run after ALL other tiers. Rebuild every Docker image with `--no-cache`. One clean pass.
 
-- [ ] **9.1–9.13** Final validation for all 12 Docker targets + sign-off summary in `docs/module-matrix.md`.
+- [x] **9.1–9.13** Final validation for all 12 Docker targets + sign-off summary in `docs/module-matrix.md`.
 
 ---
 
