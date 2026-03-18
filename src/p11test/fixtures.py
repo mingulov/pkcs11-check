@@ -64,6 +64,10 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
         if logged_in:
             try:
                 session.logout()
-            except _p11.exceptions.PKCS11Error:
-                pass  # Logout may fail if another session holds login
+            except (
+                _p11.exceptions.UserNotLoggedIn,
+                _p11.exceptions.SessionClosed,
+                _p11.exceptions.FunctionFailed,
+            ):
+                pass  # Logout may fail if session closed or not logged in
         session.close()

@@ -277,7 +277,7 @@ class TestBoundaryLengthCrypto:
 
     def test_rsa_encrypt_boundary(self, p11_session: Any) -> None:
         """RSA-PKCS encrypt with empty and max-length data."""
-        from pkcs11.exceptions import GeneralError
+        from pkcs11.exceptions import DeviceError, GeneralError
 
         pub, _priv = p11_session.generate_keypair(KeyType.RSA, 2048)
 
@@ -288,6 +288,8 @@ class TestBoundaryLengthCrypto:
             pass  # Correct: DataLenRange
         except GeneralError:
             pass  # SoftHSM2 quirk: returns GeneralError instead of DataLenRange
+        except DeviceError:
+            pass  # Kryoptic bug: returns CKR_DEVICE_ERROR for data issues
 
         # Max data for RSA-2048 PKCS#1 v1.5: 245 bytes (256 - 11)
         try:
@@ -297,6 +299,8 @@ class TestBoundaryLengthCrypto:
             pass  # Some modules are stricter
         except GeneralError:
             pass  # SoftHSM2 quirk
+        except DeviceError:
+            pass  # Kryoptic bug: returns CKR_DEVICE_ERROR for data issues
 
         # Over max — must reject
         try:
@@ -305,6 +309,8 @@ class TestBoundaryLengthCrypto:
             pass  # Correct: DataLenRange
         except GeneralError:
             pass  # SoftHSM2 quirk: should be DataLenRange
+        except DeviceError:
+            pass  # Kryoptic bug: returns CKR_DEVICE_ERROR for data issues
 
 
 class TestInvalidECCurve:

@@ -78,8 +78,8 @@ class TestMalformedAttributes:
             )
             # SoftHSM2 accepts — key won't be usable but no crash
             assert obj is not None
-        except _TEMPLATE_ERRORS:
-            pass  # Correct to reject with specific attribute/template error
+        except (*_TEMPLATE_ERRORS, KeySizeRange):
+            pass  # Correct to reject empty key value (Kryoptic: CKR_KEY_SIZE_RANGE)
 
     def test_wrong_size_aes_value(self, p11_session: Any) -> None:
         """AES key with 7-byte VALUE (not 16/24/32) — must reject or accept."""
@@ -93,7 +93,7 @@ class TestMalformedAttributes:
                 }
             )
             assert obj is not None
-        except (*_TEMPLATE_ERRORS, DataLenRange):
+        except (*_TEMPLATE_ERRORS, DataLenRange, KeySizeRange):
             pass  # Correct to reject wrong key size
 
     def test_value_len_zero_on_rsa(self, p11_session: Any) -> None:
