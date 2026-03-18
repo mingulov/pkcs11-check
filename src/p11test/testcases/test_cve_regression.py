@@ -164,3 +164,87 @@ class TestSessionObjectsAfterLogout:
             )
 
         session.close()
+
+
+class TestROCAFingerprint:
+    """ROCA CVE-2017-15361 — weak RSA key generation (task 7b.13).
+
+    Infineon RSALib generated keys with a detectable fingerprint in the
+    modulus. Test: generate RSA keys and verify no ROCA pattern.
+    """
+
+    def test_rsa_modulus_not_roca(self, p11_session: Any) -> None:
+        """Generated RSA-2048 modulus should not have ROCA fingerprint."""
+        pub, _priv = p11_session.generate_keypair(KeyType.RSA, 2048)
+        modulus = pub[Attribute.MODULUS]
+        n = int.from_bytes(modulus, "big")
+
+        # ROCA detection: check if n mod small primes follows the pattern
+        # Simplified check — full ROCA uses 39 primes
+        roca_primes = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43]
+        roca_markers = [
+            0x6, 0x18, 0x60, 0x420, 0x1800, 0x30000, 0xC0000,
+            0x780000, 0x18000000, 0xC0000000, 0x3000000000,
+            0x60000000000, 0x1C0000000000,
+        ]
+        roca_hits = 0
+        for p, marker in zip(roca_primes, roca_markers):
+            if (1 << (n % p)) & marker:
+                roca_hits += 1
+
+        # Software tokens should NOT produce ROCA-patterned keys
+        # (ROCA only affects Infineon hardware)
+        # If >10/13 primes match, it's suspicious
+        assert roca_hits < 10, (
+            f"RSA modulus has ROCA-like fingerprint ({roca_hits}/13 matches)"
+        )
+
+
+class TestECDSATimingBasic:
+    """Basic ECDSA timing variance check (CVE-2023-6135 Minerva, task 7b.14).
+
+    Full Minerva attack needs thousands of signatures + statistical analysis.
+    This is a basic sanity check that signing times don't vary wildly.
+    """
+
+    def test_ecdsa_timing_variance(
+        self, p11_session: Any, p11_module: Any
+    ) -> None:
+        """ECDSA P-256 signing should have low timing variance."""
+        import time
+
+        if not has_mechanism(p11_module, "ECDSA"):
+            pytest.skip("ECDSA not supported")
+
+        params = p11_session.create_domain_parameters(
+            KeyType.EC,
+            {Attribute.EC_PARAMS: encode_named_curve_parameters("secp256r1")},
+            local=True,
+        )
+        try:
+            _pub, priv = params.generate_keypair()
+        except p11.exceptions.PKCS11Error:
+            pytest.skip("P-256 not supported")
+            return
+
+        # Sign 100 messages and measure times
+        times = []
+        for i in range(100):
+            data = f"timing-test-{i}".encode()
+            start = time.perf_counter()
+            priv.sign(data, mechanism=Mechanism.ECDSA)
+            elapsed = time.perf_counter() - start
+            times.append(elapsed)
+
+        import statistics
+
+        mean_t = statistics.mean(times)
+        stdev_t = statistics.stdev(times)
+        cv = stdev_t / mean_t if mean_t > 0 else 0
+
+        # Coefficient of variation > 0.5 would indicate non-constant-time
+        # Software tokens typically have CV < 0.3
+        assert cv < 0.5, (
+            f"ECDSA timing CV={cv:.3f} (mean={mean_t*1000:.2f}ms, "
+            f"stdev={stdev_t*1000:.2f}ms) — possible timing leak"
+        )

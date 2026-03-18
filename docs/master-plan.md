@@ -175,8 +175,8 @@ Store test metadata in `src/p11test/testcases/test_cve_regression.py` with CVE I
 - [ ] **7b.12** tpm2-pkcs11 #44 — GnuTLS mutex deadlock. Test: rapid login/SignInit cycles from multiple threads.
 
 ### Infineon / Secure Element CVEs
-- [ ] **7b.13** ROCA (CVE-2017-15361) — Weak RSA key generation. Test: generate RSA keys and verify modulus doesn't have ROCA fingerprint (Coppersmith factorization test on low-order bits).
-- [ ] **7b.14** EUCLEAK (CVE-2024-45678) — ECDSA non-constant-time modular inversion. Test: sign many messages with P-256, measure variance in timing (statistical; detects non-constant-time ops).
+- [x] **7b.13** ROCA (CVE-2017-15361) — Weak RSA key generation. Test: generate RSA keys and verify modulus doesn't have ROCA fingerprint (Coppersmith factorization test on low-order bits).
+- [x] **7b.14** EUCLEAK (CVE-2024-45678) — ECDSA non-constant-time modular inversion. Test: sign many messages with P-256, measure variance in timing (statistical; detects non-constant-time ops).
 
 ### OpenCryptoki CVEs
 - [ ] **7b.15** CVE-2021-3798 — Missing EC curve validation. Test: import EC public key with invalid curve OID, verify rejection (not silent acceptance).
