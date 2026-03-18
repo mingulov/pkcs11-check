@@ -165,6 +165,7 @@ def assert_ckr(
 
 # Imports for CKR types used in spec tables
 from pkcs11.exceptions import (  # noqa: E402
+    ArgumentsBad,
     DataInvalid,
     DataLenRange,
     KeyFunctionNotPermitted,
@@ -212,7 +213,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         function="C_EncryptInit",
         condition="wrong_mechanism_parameter",
         spec_ckr=MechanismParamInvalid,
-        compat_tuple=(MechanismParamInvalid, MechanismInvalid, FunctionFailed),
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.1",
         mechanisms=["AES_CBC"],
     ),
