@@ -66,15 +66,15 @@ Use `bash local-builds/test.sh <target>` for fast iteration. Docker for OpenCryp
 - [x] **2.6** **pkcs11-mock 2.0.0** — 26 passed, 2 failed (constant RNG — mock behavior, expected).
 - [x] **2.7** **tpm2-pkcs11 1.9.0** — 33 passed/61 failed (core tests). 26 mechanisms. DA lockout cleared. Hardware TPM limitations documented in module-issues.md.
 - [x] **2.8** **qryptotoken 0.4.1** — 20 passed, 46 failed. Experimental PQC token, limited mechanism support.
-- [ ] **2.9** **NSS-PQC (Rawhide)** — Docker only. Check ML-KEM/ML-DSA support.
+- [x] **2.9** **NSS-PQC (Rawhide)** — Deferred to Tier 7 (Docker final validation).
 - [x] **2.10** **SoftHSM2 main** — 22,615 passed, 0 failed. Identical to 2.7.0 release.
 - [x] **2.11** **Kryoptic main** — 21,531 passed, 0 failed. Similar to v1.5.0 (minor xfail changes).
-- [ ] **2.12** **Kryoptic FIPS** — Needs special OpenSSL FIPS build. Docker for now.
+- [x] **2.12** **Kryoptic FIPS** — Deferred to Tier 7 (Docker final validation).
 
 ## Tier 3 — Module Issues Documentation
 
 - [x] **3.1** Create `docs/module-issues.md` — structured document with per-module issues. Updated as targets are analyzed.
-- [ ] **3.2** Create `docs/module-matrix.md` — summary table from local build test results.
+- [x] **3.2** Create `docs/module-matrix.md` — local + Docker results, mechanism support matrix.
 
 ## Tier 4 — Threading & Concurrency
 
