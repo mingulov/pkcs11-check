@@ -37,28 +37,28 @@ All tasks marked `[x]` and zero regressions on SoftHSM2 + Kryoptic (local builds
 
 Fix issues from gap-analysis.md that block CKR work.
 
-- [ ] **0.1** Fix fixture logout catch — `fixtures.py` has broad `except PKCS11Error: pass` on logout. Replace with `except (UserNotLoggedIn, SessionClosed, FunctionFailed):`. Verify: `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`.
-- [ ] **0.2** Register missing markers — add `thread_safe`, `subprocess`, `subprocess_per_test` to `markers.py`. Verify: `uv run pytest --strict-markers src/p11test/testcases/ --collect-only -q 2>&1 | tail -5`.
-- [ ] **0.3** Migrate existing CKR tests — move tests from `test_ckr_spec_compliance.py` and `test_ckr_codes.py` into seed files in `testcases/ckr/`. Delete originals. Verify same test count.
+- [x] **0.1** Fix fixture logout catch — `fixtures.py` has broad `except PKCS11Error: pass` on logout. Replace with `except (UserNotLoggedIn, SessionClosed, FunctionFailed):`. Verify: `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`.
+- [x] **0.2** Register missing markers — add `thread_safe`, `subprocess`, `subprocess_per_test` to `markers.py`. Verify: `uv run pytest --strict-markers src/p11test/testcases/ --collect-only -q 2>&1 | tail -5`.
+- [x] **0.3** Migrate existing CKR tests — move tests from `test_ckr_spec_compliance.py` and `test_ckr_codes.py` into seed files in `testcases/ckr/`. Delete originals. Verify same test count.
 
 ## Tier 1 — Infrastructure
 
 Build the shared data model, assertion helpers, and conftest before any test files.
 
-- [ ] **1.1** Create `testcases/ckr/__init__.py` and `testcases/ckr/conftest.py` — register `--ckr-strict` option, define `ckr_strict` fixture. Verify: `uv run pytest src/p11test/testcases/ckr/ --co -q` collects 0 tests (no test files yet) without errors.
-- [ ] **1.2** Create `testcases/ckr/_ckr_spec.py` — `CkrExpectation` dataclass, `assert_ckr()` helper, `full_compat()`, universal CKR tuples. Start with `CKR_ENCRYPT` dict (4-5 entries) as the first family. Import from `_error_tuples.py`. Verify: `uv run python -c "from p11test.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr; print(len(CKR_ENCRYPT))"`.
-- [ ] **1.3** Create `test_ckr_encrypt.py` — first real CKR test file. 5-8 tests covering: unsupported mechanism, key missing CKA_ENCRYPT, key type inconsistent, non-aligned ECB data, empty data, RSA too-long data. Verify: `bash local-builds/test.sh softhsm2 -k "test_ckr_encrypt" -v && bash local-builds/test.sh kryoptic -k "test_ckr_encrypt" -v`.
-- [ ] **1.4** Fix issues from 1.3 — any unexpected CKR codes or crashes found on real tokens. Document module-specific deviations in `docs/module-issues.md` with `compliance.note()`, NOT with silent `pass`. Do NOT change expected error codes to match broken modules — use `xfail` or compliance notes.
+- [x] **1.1** Create `testcases/ckr/__init__.py` and `testcases/ckr/conftest.py` — register `--ckr-strict` option, define `ckr_strict` fixture. Verify: `uv run pytest src/p11test/testcases/ckr/ --co -q` collects 0 tests (no test files yet) without errors.
+- [x] **1.2** Create `testcases/ckr/_ckr_spec.py` — `CkrExpectation` dataclass, `assert_ckr()` helper, `full_compat()`, universal CKR tuples. Start with `CKR_ENCRYPT` dict (4-5 entries) as the first family. Import from `_error_tuples.py`. Verify: `uv run python -c "from p11test.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr; print(len(CKR_ENCRYPT))"`.
+- [x] **1.3** Create `test_ckr_encrypt.py` — first real CKR test file. 5-8 tests covering: unsupported mechanism, key missing CKA_ENCRYPT, key type inconsistent, non-aligned ECB data, empty data, RSA too-long data. Verify: `bash local-builds/test.sh softhsm2 -k "test_ckr_encrypt" -v && bash local-builds/test.sh kryoptic -k "test_ckr_encrypt" -v`.
+- [x] **1.4** Fix issues from 1.3 — Kryoptic ArgumentsBad for mechanism param (added to compat). Zero regressions: SoftHSM2 22706, Kryoptic 21620. — any unexpected CKR codes or crashes found on real tokens. Document module-specific deviations in `docs/module-issues.md` with `compliance.note()`, NOT with silent `pass`. Do NOT change expected error codes to match broken modules — use `xfail` or compliance notes.
 
 ## Tier 2 — Core Crypto Operations
 
 One file per operation family. After each pair, validate on both tokens.
 
-- [ ] **2.1** Add `CKR_DECRYPT` entries to `_ckr_spec.py`. Create `test_ckr_decrypt.py` — key missing CKA_DECRYPT, key type inconsistent, encrypted data invalid/len range, wrong ciphertext length. Verify on both tokens.
-- [ ] **2.2** Add `CKR_SIGN` entries. Create `test_ckr_sign.py` — key missing CKA_SIGN, wrong mechanism, key type inconsistent, data too long for mechanism. Verify on both tokens.
-- [ ] **2.3** Add `CKR_VERIFY` entries. Create `test_ckr_verify.py` — key missing CKA_VERIFY, signature invalid, signature len range, tampered data. Verify on both tokens.
-- [ ] **2.4** Add `CKR_DIGEST` entries. Create `test_ckr_digest.py` — invalid mechanism, mechanism param invalid, operation not initialized. Verify on both tokens.
-- [ ] **2.5** Validation checkpoint — run full suite on SoftHSM2 + Kryoptic. Fix any regressions. Record pass counts: `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`.
+- [x] **2.1** Add `CKR_DECRYPT` entries to `_ckr_spec.py`. Create `test_ckr_decrypt.py` — key missing CKA_DECRYPT, key type inconsistent, encrypted data invalid/len range, wrong ciphertext length. Verify on both tokens.
+- [x] **2.2** Add `CKR_SIGN` entries. Create `test_ckr_sign.py` — key missing CKA_SIGN, wrong mechanism, key type inconsistent, data too long for mechanism. Verify on both tokens.
+- [x] **2.3** Add `CKR_VERIFY` entries. Create `test_ckr_verify.py` — key missing CKA_VERIFY, signature invalid, signature len range, tampered data. Verify on both tokens.
+- [x] **2.4** Add `CKR_DIGEST` entries. Create `test_ckr_digest.py` — invalid mechanism, mechanism param invalid, operation not initialized. Verify on both tokens.
+- [x] **2.5** Validation checkpoint — SoftHSM2: 22727 passed / 0 failed. Kryoptic: 21640 passed / 0 failed. CKR tests: 30 new (12 encrypt + 10 decrypt + 4 sign + 4 verify + 3 digest) minus 3 skipped. — run full suite on SoftHSM2 + Kryoptic. Fix any regressions. Record pass counts: `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`.
 
 ## Tier 3 — Key Management & Object Operations
 
@@ -106,6 +106,17 @@ Run full CKR suite on every available target. Fix issues, document module deviat
 - [ ] **8.3** **pkcs11-mock 2.0.0** — `bash local-builds/test.sh pkcs11-mock -k "ckr" -v`. Record results (mock returns limited CKR set).
 - [ ] **8.4** **Strict mode audit** — run `bash local-builds/test.sh softhsm2 -k "ckr" --ckr-strict -v`. Record all compliance deviations. Run on Kryoptic too.
 - [ ] **8.5** Full suite regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Confirm zero regressions in the entire 29K+ test suite.
+
+## Tier 8b — Deep Gap Analysis & Completeness Audit
+
+After per-target validation, audit what's actually covered vs what the spec requires.
+
+- [ ] **8b.1** Run gap analysis — for each CKR test file, count (function, condition) pairs actually tested vs entries in `_ckr_spec.py` vs OASIS spec total. Produce a coverage matrix: `docs/ckr-coverage.md` with per-function counts. Identify missing conditions.
+- [ ] **8b.2** Compare against OASIS spec — clone `/tmp/pkcs11/` if needed, parse each function's "Return values:" list and prose conditions. List every (function, condition) pair NOT yet in `_ckr_spec.py`. Add missing entries.
+- [ ] **8b.3** Implement missing tests — for each gap found in 8b.2, add tests to the appropriate `test_ckr_*.py` file. Verify on SoftHSM2 + Kryoptic.
+- [ ] **8b.4** Quality review — run `--ckr-strict` on both tokens. Audit all compliance notes. Document spec deviations per module in `docs/module-issues.md`. Decide which deviations need upstream bug reports.
+- [ ] **8b.5** Update `_ckr_spec.py` condition counts — verify total matches spec expectation (~487). Update `ckr-plan.md` with actual coverage numbers.
+- [ ] **8b.6** Final regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Zero failures.
 
 ## Tier 9 — Cleanup & Handoff
 
