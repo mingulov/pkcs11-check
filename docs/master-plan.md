@@ -111,7 +111,7 @@ These tests catch real production crashes and security issues that normal test s
 - [x] **7.3** Post-C_Finalize calls — call C_GetSlotList, C_OpenSession, etc. after C_Finalize. Must not crash. Test via subprocess (isolation.py) to avoid corrupting test session.
 - [x] **7.4** Fork safety — `os.fork()` after C_Initialize, child calls C_GetSlotList or C_GenerateRandom. Must not crash or deadlock. Test NSS-style fork detection. Run in subprocess.
 - [x] **7.5** Handle reuse after destroy — C_DestroyObject then reuse the handle for C_GetAttributeValue, C_Encrypt, etc. Must return CKR_OBJECT_HANDLE_INVALID, not crash.
-- [ ] **7.6** C_GetAttributeValue NULL buffer + modify race — query length with NULL pValue, modify object in another thread, second call with buffer. Check for stale data or crash.
+- [x] **7.6** C_GetAttributeValue NULL buffer + modify race — query length with NULL pValue, modify object in another thread, second call with buffer. Check for stale data or crash.
 
 ### Priority 2 — Protocol Violations
 
@@ -124,10 +124,10 @@ These tests catch real production crashes and security issues that normal test s
 ### Priority 3 — Robustness & Interop
 
 - [x] **7.12** DB stress under concurrent writes — 10 threads × 100 key gen+destroy cycles simultaneously. Verify no SQLite transaction errors (SoftHSM #845), no leaked objects.
-- [ ] **7.13** Resource exhaustion — open sessions until CKR_SESSION_COUNT, generate keys until CKR_DEVICE_MEMORY, create objects until storage full. Verify graceful errors, no crash, recovery after cleanup.
-- [ ] **7.14** v2.40 + v3.0 attribute mix — create object with v3.2-only attributes (CKA_ENCAPSULATE, CKA_PARAMETER_SET) on v2.40 module. Verify CKR_ATTRIBUTE_TYPE_INVALID, not crash (BouncyHSM segfault root cause).
+- [x] **7.13** Resource exhaustion — open sessions until CKR_SESSION_COUNT, generate keys until CKR_DEVICE_MEMORY, create objects until storage full. Verify graceful errors, no crash, recovery after cleanup.
+- [x] **7.14** v2.40 + v3.0 attribute mix — create object with v3.2-only attributes (CKA_ENCAPSULATE, CKA_PARAMETER_SET) on v2.40 module. Verify CKR_ATTRIBUTE_TYPE_INVALID, not crash (BouncyHSM segfault root cause).
 - [x] **7.15** Library reload cycle — dlopen, C_Initialize, ops, C_Finalize, dlclose, dlopen again. 10 cycles. Verify no leak, no crash. Test via subprocess.
-- [ ] **7.16** DoS via spec-ambiguous calls — C_WaitForSlotEvent with CKF_DONT_BLOCK; C_Initialize called twice; C_GetFunctionList after Finalize. Verify no hang, correct CKR.
+- [x] **7.16** DoS via spec-ambiguous calls — C_WaitForSlotEvent with CKF_DONT_BLOCK; C_Initialize called twice; C_GetFunctionList after Finalize. Verify no hang, correct CKR.
 
 ### Priority 4 — Interop & Client Testing
 
@@ -147,6 +147,8 @@ These tests catch real production crashes and security issues that normal test s
 - [ ] **7.24** ASAN/UBSAN integration — add `local-builds/build.sh <token> --sanitize` option to build with AddressSanitizer. Run tests with ASAN-compiled SoftHSM2 and Kryoptic. Catches memory bugs invisible to normal runs.
 - [ ] **7.25** Session objects surviving logout — create objects, C_Logout (not close session), verify session objects are cleaned up per spec. Different from close-session test.
 - [ ] **7.26** Combinatorial attribute template generator — script that generates randomized CK_ATTRIBUTE templates (valid + invalid combinations) and runs C_CreateObject/C_GenerateKey. Collect CKR results into a matrix. Seed for automated fuzz testing.
+- [ ] **7.27** Error validation audit — review ALL `except PKCS11Error: pass` and `except (Error): pass` patterns in test files. Every catch must validate the SPECIFIC error type is expected (e.g., `AttributeTypeInvalid` for bad attr, `MechanismInvalid` for bad mechanism). Generic catches hide real bugs. Replace with specific exception types or log the actual error.
+- [ ] **7.28** Configurable concurrency mode — add `--p11-thread-safe` flag. When enabled, run concurrent same-session tests (that crash SoftHSM2 but may work on Kryoptic). Default: sequential-only for safety.
 
 ## Tier 7b — CVE & Known-Issue Regression Suite
 
