@@ -1,6 +1,6 @@
 # Test Coverage Report (Auto-Generated)
 
-Generated from 82 test files, 585 test functions.
+Generated from 83 test files, 587 test functions.
 
 ## Mechanism Coverage
 
@@ -61,7 +61,7 @@ Generated from 82 test files, 585 test functions.
 | SHA512_HMAC | kdf, wycheproof_hmac |
 | SHA_1 | crossverify, digest, kat, metamorphic, surface_audit, wycheproof_hkdf, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA_1_HMAC | crossverify, interop, wycheproof_hmac |
-| ECDH1_DERIVE | kdf, keymgmt, wycheproof_ecdh, wycheproof_x25519 |
+| ECDH1_DERIVE | ecdh_known_answer, kdf, keymgmt, wycheproof_ecdh, wycheproof_x25519 |
 | EDDSA | eddsa, wycheproof_ed25519 |
 | ML_DSA | pqc_sign, wycheproof_mldsa |
 | ML_DSA_KEY_PAIR_GEN | pqc_sign |
@@ -83,10 +83,10 @@ Generated from 82 test files, 585 test functions.
 | CHACHA20 | wycheproof_chacha |
 | DH | dh_key_agreement |
 | DSA | sign, wycheproof_dsa |
-| EC | benchmark, crossverify, ec_curves, ec_import_export, fuzz, interop, kdf, key_lifecycle, keymgmt, keypair_consistency, nonce_quality, object, sign, wycheproof, wycheproof_ecdh, wycheproof_ecdsa |
+| EC | benchmark, crossverify, ec_curves, ec_import_export, ecdh_known_answer, fuzz, interop, kdf, key_lifecycle, keymgmt, keypair_consistency, nonce_quality, object, sign, wycheproof, wycheproof_ecdh, wycheproof_ecdsa |
 | EC_EDWARDS | eddsa, wycheproof_ed25519 |
 | EC_MONTGOMERY | wycheproof_x25519 |
-| GENERIC_SECRET | crossverify, interop, kdf, kem, keymgmt, sign, surface_audit, wycheproof, wycheproof_aes, wycheproof_ecdh, wycheproof_hkdf, wycheproof_hmac, wycheproof_pbkdf2, wycheproof_x25519 |
+| GENERIC_SECRET | crossverify, ecdh_known_answer, interop, kdf, kem, keymgmt, sign, surface_audit, wycheproof, wycheproof_aes, wycheproof_ecdh, wycheproof_hkdf, wycheproof_hmac, wycheproof_pbkdf2, wycheproof_x25519 |
 | ML_DSA | pqc_sign, wycheproof_mldsa |
 | ML_KEM | kem |
 | RSA | access, api_security, benchmark, buffers, crossverify, crossverify_extended, encrypt, errors, fuzz, interop, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, keypair_consistency, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, resource, rsa_key_wrapping, rsa_oaep, search, sensitivity, set_attribute, sign, stress, surface_audit, wycheproof, wycheproof_rsa, wycheproof_rsa_decrypt, wycheproof_rsa_oaep, wycheproof_rsa_pss |
@@ -124,6 +124,7 @@ Generated from 82 test files, 585 test functions.
 | test_duplicate_labels | 4 | keymgmt |
 | test_ec_curves | 3 | crossverify |
 | test_ec_import_export | 4 | keymgmt |
+| test_ecdh_known_answer | 2 | crossverify |
 | test_eddsa | 10 | crossverify |
 | test_encrypt | 12 | full |
 | test_errors | 17 | security |
@@ -190,4 +191,4 @@ Generated from 82 test files, 585 test functions.
 | test_wycheproof_rsa_pss | 1 | wycheproof |
 | test_wycheproof_x25519 | 1 | wycheproof |
 
-**Total: 82 files, 585 test functions**
+**Total: 83 files, 587 test functions**

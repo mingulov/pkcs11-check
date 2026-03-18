@@ -69,6 +69,7 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 - [x] **6.9** Key lifecycle end-to-end — RSA/EC export-import-verify, AES key wrap roundtrip
 - [x] **6.10** Extended cross-verification — AES-CBC, RSA-PSS, RSA-OAEP vs cryptography library
 - [x] **6.11** Access control attributes — CKA_PRIVATE, CKA_MODIFIABLE, CKA_COPYABLE
+- [x] **6.12** ECDH known-answer cross-verify — raw shared secret vs Python cryptography
 
 ---
 
