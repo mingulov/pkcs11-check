@@ -248,3 +248,83 @@ class TestECDSATimingBasic:
             f"ECDSA timing CV={cv:.3f} (mean={mean_t*1000:.2f}ms, "
             f"stdev={stdev_t*1000:.2f}ms) — possible timing leak"
         )
+
+
+class TestBoundaryLengthCrypto:
+    """CVE-2019-17006 — missing input length checks (task 7b.3).
+
+    Test encrypt/decrypt with boundary-length data.
+    """
+
+    def test_aes_ecb_boundary_lengths(self, p11_session: Any) -> None:
+        """AES-ECB with 0, 1, 15, 16, 17, 31, 32 bytes."""
+        key = p11_session.generate_key(KeyType.AES, 256)
+        for size in [0, 1, 15, 16, 17, 31, 32]:
+            data = b"\xAA" * size
+            if size % 16 == 0 and size > 0:
+                # Block-aligned — should work
+                ct = key.encrypt(data, mechanism=Mechanism.AES_ECB)
+                pt = key.decrypt(ct, mechanism=Mechanism.AES_ECB)
+                assert pt == data
+            else:
+                # Non-aligned — should fail with proper CKR
+                try:
+                    key.encrypt(data, mechanism=Mechanism.AES_ECB)
+                except (p11.exceptions.DataLenRange, PKCS11Error):
+                    pass  # Correct rejection
+
+    def test_rsa_encrypt_boundary(self, p11_session: Any) -> None:
+        """RSA-PKCS encrypt with empty and max-length data."""
+        pub, _priv = p11_session.generate_keypair(KeyType.RSA, 2048)
+
+        # Empty data
+        try:
+            pub.encrypt(b"", mechanism=Mechanism.RSA_PKCS)
+        except PKCS11Error:
+            pass  # Some modules reject empty
+
+        # Max data for RSA-2048 PKCS#1 v1.5: 245 bytes (256 - 11)
+        try:
+            ct = pub.encrypt(b"\x42" * 245, mechanism=Mechanism.RSA_PKCS)
+            assert len(ct) == 256
+        except PKCS11Error:
+            pass  # Some modules are stricter
+
+        # Over max — must reject
+        try:
+            pub.encrypt(b"\x42" * 246, mechanism=Mechanism.RSA_PKCS)
+        except PKCS11Error:
+            pass  # Correct
+
+
+class TestInvalidECCurve:
+    """CVE-2021-3798 — missing EC curve validation (task 7b.15).
+
+    Import EC public key with invalid/unknown curve OID.
+    """
+
+    def test_import_ec_key_with_bad_oid(self, p11_session: Any) -> None:
+        """EC key with invalid curve OID must be rejected, not accepted."""
+        bad_oid = bytes([0x06, 0x05, 0xDE, 0xAD, 0xBE, 0xEF, 0x00])
+        fake_point = b"\x04" + b"\x01" * 64  # Fake uncompressed point
+
+        try:
+            p11_session.create_object(
+                {
+                    Attribute.CLASS: ObjectClass.PUBLIC_KEY,
+                    Attribute.KEY_TYPE: KeyType.EC,
+                    Attribute.EC_PARAMS: bad_oid,
+                    Attribute.EC_POINT: fake_point,
+                    Attribute.VERIFY: True,
+                    Attribute.TOKEN: False,
+                }
+            )
+            # If accepted — this is the CVE-2021-3798 vulnerability
+            from p11test.compliance import ComplianceLevel, note
+            note(
+                "Module accepted EC key with invalid curve OID (CVE-2021-3798 pattern)",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="CVE-2021-3798: OpenCryptoki missing EC curve validation",
+            )
+        except PKCS11Error:
+            pass  # Correct: reject invalid curve

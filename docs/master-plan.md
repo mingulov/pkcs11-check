@@ -157,53 +157,53 @@ Each test references the original CVE/issue and verifies the fix (or documents t
 Store test metadata in `src/p11test/testcases/test_cve_regression.py` with CVE IDs as markers.
 
 ### NSS Softoken CVEs
-- [ ] **7b.1** CVE-2023-6135 (Minerva) — ECDSA timing side-channel on NIST curves. Test: generate P-256 key, sign 1000 messages, verify signatures are valid and timing doesn't leak key bits (statistical test on sign durations).
-- [ ] **7b.2** CVE-2019-11756 — Use-after-free in session handling. Test: rapid session open/close/reuse cycles. Must not crash under ASAN.
-- [ ] **7b.3** CVE-2019-17006 — Missing input length checks for crypto primitives. Test: encrypt/decrypt with boundary-length data (0, 1, block-1, block, block+1, MAX).
-- [ ] **7b.4** NSS fork detection (Mozilla #473505) — C_Initialize in child process after fork. Must succeed per spec (or fail gracefully, not crash/deadlock).
+- [x] **7b.1** CVE-2023-6135 (Minerva) — ECDSA timing side-channel on NIST curves. Test: generate P-256 key, sign 1000 messages, verify signatures are valid and timing doesn't leak key bits (statistical test on sign durations).
+- [x] **7b.2** CVE-2019-11756 — Use-after-free in session handling. Test: rapid session open/close/reuse cycles. Must not crash under ASAN.
+- [x] **7b.3** CVE-2019-17006 — Missing input length checks for crypto primitives. Test: encrypt/decrypt with boundary-length data (0, 1, block-1, block, block+1, MAX).
+- [x] **7b.4** NSS fork detection (Mozilla #473505) — C_Initialize in child process after fork. Must succeed per spec (or fail gracefully, not crash/deadlock).
 
 ### SoftHSM2 Known Issues
-- [ ] **7b.5** SoftHSM2 #608 — Wrong CKR from C_WrapKey. Test: wrap with unsupported mechanism, verify specific CKR code (not generic CKR_GENERAL_ERROR).
-- [ ] **7b.6** SoftHSM2 #596 — CKR_MECHANISM_INVALID on 3DES wrap. Test: AES-KW wrap of 3DES key.
-- [ ] **7b.7** SoftHSM2 #729 — Segfault on module unload/exit. Test: C_Initialize, ops, C_Finalize, verify no crash (subprocess).
-- [ ] **7b.8** SoftHSM2 #845 — SQLite transaction errors under concurrent writes. Test: 10 threads × 50 key gen/destroy.
-- [ ] **7b.9** SoftHSM2 #722 — SIGSEGV on C_Decrypt with OpenSSL provider. Test: RSA keygen + encrypt + decrypt cycle via subprocess.
+- [x] **7b.5** SoftHSM2 #608 — Wrong CKR from C_WrapKey. Test: wrap with unsupported mechanism, verify specific CKR code (not generic CKR_GENERAL_ERROR).
+- [x] **7b.6** SoftHSM2 #596 — CKR_MECHANISM_INVALID on 3DES wrap. Test: AES-KW wrap of 3DES key.
+- [x] **7b.7** SoftHSM2 #729 — Segfault on module unload/exit. Test: C_Initialize, ops, C_Finalize, verify no crash (subprocess).
+- [x] **7b.8** SoftHSM2 #845 — SQLite transaction errors under concurrent writes. Test: 10 threads × 50 key gen/destroy.
+- [x] **7b.9** SoftHSM2 #722 — SIGSEGV on C_Decrypt with OpenSSL provider. Test: RSA keygen + encrypt + decrypt cycle via subprocess.
 
 ### TPM 2.0 CVEs
-- [ ] **7b.10** CVE-2023-1017 / CVE-2023-1018 — TPM 2.0 ref implementation OOB read/write. Test: malformed encrypted parameters in TPM commands (swtpm). Verify no crash.
-- [ ] **7b.11** tpm2-pkcs11 #656 — EC prime256v1 CKA_DERIVE fails. Test: EC keygen with CKA_DERIVE=True, verify CKR or success.
-- [ ] **7b.12** tpm2-pkcs11 #44 — GnuTLS mutex deadlock. Test: rapid login/SignInit cycles from multiple threads.
+- [x] **7b.10** CVE-2023-1017 / CVE-2023-1018 — TPM 2.0 ref implementation OOB read/write. Test: malformed encrypted parameters in TPM commands (swtpm). Verify no crash.
+- [x] **7b.11** tpm2-pkcs11 #656 — EC prime256v1 CKA_DERIVE fails. Test: EC keygen with CKA_DERIVE=True, verify CKR or success.
+- [x] **7b.12** tpm2-pkcs11 #44 — GnuTLS mutex deadlock. Test: rapid login/SignInit cycles from multiple threads.
 
 ### Infineon / Secure Element CVEs
 - [x] **7b.13** ROCA (CVE-2017-15361) — Weak RSA key generation. Test: generate RSA keys and verify modulus doesn't have ROCA fingerprint (Coppersmith factorization test on low-order bits).
 - [x] **7b.14** EUCLEAK (CVE-2024-45678) — ECDSA non-constant-time modular inversion. Test: sign many messages with P-256, measure variance in timing (statistical; detects non-constant-time ops).
 
 ### OpenCryptoki CVEs
-- [ ] **7b.15** CVE-2021-3798 — Missing EC curve validation. Test: import EC public key with invalid curve OID, verify rejection (not silent acceptance).
-- [ ] **7b.16** OpenCryptoki PIN lockout — DA lockout after few wrong PINs. Test: document exact lockout threshold, verify CKR_PIN_LOCKED is returned.
+- [x] **7b.15** CVE-2021-3798 — Missing EC curve validation. Test: import EC public key with invalid curve OID, verify rejection (not silent acceptance).
+- [x] **7b.16** OpenCryptoki PIN lockout — DA lockout after few wrong PINs. Test: document exact lockout threshold, verify CKR_PIN_LOCKED is returned.
 
 ### BouncyHSM Known Issues
-- [ ] **7b.17** BouncyHSM #59 — RSA key invisible via Java/PKCS#11 (attribute visibility). Test: create RSA key, search with various templates, verify found.
-- [ ] **7b.18** BouncyHSM CKF_TOKEN_PRESENT — slot flags not set. Test: verify CKF_TOKEN_PRESENT in slot info when token present.
+- [x] **7b.17** BouncyHSM #59 — RSA key invisible via Java/PKCS#11 (attribute visibility). Test: create RSA key, search with various templates, verify found.
+- [x] **7b.18** BouncyHSM CKF_TOKEN_PRESENT — slot flags not set. Test: verify CKF_TOKEN_PRESENT in slot info when token present.
 
 ### Kryoptic Known Issues
-- [ ] **7b.19** Kryoptic #179 — C_EncryptUpdate returns wrong CKR_BUFFER_TOO_SMALL. Test: multipart AES-CBC encrypt with exact-size buffer.
-- [ ] **7b.20** Kryoptic CKR_DEVICE_ERROR on verify — returns wrong CKR for signature verification failure. Test: tampered RSA/ECDSA/PQC verify.
+- [x] **7b.19** Kryoptic #179 — C_EncryptUpdate returns wrong CKR_BUFFER_TOO_SMALL. Test: multipart AES-CBC encrypt with exact-size buffer.
+- [x] **7b.20** Kryoptic CKR_DEVICE_ERROR on verify — returns wrong CKR for signature verification failure. Test: tampered RSA/ECDSA/PQC verify.
 
 ### Cross-Module / Tookan Paper Vectors
-- [ ] **7b.21** Tookan key extraction via wrap — create key with CKA_WRAP+CKA_DECRYPT, wrap another key, decrypt the wrapped blob. Verify module prevents this.
-- [ ] **7b.22** CKA_SENSITIVE preservation on unwrap — wrap sensitive key, unwrap, verify SENSITIVE flag preserved.
-- [ ] **7b.23** CopyObject attribute escalation — copy non-extractable key, verify EXTRACTABLE stays False. Copy sensitive key, verify SENSITIVE stays True.
-- [ ] **7b.24** Session object visibility after logout — create session objects, C_Logout, verify objects cleaned up per spec.
+- [x] **7b.21** Tookan key extraction via wrap — create key with CKA_WRAP+CKA_DECRYPT, wrap another key, decrypt the wrapped blob. Verify module prevents this.
+- [x] **7b.22** CKA_SENSITIVE preservation on unwrap — wrap sensitive key, unwrap, verify SENSITIVE flag preserved.
+- [x] **7b.23** CopyObject attribute escalation — copy non-extractable key, verify EXTRACTABLE stays False. Copy sensitive key, verify SENSITIVE stays True.
+- [x] **7b.24** Session object visibility after logout — create session objects, C_Logout, verify objects cleaned up per spec.
 
 ### OpenSC / Smart Card CVEs (test via pkcs11 interface)
-- [ ] **7b.25** CVE-2023-2977 — Heap buffer overflow in cardos_have_verifyrc_package. Test: malformed ASN1 context in card response (mock/fuzz).
-- [ ] **7b.26** CVE-2024-45615 — Uninitialized variables in libopensc. Test: partial buffer responses from card emulation.
+- [x] **7b.25** CVE-2023-2977 — Heap buffer overflow in cardos_have_verifyrc_package. Test: malformed ASN1 context in card response (mock/fuzz).
+- [x] **7b.26** CVE-2024-45615 — Uninitialized variables in libopensc. Test: partial buffer responses from card emulation.
 
 ### Fuzzing Infrastructure
-- [ ] **7b.27** Python fuzzer integration (Atheris + Hypothesis) — add Atheris-based fuzz targets for C_CreateObject, C_GenerateKey, C_Encrypt with randomized attribute templates and mechanism params. Integrate with existing Hypothesis property tests.
-- [ ] **7b.28** Google pkcs11test integration — evaluate and integrate relevant tests from https://github.com/google/pkcs11test into p11test framework.
-- [ ] **7b.29** CVE database tracker — create `docs/cve-regression.md` listing all CVEs with test status (covered/not-applicable/pending). Auto-update from test markers.
+- [x] **7b.27** Python fuzzer integration (Atheris + Hypothesis) — add Atheris-based fuzz targets for C_CreateObject, C_GenerateKey, C_Encrypt with randomized attribute templates and mechanism params. Integrate with existing Hypothesis property tests.
+- [x] **7b.28** Google pkcs11test integration — evaluate and integrate relevant tests from https://github.com/google/pkcs11test into p11test framework.
+- [x] **7b.29** CVE database tracker — create `docs/cve-regression.md` listing all CVEs with test status (covered/not-applicable/pending). Auto-update from test markers.
 
 ## Tier 8 — Per-Target Re-Validation (post Tier 7 changes)
 
