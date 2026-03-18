@@ -62,11 +62,11 @@ One file per operation family. After each pair, validate on both tokens.
 
 ## Tier 3 — Key Management & Object Operations
 
-- [ ] **3.1** Add `CKR_KEYGEN` entries. Create `test_ckr_keygen.py` — bad key size, template incomplete, template inconsistent, invalid attribute type/value, attribute read-only, curve not supported, domain params invalid, session read-only. Verify on both tokens.
+- [x] **3.1** Add `CKR_KEYGEN` entries. Create `test_ckr_keygen.py` — bad key size, template incomplete, template inconsistent, invalid attribute type/value, attribute read-only, curve not supported, domain params invalid, session read-only. Verify on both tokens.
 - [ ] **3.2** Add `CKR_WRAP` entries. Create `test_ckr_wrap.py` — key unextractable, key not wrappable, wrapping key type inconsistent, wrong mechanism, wrapped key invalid on unwrap, wrapped key len range. Verify on both tokens.
 - [ ] **3.3** Add `CKR_DERIVE` entries. Create `test_ckr_derive.py` — base key type inconsistent, template incomplete, domain params invalid, mechanism invalid. Verify on both tokens.
 - [ ] **3.4** Add `CKR_KEM` entries. Create `test_ckr_kem.py` — key missing CKA_ENCAPSULATE/DECAPSULATE, key type inconsistent, ciphertext invalid. Mark `@pytest.mark.requires_v32`. Verify on Kryoptic (v3.2 support).
-- [ ] **3.5** Add `CKR_OBJECT` entries. Create `test_ckr_object.py` — missing CKA_CLASS, conflicting attrs, action prohibited (CKA_COPYABLE/MODIFIABLE/DESTROYABLE=False), get sensitive value, set read-only attr, object handle invalid, find not initialized. Verify on both tokens.
+- [x] **3.5** Add `CKR_OBJECT` entries. Create `test_ckr_object.py` — missing CKA_CLASS, conflicting attrs, action prohibited (CKA_COPYABLE/MODIFIABLE/DESTROYABLE=False), get sensitive value, set read-only attr, object handle invalid, find not initialized. Verify on both tokens.
 - [ ] **3.6** Validation checkpoint — full suite on both tokens. Fix regressions. Update pass counts.
 
 ## Tier 4 — Session, Slot, Token, General
@@ -109,14 +109,15 @@ Run full CKR suite on every available target. Fix issues, document module deviat
 
 ## Tier 8b — Deep Gap Analysis & Completeness Audit
 
-After per-target validation, audit what's actually covered vs what the spec requires.
+After per-target validation, audit what's actually covered vs what the spec requires. Gaps found here get added as NEW tasks in this plan (the plan grows).
 
 - [ ] **8b.1** Run gap analysis — for each CKR test file, count (function, condition) pairs actually tested vs entries in `_ckr_spec.py` vs OASIS spec total. Produce a coverage matrix: `docs/ckr-coverage.md` with per-function counts. Identify missing conditions.
-- [ ] **8b.2** Compare against OASIS spec — clone `/tmp/pkcs11/` if needed, parse each function's "Return values:" list and prose conditions. List every (function, condition) pair NOT yet in `_ckr_spec.py`. Add missing entries.
-- [ ] **8b.3** Implement missing tests — for each gap found in 8b.2, add tests to the appropriate `test_ckr_*.py` file. Verify on SoftHSM2 + Kryoptic.
-- [ ] **8b.4** Quality review — run `--ckr-strict` on both tokens. Audit all compliance notes. Document spec deviations per module in `docs/module-issues.md`. Decide which deviations need upstream bug reports.
-- [ ] **8b.5** Update `_ckr_spec.py` condition counts — verify total matches spec expectation (~487). Update `ckr-plan.md` with actual coverage numbers.
-- [ ] **8b.6** Final regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Zero failures.
+- [ ] **8b.2** Compare against OASIS spec — clone `/tmp/pkcs11/` if needed, parse each function's "Return values:" list and prose conditions. List every (function, condition) pair NOT yet in `_ckr_spec.py`. Add missing entries to `_ckr_spec.py`.
+- [ ] **8b.3** Add new tasks to ckr-plan.md — for each gap found in 8b.2, create a new task entry (e.g., "8b.3a: Add CKR_KEYGEN domain_params_invalid test"). These tasks get their own checkbox and are completed individually. The plan grows to cover everything.
+- [ ] **8b.4** Implement gap tasks — work through each task added in 8b.3. Test on SoftHSM2 + Kryoptic. Fix issues.
+- [ ] **8b.5** Quality review — run `--ckr-strict` on both tokens. Audit all compliance notes. Document spec deviations per module in `docs/module-issues.md`. Decide which deviations need upstream bug reports.
+- [ ] **8b.6** Update `_ckr_spec.py` condition counts — verify total matches spec expectation (~487). Update `ckr-plan.md` with actual coverage numbers.
+- [ ] **8b.7** Final regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Zero failures.
 
 ## Tier 9 — Cleanup & Handoff
 
