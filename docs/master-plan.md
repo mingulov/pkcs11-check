@@ -133,19 +133,19 @@ These tests catch real production crashes and security issues that normal test s
 
 - [ ] **7.17** OpenSSL pkcs11-provider interop — install pkcs11-provider, run `openssl req`, `openssl pkeyutl`, `openssl dgst` against local SoftHSM2/Kryoptic. Catches SoftHSM2 #722 (segfault on decrypt) and #729 (exit crash). Test via subprocess.
 - [ ] **7.18** p11-kit proxy testing — load module through p11-kit proxy, run basic ops. Verify transparent proxying works and no crash on proxy unload.
-- [ ] **7.19** CKA_TRUSTED certificate handling — create cert with CKA_TRUSTED=True. Verify it's accepted or returns proper CKR (not crash). RedHat bug regression.
-- [ ] **7.20** CKA_DERIVE on EC keygen — generate EC key with CKA_DERIVE=True in template. Verify acceptance or proper CKR_ATTRIBUTE_VALUE_INVALID (not crash). tpm2-pkcs11 #656 regression.
+- [x] **7.19** CKA_TRUSTED certificate handling — create cert with CKA_TRUSTED=True. Verify it's accepted or returns proper CKR (not crash). RedHat bug regression.
+- [x] **7.20** CKA_DERIVE on EC keygen — generate EC key with CKA_DERIVE=True in template. Verify acceptance or proper CKR_ATTRIBUTE_VALUE_INVALID (not crash). tpm2-pkcs11 #656 regression.
 
 ### Priority 5 — CVE Regression Tests
 
 - [ ] **7.21** CVE regression suite — named regression tests for fixed CVEs to catch regressions: Minerva ECDSA timing (CVE-2023-6135), OpenCryptoki EC curve validation (CVE-2021-3798), NSS fork detection (Mozilla #473505). Each test verifies the fix still holds.
 - [ ] **7.22** SoftHSM2 GitHub issue regressions — #608 (wrong C_WrapKey CKR), #596 (3DES wrap CKR_MECHANISM_INVALID), #845 (SQLite transaction errors under load). Repro from issue descriptions.
-- [ ] **7.23** Tookan wrap/unwrap attribute leaks — unwrap a key and verify CKA_SENSITIVE is preserved (not stripped). Wrap sensitive key and verify wrapped data is opaque. CopyObject must not carry conflicting attrs.
+- [x] **7.23** Tookan wrap/unwrap attribute leaks — unwrap a key and verify CKA_SENSITIVE is preserved (not stripped). Wrap sensitive key and verify wrapped data is opaque. CopyObject must not carry conflicting attrs.
 
 ### Priority 6 — Advanced Testing Infrastructure
 
 - [ ] **7.24** ASAN/UBSAN integration — add `local-builds/build.sh <token> --sanitize` option to build with AddressSanitizer. Run tests with ASAN-compiled SoftHSM2 and Kryoptic. Catches memory bugs invisible to normal runs.
-- [ ] **7.25** Session objects surviving logout — create objects, C_Logout (not close session), verify session objects are cleaned up per spec. Different from close-session test.
+- [x] **7.25** Session objects surviving logout — create objects, C_Logout (not close session), verify session objects are cleaned up per spec. Different from close-session test.
 - [ ] **7.26** Combinatorial attribute template generator — script that generates randomized CK_ATTRIBUTE templates (valid + invalid combinations) and runs C_CreateObject/C_GenerateKey. Collect CKR results into a matrix. Seed for automated fuzz testing.
 - [ ] **7.27** Error validation audit — review ALL `except PKCS11Error: pass` and `except (Error): pass` patterns in test files. Every catch must validate the SPECIFIC error type is expected (e.g., `AttributeTypeInvalid` for bad attr, `MechanismInvalid` for bad mechanism). Generic catches hide real bugs. Replace with specific exception types or log the actual error.
 - [ ] **7.28** Configurable concurrency mode — add `--p11-thread-safe` flag. When enabled, run concurrent same-session tests (that crash SoftHSM2 but may work on Kryoptic). Default: sequential-only for safety.
