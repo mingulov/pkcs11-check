@@ -88,16 +88,16 @@ Use `bash local-builds/test.sh <target>` for fast iteration. Docker for OpenCryp
 - [x] **5.1** Enhanced mechanism probe — scripts/mechanism-audit.py. Kryoptic: 164 mechanisms, 65 tested, 104 gaps (many key-gen/hash variants). Report saved to docs/mechanism-audit.md.
 - [x] **5.2** Vendor mechanism identification — mechanism-audit.py reports vendor-defined mechanisms (>= 0x80000000). Kryoptic has 0 vendor mechanisms.
 - [x] **5.3** Auto-skip untested mechanisms — mechanism-audit.py generates "Coverage Gaps" section showing untested mechanisms per module.
-- [ ] **5.4** Mechanism flag validation — verify flags match actual behavior.
+- [x] **5.4** Mechanism flag validation — verify flags match actual behavior.
 
 ## Tier 6 — Test Quality & Robustness
 
-- [ ] **6.1** Eliminate test-order dependencies — use `pytest-randomly`.
-- [ ] **6.2** Parameterize existing tests where appropriate.
-- [ ] **6.3** Add `pytest-rerunfailures` for flaky tests.
-- [ ] **6.4** Compliance note summary report per module.
-- [ ] **6.5** R/O session test coverage.
-- [ ] **6.6** Session-object lifecycle tests.
+- [x] **6.1** Eliminate test-order dependencies — use `pytest-randomly`.
+- [x] **6.2** Parameterize existing tests where appropriate.
+- [x] **6.3** Add `pytest-rerunfailures` for flaky tests.
+- [x] **6.4** Compliance note summary report per module.
+- [x] **6.5** R/O session test coverage.
+- [x] **6.6** Session-object lifecycle tests.
 
 ## Tier 7 — Final Validation (Docker)
 
