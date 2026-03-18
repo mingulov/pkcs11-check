@@ -19,11 +19,11 @@ def _open_with_login(token: Any, rw: bool, pin_str: str) -> Any:
     """Open a session, handling UserAlreadyLoggedIn gracefully."""
     try:
         return token.open(rw=rw, user_pin=pin_str)
-    except p11.exceptions.UserAlreadyLoggedIn:
+    except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
         session = token.open(rw=rw)
         try:
             session.login(p11.UserType.USER, pin_str)
-        except p11.exceptions.UserAlreadyLoggedIn:
+        except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
             pass
         return session
 

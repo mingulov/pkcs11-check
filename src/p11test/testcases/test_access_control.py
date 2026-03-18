@@ -37,11 +37,11 @@ class TestPrivateAttribute:
         # Create a non-private data object (logged in)
         try:
             session = token.open(rw=True, user_pin=pin_str)
-        except p11.exceptions.UserAlreadyLoggedIn:
+        except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
             session = token.open(rw=True)
             try:
                 session.login(p11.UserType.USER, pin_str)
-            except p11.exceptions.UserAlreadyLoggedIn:
+            except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
                 pass
 
         try:
@@ -79,7 +79,7 @@ class TestPrivateAttribute:
         # Cleanup
         try:
             cleanup = token.open(rw=True, user_pin=pin_str)
-        except p11.exceptions.UserAlreadyLoggedIn:
+        except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
             cleanup = token.open(rw=True)
         try:
             for obj in cleanup.get_objects(

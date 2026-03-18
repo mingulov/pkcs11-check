@@ -32,7 +32,7 @@ def _open_second_session(token: Any, pin_str: str) -> Any:
     session = token.open(rw=True)
     try:
         session.login(p11.UserType.USER, pin_str)
-    except p11.exceptions.UserAlreadyLoggedIn:
+    except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
         pass  # Expected — token-level login already active
     return session
 

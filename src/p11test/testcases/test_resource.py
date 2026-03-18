@@ -106,7 +106,7 @@ class TestSessionChurn:
             try:
                 with token.open(rw=True, user_pin=pin):
                     pass
-            except pkcs11.exceptions.UserAlreadyLoggedIn:
+            except (pkcs11.exceptions.UserAlreadyLoggedIn, pkcs11.exceptions.UserTypeInvalid):
                 session = token.open(rw=True)
                 session.close()
         rss_after = _get_rss_mb()

@@ -33,7 +33,7 @@ class TestMultiSessionConcurrency:
         # Open first session with login (handle already-logged-in)
         try:
             session1 = token.open(rw=True, user_pin=pin)
-        except pkcs11.exceptions.UserAlreadyLoggedIn:
+        except (pkcs11.exceptions.UserAlreadyLoggedIn, pkcs11.exceptions.UserTypeInvalid):
             session1 = token.open(rw=True)
         try:
             key1 = session1.generate_key(KeyType.AES, 128, label="multi-s1")
@@ -56,7 +56,7 @@ class TestMultiSessionConcurrency:
         digests = []
         try:
             session1 = token.open(rw=False, user_pin=pin)
-        except pkcs11.exceptions.UserAlreadyLoggedIn:
+        except (pkcs11.exceptions.UserAlreadyLoggedIn, pkcs11.exceptions.UserTypeInvalid):
             session1 = token.open(rw=False)
         try:
             d1 = session1.digest(b"session 1 data", mechanism=Mechanism.SHA256)
@@ -146,7 +146,7 @@ class TestSessionStress:
             try:
                 with token.open(rw=True, user_pin=pin) as session:
                     session.generate_random(64)
-            except pkcs11.exceptions.UserAlreadyLoggedIn:
+            except (pkcs11.exceptions.UserAlreadyLoggedIn, pkcs11.exceptions.UserTypeInvalid):
                 with token.open(rw=True) as session:
                     session.generate_random(64)
 

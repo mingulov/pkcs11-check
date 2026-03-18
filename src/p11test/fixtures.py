@@ -54,13 +54,9 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
         with token.open(rw=True, user_pin=pin) as session:
             yield session
     except _p11.exceptions.UserAlreadyLoggedIn:
-        # Token-level login already active from another session;
-        # open RW without login, then manually login (handling the race).
+        # Token-level login already active from another session.
+        # Open RW without login, reuse the existing token-level login.
         session = token.open(rw=True)
-        try:
-            session.login(_p11.UserType.USER, pin)
-        except _p11.exceptions.UserAlreadyLoggedIn:
-            pass  # Expected
         try:
             yield session
         finally:

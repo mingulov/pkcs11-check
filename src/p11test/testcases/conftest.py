@@ -60,13 +60,8 @@ def open_session(token: Any, rw: bool = True, pin: str | None = None) -> Any:
     try:
         return token.open(rw=rw, user_pin=pin)
     except _p11.exceptions.UserAlreadyLoggedIn:
-        session = token.open(rw=rw)
-        try:
-            if pin is not None:
-                session.login(_p11.UserType.USER, pin)
-        except _p11.exceptions.UserAlreadyLoggedIn:
-            pass
-        return session
+        # Token-level login already active — reuse it
+        return token.open(rw=rw)
 
 
 def extract_ec_point(ec_point_der: Any) -> Any:
