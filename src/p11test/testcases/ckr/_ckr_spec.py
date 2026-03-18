@@ -532,3 +532,44 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 §5.14.5",
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — KEM family (§5.14.7–5.14.8, v3.2 only)
+# ---------------------------------------------------------------------------
+
+CKR_KEM: dict[str, CkrExpectation] = {
+    # --- C_EncapsulateKey errors ---
+    "encap_mechanism_invalid": CkrExpectation(
+        function="C_EncapsulateKey",
+        condition="unsupported_mechanism",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.2 §5.14.7",
+    ),
+    "encap_key_type_inconsistent": CkrExpectation(
+        function="C_EncapsulateKey",
+        condition="RSA_key_with_ML_KEM_mechanism",
+        spec_ckr=KeyTypeInconsistent,
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted,
+                      ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.2 §5.14.7",
+    ),
+    # --- C_DecapsulateKey errors ---
+    "decap_mechanism_invalid": CkrExpectation(
+        function="C_DecapsulateKey",
+        condition="unsupported_mechanism",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.2 §5.14.8",
+    ),
+    "decap_ciphertext_invalid": CkrExpectation(
+        function="C_DecapsulateKey",
+        condition="garbage_ciphertext",
+        spec_ckr=EncryptedDataInvalid,
+        compat_tuple=(EncryptedDataInvalid, EncryptedDataLenRange, ArgumentsBad,
+                      MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.2 §5.14.8",
+        allow_success=True,  # ML-KEM implicit rejection may produce a key anyway
+    ),
+}
