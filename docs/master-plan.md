@@ -68,6 +68,24 @@ For each target: `docker compose -f docker/docker-compose.test.yml build --no-ca
 - [ ] **6.3** Add `pytest-rerunfailures` for flaky tests — some PKCS#11 operations are timing-sensitive. Mark genuinely flaky tests with `@pytest.mark.flaky(reruns=3)` instead of ignoring them.
 - [ ] **6.4** Compliance note summary report — collect all `compliance.note()` calls from a test run and generate a compliance deviation report per module.
 
+## Tier 7 — Final Validation
+
+Run after ALL other tiers are complete. Rebuild every Docker image with `--no-cache` and run the full suite. Confirm no regressions from fixes made during Tiers 1–6. Record final pass/fail/skip/xfail counts in `docs/module-matrix.md`.
+
+- [ ] **7.1** Final validation: **SoftHSM2 2.7.0** — rebuild, run, record results, confirm 0 failures.
+- [ ] **7.2** Final validation: **Kryoptic 1.5.0** — rebuild, run, record results, confirm 0 failures.
+- [ ] **7.3** Final validation: **NSS 3.120.1** — rebuild, run, record results, confirm only known module issues remain.
+- [ ] **7.4** Final validation: **OpenCryptoki 3.25** — rebuild, run, record results, confirm 0 test-infrastructure errors.
+- [ ] **7.5** Final validation: **BouncyHSM** — rebuild, run, record results.
+- [ ] **7.6** Final validation: **pkcs11-mock** — rebuild, run, record results.
+- [ ] **7.7** Final validation: **tpm2-pkcs11** — rebuild, run, record results.
+- [ ] **7.8** Final validation: **qryptotoken** — rebuild, run, record results.
+- [ ] **7.9** Final validation: **NSS-PQC (Rawhide)** — rebuild, run, record results.
+- [ ] **7.10** Final validation: **SoftHSM2 main** — rebuild, run, record results.
+- [ ] **7.11** Final validation: **Kryoptic main** — rebuild, run, record results.
+- [ ] **7.12** Final validation: **Kryoptic FIPS** — rebuild, run, record results.
+- [ ] **7.13** Update `docs/module-matrix.md` with final results table and sign-off summary.
+
 ---
 
 ## Recommended loop prompt
