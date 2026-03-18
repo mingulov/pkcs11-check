@@ -58,6 +58,13 @@ def pytest_addoption(parser: Any) -> None:
         default=True,
         help="Auto-skip tests for unsupported mechanisms (default: on)",
     )
+    group.addoption(
+        "--p11-thread-safe",
+        dest="p11_thread_safe",
+        action="store_true",
+        default=False,
+        help="Enable concurrent same-session tests (may crash SoftHSM2)",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -111,6 +118,13 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         if item.get_closest_marker("destructive") and not destructive_enabled:
             item.add_marker(
                 pytest.mark.skip(reason="Destructive test (use --p11-destructive to enable)")
+            )
+
+        # Thread-safe marker — skip concurrent same-session tests unless enabled
+        thread_safe_enabled = config.getoption("p11_thread_safe", default=False)
+        if item.get_closest_marker("thread_safe") and not thread_safe_enabled:
+            item.add_marker(
+                pytest.mark.skip(reason="Concurrent same-session test (use --p11-thread-safe to enable)")
             )
 
     # Skip tests for unsupported mechanisms
