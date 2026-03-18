@@ -65,7 +65,23 @@ Updated as Docker targets are analyzed.
 
 ---
 
-## OpenCryptoki 3.25 (v3.0)
+## BouncyHSM 2.0.1 (v3.2)
+
+**Status: Segfaults on attribute query (python-pkcs11 fork issue)**
+
+### Known bugs
+- **Segfault on CKA_ENCAPSULATE/CKA_DECAPSULATE**: python-pkcs11 crashes when BouncyHSM returns attribute errors for v3.2 attributes. Needs fix in fork attribute handling.
+- **CKF_TOKEN_PRESENT not set**: Slot flags are 0x0 even when a token is present. `get_slots(token_present=True)` returns empty. This violates PKCS#11 spec — `CKF_TOKEN_PRESENT` should be set. Workaround: use `get_slots(token_present=False)`.
+
+### Known quirks
+- .NET server + native PKCS#11 shim (TCP proxy architecture)
+- 206 mechanisms supported
+- Requires .NET 10.0 SDK for building
+- InMemory or LiteDb storage modes
+
+---
+
+## OpenCryptoki 3.26 (v3.0)
 
 **Status: 468 passed, 24 failed, 312 skipped, 1 xfailed, 28,762 errors**
 
