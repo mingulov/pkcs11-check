@@ -72,8 +72,21 @@ echo "PIN:      ${PIN:-<none>}"
 echo ""
 
 cd "$PROJECT_DIR"
+
+# Export provider-specific environment variables (e.g., NSS_LIB_PARAMS)
+if type -t get_env &>/dev/null; then
+    while IFS= read -r envline; do
+        [ -n "$envline" ] && export "$envline"
+    done < <(get_env)
+fi
+
 PYTEST_ARGS=(src/p11test/testcases/ "--p11-module=$MODULE" "--benchmark-disable")
 [ -n "${PIN:-}" ] && PYTEST_ARGS+=("--p11-pin=$PIN")
+# Provider may specify a slot
+if type -t get_slot &>/dev/null; then
+    local_slot="$(get_slot)"
+    [ -n "${local_slot:-}" ] && PYTEST_ARGS+=("--p11-slot=$local_slot")
+fi
 PYTEST_ARGS+=("$@")
 
 exec uv run pytest "${PYTEST_ARGS[@]}"

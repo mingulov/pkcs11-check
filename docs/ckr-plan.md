@@ -63,7 +63,7 @@ One file per operation family. After each pair, validate on both tokens.
 ## Tier 3 — Key Management & Object Operations
 
 - [x] **3.1** Add `CKR_KEYGEN` entries. Create `test_ckr_keygen.py` — bad key size, template incomplete, template inconsistent, invalid attribute type/value, attribute read-only, curve not supported, domain params invalid, session read-only. Verify on both tokens.
-- [ ] **3.2** Add `CKR_WRAP` entries. Create `test_ckr_wrap.py` — key unextractable, key not wrappable, wrapping key type inconsistent, wrong mechanism, wrapped key invalid on unwrap, wrapped key len range. Verify on both tokens.
+- [x] **3.2** Add `CKR_WRAP` entries. Create `test_ckr_wrap.py` — key unextractable, key not wrappable, wrapping key type inconsistent, wrong mechanism, wrapped key invalid on unwrap, wrapped key len range. Verify on both tokens.
 - [ ] **3.3** Add `CKR_DERIVE` entries. Create `test_ckr_derive.py` — base key type inconsistent, template incomplete, domain params invalid, mechanism invalid. Verify on both tokens.
 - [ ] **3.4** Add `CKR_KEM` entries. Create `test_ckr_kem.py` — key missing CKA_ENCAPSULATE/DECAPSULATE, key type inconsistent, ciphertext invalid. Mark `@pytest.mark.requires_v32`. Verify on Kryoptic (v3.2 support).
 - [x] **3.5** Add `CKR_OBJECT` entries. Create `test_ckr_object.py` — missing CKA_CLASS, conflicting attrs, action prohibited (CKA_COPYABLE/MODIFIABLE/DESTROYABLE=False), get sensitive value, set read-only attr, object handle invalid, find not initialized. Verify on both tokens.
@@ -71,7 +71,7 @@ One file per operation family. After each pair, validate on both tokens.
 
 ## Tier 4 — Session, Slot, Token, General
 
-- [ ] **4.1** Add `CKR_SESSION` entries. Create `test_ckr_session.py` — invalid slot ID, session count exhaustion, CKF_SERIAL_SESSION missing, login wrong PIN, login already logged in, login another user, logout not logged in, close invalid handle. Verify on both tokens.
+- [x] **4.1** Add `CKR_SESSION` entries. Create `test_ckr_session.py` — invalid slot ID, session count exhaustion, CKF_SERIAL_SESSION missing, login wrong PIN, login already logged in, login another user, logout not logged in, close invalid handle. Verify on both tokens.
 - [ ] **4.2** Add `CKR_SLOT_TOKEN` entries. Create `test_ckr_slot_token.py` — invalid slot ID for GetSlotInfo/GetTokenInfo/GetMechanismList/GetMechanismInfo, unsupported mechanism in GetMechanismInfo, WaitForSlotEvent non-blocking. Verify on both tokens.
 - [ ] **4.3** Add `CKR_GENERAL` entries. Create `test_ckr_general.py` — double C_Initialize, C_Finalize when not initialized, GetInterfaceList. Run in subprocess (post-Finalize calls). Verify on both tokens.
 - [ ] **4.4** Add `CKR_RANDOM` entries. Create `test_ckr_random.py` — SeedRandom support check, GenerateRandom after seed. Verify on both tokens.
