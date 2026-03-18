@@ -147,7 +147,7 @@ These tests catch real production crashes and security issues that normal test s
 - [ ] **7.24** ASAN/UBSAN integration — add `local-builds/build.sh <token> --sanitize` option to build with AddressSanitizer. Run tests with ASAN-compiled SoftHSM2 and Kryoptic. Catches memory bugs invisible to normal runs.
 - [x] **7.25** Session objects surviving logout — create objects, C_Logout (not close session), verify session objects are cleaned up per spec. Different from close-session test.
 - [ ] **7.26** Combinatorial attribute template generator — script that generates randomized CK_ATTRIBUTE templates (valid + invalid combinations) and runs C_CreateObject/C_GenerateKey. Collect CKR results into a matrix. Seed for automated fuzz testing.
-- [ ] **7.27** Error validation audit — review ALL `except PKCS11Error: pass` and `except (Error): pass` patterns in test files. Every catch must validate the SPECIFIC error type is expected (e.g., `AttributeTypeInvalid` for bad attr, `MechanismInvalid` for bad mechanism). Generic catches hide real bugs. Replace with specific exception types or log the actual error.
+- [x] **7.27** Error validation audit — review ALL `except PKCS11Error: pass` and `except (Error): pass` patterns in test files. Every catch must validate the SPECIFIC error type is expected (e.g., `AttributeTypeInvalid` for bad attr, `MechanismInvalid` for bad mechanism). Generic catches hide real bugs. Replace with specific exception types or log the actual error.
 - [ ] **7.28** Configurable concurrency mode — add `--p11-thread-safe` flag. When enabled, run concurrent same-session tests (that crash SoftHSM2 but may work on Kryoptic). Default: sequential-only for safety.
 
 ## Tier 7b — CVE & Known-Issue Regression Suite

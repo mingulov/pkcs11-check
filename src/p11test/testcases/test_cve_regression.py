@@ -12,6 +12,7 @@ import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.exceptions import PKCS11Error
+from p11test.testcases._error_tuples import TEMPLATE_ERRORS, DATA_ERRORS, MECHANISM_ERRORS
 from pkcs11.util.ec import encode_named_curve_parameters
 
 from p11test.testcases.conftest import has_mechanism
@@ -39,7 +40,7 @@ class TestCKATrusted:
             )
             # If accepted, verify the flag
             assert obj is not None
-        except PKCS11Error:
+        except TEMPLATE_ERRORS:
             pass  # Some modules reject CKA_TRUSTED — that's fine
 
 
@@ -271,31 +272,39 @@ class TestBoundaryLengthCrypto:
                 # Non-aligned — should fail with proper CKR
                 try:
                     key.encrypt(data, mechanism=Mechanism.AES_ECB)
-                except (p11.exceptions.DataLenRange, PKCS11Error):
+                except DATA_ERRORS:
                     pass  # Correct rejection
 
     def test_rsa_encrypt_boundary(self, p11_session: Any) -> None:
         """RSA-PKCS encrypt with empty and max-length data."""
+        from pkcs11.exceptions import GeneralError
+
         pub, _priv = p11_session.generate_keypair(KeyType.RSA, 2048)
 
-        # Empty data
+        # Empty data — some modules reject
         try:
             pub.encrypt(b"", mechanism=Mechanism.RSA_PKCS)
-        except PKCS11Error:
-            pass  # Some modules reject empty
+        except DATA_ERRORS:
+            pass  # Correct: DataLenRange
+        except GeneralError:
+            pass  # SoftHSM2 quirk: returns GeneralError instead of DataLenRange
 
         # Max data for RSA-2048 PKCS#1 v1.5: 245 bytes (256 - 11)
         try:
             ct = pub.encrypt(b"\x42" * 245, mechanism=Mechanism.RSA_PKCS)
             assert len(ct) == 256
-        except PKCS11Error:
+        except DATA_ERRORS:
             pass  # Some modules are stricter
+        except GeneralError:
+            pass  # SoftHSM2 quirk
 
         # Over max — must reject
         try:
             pub.encrypt(b"\x42" * 246, mechanism=Mechanism.RSA_PKCS)
-        except PKCS11Error:
-            pass  # Correct
+        except DATA_ERRORS:
+            pass  # Correct: DataLenRange
+        except GeneralError:
+            pass  # SoftHSM2 quirk: should be DataLenRange
 
 
 class TestInvalidECCurve:
@@ -327,5 +336,5 @@ class TestInvalidECCurve:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="CVE-2021-3798: OpenCryptoki missing EC curve validation",
             )
-        except PKCS11Error:
+        except TEMPLATE_ERRORS:
             pass  # Correct: reject invalid curve

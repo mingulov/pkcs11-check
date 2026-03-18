@@ -10,7 +10,7 @@ from typing import Any
 
 import pkcs11 as p11
 import pytest
-from pkcs11.exceptions import PKCS11Error, SessionCount
+from pkcs11.exceptions import PKCS11Error, SessionCount, UserNotLoggedIn
 
 pytestmark = pytest.mark.security
 

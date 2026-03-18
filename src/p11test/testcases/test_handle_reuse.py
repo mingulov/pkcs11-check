@@ -12,7 +12,8 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.exceptions import PKCS11Error
+from pkcs11.exceptions import ObjectHandleInvalid, PKCS11Error
+from p11test.testcases._error_tuples import HANDLE_ERRORS
 
 pytestmark = pytest.mark.security
 

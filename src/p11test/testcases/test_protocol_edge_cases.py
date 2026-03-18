@@ -11,6 +11,7 @@ import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.exceptions import PKCS11Error
+from p11test.testcases._error_tuples import RESOURCE_ERRORS
 
 pytestmark = pytest.mark.security
 
@@ -24,13 +25,13 @@ class TestResourceExhaustion:
         try:
             for i in range(200):
                 keys.append(p11_session.generate_key(KeyType.AES, 128))
-        except PKCS11Error:
+        except RESOURCE_ERRORS:
             pass  # CKR_DEVICE_MEMORY or similar — graceful
         finally:
             for k in keys:
                 try:
                     k.destroy()
-                except PKCS11Error:
+                except RESOURCE_ERRORS:
                     pass
 
     def test_many_data_objects(self, p11_session: Any) -> None:
@@ -48,13 +49,13 @@ class TestResourceExhaustion:
                         }
                     )
                 )
-        except PKCS11Error:
+        except RESOURCE_ERRORS:
             pass  # Graceful limit
         # Cleanup
         for o in objs:
             try:
                 o.destroy()
-            except PKCS11Error:
+            except RESOURCE_ERRORS:
                 pass
 
     def test_generate_random_large(self, p11_session: Any) -> None:
