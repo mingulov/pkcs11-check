@@ -108,8 +108,8 @@ These tests catch real production crashes and security issues that normal test s
 
 - [x] **7.1** Attribute template fuzzing — malformed CK_ATTRIBUTE arrays: duplicate types, wrong CK_ULONG as bytes, CKA_CLASS=0xdeadbeef, 10MB template, invalid CK_DATE, CKA_VALUE_LEN=0 on RSA. Must not crash (return CKR error instead).
 - [x] **7.2** Conflicting usage attrs (Tookan vectors) — create key with CKA_WRAP+CKA_DECRYPT (or CKA_ENCRYPT+CKA_UNWRAP), then attempt key extraction via wrap/unwrap. Verify module rejects or that extracted material doesn't match.
-- [ ] **7.3** Post-C_Finalize calls — call C_GetSlotList, C_OpenSession, etc. after C_Finalize. Must not crash. Test via subprocess (isolation.py) to avoid corrupting test session.
-- [ ] **7.4** Fork safety — `os.fork()` after C_Initialize, child calls C_GetSlotList or C_GenerateRandom. Must not crash or deadlock. Test NSS-style fork detection. Run in subprocess.
+- [x] **7.3** Post-C_Finalize calls — call C_GetSlotList, C_OpenSession, etc. after C_Finalize. Must not crash. Test via subprocess (isolation.py) to avoid corrupting test session.
+- [x] **7.4** Fork safety — `os.fork()` after C_Initialize, child calls C_GetSlotList or C_GenerateRandom. Must not crash or deadlock. Test NSS-style fork detection. Run in subprocess.
 - [x] **7.5** Handle reuse after destroy — C_DestroyObject then reuse the handle for C_GetAttributeValue, C_Encrypt, etc. Must return CKR_OBJECT_HANDLE_INVALID, not crash.
 - [ ] **7.6** C_GetAttributeValue NULL buffer + modify race — query length with NULL pValue, modify object in another thread, second call with buffer. Check for stale data or crash.
 
@@ -126,7 +126,7 @@ These tests catch real production crashes and security issues that normal test s
 - [ ] **7.12** DB stress under concurrent writes — 10 threads × 100 key gen+destroy cycles simultaneously. Verify no SQLite transaction errors (SoftHSM #845), no leaked objects.
 - [ ] **7.13** Resource exhaustion — open sessions until CKR_SESSION_COUNT, generate keys until CKR_DEVICE_MEMORY, create objects until storage full. Verify graceful errors, no crash, recovery after cleanup.
 - [ ] **7.14** v2.40 + v3.0 attribute mix — create object with v3.2-only attributes (CKA_ENCAPSULATE, CKA_PARAMETER_SET) on v2.40 module. Verify CKR_ATTRIBUTE_TYPE_INVALID, not crash (BouncyHSM segfault root cause).
-- [ ] **7.15** Library reload cycle — dlopen, C_Initialize, ops, C_Finalize, dlclose, dlopen again. 10 cycles. Verify no leak, no crash. Test via subprocess.
+- [x] **7.15** Library reload cycle — dlopen, C_Initialize, ops, C_Finalize, dlclose, dlopen again. 10 cycles. Verify no leak, no crash. Test via subprocess.
 - [ ] **7.16** DoS via spec-ambiguous calls — C_WaitForSlotEvent with CKF_DONT_BLOCK; C_Initialize called twice; C_GetFunctionList after Finalize. Verify no hang, correct CKR.
 
 ### Priority 4 — Interop & Client Testing
