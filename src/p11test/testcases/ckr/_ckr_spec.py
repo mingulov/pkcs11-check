@@ -167,6 +167,7 @@ def assert_ckr(
 from pkcs11.exceptions import (  # noqa: E402
     ArgumentsBad,
     AttributeReadOnly,
+    AttributeSensitive,
     AttributeTypeInvalid,
     AttributeValueInvalid,
     CurveNotSupported,
@@ -175,6 +176,7 @@ from pkcs11.exceptions import (  # noqa: E402
     DomainParamsInvalid,
     EncryptedDataInvalid,
     EncryptedDataLenRange,
+    FunctionNotSupported,
     KeyFunctionNotPermitted,
     KeyHandleInvalid,
     KeySizeRange,
@@ -571,5 +573,179 @@ CKR_KEM: dict[str, CkrExpectation] = {
                       MechanismInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.8",
         allow_success=True,  # ML-KEM implicit rejection may produce a key anyway
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Wrap/Unwrap family (§5.14.3–5.14.4)
+# ---------------------------------------------------------------------------
+
+# Import additional types needed for wrap
+from pkcs11.exceptions import (  # noqa: E402
+    KeyUnextractable,
+    KeyNotWrappable,
+    WrappedKeyInvalid,
+    WrappedKeyLenRange,
+)
+
+CKR_WRAP: dict[str, CkrExpectation] = {
+    "wrap_key_unextractable": CkrExpectation(
+        function="C_WrapKey",
+        condition="key_CKA_EXTRACTABLE_is_False",
+        spec_ckr=KeyUnextractable,
+        compat_tuple=(KeyUnextractable, KeyNotWrappable, KeyFunctionNotPermitted, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.3",
+    ),
+    "wrap_mechanism_invalid": CkrExpectation(
+        function="C_WrapKey",
+        condition="unsupported_mechanism",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.3",
+    ),
+    "unwrap_wrapped_key_invalid": CkrExpectation(
+        function="C_UnwrapKey",
+        condition="garbage_wrapped_data",
+        spec_ckr=WrappedKeyInvalid,
+        compat_tuple=(WrappedKeyInvalid, WrappedKeyLenRange, EncryptedDataInvalid,
+                      ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.4",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Object management (§5.7)
+# ---------------------------------------------------------------------------
+
+CKR_OBJECT: dict[str, CkrExpectation] = {
+    "create_missing_class": CkrExpectation(
+        function="C_CreateObject",
+        condition="missing_CKA_CLASS",
+        spec_ckr=TemplateIncomplete,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.1",
+    ),
+    "create_invalid_class": CkrExpectation(
+        function="C_CreateObject",
+        condition="CKA_CLASS_is_0xDEADBEEF",
+        spec_ckr=AttributeValueInvalid,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.1",
+    ),
+    "get_attr_sensitive": CkrExpectation(
+        function="C_GetAttributeValue",
+        condition="read_VALUE_on_SENSITIVE_key",
+        spec_ckr=AttributeSensitive,
+        compat_tuple=(AttributeSensitive, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.5",
+    ),
+    "get_attr_destroyed": CkrExpectation(
+        function="C_GetAttributeValue",
+        condition="destroyed_object_handle",
+        spec_ckr=ObjectHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.5",
+        allow_success=True,  # Some modules don't detect invalid handles
+    ),
+    "set_attr_readonly": CkrExpectation(
+        function="C_SetAttributeValue",
+        condition="modify_read_only_CKA_CLASS",
+        spec_ckr=AttributeReadOnly,
+        compat_tuple=(AttributeReadOnly, AttributeTypeInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.6",
+        allow_success=True,  # Kryoptic accepts CKA_CLASS modification
+    ),
+    "destroy_already_destroyed": CkrExpectation(
+        function="C_DestroyObject",
+        condition="double_destroy",
+        spec_ckr=ObjectHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.3",
+        allow_success=True,  # Some modules silently accept double destroy
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Session management (§5.6)
+# ---------------------------------------------------------------------------
+
+from pkcs11.exceptions import (  # noqa: E402
+    PinIncorrect,
+    UserAlreadyLoggedIn,
+    UserNotLoggedIn,
+)
+
+CKR_SESSION: dict[str, CkrExpectation] = {
+    "login_wrong_pin": CkrExpectation(
+        function="C_Login",
+        condition="incorrect_PIN",
+        spec_ckr=PinIncorrect,
+        compat_tuple=(PinIncorrect, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.6.7",
+    ),
+    "login_already_logged_in": CkrExpectation(
+        function="C_Login",
+        condition="double_login",
+        spec_ckr=UserAlreadyLoggedIn,
+        compat_tuple=(UserAlreadyLoggedIn, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.6.7",
+    ),
+    "logout_not_logged_in": CkrExpectation(
+        function="C_Logout",
+        condition="logout_without_login",
+        spec_ckr=UserNotLoggedIn,
+        compat_tuple=(UserNotLoggedIn, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.6.8",
+        allow_success=True,  # Some modules don't error on logout without login
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Random (§5.18)
+# ---------------------------------------------------------------------------
+
+from pkcs11.exceptions import (  # noqa: E402
+    RandomSeedNotSupported,
+)
+
+CKR_RANDOM: dict[str, CkrExpectation] = {
+    "seed_not_supported": CkrExpectation(
+        function="C_SeedRandom",
+        condition="seeding_not_supported",
+        spec_ckr=RandomSeedNotSupported,
+        compat_tuple=(RandomSeedNotSupported, FunctionNotSupported, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.18.1",
+        allow_success=True,  # Module may accept seeding
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Operation State (§5.6.5–5.6.6)
+# ---------------------------------------------------------------------------
+
+from pkcs11.exceptions import (  # noqa: E402
+    SavedStateInvalid,
+    StateUnsaveable,
+)
+
+CKR_STATE: dict[str, CkrExpectation] = {
+    "get_state_no_op": CkrExpectation(
+        function="C_GetOperationState",
+        condition="no_active_operation",
+        spec_ckr=OperationNotInitialized,
+        compat_tuple=(OperationNotInitialized, StateUnsaveable, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.6.5",
+    ),
+    "set_state_invalid": CkrExpectation(
+        function="C_SetOperationState",
+        condition="garbage_state_data",
+        spec_ckr=SavedStateInvalid,
+        compat_tuple=(SavedStateInvalid, OperationNotInitialized, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.6.6",
     ),
 }
