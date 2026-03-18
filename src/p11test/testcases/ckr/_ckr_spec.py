@@ -402,3 +402,33 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         allow_success=True,  # SoftHSM2 + Kryoptic accept wrong-length, then fail at verify
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Digest family (§5.12)
+# ---------------------------------------------------------------------------
+
+CKR_DIGEST: dict[str, CkrExpectation] = {
+    # --- C_DigestInit errors ---
+    "init_mechanism_invalid": CkrExpectation(
+        function="C_DigestInit",
+        condition="mechanism_not_supported",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.12.1",
+    ),
+    "init_mechanism_param_invalid": CkrExpectation(
+        function="C_DigestInit",
+        condition="wrong_mechanism_parameter",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.12.1",
+    ),
+    "init_encrypt_mechanism": CkrExpectation(
+        function="C_DigestInit",
+        condition="using_encrypt_mechanism_for_digest",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.12.1",
+    ),
+}
