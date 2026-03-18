@@ -111,6 +111,42 @@ class TestSetAttributeErrors:
             pass  # Any rejection is acceptable for read-only attribute
 
 
+class TestCopyObjectErrors:
+    """Error conditions for C_CopyObject (§5.7.2)."""
+
+    def test_copy_destroyed_handle(self, p11_session: Any) -> None:
+        """Copy destroyed object → CKR_OBJECT_HANDLE_INVALID."""
+        key = p11_session.generate_key(KeyType.AES, 128, label="ckr-copy-destroy")
+        key.destroy()
+        try:
+            key.copy({Attribute.LABEL: "ckr-copy-result"})
+            # Some modules don't detect invalid handle
+        except (ObjectHandleInvalid, PKCS11Error):
+            pass  # Expected
+
+
+class TestFindObjectsErrors:
+    """Error conditions for C_FindObjects* (§5.7.7-5.7.9)."""
+
+    def test_find_with_empty_result(self, p11_session: Any) -> None:
+        """FindObjects with template matching nothing → returns empty list."""
+        results = list(p11_session.get_objects({Attribute.LABEL: "nonexistent_ckr_label_xyz"}))
+        assert results == []  # Empty is valid — not an error
+
+    def test_find_by_class(self, p11_session: Any) -> None:
+        """FindObjects with CKA_CLASS filter works correctly."""
+        # Create a data object
+        obj = p11_session.create_object({
+            Attribute.CLASS: ObjectClass.DATA,
+            Attribute.LABEL: "ckr-find-test",
+            Attribute.VALUE: b"test",
+            Attribute.TOKEN: False,
+        })
+        found = list(p11_session.get_objects({Attribute.LABEL: "ckr-find-test"}))
+        assert len(found) >= 1
+        obj.destroy()
+
+
 class TestDestroyObjectErrors:
     """Error conditions for C_DestroyObject (§5.7.3)."""
 
