@@ -17,7 +17,7 @@ Each task is designed to be completed in **one iteration** of the Ralph loop.
 **Before implementing any medium or large task** (new test file, new infrastructure module, C code):
 1. **Plan first** — read the relevant OASIS spec section, check existing code patterns, identify what exception types/imports are needed, list the exact test cases you'll write. Don't start coding until you have a clear mental model.
 2. **Implement** — write the code following the plan.
-3. **Verify** — run on all 3 local targets (SoftHSM2 + Kryoptic + NSS softokn). Fix failures.
+3. **Verify** — run on all 3 local targets (SoftHSM2 + Kryoptic + NSS softokn). Fix failures. **Every 3rd task** (or at checkpoints), also rebuild and run Docker OpenCryptoki CKR-only. If Docker fails, skip with a note and continue.
 4. **Gap-check after** — after the task passes, ask: "Did I cover all the conditions the spec lists for this function? Are there edge cases I missed?" If yes, add them in the same iteration. If it needs a separate task, add a new checkbox entry to this plan.
 5. **Commit** — with task ID reference.
 
