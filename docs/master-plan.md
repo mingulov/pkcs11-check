@@ -67,8 +67,8 @@ Use `bash local-builds/test.sh <target>` for fast iteration. Docker for OpenCryp
 - [x] **2.7** **tpm2-pkcs11 1.9.0** — 33 passed/61 failed (core tests). 26 mechanisms. DA lockout cleared. Hardware TPM limitations documented in module-issues.md.
 - [x] **2.8** **qryptotoken 0.4.1** — 20 passed, 46 failed. Experimental PQC token, limited mechanism support.
 - [ ] **2.9** **NSS-PQC (Rawhide)** — Docker only. Check ML-KEM/ML-DSA support.
-- [ ] **2.10** **SoftHSM2 main** — Build locally: `bash local-builds/build.sh softhsm2 master`. Compare with 2.7.0.
-- [ ] **2.11** **Kryoptic main** — Build locally: `bash local-builds/build.sh kryoptic main`. Compare with 1.5.0.
+- [x] **2.10** **SoftHSM2 main** — 22,615 passed, 0 failed. Identical to 2.7.0 release.
+- [x] **2.11** **Kryoptic main** — 21,531 passed, 0 failed. Similar to v1.5.0 (minor xfail changes).
 - [ ] **2.12** **Kryoptic FIPS** — Needs special OpenSSL FIPS build. Docker for now.
 
 ## Tier 3 — Module Issues Documentation
