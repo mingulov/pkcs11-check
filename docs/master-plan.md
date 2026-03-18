@@ -64,7 +64,7 @@ Use `bash local-builds/test.sh <target>` for fast iteration. Docker for OpenCryp
 - [x] **2.4** **OpenCryptoki 3.26** — PIN lockout root cause found. Marked test_pin.py @destructive. Docker only (needs pkcsslotd).
 - [x] **2.5** **BouncyHSM 2.0.1** — Segfaults on v3.2 attr query (python-pkcs11 fork bug). CKF_TOKEN_PRESENT not set (BouncyHSM bug).
 - [x] **2.6** **pkcs11-mock 2.0.0** — 26 passed, 2 failed (constant RNG — mock behavior, expected).
-- [ ] **2.7** **tpm2-pkcs11 1.9.0** — Hardware TPM working (`sg tss`). 26 mechanisms. Run full suite, document limitations.
+- [x] **2.7** **tpm2-pkcs11 1.9.0** — 33 passed/61 failed (core tests). 26 mechanisms. DA lockout cleared. Hardware TPM limitations documented in module-issues.md.
 - [x] **2.8** **qryptotoken 0.4.1** — 20 passed, 46 failed. Experimental PQC token, limited mechanism support.
 - [ ] **2.9** **NSS-PQC (Rawhide)** — Docker only. Check ML-KEM/ML-DSA support.
 - [ ] **2.10** **SoftHSM2 main** — Build locally: `bash local-builds/build.sh softhsm2 master`. Compare with 2.7.0.

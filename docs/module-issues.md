@@ -81,6 +81,20 @@ Updated as Docker targets are analyzed.
 
 ---
 
+## tpm2-pkcs11 1.9.0 (hardware TPM)
+
+**Status: 33 passed, 61 failed (core tests only) — limited mechanism support**
+
+### Known limitations (hardware TPM)
+- **26 mechanisms only**: AES-ECB/CBC/CBC-PAD/CFB/CTR, RSA-PKCS/OAEP/X509, ECDSA (P-256 only), SHA-1/256/384/512, SHA-HMAC
+- **No EdDSA, DH, PQC, AES-GCM, AES-KW**: hardware doesn't support these
+- **Keys always SENSITIVE**: TPM-backed keys can't export private material (by design)
+- **CKA_PRIVATE_EXPONENT not readable**: RSA private key components not accessible
+- **DA lockout**: Wrong PIN attempts lock the TPM. Clear with `tpm2_dictionarylockout --clear-lockout`
+- **Needs `tss` group**: Use `sg tss -c "command"` or add user to `tss` group
+
+---
+
 ## OpenCryptoki 3.26 (v3.0)
 
 **Status: 468 passed, 24 failed, 312 skipped, 1 xfailed, 28,762 errors**
