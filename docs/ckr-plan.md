@@ -12,6 +12,19 @@ OASIS spec: https://github.com/oasis-tcs/pkcs11.git (`working/doc/spec/`)
 Each task is designed to be completed in **one iteration** of the Ralph loop.
 **Use local builds** (`local-builds/test.sh`) for fast iteration. Docker images are for final validation only.
 
+### Task execution discipline
+
+**Before implementing any medium or large task** (new test file, new infrastructure module, C code):
+1. **Plan first** — read the relevant OASIS spec section, check existing code patterns, identify what exception types/imports are needed, list the exact test cases you'll write. Don't start coding until you have a clear mental model.
+2. **Implement** — write the code following the plan.
+3. **Verify** — run on all 3 local targets (SoftHSM2 + Kryoptic + NSS softokn). Fix failures.
+4. **Gap-check after** — after the task passes, ask: "Did I cover all the conditions the spec lists for this function? Are there edge cases I missed?" If yes, add them in the same iteration. If it needs a separate task, add a new checkbox entry to this plan.
+5. **Commit** — with task ID reference.
+
+**For small tasks** (fix a compat tuple, add one test, update docs): just do it, verify, commit.
+
+**When a test fails on a real token:** investigate before "fixing" — the module may have a real bug. Document in `docs/module-issues.md`. Use `compliance.note()` for spec deviations, `pytest.xfail()` for known bugs, `allow_success=True` in CkrExpectation for permissive modules. NEVER silently `pass`.
+
 ### Quick reference
 
 ```bash
