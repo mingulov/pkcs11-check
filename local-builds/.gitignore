@@ -1,12 +1,11 @@
-# Build artifacts and source trees
-kryoptic/src/
-kryoptic/lib/
-softhsm2/src/
-softhsm2/lib/
-softhsm2/install/
-pkcs11-mock/src/
-pkcs11-mock/lib/
-bouncyhsm/
+# Build artifacts, source trees, and installs
+*/src/
+*/lib/
+*/install/
+*/server/
 
 # Token data
 tokens/
+
+# OpenSSL build
+openssl/
