@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pkcs11 as _p11
 from pkcs11 import Attribute, KeyType, ObjectClass
 
 
@@ -47,6 +48,25 @@ def has_mechanism(p11_module: Any, name: str) -> bool:
     slot = p11_module.get_slots(token_present=True)[0]
     names = {mech_name(m) for m in slot.get_mechanisms()}
     return name in names
+
+
+def open_session(token: Any, rw: bool = True, pin: str | None = None) -> Any:
+    """Open a PKCS#11 session, handling UserAlreadyLoggedIn gracefully.
+
+    PKCS#11 login is per-token, not per-session. If another test left a login
+    active, token.open(user_pin=...) will fail. This helper catches that and
+    opens without re-login.
+    """
+    try:
+        return token.open(rw=rw, user_pin=pin)
+    except _p11.exceptions.UserAlreadyLoggedIn:
+        session = token.open(rw=rw)
+        try:
+            if pin is not None:
+                session.login(_p11.UserType.USER, pin)
+        except _p11.exceptions.UserAlreadyLoggedIn:
+            pass
+        return session
 
 
 def extract_ec_point(ec_point_der: Any) -> Any:
