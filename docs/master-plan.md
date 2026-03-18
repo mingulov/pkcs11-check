@@ -99,11 +99,41 @@ Use `bash local-builds/test.sh <target>` for fast iteration. Docker for OpenCryp
 - [x] **6.5** R/O session test coverage.
 - [x] **6.6** Session-object lifecycle tests.
 
-## Tier 7 — Final Validation (Docker)
+## Tier 7 — Security & Edge-Case Testing (from rep11.md analysis)
+
+Inspired by CVE research, Tookan paper, and hidden failure vectors documented in `/home/user/src/m/rep11.md`.
+These tests catch real production crashes and security issues that normal test suites miss.
+
+### Priority 1 — Crashes & Security
+
+- [ ] **7.1** Attribute template fuzzing — malformed CK_ATTRIBUTE arrays: duplicate types, wrong CK_ULONG as bytes, CKA_CLASS=0xdeadbeef, 10MB template, invalid CK_DATE, CKA_VALUE_LEN=0 on RSA. Must not crash (return CKR error instead).
+- [ ] **7.2** Conflicting usage attrs (Tookan vectors) — create key with CKA_WRAP+CKA_DECRYPT (or CKA_ENCRYPT+CKA_UNWRAP), then attempt key extraction via wrap/unwrap. Verify module rejects or that extracted material doesn't match.
+- [ ] **7.3** Post-C_Finalize calls — call C_GetSlotList, C_OpenSession, etc. after C_Finalize. Must not crash. Test via subprocess (isolation.py) to avoid corrupting test session.
+- [ ] **7.4** Fork safety — `os.fork()` after C_Initialize, child calls C_GetSlotList or C_GenerateRandom. Must not crash or deadlock. Test NSS-style fork detection. Run in subprocess.
+- [ ] **7.5** Handle reuse after destroy — C_DestroyObject then reuse the handle for C_GetAttributeValue, C_Encrypt, etc. Must return CKR_OBJECT_HANDLE_INVALID, not crash.
+- [ ] **7.6** C_GetAttributeValue NULL buffer + modify race — query length with NULL pValue, modify object in another thread, second call with buffer. Check for stale data or crash.
+
+### Priority 2 — Protocol Violations
+
+- [ ] **7.7** Stale session handles — C_CloseSession then reuse handle for C_FindObjects, C_Sign, etc. Must return CKR_SESSION_HANDLE_INVALID.
+- [ ] **7.8** C_CloseAllSessions during active ops — start multipart encrypt, call C_CloseAllSessions, verify no crash and proper cleanup.
+- [ ] **7.9** Multipart CKR_BUFFER_TOO_SMALL — C_EncryptUpdate with too-small output buffer. Verify correct CKR and operation can continue (Kryoptic #179).
+- [ ] **7.10** Default tool templates — test with pkcs11-tool default templates (CKA_WRAP+CKA_DECRYPT together, CKA_SIGN+CKA_VERIFY+CKA_ENCRYPT). Verify no security policy violations.
+- [ ] **7.11** C_FindObjects with concurrent modifications — search while another session creates/destroys objects. Must not crash or return invalid handles.
+
+### Priority 3 — Robustness & Interop
+
+- [ ] **7.12** DB stress under concurrent writes — 10 threads × 100 key gen+destroy cycles simultaneously. Verify no SQLite transaction errors (SoftHSM #845), no leaked objects.
+- [ ] **7.13** Resource exhaustion — open sessions until CKR_SESSION_COUNT, generate keys until CKR_DEVICE_MEMORY, create objects until storage full. Verify graceful errors, no crash, recovery after cleanup.
+- [ ] **7.14** v2.40 + v3.0 attribute mix — create object with v3.2-only attributes (CKA_ENCAPSULATE, CKA_PARAMETER_SET) on v2.40 module. Verify CKR_ATTRIBUTE_TYPE_INVALID, not crash (BouncyHSM segfault root cause).
+- [ ] **7.15** Library reload cycle — dlopen, C_Initialize, ops, C_Finalize, dlclose, dlopen again. 10 cycles. Verify no leak, no crash. Test via subprocess.
+- [ ] **7.16** DoS via spec-ambiguous calls — C_WaitForSlotEvent with CKF_DONT_BLOCK; C_Initialize called twice; C_GetFunctionList after Finalize. Verify no hang, correct CKR.
+
+## Tier 8 — Docker Final Validation
 
 Run after ALL other tiers. Rebuild every Docker image with `--no-cache`. Record final counts.
 
-- [x] **7.1–7.13** Final validation for all 12 Docker targets + summary in `docs/module-matrix.md`.
+- [ ] **8.1–8.13** Final validation for all 12 Docker targets + summary in `docs/module-matrix.md`.
 
 ---
 
