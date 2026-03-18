@@ -11,7 +11,7 @@ mkdir -p "$LIB"
 echo "=== Building pkcs11-mock ==="
 
 if [ ! -d "$SRC" ]; then
-    git clone --depth 1 https://github.com/pspacek/pkcs11-mock.git "$SRC"
+    git clone --depth 1 --branch v2.0.0 https://github.com/Pkcs11Interop/pkcs11-mock.git "$SRC"
 fi
 
 cd "$SRC"

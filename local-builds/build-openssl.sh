@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BRANCH="${1:-openssl-3.5.0}"
+BRANCH="${1:-openssl-3.6.1}"
 SRC="$SCRIPT_DIR/openssl/src"
 PREFIX="$SCRIPT_DIR/openssl/install"
 mkdir -p "$PREFIX"

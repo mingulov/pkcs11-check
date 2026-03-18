@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BRANCH="${1:-main}"
+BRANCH="${1:-v0.4.1}"
 SRC="$SCRIPT_DIR/qryptotoken/src"
 LIB="$SCRIPT_DIR/qryptotoken/lib"
 mkdir -p "$LIB"
