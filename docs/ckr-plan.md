@@ -154,9 +154,15 @@ Run full CKR suite on every available target. Fix issues, document module deviat
 
 After per-target validation, audit what's actually covered vs what the spec requires. Gaps found here get added as NEW tasks in this plan (the plan grows).
 
-- [ ] **8b.1** Run gap analysis — for each CKR test file, count (function, condition) pairs actually tested vs entries in `_ckr_spec.py` vs OASIS spec total. Produce a coverage matrix: `docs/ckr-coverage.md` with per-function counts. Identify missing conditions.
-- [ ] **8b.2** Compare against OASIS spec — clone `/tmp/pkcs11/` if needed, parse each function's "Return values:" list and prose conditions. List every (function, condition) pair NOT yet in `_ckr_spec.py`. Add missing entries to `_ckr_spec.py`.
-- [ ] **8b.3** Add new tasks to ckr-plan.md — for each gap found in 8b.2, add a checkbox entry below this line (e.g., `- [ ] **8b.3a** Add CKR_KEYGEN domain_params_invalid test`). Mark 8b.3 done AFTER all new entries are written. Then continue to next iteration to implement them one by one.
+- [x] **8b.1** Run gap analysis — docs/ckr-coverage.md created. 40 spec entries, 102 tests, 8.2% of full 487 spec conditions. — for each CKR test file, count (function, condition) pairs actually tested vs entries in `_ckr_spec.py` vs OASIS spec total. Produce a coverage matrix: `docs/ckr-coverage.md` with per-function counts. Identify missing conditions.
+- [x] **8b.2** Compare against OASIS spec — major gaps identified in ckr-coverage.md. Key missing: multipart ops (Update/Final), session mgmt spec entries, C_CopyObject, C_FindObjects*. Adding gap tasks in 8b.3. — clone `/tmp/pkcs11/` if needed, parse each function's "Return values:" list and prose conditions. List every (function, condition) pair NOT yet in `_ckr_spec.py`. Add missing entries to `_ckr_spec.py`.
+- [x] **8b.3** Add new tasks to ckr-plan.md — added 8b.3a-8b.3f below.
+- [ ] **8b.3a** Add CkrExpectation entries for existing test files that lack them (wrap, object, session, slot_token, random, state). Wire existing tests to use assert_ckr().
+- [ ] **8b.3b** Add multipart encrypt/decrypt error tests — C_EncryptUpdate with non-aligned partial, C_EncryptFinal without Update, C_DecryptUpdate/Final similarly.
+- [ ] **8b.3c** Add multipart sign/verify/digest error tests — C_SignUpdate/Final, C_DigestUpdate/Final, C_Digest with empty data.
+- [ ] **8b.3d** Add C_CopyObject error tests — CKA_COPYABLE=False, copy with conflicting template, copy destroyed handle.
+- [ ] **8b.3e** Add C_FindObjects error tests — FindObjects without FindObjectsInit, FindObjectsFinal without Init, search with 0 max results.
+- [ ] **8b.3f** Add session management spec entries — C_OpenSession invalid slot, C_CloseSession invalid handle, C_Login/Logout spec CKR codes. — for each gap found in 8b.2, add a checkbox entry below this line (e.g., `- [ ] **8b.3a** Add CKR_KEYGEN domain_params_invalid test`). Mark 8b.3 done AFTER all new entries are written. Then continue to next iteration to implement them one by one.
 - [ ] **8b.4** Implement all gap tasks added in 8b.3 — pick the first unchecked `8b.3x` task, implement it, test on SoftHSM2 + Kryoptic + NSS softokn, commit, mark done. **This task is done when ALL 8b.3x sub-tasks are marked `[x]`.** If no 8b.3x tasks exist yet, mark 8b.4 done immediately.
 - [ ] **8b.5** Quality review — run `--ckr-strict` on both tokens. Audit all compliance notes. Document spec deviations per module in `docs/module-issues.md`. Decide which deviations need upstream bug reports.
 - [ ] **8b.6** Update `_ckr_spec.py` condition counts — verify total matches spec expectation (~487). Update `ckr-plan.md` with actual coverage numbers.
