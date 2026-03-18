@@ -60,9 +60,9 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 
 - [x] **6.1** EC key import/export round-trip — generate, export EC_POINT, import as new key, verify
 - [x] **6.2** Session info tests — R/W vs R/O state, token reference, R/O cannot create token objects
-- [ ] **6.3** C_GetObjectSize — verify object size is reported correctly
-- [ ] **6.4** C_GetOperationState / C_SetOperationState — multi-part operation suspend/resume
-- [ ] **6.5** AES-GCM authenticated wrapping — wrap/unwrap with AEAD (v3.2)
+- [ ] **6.3** C_GetObjectSize — verify object size is reported correctly (blocked: needs python-pkcs11 fork)
+- [ ] **6.4** C_GetOperationState / C_SetOperationState — multi-part operation suspend/resume (blocked: needs python-pkcs11 fork)
+- [ ] **6.5** AES-GCM authenticated wrapping — wrap/unwrap with AEAD (blocked: needs v3.2 wrap_key_authenticated)
 - [x] **6.6** Keypair attribute consistency — pub/priv modulus, EC params match
 - [x] **6.7** Key security flags — NEVER_EXTRACTABLE, LOCAL, ALWAYS_SENSITIVE
 - [x] **6.8** AES-CBC-PAD auto-padding — variable-length plaintext roundtrip
