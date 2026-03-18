@@ -78,14 +78,14 @@ Use `bash local-builds/test.sh <target>` for fast iteration. Docker for OpenCryp
 
 ## Tier 4 — Threading & Concurrency
 
-- [ ] **4.1** Research python-pkcs11 thread safety — check `with nogil:` blocks in Cython.
+- [x] **4.1** Research python-pkcs11 thread safety — 124 `with nogil:` blocks release GIL for all C_* calls. C_Initialize(NULL) uses OS locking. Thread-safe for concurrent calls from Python threads.
 - [ ] **4.2** Threaded test runner — ThreadPoolExecutor for parallel AES/digest/keygen.
 - [ ] **4.3** Multi-session thread test — separate sessions in separate threads.
 - [ ] **4.4** Thread-safe session pool — handle login state correctly.
 
 ## Tier 5 — Mechanism Discovery & Analysis
 
-- [ ] **5.1** Enhanced mechanism probe — enumerate ALL mechanisms per module, generate coverage gap report.
+- [x] **5.1** Enhanced mechanism probe — scripts/mechanism-audit.py. Kryoptic: 164 mechanisms, 65 tested, 104 gaps (many key-gen/hash variants). Report saved to docs/mechanism-audit.md.
 - [ ] **5.2** Vendor mechanism identification — decode vendor-defined IDs.
 - [ ] **5.3** Auto-skip untested mechanisms — coverage gap report.
 - [ ] **5.4** Mechanism flag validation — verify flags match actual behavior.
