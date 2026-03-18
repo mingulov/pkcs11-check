@@ -1,6 +1,6 @@
 # Test Coverage Report (Auto-Generated)
 
-Generated from 77 test files, 553 test functions.
+Generated from 79 test files, 568 test functions.
 
 ## Mechanism Coverage
 
@@ -9,7 +9,7 @@ Generated from 77 test files, 553 test functions.
 | Mechanism | Test Files |
 |-----------|------------|
 | AES_CBC | benchmark, large_objects, mechanism, mechanism_fuzz, multipart_streaming, vendor_extensions |
-| AES_CBC_PAD | interface |
+| AES_CBC_PAD | interface, key_flags |
 | AES_CCM | wycheproof_aes |
 | AES_CMAC | wycheproof_aes |
 | AES_ECB | api_security, benchmark, buffers, ckr_codes, concurrent_sessions, crossverify, dh_key_agreement, encrypt, errors, fuzz, interop, kat, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, resource, rsa_key_wrapping, stateful, stress, surface_audit, token_objects, vendor_extensions |
@@ -78,18 +78,18 @@ Generated from 77 test files, 553 test functions.
 
 | Key Type | Test Files |
 |----------|------------|
-| AES | access, aead, api_security, benchmark, buffers, ckr_codes, concurrent_sessions, dh_key_agreement, duplicate_labels, encrypt, errors, fuzz, interface, interface_negotiation, kem, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, pin, reinitialize, resource, rsa_key_wrapping, search, sensitivity, session_exhaustion, session_info, set_attribute, so_pin, stateful, stress, surface_audit, token_objects, wycheproof, wycheproof_aes |
+| AES | access, aead, api_security, benchmark, buffers, ckr_codes, concurrent_sessions, dh_key_agreement, duplicate_labels, encrypt, errors, fuzz, interface, interface_negotiation, kem, key_flags, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, pin, reinitialize, resource, rsa_key_wrapping, search, sensitivity, session_exhaustion, session_info, set_attribute, so_pin, stateful, stress, surface_audit, token_objects, wycheproof, wycheproof_aes |
 | AES_XTS | wycheproof_aes |
 | CHACHA20 | wycheproof_chacha |
 | DH | dh_key_agreement |
 | DSA | sign, wycheproof_dsa |
-| EC | benchmark, crossverify, ec_curves, ec_import_export, fuzz, interop, kdf, keymgmt, nonce_quality, object, sign, wycheproof, wycheproof_ecdh, wycheproof_ecdsa |
+| EC | benchmark, crossverify, ec_curves, ec_import_export, fuzz, interop, kdf, keymgmt, keypair_consistency, nonce_quality, object, sign, wycheproof, wycheproof_ecdh, wycheproof_ecdsa |
 | EC_EDWARDS | eddsa, wycheproof_ed25519 |
 | EC_MONTGOMERY | wycheproof_x25519 |
 | GENERIC_SECRET | crossverify, interop, kdf, kem, keymgmt, sign, surface_audit, wycheproof, wycheproof_aes, wycheproof_ecdh, wycheproof_hkdf, wycheproof_hmac, wycheproof_pbkdf2, wycheproof_x25519 |
 | ML_DSA | pqc_sign, wycheproof_mldsa |
 | ML_KEM | kem |
-| RSA | access, api_security, benchmark, buffers, crossverify, encrypt, errors, fuzz, interop, key_sizes, key_usage_policy, keymgmt, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, resource, rsa_key_wrapping, rsa_oaep, search, sensitivity, set_attribute, sign, stress, surface_audit, wycheproof, wycheproof_rsa, wycheproof_rsa_decrypt, wycheproof_rsa_oaep, wycheproof_rsa_pss |
+| RSA | access, api_security, benchmark, buffers, crossverify, encrypt, errors, fuzz, interop, key_flags, key_sizes, key_usage_policy, keymgmt, keypair_consistency, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, resource, rsa_key_wrapping, rsa_oaep, search, sensitivity, set_attribute, sign, stress, surface_audit, wycheproof, wycheproof_rsa, wycheproof_rsa_decrypt, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA224_HMAC | wycheproof_hmac |
 | SHA256_HMAC | crossverify, fuzz, kdf, multipart_streaming, wycheproof |
 | SHA384_HMAC | wycheproof_hmac |
@@ -133,9 +133,11 @@ Generated from 77 test files, 553 test functions.
 | test_kat | 7 | kat |
 | test_kdf | 8 | keymgmt, requires_v30 |
 | test_kem | 14 | kat, keymgmt, pqc, requires_v32, v32 |
+| test_key_flags | 9 | security |
 | test_key_sizes | 6 | keymgmt |
 | test_key_usage_policy | 8 | security |
 | test_keymgmt | 10 | keymgmt |
+| test_keypair_consistency | 6 | keymgmt |
 | test_large_objects | 6 | security |
 | test_mechanism | 8 | mechflags |
 | test_mechanism_fuzz | 7 | security |
@@ -185,4 +187,4 @@ Generated from 77 test files, 553 test functions.
 | test_wycheproof_rsa_pss | 1 | wycheproof |
 | test_wycheproof_x25519 | 1 | wycheproof |
 
-**Total: 77 files, 553 test functions**
+**Total: 79 files, 568 test functions**
