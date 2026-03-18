@@ -1,6 +1,6 @@
 # Test Coverage Report (Auto-Generated)
 
-Generated from 80 test files, 574 test functions.
+Generated from 82 test files, 585 test functions.
 
 ## Mechanism Coverage
 
@@ -8,25 +8,25 @@ Generated from 80 test files, 574 test functions.
 
 | Mechanism | Test Files |
 |-----------|------------|
-| AES_CBC | benchmark, large_objects, mechanism, mechanism_fuzz, multipart_streaming, vendor_extensions |
+| AES_CBC | benchmark, crossverify_extended, large_objects, mechanism, mechanism_fuzz, multipart_streaming, vendor_extensions |
 | AES_CBC_PAD | interface, key_flags |
 | AES_CCM | wycheproof_aes |
 | AES_CMAC | wycheproof_aes |
 | AES_ECB | api_security, benchmark, buffers, ckr_codes, concurrent_sessions, crossverify, dh_key_agreement, encrypt, errors, fuzz, interop, kat, key_lifecycle, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, resource, rsa_key_wrapping, stateful, stress, surface_audit, token_objects, vendor_extensions |
-| AES_GCM | aead, interop, wycheproof |
+| AES_GCM | aead, crossverify_extended, interop, wycheproof |
 | AES_GMAC | wycheproof_aes |
 | AES_KEY_GEN | vendor_extensions |
 | AES_KEY_WRAP | key_lifecycle, wycheproof_aes |
 | AES_KEY_WRAP_PAD | wycheproof_aes |
 | AES_XTS | wycheproof_aes |
 | RSA_PKCS | encrypt, errors, mechanism, padding_oracle, rsa_key_wrapping, wycheproof_rsa_decrypt |
-| RSA_PKCS_OAEP | encrypt, key_sizes, padding_oracle, rsa_key_wrapping, rsa_oaep, wycheproof_rsa_oaep |
+| RSA_PKCS_OAEP | crossverify_extended, encrypt, key_sizes, padding_oracle, rsa_key_wrapping, rsa_oaep, wycheproof_rsa_oaep |
 | SHA1_RSA_PKCS | crossverify, interop, sign |
 | SHA1_RSA_PKCS_PSS | wycheproof_rsa_pss |
 | SHA224_RSA_PKCS | crossverify, wycheproof_rsa |
 | SHA224_RSA_PKCS_PSS | wycheproof_rsa_pss |
 | SHA256_RSA_PKCS | benchmark, buffers, crossverify, errors, fuzz, interop, key_lifecycle, key_sizes, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, resource, sign, stress, wycheproof, wycheproof_rsa |
-| SHA256_RSA_PKCS_PSS | interop, sign, wycheproof_rsa_pss |
+| SHA256_RSA_PKCS_PSS | crossverify_extended, interop, sign, wycheproof_rsa_pss |
 | SHA384_RSA_PKCS | crossverify, errors, interop, sign, wycheproof_rsa |
 | SHA384_RSA_PKCS_PSS | wycheproof_rsa_pss |
 | SHA3_224_RSA_PKCS | wycheproof_rsa |
@@ -43,7 +43,7 @@ Generated from 80 test files, 574 test functions.
 | EC_EDWARDS_KEY_PAIR_GEN | eddsa |
 | SHA224 | crossverify, digest, kat, surface_audit, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA224_HMAC | wycheproof_hmac |
-| SHA256 | benchmark, buffers, ckr_codes, crossverify, digest, errors, fuzz, interop, kat, kdf, mechanism_fuzz, metamorphic, multipart, multipart_streaming, resource, sign, stateful, stress, surface_audit, wycheproof_hkdf, wycheproof_rsa_oaep, wycheproof_rsa_pss |
+| SHA256 | benchmark, buffers, ckr_codes, crossverify, crossverify_extended, digest, errors, fuzz, interop, kat, kdf, mechanism_fuzz, metamorphic, multipart, multipart_streaming, resource, sign, stateful, stress, surface_audit, wycheproof_hkdf, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA256_HMAC | crossverify, fuzz, interop, kdf, multipart_streaming, sign, surface_audit, wycheproof, wycheproof_hmac |
 | SHA384 | crossverify, digest, kat, surface_audit, wycheproof_hkdf, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA384_HMAC | wycheproof_hmac |
@@ -78,7 +78,7 @@ Generated from 80 test files, 574 test functions.
 
 | Key Type | Test Files |
 |----------|------------|
-| AES | access, aead, api_security, benchmark, buffers, ckr_codes, concurrent_sessions, dh_key_agreement, duplicate_labels, encrypt, errors, fuzz, interface, interface_negotiation, kem, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, pin, reinitialize, resource, rsa_key_wrapping, search, sensitivity, session_exhaustion, session_info, set_attribute, so_pin, stateful, stress, surface_audit, token_objects, wycheproof, wycheproof_aes |
+| AES | access, access_control, aead, api_security, benchmark, buffers, ckr_codes, concurrent_sessions, dh_key_agreement, duplicate_labels, encrypt, errors, fuzz, interface, interface_negotiation, kem, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, large_objects, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, pin, reinitialize, resource, rsa_key_wrapping, search, sensitivity, session_exhaustion, session_info, set_attribute, so_pin, stateful, stress, surface_audit, token_objects, wycheproof, wycheproof_aes |
 | AES_XTS | wycheproof_aes |
 | CHACHA20 | wycheproof_chacha |
 | DH | dh_key_agreement |
@@ -89,7 +89,7 @@ Generated from 80 test files, 574 test functions.
 | GENERIC_SECRET | crossverify, interop, kdf, kem, keymgmt, sign, surface_audit, wycheproof, wycheproof_aes, wycheproof_ecdh, wycheproof_hkdf, wycheproof_hmac, wycheproof_pbkdf2, wycheproof_x25519 |
 | ML_DSA | pqc_sign, wycheproof_mldsa |
 | ML_KEM | kem |
-| RSA | access, api_security, benchmark, buffers, crossverify, encrypt, errors, fuzz, interop, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, keypair_consistency, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, resource, rsa_key_wrapping, rsa_oaep, search, sensitivity, set_attribute, sign, stress, surface_audit, wycheproof, wycheproof_rsa, wycheproof_rsa_decrypt, wycheproof_rsa_oaep, wycheproof_rsa_pss |
+| RSA | access, api_security, benchmark, buffers, crossverify, crossverify_extended, encrypt, errors, fuzz, interop, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, keypair_consistency, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, resource, rsa_key_wrapping, rsa_oaep, search, sensitivity, set_attribute, sign, stress, surface_audit, wycheproof, wycheproof_rsa, wycheproof_rsa_decrypt, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA224_HMAC | wycheproof_hmac |
 | SHA256_HMAC | crossverify, fuzz, kdf, multipart_streaming, wycheproof |
 | SHA384_HMAC | wycheproof_hmac |
@@ -108,6 +108,7 @@ Generated from 80 test files, 574 test functions.
 | File | Tests | Markers |
 |------|-------|---------|
 | test_access | 8 | access |
+| test_access_control | 6 | security |
 | test_aead | 7 | crossverify |
 | test_api_security | 12 | security |
 | test_benchmark | 16 | benchmark |
@@ -116,6 +117,7 @@ Generated from 80 test files, 574 test functions.
 | test_ckr_codes | 7 | security |
 | test_concurrent_sessions | 6 | security |
 | test_crossverify | 21 | crossverify |
+| test_crossverify_extended | 5 | crossverify |
 | test_data_objects | 13 | keymgmt |
 | test_dh_key_agreement | 6 | keymgmt |
 | test_digest | 8 | full |
@@ -188,4 +190,4 @@ Generated from 80 test files, 574 test functions.
 | test_wycheproof_rsa_pss | 1 | wycheproof |
 | test_wycheproof_x25519 | 1 | wycheproof |
 
-**Total: 80 files, 574 test functions**
+**Total: 82 files, 585 test functions**
