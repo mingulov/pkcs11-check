@@ -49,6 +49,9 @@ docker compose -f docker/docker-compose.test.yml run test-kryoptic
 - `plugin.py` — pytest11 entry point, registers markers, fixtures, collection hooks
 - `fixtures.py` — p11_session (with explicit login/logout), p11_module, p11_config, p11_interface_version
 - `testcases/conftest.py` — shared helpers: mech_name(), import_aes_key(), has_mechanism(), extract_ec_point(), open_session()
+- `testcases/ckr/` — CKR error coverage tests (102 tests, 21 files). Use `--ckr-strict` for exact spec compliance. Spec: `docs/superpowers/specs/2026-03-18-ckr-error-coverage-design.md`
+- `testcases/ckr/_ckr_spec.py` — CkrExpectation dataclass, assert_ckr() helper, spec tables
+- `testcases/ckr/_ctypes_raw.py` — raw ctypes PKCS#11 caller for NULL parameter tests
 
 ### Local builds (`local-builds/`)
 - `providers/<name>.sh` — one file per token with `build()` and `setup()` functions
