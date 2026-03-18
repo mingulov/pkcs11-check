@@ -45,19 +45,21 @@ def p11_interface_version(p11_module: P11Module) -> str:
 def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[Any, None, None]:
     """Open PKCS#11 session with login. Yields session, closes after test.
 
-    Handles UserAlreadyLoggedIn gracefully — PKCS#11 login is per-token,
-    so if another test left a login active, we open RW and reuse it.
+    After the test, we attempt to logout so the next test can login fresh.
+    This avoids UserAlreadyLoggedIn / UserTypeInvalid cascading failures.
     """
     token = p11_module.get_token(p11_config.slot)
     pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+    session = token.open(rw=True)
     try:
-        with token.open(rw=True, user_pin=pin) as session:
-            yield session
+        session.login(_p11.UserType.USER, pin)
     except _p11.exceptions.UserAlreadyLoggedIn:
-        # Token-level login already active from another session.
-        # Open RW without login, reuse the existing token-level login.
-        session = token.open(rw=True)
+        pass  # Already logged in at token level — reuse
+    try:
+        yield session
+    finally:
         try:
-            yield session
-        finally:
-            session.close()
+            session.logout()
+        except _p11.exceptions.PKCS11Error:
+            pass  # Logout may fail if not logged in or other session holds login
+        session.close()
