@@ -1,6 +1,6 @@
 # Test Coverage Report (Auto-Generated)
 
-Generated from 85 test files, 594 test functions.
+Generated from 86 test files, 597 test functions.
 
 ## Mechanism Coverage
 
@@ -152,6 +152,7 @@ Generated from 85 test files, 594 test functions.
 | test_nonce_quality | 4 | security |
 | test_object | 16 | keymgmt |
 | test_object_size | 3 | keymgmt |
+| test_operation_state | 3 | access |
 | test_padding_oracle | 4 | security |
 | test_pin | 7 | security |
 | test_pqc_sign | 14 | pqc, requires_v32 |
@@ -193,4 +194,4 @@ Generated from 85 test files, 594 test functions.
 | test_wycheproof_rsa_pss | 1 | wycheproof |
 | test_wycheproof_x25519 | 1 | wycheproof |
 
-**Total: 85 files, 594 test functions**
+**Total: 86 files, 597 test functions**
