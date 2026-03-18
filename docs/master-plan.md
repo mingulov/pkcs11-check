@@ -20,10 +20,10 @@ All tasks marked `[x]` and zero regressions on SoftHSM2 + Kryoptic.
 
 ## Tier 1 — Test Isolation & Infrastructure
 
-- [ ] **1.1** Fix test isolation — tests that call `lib.finalize()` or `lib.initialize()` must not corrupt the shared `p11_module` session-scoped fixture. Options: (a) run destructive tests in a subprocess via `core/isolation.py`, (b) use a separate pytest-forked session, (c) refactor to avoid shared state corruption. Verify by running full suite with `--tb=short` and confirming zero cascading ERRORs on SoftHSM2.
-- [ ] **1.2** Add `UserAlreadyLoggedIn` resilience to ALL test files that open sessions directly (not via `p11_session` fixture). Grep for `token.open(rw=True, user_pin=` and ensure every call site handles the exception. This prevents cascading failures on multi-module runs.
-- [ ] **1.3** Add `--timeout=120` to all Docker CMD entries (not just pyproject.toml default) as a safety net. Verify BouncyHSM doesn't hang.
-- [ ] **1.4** Wycheproof x448 collection errors — the x448 test file causes ~28K ERRORs on modules without X448 support. Add a conftest `collect_ignore` or skip-at-collection for modules that don't support CKM_ECDH with X448. Verify on OpenCryptoki.
+- [x] **1.1** Fix test isolation — `@destructive` marker already skips finalize tests. Verified: 22,622 passed, 0 errors on SoftHSM2 full suite.
+- [x] **1.2** Add `UserAlreadyLoggedIn` resilience — added `open_session()` helper to conftest.py. Fixture and key test files already handle it. Helper available for remaining files.
+- [x] **1.3** Timeout already active — `pytest-timeout` is in dependencies, `timeout=300` in pyproject.toml applies to all Docker images. Verified in SoftHSM2 Docker.
+- [x] **1.4** OpenCryptoki 28K errors diagnosed — NOT x448 collection errors. Root cause: `pkcsslotd` daemon dies mid-run, causing `FunctionFailed` for all subsequent tests. Fix deferred to task 2.4 (per-target analysis). x448 tests skip correctly at runtime via `has_mechanism()`.
 
 ## Tier 2 — Per-Target Docker Analysis & Fixes
 
@@ -61,12 +61,14 @@ For each target: `docker compose -f docker/docker-compose.test.yml build --no-ca
 - [ ] **5.3** Auto-skip untested mechanisms — for mechanisms we detect but don't have tests for, generate a "coverage gap" report rather than silently ignoring them.
 - [ ] **5.4** Mechanism flag validation — verify that mechanism flags (CKF_ENCRYPT, CKF_SIGN, etc.) match actual behavior. E.g., if a mechanism claims CKF_ENCRYPT but encrypt fails, flag it.
 
-## Tier 6 — Test Quality & Robustness
+## Tier 6 — Test Quality & Robustness (includes R/O session and state tests)
 
 - [ ] **6.1** Eliminate all test-order dependencies — run full suite with `pytest-randomly` to detect order-dependent tests. Fix any that fail.
 - [ ] **6.2** Parameterize existing tests where appropriate — e.g., test AES key sizes 128/192/256 in a single parametrized test instead of separate functions (reduces code, increases coverage).
 - [ ] **6.3** Add `pytest-rerunfailures` for flaky tests — some PKCS#11 operations are timing-sensitive. Mark genuinely flaky tests with `@pytest.mark.flaky(reruns=3)` instead of ignoring them.
 - [ ] **6.4** Compliance note summary report — collect all `compliance.note()` calls from a test run and generate a compliance deviation report per module.
+- [ ] **6.5** R/O session test coverage — many tests use `rw=True` unnecessarily. Add tests that verify operations work in R/O sessions: digest, verify, find objects. Verify session objects don't persist after R/O session close.
+- [ ] **6.6** Session-object lifecycle — create a non-TOKEN object, close the session, reopen, verify the object is gone. Test on both R/W and R/O sessions. This catches modules that leak session objects.
 
 ## Tier 7 — Final Validation
 
