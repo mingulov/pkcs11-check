@@ -57,6 +57,30 @@ docker compose -f docker/docker-compose.test.yml run test-kryoptic
 - `reset.sh` — reset token data: `bash local-builds/reset.sh kryoptic`
 - Available: OpenSSL 3.6.1, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.26, pkcs11-mock 2.0.0, qryptotoken 0.4.1, tpm2-pkcs11 1.9.0, BouncyHSM 2.0.1, swtpm 0.10.1
 
+### Test categories (101 files, ~29K tests)
+- Core: interface, slot, object, mechanism, encrypt, sign, digest, errors
+- Cross-verification: AES-ECB/GCM, RSA PKCS/PSS/OAEP, ECDSA P-256/384/521, EdDSA, HMAC, digest
+- NIST KAT: SHA-1/224/256/384/512, AES-ECB from SP 800-38A
+- Wycheproof: ECDSA, RSA, ECDH, DSA, AES, HMAC, Ed25519/Ed448, ChaCha20, X25519/X448, HKDF
+- PQC (v3.2): ML-KEM, ML-DSA, SLH-DSA
+- Key management: import, export, copy, wrap/unwrap, derive, KEM
+- Security: attribute fuzz, Tookan vectors, handle reuse, padding oracle, ECDSA nonce, RNG stats
+- CVE regression: 29 tests covering CVEs across NSS, SoftHSM2, TPM2, OpenCryptoki, BouncyHSM, Kryoptic
+- CKR spec compliance: exact return code verification per PKCS#11 standard
+- Interop: OpenSSL pkcs11-provider, p11-kit proxy
+- Stress: 1000-cycle ops, threading, resource exhaustion, DB concurrent writes
+- Fuzz: Hypothesis property tests, attribute template fuzzer
+
+### Docker test matrix (12 targets)
+- `test-softhsm2` / `test-softhsm2-main` — SoftHSM2 2.7.0 / main
+- `test-kryoptic` / `test-kryoptic-main` / `test-kryoptic-fips` — Kryoptic v1.5.0 / main / FIPS
+- `test-nss` / `test-nss-pqc` — NSS 3.120.1 / 3.121.0 PQC
+- `test-opencryptoki` — OpenCryptoki 3.25.0
+- `test-tpm2` — tpm2-pkcs11 + swtpm
+- `test-bouncyhsm` — BouncyHSM 2.0.1
+- `test-pkcs11-mock` — pkcs11-mock v3.1 stub
+- `test-qryptotoken` — qryptotoken Rust PQC
+
 ### Key design decisions
 - python-pkcs11 fork as git submodule with v3.0/3.1/3.2 interface negotiation, PQC mechanisms, 50+ new enums, specific CKR exception classes for ALL standard error codes
 - `p11_session` fixture does explicit `login()` / `logout()` per test to avoid `UserAlreadyLoggedIn` cascading
@@ -106,6 +130,13 @@ docker compose -f docker/docker-compose.test.yml run test-kryoptic
 - Config values: snake_case in TOML/Python, kebab-case for CLI flags
 - CVE regression tests reference the CVE/issue number in docstring
 
+## PKCS#11 Specification
+
+The OASIS PKCS#11 spec is available in Markdown format:
+- Repo: https://github.com/oasis-tcs/pkcs11.git
+- Spec docs: `working/doc/spec/` (all in .md format)
+- Use for exact CKR return code tables, attribute definitions, mechanism parameters, and operation semantics
+
 ## Documentation
 
 - `docs/master-plan.md` — Current task plan (Tiers 1-9)
@@ -113,6 +144,8 @@ docker compose -f docker/docker-compose.test.yml run test-kryoptic
 - `docs/module-matrix.md` — Test results per module (pass/fail/skip/xfail)
 - `docs/cve-regression.md` — CVE coverage tracker (Covered/Documented/N-A/Pending)
 - `docs/mechanism-audit.md` — Mechanism coverage gap report per module
+- `docs/gap-analysis.md` — Deep gap analysis: execution backbone, packaging, CI weaknesses
 - `docs/test-coverage.md` — Test coverage summary
 - `docs/test-coverage-generated.md` — Auto-generated from `scripts/generate-coverage-report.py`
 - `docs/python-pkcs11-fork.md` — Fork changes and upstream PR plan
+- `docs/superpowers/specs/` — Phase 1 architecture, comprehensive testing, standards addendum
