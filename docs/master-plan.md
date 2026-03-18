@@ -1,83 +1,77 @@
-# p11test Master Plan
+# p11test Master Plan v2
 
-Iterative improvement plan for the PKCS#11 test suite.
-Each task should pass on **SoftHSM2** (v2.40) and **Kryoptic** (v3.2) before being marked done.
+Phase 2: Docker matrix hardening, failure analysis, test isolation, and threading.
 
-## Verification targets
-
-- **SoftHSM2 2.6.1** (local, v2.40): `SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234 -q --benchmark-disable`
-- **SoftHSM2 2.7.0** (Docker, v2.40): `docker compose -f docker/docker-compose.test.yml run --rm test-softhsm2`
-- **Kryoptic 1.5.0** (Docker, v3.2): `docker compose -f docker/docker-compose.test.yml run --rm test-kryoptic`
-
-Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source (latest release).
+Previous phase (v1) completed 43 tasks across 6 tiers — see git history for details.
+Current baseline: **22,622 passed / 0 failed** (SoftHSM2), **21,503 passed / 0 failed** (Kryoptic).
 
 ---
 
-## Tier 1 — PKCS#11 Compliance Fundamentals
+## How to use
 
-- [x] **1.1** Wrong-PIN / PIN-locked tests — 7 tests: wrong PIN, empty PIN, recovery after bad attempt, no object leak, long/unicode/null PIN edge cases
-- [x] **1.2** Token (persistent) objects — 6 tests: create, survive session, use across sessions, session obj disappears, destroy, flag check
-- [x] **1.3** `C_SetAttributeValue` — 7 tests: change label/ID, keypair labels, reject CKA_CLASS/KEY_TYPE/MODULUS/VALUE (compliance notes for silent ignore)
-- [x] **1.4** SO login / `C_SetPIN` — 3 tests: SO wrong PIN, user+SO coexist rejected, PIN change+restore (@destructive)
-- [x] **1.5** Multipart streaming — 20 tests: AES-ECB/CBC multiblock, SHA-256/512 large data, RSA sign 10KB, HMAC 64KB cross-verify
-- [x] **1.6** Interface negotiation tests — test v2.40 fallback when v3.x unavailable, test `interface="auto"` vs explicit
+Each task is designed to be completed in **one iteration** of the Ralph loop.
+Per-target tasks: rebuild the image, run tests, analyze failures, fix what's ours, document what's theirs.
 
-## Tier 2 — Object & Type Coverage
+## Completion promise
 
-- [x] **2.1** `CKO_DATA` objects — create, search by label/app, read value, destroy
-- [x] **2.2** `CKO_CERTIFICATE` — import X.509 DER cert, search by subject/issuer, extract fields
-- [x] **2.3** Classic DH key agreement — `CKM_DH_PKCS_DERIVE` with parameter generation
-- [x] **2.4** RSA key wrapping — wrap AES key with RSA-OAEP, unwrap, verify material matches
+All tasks marked `[x]` and zero regressions on SoftHSM2 + Kryoptic.
 
-## Tier 3 — Adversarial & Security Testing
+---
 
-- [x] **3.1** Concurrent session attacks — two sessions racing on same object (create/destroy/use)
-- [x] **3.2** Object visibility across sessions — create in session A, find in session B (same token) [covered by 3.1]
-- [x] **3.3** Attribute sensitivity enforcement — read CKA_VALUE on SENSITIVE=True key, must return error
-- [x] **3.4** Key usage policy enforcement — use encrypt-only key for signing, must fail
-- [x] **3.5** Mechanism parameter fuzzing — random bytes as mechanism_param, must not crash (segfault survival)
-- [x] **3.6** Large object stress — 1MB CKO_DATA, 100KB random generation, very large plaintext encrypt
-- [x] **3.7** Session exhaustion — open sessions until CKR_SESSION_COUNT, verify graceful error
-- [x] **3.8** Duplicate label handling — two objects with same label, search returns both
-- [x] **3.9** Slot re-initialization — C_Finalize + C_Initialize cycle, verify clean state
-- [x] **3.10** CKR return code coverage — map all standard CKR codes, verify we trigger each reachable one
+## Tier 1 — Test Isolation & Infrastructure
 
-## Tier 4 — Module Differential & Reporting
+- [ ] **1.1** Fix test isolation — tests that call `lib.finalize()` or `lib.initialize()` must not corrupt the shared `p11_module` session-scoped fixture. Options: (a) run destructive tests in a subprocess via `core/isolation.py`, (b) use a separate pytest-forked session, (c) refactor to avoid shared state corruption. Verify by running full suite with `--tb=short` and confirming zero cascading ERRORs on SoftHSM2.
+- [ ] **1.2** Add `UserAlreadyLoggedIn` resilience to ALL test files that open sessions directly (not via `p11_session` fixture). Grep for `token.open(rw=True, user_pin=` and ensure every call site handles the exception. This prevents cascading failures on multi-module runs.
+- [ ] **1.3** Add `--timeout=120` to all Docker CMD entries (not just pyproject.toml default) as a safety net. Verify BouncyHSM doesn't hang.
+- [ ] **1.4** Wycheproof x448 collection errors — the x448 test file causes ~28K ERRORs on modules without X448 support. Add a conftest `collect_ignore` or skip-at-collection for modules that don't support CKM_ECDH with X448. Verify on OpenCryptoki.
 
-- [x] **4.1** Cross-module differential — same test on SoftHSM2 vs Kryoptic, flag behavioral differences
-- [x] **4.2** Module mechanism matrix report — generate CSV: module × mechanism × pass/skip/fail/xfail
-- [x] **4.3** Vendor extension detection — probe CKM_VENDOR_DEFINED range for hidden mechanisms
-- [x] **4.4** FIPS mode detection — check CKF_FIPS_APPROVED flag, adjust test expectations
+## Tier 2 — Per-Target Docker Analysis & Fixes
 
-## Tier 5 — Infrastructure & Quality
+For each target: `docker compose -f docker/docker-compose.test.yml build --no-cache <target> && docker compose ... run --rm <target>`. Analyze every FAIL and ERROR. Fix if it's our bug. Document in `docs/module-issues.md` if it's the module's bug.
 
-- [x] **5.1** Add pytest-timeout to Docker images — prevent hangs (OpenCryptoki took 33 min)
-- [x] **5.2** NSS + NSS-PQC Docker test run — rebuild and test with expanded suite (20,669 passed)
-- [x] **5.3** Test result archival — save pytest JSON/JUnit output per module per run
-- [x] **5.4** Mechanism coverage report — auto-generate docs/test-coverage.md from test metadata
+- [ ] **2.1** **SoftHSM2 2.7.0** — Verify 0 failures. Analyze xfail reasons. Document any quirks.
+- [ ] **2.2** **Kryoptic 1.5.0** — Verify 0 failures. Analyze xfail reasons. Document any quirks.
+- [ ] **2.3** **NSS 3.120.1** — 362 failures (296 DSA Wycheproof). Analyze: are DSA failures NSS bugs or test bugs? Check non-DSA failures (66). Fix or xfail with reason.
+- [ ] **2.4** **OpenCryptoki 3.25** — 28,762 errors. Root cause the cascading errors (likely x448 collection + session fixture). Fix infrastructure, re-run, analyze remaining real failures.
+- [ ] **2.5** **BouncyHSM** — Hangs during test run. Debug: is it the .NET server dying? Add timeout, check if PKCS#11 lib loads. Get it passing or document why it can't.
+- [ ] **2.6** **pkcs11-mock** — Run and analyze. This is a v3.1 stub — many skips expected. Verify no crashes.
+- [ ] **2.7** **tpm2-pkcs11 + swtpm** — Run and analyze. TPM has limited mechanism support. Document what works.
+- [ ] **2.8** **qryptotoken** — Run and analyze. Rust PQC token — experimental. Document status.
+- [ ] **2.9** **NSS-PQC (Rawhide)** — Run and analyze. v3.2 PQC support — check ML-KEM/ML-DSA tests.
+- [ ] **2.10** **SoftHSM2 main** — Run dev branch. Compare with 2.7.0 release.
+- [ ] **2.11** **Kryoptic main** — Run dev branch. Compare with 1.5.0 release.
+- [ ] **2.12** **Kryoptic FIPS** — Run FIPS build. Analyze FIPS-specific behavior.
 
-## Tier 6 — Gap Analysis (added 2026-03-18)
+## Tier 3 — Module Issues Documentation
 
-- [x] **6.1** EC key import/export round-trip — generate, export EC_POINT, import as new key, verify
-- [x] **6.2** Session info tests — R/W vs R/O state, token reference, R/O cannot create token objects
-- [x] **6.3** C_GetObjectSize — verify object size is reported correctly (fork updated)
-- [x] **6.4** C_GetOperationState / C_SetOperationState — multi-part operation suspend/resume (fork updated)
-- [x] **6.5** AES-GCM authenticated wrapping — wrap/unwrap with AEAD (v3.2, skips gracefully on v2.40)
-- [x] **6.6** Keypair attribute consistency — pub/priv modulus, EC params match
-- [x] **6.7** Key security flags — NEVER_EXTRACTABLE, LOCAL, ALWAYS_SENSITIVE
-- [x] **6.8** AES-CBC-PAD auto-padding — variable-length plaintext roundtrip
-- [x] **6.9** Key lifecycle end-to-end — RSA/EC export-import-verify, AES key wrap roundtrip
-- [x] **6.10** Extended cross-verification — AES-CBC, RSA-PSS, RSA-OAEP vs cryptography library
-- [x] **6.11** Access control attributes — CKA_PRIVATE, CKA_MODIFIABLE, CKA_COPYABLE
-- [x] **6.12** ECDH known-answer cross-verify — raw shared secret vs Python cryptography
-- [x] **6.13** Generic secret key gen and HMAC cross-verify — CKM_GENERIC_SECRET_KEY_GEN + HMAC
-- [x] **6.14** RSA key import — pub/priv import from raw components with cross-library verify
-- [x] **6.15** Object search patterns — CKA_ID search, keypair ID linkage, multi-attribute filtering
+- [ ] **3.1** Create `docs/module-issues.md` — structured document listing known issues per module: failures, quirks, missing mechanisms, compliance deviations. Updated as Tier 2 tasks complete.
+- [ ] **3.2** Create `docs/module-matrix.md` — summary table: module × version × interface × passed/failed/skipped/xfailed. Auto-generated from test results.
+
+## Tier 4 — Threading & Concurrency
+
+- [ ] **4.1** Research python-pkcs11 thread safety — does the Cython code release the GIL during C calls? Check `with nogil:` blocks. Document findings.
+- [ ] **4.2** Implement threaded test runner — use `concurrent.futures.ThreadPoolExecutor` to run N operations in parallel on the same session. Test AES encrypt, digest, and key generation under thread contention. Handle `UserAlreadyLoggedIn` and `CKR_MUTEX` errors gracefully.
+- [ ] **4.3** Multi-session thread test — open separate sessions in separate threads, each doing independent operations. Verify no crashes or data corruption.
+- [ ] **4.4** Thread-safe session pool — prototype a session pool that handles login state correctly: one login per token, multiple sessions sharing the login, `UserAlreadyLoggedIn` handled transparently.
+
+## Tier 5 — Mechanism Discovery & Analysis
+
+- [ ] **5.1** Enhanced mechanism probe — for each module, enumerate ALL mechanisms via `slot.get_mechanisms()`, get `MechanismInfo` (min/max key size, flags), and generate a report showing which mechanisms are supported but NOT tested. Save to `docs/mechanism-audit.md`.
+- [ ] **5.2** Vendor mechanism identification — decode vendor-defined mechanism IDs (`>= 0x80000000`). Cross-reference with known vendor OIDs (AWS CloudHSM, Thales Luna, Utimaco, etc.). Report any found.
+- [ ] **5.3** Auto-skip untested mechanisms — for mechanisms we detect but don't have tests for, generate a "coverage gap" report rather than silently ignoring them.
+- [ ] **5.4** Mechanism flag validation — verify that mechanism flags (CKF_ENCRYPT, CKF_SIGN, etc.) match actual behavior. E.g., if a mechanism claims CKF_ENCRYPT but encrypt fails, flag it.
+
+## Tier 6 — Test Quality & Robustness
+
+- [ ] **6.1** Eliminate all test-order dependencies — run full suite with `pytest-randomly` to detect order-dependent tests. Fix any that fail.
+- [ ] **6.2** Parameterize existing tests where appropriate — e.g., test AES key sizes 128/192/256 in a single parametrized test instead of separate functions (reduces code, increases coverage).
+- [ ] **6.3** Add `pytest-rerunfailures` for flaky tests — some PKCS#11 operations are timing-sensitive. Mark genuinely flaky tests with `@pytest.mark.flaky(reruns=3)` instead of ignoring them.
+- [ ] **6.4** Compliance note summary report — collect all `compliance.note()` calls from a test run and generate a compliance deviation report per module.
 
 ---
 
 ## Recommended loop prompt
 
 ```
-/using-superpowers Pick the highest-priority unfinished task from docs/master-plan.md, implement it with tests passing on SoftHSM2 and Kryoptic (use Docker for Kryoptic), commit, then update the plan marking it done. If all tasks are done, do a gap analysis and add new tasks. Focus on test quality over quantity — each test should catch real bugs in real PKCS#11 modules.
+/ralph-loop:ralph-loop "/using-superpowers Pick the highest-priority unfinished task from docs/master-plan.md. For per-target tasks (Tier 2): rebuild the Docker image with --no-cache, run the full test suite, analyze every FAIL/ERROR/xfail, fix bugs on our side (p11test or python-pkcs11 fork), document module-side issues in docs/module-issues.md, commit, and mark the task done. For other tasks: implement, test on local SoftHSM2, commit, mark done. Always verify zero regressions on SoftHSM2 + Kryoptic before marking done." --completion-promise "All tasks in docs/master-plan.md are marked done"
 ```
