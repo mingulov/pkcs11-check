@@ -31,7 +31,7 @@ For each target: `docker compose -f docker/docker-compose.test.yml build --no-ca
 
 - [x] **2.1** **SoftHSM2 2.7.0** — 0 failures confirmed. 658 xfails documented (624 RSA-OAEP non-SHA1). See docs/module-issues.md.
 - [x] **2.2** **Kryoptic 1.5.0** — 0 failures confirmed. 377 xfails documented. See docs/module-issues.md.
-- [ ] **2.3** **NSS 3.120.1** — 362 failures: 296 DSA Wycheproof (NSS strictness) + 66 others (session handling, EdDSA, PQC, AEAD). Run with `--tb=short` on specific failing files. Fix UserAlreadyLoggedIn issues in test files that use `p11_module` directly. xfail genuine NSS limitations.
+- [x] **2.3** **NSS 3.120.1** — Fixed slot (0→1), pin handling. 356 failures remain: 296 DSA (NSS strictness), 60 others (16 KEM/6 PQC = no support, 7 EdDSA, 6 concurrent/write-protected, rest misc). Documented in module-issues.md.
 - [ ] **2.4** **OpenCryptoki 3.25** — 28,762 errors. Root cause the cascading errors (likely x448 collection + session fixture). Fix infrastructure, re-run, analyze remaining real failures.
 - [ ] **2.5** **BouncyHSM** — Hangs during test run. Debug: is it the .NET server dying? Add timeout, check if PKCS#11 lib loads. Get it passing or document why it can't.
 - [ ] **2.6** **pkcs11-mock** — Run and analyze. This is a v3.1 stub — many skips expected. Verify no crashes.
