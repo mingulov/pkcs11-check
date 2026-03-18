@@ -103,7 +103,7 @@ Use `bash local-builds/test.sh <target>` for fast iteration. Docker for OpenCryp
 
 Run after ALL other tiers. Rebuild every Docker image with `--no-cache`. Record final counts.
 
-- [ ] **7.1–7.13** Final validation for all 12 Docker targets + summary in `docs/module-matrix.md`.
+- [x] **7.1–7.13** Final validation for all 12 Docker targets + summary in `docs/module-matrix.md`.
 
 ---
 
