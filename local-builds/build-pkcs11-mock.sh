@@ -14,13 +14,7 @@ if [ ! -d "$SRC" ]; then
     git clone --depth 1 --branch v2.0.0 https://github.com/Pkcs11Interop/pkcs11-mock.git "$SRC"
 fi
 
-cd "$SRC"
-mkdir -p build && cd build
-cmake ..
-make -j"$(nproc)"
-
-SO=$(find . -name "*.so" | head -1)
-cp "$SO" "$LIB/pkcs11-mock.so"
-
+cd "$SRC/src"
+gcc -shared -fPIC -o "$LIB/pkcs11-mock.so" pkcs11-mock.c -I .
 echo "Built: $LIB/pkcs11-mock.so"
 ls -lh "$LIB/pkcs11-mock.so"
