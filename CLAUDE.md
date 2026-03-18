@@ -17,25 +17,23 @@ CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pyte
 ## Commands
 
 ```bash
+# Local builds (preferred for fast iteration)
+bash local-builds/build.sh kryoptic           # build token
+bash local-builds/test.sh kryoptic            # run full suite (~1 min)
+bash local-builds/test.sh kryoptic -k test_encrypt -v  # specific tests
+bash local-builds/test.sh softhsm2            # system SoftHSM2
+bash local-builds/reset.sh kryoptic           # reset token data
+
+# Standard commands
 uv run p11test version              # check CLI works
-uv run p11test test --module /path/to.so --pin 1234  # run PKCS#11 tests
-uv run p11test info --module /path/to.so             # show module info
-uv run p11test list                 # list test categories
 uv run pytest tests/                # run meta-tests (p11test's own tests)
 uv run ruff check src/ tests/       # lint
 uv run ruff format src/ tests/      # format
 uv run mypy src/                    # type check
 
-# Docker multi-module testing
+# Docker (for final validation or modules needing daemons)
 docker compose -f docker/docker-compose.test.yml run test-softhsm2
 docker compose -f docker/docker-compose.test.yml run test-kryoptic
-docker compose -f docker/docker-compose.test.yml run test-nss
-docker compose -f docker/docker-compose.test.yml run test-kryoptic-main
-
-# Local SoftHSM2 testing
-bash scripts/setup-softhsm.sh
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
-  --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234 -v
 ```
 
 ## Architecture
@@ -47,61 +45,58 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
 ### Core modules
 - `core/loader.py` — PKCS#11 module loading with v2.40/v3.0/v3.1/v3.2 interface negotiation
 - `core/isolation.py` — subprocess-based test execution for segfault survival
-- `core/logging.py` — rich logging with trace mode
 - `config.py` — four-layer config: CLI > env > TOML > defaults
 - `plugin.py` — pytest11 entry point, registers markers, fixtures, collection hooks
-- `markers.py` — marker definitions with version-skip logic
-- `compliance.py` — compliance note system (NOT_RECOMMENDED, DEPRECATED tracking)
-- `fixtures.py` — p11_session, p11_module, p11_config, p11_interface_version
-- `cli/app.py` — typer app, routes to test/info/list/version subcommands
-- `testcases/conftest.py` — shared helpers: mech_name(), import_aes_key(), has_mechanism(), extract_ec_point()
+- `fixtures.py` — p11_session (with explicit login/logout), p11_module, p11_config, p11_interface_version
+- `testcases/conftest.py` — shared helpers: mech_name(), import_aes_key(), has_mechanism(), extract_ec_point(), open_session()
 
-### Test categories
-- Core: interface, slot, object, mechanism, encrypt, sign, digest, errors
-- Cross-verification: AES-ECB/GCM, RSA PKCS/PSS/OAEP, ECDSA P-256/384/521, EdDSA, HMAC, digest
-- NIST KAT: SHA-1/224/256/384/512, AES-ECB from SP 800-38A
-- Wycheproof edge-case vectors (see docs/test-coverage.md for details):
-  ECDSA (P-224/256/384/521 × SHA/SHA-3), RSA PKCS#1/PSS/OAEP,
-  ECDH (P-224/256/384/521), DSA, AES (GCM/CBC/CMAC/CCM/KW/KWP/XTS/GMAC),
-  HMAC (SHA/SHA-3/SHA-512 truncated), Ed25519/Ed448, ChaCha20-Poly1305,
-  X25519/X448, HKDF — mechanism availability checked at runtime
-- PQC (PKCS#11 v3.2): ML-KEM encapsulate/decapsulate, ML-DSA sign/verify, SLH-DSA sign/verify
-- Key management: import, export, copy, wrap/unwrap, derive, KEM
-- Security: API attacks, padding oracle, ECDSA nonce quality, RNG statistics (Shannon entropy, runs test)
-- Standards: buffer boundaries, access control, session lifecycle, token flags, CKO_PROFILE
-- Stress: 1000-cycle operations, multi-session, resource safety
-- Fuzz: hypothesis property tests for AES, RSA, SHA, HMAC, ECDSA roundtrips
-
-### Docker test matrix (12 targets)
-Versioned releases:
-- `test-softhsm2` — SoftHSM2 2.7.0 (v2.40, OpenSSL)
-- `test-kryoptic` — Kryoptic v1.5.0 (v3.2, Rust)
-- `test-nss` — NSS 3.120.1 (v3.0, Fedora 43)
-- `test-nss-pqc` — NSS 3.121.0 (v3.2 PQC, Rawhide)
-- `test-opencryptoki` — OpenCryptoki 3.25.0 (v3.0, IBM)
-
-Development branches:
-- `test-softhsm2-main` — SoftHSM2 main branch
-- `test-kryoptic-main` — Kryoptic main branch
-- `test-kryoptic-fips` — Kryoptic FIPS + simo5/openssl kryoptic_ossl40
-
-Additional:
-- `test-tpm2` — tpm2-pkcs11 + swtpm
-- `test-bouncyhsm` — BouncyHSM (.NET/BouncyCastle)
-- `test-pkcs11-mock` — pkcs11-mock (v3.1 stub)
-- `test-qryptotoken` — qryptotoken (Rust PQC)
+### Local builds (`local-builds/`)
+- `providers/<name>.sh` — one file per token with `build()` and `setup()` functions
+- `build.sh` — dispatcher: `bash local-builds/build.sh kryoptic [branch]`
+- `test.sh` — dispatcher: `bash local-builds/test.sh kryoptic [pytest-args]`
+- `reset.sh` — reset token data: `bash local-builds/reset.sh kryoptic`
+- Available: OpenSSL 3.6.1, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.26, pkcs11-mock 2.0.0, qryptotoken 0.4.1, tpm2-pkcs11 1.9.0, BouncyHSM 2.0.1, swtpm 0.10.1
 
 ### Key design decisions
-- python-pkcs11 fork as git submodule (`python-pkcs11/`) with v3.0/3.1/3.2 interface negotiation, PQC mechanisms (ML-KEM, ML-DSA, SLH-DSA), parameter structs (CCM, ChaCha20-Poly1305, HKDF), and 50+ new mechanism/key type enums
-- Test cases are native pytest tests with custom fixtures (p11_session, p11_module)
+- python-pkcs11 fork as git submodule with v3.0/3.1/3.2 interface negotiation, PQC mechanisms, 50+ new enums, specific CKR exception classes for ALL standard error codes
+- `p11_session` fixture does explicit `login()` / `logout()` per test to avoid `UserAlreadyLoggedIn` cascading
 - Tests auto-skip when interface version doesn't support them (@pytest.mark.requires_v30)
-- Wycheproof vectors use `xfail` for module limitations (not hard failures)
 - Mechanism availability checked at runtime via `slot.get_mechanisms()` — tests skip cleanly
-- Compliance notes track NOT_RECOMMENDED/DEPRECATED behavior
-- `mech_name()` helper handles both Mechanism enum and raw int (SoftHSM2 2.7.0+ compat)
+- PQC tests always provide `CKA_PARAMETER_SET` (ML-KEM-768, ML-DSA-65, SLH-DSA-SHA2-128s defaults)
+- PIN tests marked `@destructive` to prevent token lockout (OpenCryptoki, TPM)
 
-## Conventions
+## Coding Rules
 
+### Error handling — CRITICAL
+- **NEVER use generic `except PKCS11Error: pass`** — this hides real bugs. Every catch must list SPECIFIC acceptable CKR codes for that operation.
+- Use predefined error tuples for common patterns:
+  ```python
+  _TEMPLATE_ERRORS = (AttributeTypeInvalid, AttributeValueInvalid,
+                      TemplateIncomplete, TemplateInconsistent, ArgumentsBad)
+  _KEY_SIZE_ERRORS = (AttributeValueInvalid, KeySizeRange, MechanismInvalid,
+                      ArgumentsBad, TemplateIncomplete)
+  ```
+- If a module returns an unexpected error (e.g., `DeviceError` for a bad template), the test should FAIL — exposing the module bug.
+- `UserAlreadyLoggedIn` handling: catch only `UserAlreadyLoggedIn` (standard) and `UserTypeInvalid` (NSS quirk). Never catch broad `PKCS11Error` for login failures.
+
+### PIN handling
+- PIN values are never logged, printed, or included in error messages
+- When `p11_config.pin` is `None` (no `--p11-pin`), don't call `C_Login` — some modules don't need it (e.g., NSS crypto services slot)
+- Never use `str(pin)` when pin might be `None` — this produces the string `"None"` which gets passed as an actual PIN
+
+### Test isolation
+- Tests that call `lib.finalize()` or `lib.initialize()` MUST be marked `@destructive`
+- Tests expecting crashes (post-Finalize, fork) MUST run in subprocess via `subprocess.run([sys.executable, "-c", script])`
+- Token-locking operations (wrong PIN tests) MUST be marked `@destructive`
+- Multi-thread tests on the same session can segfault SoftHSM2 (#845) — use sequential approach by default, or mark with `@pytest.mark.stress`
+
+### Module-specific behavior
+- Document module quirks in `docs/module-issues.md`, not as silent `pass` in code
+- Use `compliance.note()` for spec deviations that aren't bugs (e.g., SoftHSM2 allows Tookan-vulnerable templates)
+- Use `pytest.xfail()` for known module bugs with an explanatory message (e.g., Kryoptic CKR_DEVICE_ERROR on verify)
+- NSS uses slot 1 (Certificate DB), not slot 0 (crypto services). Pass `--p11-slot=1`
+
+### Conventions
 - Type annotations on all public functions (mypy strict)
 - `ruff` for formatting and linting — no other formatters
 - Imports sorted by ruff (isort-compatible)
@@ -109,12 +104,15 @@ Additional:
 - Test files prefixed with `test_`
 - Use `rich.console` for all CLI output (no bare print)
 - Config values: snake_case in TOML/Python, kebab-case for CLI flags
-- PIN values are never logged, printed, or included in error messages
+- CVE regression tests reference the CVE/issue number in docstring
 
-## Design Specs
+## Documentation
 
-- `docs/superpowers/specs/2026-03-16-p11test-design.md` — Phase 1 architecture
-- `docs/superpowers/specs/2026-03-16-comprehensive-testing-design.md` — Full testing spec (~2,400 tests)
-- `docs/superpowers/specs/2026-03-16-standards-addendum.md` — OASIS standards conformance
-- `docs/test-coverage.md` — Current test coverage summary and mechanism matrix
+- `docs/master-plan.md` — Current task plan (Tiers 1-9)
+- `docs/module-issues.md` — Per-module bugs, quirks, compliance deviations
+- `docs/module-matrix.md` — Test results per module (pass/fail/skip/xfail)
+- `docs/cve-regression.md` — CVE coverage tracker (Covered/Documented/N-A/Pending)
+- `docs/mechanism-audit.md` — Mechanism coverage gap report per module
+- `docs/test-coverage.md` — Test coverage summary
+- `docs/test-coverage-generated.md` — Auto-generated from `scripts/generate-coverage-report.py`
 - `docs/python-pkcs11-fork.md` — Fork changes and upstream PR plan
