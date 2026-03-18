@@ -205,6 +205,30 @@ Store test metadata in `src/p11test/testcases/test_cve_regression.py` with CVE I
 - [x] **7b.28** Google pkcs11test integration — evaluate and integrate relevant tests from https://github.com/google/pkcs11test into p11test framework.
 - [x] **7b.29** CVE database tracker — create `docs/cve-regression.md` listing all CVEs with test status (covered/not-applicable/pending). Auto-update from test markers.
 
+## Tier 7c — Productization & Correctness (from gap-analysis.md)
+
+Based on deep gap analysis in `docs/gap-analysis.md`. Focuses on execution backbone,
+packaging, and validation gates — the areas where ambition exceeds implementation.
+
+### P0: Correctness and Trust
+- [ ] **7c.1** Fix marker drift — register `thread_safe` in `markers.py`. Run `pytest --strict-markers --collect-only` as validation. Add to CI gate.
+- [ ] **7c.2** Remove collection-time module loading — `plugin.py` currently loads PKCS#11 module during `pytest_collection_modifyitems`. Move capability probing to runtime-only (fixture time) or a preflight subprocess.
+- [ ] **7c.3** Wire crash isolation into CLI — `p11test test` should use `isolation.py` subprocess runner, not in-process `pytest.main()`. Crash in one test must not kill the suite.
+- [ ] **7c.4** Fix fixture logout catch — `fixtures.py` has broad `except PKCS11Error: pass` on logout. Replace with specific `(UserNotLoggedIn, SessionClosed)`.
+
+### P1: Product Surface
+- [ ] **7c.5** Audit and wire CLI options — remove or implement: `--sessions`, `--timeout`, `--output json`. Each option must work end-to-end or not exist.
+- [ ] **7c.6** JSON report output — implement real JSON/JUnit report from `p11test test`. Machine-readable with per-test outcome, duration, mechanism requirements, crash status.
+- [ ] **7c.7** Write real README.md — project description, quick start, architecture overview, contribution guide. Currently empty.
+- [ ] **7c.8** Add CI workflow — `.github/workflows/ci.yml` with: ruff check, mypy, pytest tests/, strict-marker collection, one smoke module.
+- [ ] **7c.9** Capability snapshot command — `p11test capabilities --module ... --output json` writes slot info, mechanism list, interface list, token flags.
+
+### P2: Depth and Polish
+- [ ] **7c.10** Interface negotiation negative tests — invalid interface name, unsupported version, repeated load with different versions, inconsistent `C_GetInterfaceList` entries.
+- [ ] **7c.11** Baseline regression workflow — "run suite → emit structured results → diff against known-good artifact" for each module.
+- [ ] **7c.12** Current status document — single `docs/status.md` showing what works / what's partial / what's planned. Different from aspirational master-plan.
+- [ ] **7c.13** pyproject.toml polish — add URLs, classifiers, supported-platform statement. Prepare for PyPI publication.
+
 ## Tier 8 — Per-Target Re-Validation (post Tier 7 changes)
 
 Re-run full suite on every target after Tier 7 security tests are added. Use local builds where possible, Docker for the rest. Record pass/fail/skip/xfail. Update `docs/module-matrix.md` and `docs/module-issues.md`.
