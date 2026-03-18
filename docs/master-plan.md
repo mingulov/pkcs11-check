@@ -71,6 +71,7 @@ Note: Local SoftHSM2 is 2.6.1 (Ubuntu package). Docker builds 2.7.0 from source 
 - [x] **6.11** Access control attributes — CKA_PRIVATE, CKA_MODIFIABLE, CKA_COPYABLE
 - [x] **6.12** ECDH known-answer cross-verify — raw shared secret vs Python cryptography
 - [x] **6.13** Generic secret key gen and HMAC cross-verify — CKM_GENERIC_SECRET_KEY_GEN + HMAC
+- [x] **6.14** RSA key import — pub/priv import from raw components with cross-library verify
 
 ---
 
