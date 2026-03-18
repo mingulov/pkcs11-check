@@ -115,8 +115,8 @@ These tests catch real production crashes and security issues that normal test s
 
 ### Priority 2 — Protocol Violations
 
-- [ ] **7.7** Stale session handles — C_CloseSession then reuse handle for C_FindObjects, C_Sign, etc. Must return CKR_SESSION_HANDLE_INVALID.
-- [ ] **7.8** C_CloseAllSessions during active ops — start multipart encrypt, call C_CloseAllSessions, verify no crash and proper cleanup.
+- [x] **7.7** Stale session handles — C_CloseSession then reuse handle for C_FindObjects, C_Sign, etc. Must return CKR_SESSION_HANDLE_INVALID.
+- [x] **7.8** C_CloseAllSessions during active ops — start multipart encrypt, call C_CloseAllSessions, verify no crash and proper cleanup.
 - [ ] **7.9** Multipart CKR_BUFFER_TOO_SMALL — C_EncryptUpdate with too-small output buffer. Verify correct CKR and operation can continue (Kryoptic #179).
 - [x] **7.10** Default tool templates — test with pkcs11-tool default templates (CKA_WRAP+CKA_DECRYPT together, CKA_SIGN+CKA_VERIFY+CKA_ENCRYPT). Verify no security policy violations.
 - [x] **7.11** C_FindObjects with concurrent modifications — search while another session creates/destroys objects. Must not crash or return invalid handles.
@@ -139,7 +139,7 @@ These tests catch real production crashes and security issues that normal test s
 ### Priority 5 — CVE Regression Tests
 
 - [ ] **7.21** CVE regression suite — named regression tests for fixed CVEs to catch regressions: Minerva ECDSA timing (CVE-2023-6135), OpenCryptoki EC curve validation (CVE-2021-3798), NSS fork detection (Mozilla #473505). Each test verifies the fix still holds.
-- [ ] **7.22** SoftHSM2 GitHub issue regressions — #608 (wrong C_WrapKey CKR), #596 (3DES wrap CKR_MECHANISM_INVALID), #845 (SQLite transaction errors under load). Repro from issue descriptions.
+- [x] **7.22** SoftHSM2 GitHub issue regressions — #608 (wrong C_WrapKey CKR), #596 (3DES wrap CKR_MECHANISM_INVALID), #845 (SQLite transaction errors under load). Repro from issue descriptions.
 - [x] **7.23** Tookan wrap/unwrap attribute leaks — unwrap a key and verify CKA_SENSITIVE is preserved (not stripped). Wrap sensitive key and verify wrapped data is opaque. CopyObject must not carry conflicting attrs.
 
 ### Priority 6 — Advanced Testing Infrastructure
