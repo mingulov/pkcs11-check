@@ -106,11 +106,11 @@ These tests catch real production crashes and security issues that normal test s
 
 ### Priority 1 — Crashes & Security
 
-- [ ] **7.1** Attribute template fuzzing — malformed CK_ATTRIBUTE arrays: duplicate types, wrong CK_ULONG as bytes, CKA_CLASS=0xdeadbeef, 10MB template, invalid CK_DATE, CKA_VALUE_LEN=0 on RSA. Must not crash (return CKR error instead).
-- [ ] **7.2** Conflicting usage attrs (Tookan vectors) — create key with CKA_WRAP+CKA_DECRYPT (or CKA_ENCRYPT+CKA_UNWRAP), then attempt key extraction via wrap/unwrap. Verify module rejects or that extracted material doesn't match.
+- [x] **7.1** Attribute template fuzzing — malformed CK_ATTRIBUTE arrays: duplicate types, wrong CK_ULONG as bytes, CKA_CLASS=0xdeadbeef, 10MB template, invalid CK_DATE, CKA_VALUE_LEN=0 on RSA. Must not crash (return CKR error instead).
+- [x] **7.2** Conflicting usage attrs (Tookan vectors) — create key with CKA_WRAP+CKA_DECRYPT (or CKA_ENCRYPT+CKA_UNWRAP), then attempt key extraction via wrap/unwrap. Verify module rejects or that extracted material doesn't match.
 - [ ] **7.3** Post-C_Finalize calls — call C_GetSlotList, C_OpenSession, etc. after C_Finalize. Must not crash. Test via subprocess (isolation.py) to avoid corrupting test session.
 - [ ] **7.4** Fork safety — `os.fork()` after C_Initialize, child calls C_GetSlotList or C_GenerateRandom. Must not crash or deadlock. Test NSS-style fork detection. Run in subprocess.
-- [ ] **7.5** Handle reuse after destroy — C_DestroyObject then reuse the handle for C_GetAttributeValue, C_Encrypt, etc. Must return CKR_OBJECT_HANDLE_INVALID, not crash.
+- [x] **7.5** Handle reuse after destroy — C_DestroyObject then reuse the handle for C_GetAttributeValue, C_Encrypt, etc. Must return CKR_OBJECT_HANDLE_INVALID, not crash.
 - [ ] **7.6** C_GetAttributeValue NULL buffer + modify race — query length with NULL pValue, modify object in another thread, second call with buffer. Check for stale data or crash.
 
 ### Priority 2 — Protocol Violations

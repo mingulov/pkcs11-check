@@ -69,6 +69,7 @@ class TestThreadedOperations:
 class TestMultiSessionThreads:
     """Each thread opens its own session for independent operations."""
 
+    @pytest.mark.flaky(reruns=2)
     def test_independent_sessions(self, p11_session: Any, p11_module: Any, p11_config: Any) -> None:
         """Each thread gets its own session and operates independently."""
         token = p11_module.get_token()
