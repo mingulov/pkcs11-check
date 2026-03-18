@@ -32,7 +32,7 @@ _list_providers() {
     done
 }
 
-# Handle softhsm2-system and softhsm2-local variants
+# Handle aliases and variants
 SETUP_FUNC="setup"
 case "$TARGET" in
     softhsm2-system)
@@ -41,6 +41,9 @@ case "$TARGET" in
         ;;
     softhsm2-local)
         TARGET="softhsm2"
+        ;;
+    tpm2)
+        TARGET="tpm2-pkcs11"
         ;;
 esac
 

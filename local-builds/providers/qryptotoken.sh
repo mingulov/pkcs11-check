@@ -34,6 +34,19 @@ build() {
 setup() {
     local so="$BASE_DIR/qryptotoken/lib/libqryptotoken_pkcs11.so"
     [ -f "$so" ] || { echo "ERROR: Build first: bash local-builds/build.sh qryptotoken"; exit 1; }
+
+    local token_dir="$TOKENS_DIR/qryptotoken"
+    mkdir -p "$token_dir"
+    export QRYPTOTOKEN_CONF="$token_dir/token.sql"
+
+    if [ ! -f "$token_dir/token.sql" ]; then
+        echo "Initializing qryptotoken..."
+        QRYPTOTOKEN_CONF="$token_dir/token.sql" pkcs11-tool --module "$so" \
+            --init-token --label "p11test" --so-pin 12345678 2>/dev/null || true
+        QRYPTOTOKEN_CONF="$token_dir/token.sql" pkcs11-tool --module "$so" \
+            --init-pin --pin 1234 --so-pin 12345678 2>/dev/null || true
+    fi
+
     MODULE="$so"
     PIN="1234"
 }

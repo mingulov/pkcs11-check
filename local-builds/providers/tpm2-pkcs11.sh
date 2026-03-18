@@ -36,15 +36,25 @@ setup() {
     fi
     [ -f "$so" ] || [ -L "$so" ] || { echo "ERROR: tpm2-pkcs11 not found."; exit 1; }
 
-    # Check for hardware TPM
+    local token_dir="$TOKENS_DIR/tpm2"
+    mkdir -p "$token_dir"
+    export TPM2_PKCS11_STORE="$token_dir"
+
     if [ -c /dev/tpm0 ] || [ -c /dev/tpmrm0 ]; then
         echo "Hardware TPM detected"
     else
         echo "WARNING: No hardware TPM — need swtpm running"
     fi
 
-    export TPM2_PKCS11_STORE="$TOKENS_DIR/tpm2"
-    mkdir -p "$TPM2_PKCS11_STORE"
+    # Initialize if not done (needs tss group or sudo)
+    if [ ! -f "$token_dir/tpm2_pkcs11.sqlite3" ]; then
+        echo "Initializing tpm2-pkcs11 token (may need sudo for TPM access)..."
+        sudo TPM2_PKCS11_STORE="$token_dir" python3 -m tpm2_pkcs11.tpm2_ptool init 2>/dev/null || true
+        sudo TPM2_PKCS11_STORE="$token_dir" python3 -m tpm2_pkcs11.tpm2_ptool addtoken \
+            --pid=1 --label=p11test --sopin=12345678 --userpin=1234 2>/dev/null || true
+        sudo chown -R "$(whoami)" "$token_dir"
+    fi
+
     MODULE="$so"
     PIN="1234"
 }
