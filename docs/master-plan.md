@@ -129,11 +129,29 @@ These tests catch real production crashes and security issues that normal test s
 - [ ] **7.15** Library reload cycle — dlopen, C_Initialize, ops, C_Finalize, dlclose, dlopen again. 10 cycles. Verify no leak, no crash. Test via subprocess.
 - [ ] **7.16** DoS via spec-ambiguous calls — C_WaitForSlotEvent with CKF_DONT_BLOCK; C_Initialize called twice; C_GetFunctionList after Finalize. Verify no hang, correct CKR.
 
-## Tier 8 — Docker Final Validation
+## Tier 8 — Per-Target Re-Validation (post Tier 7 changes)
 
-Run after ALL other tiers. Rebuild every Docker image with `--no-cache`. Record final counts.
+Re-run full suite on every target after Tier 7 security tests are added. Use local builds where possible, Docker for the rest. Record pass/fail/skip/xfail. Update `docs/module-matrix.md` and `docs/module-issues.md`.
 
-- [ ] **8.1–8.13** Final validation for all 12 Docker targets + summary in `docs/module-matrix.md`.
+- [ ] **8.1** **SoftHSM2 2.7.0** — local build full suite. Confirm 0 failures.
+- [ ] **8.2** **Kryoptic 1.5.0+PQC** — local build full suite. Confirm 0 failures.
+- [ ] **8.3** **pkcs11-mock 2.0.0** — local build. Document expected mock failures.
+- [ ] **8.4** **qryptotoken 0.4.1** — local build. Document PQC-only limitations.
+- [ ] **8.5** **tpm2-pkcs11 (hardware)** — `sg tss`. Document TPM limitations.
+- [ ] **8.6** **tpm2-swtpm 0.10.1** — local swtpm build. Full suite with abrmd.
+- [ ] **8.7** **BouncyHSM 2.0.1** — local build. Fix or document segfault + CKF_TOKEN_PRESENT.
+- [ ] **8.8** **SoftHSM2 main** — local build dev branch. Compare with 2.7.0.
+- [ ] **8.9** **Kryoptic main** — local build dev branch. Compare with 1.5.0.
+- [ ] **8.10** **NSS 3.120.1** — Docker. Analyze remaining 356 failures.
+- [ ] **8.11** **OpenCryptoki 3.26** — Docker. Verify PIN lockout fix works.
+- [ ] **8.12** **NSS-PQC (Rawhide)** — Docker. Check ML-KEM/ML-DSA support.
+- [ ] **8.13** **Kryoptic FIPS** — Docker. Analyze FIPS-specific behavior.
+
+## Tier 9 — Docker Final Validation
+
+Run after ALL other tiers. Rebuild every Docker image with `--no-cache`. One clean pass.
+
+- [ ] **9.1–9.13** Final validation for all 12 Docker targets + sign-off summary in `docs/module-matrix.md`.
 
 ---
 
