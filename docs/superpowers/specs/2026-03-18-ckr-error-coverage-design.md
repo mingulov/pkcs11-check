@@ -32,6 +32,41 @@ Every PKCS#11 C_* function gets per-parameter error tests. ~487 spec conditions,
 
 One file per operation family. 22 test files + 3 infrastructure files + 1 C proxy module.
 
+### Prerequisites
+
+Before implementing this spec:
+- Fix the broad `except PKCS11Error: pass` in `fixtures.py` logout cleanup (replace with specific `(UserNotLoggedIn, SessionClosed)`) — task 7c.4 in master-plan.
+- Register `thread_safe` marker in `markers.py` — task 7c.1.
+
+## conftest.py — Flag and Fixtures
+
+```python
+# src/p11test/testcases/ckr/conftest.py
+
+import pytest
+
+def pytest_addoption(parser):
+    group = parser.getgroup("ckr", "CKR spec compliance options")
+    group.addoption(
+        "--ckr-strict",
+        action="store_true",
+        default=False,
+        help="Strict CKR compliance: spec deviations are test failures, not notes",
+    )
+
+@pytest.fixture
+def ckr_strict(request) -> bool:
+    """Whether to enforce exact spec CKR codes (True) or accept compatible alternatives (False)."""
+    return request.config.getoption("--ckr-strict")
+```
+
+New markers to register in `src/p11test/markers.py`:
+
+```python
+"subprocess": "Test always runs in isolated subprocess (crash-prone operations)",
+"subprocess_per_test": "Each test in file runs in its own subprocess",
+```
+
 ## File Structure
 
 ```
@@ -103,7 +138,12 @@ _SESSION_UNIVERSAL = (SessionHandleInvalid, DeviceRemoved, SessionClosed)
 _TOKEN_UNIVERSAL = (DeviceMemory, DeviceError, TokenNotPresent)
 
 def full_compat(base_tuple: tuple, uses_session: bool = True) -> tuple:
-    """Build full acceptable error set from base + universals."""
+    """Build full acceptable error set from base + universals.
+
+    Duplicates with base_tuple (e.g. FunctionFailed already in most tuples)
+    are harmless for isinstance() and kept for clarity — each layer adds
+    what the spec says it may return.
+    """
     result = base_tuple + _UNIVERSAL
     if uses_session:
         result += _SESSION_UNIVERSAL + _TOKEN_UNIVERSAL
@@ -186,6 +226,31 @@ CKR_SIGN = { ... }
 
 The OASIS spec repo (https://github.com/oasis-tcs/pkcs11.git, `working/doc/spec/`) is the source of truth for all entries.
 
+### Condition count per family (approximate)
+
+| File | Functions | Conditions | Python-testable |
+|------|-----------|-----------|-----------------|
+| test_ckr_encrypt.py | 4 | 49 | 46 |
+| test_ckr_decrypt.py | 4 | 43 | 42 |
+| test_ckr_sign.py | 6 | 63 | 59 |
+| test_ckr_verify.py | 8 | 76 | 71 |
+| test_ckr_digest.py | 9 | 68 | 66 |
+| test_ckr_keygen.py | 2 | ~30 | ~28 |
+| test_ckr_wrap.py | 2 | ~25 | ~23 |
+| test_ckr_derive.py | 1 | ~15 | ~14 |
+| test_ckr_kem.py | 2 | ~15 | ~14 |
+| test_ckr_object.py | 9 | 52 | 48 |
+| test_ckr_session.py | 6 | ~50 | ~42 |
+| test_ckr_slot_token.py | 9 | 41 | 36 |
+| test_ckr_random.py | 2 | 16 | 15 |
+| test_ckr_state.py | 2 | ~12 | ~10 |
+| test_ckr_general.py | 4 | 16 | 9 |
+| test_ckr_dual.py | — | ~20 | ~18 |
+| test_ckr_priority.py | — | ~15 | ~15 |
+| test_ckr_null_params.py | — | ~20 | 20 (ctypes) |
+| test_ckr_fault_inject.py | — | ~20 | 20 (proxy) |
+| **Total** | **65** | **~487** | **~482** |
+
 ## Test Pattern
 
 Each test file follows a consistent structure:
@@ -209,6 +274,10 @@ class TestEncryptInitErrors:
             key.encrypt(b"\x00" * 16, mechanism=Mechanism.SHA256)
             pytest.fail("Should have rejected digest mechanism for encrypt")
         except PKCS11Error as e:
+            # Broad PKCS11Error catch is intentional here — assert_ckr
+            # validates the specific type. This is the ONE place where
+            # catching PKCS11Error is correct: we don't know which CKR
+            # the module returns, and assert_ckr enforces the rules.
             assert_ckr(CKR_ENCRYPT["init_unsupported_mechanism"], e, ckr_strict)
 
     def test_key_missing_encrypt_attr(self, p11_session, ckr_strict):
@@ -216,12 +285,16 @@ class TestEncryptInitErrors:
         key = p11_session.generate_key(
             KeyType.AES, 256, template={Attribute.ENCRYPT: False}
         )
+        exp = CKR_ENCRYPT["init_key_no_encrypt"]
         try:
             key.encrypt(b"\x00" * 16, mechanism=Mechanism.AES_ECB)
-            if not CKR_ENCRYPT["init_key_no_encrypt"].allow_success:
+            # Operation succeeded
+            if not exp.allow_success:
                 pytest.fail("Should have rejected key without ENCRYPT attr")
         except PKCS11Error as e:
-            assert_ckr(CKR_ENCRYPT["init_key_no_encrypt"], e, ckr_strict)
+            # Even when allow_success=True, if the module rejects,
+            # it must reject with the correct CKR code.
+            assert_ckr(exp, e, ckr_strict)
 
 
 class TestEncryptDataErrors:
@@ -254,17 +327,23 @@ For NULL/bad pointer parameters that python-pkcs11 prevents:
 ```python
 # _ctypes_raw.py
 class RawPkcs11:
-    """Direct ctypes access to C_* functions, bypassing python-pkcs11 safety."""
+    """Direct ctypes access to C_* functions, bypassing python-pkcs11 safety.
+
+    Targets CK_FUNCTION_LIST v2.40 (68 function pointers after CK_VERSION).
+    For v3.x functions, uses C_GetInterface to get CK_FUNCTION_LIST_3_0.
+    The struct layout is defined in pkcs11t.h — offsets are stable across
+    all compliant implementations.
+    """
     def __init__(self, module_path: str):
         self._lib = ctypes.CDLL(module_path)
-        # Extract CK_FUNCTION_LIST via C_GetFunctionList
-        # Read individual function pointers at known offsets
+        # C_GetFunctionList is the only guaranteed exported symbol
+        # Extract CK_FUNCTION_LIST pointer, read function pointers at offsets
 
     def call(self, func_name: str, *args) -> int:
         """Call C_* function with raw args. Returns CK_RV as int."""
 ```
 
-All ctypes tests run in subprocess — modules may segfault on NULL instead of returning CKR. Segfault is also a valid finding (module fails to validate parameters).
+All ctypes tests run in subprocess — modules may segfault on NULL instead of returning CKR. Segfault is also a valid finding (module fails to validate parameters). If the fault-proxy `.so` is not built, tests in `test_ckr_fault_inject.py` skip gracefully (check for file at collection time).
 
 ### Technique B: Fault-Injection Proxy (~15 conditions)
 
@@ -276,6 +355,8 @@ A minimal C proxy (`local-builds/fault-proxy/fault-proxy.c`, ~300 lines):
 4. When target function is called, returns injected CKR instead of delegating
 
 Covers: `CKR_DEVICE_REMOVED`, `CKR_DEVICE_ERROR`, `CKR_DEVICE_MEMORY`, `CKR_TOKEN_NOT_PRESENT`, `CKR_TOKEN_NOT_RECOGNIZED`.
+
+Fault-proxy tests MUST use `_ctypes_raw.py` (not python-pkcs11) because the wrapper caches internal state (session handles, operation state) that becomes inconsistent when the proxy injects errors mid-operation.
 
 ### Technique C: Process Killing (~5 conditions)
 
@@ -350,26 +431,56 @@ p11test test --module softhsm2.so
 
 Tests in `test_ckr_null_params.py` and `test_ckr_fault_inject.py` are always `@subprocess`.
 
-### Plugin hook
+### Implementation: outer orchestrator, not pytest plugin
+
+A crash (SIGSEGV) kills the entire pytest process — no hook can intercept it from inside. The adaptive isolation lives in the **`p11test test` CLI command** (`src/p11test/cli/test_cmd.py`), which is an outer process that launches pytest as a subprocess:
 
 ```python
-class CrashSurvivalPlugin:
-    def __init__(self):
-        self.mode = "inprocess"
-        self.crashed_files = set()
-        self.crash_log = []
+# src/p11test/cli/test_cmd.py (simplified)
+class AdaptiveRunner:
+    """Outer orchestrator that survives child crashes."""
 
-    def pytest_runtest_protocol(self, item, nextitem):
-        if self._should_subprocess(item):
-            return self._run_in_subprocess(item)
-        return None  # Normal execution
+    def run(self, test_paths, module, pin, ...):
+        # Phase 1: try in-process (fast)
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", *test_paths, ...],
+            timeout=timeout,
+        )
+        if result.returncode >= 0:
+            return result  # Clean exit (pass or fail, no crash)
 
-    def _should_subprocess(self, item):
-        if "subprocess" in item.own_markers:
-            return True
-        if self.mode != "inprocess":
-            return True
-        return False
+        # Phase 2: crash detected — re-run per-file
+        crashed_signal = -result.returncode
+        self.crash_log.append(("phase1", crashed_signal))
+        remaining = self._collect_remaining_files(test_paths, result)
+
+        for test_file in remaining:
+            file_result = subprocess.run(
+                [sys.executable, "-m", "pytest", test_file, ...],
+                timeout=timeout,
+            )
+            if file_result.returncode < 0:
+                # Phase 3: file crashed — re-run per-test
+                self._run_per_test(test_file)
+            else:
+                self._merge_results(file_result)
+
+        return self._final_report()
+```
+
+The existing `core/isolation.py` `IsolatedRunner` is NOT reused — it uses `multiprocessing.Process` with fork semantics which is unsuitable for crash survival. The `AdaptiveRunner` uses `subprocess.run` (clean child process) like `test_subprocess_safety.py` already does.
+
+### Subprocess marker handling in plugin
+
+Tests marked `@subprocess` are collected by pytest but deferred to the outer runner:
+
+```python
+# In plugin.py
+def pytest_collection_modifyitems(config, items):
+    subprocess_items = [i for i in items if "subprocess" in i.own_markers]
+    for item in subprocess_items:
+        item.add_marker(pytest.mark.skip(reason="deferred to AdaptiveRunner"))
+    # AdaptiveRunner runs these separately in isolated subprocesses
 ```
 
 ## Migration
