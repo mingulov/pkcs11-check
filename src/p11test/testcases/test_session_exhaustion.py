@@ -35,7 +35,7 @@ class TestSessionExhaustion:
         """Open sessions until limit or 100, verify all work, close all."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         sessions = []
         s0 = _open_with_login(token, rw=True, pin_str=pin_str)
@@ -66,7 +66,7 @@ class TestSessionExhaustion:
         """Opening and closing sessions in a loop doesn't leak."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         for _ in range(50):
             session = _open_with_login(token, rw=True, pin_str=pin_str)

@@ -56,7 +56,7 @@ class TestSetPIN:
         """User can change their PIN, then login with new PIN."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        old_pin = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        old_pin = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         new_pin = old_pin + "X"  # Slightly different
 

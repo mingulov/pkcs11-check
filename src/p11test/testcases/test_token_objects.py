@@ -49,7 +49,7 @@ class TestTokenObjectLifecycle:
         """Token object created in one session is visible in a new session."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
         label = _unique_label()
 
         # Session 1: create
@@ -74,7 +74,7 @@ class TestTokenObjectLifecycle:
         """Token key created in session A can encrypt in session B."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
         label = _unique_label()
         plaintext = b"persistent key!!"  # 16 bytes
 
@@ -102,7 +102,7 @@ class TestTokenObjectLifecycle:
         """Session object (TOKEN=False) disappears when session closes."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
         label = _unique_label()
 
         # Session 1: create session object

@@ -30,7 +30,7 @@ class TestPrivateAttribute:
         """CKA_PRIVATE=False object should be visible without login."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         label = f"pub-visible-{id(self)}"
 

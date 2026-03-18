@@ -44,7 +44,7 @@ class TestConcurrentSessions:
         """Object created in session A with TOKEN=True is visible in session B."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
         label = _unique_label("vis")
 
         with token.open(rw=True, user_pin=pin_str) as s1:
@@ -73,7 +73,7 @@ class TestConcurrentSessions:
         """Destroying a token object in session A is reflected in session B."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
         label = _unique_label("destr")
 
         with token.open(rw=True, user_pin=pin_str) as s1:
@@ -103,7 +103,7 @@ class TestConcurrentSessions:
         """Token key created in session A can be used for crypto in session B."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
         label = _unique_label("use")
         plaintext = b"concurrent-test!" * 2  # 32 bytes
 
@@ -143,7 +143,7 @@ class TestConcurrentObjectCreation:
         """Create and immediately destroy objects in rapid succession — no leak."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         with token.open(rw=True, user_pin=pin_str) as session:
             labels = []
@@ -167,7 +167,7 @@ class TestConcurrentObjectCreation:
         """Creating objects in two concurrent sessions doesn't cause conflicts."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         label_a = _unique_label("sA")
         label_b = _unique_label("sB")
@@ -207,7 +207,7 @@ class TestConcurrentDataObjects:
         """CKO_DATA with TOKEN=True visible in concurrent session."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
         label = _unique_label("data")
 
         with token.open(rw=True, user_pin=pin_str) as s1:

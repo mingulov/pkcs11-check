@@ -82,7 +82,7 @@ class TestCKRSessionErrors:
         """Double login triggers CKR_USER_ALREADY_LOGGED_IN."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         session = token.open(rw=True, user_pin=pin_str)
         try:

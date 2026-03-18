@@ -34,7 +34,7 @@ class TestSessionInfo:
         """R/W session reports correct state."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         session = _open_session(token, rw=True, pin_str=pin_str)
         try:
@@ -46,7 +46,7 @@ class TestSessionInfo:
         """R/O session reports read-only state."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         session = _open_session(token, rw=False, pin_str=pin_str)
         try:
@@ -58,7 +58,7 @@ class TestSessionInfo:
         """Session is associated with a token."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         session = _open_session(token, rw=True, pin_str=pin_str)
         try:
@@ -74,7 +74,7 @@ class TestSessionInfo:
         """R/O session cannot create TOKEN=True objects."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         session = _open_session(token, rw=False, pin_str=pin_str)
         try:

@@ -63,7 +63,7 @@ class TestInterfaceVersion:
         if hasattr(module_path, "get_secret_value"):
             module_path = module_path.get_secret_value()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
 
         lib = pkcs11.lib(str(module_path))
         lib.initialize()

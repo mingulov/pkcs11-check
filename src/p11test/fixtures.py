@@ -51,15 +51,19 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
     token = p11_module.get_token(p11_config.slot)
     pin = p11_config.pin.get_secret_value() if p11_config.pin else None
     session = token.open(rw=True)
-    try:
-        session.login(_p11.UserType.USER, pin)
-    except _p11.exceptions.UserAlreadyLoggedIn:
-        pass  # Already logged in at token level — reuse
+    logged_in = False
+    if pin is not None:
+        try:
+            session.login(_p11.UserType.USER, pin)
+            logged_in = True
+        except _p11.exceptions.UserAlreadyLoggedIn:
+            logged_in = True  # Already logged in at token level — reuse
     try:
         yield session
     finally:
-        try:
-            session.logout()
-        except _p11.exceptions.PKCS11Error:
-            pass  # Logout may fail if not logged in or other session holds login
+        if logged_in:
+            try:
+                session.logout()
+            except _p11.exceptions.PKCS11Error:
+                pass  # Logout may fail if another session holds login
         session.close()

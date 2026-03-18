@@ -233,7 +233,7 @@ class TestDataObjectToken:
         """CKO_DATA with TOKEN=True persists across sessions."""
         token = p11_module.get_token()
         pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
         label = _unique_label("persist")
 
         # Session 1: create
