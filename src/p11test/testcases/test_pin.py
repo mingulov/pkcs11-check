@@ -17,7 +17,7 @@ import pkcs11
 import pytest
 from pkcs11 import Attribute, KeyType
 
-pytestmark = pytest.mark.security
+pytestmark = [pytest.mark.security, pytest.mark.destructive]
 
 
 class TestWrongPIN:
