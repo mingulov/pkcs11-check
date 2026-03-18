@@ -519,8 +519,10 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         function="C_DeriveKey",
         condition="base_key_type_wrong_for_mechanism",
         spec_ckr=KeyTypeInconsistent,
-        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, ArgumentsBad, FunctionFailed),
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted,
+                      MechanismParamInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
+        # OpenCryptoki: MechanismParamInvalid, Kryoptic: ArgumentsBad, NSS: UserTypeInvalid
     ),
     "mechanism_param_invalid": CkrExpectation(
         function="C_DeriveKey",
