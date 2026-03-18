@@ -323,3 +323,82 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         allow_success=True,  # Kryoptic accepts wrong-length ciphertext (spec deviation)
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Sign family (§5.10)
+# ---------------------------------------------------------------------------
+
+CKR_SIGN: dict[str, CkrExpectation] = {
+    # --- C_SignInit errors ---
+    "init_mechanism_invalid": CkrExpectation(
+        function="C_SignInit",
+        condition="mechanism_not_supported",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.10.1",
+    ),
+    "init_key_type_inconsistent": CkrExpectation(
+        function="C_SignInit",
+        condition="key_type_wrong_for_mechanism",
+        spec_ckr=KeyTypeInconsistent,
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.10.1",
+    ),
+    "init_mechanism_param_invalid": CkrExpectation(
+        function="C_SignInit",
+        condition="wrong_mechanism_parameter",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.10.1",
+    ),
+    # --- C_Sign errors ---
+    "data_len_range": CkrExpectation(
+        function="C_Sign",
+        condition="data_too_long_for_mechanism",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.10.2",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Verify family (§5.11)
+# ---------------------------------------------------------------------------
+
+CKR_VERIFY: dict[str, CkrExpectation] = {
+    # --- C_VerifyInit errors ---
+    "init_mechanism_invalid": CkrExpectation(
+        function="C_VerifyInit",
+        condition="mechanism_not_supported",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.11.1",
+    ),
+    "init_key_type_inconsistent": CkrExpectation(
+        function="C_VerifyInit",
+        condition="key_type_wrong_for_mechanism",
+        spec_ckr=KeyTypeInconsistent,
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.1",
+        allow_success=True,  # SoftHSM2 accepts AES key with RSA verify mechanism
+    ),
+    # --- C_Verify errors ---
+    "signature_invalid": CkrExpectation(
+        function="C_Verify",
+        condition="tampered_signature",
+        spec_ckr=SignatureInvalid,
+        compat_tuple=(SignatureInvalid, SignatureLenRange, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.2",
+    ),
+    "signature_len_range": CkrExpectation(
+        function="C_Verify",
+        condition="signature_wrong_length",
+        spec_ckr=SignatureLenRange,
+        compat_tuple=(SignatureLenRange, SignatureInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.2",
+        priority_note="Higher priority than CKR_SIGNATURE_INVALID",
+        allow_success=True,  # SoftHSM2 + Kryoptic accept wrong-length, then fail at verify
+    ),
+}
