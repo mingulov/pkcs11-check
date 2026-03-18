@@ -1,6 +1,6 @@
 # Test Coverage Report (Auto-Generated)
 
-Generated from 83 test files, 587 test functions.
+Generated from 84 test files, 591 test functions.
 
 ## Mechanism Coverage
 
@@ -44,7 +44,7 @@ Generated from 83 test files, 587 test functions.
 | SHA224 | crossverify, digest, kat, surface_audit, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA224_HMAC | wycheproof_hmac |
 | SHA256 | benchmark, buffers, ckr_codes, crossverify, crossverify_extended, digest, errors, fuzz, interop, kat, kdf, mechanism_fuzz, metamorphic, multipart, multipart_streaming, resource, sign, stateful, stress, surface_audit, wycheproof_hkdf, wycheproof_rsa_oaep, wycheproof_rsa_pss |
-| SHA256_HMAC | crossverify, fuzz, interop, kdf, multipart_streaming, sign, surface_audit, wycheproof, wycheproof_hmac |
+| SHA256_HMAC | crossverify, fuzz, generic_secret, interop, kdf, multipart_streaming, sign, surface_audit, wycheproof, wycheproof_hmac |
 | SHA384 | crossverify, digest, kat, surface_audit, wycheproof_hkdf, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA384_HMAC | wycheproof_hmac |
 | SHA3_224 | sha3, wycheproof_rsa_pss |
@@ -58,7 +58,7 @@ Generated from 83 test files, 587 test functions.
 | SHA512 | crossverify, digest, fuzz, kat, metamorphic, multipart, multipart_streaming, surface_audit, wycheproof_hkdf, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA512_224_HMAC | wycheproof_hmac |
 | SHA512_256_HMAC | wycheproof_hmac |
-| SHA512_HMAC | kdf, wycheproof_hmac |
+| SHA512_HMAC | generic_secret, kdf, wycheproof_hmac |
 | SHA_1 | crossverify, digest, kat, metamorphic, surface_audit, wycheproof_hkdf, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA_1_HMAC | crossverify, interop, wycheproof_hmac |
 | ECDH1_DERIVE | ecdh_known_answer, kdf, keymgmt, wycheproof_ecdh, wycheproof_x25519 |
@@ -86,12 +86,12 @@ Generated from 83 test files, 587 test functions.
 | EC | benchmark, crossverify, ec_curves, ec_import_export, ecdh_known_answer, fuzz, interop, kdf, key_lifecycle, keymgmt, keypair_consistency, nonce_quality, object, sign, wycheproof, wycheproof_ecdh, wycheproof_ecdsa |
 | EC_EDWARDS | eddsa, wycheproof_ed25519 |
 | EC_MONTGOMERY | wycheproof_x25519 |
-| GENERIC_SECRET | crossverify, ecdh_known_answer, interop, kdf, kem, keymgmt, sign, surface_audit, wycheproof, wycheproof_aes, wycheproof_ecdh, wycheproof_hkdf, wycheproof_hmac, wycheproof_pbkdf2, wycheproof_x25519 |
+| GENERIC_SECRET | crossverify, ecdh_known_answer, generic_secret, interop, kdf, kem, keymgmt, sign, surface_audit, wycheproof, wycheproof_aes, wycheproof_ecdh, wycheproof_hkdf, wycheproof_hmac, wycheproof_pbkdf2, wycheproof_x25519 |
 | ML_DSA | pqc_sign, wycheproof_mldsa |
 | ML_KEM | kem |
 | RSA | access, api_security, benchmark, buffers, crossverify, crossverify_extended, encrypt, errors, fuzz, interop, key_flags, key_lifecycle, key_sizes, key_usage_policy, keymgmt, keypair_consistency, mechanism_fuzz, metamorphic, multipart, multipart_streaming, object, padding_oracle, resource, rsa_key_wrapping, rsa_oaep, search, sensitivity, set_attribute, sign, stress, surface_audit, wycheproof, wycheproof_rsa, wycheproof_rsa_decrypt, wycheproof_rsa_oaep, wycheproof_rsa_pss |
 | SHA224_HMAC | wycheproof_hmac |
-| SHA256_HMAC | crossverify, fuzz, kdf, multipart_streaming, wycheproof |
+| SHA256_HMAC | crossverify, fuzz, generic_secret, kdf, multipart_streaming, wycheproof |
 | SHA384_HMAC | wycheproof_hmac |
 | SHA3_224_HMAC | wycheproof_hmac |
 | SHA3_256_HMAC | wycheproof_hmac |
@@ -99,7 +99,7 @@ Generated from 83 test files, 587 test functions.
 | SHA3_512_HMAC | wycheproof_hmac |
 | SHA512_224_HMAC | wycheproof_hmac |
 | SHA512_256_HMAC | wycheproof_hmac |
-| SHA512_HMAC | kdf, wycheproof_hmac |
+| SHA512_HMAC | generic_secret, kdf, wycheproof_hmac |
 | SHA_1_HMAC | crossverify, wycheproof_hmac |
 | SLH_DSA | pqc_sign |
 
@@ -129,6 +129,7 @@ Generated from 83 test files, 587 test functions.
 | test_encrypt | 12 | full |
 | test_errors | 17 | security |
 | test_fuzz | 11 | fuzz |
+| test_generic_secret | 4 | keymgmt |
 | test_init | 9 | access |
 | test_interface | 11 | requires_v30, requires_v32, smoke, v30, v32 |
 | test_interface_negotiation | 6 | destructive, smoke |
@@ -191,4 +192,4 @@ Generated from 83 test files, 587 test functions.
 | test_wycheproof_rsa_pss | 1 | wycheproof |
 | test_wycheproof_x25519 | 1 | wycheproof |
 
-**Total: 83 files, 587 test functions**
+**Total: 84 files, 591 test functions**
