@@ -131,8 +131,8 @@ These tests catch real production crashes and security issues that normal test s
 
 ### Priority 4 — Interop & Client Testing
 
-- [ ] **7.17** OpenSSL pkcs11-provider interop — install pkcs11-provider, run `openssl req`, `openssl pkeyutl`, `openssl dgst` against local SoftHSM2/Kryoptic. Catches SoftHSM2 #722 (segfault on decrypt) and #729 (exit crash). Test via subprocess.
-- [ ] **7.18** p11-kit proxy testing — load module through p11-kit proxy, run basic ops. Verify transparent proxying works and no crash on proxy unload.
+- [x] **7.17** OpenSSL pkcs11-provider interop — install pkcs11-provider, run `openssl req`, `openssl pkeyutl`, `openssl dgst` against local SoftHSM2/Kryoptic. Catches SoftHSM2 #722 (segfault on decrypt) and #729 (exit crash). Test via subprocess.
+- [x] **7.18** p11-kit proxy testing — load module through p11-kit proxy, run basic ops. Verify transparent proxying works and no crash on proxy unload.
 - [x] **7.19** CKA_TRUSTED certificate handling — create cert with CKA_TRUSTED=True. Verify it's accepted or returns proper CKR (not crash). RedHat bug regression.
 - [x] **7.20** CKA_DERIVE on EC keygen — generate EC key with CKA_DERIVE=True in template. Verify acceptance or proper CKR_ATTRIBUTE_VALUE_INVALID (not crash). tpm2-pkcs11 #656 regression.
 
