@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import PKCS11Error
 
+from p11test.testcases._error_tuples import MECHANISM_ERRORS, SECURITY_POLICY_ERRORS
 from p11test.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.security
@@ -24,14 +24,9 @@ class TestConflictingUsageAttrs:
     """Tookan vector: conflicting CKA_WRAP + CKA_DECRYPT on same key."""
 
     def test_wrap_and_decrypt_on_same_key(self, p11_session: Any) -> None:
-        """Create AES key with both WRAP and DECRYPT — security risk.
-
-        If accepted, the key can wrap another key and then decrypt the
-        wrapped blob, extracting the raw key material.
-        Strict modules should reject this template.
-        """
+        """Create AES key with both WRAP and DECRYPT — security risk."""
         try:
-            key = p11_session.generate_key(
+            p11_session.generate_key(
                 KeyType.AES,
                 256,
                 template={
@@ -43,12 +38,9 @@ class TestConflictingUsageAttrs:
                     Attribute.SENSITIVE: True,
                 },
             )
-        except PKCS11Error:
-            # Strict module rejects conflicting attrs — GOOD
-            return
+        except SECURITY_POLICY_ERRORS:
+            return  # Strict module rejects conflicting attrs — GOOD
 
-        # Module accepted. This is a security policy weakness.
-        # Document it but don't hard-fail (most software tokens allow this).
         from p11test.compliance import ComplianceLevel, note
 
         note(
@@ -60,7 +52,7 @@ class TestConflictingUsageAttrs:
     def test_encrypt_and_unwrap_on_same_key(self, p11_session: Any) -> None:
         """Create key with ENCRYPT + UNWRAP — inverse Tookan vector."""
         try:
-            key = p11_session.generate_key(
+            p11_session.generate_key(
                 KeyType.AES,
                 256,
                 template={
@@ -68,7 +60,7 @@ class TestConflictingUsageAttrs:
                     Attribute.UNWRAP: True,
                 },
             )
-        except PKCS11Error:
+        except SECURITY_POLICY_ERRORS:
             return  # Strict module — good
 
         from p11test.compliance import ComplianceLevel, note
@@ -85,6 +77,8 @@ class TestSensitivePreservation:
 
     def test_sensitive_preserved_on_copy(self, p11_session: Any) -> None:
         """Copying a SENSITIVE key must keep SENSITIVE=True."""
+        from pkcs11.exceptions import FunctionNotSupported
+
         key = p11_session.generate_key(KeyType.AES, 256)
         assert key[Attribute.SENSITIVE] is True
 
@@ -93,11 +87,18 @@ class TestSensitivePreservation:
             assert copied[Attribute.SENSITIVE] is True, (
                 "SENSITIVE flag lost on copy — Tookan vulnerability"
             )
-        except PKCS11Error:
+        except FunctionNotSupported:
             pass  # Copy not supported — ok
 
     def test_extractable_cannot_escalate_on_copy(self, p11_session: Any) -> None:
         """Copying non-EXTRACTABLE key cannot set EXTRACTABLE=True."""
+        from pkcs11.exceptions import (
+            AttributeReadOnly,
+            AttributeValueInvalid,
+            FunctionNotSupported,
+            TemplateInconsistent,
+        )
+
         key = p11_session.generate_key(
             KeyType.AES, 256, template={Attribute.EXTRACTABLE: False}
         )
@@ -105,11 +106,10 @@ class TestSensitivePreservation:
 
         try:
             copied = key.copy({Attribute.EXTRACTABLE: True})
-            # If copy succeeds, EXTRACTABLE should still be False
             assert copied[Attribute.EXTRACTABLE] is False, (
                 "EXTRACTABLE escalated on copy — Tookan vulnerability"
             )
-        except PKCS11Error:
+        except (AttributeReadOnly, AttributeValueInvalid, TemplateInconsistent, FunctionNotSupported):
             pass  # Correct: reject the escalation attempt
 
 
@@ -123,7 +123,6 @@ class TestWrapExtraction:
         if not has_mechanism(p11_module, "AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
 
-        # Create wrapping key with both WRAP and DECRYPT
         wrap_key = p11_session.generate_key(
             KeyType.AES,
             256,
@@ -137,7 +136,6 @@ class TestWrapExtraction:
             },
         )
 
-        # Create sensitive target key
         target = p11_session.generate_key(
             KeyType.AES,
             128,
@@ -148,11 +146,8 @@ class TestWrapExtraction:
         )
         target_value = target[Attribute.VALUE]
 
-        # Wrap the target
         wrapped = wrap_key.wrap_key(target, mechanism=Mechanism.AES_KEY_WRAP)
 
-        # Try to decrypt the wrapped blob using the same key
-        # If this returns the raw key material, it's a security issue
         try:
             decrypted = wrap_key.decrypt(wrapped, mechanism=Mechanism.AES_ECB)
             if decrypted == target_value:
@@ -163,5 +158,5 @@ class TestWrapExtraction:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="Tookan paper: full key extraction",
                 )
-        except PKCS11Error:
+        except MECHANISM_ERRORS:
             pass  # Module correctly prevents decrypt of wrapped data
