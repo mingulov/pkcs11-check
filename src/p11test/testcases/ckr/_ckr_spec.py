@@ -166,8 +166,13 @@ def assert_ckr(
 # Imports for CKR types used in spec tables
 from pkcs11.exceptions import (  # noqa: E402
     ArgumentsBad,
+    AttributeReadOnly,
+    AttributeTypeInvalid,
+    AttributeValueInvalid,
+    CurveNotSupported,
     DataInvalid,
     DataLenRange,
+    DomainParamsInvalid,
     EncryptedDataInvalid,
     EncryptedDataLenRange,
     KeyFunctionNotPermitted,
@@ -176,10 +181,13 @@ from pkcs11.exceptions import (  # noqa: E402
     KeyTypeInconsistent,
     MechanismInvalid,
     MechanismParamInvalid,
+    ObjectHandleInvalid,
     OperationActive,
     OperationNotInitialized,
     SignatureInvalid,
     SignatureLenRange,
+    TemplateIncomplete,
+    TemplateInconsistent,
 )
 
 CKR_ENCRYPT: dict[str, CkrExpectation] = {
@@ -430,5 +438,66 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=MechanismInvalid,
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.12.1",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Key Generation family (§5.14)
+# ---------------------------------------------------------------------------
+
+CKR_KEYGEN: dict[str, CkrExpectation] = {
+    # --- C_GenerateKey errors ---
+    "genkey_mechanism_invalid": CkrExpectation(
+        function="C_GenerateKey",
+        condition="unsupported_mechanism",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.1",
+    ),
+    "genkey_bad_size": CkrExpectation(
+        function="C_GenerateKey",
+        condition="invalid_key_size",
+        spec_ckr=AttributeValueInvalid,
+        compat_tuple=KEY_SIZE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.1",
+        allow_success=True,  # Kryoptic accepts AES key size 0 and non-standard sizes
+    ),
+    "genkey_template_incomplete": CkrExpectation(
+        function="C_GenerateKey",
+        condition="missing_required_attribute",
+        spec_ckr=TemplateIncomplete,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.1",
+    ),
+    "genkey_template_inconsistent": CkrExpectation(
+        function="C_GenerateKey",
+        condition="conflicting_attributes",
+        spec_ckr=TemplateInconsistent,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.1",
+    ),
+    # --- C_GenerateKeyPair errors ---
+    "genkeypair_bad_size": CkrExpectation(
+        function="C_GenerateKeyPair",
+        condition="invalid_key_size",
+        spec_ckr=AttributeValueInvalid,
+        compat_tuple=KEY_SIZE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.2",
+    ),
+    "genkeypair_mechanism_invalid": CkrExpectation(
+        function="C_GenerateKeyPair",
+        condition="unsupported_mechanism",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.2",
+    ),
+    "genkeypair_curve_not_supported": CkrExpectation(
+        function="C_GenerateKeyPair",
+        condition="unsupported_EC_curve",
+        spec_ckr=CurveNotSupported,
+        compat_tuple=(CurveNotSupported, DomainParamsInvalid, AttributeValueInvalid,
+                      MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.2",
     ),
 }
