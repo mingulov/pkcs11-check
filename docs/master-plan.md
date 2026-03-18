@@ -29,8 +29,8 @@ All tasks marked `[x]` and zero regressions on SoftHSM2 + Kryoptic.
 
 For each target: `docker compose -f docker/docker-compose.test.yml build --no-cache <target> && docker compose ... run --rm <target>`. Analyze every FAIL and ERROR. Fix if it's our bug. Document in `docs/module-issues.md` if it's the module's bug.
 
-- [ ] **2.1** **SoftHSM2 2.7.0** — Verify 0 failures. Analyze xfail reasons. Document any quirks.
-- [ ] **2.2** **Kryoptic 1.5.0** — Verify 0 failures. Analyze xfail reasons. Document any quirks.
+- [x] **2.1** **SoftHSM2 2.7.0** — 0 failures confirmed. 658 xfails documented (624 RSA-OAEP non-SHA1). See docs/module-issues.md.
+- [x] **2.2** **Kryoptic 1.5.0** — 0 failures confirmed. 377 xfails documented. See docs/module-issues.md.
 - [ ] **2.3** **NSS 3.120.1** — 362 failures (296 DSA Wycheproof). Analyze: are DSA failures NSS bugs or test bugs? Check non-DSA failures (66). Fix or xfail with reason.
 - [ ] **2.4** **OpenCryptoki 3.25** — 28,762 errors. Root cause the cascading errors (likely x448 collection + session fixture). Fix infrastructure, re-run, analyze remaining real failures.
 - [ ] **2.5** **BouncyHSM** — Hangs during test run. Debug: is it the .NET server dying? Add timeout, check if PKCS#11 lib loads. Get it passing or document why it can't.
