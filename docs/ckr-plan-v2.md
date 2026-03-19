@@ -74,28 +74,28 @@ For each existing dict, add ALL missing function-specific CKR entries from the s
 
 ## Phase 1b — New Dicts for v3.0 Functions
 
-- [ ] **1b.1** Create CKR_VERIFY_SIGNATURE dict — C_VerifySignatureInit, C_VerifySignature, C_VerifySignatureUpdate, C_VerifySignatureFinal. Add all function-specific CKRs. Mark `@pytest.mark.requires_v30`.
-- [ ] **1b.2** Create CKR_DIGEST_XOF dict — C_DigestXofInit, C_DigestXof, C_DigestXofUpdate, C_DigestXofExtract, C_DigestXofFinal, C_DigestXofKeyValue. Mark `@pytest.mark.requires_v30`.
-- [ ] **1b.3** Create CKR_MSG_ENCRYPT dict — C_MessageEncryptInit, C_EncryptMessage, C_EncryptMessageBegin, C_EncryptMessageNext, C_MessageEncryptFinal. Mark `@pytest.mark.requires_v30`.
-- [ ] **1b.4** Create CKR_MSG_DECRYPT dict — C_MessageDecryptInit, C_DecryptMessage, etc.
-- [ ] **1b.5** Create CKR_MSG_SIGN dict — C_MessageSignInit, C_SignMessage, etc.
-- [ ] **1b.6** Create CKR_MSG_VERIFY dict — C_MessageVerifyInit, C_VerifyMessage, etc.
-- [ ] **1b.7** Add C_LoginUser, C_SessionCancel, C_GetSessionValidationFlags to CKR_SESSION.
-- [ ] **1b.8** Add C_GetInterface, C_GetInterfaceList to CKR_GENERAL.
-- [ ] **1b.9** Validation checkpoint — run script. All v3.0 functions show 0 gaps.
+- [x] **1b.1** Create CKR_VERIFY_SIGNATURE dict — C_VerifySignatureInit, C_VerifySignature, C_VerifySignatureUpdate, C_VerifySignatureFinal. Add all function-specific CKRs. Mark `@pytest.mark.requires_v30`.
+- [x] **1b.2** Create CKR_DIGEST_XOF dict — C_DigestXofInit, C_DigestXof, C_DigestXofUpdate, C_DigestXofExtract, C_DigestXofFinal, C_DigestXofKeyValue. Mark `@pytest.mark.requires_v30`.
+- [x] **1b.3** Create CKR_MSG_ENCRYPT dict — C_MessageEncryptInit, C_EncryptMessage, C_EncryptMessageBegin, C_EncryptMessageNext, C_MessageEncryptFinal. Mark `@pytest.mark.requires_v30`.
+- [x] **1b.4** Create CKR_MSG_DECRYPT dict — C_MessageDecryptInit, C_DecryptMessage, etc.
+- [x] **1b.5** Create CKR_MSG_SIGN dict — C_MessageSignInit, C_SignMessage, etc.
+- [x] **1b.6** Create CKR_MSG_VERIFY dict — C_MessageVerifyInit, C_VerifyMessage, etc.
+- [x] **1b.7** Add C_LoginUser, C_SessionCancel, C_GetSessionValidationFlags to CKR_SESSION.
+- [x] **1b.8** Add C_GetInterface, C_GetInterfaceList to CKR_GENERAL.
+- [x] **1b.9** Validation checkpoint — run script. All v3.0 functions show 0 gaps.
 
 ## Phase 1c — New Dicts for v3.2 Functions
 
-- [ ] **1c.1** Create CKR_WRAP_AUTH dict — C_WrapKeyAuthenticated, C_UnwrapKeyAuthenticated. Mark `@pytest.mark.requires_v32`.
-- [ ] **1c.2** Create CKR_ASYNC dict — C_AsyncGetID, C_AsyncJoin. Document C_AsyncComplete as special case (dynamic return values).
-- [ ] **1c.3** Expand CKR_KEM if any remaining entries for C_EncapsulateKey/C_DecapsulateKey.
-- [ ] **1c.4** Validation checkpoint — all v3.2 functions show 0 gaps.
+- [x] **1c.1** Create CKR_WRAP_AUTH dict — C_WrapKeyAuthenticated, C_UnwrapKeyAuthenticated. Mark `@pytest.mark.requires_v32`.
+- [x] **1c.2** Create CKR_ASYNC dict — C_AsyncGetID, C_AsyncJoin. Document C_AsyncComplete as special case (dynamic return values).
+- [x] **1c.3** Expand CKR_KEM if any remaining entries for C_EncapsulateKey/C_DecapsulateKey.
+- [x] **1c.4** Validation checkpoint — all v3.2 functions show 0 gaps.
 
 ## Phase 1d — Dual-Function and Special Cases
 
-- [ ] **1d.1** Create CKR_DUAL dict — C_DigestEncryptUpdate, C_DecryptDigestUpdate, C_SignEncryptUpdate, C_DecryptVerifyUpdate.
-- [ ] **1d.2** Document special cases: C_AsyncComplete (dynamic), C_GetFunctionStatus/C_CancelFunction (legacy, CKR_FUNCTION_NOT_PARALLEL only).
-- [ ] **1d.3** Final validation — `scripts/ckr-coverage-check.py` reports **0 missing function-specific entries**. Commit milestone.
+- [x] **1d.1** Create CKR_DUAL dict — C_DigestEncryptUpdate, C_DecryptDigestUpdate, C_SignEncryptUpdate, C_DecryptVerifyUpdate.
+- [x] **1d.2** Document special cases: C_AsyncComplete (dynamic), C_GetFunctionStatus/C_CancelFunction (legacy, CKR_FUNCTION_NOT_PARALLEL only).
+- [x] **1d.3** Final validation — `scripts/ckr-coverage-check.py` reports **0 missing function-specific entries**. Commit milestone.
 
 ## Phase 2 — Raw ctypes Tests (unlock testable=False)
 
