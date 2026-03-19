@@ -17,6 +17,7 @@ from pkcs11.exceptions import (
     FunctionFailed,
     FunctionNotSupported,
     KeyFunctionNotPermitted,
+    KeyHandleInvalid,
     KeyNotWrappable,
     KeySizeRange,
     MechanismInvalid,
@@ -48,9 +49,10 @@ KEY_SIZE_ERRORS = (
     FunctionFailed,
 )
 
-# Using a destroyed/invalid object handle
+# Using a destroyed/invalid object handle or key handle
 HANDLE_ERRORS = (
     ObjectHandleInvalid,
+    KeyHandleInvalid,
     KeyFunctionNotPermitted,
     FunctionFailed,
 )

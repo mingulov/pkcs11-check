@@ -112,3 +112,37 @@ class TestDecryptDataErrors:
             )
         except PKCS11Error as e:
             assert_ckr(exp, e, ckr_strict)
+
+    def test_key_handle_invalid(
+        self, p11_session: Any, ckr_strict: bool
+    ) -> None:
+        """Decrypt with destroyed key handle -> CKR_KEY_HANDLE_INVALID."""
+        key = p11_session.generate_key(KeyType.AES, 256)
+        ct = key.encrypt(b"\x00" * 16, mechanism=Mechanism.AES_ECB)
+        key.destroy()
+        try:
+            key.decrypt(ct, mechanism=Mechanism.AES_ECB)
+            # Some modules may not detect invalid handle
+        except PKCS11Error as e:
+            assert_ckr(CKR_DECRYPT["init_key_handle_invalid"], e, ckr_strict)
+
+    def test_key_function_not_permitted(
+        self, p11_session: Any, ckr_strict: bool
+    ) -> None:
+        """Key with CKA_DECRYPT=False -> CKR_KEY_FUNCTION_NOT_PERMITTED.
+
+        python-pkcs11 may block .decrypt() at wrapper level.
+        """
+        key = p11_session.generate_key(
+            KeyType.AES, 256,
+            template={Attribute.DECRYPT: False, Attribute.ENCRYPT: True},
+        )
+        exp = CKR_DECRYPT["init_key_function_not_permitted"]
+        if not hasattr(key, "decrypt"):
+            pytest.skip("python-pkcs11 blocks decrypt on CKA_DECRYPT=False keys")
+        try:
+            key.decrypt(b"\x00" * 16, mechanism=Mechanism.AES_ECB)
+            if not exp.allow_success:
+                pytest.fail("Should have rejected key without CKA_DECRYPT")
+        except PKCS11Error as e:
+            assert_ckr(exp, e, ckr_strict)

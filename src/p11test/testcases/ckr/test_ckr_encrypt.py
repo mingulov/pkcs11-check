@@ -129,3 +129,23 @@ class TestEncryptDataErrors:
             pytest.fail("Should have rejected 246 bytes for RSA-2048 PKCS")
         except PKCS11Error as e:
             assert_ckr(CKR_ENCRYPT["data_too_long_rsa"], e, ckr_strict)
+
+    def test_key_size_range(
+        self, p11_session: Any, p11_module: Any, ckr_strict: bool
+    ) -> None:
+        """AES-256 mechanism with 64-bit key -> CKR_KEY_SIZE_RANGE.
+
+        Generate an intentionally small DES key and try AES encrypt.
+        Some modules may reject at key type level instead.
+        """
+        from p11test.testcases.conftest import has_mechanism
+        if not has_mechanism(p11_module, "DES_ECB"):
+            pytest.skip("DES not supported — can't create small key")
+        try:
+            # DES key is 64-bit — too small for AES
+            des_key = p11_session.generate_key(KeyType.DES)
+            des_key.encrypt(b"\x00" * 8, mechanism=Mechanism.AES_ECB)
+            pytest.fail("Should have rejected DES key with AES mechanism")
+        except PKCS11Error as e:
+            # KEY_TYPE_INCONSISTENT or KEY_SIZE_RANGE — both acceptable
+            assert_ckr(CKR_ENCRYPT["init_key_size_range"], e, ckr_strict)

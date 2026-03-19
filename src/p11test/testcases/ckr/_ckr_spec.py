@@ -264,6 +264,13 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.2",
     ),
+    "init_key_size_range": CkrExpectation(
+        function="C_EncryptInit",
+        condition="key_size_out_of_range",
+        spec_ckr=KeySizeRange,
+        compat_tuple=KEY_SIZE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.8.1",
+    ),
 }
 
 
@@ -331,6 +338,34 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 §5.9.2",
         mechanisms=["RSA_PKCS"],
         allow_success=True,  # Kryoptic accepts wrong-length ciphertext (spec deviation)
+    ),
+    "init_key_function_not_permitted": CkrExpectation(
+        function="C_DecryptInit",
+        condition="key_CKA_DECRYPT_is_False",
+        spec_ckr=KeyFunctionNotPermitted,
+        compat_tuple=(KeyFunctionNotPermitted, KeyTypeInconsistent, MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.9.1",
+    ),
+    "init_key_handle_invalid": CkrExpectation(
+        function="C_DecryptInit",
+        condition="invalid_key_handle",
+        spec_ckr=KeyHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.1",
+    ),
+    "init_key_size_range": CkrExpectation(
+        function="C_DecryptInit",
+        condition="key_size_out_of_range",
+        spec_ckr=KeySizeRange,
+        compat_tuple=KEY_SIZE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.1",
+    ),
+    "operation_not_initialized": CkrExpectation(
+        function="C_Decrypt",
+        condition="no_prior_C_DecryptInit",
+        spec_ckr=OperationNotInitialized,
+        compat_tuple=(OperationNotInitialized, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.9.2",
     ),
 }
 
