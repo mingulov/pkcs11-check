@@ -6,7 +6,7 @@ This document is intentionally stricter than `docs/master-plan.md`. It focuses o
 
 ## Current Snapshot
 
-- The project already has a large product suite: `src/pkcs11-check/testcases/` currently contains 105 top-level test files.
+- The project already has a large product suite: `src/pkcs11_check/testcases/` currently contains 105 top-level test files.
 - Strict collection currently sees 29,644 testcase items in this environment.
 - The `python-pkcs11` fork now supports PKCS#11 v3.0/v3.1/v3.2 negotiation, `interface_version`, and `get_interface_list()`.
 - The package metadata already claims the project name `pkcs11-check`.
@@ -17,34 +17,35 @@ This document is intentionally stricter than `docs/master-plan.md`. It focuses o
 - Broad test scope: classic crypto, PQC, Wycheproof, interop, CVE regressions, stress, stateful tests, and mechanism auditing.
 - Good local build ergonomics via `local-builds/`.
 - A serious `python-pkcs11` fork instead of thin wrappers around v2.40-only APIs.
-- Clear separation between product tests (`src/pkcs11-check/testcases/`) and meta-tests (`tests/`).
+- Clear separation between product tests (`src/pkcs11_check/testcases/`) and meta-tests (`tests/`).
 - Good direction on markers, categories, and module-matrix style reporting.
 
 ## Confirmed Gaps
 
 ### 1. Core Execution Path Is Still Incomplete
 
-The project promise is "CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin." Interface forcing is now real. Segfault survival is not yet integrated into the real runner path.
+The project promise is "CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin." Interface forcing is now real. Segfault survival is real on the default CLI path, but the whole stack is not uniformly crash-safe yet.
 
 ### Confirmed issues
 
-- `src/pkcs11-check/cli/test_cmd.py` still calls `pytest.main(...)` in-process.
-- `src/pkcs11-check/plugin.py` no longer loads the PKCS#11 module during collection; it now uses a preflight manifest. Collection safety is materially better than before.
-- `src/pkcs11-check/fixtures.py` still loads modules and opens sessions directly in normal pytest execution.
-- `src/pkcs11-check/core/file_runner.py` provides practical per-file subprocess isolation and resume support, but plain `--isolation none` remains in-process.
-- `src/pkcs11-check/core/isolation.py` exists, uses `spawn`, and has tests, but it is not what `pkcs11-check test` actually uses for product execution today.
+- `src/pkcs11_check/cli/test_cmd.py` now defaults to `--isolation auto`, but it still calls `pytest.main(...)` in-process for explicit `--isolation none`.
+- `src/pkcs11_check/plugin.py` no longer loads the PKCS#11 module during collection; it now uses a preflight manifest. Collection safety is materially better than before.
+- `src/pkcs11_check/fixtures.py` still loads modules and opens sessions directly inside each isolated pytest subprocess.
+- `src/pkcs11_check/core/file_runner.py` is now the real execution backbone for `auto|file|test`, including resume, adaptive promotion, crash budgets, and aggregated reports.
+- `src/pkcs11_check/core/collection.py` now gathers real pytest marker metadata in a helper subprocess so auto-isolation planning no longer depends on source-text scans.
+- `src/pkcs11_check/core/isolation.py` exists, uses `spawn`, and has tests, but it is not what `pkcs11-check test` actually uses for product execution today.
 
 ### Why this matters
 
 - A bad PKCS#11 library is less likely to kill collection now, because capability probing moved to a preflight subprocess.
-- A crash in fixture setup or teardown can still take down the whole process.
+- A crash in fixture setup or teardown is now contained when the user stays on the default isolated CLI path, but it can still take down the whole process in explicit `--isolation none` runs.
 - The implementation does not yet fully match the product claim or the isolation-oriented specs in `docs/superpowers/`.
 
 ### Recommended direction
 
 - Keep collection-safe preflight probing.
-- Decide on the real default isolation contract for the test command.
-- Extend the current per-file path toward per-test isolation for crash-prone units.
+- Keep `auto` as the default contract and continue documenting `none` as explicitly unsafe.
+- Extend the current per-file/per-test path toward richer policy and future worker isolation.
 
 ### 2. CLI, Config, and Actual Behavior Still Drift
 
@@ -52,8 +53,8 @@ There is a visible gap between the CLI surface, the config model, and what the c
 
 ### Confirmed issues
 
-- `--sessions` exists in `src/pkcs11-check/cli/test_cmd.py` but is not used.
-- `--timeout` exists in `src/pkcs11-check/cli/test_cmd.py` but is not used.
+- `--sessions` exists in `src/pkcs11_check/cli/test_cmd.py` but is not used.
+- `--timeout` exists in `src/pkcs11_check/cli/test_cmd.py` and is used for per-test timeout plus outer isolated-run timeout heuristics, but the model is still blunt.
 - isolated modes now emit real aggregated JSON/JUnit reports and expose `pkcs11-check state` for inspection.
 - `--output json` in non-isolated mode still relies on `pytest-json-report`, so output semantics differ by runner path.
 - `P11TestConfig` contains `timeout_operation`, `timeout_test`, `max_sessions`, `skip_unsupported`, `log_level`, and `output`, but only part of that model is wired through the fixtures and CLI path.
@@ -69,7 +70,7 @@ There is a visible gap between the CLI surface, the config model, and what the c
 
 - Either wire every advertised option end-to-end or remove/defer it.
 - Decide whether isolated and non-isolated JSON output should converge on one schema.
-- Add explicit docs for the difference between `pytest tests/`, `pytest src/pkcs11-check/testcases/`, and `pkcs11-check test`.
+- Add explicit docs for the difference between `pytest tests/`, `pytest src/pkcs11_check/testcases/`, and `pkcs11-check test`.
 
 ### 3. Marker Execution Policy Is Still Partial
 
@@ -82,6 +83,7 @@ The marker registration situation is much better than before, but marker-driven 
 - `subprocess_per_test` is now wired into `--isolation auto`, and crashing files are now promoted to per-test isolation through the adaptive policy file.
 - `--isolation auto` now also escalates a crashing file to per-test isolation immediately inside the same run.
 - plain `subprocess` now keeps files on the file-isolated path in `--isolation auto`.
+- `auto` now learns those marker decisions from real collected pytest item metadata instead of source-text scans.
 - Marker registration is still ahead of marker-driven execution in a few places.
 
 ### Why this matters
@@ -100,9 +102,9 @@ The project rules are strong, but the codebase does not yet fully follow them.
 
 ### Confirmed issues
 
-- `src/pkcs11-check/fixtures.py` no longer contains the broad logout cleanup catch.
+- `src/pkcs11_check/fixtures.py` no longer contains the broad logout cleanup catch.
 - Many testcase files still catch broad `PKCS11Error` rather than named expected CKR-specific exception classes.
-- The repository already has `src/pkcs11-check/testcases/_error_tuples.py`, which means the intended direction is clear, but the migration is incomplete.
+- The repository already has `src/pkcs11_check/testcases/_error_tuples.py`, which means the intended direction is clear, but the migration is incomplete.
 
 ### Why this matters
 
@@ -120,14 +122,14 @@ The v3.x loader criticism is no longer valid. That part has advanced. The remain
 
 ### Confirmed positives
 
-- `src/pkcs11-check/core/loader.py` accepts `auto`, `2.40`, `3.0`, `3.1`, and `3.2`.
-- `src/pkcs11-check/cli/info_cmd.py` prints negotiated interface information and available interfaces when exposed by the library.
-- `src/pkcs11-check/testcases/test_interface.py` and `src/pkcs11-check/testcases/test_interface_negotiation.py` cover positive-path negotiation and basic capability checks.
+- `src/pkcs11_check/core/loader.py` accepts `auto`, `2.40`, `3.0`, `3.1`, and `3.2`.
+- `src/pkcs11_check/cli/info_cmd.py` prints negotiated interface information and available interfaces when exposed by the library.
+- `src/pkcs11_check/testcases/test_interface.py` and `src/pkcs11_check/testcases/test_interface_negotiation.py` cover positive-path negotiation and basic capability checks.
 
 ### Confirmed gaps
 
 - Negative `C_GetInterface` and `C_GetInterfaceList` behavior is not covered as explicitly as in OpenSC's `pkcs11-check_case_interface.c`.
-- `src/pkcs11-check/testcases/test_interface_negotiation.py` checks `hasattr(p11_module, "get_interface_list")`, but the current wrapper exposes that method on `p11_module.lib`, not on `P11Module` itself.
+- `src/pkcs11_check/testcases/test_interface_negotiation.py` checks `hasattr(p11_module, "get_interface_list")`, but the current wrapper exposes that method on `p11_module.lib`, not on `P11Module` itself.
 - Explicit version-forcing behavior is not yet deeply regression-tested across mixed-process and repeated-load scenarios.
 
 ### Recommended direction
@@ -202,8 +204,8 @@ Current quality depends heavily on local discipline.
 
 - `ruff check src/ tests/`
 - `mypy src/`
-- `pytest tests/`
-- `pytest --strict-markers src/pkcs11-check/testcases --collect-only -q`
+- `python -m pytest tests/`
+- `pytest --strict-markers src/pkcs11_check/testcases --collect-only -q`
 - one CLI smoke run against a known-good software token
 
 ## Edge Cases Still Worth Adding or Tightening
@@ -281,8 +283,8 @@ These are not the highest-risk gaps, but they would make the project materially 
 
 ### P0: Correctness and Trust
 
-1. Decide and implement the real default crash-isolation execution path.
-2. Finish marker-driven isolation for plain `subprocess`.
+1. Keep the current default crash-isolation execution path healthy and validated.
+2. Decide whether plain `subprocess` should remain file-first-but-promotable or become a harder cap.
 3. Burn down broad `PKCS11Error` catches in testcase files.
 4. Add stronger validation gates for local-helper and crash-prone providers.
 

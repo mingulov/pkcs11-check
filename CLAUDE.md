@@ -46,7 +46,10 @@ docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 
 ### Core modules
 - `core/loader.py` — PKCS#11 module loading with v2.40/v3.0/v3.1/v3.2 interface negotiation
-- `core/isolation.py` — subprocess-based test execution for segfault survival
+- `core/file_runner.py` — main isolated runner for `auto|file|test`, with resume, adaptive promotion, and aggregated reports
+- `core/preflight.py` — collection-safe capability probe written through a helper subprocess manifest
+- `core/collection.py` — pytest item metadata collection for marker-aware isolation planning
+- `core/isolation.py` — lower-level `spawn` helper retained for focused tests and future integration
 - `config.py` — four-layer config: CLI > env > TOML > defaults
 - `plugin.py` — pytest11 entry point, registers markers, fixtures, collection hooks
 - `fixtures.py` — p11_session (with explicit login/logout), p11_module, p11_config, p11_interface_version
@@ -97,6 +100,7 @@ docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 
 ### Key design decisions
 - python-pkcs11 fork as git submodule with v3.0/3.1/3.2 interface negotiation, PQC mechanisms, 50+ new enums, specific CKR exception classes for ALL standard error codes
+- `pkcs11-check test` defaults to `--isolation auto`; explicit `--isolation none` is the unsafe fast path
 - `p11_session` fixture does explicit `login()` / `logout()` per test to avoid `UserAlreadyLoggedIn` cascading
 - Tests auto-skip when interface version doesn't support them (@pytest.mark.requires_v30)
 - Mechanism availability checked at runtime via `slot.get_mechanisms()` — tests skip cleanly

@@ -16,6 +16,8 @@ from xml.etree import ElementTree as ET
 
 from rich.console import Console
 
+from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+
 IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
 CrashStatus = Literal["crashed", "timeout"]
@@ -196,28 +198,45 @@ def discover_pytest_units(
     return units
 
 
-def file_isolation_mode(path: Path) -> IsolationGranularity:
-    """Return the preferred isolated granularity for a collected test file."""
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return "file"
-
-    if "pytest.mark.subprocess_per_test" in text:
+def file_isolation_mode(
+    marker_names: set[str] | list[str] | tuple[str, ...],
+) -> IsolationGranularity:
+    """Return the preferred isolated granularity for collected marker names."""
+    if "subprocess_per_test" in marker_names:
         return "test"
     return "file"
 
 
-def file_forces_file_isolation(path: Path) -> bool:
-    """Return True if the file should stay at file granularity in auto mode."""
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
+def file_forces_file_isolation(marker_names: set[str] | list[str] | tuple[str, ...]) -> bool:
+    """Return True if collected marker names should stay at file granularity."""
+    if "subprocess_per_test" in marker_names:
         return False
+    return "subprocess" in marker_names
 
-    if "pytest.mark.subprocess_per_test" in text:
-        return False
-    return "pytest.mark.subprocess" in text
+
+def _markers_by_file(items: list[CollectedPytestItem]) -> dict[str, set[str]]:
+    markers_by_file: dict[str, set[str]] = {}
+    for item in items:
+        file_key = normalize_policy_file_key(item.file_path)
+        markers_by_file.setdefault(file_key, set()).update(item.markers)
+    return markers_by_file
+
+
+def _nodeids_for_unit(unit: str, items: list[CollectedPytestItem]) -> list[str]:
+    file_key = normalize_policy_file_key(unit.split("::", 1)[0])
+    if "::" in unit:
+        prefix = unit
+        return [
+            item.nodeid
+            for item in items
+            if normalize_policy_file_key(item.file_path) == file_key
+            and (item.nodeid == prefix or item.nodeid.startswith(prefix + "["))
+        ]
+    return [
+        item.nodeid
+        for item in items
+        if normalize_policy_file_key(item.file_path) == file_key
+    ]
 
 
 def discover_auto_isolation_units(
@@ -232,24 +251,35 @@ def discover_auto_isolation_units(
     file_units = discover_pytest_units(targets, default_root, granularity="file")
     units: list[str] = []
     promoted_files = load_promoted_files(policy_file, pytest_args, env)
+    collected_items = collect_pytest_item_metadata(
+        targets,
+        pytest_args,
+        env=dict(env or os.environ),
+    )
+    markers_by_file = _markers_by_file(collected_items)
 
     for file_unit in file_units:
         file_path = Path(file_unit.split("::", 1)[0])
-        mode = file_isolation_mode(file_path)
+        marker_names = markers_by_file.get(normalize_policy_file_key(str(file_path)), set())
+        mode = file_isolation_mode(marker_names)
         if normalize_policy_file_key(str(file_path)) in promoted_files:
             mode = "test"
         if mode == "test":
-            units.extend(
-                discover_pytest_units(
-                    [file_unit],
-                    default_root,
-                    granularity="test",
-                    pytest_args=pytest_args,
-                    env=env,
+            nodeids = _nodeids_for_unit(file_unit, collected_items)
+            if nodeids:
+                units.extend(nodeids)
+            else:
+                units.extend(
+                    discover_pytest_units(
+                        [file_unit],
+                        default_root,
+                        granularity="test",
+                        pytest_args=pytest_args,
+                        env=env,
+                    )
                 )
-            )
         else:
-            if file_forces_file_isolation(file_path):
+            if file_forces_file_isolation(marker_names):
                 units.append(str(file_path))
             else:
                 units.append(file_unit)

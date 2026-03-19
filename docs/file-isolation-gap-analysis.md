@@ -7,19 +7,20 @@ Date: 2026-03-19
 This review started with `pkcs11-check test --isolation file` and now also covers
 the newer `--isolation auto` and `--isolation test` modes:
 
-- CLI wiring in `src/pkcs11-check/cli/test_cmd.py`
-- per-unit runner in `src/pkcs11-check/core/file_runner.py`
-- subprocess base helper in `src/pkcs11-check/core/isolation.py`
-- current pytest plugin behavior in `src/pkcs11-check/plugin.py`
-- collection-safe capability probing in `src/pkcs11-check/core/preflight.py`
+- CLI wiring in `src/pkcs11_check/cli/test_cmd.py`
+- per-unit runner in `src/pkcs11_check/core/file_runner.py`
+- marker-aware collection metadata helper in `src/pkcs11_check/core/collection.py`
+- subprocess base helper in `src/pkcs11_check/core/isolation.py`
+- current pytest plugin behavior in `src/pkcs11_check/plugin.py`
+- collection-safe capability probing in `src/pkcs11_check/core/preflight.py`
 - local BouncyHSM smoke validation with the patched native shim
 - local helper validation through `local-builds/test.sh`
 
 Checks run during this review:
 
-- `uv run pytest tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py tests/test_plugin.py tests/test_preflight.py tests/test_loader.py -q`
-- `uv run ruff check src/pkcs11-check/cli/test_cmd.py src/pkcs11-check/core/file_runner.py src/pkcs11-check/core/isolation.py src/pkcs11-check/core/preflight.py src/pkcs11-check/plugin.py src/pkcs11-check/fixtures.py tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py tests/test_plugin.py tests/test_preflight.py tests/test_loader.py`
-- `uv run mypy src/pkcs11-check/core/file_runner.py src/pkcs11-check/cli/test_cmd.py src/pkcs11-check/core/isolation.py src/pkcs11-check/core/preflight.py src/pkcs11-check/plugin.py src/pkcs11-check/fixtures.py`
+- `uv run python -m pytest tests/test_collection.py tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py tests/test_plugin.py tests/test_preflight.py tests/test_loader.py -q`
+- `uv run ruff check src/pkcs11_check/cli/test_cmd.py src/pkcs11_check/core/collection.py src/pkcs11_check/core/file_runner.py src/pkcs11_check/core/isolation.py src/pkcs11_check/core/preflight.py src/pkcs11_check/plugin.py src/pkcs11_check/fixtures.py tests/test_collection.py tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py tests/test_plugin.py tests/test_preflight.py tests/test_loader.py`
+- `uv run mypy src/pkcs11_check/core/collection.py src/pkcs11_check/core/file_runner.py src/pkcs11_check/cli/test_cmd.py src/pkcs11_check/core/isolation.py src/pkcs11_check/core/preflight.py src/pkcs11_check/plugin.py src/pkcs11_check/fixtures.py`
 - local BouncyHSM stop-and-resume smoke:
   - first run stopped at a real failing file
   - second run resumed from that file and continued to the next one
@@ -31,7 +32,7 @@ Checks run during this review:
   - second helper-driven `auto` run expanded that file to 298 per-test units and recorded the crashing nodeid
   - same-run escalation now uses that same expansion logic immediately after a file crash in `auto`
 - direct pytest smoke:
-  - `uv run pytest ... test_interface.py::TestInterfaceV30::test_v30_interface_negotiated ...`
+  - `uv run python -m pytest ... test_interface.py::TestInterfaceV30::test_v30_interface_negotiated ...`
     passed against local BouncyHSM
   - BouncyHSM server logs confirmed a separate `python -m pkcs11_check.core.preflight` helper
     loaded the module before the pytest process ran the test
@@ -45,14 +46,18 @@ Checks run during this review:
 
 The current solution is useful and real. It is not just a draft.
 
+- `pkcs11-check test` now defaults to `--isolation auto`; users must opt back into `--isolation none`.
 - `--isolation file` runs each requested file in a fresh `python -m pytest` subprocess.
 - `--isolation test` collects nodeids first and then runs each test in its own subprocess.
 - `--isolation auto` now combines file-level speed with marker-aware and crash-aware promotion.
+- `auto` now gets marker information from real pytest collection metadata in a helper subprocess,
+  not from source-text scans.
 - `--stop-on-failure` stops at the first failing, crashing, or timing-out unit and leaves a resumable state file.
 - `--resume` skips only units already marked `passed` or `empty`.
 - rerunning a failed unit replaces the old state entry instead of appending duplicates.
 - resume now rejects mismatched state files via a fingerprint of the requested units and pytest arguments.
-- the subprocess helper now consistently uses `spawn`, which is the safer default for PKCS#11 isolation.
+- the runner path is now centered on `core/file_runner.py`; `core/isolation.py` remains a lower-level
+  spawn helper rather than the main product execution path.
 - the state fingerprint now also covers relevant environment plus test/module file metadata.
 - `auto` now persists backend-specific crash knowledge in `.pkcs11-check-isolation-policy.json`.
 - files marked `subprocess` now stay on the file-isolated path in `auto`, even when the user
@@ -141,14 +146,16 @@ This is acceptable as a safety valve, but it is not a principled timeout model.
 
 ### P1: `subprocess` marker support is now minimal, not rich
 
-`src/pkcs11-check/markers.py` registers `subprocess` and `subprocess_per_test`, and both now affect
+`src/pkcs11_check/markers.py` registers `subprocess` and `subprocess_per_test`, and both now affect
 `--isolation auto`.
 
 - `subprocess` keeps the file on the file-isolated path
 - `subprocess_per_test` promotes the file to per-test execution
 - crash policy can still escalate plain files further after observed crashes
 
-The remaining gap is that this is file-content detection, not yet a richer pytest-level marker policy.
+The remaining gap is that this is still a coarse file-level execution policy. The runner now
+learns markers from real pytest collection metadata, but it still does not make finer decisions
+such as splitting one file by marker subsets or using dedicated pytest hooks to route items.
 
 ### P2: `--sessions` remains ignored in file mode
 

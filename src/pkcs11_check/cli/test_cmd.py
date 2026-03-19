@@ -106,7 +106,9 @@ def test_command(
     output_file: str | None = typer.Option(None, "--output-file", help="Output file path"),
     verbose: bool = typer.Option(False, "--verbose", "-V", help="Verbose output"),
     isolation: str = typer.Option(
-        "none", "--isolation", help="Isolation mode: none, auto, file, test"
+        "auto",
+        "--isolation",
+        help="Isolation mode: auto, file, test, none (auto is default; none is fastest but unsafe)",
     ),
     resume: bool = typer.Option(False, "--resume", help="Resume an isolated run"),
     stop_on_failure: bool = typer.Option(
@@ -149,7 +151,10 @@ def test_command(
     if pin:
         os.environ["P11TEST_PIN"] = pin
 
-    manifest_fd, manifest_raw_path = tempfile.mkstemp(prefix="pkcs11-check-manifest-", suffix=".json")
+    manifest_fd, manifest_raw_path = tempfile.mkstemp(
+        prefix="pkcs11-check-manifest-",
+        suffix=".json",
+    )
     os.close(manifest_fd)
     manifest_path = Path(manifest_raw_path)
 

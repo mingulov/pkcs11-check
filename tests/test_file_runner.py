@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 
+from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.file_runner import (
     BackendIsolationPolicy,
     FileRunResult,
@@ -129,29 +130,30 @@ def test_collect_pytest_nodeids_reports_collection_failure(
 
 
 def test_file_isolation_mode_defaults_to_file(tmp_path: Path) -> None:
-    target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
-
-    assert file_isolation_mode(target) == "file"
+    assert file_isolation_mode(set()) == "file"
 
 
 def test_file_isolation_mode_promotes_subprocess_per_test(tmp_path: Path) -> None:
-    target = tmp_path / "test_demo.py"
-    target.write_text("import pytest\npytestmark = [pytest.mark.subprocess_per_test]\n")
-
-    assert file_isolation_mode(target) == "test"
+    del tmp_path
+    assert file_isolation_mode({"subprocess_per_test"}) == "test"
 
 
 def test_file_forces_file_isolation_for_subprocess_marker(tmp_path: Path) -> None:
-    target = tmp_path / "test_demo.py"
-    target.write_text("import pytest\npytestmark = [pytest.mark.subprocess]\n")
-
-    assert file_forces_file_isolation(target) is True
+    del tmp_path
+    assert file_forces_file_isolation({"subprocess"}) is True
 
 
-def test_discover_auto_isolation_units_keeps_regular_files(tmp_path: Path) -> None:
+def test_discover_auto_isolation_units_keeps_regular_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     target = tmp_path / "test_demo.py"
     target.write_text("def test_case():\n    assert True\n")
+    monkeypatch.setattr(
+        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
+            CollectedPytestItem(nodeid=f"{target}::test_case", file_path=str(target), markers=[])
+        ],
+    )
 
     units = discover_auto_isolation_units(
         [str(target)],
@@ -166,11 +168,21 @@ def test_discover_auto_isolation_units_expands_per_test_marked_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "test_demo.py"
-    target.write_text("import pytest\npytestmark = [pytest.mark.subprocess_per_test]\n")
-
+    target.write_text("def test_one():\n    assert True\n")
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [f"{target}::test_one", f"{target}::test_two"],  # type: ignore[arg-type]
+        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
+            CollectedPytestItem(
+                nodeid=f"{target}::test_one",
+                file_path=str(target),
+                markers=["subprocess_per_test"],
+            ),
+            CollectedPytestItem(
+                nodeid=f"{target}::test_two",
+                file_path=str(target),
+                markers=["subprocess_per_test"],
+            ),
+        ],
     )
 
     units = discover_auto_isolation_units(
@@ -203,8 +215,10 @@ def test_discover_auto_isolation_units_expands_policy_promoted_files(
     )
 
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [f"{target}::test_one"],  # type: ignore[arg-type]
+        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
+            CollectedPytestItem(nodeid=f"{target}::test_one", file_path=str(target), markers=[])
+        ],
     )
 
     units = discover_auto_isolation_units(
@@ -217,9 +231,21 @@ def test_discover_auto_isolation_units_expands_policy_promoted_files(
     assert units == [f"{target}::test_one"]
 
 
-def test_discover_auto_isolation_units_collapses_nodeid_for_subprocess_file(tmp_path: Path) -> None:
+def test_discover_auto_isolation_units_collapses_nodeid_for_subprocess_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     target = tmp_path / "test_demo.py"
-    target.write_text("import pytest\npytestmark = [pytest.mark.subprocess]\n")
+    target.write_text("def test_case():\n    assert True\n")
+    monkeypatch.setattr(
+        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
+            CollectedPytestItem(
+                nodeid=f"{target}::test_case",
+                file_path=str(target),
+                markers=["subprocess"],
+            )
+        ],
+    )
 
     units = discover_auto_isolation_units(
         [f"{target}::test_case"],
@@ -228,6 +254,46 @@ def test_discover_auto_isolation_units_collapses_nodeid_for_subprocess_file(tmp_
     )
 
     assert units == [str(target)]
+
+
+def test_discover_auto_isolation_units_falls_back_to_nodeid_collection_when_metadata_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = tmp_path / "module.so"
+    module.write_text("")
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n")
+    policy_file = tmp_path / "policy.json"
+    fingerprint = build_policy_fingerprint(["--p11-module", str(module)])
+    save_isolation_policy(
+        policy_file,
+        {
+            fingerprint: BackendIsolationPolicy(
+                fingerprint=fingerprint,
+                promoted_files=[normalize_policy_file_key(str(target))],
+                crashed_tests=[],
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        lambda targets, pytest_args, *, env=None: [],  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        "pkcs11_check.core.file_runner.discover_pytest_units",
+        lambda targets, default_root, *, granularity, pytest_args=None, env=None: (  # type: ignore[arg-type]
+            [f"{target}::test_case"] if granularity == "test" else list(targets)
+        ),
+    )
+
+    units = discover_auto_isolation_units(
+        [str(target)],
+        tmp_path / "unused",
+        pytest_args=["--p11-module", str(module)],
+        policy_file=policy_file,
+    )
+
+    assert units == [f"{target}::test_case"]
 
 
 def test_state_round_trip(tmp_path: Path) -> None:

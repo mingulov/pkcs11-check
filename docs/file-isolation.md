@@ -1,6 +1,6 @@
 # Isolated Modes
 
-`pkcs11-check test` now supports resumable isolated modes for crash-prone modules:
+`pkcs11-check test` now defaults to resumable isolated execution for crash-prone modules:
 
 ```bash
 uv run pkcs11-check test \
@@ -27,6 +27,8 @@ uv run pkcs11-check test \
 ## What it does
 
 - Expands the requested pytest targets into an ordered list of files or individual pytest nodeids.
+- Collects pytest item metadata in a short-lived helper subprocess so `auto` can use
+  real marker names instead of source-text scans.
 - Probes PKCS#11 capabilities in a short-lived helper subprocess and passes the
   resulting manifest into pytest instead of loading the module during collection.
 - Runs each unit in a fresh `python -m pytest` subprocess.
@@ -38,10 +40,12 @@ uv run pkcs11-check test \
 
 Mode summary:
 
-- `--isolation auto`: safe default, using per-file isolation unless a file is marked
+- `--isolation auto`: CLI default and safe default, using per-file isolation unless a file is marked
   `subprocess_per_test` or was previously promoted by the adaptive policy file
 - `--isolation file`: one subprocess per file
 - `--isolation test`: one subprocess per collected pytest test nodeid
+- `--isolation none`: fastest path, but it falls back to in-process `pytest.main(...)` and is not
+  crash-safe
 
 `test` mode is slower, but it gives much better crash attribution and lets the
 runner skip only the one crashing test on resume instead of rerunning a whole file.
@@ -185,6 +189,7 @@ Use `file` when:
 Use `auto` when:
 
 - you want the run to recover from token/module crashes
+- you are using the default `pkcs11-check test` path
 - you want the runner to keep file-level speed for most tests
 - you want existing `subprocess` files kept on the file-isolated path
 - you want existing `subprocess_per_test` files promoted automatically
@@ -196,23 +201,29 @@ Use `test` when:
 - you want resume to skip only one bad test
 - a single file contains both crashing and useful tests
 
+Use `none` when:
+
+- you explicitly want the old fastest path
+- you trust the backend not to crash the pytest process
+- you are debugging runner overhead rather than backend stability
+
 ## Local Helper Script
 
 `local-builds/test.sh` can now opt into the same modes:
 
 ```bash
 P11TEST_ISOLATION=auto \
-bash local-builds/test.sh qryptotoken src/pkcs11-check/testcases/test_aead.py
+bash local-builds/test.sh qryptotoken src/pkcs11_check/testcases/test_aead.py
 ```
 
 ```bash
 P11TEST_ISOLATION=file \
-bash local-builds/test.sh bouncyhsm src/pkcs11-check/testcases/ckr/test_ckr_codes.py
+bash local-builds/test.sh bouncyhsm src/pkcs11_check/testcases/ckr/test_ckr_codes.py
 ```
 
 ```bash
 P11TEST_ISOLATION=test \
-bash local-builds/test.sh qryptotoken src/pkcs11-check/testcases/test_aead.py
+bash local-builds/test.sh qryptotoken src/pkcs11_check/testcases/test_aead.py
 ```
 
 Some crash-prone providers now default to `auto` isolation automatically when the
@@ -239,7 +250,7 @@ You can still override the default explicitly:
 P11TEST_ISOLATION=none bash local-builds/test.sh nss-softokn -k ckr
 P11TEST_ISOLATION=auto bash local-builds/test.sh nss-softokn -k ckr
 P11TEST_ISOLATION=file bash local-builds/test.sh qryptotoken -x
-P11TEST_ISOLATION=test bash local-builds/test.sh qryptotoken src/pkcs11-check/testcases/test_aead.py
+P11TEST_ISOLATION=test bash local-builds/test.sh qryptotoken src/pkcs11_check/testcases/test_aead.py
 ```
 
 Useful companion variables:
@@ -295,7 +306,7 @@ uv run pkcs11-check test \
   --module local-builds/bouncyhsm/lib/libbouncyhsm_pkcs11.so \
   --pin 1234 \
   --isolation file \
-  src/pkcs11-check/testcases/ckr
+  src/pkcs11_check/testcases/ckr
 ```
 
 The same flow also works through the local helper:
@@ -303,5 +314,5 @@ The same flow also works through the local helper:
 ```bash
 BOUNCY_HSM_CFG_STRING='Server=127.0.0.1;Port=8765;' \
 P11TEST_ISOLATION=file \
-bash local-builds/test.sh bouncyhsm src/pkcs11-check/testcases/ckr/test_ckr_codes.py
+bash local-builds/test.sh bouncyhsm src/pkcs11_check/testcases/ckr/test_ckr_codes.py
 ```
