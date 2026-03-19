@@ -123,8 +123,11 @@ def load_ckr_spec() -> dict[str, set[str]]:
         "DomainParamsInvalid": "CKR_DOMAIN_PARAMS_INVALID",
         "EncryptedDataInvalid": "CKR_ENCRYPTED_DATA_INVALID",
         "EncryptedDataLenRange": "CKR_ENCRYPTED_DATA_LEN_RANGE",
+        "ExceededMaxIterations": "CKR_EXCEEDED_MAX_ITERATIONS",
+        "FunctionCancelled": "CKR_FUNCTION_CANCELED",
         "FunctionFailed": "CKR_FUNCTION_FAILED",
         "FunctionNotSupported": "CKR_FUNCTION_NOT_SUPPORTED",
+        "FunctionRejected": "CKR_FUNCTION_REJECTED",
         "GeneralError": "CKR_GENERAL_ERROR",
         "KeyFunctionNotPermitted": "CKR_KEY_FUNCTION_NOT_PERMITTED",
         "KeyHandleInvalid": "CKR_KEY_HANDLE_INVALID",
@@ -141,23 +144,37 @@ def load_ckr_spec() -> dict[str, set[str]]:
         "ObjectHandleInvalid": "CKR_OBJECT_HANDLE_INVALID",
         "OperationActive": "CKR_OPERATION_ACTIVE",
         "OperationNotInitialized": "CKR_OPERATION_NOT_INITIALIZED",
+        "ParameterSetNotSupported": "CKR_PARAMETER_SET_NOT_SUPPORTED",
+        "ParallelNotSupported": "CKR_SESSION_PARALLEL_NOT_SUPPORTED",
+        "PinExpired": "CKR_PIN_EXPIRED",
         "PinIncorrect": "CKR_PIN_INCORRECT",
+        "PinInvalid": "CKR_PIN_INVALID",
         "PinLenRange": "CKR_PIN_LEN_RANGE",
         "PinLocked": "CKR_PIN_LOCKED",
+        "RandomNoRNG": "CKR_RANDOM_NO_RNG",
         "RandomSeedNotSupported": "CKR_RANDOM_SEED_NOT_SUPPORTED",
         "SavedStateInvalid": "CKR_SAVED_STATE_INVALID",
+        "SessionAsyncNotSupported": "CKR_SESSION_ASYNC_NOT_SUPPORTED",
         "SessionCount": "CKR_SESSION_COUNT",
         "SessionExists": "CKR_SESSION_EXISTS",
         "SessionReadOnly": "CKR_SESSION_READ_ONLY",
+        "SessionReadOnlyExists": "CKR_SESSION_READ_ONLY_EXISTS",
+        "SessionReadWriteSOExists": "CKR_SESSION_READ_WRITE_SO_EXISTS",
         "SignatureInvalid": "CKR_SIGNATURE_INVALID",
         "SignatureLenRange": "CKR_SIGNATURE_LEN_RANGE",
         "SlotIDInvalid": "CKR_SLOT_ID_INVALID",
         "StateUnsaveable": "CKR_STATE_UNSAVEABLE",
         "TemplateIncomplete": "CKR_TEMPLATE_INCOMPLETE",
         "TemplateInconsistent": "CKR_TEMPLATE_INCONSISTENT",
+        "TokenNotRecognised": "CKR_TOKEN_NOT_RECOGNIZED",
         "TokenWriteProtected": "CKR_TOKEN_WRITE_PROTECTED",
+        "UnwrappingKeyHandleInvalid": "CKR_UNWRAPPING_KEY_HANDLE_INVALID",
+        "UnwrappingKeySizeRange": "CKR_UNWRAPPING_KEY_SIZE_RANGE",
+        "UnwrappingKeyTypeInconsistent": "CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT",
         "UserAlreadyLoggedIn": "CKR_USER_ALREADY_LOGGED_IN",
         "UserNotLoggedIn": "CKR_USER_NOT_LOGGED_IN",
+        "UserPinNotInitialized": "CKR_USER_PIN_NOT_INITIALIZED",
+        "UserTooManyTypes": "CKR_USER_TOO_MANY_TYPES",
         "UserTypeInvalid": "CKR_USER_TYPE_INVALID",
         "AnotherUserAlreadyLoggedIn": "CKR_USER_ANOTHER_ALREADY_LOGGED_IN",
         "WrappedKeyInvalid": "CKR_WRAPPED_KEY_INVALID",
@@ -173,6 +190,10 @@ def load_ckr_spec() -> dict[str, set[str]]:
             continue
         for entry in d.values():
             func = entry.function
+            # If spec_ckr_code is set, use it directly (for CKR codes without exception class)
+            if entry.spec_ckr_code:
+                covered.setdefault(func, set()).add(entry.spec_ckr_code)
+                continue
             # Get the CKR code from spec_ckr
             spec_ckr = entry.spec_ckr
             if isinstance(spec_ckr, tuple):
