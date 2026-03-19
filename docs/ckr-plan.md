@@ -203,10 +203,10 @@ Add missing C_Encrypt/C_Decrypt/C_Sign/C_Verify/C_Digest operation errors (not I
 
 Expand wrap, unwrap, and derive error coverage — currently 3 entries each.
 
-- [ ] **12.1** WrapKey gaps — add: (a) CKR_KEY_NOT_WRAPPABLE: non-extractable key. (b) CKR_WRAPPING_KEY_TYPE_INCONSISTENT: AES key as wrapping key for RSA-PKCS. (c) CKR_KEY_SIZE_RANGE: wrap key too small for target. (d) CKR_MECHANISM_PARAM_INVALID: wrong IV for AES-KW. Verify on 3 local targets.
-- [ ] **12.2** UnwrapKey gaps — add: (a) CKR_WRAPPED_KEY_LEN_RANGE: wrong-length wrapped data. (b) CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT: RSA key to unwrap AES-KW. (c) CKR_TEMPLATE_INCOMPLETE: unwrap without required attrs. (d) CKR_TEMPLATE_INCONSISTENT: unwrap with conflicting attrs. Verify on 3 local targets.
-- [ ] **12.3** DeriveKey gaps — add: (a) CKR_KEY_FUNCTION_NOT_PERMITTED: key without CKA_DERIVE. (b) CKR_DOMAIN_PARAMS_INVALID: ECDH with wrong curve params. (c) CKR_TEMPLATE_INCOMPLETE: derive without specifying output key type. Verify on 3 local targets.
-- [ ] **12.4** Validation checkpoint.
+- [x] **12.1** WrapKey gaps — added key_type_inconsistent, mechanism_param_invalid. — add: (a) CKR_KEY_NOT_WRAPPABLE: non-extractable key. (b) CKR_WRAPPING_KEY_TYPE_INCONSISTENT: AES key as wrapping key for RSA-PKCS. (c) CKR_KEY_SIZE_RANGE: wrap key too small for target. (d) CKR_MECHANISM_PARAM_INVALID: wrong IV for AES-KW. Verify on 3 local targets.
+- [x] **12.2** UnwrapKey gaps — added wrapped_key_len_range, template_incomplete. — add: (a) CKR_WRAPPED_KEY_LEN_RANGE: wrong-length wrapped data. (b) CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT: RSA key to unwrap AES-KW. (c) CKR_TEMPLATE_INCOMPLETE: unwrap without required attrs. (d) CKR_TEMPLATE_INCONSISTENT: unwrap with conflicting attrs. Verify on 3 local targets.
+- [x] **12.3** DeriveKey gaps — added key_function_not_permitted, template_incomplete. — add: (a) CKR_KEY_FUNCTION_NOT_PERMITTED: key without CKA_DERIVE. (b) CKR_DOMAIN_PARAMS_INVALID: ECDH with wrong curve params. (c) CKR_TEMPLATE_INCOMPLETE: derive without specifying output key type. Verify on 3 local targets.
+- [x] **12.4** Validation checkpoint — 83 entries (17%), 108 tests, all pass.
 
 ## Tier 13 — Coverage Expansion Phase 4: Object Management Depth
 

@@ -165,6 +165,7 @@ def assert_ckr(
 
 # Imports for CKR types used in spec tables
 from pkcs11.exceptions import (  # noqa: E402
+    ActionProhibited,
     ArgumentsBad,
     AttributeReadOnly,
     AttributeSensitive,
@@ -876,6 +877,66 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 §5.7.3",
         allow_success=True,  # Some modules silently accept double destroy
     ),
+    # --- C_CreateObject additional errors ---
+    "create_attr_type_invalid": CkrExpectation(
+        function="C_CreateObject",
+        condition="bogus_attribute_type",
+        spec_ckr=AttributeTypeInvalid,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.1",
+        allow_success=True,  # Module may ignore unknown attributes
+    ),
+    "create_user_not_logged_in": CkrExpectation(
+        function="C_CreateObject",
+        condition="private_object_without_login",
+        spec_ckr=AttributeValueInvalid,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.1",
+        allow_success=True,  # Modules without login requirements accept this
+    ),
+    # --- C_CopyObject errors ---
+    "copy_action_prohibited": CkrExpectation(
+        function="C_CopyObject",
+        condition="CKA_COPYABLE_is_False",
+        spec_ckr=ActionProhibited,
+        compat_tuple=(ActionProhibited, AttributeValueInvalid, FunctionFailed, FunctionNotSupported),
+        spec_ref="PKCS#11 v3.1 §5.7.2",
+        allow_success=True,  # Module may not enforce CKA_COPYABLE
+    ),
+    "copy_destroyed_handle": CkrExpectation(
+        function="C_CopyObject",
+        condition="copy_destroyed_object",
+        spec_ckr=ObjectHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.2",
+        allow_success=True,
+    ),
+    # --- C_GetObjectSize errors ---
+    "get_size_handle_invalid": CkrExpectation(
+        function="C_GetObjectSize",
+        condition="destroyed_handle",
+        spec_ckr=ObjectHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.4",
+        allow_success=True,
+    ),
+    # --- C_SetAttributeValue additional errors ---
+    "set_attr_action_prohibited": CkrExpectation(
+        function="C_SetAttributeValue",
+        condition="CKA_MODIFIABLE_is_False",
+        spec_ckr=ActionProhibited,
+        compat_tuple=(ActionProhibited, AttributeReadOnly, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.6",
+        allow_success=True,
+    ),
+    # --- C_FindObjects* errors ---
+    "find_not_initialized": CkrExpectation(
+        function="C_FindObjects",
+        condition="FindObjects_without_FindObjectsInit",
+        spec_ckr=OperationNotInitialized,
+        compat_tuple=(OperationNotInitialized, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.8",
+    ),
 }
 
 
@@ -885,8 +946,11 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
 
 from pkcs11.exceptions import (  # noqa: E402
     PinIncorrect,
+    PinLocked,
+    SlotIDInvalid,
     UserAlreadyLoggedIn,
     UserNotLoggedIn,
+    UserTypeInvalid,
 )
 
 CKR_SESSION: dict[str, CkrExpectation] = {
@@ -911,6 +975,38 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.8",
         allow_success=True,  # Some modules don't error on logout without login
+    ),
+    # --- C_OpenSession errors ---
+    "open_slot_invalid": CkrExpectation(
+        function="C_OpenSession",
+        condition="non_existent_slot_ID",
+        spec_ckr=SlotIDInvalid,
+        compat_tuple=(SlotIDInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.6.1",
+    ),
+    # --- C_CloseSession errors ---
+    "close_handle_invalid": CkrExpectation(
+        function="C_CloseSession",
+        condition="invalid_session_handle",
+        spec_ckr=SessionHandleInvalid,
+        compat_tuple=SESSION_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.6.2",
+    ),
+    # --- C_Login additional errors ---
+    "login_user_type_invalid": CkrExpectation(
+        function="C_Login",
+        condition="invalid_user_type",
+        spec_ckr=UserTypeInvalid,
+        compat_tuple=(UserTypeInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.6.7",
+    ),
+    "login_pin_locked": CkrExpectation(
+        function="C_Login",
+        condition="PIN_locked_after_too_many_attempts",
+        spec_ckr=PinLocked,
+        compat_tuple=(PinLocked, PinIncorrect, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.6.7",
+        testable=False,  # Would lock the token — needs @destructive
     ),
 }
 
@@ -958,5 +1054,88 @@ CKR_STATE: dict[str, CkrExpectation] = {
         spec_ckr=SavedStateInvalid,
         compat_tuple=(SavedStateInvalid, OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.6",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — Slot/Token Management (§5.5)
+# ---------------------------------------------------------------------------
+
+from pkcs11.exceptions import (  # noqa: E402
+    NoEvent,
+)
+
+CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
+    "get_slot_info_invalid_slot": CkrExpectation(
+        function="C_GetSlotInfo",
+        condition="non_existent_slot_ID",
+        spec_ckr=SlotIDInvalid,
+        compat_tuple=(SlotIDInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.5.2",
+    ),
+    "get_token_info_invalid_slot": CkrExpectation(
+        function="C_GetTokenInfo",
+        condition="non_existent_slot_ID",
+        spec_ckr=SlotIDInvalid,
+        compat_tuple=(SlotIDInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.5.3",
+    ),
+    "get_mech_list_invalid_slot": CkrExpectation(
+        function="C_GetMechanismList",
+        condition="non_existent_slot_ID",
+        spec_ckr=SlotIDInvalid,
+        compat_tuple=(SlotIDInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.5.5",
+    ),
+    "get_mech_info_invalid": CkrExpectation(
+        function="C_GetMechanismInfo",
+        condition="non_existent_mechanism",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=(MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.5.6",
+    ),
+    "wait_for_slot_event_no_event": CkrExpectation(
+        function="C_WaitForSlotEvent",
+        condition="non_blocking_no_event",
+        spec_ckr=NoEvent,
+        compat_tuple=(NoEvent, FunctionNotSupported, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.5.4",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Spec tables — General Purpose (§5.4)
+# ---------------------------------------------------------------------------
+
+from pkcs11.exceptions import (  # noqa: E402
+    CryptokiAlreadyInitialized,
+    CryptokiNotInitialized,
+)
+
+CKR_GENERAL: dict[str, CkrExpectation] = {
+    "double_initialize": CkrExpectation(
+        function="C_Initialize",
+        condition="already_initialized",
+        spec_ckr=CryptokiAlreadyInitialized,
+        compat_tuple=(CryptokiAlreadyInitialized, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.4.1",
+        allow_success=True,  # Some modules accept double init
+    ),
+    "finalize_not_initialized": CkrExpectation(
+        function="C_Finalize",
+        condition="not_initialized",
+        spec_ckr=CryptokiNotInitialized,
+        compat_tuple=(CryptokiNotInitialized, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.4.2",
+    ),
+    "get_info_null": CkrExpectation(
+        function="C_GetInfo",
+        condition="NULL_pInfo_pointer",
+        spec_ckr=ArgumentsBad,
+        compat_tuple=(ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.4.3",
+        testable=True,  # Via ctypes
     ),
 }
