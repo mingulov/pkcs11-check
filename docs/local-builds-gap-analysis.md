@@ -10,6 +10,7 @@ This check focused on the recent runner changes:
 - optional isolated modes via `p11test test --isolation auto|file|test`
 - `local-builds/test.sh` integration with the new runner path
 - adaptive isolation policy persistence across repeated local runs
+- same-run file-to-test escalation in `auto`
 
 The goal was not to prove that every module passes the whole product suite. The goal was to separate:
 

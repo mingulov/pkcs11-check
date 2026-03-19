@@ -260,6 +260,17 @@ def test_units_remaining_for_resume_skips_passed_and_empty() -> None:
     assert units_remaining_for_resume(units, state) == ["test_c.py", "test_d.py"]
 
 
+def test_units_remaining_for_resume_skips_escalated() -> None:
+    units = ["test_a.py", "test_a.py::test_case", "test_b.py"]
+    state = FileRunState(
+        units=units,
+        fingerprint="abc123",
+        results=[FileRunResult("test_a.py", "escalated", -11, 0.1)],
+    )
+
+    assert units_remaining_for_resume(units, state) == ["test_a.py::test_case", "test_b.py"]
+
+
 def test_run_isolated_pytest_units_records_results_and_stops(
     monkeypatch: object, tmp_path: Path
 ) -> None:
@@ -344,6 +355,74 @@ def test_run_isolated_pytest_units_promotes_crashed_file_in_policy(
 
     assert exit_code == 1
     assert policies[fingerprint].promoted_files == [normalize_policy_file_key(str(target))]
+
+
+def test_run_isolated_pytest_units_escalates_crashed_file_in_same_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = tmp_path / "module.so"
+    module.write_text("")
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n")
+    state_file = tmp_path / "state.json"
+    console = Console(file=StringIO(), force_terminal=False)
+    calls: list[str] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        check: bool,
+        env: dict[str, str],
+        timeout: int,
+    ) -> SimpleNamespace:
+        del check, env, timeout
+        unit = cmd[3]
+        calls.append(unit)
+        return SimpleNamespace(returncode=-11 if unit == str(target) else 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        "p11test.core.file_runner.discover_pytest_units",
+        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+            [  # type: ignore[arg-type]
+                f"{target}::test_one",
+                f"{target}::test_two",
+            ]
+            if granularity == "test"
+            else list(targets)
+        ),
+    )
+
+    exit_code = run_isolated_pytest_units(
+        [str(target), "test_after.py"],
+        ["--p11-module", str(module)],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        resume=False,
+        stop_on_failure=False,
+        console=console,
+        granularity="mixed",
+    )
+
+    saved = load_run_state(state_file)
+    assert exit_code == 1
+    assert calls[:4] == [str(target), f"{target}::test_one", f"{target}::test_two", "test_after.py"]
+    assert saved is not None
+    assert saved.units == [
+        str(target),
+        f"{target}::test_one",
+        f"{target}::test_two",
+        "test_after.py",
+    ]
+    assert saved.fingerprint == build_state_fingerprint(saved.units, ["--p11-module", str(module)])
+    assert saved.results[0].target == str(target)
+    assert saved.results[0].status == "escalated"
+    assert [result.target for result in saved.results[1:]] == [
+        f"{target}::test_one",
+        f"{target}::test_two",
+        "test_after.py",
+    ]
 
 
 def test_build_state_fingerprint_changes_when_unit_file_changes(tmp_path: Path) -> None:

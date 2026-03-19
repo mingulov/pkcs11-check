@@ -9,7 +9,7 @@ Last updated: 2026-03-19
 - **148+ CKR error tests** with raw ctypes bypass for wrapper-blocked conditions
 - **v3.0/v3.2 interface negotiation** — tested on Kryoptic
 - **PQC support** — ML-KEM, ML-DSA, SLH-DSA tested on Kryoptic
-- **Adaptive isolated runner** — `--isolation auto|file|test` survives crashes and remembers crash-prone files per backend
+- **Adaptive isolated runner** — `--isolation auto|file|test` survives crashes, escalates crashing files in-run, and remembers crash-prone files per backend
 - **JSON/JUnit report output** — `--output json` or `--output junit`
 - **10 local build providers** — SoftHSM2, Kryoptic, NSS, pkcs11-mock, qryptotoken, tpm2-pkcs11, BouncyHSM, OpenCryptoki, swtpm, tpm2-swtpm
 - **12 Docker test targets** for CI validation

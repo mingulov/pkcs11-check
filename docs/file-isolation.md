@@ -47,6 +47,8 @@ Mode summary:
 runner skip only the one crashing test on resume instead of rerunning a whole file.
 `auto` is the best default recovery mode when you want safety without paying full
 per-test cost across the entire target set.
+If a file crashes or times out during an `auto` run, the runner now escalates that
+same file to per-test isolation immediately for the rest of the current run.
 
 ## Resume From The Broken Place
 
@@ -103,7 +105,9 @@ The default adaptive policy file is:
 
 `--isolation auto` uses it to remember files that previously crashed or timed out
 for the same backend fingerprint. Those files are promoted to per-test isolation
-on later runs while the rest of the target set stays at file granularity.
+on later runs while the rest of the target set stays at file granularity. Fresh
+crashes in the current run are also escalated immediately without waiting for a
+second invocation.
 
 You can override it:
 

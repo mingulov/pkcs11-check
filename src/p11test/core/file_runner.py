@@ -18,6 +18,7 @@ from rich.console import Console
 IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
 CrashStatus = Literal["crashed", "timeout"]
+_RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated"}
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
 _FINGERPRINT_ENV_PREFIXES = (
@@ -506,7 +507,7 @@ def units_remaining_for_resume(units: list[str], state: FileRunState | None) -> 
         return units
 
     completed_ok = {
-        result.target for result in state.results if result.status in {"passed", "empty"}
+        result.target for result in state.results if result.status in _RESUME_COMPLETE_STATUSES
     }
     return [unit for unit in units if unit not in completed_ok]
 
@@ -590,6 +591,68 @@ def _record_result(state: FileRunState, result: FileRunResult) -> None:
     state.results.append(result)
 
 
+def _refresh_state_plan(
+    state: FileRunState,
+    units: list[str],
+    pytest_args: list[str],
+    env: Mapping[str, str],
+) -> None:
+    state.units = list(units)
+    state.fingerprint = build_state_fingerprint(units, pytest_args, env)
+
+
+def _insert_escalated_units(
+    state: FileRunState,
+    units: list[str],
+    index: int,
+    new_units: list[str],
+    pytest_args: list[str],
+    env: Mapping[str, str],
+) -> list[str]:
+    existing = set(units)
+    additions = [unit for unit in new_units if unit not in existing]
+    if not additions:
+        return []
+
+    insert_at = index + 1
+    units[insert_at:insert_at] = additions
+    _refresh_state_plan(state, units, pytest_args, env)
+    return additions
+
+
+def _escalate_current_file(
+    *,
+    unit: str,
+    units: list[str],
+    index: int,
+    state: FileRunState,
+    pytest_args: list[str],
+    env: Mapping[str, str],
+    console: Console,
+) -> list[str]:
+    try:
+        nodeids = discover_pytest_units(
+            [unit],
+            Path(unit).parent,
+            granularity="test",
+            pytest_args=pytest_args,
+            env=env,
+        )
+    except ValueError as exc:
+        console.print(
+            f"[yellow]Adaptive isolation:[/yellow] failed to collect tests for {unit}: {exc}"
+        )
+        return []
+
+    additions = _insert_escalated_units(state, units, index, nodeids, pytest_args, env)
+    if additions:
+        console.print(
+            f"[yellow]Adaptive isolation:[/yellow] escalating {unit} to per-test isolation "
+            f"for the rest of this run ({len(additions)} units)."
+        )
+    return additions
+
+
 def run_isolated_pytest_units(
     units: list[str],
     pytest_args: list[str],
@@ -647,13 +710,14 @@ def run_isolated_pytest_units(
         return 0
 
     exit_code = 0
-    total = len(units)
-
-    for index, unit in enumerate(units, start=1):
+    index = 0
+    while index < len(units):
+        unit = units[index]
         if unit not in pending_units:
+            index += 1
             continue
 
-        console.print(f"[cyan][{index}/{total}][/cyan] {unit}")
+        console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
         start = time.monotonic()
         cmd = [sys.executable, "-m", "pytest", unit, *pytest_args]
         unit_granularity = _effective_granularity(unit, granularity)
@@ -686,6 +750,33 @@ def run_isolated_pytest_units(
                 "timeout",
                 console,
             )
+            if granularity == "mixed" and unit_granularity == "file" and not stop_on_failure:
+                escalated_units = _escalate_current_file(
+                    unit=unit,
+                    units=units,
+                    index=index,
+                    state=state,
+                    pytest_args=pytest_args,
+                    env=env,
+                    console=console,
+                )
+                if escalated_units:
+                    _record_result(
+                        state,
+                        FileRunResult(
+                            target=unit,
+                            status="escalated",
+                            returncode=124,
+                            duration_s=duration_s,
+                        ),
+                    )
+                    save_run_state(state_file, state)
+                    pending_units.extend(escalated_units)
+                    exit_code = 1
+                    console.print(f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)")
+                    index += 1
+                    continue
+
             console.print(f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)")
             exit_code = 1
             if stop_on_failure:
@@ -694,6 +785,7 @@ def run_isolated_pytest_units(
                     f"[bold]--resume --state-file {state_file}[/bold]."
                 )
                 return exit_code
+            index += 1
             continue
 
         duration_s = time.monotonic() - start
@@ -708,6 +800,7 @@ def run_isolated_pytest_units(
 
         if status in {"passed", "empty"}:
             console.print(f"[green]{status.upper()}[/green] {unit} ({duration_s:.1f}s)")
+            index += 1
             continue
 
         if status == "crashed":
@@ -720,6 +813,32 @@ def run_isolated_pytest_units(
                 "crashed",
                 console,
             )
+            if granularity == "mixed" and unit_granularity == "file" and not stop_on_failure:
+                escalated_units = _escalate_current_file(
+                    unit=unit,
+                    units=units,
+                    index=index,
+                    state=state,
+                    pytest_args=pytest_args,
+                    env=env,
+                    console=console,
+                )
+                if escalated_units:
+                    _record_result(
+                        state,
+                        FileRunResult(
+                            target=unit,
+                            status="escalated",
+                            returncode=returncode,
+                            duration_s=duration_s,
+                        ),
+                    )
+                    save_run_state(state_file, state)
+                    pending_units.extend(escalated_units)
+                    exit_code = 1
+                    console.print(f"[red]CRASHED[/red] {unit} ({duration_s:.1f}s)")
+                    index += 1
+                    continue
 
         exit_code = 1
         console.print(f"[red]{status.upper()}[/red] {unit} ({duration_s:.1f}s)")
@@ -729,6 +848,7 @@ def run_isolated_pytest_units(
                 f"[bold]--resume --state-file {state_file}[/bold]."
             )
             return exit_code
+        index += 1
 
     return exit_code
 

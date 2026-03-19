@@ -29,6 +29,7 @@ Checks run during this review:
 - local NSS adaptive smoke:
   - first `auto` run on `test_wycheproof_pbkdf2.py` crashed and wrote a promotion into the policy file
   - second helper-driven `auto` run expanded that file to 298 per-test units and recorded the crashing nodeid
+  - same-run escalation now uses that same expansion logic immediately after a file crash in `auto`
 - direct pytest smoke:
   - `uv run pytest ... test_interface.py::TestInterfaceV30::test_v30_interface_negotiated ...`
     passed against local BouncyHSM
@@ -51,6 +52,7 @@ The current solution is useful and real. It is not just a draft.
 - `auto` now persists backend-specific crash knowledge in `.p11test-isolation-policy.json`.
 - files marked `subprocess_per_test` are expanded to nodeids automatically in `auto` mode.
 - files that crash or time out in isolated mode are promoted to per-test isolation for later `auto` runs.
+- `auto` now also escalates a crashing file to per-test isolation immediately inside the same run.
 - crash-prone local helper runs can now keep provider-specific policy files under `/tmp` instead of sharing one repo-root file.
 - file isolation now uses env-only PIN propagation to child pytest processes.
 - the local helper can opt into file isolation and stateful resume instead of always bypassing the CLI.
@@ -68,21 +70,20 @@ That is already useful for unstable modules and for long regression sweeps.
 
 ## Confirmed Gaps
 
-### P0: Adaptive policy now exists, but same-run escalation is still missing
+### P0: Adaptive policy now exists, but escalation still stops at file boundaries for `stop-on-failure`
 
 The biggest architectural gap is no longer "there is no per-test mode." It is
-that the runner still does not re-plan the remainder of the same run after the
-first crash.
+that same-run escalation is still intentionally conservative.
 
 - `--isolation auto` uses `subprocess_per_test` markers and a persistent crash policy
 - `--isolation file` still loses the rest of a crashing file by design
-- if a file crashes in `auto`, the promotion helps the next run, not the current one
-- there is still no "restart remaining work immediately at stricter granularity" path
+- `--isolation auto` now requeues a crashing file at per-test granularity in the same run
+- `--stop-on-failure` still stops before any same-run escalation, by design
 
 The collection-safe preflight manifest fixed the old parent-process collection hazard,
 and `--isolation test` now gives true per-test subprocess execution. The missing
-piece is making the runner escalate within the current session rather than only
-for future runs.
+piece is no longer basic same-run escalation; it is richer control over when that
+escalation should or should not keep going automatically.
 
 ### P1: Resume protection is stronger, but still not complete
 
@@ -161,6 +162,7 @@ Current limitations:
 - A resumed run intentionally reruns failed units, so state files should not be treated as immutable history.
 - `--isolation auto --resume` intentionally keeps the saved unit plan even if the adaptive
   policy file would now promote one of those files differently.
+- if a file is escalated inside the current run, the saved state file is rewritten with the expanded plan.
 - The parent CLI still accepts `--pin`, but file mode now keeps it in environment propagation instead of child command-line arguments.
 - `discover_pytest_units()` accepts explicit nodeids and whole directories, but the default unit order is just filesystem order, not historical-failure order or duration-aware scheduling.
 
@@ -182,7 +184,7 @@ Current limitations:
 
 ### Long Term
 
-1. Add same-run escalation so a crash in `auto` can immediately requeue that file at per-test granularity.
+1. Add a policy knob for whether `auto` should continue through the rest of an escalated file or only record the crashing nodeid.
 2. Define a real worker-isolation model before enabling concurrent file execution.
 3. Decide whether preflight data should be reused across workers through a shared manifest cache.
 
@@ -195,4 +197,4 @@ The isolated runner is worth keeping. It solves a real operational problem now:
 - unstable modules no longer require a single all-or-nothing pytest invocation
 
 But it is still not the final segfault-survival design. The biggest missing pieces
-are same-run adaptive escalation, richer reporting, and a real worker model.
+are marker coverage for plain `subprocess`, richer reporting, and a real worker model.

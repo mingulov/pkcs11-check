@@ -79,6 +79,7 @@ The marker registration situation is much better than before, but marker-driven 
 - `thread_safe` is now registered and handled by the plugin.
 - strict-marker collection is no longer the active blocker it was before.
 - `subprocess_per_test` is now wired into `--isolation auto`, and crashing files are now promoted to per-test isolation through the adaptive policy file.
+- `--isolation auto` now also escalates a crashing file to per-test isolation immediately inside the same run.
 - plain `subprocess` is still not wired to force per-file isolation automatically.
 - Marker registration is still ahead of marker-driven execution in a few places.
 
@@ -283,7 +284,7 @@ These are not the highest-risk gaps, but they would make the project materially 
 ### P0: Correctness and Trust
 
 1. Decide and implement the real default crash-isolation execution path.
-2. Finish marker-driven isolation for plain `subprocess` and same-run escalation.
+2. Finish marker-driven isolation for plain `subprocess`.
 3. Burn down broad `PKCS11Error` catches in testcase files.
 4. Add stronger validation gates for local-helper and crash-prone providers.
 
