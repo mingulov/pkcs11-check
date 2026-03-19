@@ -1,0 +1,99 @@
+# Per-File Isolation Mode
+
+`p11test test` now supports a resumable per-file isolation mode for crash-prone modules:
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
+  --isolation file
+```
+
+## What it does
+
+- Expands the requested pytest targets into an ordered list of files or nodeids.
+- Runs each unit in a fresh `python -m pytest` subprocess.
+- Writes progress to `.p11test-isolation-state.json` by default.
+- Continues past a crashing file because the file process, not the main runner, dies.
+
+This is not full per-test isolation. It is a practical regression mode for unstable modules while the deeper pytest integration is still unfinished.
+
+## Resume From The Broken Place
+
+Use `--resume` to continue from the first unit that did not finish cleanly:
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
+  --isolation file \
+  --resume
+```
+
+The runner treats only `passed` and `empty` units as complete. Files that failed, crashed, or timed out are rerun on resume.
+
+If you want the run to stop immediately when it hits a bad file, use:
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
+  --isolation file \
+  --stop-on-failure
+```
+
+Then rerun with `--resume` after fixing or investigating the problem.
+
+## State File
+
+The default state file is:
+
+```text
+.p11test-isolation-state.json
+```
+
+You can override it:
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
+  --isolation file \
+  --state-file /tmp/p11test-bouncyhsm.json
+```
+
+## Scope And Limits
+
+- `--isolation file` currently supports only `--output rich`.
+- `--sessions` is ignored in file isolation mode.
+- The normal `--timeout` value is still passed through to pytest as per-test timeout.
+- The file runner also has an outer subprocess timeout so a dead file runner does not hang forever.
+
+## BouncyHSM Local Example
+
+For local BouncyHSM, the stable path today is the LiteDb-backed server mode:
+
+```bash
+mkdir -p local-builds/bouncyhsm/data
+cd local-builds/bouncyhsm/server
+ASPNETCORE_ENVIRONMENT=Docker \
+ASPNETCORE_URLS=http://127.0.0.1:5011 \
+BouncyHsm_LiteDbPersistentRepositorySetup__DbFilePath=$PWD/../data/BouncyHsm.db \
+BouncyHsm_BouncyHsmSetup__TcpEndpoint__Endpoint=127.0.0.1:8765 \
+dotnet BouncyHsm.dll
+```
+
+Create a token:
+
+```bash
+curl -X POST http://127.0.0.1:5011/Slot \
+  -H "Content-Type: application/json" \
+  -d '{"IsHwDevice":false,"Description":"p11test","Token":{"Label":"p11test","SerialNumber":"0001","UserPin":"1234","SoPin":"12345678"}}'
+```
+
+Point the native shim at the local TCP endpoint and run the isolated mode:
+
+```bash
+BOUNCY_HSM_CFG_STRING='Server=127.0.0.1;Port=8765;' \
+uv run p11test test \
+  --module local-builds/bouncyhsm/lib/libbouncyhsm_pkcs11.so \
+  --pin 1234 \
+  --isolation file \
+  src/p11test/testcases/ckr
+```

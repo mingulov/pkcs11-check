@@ -88,11 +88,12 @@ setup() {
 
     echo "NOTE: BouncyHSM server must be running."
     echo "  mkdir -p $BASE_DIR/bouncyhsm/data"
+    echo "  cd $BASE_DIR/bouncyhsm/server"
     echo "  ASPNETCORE_ENVIRONMENT=Docker \\"
     echo "  ASPNETCORE_URLS=http://127.0.0.1:5011 \\"
     echo "  BouncyHsm_LiteDbPersistentRepositorySetup__DbFilePath=$BASE_DIR/bouncyhsm/data/BouncyHsm.db \\"
     echo "  BouncyHsm_BouncyHsmSetup__TcpEndpoint__Endpoint=127.0.0.1:8765 \\"
-    echo "  dotnet $BASE_DIR/bouncyhsm/server/BouncyHsm.dll"
+    echo "  dotnet BouncyHsm.dll"
     echo ""
     echo "Create a slot via API:"
     echo '  curl -X POST http://127.0.0.1:5011/Slot -H "Content-Type: application/json" \'

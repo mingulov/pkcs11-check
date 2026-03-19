@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import multiprocessing
-import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
-
-_USE_FORK = sys.platform != "win32"
 
 
 @dataclass
@@ -59,12 +56,9 @@ class IsolatedRunner:
 
     def run(self, name: str, fn: Callable[[], None]) -> TestResult:
         """Run fn in a subprocess. Returns TestResult regardless of crash/timeout."""
-        method = "fork" if _USE_FORK else "spawn"
-        ctx = multiprocessing.get_context(method)
+        ctx = multiprocessing.get_context("spawn")
         queue: Queue[TestResult] = ctx.Queue()
-        proc = ctx.Process(  # type: ignore[attr-defined]
-            target=_run_in_subprocess, args=(queue, name, fn)
-        )
+        proc = ctx.Process(target=_run_in_subprocess, args=(queue, name, fn))
 
         start = time.monotonic()
         proc.start()
