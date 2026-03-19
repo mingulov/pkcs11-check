@@ -127,9 +127,9 @@ Kryoptic supports v3.0 AND v3.2 interfaces. The 278 entries marked testable=Fals
 
 Each test runs in subprocess with temporary token. Main token untouched.
 
-- [ ] **3.1** Create `test_ckr_destructive.py` — all @subprocess + @destructive: (a) C_InitToken with open session → CKR_SESSION_EXISTS. (b) C_InitToken with wrong SO PIN → CKR_PIN_INCORRECT. (c) C_SetPIN with wrong old PIN → CKR_PIN_INCORRECT. (d) C_SetPIN with too-short new PIN → CKR_PIN_LEN_RANGE. (e) C_InitPIN without SO login → CKR_USER_NOT_LOGGED_IN. Verify on SoftHSM2.
-- [ ] **3.2** PIN lockout test — C_Login with wrong PIN N times → CKR_PIN_LOCKED. Mark @destructive. Use fresh temp token. Document lockout threshold per module.
-- [ ] **3.3** Flip testable=False for destructive entries covered.
+- [x] **3.1** Create `test_ckr_destructive.py` — all @subprocess + @destructive: (a) C_InitToken with open session → CKR_SESSION_EXISTS. (b) C_InitToken with wrong SO PIN → CKR_PIN_INCORRECT. (c) C_SetPIN with wrong old PIN → CKR_PIN_INCORRECT. (d) C_SetPIN with too-short new PIN → CKR_PIN_LEN_RANGE. (e) C_InitPIN without SO login → CKR_USER_NOT_LOGGED_IN. Verify on SoftHSM2.
+- [x] **3.2** PIN lockout test — C_Login with wrong PIN N times → CKR_PIN_LOCKED. Mark @destructive. Use fresh temp token. Document lockout threshold per module.
+- [x] **3.3** Flip testable=False for destructive entries covered.
 
 ## Phase 4 — Fault-Proxy Upgrade
 
