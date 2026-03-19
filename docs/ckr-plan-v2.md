@@ -102,41 +102,41 @@ For each existing dict, add ALL missing function-specific CKR entries from the s
 Use `pkcs11.raw.RawPKCS11` to test conditions blocked by wrapper. All run in subprocess.
 
 - [x] **2.1** Attribute permission tests — create `test_ckr_raw_attrs.py`: CKA_ENCRYPT=False + C_EncryptInit, CKA_DECRYPT=False + C_DecryptInit, CKA_SIGN=False + C_SignInit, CKA_VERIFY=False + C_VerifyInit, CKA_DERIVE=False + C_DeriveKey. Each → CKR_KEY_FUNCTION_NOT_PERMITTED. Verify on SoftHSM2 + Kryoptic.
-- [ ] **2.2** Additional multipart tests — expand `test_ckr_raw_multipart.py`: C_DecryptFinal without Init, C_SignFinal without Init, C_VerifyUpdate without Init, C_VerifyFinal without Init. All → CKR_OPERATION_NOT_INITIALIZED.
-- [ ] **2.3** Additional state tests — expand `test_ckr_raw_state.py`: double C_SignInit, double C_DecryptInit, C_DigestInit then C_EncryptInit (cross-op).
-- [ ] **2.4** Additional buffer tests — expand `test_ckr_raw_buffer.py`: C_Sign with 1-byte output, C_SignFinal with 1-byte output, C_GetAttributeValue with 1-byte buffer.
-- [ ] **2.5** Flip testable=False → testable=True for all entries now covered by raw tests.
-- [ ] **2.5b** Gap audit: count remaining testable=False by category. For v2.40 functions where RawPKCS11 COULD test but no test exists — add more raw tests. For v3.0/v3.2 (no module support) — leave testable=False with note. For FunctionCanceled — documented exclusion. Add new tasks if gaps found.
-- [ ] **2.6** Validation checkpoint — all 3 local targets. Count tests + testable=True percentage.
+- [x] **2.2** Additional multipart tests — expand `test_ckr_raw_multipart.py`: C_DecryptFinal without Init, C_SignFinal without Init, C_VerifyUpdate without Init, C_VerifyFinal without Init. All → CKR_OPERATION_NOT_INITIALIZED.
+- [x] **2.3** Additional state tests — expand `test_ckr_raw_state.py`: double C_SignInit, double C_DecryptInit, C_DigestInit then C_EncryptInit (cross-op).
+- [x] **2.4** Additional buffer tests — expand `test_ckr_raw_buffer.py`: C_Sign with 1-byte output, C_SignFinal with 1-byte output, C_GetAttributeValue with 1-byte buffer.
+- [x] **2.5** Flip testable=False → testable=True for all entries now covered by raw tests.
+- [x] **2.5b** Gap audit: count remaining testable=False by category. For v2.40 functions where RawPKCS11 COULD test but no test exists — add more raw tests. For v3.0/v3.2 (no module support) — leave testable=False with note. For FunctionCanceled — documented exclusion. Add new tasks if gaps found.
+- [x] **2.6** Validation checkpoint — all 3 local targets. Count tests + testable=True percentage.
 
 ## Phase 3 — Destructive Subprocess Tests
 
 Each test runs in subprocess with temporary token. Main token untouched.
 
-- [ ] **3.1** Create `test_ckr_destructive.py` — all @subprocess + @destructive: (a) C_InitToken with open session → CKR_SESSION_EXISTS. (b) C_InitToken with wrong SO PIN → CKR_PIN_INCORRECT. (c) C_SetPIN with wrong old PIN → CKR_PIN_INCORRECT. (d) C_SetPIN with too-short new PIN → CKR_PIN_LEN_RANGE. (e) C_InitPIN without SO login → CKR_USER_NOT_LOGGED_IN. Verify on SoftHSM2.
-- [ ] **3.2** PIN lockout test — C_Login with wrong PIN N times → CKR_PIN_LOCKED. Mark @destructive. Use fresh temp token. Document lockout threshold per module.
-- [ ] **3.3** Flip testable=False for destructive entries covered.
+- [x] **3.1** Create `test_ckr_destructive.py` — all @subprocess + @destructive: (a) C_InitToken with open session → CKR_SESSION_EXISTS. (b) C_InitToken with wrong SO PIN → CKR_PIN_INCORRECT. (c) C_SetPIN with wrong old PIN → CKR_PIN_INCORRECT. (d) C_SetPIN with too-short new PIN → CKR_PIN_LEN_RANGE. (e) C_InitPIN without SO login → CKR_USER_NOT_LOGGED_IN. Verify on SoftHSM2.
+- [x] **3.2** PIN lockout test — C_Login with wrong PIN N times → CKR_PIN_LOCKED. Mark @destructive. Use fresh temp token. Document lockout threshold per module.
+- [x] **3.3** Flip testable=False for destructive entries covered.
 
 ## Phase 4 — Fault-Proxy Upgrade
 
 Upgrade fault-proxy.c to intercept all C_* functions for device/token error injection.
 
-- [ ] **4.1** Upgrade `fault-proxy.c` — instead of pass-through, build full CK_FUNCTION_LIST with intercepting wrappers for ALL 68 functions. Each checks `should_inject(func_name)` before delegating. ~600 lines C. Verify: build + basic encrypt/decrypt through proxy.
-- [ ] **4.2** Expand `test_ckr_fault_inject.py` — inject: CKR_DEVICE_REMOVED on C_Encrypt, CKR_DEVICE_ERROR on C_Sign, CKR_DEVICE_MEMORY on C_GenerateKey, CKR_TOKEN_NOT_PRESENT on C_GetTokenInfo. Verify actual injection works (not just pass-through).
-- [ ] **4.3** Flip testable=False for device/token entries covered.
+- [x] **4.1** Upgrade `fault-proxy.c` — instead of pass-through, build full CK_FUNCTION_LIST with intercepting wrappers for ALL 68 functions. Each checks `should_inject(func_name)` before delegating. ~600 lines C. Verify: build + basic encrypt/decrypt through proxy.
+- [x] **4.2** Expand `test_ckr_fault_inject.py` — inject: CKR_DEVICE_REMOVED on C_Encrypt, CKR_DEVICE_ERROR on C_Sign, CKR_DEVICE_MEMORY on C_GenerateKey, CKR_TOKEN_NOT_PRESENT on C_GetTokenInfo. Verify actual injection works (not just pass-through).
+- [x] **4.3** Flip testable=False for device/token entries covered.
 
 ## Phase 5 — Universal CKR Infrastructure Tests
 
-- [ ] **5.1** Create `test_ckr_universal.py` — parametrized tests verifying each of the 14 universal CKR codes: (a) Present in correct `_UNIVERSAL` / `_SESSION_UNIVERSAL` / `_TOKEN_UNIVERSAL` tuple. (b) `full_compat()` includes it. (c) At least one real trigger (e.g., CKR_SESSION_HANDLE_INVALID via closed session, CKR_DEVICE_ERROR via fault-proxy, CKR_CRYPTOKI_NOT_INITIALIZED via post-Finalize call).
-- [ ] **5.2** Update `full_compat()` if any universal codes are missing (CKR_OPERATION_NOT_VALIDATED, CKR_TOKEN_NOT_INITIALIZED).
+- [x] **5.1** Create `test_ckr_universal.py` — parametrized tests verifying each of the 14 universal CKR codes: (a) Present in correct `_UNIVERSAL` / `_SESSION_UNIVERSAL` / `_TOKEN_UNIVERSAL` tuple. (b) `full_compat()` includes it. (c) At least one real trigger (e.g., CKR_SESSION_HANDLE_INVALID via closed session, CKR_DEVICE_ERROR via fault-proxy, CKR_CRYPTOKI_NOT_INITIALIZED via post-Finalize call).
+- [x] **5.2** Update `full_compat()` if any universal codes are missing (CKR_OPERATION_NOT_VALIDATED, CKR_TOKEN_NOT_INITIALIZED).
 
 ## Phase 6 — Document Untestable + Final
 
-- [ ] **6.1** For each truly untestable CKR, add entry with `testable=False, rationale="..."`: CKR_MUTEX_BAD, CKR_MUTEX_NOT_LOCKED, CKR_CANCEL, CKR_FUNCTION_NOT_PARALLEL, CKR_PENDING (most contexts), CKR_FUNCTION_REJECTED (token-specific), C_AsyncComplete (dynamic returns).
-- [ ] **6.2** Update `docs/ckr-coverage.md` — final numbers from validation script. Per-function matrix. Per-module deviation summary.
-- [ ] **6.3** Final regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Zero failures.
-- [ ] **6.4** Update `docs/master-plan.md` — mark CKR coverage as complete.
-- [ ] **6.5** **Handoff to master-plan.md** — CKR 100% coverage achieved.
+- [x] **6.1** For each truly untestable CKR, add entry with `testable=False, rationale="..."`: CKR_MUTEX_BAD, CKR_MUTEX_NOT_LOCKED, CKR_CANCEL, CKR_FUNCTION_NOT_PARALLEL, CKR_PENDING (most contexts), CKR_FUNCTION_REJECTED (token-specific), C_AsyncComplete (dynamic returns).
+- [x] **6.2** Update `docs/ckr-coverage.md` — final numbers from validation script. Per-function matrix. Per-module deviation summary.
+- [x] **6.3** Final regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Zero failures.
+- [x] **6.4** Update `docs/master-plan.md` — mark CKR coverage as complete.
+- [x] **6.5** **Handoff to master-plan.md** — CKR 100% coverage achieved.
 
 ---
 
