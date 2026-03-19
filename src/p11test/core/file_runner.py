@@ -19,7 +19,7 @@ from rich.console import Console
 IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
 CrashStatus = Literal["crashed", "timeout"]
-_RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated"}
+_RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated", "crash_limited"}
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
 _FINGERPRINT_ENV_PREFIXES = (
@@ -353,7 +353,9 @@ def write_isolated_junit_report(
 
     failures = sum(1 for result in state.results if result.status == "failed")
     errors = sum(1 for result in state.results if result.status in {"crashed", "timeout"})
-    skipped = sum(1 for result in state.results if result.status in {"empty", "escalated"})
+    skipped = sum(
+        1 for result in state.results if result.status in {"empty", "escalated", "crash_limited"}
+    )
     duration_s = sum(result.duration_s for result in state.results)
 
     suite = ET.Element(
@@ -422,6 +424,16 @@ def write_isolated_junit_report(
             skipped_node.text = (
                 f"Unit {result.target} crashed at file granularity and was expanded to per-test "
                 "isolation."
+            )
+        elif result.status == "crash_limited":
+            skipped_node = ET.SubElement(
+                case,
+                "skipped",
+                {"message": "skipped after per-file crash limit was reached"},
+            )
+            skipped_node.text = (
+                f"Unit {result.target} was skipped because this file exceeded the configured "
+                "per-file crash limit in isolated mode."
             )
 
     tree = ET.ElementTree(suite)
@@ -665,7 +677,7 @@ def build_state_fingerprint(
 def units_remaining_for_resume(units: list[str], state: FileRunState | None) -> list[str]:
     """Return units that still need to run for a resumed session."""
     if state is None:
-        return units
+        return list(units)
 
     completed_ok = {
         result.target for result in state.results if result.status in _RESUME_COMPLETE_STATUSES
@@ -695,6 +707,10 @@ def _effective_granularity(unit: str, granularity: RunnerGranularity) -> Isolati
     return granularity
 
 
+def _unit_file_key(unit: str) -> str:
+    return normalize_policy_file_key(unit.split("::", 1)[0])
+
+
 def _promote_crashing_unit(
     policy_file: Path | None,
     pytest_args: list[str],
@@ -714,7 +730,7 @@ def _promote_crashing_unit(
         BackendIsolationPolicy(fingerprint=fingerprint, promoted_files=[], crashed_tests=[]),
     )
 
-    file_key = normalize_policy_file_key(unit.split("::", 1)[0])
+    file_key = _unit_file_key(unit)
     changed = False
 
     if file_key not in policy.promoted_files:
@@ -760,6 +776,69 @@ def _refresh_state_plan(
 ) -> None:
     state.units = list(units)
     state.fingerprint = build_state_fingerprint(units, pytest_args, env)
+
+
+def _count_test_level_crashes_for_file(state: FileRunState, file_key: str) -> int:
+    return sum(
+        1
+        for result in state.results
+        if "::" in result.target
+        and _unit_file_key(result.target) == file_key
+        and result.status in {"crashed", "timeout"}
+    )
+
+
+def _limit_remaining_units_for_file(
+    *,
+    unit: str,
+    units: list[str],
+    index: int,
+    pending_units: list[str],
+    state: FileRunState,
+    pytest_args: list[str],
+    env: Mapping[str, str],
+    console: Console,
+    max_crashes_per_file: int,
+) -> list[str]:
+    if max_crashes_per_file <= 0 or "::" not in unit:
+        return []
+
+    file_key = _unit_file_key(unit)
+    crash_count = _count_test_level_crashes_for_file(state, file_key)
+    if crash_count < max_crashes_per_file:
+        return []
+
+    limited_units: list[str] = []
+    for candidate in units[index + 1 :]:
+        if "::" not in candidate or _unit_file_key(candidate) != file_key:
+            continue
+        if candidate not in pending_units:
+            continue
+
+        limited_units.append(candidate)
+        _record_result(
+            state,
+            FileRunResult(
+                target=candidate,
+                status="crash_limited",
+                returncode=0,
+                duration_s=0.0,
+            ),
+        )
+
+    if not limited_units:
+        return []
+
+    limited_set = set(limited_units)
+    pending_units[:] = [candidate for candidate in pending_units if candidate not in limited_set]
+    _refresh_state_plan(state, units, pytest_args, env)
+    console.print(
+        "[yellow]Adaptive isolation:[/yellow] "
+        f"reached the per-file crash limit for {Path(unit.split('::', 1)[0]).name} "
+        f"({crash_count}/{max_crashes_per_file}); "
+        f"skipping {len(limited_units)} remaining test units from that file."
+    )
+    return limited_units
 
 
 def _insert_escalated_units(
@@ -826,6 +905,7 @@ def run_isolated_pytest_units(
     stop_on_failure: bool,
     console: Console,
     granularity: RunnerGranularity = "file",
+    max_crashes_per_file: int = 3,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
     env = os.environ.copy()
@@ -942,6 +1022,21 @@ def run_isolated_pytest_units(
                         index += 1
                         continue
 
+                if granularity in {"mixed", "test"} and unit_granularity == "test":
+                    limited_units = _limit_remaining_units_for_file(
+                        unit=unit,
+                        units=units,
+                        index=index,
+                        pending_units=pending_units,
+                        state=state,
+                        pytest_args=pytest_args,
+                        env=env,
+                        console=console,
+                        max_crashes_per_file=max_crashes_per_file,
+                    )
+                    if limited_units:
+                        save_run_state(state_file, state)
+
                 console.print(f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)")
                 exit_code = 1
                 if stop_on_failure:
@@ -1004,6 +1099,26 @@ def run_isolated_pytest_units(
                         console.print(f"[red]CRASHED[/red] {unit} ({duration_s:.1f}s)")
                         index += 1
                         continue
+
+            if (
+                granularity in {"mixed", "test"}
+                and unit_granularity == "test"
+                and not stop_on_failure
+                and status in {"crashed", "timeout"}
+            ):
+                limited_units = _limit_remaining_units_for_file(
+                    unit=unit,
+                    units=units,
+                    index=index,
+                    pending_units=pending_units,
+                    state=state,
+                    pytest_args=pytest_args,
+                    env=env,
+                    console=console,
+                    max_crashes_per_file=max_crashes_per_file,
+                )
+                if limited_units:
+                    save_run_state(state_file, state)
 
             exit_code = 1
             console.print(f"[red]{status.upper()}[/red] {unit} ({duration_s:.1f}s)")

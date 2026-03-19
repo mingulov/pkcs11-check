@@ -7,3 +7,9 @@
 [submodule "src/p11test/testcases/data/cctv"]
 	path = src/p11test/testcases/data/cctv
 	url = https://github.com/C2SP/CCTV.git
+[submodule "src/p11test/testcases/data/x509-limbo"]
+	path = src/p11test/testcases/data/x509-limbo
+	url = https://github.com/C2SP/x509-limbo.git
+[submodule "src/p11test/testcases/data/acvp"]
+	path = src/p11test/testcases/data/acvp
+	url = https://github.com/usnistgov/ACVP-Server.git

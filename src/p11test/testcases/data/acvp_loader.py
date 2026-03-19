@@ -20,17 +20,15 @@ from typing import Any
 
 from p11test.testcases.data import ACVP_DIR
 
-ACVP_AVAILABLE = ACVP_DIR.exists() and (ACVP_DIR / "gen-val").exists()
+ACVP_AVAILABLE = ACVP_DIR.exists()
 
 
 def _find_vector_dir(algorithm: str) -> Path | None:
     """Find the vector directory for an algorithm."""
-    # ACVP structure: json-files/<algorithm>/...
-    # But actual path may be under gen-val/json-files/
-    for base in [ACVP_DIR, ACVP_DIR / "gen-val"]:
-        candidate = base / "json-files" / algorithm
-        if candidate.exists():
-            return candidate
+    # ACVP_DIR already points to gen-val/json-files/
+    candidate = ACVP_DIR / algorithm
+    if candidate.exists():
+        return candidate
     return None
 
 
@@ -85,9 +83,4 @@ def list_acvp_algorithms() -> list[str]:
     """List available ACVP algorithm directories."""
     if not ACVP_AVAILABLE:
         return []
-    results = []
-    for base in [ACVP_DIR, ACVP_DIR / "gen-val"]:
-        jf = base / "json-files"
-        if jf.exists():
-            results.extend(d.name for d in jf.iterdir() if d.is_dir())
-    return sorted(set(results))
+    return sorted(d.name for d in ACVP_DIR.iterdir() if d.is_dir())

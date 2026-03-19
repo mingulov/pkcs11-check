@@ -124,6 +124,13 @@ def test_command(
         "--policy-file",
         help="Adaptive isolation policy file for isolated runs",
     ),
+    max_crashes_per_file: int = typer.Option(
+        3,
+        "--max-crashes-per-file",
+        min=0,
+        help="In test/auto isolation, skip remaining tests from a file after this many crashes "
+        "(0 = unlimited)",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
@@ -215,6 +222,7 @@ def test_command(
                     stop_on_failure=stop_on_failure,
                     console=console,
                     granularity=runner_granularity,
+                    max_crashes_per_file=max_crashes_per_file,
                 )
             except (FileNotFoundError, ValueError) as exc:
                 console.print(f"[red]Error:[/red] {exc}")

@@ -23,17 +23,17 @@ if not ACVP_AVAILABLE:
     pytest.skip("ACVP vectors not cloned (run: scripts/fetch-optional-data.sh acvp)", allow_module_level=True)
 
 _SLH_DSA_ALGORITHMS = [
-    "SLH-DSA-SHA2-128s-sigVer",
-    "SLH-DSA-SHA2-128f-sigVer",
-    "SLH-DSA-SHA2-192s-sigVer",
-    "SLH-DSA-SHA2-256s-sigVer",
-    "SLH-DSA-SHAKE-128s-sigVer",
+    "SLH-DSA-sigVer-FIPS205",
+    "SLH-DSA-sigGen-FIPS205",
+    "SLH-DSA-keyGen-FIPS205",
 ]
 
 
 def _find_available_slhdsa() -> list[str]:
     """Find which SLH-DSA algorithm directories exist."""
-    return [alg for alg in _SLH_DSA_ALGORITHMS if load_acvp_vectors(alg)]
+    from p11test.testcases.data.acvp_loader import list_acvp_algorithms
+    available = list_acvp_algorithms()
+    return [alg for alg in _SLH_DSA_ALGORITHMS if alg in available]
 
 
 @pytest.mark.parametrize("algorithm", _find_available_slhdsa())

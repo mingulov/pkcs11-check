@@ -49,6 +49,8 @@ runner skip only the one crashing test on resume instead of rerunning a whole fi
 per-test cost across the entire target set.
 If a file crashes or times out during an `auto` run, the runner now escalates that
 same file to per-test isolation immediately for the rest of the current run.
+Once an escalated file reaches the configured per-file crash budget, the runner
+marks the remaining test units from that file as `crash_limited` and moves on.
 
 ## Resume From The Broken Place
 
@@ -61,7 +63,8 @@ uv run p11test test \
   --resume
 ```
 
-The runner treats only `passed` and `empty` units as complete. Files that failed, crashed, or timed out are rerun on resume.
+The runner treats `passed`, `empty`, and `crash_limited` units as complete. Files
+that failed, crashed, or timed out are rerun on resume.
 In `--isolation auto`, resume keeps the saved unit plan from the state file. Fresh
 non-resume runs are the point where newly learned policy promotions take effect.
 
@@ -108,6 +111,18 @@ for the same backend fingerprint. Those files are promoted to per-test isolation
 on later runs while the rest of the target set stays at file granularity. Fresh
 crashes in the current run are also escalated immediately without waiting for a
 second invocation.
+
+Use `--max-crashes-per-file` to cap how many crashing per-test units the runner
+will attribute before skipping the rest of that file:
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
+  --isolation auto \
+  --max-crashes-per-file 2
+```
+
+`0` disables the cap and keeps running every collected nodeid from an escalated file.
 
 You can override it:
 
@@ -156,6 +171,7 @@ uv run p11test state --output json .p11test-isolation-state.json
 - `--sessions` is ignored in isolated modes.
 - The normal `--timeout` value is still passed through to pytest as per-test timeout.
 - The file runner also has an outer subprocess timeout so a dead file runner does not hang forever.
+- `--max-crashes-per-file` defaults to `3` in `test` and `auto` isolation; `0` disables it.
 - Resume safety checks include the requested units, pytest arguments, relevant environment,
   and file/module metadata. A changed test file or changed module binary invalidates the old state.
 - Adaptive policy keys off backend-relevant inputs only: module/interface/slot/manifest/env, not the
@@ -234,6 +250,7 @@ P11TEST_RESUME=1
 P11TEST_STOP_ON_FAILURE=1
 P11TEST_STATE_FILE=/tmp/p11test-bouncyhsm.json
 P11TEST_POLICY_FILE=/tmp/p11test-bouncyhsm-policy.json
+P11TEST_MAX_CRASHES_PER_FILE=2
 ```
 
 The shell helper supports the common local workflow options in isolation mode:

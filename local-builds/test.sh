@@ -109,7 +109,7 @@ if [ "${P11TEST_ISOLATION:-none}" != "none" ]; then
 fi
 for arg in "$@"; do
     case "$arg" in
-        --isolation|--isolation=*|--resume|--stop-on-failure|--state-file|--state-file=*|--policy-file|--policy-file=*)
+        --isolation|--isolation=*|--resume|--stop-on-failure|--state-file|--state-file=*|--policy-file|--policy-file=*|--max-crashes-per-file|--max-crashes-per-file=*)
             use_isolation_runner=1
             isolation_requested=1
             ;;
@@ -135,6 +135,7 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     stop_on_failure="${P11TEST_STOP_ON_FAILURE:-0}"
     state_file="${P11TEST_STATE_FILE:-}"
     policy_file="${P11TEST_POLICY_FILE:-}"
+    max_crashes_per_file="${P11TEST_MAX_CRASHES_PER_FILE:-}"
     match=""
     output="rich"
     output_file=""
@@ -174,6 +175,14 @@ if [ "$use_isolation_runner" -eq 1 ]; then
                 ;;
             --policy-file=*)
                 policy_file="${1#*=}"
+                shift
+                ;;
+            --max-crashes-per-file)
+                max_crashes_per_file="${2:-}"
+                shift 2
+                ;;
+            --max-crashes-per-file=*)
+                max_crashes_per_file="${1#*=}"
                 shift
                 ;;
             -k|--match)
@@ -248,6 +257,9 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     elif [ -n "$policy_file" ]; then
         echo "Policy:    $policy_file"
     fi
+    if [ -n "$max_crashes_per_file" ]; then
+        echo "Crash cap: $max_crashes_per_file"
+    fi
     echo ""
 
     CLI_ARGS=(test --module "$MODULE" --isolation "$isolation_mode")
@@ -257,6 +269,7 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     [ "$stop_on_failure" != "0" ] && CLI_ARGS+=("--stop-on-failure")
     [ -n "$state_file" ] && CLI_ARGS+=("--state-file" "$state_file")
     [ -n "$policy_file" ] && CLI_ARGS+=("--policy-file" "$policy_file")
+    [ -n "$max_crashes_per_file" ] && CLI_ARGS+=("--max-crashes-per-file" "$max_crashes_per_file")
     [ -n "$output" ] && CLI_ARGS+=("--output" "$output")
     [ -n "$output_file" ] && CLI_ARGS+=("--output-file" "$output_file")
     [ "$verbose" != "0" ] && CLI_ARGS+=("--verbose")

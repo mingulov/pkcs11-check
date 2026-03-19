@@ -49,6 +49,7 @@ class TestTestCommand:
             stop_on_failure: bool,
             console: object,
             granularity: str,
+            max_crashes_per_file: int,
         ) -> int:
             del console
             called["units"] = units
@@ -60,6 +61,7 @@ class TestTestCommand:
             called["resume"] = resume
             called["stop_on_failure"] = stop_on_failure
             called["granularity"] = granularity
+            called["max_crashes_per_file"] = max_crashes_per_file
             return 7
 
         monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
@@ -101,6 +103,8 @@ class TestTestCommand:
                 "33",
                 "--resume",
                 "--stop-on-failure",
+                "--max-crashes-per-file",
+                "5",
                 "--state-file",
                 str(state_file),
             ],
@@ -114,6 +118,7 @@ class TestTestCommand:
         assert called["resume"] is True
         assert called["stop_on_failure"] is True
         assert called["granularity"] == "file"
+        assert called["max_crashes_per_file"] == 5
         assert "--p11-pin" not in called["pytest_args"]
         assert "--p11-manifest" in called["pytest_args"]
 
@@ -134,6 +139,7 @@ class TestTestCommand:
             stop_on_failure: bool,
             console: object,
             granularity: str,
+            max_crashes_per_file: int,
         ) -> int:
             del (
                 pytest_args,
@@ -144,6 +150,7 @@ class TestTestCommand:
                 resume,
                 stop_on_failure,
                 console,
+                max_crashes_per_file,
             )
             called["units"] = units
             called["granularity"] = granularity
@@ -202,6 +209,7 @@ class TestTestCommand:
             stop_on_failure: bool,
             console: object,
             granularity: str,
+            max_crashes_per_file: int,
         ) -> int:
             del (
                 pytest_args,
@@ -212,6 +220,7 @@ class TestTestCommand:
                 resume,
                 stop_on_failure,
                 console,
+                max_crashes_per_file,
             )
             called["units"] = units
             called["granularity"] = granularity
@@ -275,6 +284,7 @@ class TestTestCommand:
             stop_on_failure: bool,
             console: object,
             granularity: str,
+            max_crashes_per_file: int,
         ) -> int:
             del (
                 pytest_args,
@@ -284,6 +294,7 @@ class TestTestCommand:
                 report_config,
                 stop_on_failure,
                 console,
+                max_crashes_per_file,
             )
             called["units"] = units
             called["resume"] = resume
@@ -371,6 +382,7 @@ class TestTestCommand:
             stop_on_failure: bool,
             console: object,
             granularity: str,
+            max_crashes_per_file: int,
         ) -> int:
             del (
                 units,
@@ -382,6 +394,7 @@ class TestTestCommand:
                 stop_on_failure,
                 console,
                 granularity,
+                max_crashes_per_file,
             )
             called["report_config"] = report_config
             return 0
