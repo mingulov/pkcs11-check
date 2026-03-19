@@ -47,6 +47,11 @@ _RSA_HASH_MECHANISMS = {
 
 # All RSA signature vector files we want to test
 _RSA_SIG_FILES = [
+    "rsa_pkcs1_1024_sig_gen_test.json",
+    "rsa_pkcs1_1536_sig_gen_test.json",
+    "rsa_pkcs1_2048_sig_gen_test.json",
+    "rsa_pkcs1_3072_sig_gen_test.json",
+    "rsa_pkcs1_4096_sig_gen_test.json",
     "rsa_signature_2048_sha224_test.json",
     "rsa_signature_2048_sha256_test.json",
     "rsa_signature_2048_sha384_test.json",
@@ -119,7 +124,7 @@ def test_rsa_wycheproof(
     if mech_display not in supported:
         pytest.skip(f"{mech_display} not supported by module")
 
-    pk = group.get("publicKey", {})
+    pk = group.get("publicKey", group.get("privateKey", {}))
     modulus_hex = pk.get("modulus", "")
     exp_hex = pk.get("publicExponent", "")
     if not modulus_hex or not exp_hex:

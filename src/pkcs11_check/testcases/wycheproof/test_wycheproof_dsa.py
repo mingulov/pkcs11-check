@@ -1,7 +1,7 @@
 """Wycheproof DSA signature verification vectors.
 
 Tests DSA across key sizes 2048/3072 with SHA-224/SHA-256.
-Uses DER-encoded signatures (not P1363).
+Supports both ASN.1 DER and IEEE P1363 signature encodings.
 """
 
 from __future__ import annotations
@@ -31,17 +31,20 @@ _MECH_DISPLAY: dict[Mechanism, str] = {
     Mechanism.DSA_SHA256: "DSA_SHA256",
 }
 
-# DSA vector files — DER-encoded (not P1363)
 _DSA_FILES = [
     "dsa_2048_224_sha224_test.json",
+    "dsa_2048_224_sha224_p1363_test.json",
     "dsa_2048_224_sha256_test.json",
+    "dsa_2048_224_sha256_p1363_test.json",
     "dsa_2048_256_sha256_test.json",
+    "dsa_2048_256_sha256_p1363_test.json",
     "dsa_3072_256_sha256_test.json",
+    "dsa_3072_256_sha256_p1363_test.json",
 ]
 
 
 def _load_dsa_vectors() -> list[tuple[str, dict[str, Any]]]:
-    """Load all DSA DER-encoded vectors."""
+    """Load all DSA vectors."""
     vectors = []
     for filename in _DSA_FILES:
         path = WYCHEPROOF_DIR / filename
@@ -58,6 +61,7 @@ def _load_dsa_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}
                 test["_mechanism"] = mechanism
                 test["_file"] = filename
+                test["_is_p1363"] = "p1363" in filename
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
     return vectors
@@ -81,7 +85,6 @@ def test_dsa(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
     result = vec["result"]
     mechanism = vec["_mechanism"]
     group = vec["_group"]
-
     pk = group.get("publicKey", {})
     p_hex = pk.get("p", "")
     q_hex = pk.get("q", "")

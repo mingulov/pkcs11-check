@@ -1,9 +1,6 @@
 """Wycheproof ML-KEM (CRYSTALS-Kyber) test vectors.
 
-Tests ML-KEM-512, ML-KEM-768, ML-KEM-1024 decapsulation using
-Wycheproof edge-case vectors. Requires v3.2 module with KEM support.
-
-Vector files: mlkem_{512,768,1024}_test.json (decapsulation)
+Adds decapsulation-style coverage for the available ML-KEM vector families.
 """
 
 from __future__ import annotations
@@ -26,6 +23,15 @@ _PARAM_SETS = {
     1024: MLKemParameterSet.ML_KEM_1024,
 }
 
+_MLKEM_FILES = [
+    ("mlkem_512_test.json", 512),
+    ("mlkem_512_semi_expanded_decaps_test.json", 512),
+    ("mlkem_768_test.json", 768),
+    ("mlkem_768_semi_expanded_decaps_test.json", 768),
+    ("mlkem_1024_test.json", 1024),
+    ("mlkem_1024_semi_expanded_decaps_test.json", 1024),
+]
+
 
 def _load_mlkem_vectors(filename: str) -> list[dict[str, Any]]:
     """Load ML-KEM Wycheproof vectors."""
@@ -47,19 +53,34 @@ def _vec_id(v: dict[str, Any]) -> str:
     return f"tc{v['tcId']}-{v['result']}"
 
 
+def _load_all_mlkem_vectors() -> list[tuple[str, dict[str, Any]]]:
+    vectors = []
+    for filename, parameter_set in _MLKEM_FILES:
+        for vec in _load_mlkem_vectors(filename):
+            vec["_filename"] = filename
+            vec["_parameter_set"] = parameter_set
+            vectors.append((f"{filename}:{_vec_id(vec)}", vec))
+    return vectors
+
+
+_ALL_MLKEM_VECTORS = _load_all_mlkem_vectors()
+
+
 @pytest.mark.parametrize(
-    "vec",
-    _load_mlkem_vectors("mlkem_768_test.json"),
-    ids=lambda v: _vec_id(v),
+    "vec_id,vec",
+    _ALL_MLKEM_VECTORS,
+    ids=[v[0] for v in _ALL_MLKEM_VECTORS],
 )
-def test_mlkem_768_decaps(vec: dict[str, Any], p11_session: Any, p11_module: Any) -> None:
-    """ML-KEM-768 decapsulation from Wycheproof vectors."""
+def test_mlkem_decaps(
+    vec_id: str, vec: dict[str, Any], p11_session: Any, p11_module: Any
+) -> None:
+    """ML-KEM decapsulation from Wycheproof vectors."""
     if not has_mechanism(p11_module, "ML_KEM"):
         pytest.skip("ML_KEM not supported")
 
     group = vec["_group"]
     private_key_bytes = bytes.fromhex(group.get("privateKey", vec.get("dk", "")))
-    ciphertext = bytes.fromhex(vec.get("ct", ""))
+    ciphertext = bytes.fromhex(vec.get("ct", vec.get("c", "")))
     expected_ss = bytes.fromhex(vec.get("ss", ""))
     result = vec["result"]
 
@@ -67,7 +88,7 @@ def test_mlkem_768_decaps(vec: dict[str, Any], p11_session: Any, p11_module: Any
         pytest.skip("Missing key or ciphertext in vector")
 
     # Import private key
-    param_set = int(MLKemParameterSet.ML_KEM_768)
+    param_set = int(_PARAM_SETS[vec["_parameter_set"]])
     try:
         priv = p11_session.create_object({
             Attribute.CLASS: ObjectClass.PRIVATE_KEY,
@@ -95,5 +116,5 @@ def test_mlkem_768_decaps(vec: dict[str, Any], p11_session: Any, p11_module: Any
             pass  # Key was produced — that's the expected behavior
     except Exception:
         if result == "valid":
-            pytest.fail(f"Valid ML-KEM-768 decaps failed: tc{vec['tcId']}")
+            pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}")
         # Invalid vectors failing is expected

@@ -2,8 +2,6 @@
 
 Tests ML-DSA-44, ML-DSA-65, ML-DSA-87 signature generation using
 Wycheproof vectors. Complements test_wycheproof_mldsa.py (verify-only).
-
-Vector files: mldsa_{44,65,87}_sign_noseed_test.json
 """
 
 from __future__ import annotations
@@ -40,28 +38,54 @@ def _vid(v: dict[str, Any]) -> str:
     return f"tc{v['tcId']}-{v['result']}"
 
 
-@pytest.mark.parametrize("vec", _load("mldsa_65_sign_noseed_test.json"), ids=_vid)
-def test_mldsa_65_sign(vec: dict[str, Any], p11_session: Any, p11_module: Any) -> None:
-    """ML-DSA-65 signing from Wycheproof vectors."""
+_MLDSA_SIGN_FILES = [
+    ("mldsa_44_sign_noseed_test.json", MLDsaParameterSet.ML_DSA_44),
+    ("mldsa_44_sign_seed_test.json", MLDsaParameterSet.ML_DSA_44),
+    ("mldsa_65_sign_noseed_test.json", MLDsaParameterSet.ML_DSA_65),
+    ("mldsa_65_sign_seed_test.json", MLDsaParameterSet.ML_DSA_65),
+    ("mldsa_87_sign_noseed_test.json", MLDsaParameterSet.ML_DSA_87),
+    ("mldsa_87_sign_seed_test.json", MLDsaParameterSet.ML_DSA_87),
+]
+
+
+def _load_sign_vectors() -> list[tuple[str, dict[str, Any]]]:
+    vectors = []
+    for filename, parameter_set in _MLDSA_SIGN_FILES:
+        for vec in _load(filename):
+            vec["_parameter_set"] = int(parameter_set)
+            vec["_filename"] = filename
+            vectors.append((f"{filename}:tc{vec['tcId']}-{vec['result']}", vec))
+    return vectors
+
+
+_ALL_SIGN_VECTORS = _load_sign_vectors()
+
+
+@pytest.mark.parametrize("vec_id,vec", _ALL_SIGN_VECTORS, ids=[v[0] for v in _ALL_SIGN_VECTORS])
+def test_mldsa_sign(
+    vec_id: str, vec: dict[str, Any], p11_session: Any, p11_module: Any
+) -> None:
+    """ML-DSA signing from Wycheproof vectors."""
     if not has_mechanism(p11_module, "ML_DSA"):
         pytest.skip("ML_DSA not supported")
 
     group = vec["_group"]
-    private_key_bytes = bytes.fromhex(group.get("privateKey", ""))
+    private_key_hex = group.get("privateKey", "")
+    if not private_key_hex:
+        private_key_hex = group.get("privateKeyPkcs8", "")
     msg = bytes.fromhex(vec.get("msg", ""))
-    expected_sig = bytes.fromhex(vec.get("sig", ""))
     result = vec["result"]
+    private_key_bytes = bytes.fromhex(private_key_hex)
 
     if not private_key_bytes:
         pytest.skip("No private key in vector")
 
-    param_set = int(MLDsaParameterSet.ML_DSA_65)
     try:
         priv = p11_session.create_object({
             Attribute.CLASS: ObjectClass.PRIVATE_KEY,
             Attribute.KEY_TYPE: KeyType.ML_DSA,
             Attribute.VALUE: private_key_bytes,
-            Attribute.PARAMETER_SET: param_set,
+            Attribute.PARAMETER_SET: vec["_parameter_set"],
             Attribute.SIGN: True,
             Attribute.TOKEN: False,
         })
@@ -74,8 +98,8 @@ def test_mldsa_65_sign(vec: dict[str, Any], p11_session: Any, p11_module: Any) -
         sig = priv.sign(msg, mechanism=Mechanism.ML_DSA)
         if result == "valid":
             assert len(sig) > 0, "Empty signature"
-            # Note: ML-DSA signatures are non-deterministic (randomized)
-            # so we can't compare exact bytes — just verify it's valid length
+            # Note: ML-DSA signatures are non-deterministic, so length/non-empty
+            # is the meaningful invariant for this path.
     except Exception:
         if result == "valid":
-            pytest.fail(f"Valid ML-DSA-65 sign failed: tc{vec['tcId']}")
+            pytest.fail(f"Valid ML-DSA sign failed: {vec_id}")

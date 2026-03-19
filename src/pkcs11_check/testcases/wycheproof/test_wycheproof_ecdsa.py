@@ -1,8 +1,8 @@
-"""Wycheproof ECDSA vectors — all curves and hash combinations.
+"""Wycheproof ECDSA vectors — broad curve and hash coverage.
 
-Auto-loads vectors for P-256/384/521 with various SHA hashes.
-The test_wycheproof.py file covers P-256 SHA-256 and P-384 SHA-384.
-This file adds the remaining curve/hash combos.
+The base Wycheproof module covers a small core subset.
+This file adds the remaining DER and P1363-encoded verification vectors
+that can run through the existing raw `CKM_ECDSA` mechanism path.
 """
 
 from __future__ import annotations
@@ -59,42 +59,83 @@ def _shake256(output_len: int) -> Any:
 
 # Curve config: (filename, curve_name, coord_size, hash_fn)
 _ECDSA_CONFIGS = [
-    # P-256 with SHA-512
-    ("ecdsa_secp256r1_sha512_test.json", "secp256r1", 32, hashlib.sha512),
-    # P-384 with SHA-256
-    ("ecdsa_secp384r1_sha256_test.json", "secp384r1", 48, hashlib.sha256),
-    # P-384 with SHA-512
-    ("ecdsa_secp384r1_sha512_test.json", "secp384r1", 48, hashlib.sha512),
-    # P-521 with SHA-512
-    ("ecdsa_secp521r1_sha512_test.json", "secp521r1", 66, hashlib.sha512),
-    # P-224 with SHA-224
-    ("ecdsa_secp224r1_sha224_test.json", "secp224r1", 28, hashlib.sha224),
-    # P-224 with SHA-256
-    ("ecdsa_secp224r1_sha256_test.json", "secp224r1", 28, hashlib.sha256),
-    # P-224 with SHA-512
-    ("ecdsa_secp224r1_sha512_test.json", "secp224r1", 28, hashlib.sha512),
-    # SHA-3 variants (skip on modules without SHA-3 ECDSA support)
-    ("ecdsa_secp224r1_sha3_224_test.json", "secp224r1", 28, hashlib.sha3_224),
-    ("ecdsa_secp224r1_sha3_256_test.json", "secp224r1", 28, hashlib.sha3_256),
-    ("ecdsa_secp224r1_sha3_512_test.json", "secp224r1", 28, hashlib.sha3_512),
-    ("ecdsa_secp256r1_sha3_256_test.json", "secp256r1", 32, hashlib.sha3_256),
-    ("ecdsa_secp256r1_sha3_512_test.json", "secp256r1", 32, hashlib.sha3_512),
-    ("ecdsa_secp384r1_sha3_384_test.json", "secp384r1", 48, hashlib.sha3_384),
-    ("ecdsa_secp384r1_sha3_512_test.json", "secp384r1", 48, hashlib.sha3_512),
-    ("ecdsa_secp521r1_sha3_512_test.json", "secp521r1", 66, hashlib.sha3_512),
-    # SHAKE variants — PKCS#11 has no CKM_ECDSA_SHAKE128/256 mechanism,
-    # so we pre-hash with SHAKE externally and use raw CKM_ECDSA.
-    # Output length truncated to curve order byte size per NIST SP 800-186.
-    ("ecdsa_secp224r1_shake128_test.json", "secp224r1", 28, _shake128(28)),
-    ("ecdsa_secp256r1_shake128_test.json", "secp256r1", 32, _shake128(32)),
-    ("ecdsa_secp384r1_shake256_test.json", "secp384r1", 48, _shake256(48)),
-    ("ecdsa_secp521r1_shake256_test.json", "secp521r1", 66, _shake256(66)),
+    ("ecdsa_brainpoolP224r1_sha224_test.json", "brainpoolp224r1", 28, hashlib.sha224, False),
+    ("ecdsa_brainpoolP224r1_sha224_p1363_test.json", "brainpoolp224r1", 28, hashlib.sha224, True),
+    ("ecdsa_brainpoolP224r1_sha3_224_test.json", "brainpoolp224r1", 28, hashlib.sha3_224, False),
+    ("ecdsa_brainpoolP256r1_sha256_test.json", "brainpoolp256r1", 32, hashlib.sha256, False),
+    ("ecdsa_brainpoolP256r1_sha256_p1363_test.json", "brainpoolp256r1", 32, hashlib.sha256, True),
+    ("ecdsa_brainpoolP256r1_sha3_256_test.json", "brainpoolp256r1", 32, hashlib.sha3_256, False),
+    ("ecdsa_brainpoolP320r1_sha384_test.json", "brainpoolp320r1", 40, hashlib.sha384, False),
+    ("ecdsa_brainpoolP320r1_sha384_p1363_test.json", "brainpoolp320r1", 40, hashlib.sha384, True),
+    ("ecdsa_brainpoolP320r1_sha3_384_test.json", "brainpoolp320r1", 40, hashlib.sha3_384, False),
+    ("ecdsa_brainpoolP384r1_sha384_test.json", "brainpoolp384r1", 48, hashlib.sha384, False),
+    ("ecdsa_brainpoolP384r1_sha384_p1363_test.json", "brainpoolp384r1", 48, hashlib.sha384, True),
+    ("ecdsa_brainpoolP384r1_sha3_384_test.json", "brainpoolp384r1", 48, hashlib.sha3_384, False),
+    ("ecdsa_brainpoolP512r1_sha512_test.json", "brainpoolp512r1", 64, hashlib.sha512, False),
+    ("ecdsa_brainpoolP512r1_sha512_p1363_test.json", "brainpoolp512r1", 64, hashlib.sha512, True),
+    ("ecdsa_brainpoolP512r1_sha3_512_test.json", "brainpoolp512r1", 64, hashlib.sha3_512, False),
+    ("ecdsa_secp160k1_sha256_test.json", "secp160k1", 20, hashlib.sha256, False),
+    ("ecdsa_secp160k1_sha256_p1363_test.json", "secp160k1", 20, hashlib.sha256, True),
+    ("ecdsa_secp160r1_sha256_test.json", "secp160r1", 20, hashlib.sha256, False),
+    ("ecdsa_secp160r1_sha256_p1363_test.json", "secp160r1", 20, hashlib.sha256, True),
+    ("ecdsa_secp160r2_sha256_test.json", "secp160r2", 20, hashlib.sha256, False),
+    ("ecdsa_secp160r2_sha256_p1363_test.json", "secp160r2", 20, hashlib.sha256, True),
+    ("ecdsa_secp192k1_sha256_test.json", "secp192k1", 24, hashlib.sha256, False),
+    ("ecdsa_secp192k1_sha256_p1363_test.json", "secp192k1", 24, hashlib.sha256, True),
+    ("ecdsa_secp192r1_sha256_test.json", "secp192r1", 24, hashlib.sha256, False),
+    ("ecdsa_secp192r1_sha256_p1363_test.json", "secp192r1", 24, hashlib.sha256, True),
+    ("ecdsa_secp224k1_sha224_test.json", "secp224k1", 28, hashlib.sha224, False),
+    ("ecdsa_secp224k1_sha224_p1363_test.json", "secp224k1", 28, hashlib.sha224, True),
+    ("ecdsa_secp224k1_sha256_test.json", "secp224k1", 28, hashlib.sha256, False),
+    ("ecdsa_secp224k1_sha256_p1363_test.json", "secp224k1", 28, hashlib.sha256, True),
+    ("ecdsa_secp224r1_sha224_test.json", "secp224r1", 28, hashlib.sha224, False),
+    ("ecdsa_secp224r1_sha224_p1363_test.json", "secp224r1", 28, hashlib.sha224, True),
+    ("ecdsa_secp224r1_sha256_test.json", "secp224r1", 28, hashlib.sha256, False),
+    ("ecdsa_secp224r1_sha256_p1363_test.json", "secp224r1", 28, hashlib.sha256, True),
+    ("ecdsa_secp224r1_sha512_test.json", "secp224r1", 28, hashlib.sha512, False),
+    ("ecdsa_secp224r1_sha512_p1363_test.json", "secp224r1", 28, hashlib.sha512, True),
+    ("ecdsa_secp224r1_sha3_224_test.json", "secp224r1", 28, hashlib.sha3_224, False),
+    ("ecdsa_secp224r1_sha3_256_test.json", "secp224r1", 28, hashlib.sha3_256, False),
+    ("ecdsa_secp224r1_sha3_512_test.json", "secp224r1", 28, hashlib.sha3_512, False),
+    ("ecdsa_secp224r1_shake128_test.json", "secp224r1", 28, _shake128(28), False),
+    ("ecdsa_secp224r1_shake128_p1363_test.json", "secp224r1", 28, _shake128(28), True),
+    ("ecdsa_secp256k1_sha256_test.json", "secp256k1", 32, hashlib.sha256, False),
+    ("ecdsa_secp256k1_sha256_p1363_test.json", "secp256k1", 32, hashlib.sha256, True),
+    ("ecdsa_secp256k1_sha256_bitcoin_test.json", "secp256k1", 32, hashlib.sha256, False),
+    ("ecdsa_secp256k1_sha512_test.json", "secp256k1", 32, hashlib.sha512, False),
+    ("ecdsa_secp256k1_sha512_p1363_test.json", "secp256k1", 32, hashlib.sha512, True),
+    ("ecdsa_secp256k1_sha3_256_test.json", "secp256k1", 32, hashlib.sha3_256, False),
+    ("ecdsa_secp256k1_sha3_512_test.json", "secp256k1", 32, hashlib.sha3_512, False),
+    ("ecdsa_secp256k1_shake128_test.json", "secp256k1", 32, _shake128(32), False),
+    ("ecdsa_secp256k1_shake128_p1363_test.json", "secp256k1", 32, _shake128(32), True),
+    ("ecdsa_secp256k1_shake256_test.json", "secp256k1", 32, _shake256(32), False),
+    ("ecdsa_secp256k1_shake256_p1363_test.json", "secp256k1", 32, _shake256(32), True),
+    ("ecdsa_secp256r1_sha512_test.json", "secp256r1", 32, hashlib.sha512, False),
+    ("ecdsa_secp256r1_sha512_p1363_test.json", "secp256r1", 32, hashlib.sha512, True),
+    ("ecdsa_secp256r1_sha256_p1363_test.json", "secp256r1", 32, hashlib.sha256, True),
+    ("ecdsa_secp256r1_sha3_256_test.json", "secp256r1", 32, hashlib.sha3_256, False),
+    ("ecdsa_secp256r1_sha3_512_test.json", "secp256r1", 32, hashlib.sha3_512, False),
+    ("ecdsa_secp256r1_shake128_test.json", "secp256r1", 32, _shake128(32), False),
+    ("ecdsa_secp256r1_shake128_p1363_test.json", "secp256r1", 32, _shake128(32), True),
+    ("ecdsa_secp384r1_sha256_test.json", "secp384r1", 48, hashlib.sha256, False),
+    ("ecdsa_secp384r1_sha384_p1363_test.json", "secp384r1", 48, hashlib.sha384, True),
+    ("ecdsa_secp384r1_sha512_test.json", "secp384r1", 48, hashlib.sha512, False),
+    ("ecdsa_secp384r1_sha512_p1363_test.json", "secp384r1", 48, hashlib.sha512, True),
+    ("ecdsa_secp384r1_sha3_384_test.json", "secp384r1", 48, hashlib.sha3_384, False),
+    ("ecdsa_secp384r1_sha3_512_test.json", "secp384r1", 48, hashlib.sha3_512, False),
+    ("ecdsa_secp384r1_shake256_test.json", "secp384r1", 48, _shake256(48), False),
+    ("ecdsa_secp384r1_shake256_p1363_test.json", "secp384r1", 48, _shake256(48), True),
+    ("ecdsa_secp521r1_sha512_test.json", "secp521r1", 66, hashlib.sha512, False),
+    ("ecdsa_secp521r1_sha512_p1363_test.json", "secp521r1", 66, hashlib.sha512, True),
+    ("ecdsa_secp521r1_sha3_512_test.json", "secp521r1", 66, hashlib.sha3_512, False),
+    ("ecdsa_secp521r1_shake256_test.json", "secp521r1", 66, _shake256(66), False),
+    ("ecdsa_secp521r1_shake256_p1363_test.json", "secp521r1", 66, _shake256(66), True),
 ]
 
 
 def _load_ecdsa_vectors() -> list[tuple[str, dict[str, Any]]]:
     vectors = []
-    for filename, curve, coord_size, hash_fn in _ECDSA_CONFIGS:
+    for filename, curve, coord_size, hash_fn, is_p1363 in _ECDSA_CONFIGS:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
@@ -107,6 +148,7 @@ def _load_ecdsa_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_coord_size"] = coord_size
                 test["_hash_fn"] = hash_fn
                 test["_file"] = filename
+                test["_is_p1363"] = is_p1363
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
     return vectors
@@ -130,6 +172,7 @@ def test_ecdsa_wycheproof(
     curve = vec["_curve"]
     coord_size = vec["_coord_size"]
     hash_fn = vec["_hash_fn"]
+    is_p1363 = vec["_is_p1363"]
 
     pub_key_info = group.get("publicKey", {})
     uncompressed_hex = pub_key_info.get("uncompressed", "")
@@ -158,14 +201,16 @@ def test_ecdsa_wycheproof(
     except p11.exceptions.PKCS11Error:
         pytest.skip("Cannot import EC public key")
 
-    # Convert DER sig to raw r||s
-    try:
-        r_int, s_int = decode_dss_signature(sig_der)
-        raw_sig = r_int.to_bytes(coord_size, "big") + s_int.to_bytes(coord_size, "big")
-    except (ValueError, OverflowError):
-        if result == "invalid":
-            return
-        pytest.fail(f"Cannot decode valid DER sig for {vec_id}")
+    if is_p1363:
+        raw_sig = sig_der
+    else:
+        try:
+            r_int, s_int = decode_dss_signature(sig_der)
+            raw_sig = r_int.to_bytes(coord_size, "big") + s_int.to_bytes(coord_size, "big")
+        except (ValueError, OverflowError):
+            if result == "invalid":
+                return
+            pytest.fail(f"Cannot decode valid DER sig for {vec_id}")
 
     digest = hash_fn(msg).digest()
 

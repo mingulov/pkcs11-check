@@ -1,13 +1,12 @@
 """Wycheproof X25519 and X448 key exchange vectors.
 
 Tests Montgomery curve Diffie-Hellman (RFC 7748) using CKM_ECDH1_DERIVE
-with EC_MONTGOMERY key type. Skips on modules without Montgomery support.
+with EC_MONTGOMERY key type across raw, ASN.1, PEM, and JWK encodings.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import pkcs11 as p11
@@ -16,6 +15,10 @@ from pkcs11 import Attribute, KeyType, Mechanism
 from pkcs11.mechanisms import KDF
 
 from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.testcases.wycheproof._key_decoders import (
+    decode_xdh_private_bytes,
+    decode_xdh_public_bytes,
+)
 
 pytestmark = pytest.mark.wycheproof
 
@@ -26,15 +29,21 @@ X25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x6E])  # 1.3.101.110
 X448_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x6F])  # 1.3.101.111
 
 _X25519_X448_FILES = [
-    ("x25519_test.json", X25519_OID, 32),
-    ("x448_test.json", X448_OID, 56),
+    ("x25519_test.json", X25519_OID, 32, "raw"),
+    ("x25519_asn_test.json", X25519_OID, 32, "asn"),
+    ("x25519_jwk_test.json", X25519_OID, 32, "jwk"),
+    ("x25519_pem_test.json", X25519_OID, 32, "pem"),
+    ("x448_test.json", X448_OID, 56, "raw"),
+    ("x448_asn_test.json", X448_OID, 56, "asn"),
+    ("x448_jwk_test.json", X448_OID, 56, "jwk"),
+    ("x448_pem_test.json", X448_OID, 56, "pem"),
 ]
 
 
 def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load X25519/X448 key exchange vectors."""
     vectors = []
-    for filename, oid, key_size in _X25519_X448_FILES:
+    for filename, oid, key_size, encoding_name in _X25519_X448_FILES:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
@@ -45,6 +54,7 @@ def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}
                 test["_oid"] = oid
                 test["_key_size"] = key_size
+                test["_encoding"] = encoding_name
                 test["_file"] = filename
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
@@ -62,8 +72,12 @@ def test_xdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
 
     oid = vec["_oid"]
     key_size = vec["_key_size"]
-    public_bytes = bytes.fromhex(vec["public"])
-    private_bytes = bytes.fromhex(vec["private"])
+    encoding_name = vec["_encoding"]
+    try:
+        public_bytes = decode_xdh_public_bytes(vec["public"], encoding_name)
+        private_bytes = decode_xdh_private_bytes(vec["private"], encoding_name)
+    except Exception as exc:
+        pytest.skip(f"Cannot decode {encoding_name} XDH vector: {type(exc).__name__}")
     shared_expected = bytes.fromhex(vec["shared"])
     result = vec["result"]
 

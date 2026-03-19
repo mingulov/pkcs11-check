@@ -1,54 +1,66 @@
 """Wycheproof ECDH key agreement vectors.
 
-Tests ECDH (P-256, P-384, P-521) using ecpoint-encoded test vectors.
-Imports private key + peer public key, performs derive, compares shared secret.
+Exercises raw-point, ASN.1, PEM, and WebCrypto encodings across the
+curve families that can be fed into the existing PKCS#11 derive path.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
-import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.mechanisms import KDF
 
 from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.testcases.wycheproof._key_decoders import (
+    decode_ec_private_scalar,
+    decode_ec_public_point,
+    ec_key_bits,
+    ec_params_for_curve,
+)
 
 pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
-# OIDs for PKCS#11 EC key import (DER-encoded)
-_CURVE_OIDS: dict[str, bytes] = {
-    "secp224r1": bytes.fromhex("06052b81040021"),  # OID 1.3.132.0.33
-    "secp256r1": bytes.fromhex("06082a8648ce3d030107"),  # OID 1.2.840.10045.3.1.7
-    "secp384r1": bytes.fromhex("06052b81040022"),  # OID 1.3.132.0.34
-    "secp521r1": bytes.fromhex("06052b81040023"),  # OID 1.3.132.0.35
-}
-
-# Key sizes in bits for derive_key (python-pkcs11 divides by 8 internally)
-_CURVE_KEY_BITS: dict[str, int] = {
-    "secp224r1": 224,
-    "secp256r1": 256,
-    "secp384r1": 384,
-    "secp521r1": 528,  # 66 bytes = 528 bits (ceil(521/8)*8)
-}
-
 _ECDH_FILES = [
-    ("ecdh_secp224r1_ecpoint_test.json", "secp224r1"),
-    ("ecdh_secp256r1_ecpoint_test.json", "secp256r1"),
-    ("ecdh_secp384r1_ecpoint_test.json", "secp384r1"),
-    ("ecdh_secp521r1_ecpoint_test.json", "secp521r1"),
+    ("ecdh_brainpoolP224r1_test.json", "brainpoolP224r1", "asn"),
+    ("ecdh_brainpoolP256r1_test.json", "brainpoolP256r1", "asn"),
+    ("ecdh_brainpoolP320r1_test.json", "brainpoolP320r1", "asn"),
+    ("ecdh_brainpoolP384r1_test.json", "brainpoolP384r1", "asn"),
+    ("ecdh_brainpoolP512r1_test.json", "brainpoolP512r1", "asn"),
+    ("ecdh_secp224r1_ecpoint_test.json", "secp224r1", "ecpoint"),
+    ("ecdh_secp224r1_pem_test.json", "secp224r1", "pem"),
+    ("ecdh_secp224r1_test.json", "secp224r1", "asn"),
+    ("ecdh_secp256k1_test.json", "secp256k1", "asn"),
+    ("ecdh_secp256k1_webcrypto_test.json", "P-256K", "webcrypto"),
+    ("ecdh_secp256r1_ecpoint_test.json", "secp256r1", "ecpoint"),
+    ("ecdh_secp256r1_pem_test.json", "secp256r1", "pem"),
+    ("ecdh_secp256r1_test.json", "secp256r1", "asn"),
+    ("ecdh_secp256r1_webcrypto_test.json", "P-256", "webcrypto"),
+    ("ecdh_secp384r1_ecpoint_test.json", "secp384r1", "ecpoint"),
+    ("ecdh_secp384r1_pem_test.json", "secp384r1", "pem"),
+    ("ecdh_secp384r1_test.json", "secp384r1", "asn"),
+    ("ecdh_secp384r1_webcrypto_test.json", "P-384", "webcrypto"),
+    ("ecdh_secp521r1_ecpoint_test.json", "secp521r1", "ecpoint"),
+    ("ecdh_secp521r1_pem_test.json", "secp521r1", "pem"),
+    ("ecdh_secp521r1_test.json", "secp521r1", "asn"),
+    ("ecdh_secp521r1_webcrypto_test.json", "P-521", "webcrypto"),
+    ("ecdh_sect283k1_test.json", "sect283k1", "asn"),
+    ("ecdh_sect283r1_test.json", "sect283r1", "asn"),
+    ("ecdh_sect409k1_test.json", "sect409k1", "asn"),
+    ("ecdh_sect409r1_test.json", "sect409r1", "asn"),
+    ("ecdh_sect571k1_test.json", "sect571k1", "asn"),
+    ("ecdh_sect571r1_test.json", "sect571r1", "asn"),
 ]
 
 
 def _load_ecdh_vectors() -> list[tuple[str, dict[str, Any]]]:
-    """Load ECDH ecpoint vectors."""
+    """Load ECDH vectors across multiple input encodings."""
     vectors = []
-    for filename, curve in _ECDH_FILES:
+    for filename, curve, encoding_name in _ECDH_FILES:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
@@ -58,6 +70,7 @@ def _load_ecdh_vectors() -> list[tuple[str, dict[str, Any]]]:
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}
                 test["_curve"] = curve
+                test["_encoding"] = encoding_name
                 test["_file"] = filename
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
@@ -80,12 +93,17 @@ def test_ecdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any
         pytest.skip("ECDH1_DERIVE not supported")
 
     curve = vec["_curve"]
-    oid = _CURVE_OIDS.get(curve)
-    if oid is None:
-        pytest.skip(f"No OID for curve {curve}")
+    encoding_name = vec["_encoding"]
+    try:
+        oid = ec_params_for_curve(curve)
+    except Exception:
+        pytest.skip(f"No EC params mapping for curve {curve}")
 
-    public_point = bytes.fromhex(vec["public"])
-    private_scalar = bytes.fromhex(vec["private"])
+    try:
+        public_point = decode_ec_public_point(vec["public"], encoding_name, curve)
+        private_scalar = decode_ec_private_scalar(vec["private"], encoding_name, curve)
+    except Exception as exc:
+        pytest.skip(f"Cannot decode {encoding_name} ECDH vector: {type(exc).__name__}")
     shared_expected = bytes.fromhex(vec["shared"])
     result = vec["result"]
 
@@ -113,7 +131,7 @@ def test_ecdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any
     try:
         derived_key = priv_key.derive_key(
             KeyType.GENERIC_SECRET,
-            _CURVE_KEY_BITS[curve],
+            ec_key_bits(curve),
             mechanism=Mechanism.ECDH1_DERIVE,
             mechanism_param=(KDF.NULL, None, public_point),
             template={

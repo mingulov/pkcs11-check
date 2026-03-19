@@ -71,14 +71,13 @@ _MECH_DISPLAY: dict[Mechanism, str] = {
     Mechanism.SHA3_512_RSA_PKCS_PSS: "SHA3_512_RSA_PKCS_PSS",
 }
 
-# RSA-PSS vector files — standard test variants (non-params, non-SHAKE)
+# RSA-PSS vector files — standard and parameterized variants that map to
+# the existing PKCS#11 PSS mechanism family.
 _PSS_FILES = sorted(
     f.name
     for f in WYCHEPROOF_DIR.glob("rsa_pss_*_test.json")
     if f.exists()
-    and "params" not in f.name
     and "shake" not in f.name
-    and "mgf1sha" not in f.name  # mixed mgf1sha variants: sha != mgfSha
 )
 
 
@@ -94,11 +93,12 @@ def _load_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
         for group in data["testGroups"]:
             sha = group.get("sha", "")
             mgf_sha = group.get("mgfSha", sha)
-            # Only test where hash == mgfSha (standard PKCS#11 PSS mechanisms)
-            if sha != mgf_sha:
-                continue
-            mechanism = _SHA_MECHANISMS.get(sha)
-            if mechanism is None:
+            mechanism = (
+                _SHA_MECHANISMS.get(sha) if sha == mgf_sha else Mechanism.RSA_PKCS_PSS
+            )
+            hash_mech = _SHA_HASH_MECHS.get(sha)
+            mgf = _SHA_MGFS.get(mgf_sha)
+            if mechanism is None or hash_mech is None or mgf is None:
                 continue
             s_len = group.get("sLen", 0)
             for test in group["tests"]:
@@ -106,6 +106,9 @@ def _load_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_mechanism"] = mechanism
                 test["_sLen"] = s_len
                 test["_sha"] = sha
+                test["_mgf_sha"] = mgf_sha
+                test["_hash_mech"] = hash_mech
+                test["_mgf"] = mgf
                 test["_file"] = filename
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
@@ -119,7 +122,7 @@ _ALL_PSS_VECTORS = _load_pss_vectors()
 def test_rsa_pss(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-PSS signature verification from Wycheproof vectors."""
     mechanism = vec["_mechanism"]
-    name = _MECH_DISPLAY.get(mechanism, str(mechanism))
+    name = _MECH_DISPLAY.get(mechanism, "RSA_PKCS_PSS")
     slot = p11_module.get_slots(token_present=True)[0]
     supported = {mech_name(m) for m in slot.get_mechanisms()}
     if name not in supported:
@@ -131,7 +134,8 @@ def test_rsa_pss(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
     mechanism = vec["_mechanism"]
     group = vec["_group"]
     s_len = vec["_sLen"]
-    sha = vec["_sha"]
+    hash_mech = vec["_hash_mech"]
+    mgf = vec["_mgf"]
 
     pk = group.get("publicKey", {})
     modulus_hex = pk.get("modulus", "")
@@ -157,11 +161,6 @@ def test_rsa_pss(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
         pytest.skip("Cannot import RSA public key")
 
     # Build PSS params: (hash_mechanism, mgf, salt_length)
-    hash_mech = _SHA_HASH_MECHS.get(sha)
-    mgf = _SHA_MGFS.get(sha)
-    if hash_mech is None or mgf is None:
-        pytest.skip(f"No PSS param mapping for {sha}")
-
     pss_params = (hash_mech, mgf, s_len)
 
     try:
