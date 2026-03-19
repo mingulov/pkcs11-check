@@ -19,7 +19,7 @@ from p11test.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.wycheproof
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # OIDs for Montgomery curves
 X25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x6E])  # 1.3.101.110

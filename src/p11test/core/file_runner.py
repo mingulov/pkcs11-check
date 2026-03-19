@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
+from xml.etree import ElementTree as ET
 
 from rich.console import Console
 
@@ -67,6 +68,14 @@ class BackendIsolationPolicy:
     fingerprint: str
     promoted_files: list[str]
     crashed_tests: list[str]
+
+
+@dataclass(frozen=True)
+class IsolatedReportConfig:
+    """Output configuration for aggregated isolated-run reports."""
+
+    output_format: Literal["json", "junit"]
+    output_path: Path
 
 
 def _validate_pytest_target_exists(target: str) -> None:
@@ -199,6 +208,18 @@ def file_isolation_mode(path: Path) -> IsolationGranularity:
     return "file"
 
 
+def file_forces_file_isolation(path: Path) -> bool:
+    """Return True if the file should stay at file granularity in auto mode."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+    if "pytest.mark.subprocess_per_test" in text:
+        return False
+    return "pytest.mark.subprocess" in text
+
+
 def discover_auto_isolation_units(
     targets: list[str],
     default_root: Path,
@@ -228,7 +249,10 @@ def discover_auto_isolation_units(
                 )
             )
         else:
-            units.append(file_unit)
+            if file_forces_file_isolation(file_path):
+                units.append(str(file_path))
+            else:
+                units.append(file_unit)
 
     return units
 
@@ -279,6 +303,143 @@ def save_isolation_policy(path: Path, policies: Mapping[str, BackendIsolationPol
         }
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def _state_summary(state: FileRunState) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for result in state.results:
+        summary[result.status] = summary.get(result.status, 0) + 1
+    summary["total"] = len(state.results)
+    return summary
+
+
+def write_isolated_json_report(
+    path: Path,
+    state: FileRunState,
+    *,
+    state_file: Path,
+) -> None:
+    """Write an aggregated JSON report for an isolated run."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "tool": "p11test",
+        "kind": "isolated-run",
+        "state_file": str(state_file),
+        "summary": _state_summary(state),
+        "units": state.units,
+        "results": [asdict(result) for result in state.results],
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def _junit_case_identity(target: str) -> tuple[str, str]:
+    if "::" not in target:
+        path = Path(target)
+        return (str(path.parent).replace("/", ".").strip(".") or "p11test", path.name)
+
+    file_part, node_part = target.split("::", 1)
+    class_name = str(Path(file_part).with_suffix("")).replace("/", ".").strip(".") or "p11test"
+    return (class_name, node_part)
+
+
+def write_isolated_junit_report(
+    path: Path,
+    state: FileRunState,
+    *,
+    suite_name: str = "p11test-isolated",
+) -> None:
+    """Write an aggregated JUnit XML report for an isolated run."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    failures = sum(1 for result in state.results if result.status == "failed")
+    errors = sum(1 for result in state.results if result.status in {"crashed", "timeout"})
+    skipped = sum(1 for result in state.results if result.status in {"empty", "escalated"})
+    duration_s = sum(result.duration_s for result in state.results)
+
+    suite = ET.Element(
+        "testsuite",
+        {
+            "name": suite_name,
+            "tests": str(len(state.results)),
+            "failures": str(failures),
+            "errors": str(errors),
+            "skipped": str(skipped),
+            "time": f"{duration_s:.6f}",
+        },
+    )
+
+    for result in state.results:
+        class_name, case_name = _junit_case_identity(result.target)
+        case = ET.SubElement(
+            suite,
+            "testcase",
+            {
+                "classname": class_name,
+                "name": case_name,
+                "time": f"{result.duration_s:.6f}",
+            },
+        )
+
+        if result.status == "failed":
+            failure = ET.SubElement(
+                case,
+                "failure",
+                {
+                    "message": f"pytest exited with code {result.returncode}",
+                    "type": "failure",
+                },
+            )
+            failure.text = f"Unit {result.target} failed in isolated mode."
+        elif result.status == "crashed":
+            error = ET.SubElement(
+                case,
+                "error",
+                {
+                    "message": f"isolated unit crashed (returncode {result.returncode})",
+                    "type": "crashed",
+                },
+            )
+            error.text = f"Unit {result.target} crashed in isolated mode."
+        elif result.status == "timeout":
+            error = ET.SubElement(
+                case,
+                "error",
+                {
+                    "message": "isolated unit timed out",
+                    "type": "timeout",
+                },
+            )
+            error.text = f"Unit {result.target} timed out in isolated mode."
+        elif result.status == "empty":
+            skipped_node = ET.SubElement(case, "skipped", {"message": "no tests collected"})
+            skipped_node.text = f"Unit {result.target} collected no tests."
+        elif result.status == "escalated":
+            skipped_node = ET.SubElement(
+                case,
+                "skipped",
+                {"message": "unit escalated to per-test isolation"},
+            )
+            skipped_node.text = (
+                f"Unit {result.target} crashed at file granularity and was expanded to per-test "
+                "isolation."
+            )
+
+    tree = ET.ElementTree(suite)
+    ET.indent(tree, space="  ")
+    tree.write(path, encoding="utf-8", xml_declaration=True)
+
+
+def write_isolated_report(
+    config: IsolatedReportConfig,
+    state: FileRunState,
+    *,
+    state_file: Path,
+) -> None:
+    """Write the requested aggregated report format for an isolated run."""
+    if config.output_format == "json":
+        write_isolated_json_report(config.output_path, state, state_file=state_file)
+        return
+    write_isolated_junit_report(config.output_path, state)
 
 
 def load_run_state(path: Path) -> FileRunState | None:
@@ -660,6 +821,7 @@ def run_isolated_pytest_units(
     timeout: int,
     state_file: Path,
     policy_file: Path | None,
+    report_config: IsolatedReportConfig | None,
     resume: bool,
     stop_on_failure: bool,
     console: Console,
@@ -707,78 +869,144 @@ def run_isolated_pytest_units(
 
     if not pending_units:
         console.print("[green]Nothing to do[/green] — all isolated units already completed.")
+        if report_config is not None:
+            write_isolated_report(report_config, state, state_file=state_file)
         return 0
 
     exit_code = 0
     index = 0
-    while index < len(units):
-        unit = units[index]
-        if unit not in pending_units:
-            index += 1
-            continue
+    try:
+        while index < len(units):
+            unit = units[index]
+            if unit not in pending_units:
+                index += 1
+                continue
 
-        console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
-        start = time.monotonic()
-        cmd = [sys.executable, "-m", "pytest", unit, *pytest_args]
-        unit_granularity = _effective_granularity(unit, granularity)
+            console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
+            start = time.monotonic()
+            cmd = [sys.executable, "-m", "pytest", unit, *pytest_args]
+            unit_granularity = _effective_granularity(unit, granularity)
 
-        try:
-            completed = subprocess.run(
-                cmd,
-                check=False,
-                env=env,
-                timeout=_unit_timeout_seconds(timeout, unit_granularity),
-            )
-            returncode = completed.returncode
-            status = _status_from_returncode(returncode)
-        except subprocess.TimeoutExpired:
+            try:
+                completed = subprocess.run(
+                    cmd,
+                    check=False,
+                    env=env,
+                    timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                )
+                returncode = completed.returncode
+                status = _status_from_returncode(returncode)
+            except subprocess.TimeoutExpired:
+                duration_s = time.monotonic() - start
+                result = FileRunResult(
+                    target=unit,
+                    status="timeout",
+                    returncode=124,
+                    duration_s=duration_s,
+                )
+                _record_result(state, result)
+                save_run_state(state_file, state)
+                _promote_crashing_unit(
+                    policy_file,
+                    pytest_args,
+                    env,
+                    unit,
+                    unit_granularity,
+                    "timeout",
+                    console,
+                )
+                if granularity == "mixed" and unit_granularity == "file" and not stop_on_failure:
+                    escalated_units = _escalate_current_file(
+                        unit=unit,
+                        units=units,
+                        index=index,
+                        state=state,
+                        pytest_args=pytest_args,
+                        env=env,
+                        console=console,
+                    )
+                    if escalated_units:
+                        _record_result(
+                            state,
+                            FileRunResult(
+                                target=unit,
+                                status="escalated",
+                                returncode=124,
+                                duration_s=duration_s,
+                            ),
+                        )
+                        save_run_state(state_file, state)
+                        pending_units.extend(escalated_units)
+                        exit_code = 1
+                        console.print(f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)")
+                        index += 1
+                        continue
+
+                console.print(f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)")
+                exit_code = 1
+                if stop_on_failure:
+                    console.print(
+                        f"[yellow]Stopped[/yellow] at {unit}. Resume with "
+                        f"[bold]--resume --state-file {state_file}[/bold]."
+                    )
+                    return exit_code
+                index += 1
+                continue
+
             duration_s = time.monotonic() - start
             result = FileRunResult(
                 target=unit,
-                status="timeout",
-                returncode=124,
+                status=status,
+                returncode=returncode,
                 duration_s=duration_s,
             )
             _record_result(state, result)
             save_run_state(state_file, state)
-            _promote_crashing_unit(
-                policy_file,
-                pytest_args,
-                env,
-                unit,
-                unit_granularity,
-                "timeout",
-                console,
-            )
-            if granularity == "mixed" and unit_granularity == "file" and not stop_on_failure:
-                escalated_units = _escalate_current_file(
-                    unit=unit,
-                    units=units,
-                    index=index,
-                    state=state,
-                    pytest_args=pytest_args,
-                    env=env,
-                    console=console,
-                )
-                if escalated_units:
-                    _record_result(
-                        state,
-                        FileRunResult(
-                            target=unit,
-                            status="escalated",
-                            returncode=124,
-                            duration_s=duration_s,
-                        ),
-                    )
-                    save_run_state(state_file, state)
-                    pending_units.extend(escalated_units)
-                    exit_code = 1
-                    console.print(f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)")
-                    index += 1
-                    continue
 
-            console.print(f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)")
+            if status in {"passed", "empty"}:
+                console.print(f"[green]{status.upper()}[/green] {unit} ({duration_s:.1f}s)")
+                index += 1
+                continue
+
+            if status == "crashed":
+                _promote_crashing_unit(
+                    policy_file,
+                    pytest_args,
+                    env,
+                    unit,
+                    unit_granularity,
+                    "crashed",
+                    console,
+                )
+                if granularity == "mixed" and unit_granularity == "file" and not stop_on_failure:
+                    escalated_units = _escalate_current_file(
+                        unit=unit,
+                        units=units,
+                        index=index,
+                        state=state,
+                        pytest_args=pytest_args,
+                        env=env,
+                        console=console,
+                    )
+                    if escalated_units:
+                        _record_result(
+                            state,
+                            FileRunResult(
+                                target=unit,
+                                status="escalated",
+                                returncode=returncode,
+                                duration_s=duration_s,
+                            ),
+                        )
+                        save_run_state(state_file, state)
+                        pending_units.extend(escalated_units)
+                        exit_code = 1
+                        console.print(f"[red]CRASHED[/red] {unit} ({duration_s:.1f}s)")
+                        index += 1
+                        continue
+
             exit_code = 1
+            console.print(f"[red]{status.upper()}[/red] {unit} ({duration_s:.1f}s)")
             if stop_on_failure:
                 console.print(
                     f"[yellow]Stopped[/yellow] at {unit}. Resume with "
@@ -786,69 +1014,9 @@ def run_isolated_pytest_units(
                 )
                 return exit_code
             index += 1
-            continue
-
-        duration_s = time.monotonic() - start
-        result = FileRunResult(
-            target=unit,
-            status=status,
-            returncode=returncode,
-            duration_s=duration_s,
-        )
-        _record_result(state, result)
-        save_run_state(state_file, state)
-
-        if status in {"passed", "empty"}:
-            console.print(f"[green]{status.upper()}[/green] {unit} ({duration_s:.1f}s)")
-            index += 1
-            continue
-
-        if status == "crashed":
-            _promote_crashing_unit(
-                policy_file,
-                pytest_args,
-                env,
-                unit,
-                unit_granularity,
-                "crashed",
-                console,
-            )
-            if granularity == "mixed" and unit_granularity == "file" and not stop_on_failure:
-                escalated_units = _escalate_current_file(
-                    unit=unit,
-                    units=units,
-                    index=index,
-                    state=state,
-                    pytest_args=pytest_args,
-                    env=env,
-                    console=console,
-                )
-                if escalated_units:
-                    _record_result(
-                        state,
-                        FileRunResult(
-                            target=unit,
-                            status="escalated",
-                            returncode=returncode,
-                            duration_s=duration_s,
-                        ),
-                    )
-                    save_run_state(state_file, state)
-                    pending_units.extend(escalated_units)
-                    exit_code = 1
-                    console.print(f"[red]CRASHED[/red] {unit} ({duration_s:.1f}s)")
-                    index += 1
-                    continue
-
-        exit_code = 1
-        console.print(f"[red]{status.upper()}[/red] {unit} ({duration_s:.1f}s)")
-        if stop_on_failure:
-            console.print(
-                f"[yellow]Stopped[/yellow] at {unit}. Resume with "
-                f"[bold]--resume --state-file {state_file}[/bold]."
-            )
-            return exit_code
-        index += 1
+    finally:
+        if report_config is not None:
+            write_isolated_report(report_config, state, state_file=state_file)
 
     return exit_code
 
@@ -856,10 +1024,9 @@ def run_isolated_pytest_units(
 def state_results_by_status(path: Path) -> dict[str, int]:
     """Return a small status histogram for a saved state file."""
     state = load_run_state(path)
-    counts: dict[str, int] = {}
     if state is None:
-        return counts
+        return {}
 
-    for result in state.results:
-        counts[result.status] = counts.get(result.status, 0) + 1
-    return counts
+    summary = _state_summary(state)
+    summary.pop("total", None)
+    return summary

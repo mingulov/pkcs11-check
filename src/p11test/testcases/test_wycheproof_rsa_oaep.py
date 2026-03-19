@@ -20,7 +20,7 @@ from p11test.testcases.conftest import mech_name
 
 pytestmark = pytest.mark.wycheproof
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map Wycheproof sha names to PKCS#11 hash mechanisms and MGFs for OAEP params
 _SHA_HASH_MECHS: dict[str, Mechanism] = {

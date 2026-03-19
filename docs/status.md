@@ -10,17 +10,19 @@ Last updated: 2026-03-19
 - **v3.0/v3.2 interface negotiation** — tested on Kryoptic
 - **PQC support** — ML-KEM, ML-DSA, SLH-DSA tested on Kryoptic
 - **Adaptive isolated runner** — `--isolation auto|file|test` survives crashes, escalates crashing files in-run, and remembers crash-prone files per backend
-- **JSON/JUnit report output** — `--output json` or `--output junit`
+- **JSON/JUnit isolated reports** — `--output json` or `--output junit`
+- **State inspection command** — `p11test state` summarizes saved isolation state and policy files
 - **10 local build providers** — SoftHSM2, Kryoptic, NSS, pkcs11-mock, qryptotoken, tpm2-pkcs11, BouncyHSM, OpenCryptoki, swtpm, tpm2-swtpm
 - **12 Docker test targets** for CI validation
 - **CI workflow** — GitHub Actions with lint, typecheck, tests, strict markers, smoke
 
 ## What's Partial
 
-- **JSON report** — uses pytest-json-report plugin, works but large output
+- **JSON report** — non-isolated mode still uses `pytest-json-report`; isolated mode uses an aggregated runner report
 - **Per-target validation** — SoftHSM2 + Kryoptic fully validated, others need re-run post CKR changes
 - **Fault injection proxy** — works for v2.40 functions, v3.0+ not yet intercepted
 - **v3.0 message-based tests** — 6 tests proven on Kryoptic, more possible
+- **Crash-prone Docker paths** — now use `p11test test`, but the full matrix still needs a fresh pass
 
 ## What's Planned
 

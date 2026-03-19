@@ -61,7 +61,8 @@ CMD ["sh", "-c", "\
   fi && \
   echo \"qryptotoken module: $MODULE\" && \
   ls -lh \"$MODULE\" && \
-  uv run pytest src/p11test/testcases/ \
-    --p11-module=\"$MODULE\" \
-    -q --tb=short 2>&1 || \
+  uv run p11test test \
+    --module \"$MODULE\" \
+    --isolation auto \
+    src/p11test/testcases/ 2>&1 || \
   echo 'qryptotoken: some tests failed — experimental module'"]

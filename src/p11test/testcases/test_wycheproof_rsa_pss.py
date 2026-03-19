@@ -19,7 +19,7 @@ from p11test.testcases.conftest import mech_name
 
 pytestmark = pytest.mark.wycheproof
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map hash names to PKCS#11 mechanisms and hash mechanisms for PSS params
 _SHA_MECHANISMS: dict[str, Mechanism] = {

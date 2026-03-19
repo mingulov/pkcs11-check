@@ -6,6 +6,7 @@ import typer
 
 from p11test.cli.info_cmd import info_command
 from p11test.cli.list_cmd import list_command
+from p11test.cli.state_cmd import state_command
 from p11test.cli.test_cmd import test_command
 
 app = typer.Typer(
@@ -30,6 +31,7 @@ def callback(
 app.command("test")(test_command)
 app.command("info")(info_command)
 app.command("list")(list_command)
+app.command("state")(state_command)
 
 
 @app.command()

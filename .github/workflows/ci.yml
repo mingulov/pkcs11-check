@@ -67,8 +67,9 @@ jobs:
         env:
           SOFTHSM2_CONF: /tmp/softhsm2.conf
         run: |
-          uv run pytest src/p11test/testcases/ \
-            --p11-module=/usr/lib/softhsm/libsofthsm2.so \
-            --p11-pin=1234 \
-            -k "test_encrypt or test_sign or test_digest" \
-            --timeout=60 -q
+          uv run p11test test \
+            --module /usr/lib/softhsm/libsofthsm2.so \
+            --pin 1234 \
+            --timeout 60 \
+            --isolation auto \
+            --match "test_encrypt or test_sign or test_digest"

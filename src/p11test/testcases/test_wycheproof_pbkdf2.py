@@ -19,7 +19,7 @@ from p11test.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.wycheproof
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map Wycheproof file suffix to CKP_PKCS5_PBKD2_HMAC_* PRF constant
 # These must match the values in python-pkcs11's _pkcs11.pxd

@@ -11,6 +11,7 @@ This check focused on the recent runner changes:
 - `local-builds/test.sh` integration with the new runner path
 - adaptive isolation policy persistence across repeated local runs
 - same-run file-to-test escalation in `auto`
+- isolated JSON/JUnit report generation and saved-state inspection
 
 The goal was not to prove that every module passes the whole product suite. The goal was to separate:
 
@@ -79,6 +80,9 @@ For BouncyHSM, the local server was started manually and a manifest-heavy slice 
 ### 1. Collection safety is materially better
 
 The new preflight manifest path no longer dies in pytest collection for the checked providers. BouncyHSM was the most important proof point here: the run went through the separate preflight helper, then collected and executed the selected tests normally.
+
+The same runner path can now also emit aggregated JSON/JUnit artifacts, which makes isolated
+mode usable for local CI-style result capture instead of only interactive debugging.
 
 ### 2. The local helper integration works
 
@@ -159,6 +163,7 @@ What is clearly working:
 - `local-builds/test.sh` integration
 - explicit target passing in the local helper
 - file isolation as a real crash-containment tool
+- machine-readable isolated reports when needed
 
 What is not yet true:
 

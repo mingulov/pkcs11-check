@@ -2,5 +2,5 @@
 	path = /home/user/src/m/p11test/python-pkcs11
 	url = git@github.com:mingulov/python-pkcs11.git
 [submodule "src/p11test/testcases/vectors/wycheproof"]
-	path = src/p11test/testcases/vectors/wycheproof
+	path = src/p11test/testcases/data/wycheproof
 	url = https://github.com/C2SP/wycheproof.git

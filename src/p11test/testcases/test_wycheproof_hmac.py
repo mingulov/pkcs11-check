@@ -29,7 +29,7 @@ _MECH_NAMES: dict[Mechanism, str] = {
     Mechanism.SHA3_512_HMAC: "SHA3_512_HMAC",
 }
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 _HMAC_FILES = {
     "hmac_sha1_test.json": (KeyType.SHA_1_HMAC, Mechanism.SHA_1_HMAC, KeyType.GENERIC_SECRET),

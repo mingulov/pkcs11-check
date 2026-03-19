@@ -50,6 +50,8 @@ The current solution is useful and real. It is not just a draft.
 - the subprocess helper now consistently uses `spawn`, which is the safer default for PKCS#11 isolation.
 - the state fingerprint now also covers relevant environment plus test/module file metadata.
 - `auto` now persists backend-specific crash knowledge in `.p11test-isolation-policy.json`.
+- files marked `subprocess` now stay on the file-isolated path in `auto`, even when the user
+  targets a single nodeid from that file.
 - files marked `subprocess_per_test` are expanded to nodeids automatically in `auto` mode.
 - files that crash or time out in isolated mode are promoted to per-test isolation for later `auto` runs.
 - `auto` now also escalates a crashing file to per-test isolation immediately inside the same run.
@@ -102,18 +104,19 @@ It does not cover:
 
 So a user can still resume into a technically stale continuation after changing fixture/plugin code or after changing external token state without changing the module binary or test files.
 
-### P1: Reporting is intentionally narrow
+### P1: Reporting is now usable, but still basic
 
-The isolated modes currently support only `--output rich`.
+The isolated modes now support:
 
-Missing pieces:
-
-- aggregated JUnit XML
 - aggregated JSON output
-- a machine-readable summary for CI
-- an easy way to see only failed/crashed/timed-out units from the saved state
+- aggregated JUnit XML
+- `p11test state` for saved-state and adaptive-policy inspection
 
-For local debugging this is fine. For CI and dashboards it is not enough yet.
+The remaining gaps are narrower:
+
+- no explicit schema version yet for the JSON report
+- no setup/call/teardown phase split in aggregated JUnit output
+- no dedicated filter to show only failed or crashing units beyond the current summaries
 
 ### P1: Timeout behavior is still heuristic
 
@@ -126,14 +129,16 @@ That is pragmatic but still blunt.
 
 This is acceptable as a safety valve, but it is not a principled timeout model.
 
-### P1: `subprocess` marker is still not wired
+### P1: `subprocess` marker support is now minimal, not rich
 
-`src/p11test/markers.py` registers `subprocess` and `subprocess_per_test`.
-Only the stronger one is wired today.
+`src/p11test/markers.py` registers `subprocess` and `subprocess_per_test`, and both now affect
+`--isolation auto`.
 
-- `subprocess_per_test` now promotes a file to per-test execution in `auto`
-- plain `subprocess` still has no special handling
-- there is still no marker-based "always per-file subprocess" promotion path
+- `subprocess` keeps the file on the file-isolated path
+- `subprocess_per_test` promotes the file to per-test execution
+- crash policy can still escalate plain files further after observed crashes
+
+The remaining gap is that this is file-content detection, not yet a richer pytest-level marker policy.
 
 ### P2: `--sessions` remains ignored in file mode
 
@@ -170,17 +175,17 @@ Current limitations:
 
 ### Short Term
 
-1. Add a small helper to print saved-state summaries without opening the JSON manually.
-2. Decide whether the local shell helper should accept a broader set of pytest-style flags in isolation mode.
-3. Add a lightweight marker-aware mode for `@subprocess`, not just `@subprocess_per_test`.
-4. Document the collection-safe preflight manifest path more explicitly for direct `pytest` users.
+1. Decide whether the local shell helper should accept a broader set of pytest-style flags in isolation mode.
+2. Document the collection-safe preflight manifest path more explicitly for direct `pytest` users.
+3. Add a JSON schema version for isolated reports.
+4. Decide whether plain `subprocess` should block adaptive promotion to per-test or only request file granularity by default.
 
 ### Medium Term
 
-1. Add aggregated JUnit/JSON reporting for file isolation runs.
-2. Add a small `p11test state` or `p11test resume-status` helper to inspect saved state files.
-3. Refine timeout calculation to account for file size or collected test count.
-4. Add an option to resume only failed/crashed units from a saved state without repeating already passed files in the target list.
+1. Refine timeout calculation to account for file size or collected test count.
+2. Add an option to resume only failed/crashed units from a saved state without repeating already passed files in the target list.
+3. Add richer CI-facing report metadata, such as backend fingerprint and manifest details.
+4. Consider a dedicated `resume-status` view for failed/crashed units only.
 
 ### Long Term
 
@@ -197,4 +202,4 @@ The isolated runner is worth keeping. It solves a real operational problem now:
 - unstable modules no longer require a single all-or-nothing pytest invocation
 
 But it is still not the final segfault-survival design. The biggest missing pieces
-are marker coverage for plain `subprocess`, richer reporting, and a real worker model.
+are richer report semantics, clearer policy rules for plain `subprocess`, and a real worker model.

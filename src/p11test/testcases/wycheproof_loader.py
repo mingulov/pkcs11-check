@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 
 def load_vectors(filename: str) -> list[dict[str, Any]]:

@@ -12,6 +12,7 @@ import typer
 from rich.console import Console
 
 from p11test.core.file_runner import (
+    IsolatedReportConfig,
     discover_auto_isolation_units,
     discover_pytest_units,
     load_run_state,
@@ -41,6 +42,7 @@ def _build_pytest_args(
     destructive: bool,
     output: str,
     output_file: str | None,
+    include_machine_report_args: bool,
     verbose: bool,
 ) -> list[str]:
     args: list[str] = []
@@ -65,9 +67,9 @@ def _build_pytest_args(
     else:
         args.append("-q")
 
-    if output == "junit":
+    if include_machine_report_args and output == "junit":
         args.extend(["--junit-xml", output_file or "p11test-results.xml"])
-    elif output == "json":
+    elif include_machine_report_args and output == "json":
         json_file = output_file or "p11test-results.json"
         args.extend(
             [
@@ -80,6 +82,14 @@ def _build_pytest_args(
     args.append("--tb=short")
     args.append("--no-header")
     return args
+
+
+def _isolated_report_config(output: str, output_file: str | None) -> IsolatedReportConfig | None:
+    if output not in {"json", "junit"}:
+        return None
+    if output == "json":
+        return IsolatedReportConfig("json", Path(output_file or "p11test-results.json"))
+    return IsolatedReportConfig("junit", Path(output_file or "p11test-results.xml"))
 
 
 def test_command(
@@ -125,12 +135,6 @@ def test_command(
         console.print(f"[red]Error:[/red] Unsupported isolation mode: {isolation}")
         raise typer.Exit(code=2)
 
-    if isolation in {"auto", "file", "test"} and output != "rich":
-        console.print(
-            f"[red]Error:[/red] --isolation {isolation} currently supports only --output rich"
-        )
-        raise typer.Exit(code=2)
-
     # Pass PIN via env so pytest fixtures pick it up
     if pin:
         os.environ["P11TEST_PIN"] = pin
@@ -163,9 +167,11 @@ def test_command(
         destructive=destructive,
         output=output,
         output_file=output_file,
+        include_machine_report_args=isolation == "none",
         verbose=verbose,
     )
     pytest_args.extend(["--p11-manifest", str(manifest_path)])
+    report_config = _isolated_report_config(output, output_file) if isolation != "none" else None
 
     target_args = targets or [_TESTCASES_DIR]
     try:
@@ -204,6 +210,7 @@ def test_command(
                     timeout=timeout,
                     state_file=state_file,
                     policy_file=policy_file,
+                    report_config=report_config,
                     resume=resume,
                     stop_on_failure=stop_on_failure,
                     console=console,

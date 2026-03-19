@@ -54,7 +54,8 @@ There is a visible gap between the CLI surface, the config model, and what the c
 
 - `--sessions` exists in `src/p11test/cli/test_cmd.py` but is not used.
 - `--timeout` exists in `src/p11test/cli/test_cmd.py` but is not used.
-- `--output json` does not produce a real JSON report; it only changes pytest output formatting.
+- isolated modes now emit real aggregated JSON/JUnit reports and expose `p11test state` for inspection.
+- `--output json` in non-isolated mode still relies on `pytest-json-report`, so output semantics differ by runner path.
 - `P11TestConfig` contains `timeout_operation`, `timeout_test`, `max_sessions`, `skip_unsupported`, `log_level`, and `output`, but only part of that model is wired through the fixtures and CLI path.
 - `pyproject.toml` sets `testpaths = ["tests"]`, so plain `pytest` runs only meta-tests, not the product suite.
 
@@ -67,7 +68,7 @@ There is a visible gap between the CLI surface, the config model, and what the c
 ### Recommended direction
 
 - Either wire every advertised option end-to-end or remove/defer it.
-- Define one machine-readable result format and support it properly.
+- Decide whether isolated and non-isolated JSON output should converge on one schema.
 - Add explicit docs for the difference between `pytest tests/`, `pytest src/p11test/testcases/`, and `p11test test`.
 
 ### 3. Marker Execution Policy Is Still Partial
@@ -80,7 +81,7 @@ The marker registration situation is much better than before, but marker-driven 
 - strict-marker collection is no longer the active blocker it was before.
 - `subprocess_per_test` is now wired into `--isolation auto`, and crashing files are now promoted to per-test isolation through the adaptive policy file.
 - `--isolation auto` now also escalates a crashing file to per-test isolation immediately inside the same run.
-- plain `subprocess` is still not wired to force per-file isolation automatically.
+- plain `subprocess` now keeps files on the file-isolated path in `--isolation auto`.
 - Marker registration is still ahead of marker-driven execution in a few places.
 
 ### Why this matters
@@ -91,7 +92,7 @@ The marker registration situation is much better than before, but marker-driven 
 ### Recommended direction
 
 - Keep marker registration fully generated or fully audited.
-- Finish marker-to-isolation policy wiring for plain `subprocess`.
+- Decide whether plain `subprocess` should remain "file-first but promotable" or become "never promote past file."
 
 ### 4. Error-Handling Discipline Is Not Yet Consistent
 
@@ -144,13 +145,13 @@ OpenSC's `p11test` is narrower, but it has a more concrete JSON regression harne
 
 ### Confirmed issues
 
-- There is no real JSON result artifact format for `p11test test`.
+- `--isolation auto|file|test` now has aggregated JSON/JUnit result artifacts.
 - There is no stable baseline comparison flow equivalent to "run suite -> emit structured results -> diff against known-good artifact" in the main CLI path.
 - There is no built-in "capability snapshot" output that could be archived alongside module results.
 
 ### Nice additions here
 
-- JSON result schema with per-test outcome, duration, marker set, mechanism requirements, crash/timeout status, and module metadata.
+- JSON result schema versioning with per-test outcome, duration, marker set, mechanism requirements, crash/timeout status, and module metadata.
 - Capability snapshot command that records slot info, mechanism list, interface list, token flags, and library identity.
 - Golden baseline files for smoke/full profiles per module.
 
@@ -161,7 +162,7 @@ The package name may be available, but the release surface is not production-rea
 ### Confirmed issues
 
 - `README.md` is empty.
-- There is no `.github/workflows/` directory in this repo.
+- CI exists now, but it is still relatively shallow.
 - `pyproject.toml` has minimal project metadata; it lacks URLs, classifiers, and packaging polish expected for a public release.
 - There is no documented release flow for publishing wheels or sdists.
 - There is no install-time smoke test documented for users who are not working from this exact repo layout.
@@ -194,11 +195,8 @@ Current quality depends heavily on local discipline.
 
 ### Confirmed issues
 
-- No GitHub Actions workflows are present.
-- The current repo state already demonstrates this risk:
-  - `tests/test_markers.py` fails.
-  - strict-marker collection fails.
-  - these issues are small and should have been caught immediately by automation.
+- GitHub Actions workflows are present and cover lint, typecheck, meta-tests, strict markers, and a SoftHSM2 smoke job.
+- The remaining gap is breadth: crash-prone backends and isolated report paths are not all gated in CI yet.
 
 ### Minimum suggested gates
 

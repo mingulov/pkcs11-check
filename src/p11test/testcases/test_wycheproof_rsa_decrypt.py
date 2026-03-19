@@ -16,7 +16,7 @@ from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
 pytestmark = pytest.mark.wycheproof
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 _DECRYPT_FILES = [
     "rsa_pkcs1_2048_test.json",

@@ -19,7 +19,7 @@ from p11test.testcases.conftest import mech_name
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v30]
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 _HKDF_FILES = [
     ("hkdf_sha1_test.json", "SHA-1"),

@@ -38,7 +38,8 @@ CMD ["sh", "-c", "\
   echo 'p11test' | pkcsconf -I -c 0 -S 87654321 2>&1 || true && \
   printf '87654321\\n1234\\n1234\\n' | pkcsconf -u -c 0 2>&1 || true && \
   pkcsconf -t -c 0 2>&1 && \
-  uv run pytest src/p11test/testcases/ \
-    --p11-module=/usr/lib64/pkcs11/libopencryptoki.so \
-    --p11-pin=1234 -q --tb=no; \
+  uv run p11test test \
+    --module /usr/lib64/pkcs11/libopencryptoki.so \
+    --pin 1234 --isolation auto \
+    src/p11test/testcases/; \
   RC=$?; killall pkcsslotd 2>/dev/null; exit $RC"]

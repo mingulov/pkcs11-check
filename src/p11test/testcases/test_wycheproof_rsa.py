@@ -30,7 +30,7 @@ _MECH_DISPLAY: dict[Mechanism, str] = {
     Mechanism.SHA3_512_RSA_PKCS: "SHA3_512_RSA_PKCS",
 }
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map hash names to PKCS#11 mechanisms
 _RSA_HASH_MECHANISMS = {

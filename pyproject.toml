@@ -65,7 +65,7 @@ python-pkcs11 = { path = "python-pkcs11", editable = true }
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-exclude = ["src/p11test/testcases/vectors/"]
+exclude = ["src/p11test/testcases/data/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
@@ -81,7 +81,7 @@ module = ["pkcs11", "pkcs11.*", "psutil"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["p11test.testcases.vectors.*"]
+module = ["p11test.testcases.data.*"]
 ignore_errors = true
 
 [tool.pytest.ini_options]

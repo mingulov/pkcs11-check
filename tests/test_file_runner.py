@@ -14,11 +14,13 @@ from p11test.core.file_runner import (
     BackendIsolationPolicy,
     FileRunResult,
     FileRunState,
+    IsolatedReportConfig,
     build_policy_fingerprint,
     build_state_fingerprint,
     collect_pytest_nodeids,
     discover_auto_isolation_units,
     discover_pytest_units,
+    file_forces_file_isolation,
     file_isolation_mode,
     load_isolation_policy,
     load_run_state,
@@ -140,6 +142,13 @@ def test_file_isolation_mode_promotes_subprocess_per_test(tmp_path: Path) -> Non
     assert file_isolation_mode(target) == "test"
 
 
+def test_file_forces_file_isolation_for_subprocess_marker(tmp_path: Path) -> None:
+    target = tmp_path / "test_demo.py"
+    target.write_text("import pytest\npytestmark = [pytest.mark.subprocess]\n")
+
+    assert file_forces_file_isolation(target) is True
+
+
 def test_discover_auto_isolation_units_keeps_regular_files(tmp_path: Path) -> None:
     target = tmp_path / "test_demo.py"
     target.write_text("def test_case():\n    assert True\n")
@@ -206,6 +215,19 @@ def test_discover_auto_isolation_units_expands_policy_promoted_files(
     )
 
     assert units == [f"{target}::test_one"]
+
+
+def test_discover_auto_isolation_units_collapses_nodeid_for_subprocess_file(tmp_path: Path) -> None:
+    target = tmp_path / "test_demo.py"
+    target.write_text("import pytest\npytestmark = [pytest.mark.subprocess]\n")
+
+    units = discover_auto_isolation_units(
+        [f"{target}::test_case"],
+        tmp_path / "unused",
+        pytest_args=["--p11-module", "/tmp/module.so"],
+    )
+
+    assert units == [str(target)]
 
 
 def test_state_round_trip(tmp_path: Path) -> None:
@@ -298,6 +320,7 @@ def test_run_isolated_pytest_units_records_results_and_stops(
         timeout=12,
         state_file=state_file,
         policy_file=None,
+        report_config=None,
         resume=False,
         stop_on_failure=True,
         console=console,
@@ -344,6 +367,7 @@ def test_run_isolated_pytest_units_promotes_crashed_file_in_policy(
         timeout=12,
         state_file=state_file,
         policy_file=policy_file,
+        report_config=None,
         resume=False,
         stop_on_failure=False,
         console=console,
@@ -399,6 +423,7 @@ def test_run_isolated_pytest_units_escalates_crashed_file_in_same_run(
         timeout=12,
         state_file=state_file,
         policy_file=None,
+        report_config=None,
         resume=False,
         stop_on_failure=False,
         console=console,
@@ -551,6 +576,7 @@ def test_run_isolated_pytest_units_resume_skips_passed(monkeypatch: object, tmp_
         timeout=12,
         state_file=state_file,
         policy_file=None,
+        report_config=None,
         resume=True,
         stop_on_failure=False,
         console=console,
@@ -599,6 +625,7 @@ def test_run_isolated_pytest_units_resume_replaces_failed_result(
         timeout=12,
         state_file=state_file,
         policy_file=None,
+        report_config=None,
         resume=True,
         stop_on_failure=False,
         console=console,
@@ -635,6 +662,7 @@ def test_run_isolated_pytest_units_resume_rejects_mismatched_state(
             timeout=12,
             state_file=state_file,
             policy_file=None,
+            report_config=None,
             resume=True,
             stop_on_failure=False,
             console=console,
@@ -667,6 +695,7 @@ def test_run_isolated_pytest_units_test_granularity_uses_shorter_outer_timeout(
         timeout=30,
         state_file=tmp_path / "state.json",
         policy_file=None,
+        report_config=None,
         resume=False,
         stop_on_failure=False,
         console=console,
@@ -675,3 +704,74 @@ def test_run_isolated_pytest_units_test_granularity_uses_shorter_outer_timeout(
 
     assert exit_code == 0
     assert seen["timeout"] == 120
+
+
+def test_run_isolated_pytest_units_writes_json_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_run(
+        cmd: list[str],
+        *,
+        check: bool,
+        env: dict[str, str],
+        timeout: int,
+    ) -> SimpleNamespace:
+        del cmd, check, env, timeout
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    report_path = tmp_path / "results.json"
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    payload = report_path.read_text()
+    assert '"kind": "isolated-run"' in payload
+    assert '"status": "passed"' in payload
+
+
+def test_run_isolated_pytest_units_writes_junit_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    results = iter([1, -11])
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        check: bool,
+        env: dict[str, str],
+        timeout: int,
+    ) -> SimpleNamespace:
+        del cmd, check, env, timeout
+        return SimpleNamespace(returncode=next(results))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    report_path = tmp_path / "results.xml"
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py", "test_b.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("junit", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 1
+    payload = report_path.read_text()
+    assert '<testsuite name="p11test-isolated"' in payload
+    assert 'type="failure"' in payload
+    assert 'type="crashed"' in payload

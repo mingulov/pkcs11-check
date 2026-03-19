@@ -55,5 +55,6 @@ CMD ["sh", "-c", "\
     -H 'Content-Type: application/json' \
     -d '{\"IsHwDevice\":false,\"Description\":\"p11test\",\"Token\":{\"Label\":\"p11test\",\"SerialNumber\":\"0001\",\"UserPin\":\"1234\",\"SoPin\":\"12345678\",\"SimulateHwRng\":true,\"SimulateHwMechanism\":true,\"SimulateProtectedAuthPath\":false,\"SimulateQualifiedArea\":false,\"SpeedMode\":\"WithoutRestriction\"}}' && \
   echo '' && echo 'Slot created — 206 mechanisms' && \
-  uv run pytest src/p11test/testcases/ \
-    --p11-module=/usr/lib/libbouncyhsm_pkcs11.so --p11-pin=1234 -q --tb=no"]
+  uv run p11test test \
+    --module /usr/lib/libbouncyhsm_pkcs11.so --pin 1234 --isolation auto \
+    src/p11test/testcases/"]

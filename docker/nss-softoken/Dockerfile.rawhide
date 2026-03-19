@@ -22,4 +22,4 @@ WORKDIR /app
 COPY . .
 RUN uv python pin 3.12 && uv sync --frozen
 
-CMD ["sh", "-c", "echo 'NSS (rawhide/PQC):' && rpm -q nss && uv run pytest src/p11test/testcases/ --p11-module=$(cat /tmp/module_path) -q --tb=no"]
+CMD ["sh", "-c", "echo 'NSS (rawhide/PQC):' && rpm -q nss && uv run p11test test --module=$(cat /tmp/module_path) --slot 1 --isolation auto src/p11test/testcases/"]

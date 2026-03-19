@@ -118,9 +118,41 @@ uv run p11test test \
   --policy-file /tmp/p11test-policy.json
 ```
 
+## Reports And State Inspection
+
+Isolated modes can now emit aggregated machine-readable reports too:
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
+  --isolation auto \
+  --output json
+```
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
+  --isolation file \
+  --output junit \
+  --output-file /tmp/p11test.xml
+```
+
+For isolated runs:
+
+- `--output json` writes an aggregated `p11test-results.json`
+- `--output junit` writes an aggregated `p11test-results.xml`
+- `--output rich` keeps console-only output
+
+You can inspect saved state or adaptive policy files directly:
+
+```bash
+uv run p11test state .p11test-isolation-state.json
+uv run p11test state .p11test-isolation-policy.json
+uv run p11test state --output json .p11test-isolation-state.json
+```
+
 ## Scope And Limits
 
-- isolated modes currently support only `--output rich`.
 - `--sessions` is ignored in isolated modes.
 - The normal `--timeout` value is still passed through to pytest as per-test timeout.
 - The file runner also has an outer subprocess timeout so a dead file runner does not hang forever.
@@ -138,6 +170,7 @@ Use `auto` when:
 
 - you want the run to recover from token/module crashes
 - you want the runner to keep file-level speed for most tests
+- you want existing `subprocess` files kept on the file-isolated path
 - you want existing `subprocess_per_test` files promoted automatically
 - you want files that crashed earlier on the same backend to be promoted automatically
 

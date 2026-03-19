@@ -18,7 +18,7 @@ from p11test.testcases.conftest import has_mechanism
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v32, pytest.mark.pqc]
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 _MLDSA_FILES = [
     ("mldsa_44_verify_test.json", 44),

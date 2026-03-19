@@ -44,6 +44,7 @@ class TestTestCommand:
             timeout: int,
             state_file: Path,
             policy_file: Path | None,
+            report_config: object | None,
             resume: bool,
             stop_on_failure: bool,
             console: object,
@@ -55,6 +56,7 @@ class TestTestCommand:
             called["timeout"] = timeout
             called["state_file"] = state_file
             called["policy_file"] = policy_file
+            called["report_config"] = report_config
             called["resume"] = resume
             called["stop_on_failure"] = stop_on_failure
             called["granularity"] = granularity
@@ -127,12 +129,22 @@ class TestTestCommand:
             timeout: int,
             state_file: Path,
             policy_file: Path | None,
+            report_config: object | None,
             resume: bool,
             stop_on_failure: bool,
             console: object,
             granularity: str,
         ) -> int:
-            del pytest_args, timeout, state_file, policy_file, resume, stop_on_failure, console
+            del (
+                pytest_args,
+                timeout,
+                state_file,
+                policy_file,
+                report_config,
+                resume,
+                stop_on_failure,
+                console,
+            )
             called["units"] = units
             called["granularity"] = granularity
             return 0
@@ -185,12 +197,22 @@ class TestTestCommand:
             timeout: int,
             state_file: Path,
             policy_file: Path | None,
+            report_config: object | None,
             resume: bool,
             stop_on_failure: bool,
             console: object,
             granularity: str,
         ) -> int:
-            del pytest_args, timeout, state_file, policy_file, resume, stop_on_failure, console
+            del (
+                pytest_args,
+                timeout,
+                state_file,
+                policy_file,
+                report_config,
+                resume,
+                stop_on_failure,
+                console,
+            )
             called["units"] = units
             called["granularity"] = granularity
             return 0
@@ -248,12 +270,21 @@ class TestTestCommand:
             timeout: int,
             state_file: Path,
             policy_file: Path | None,
+            report_config: object | None,
             resume: bool,
             stop_on_failure: bool,
             console: object,
             granularity: str,
         ) -> int:
-            del pytest_args, timeout, state_file, policy_file, stop_on_failure, console
+            del (
+                pytest_args,
+                timeout,
+                state_file,
+                policy_file,
+                report_config,
+                stop_on_failure,
+                console,
+            )
             called["units"] = units
             called["resume"] = resume
             called["granularity"] = granularity
@@ -308,18 +339,95 @@ class TestTestCommand:
         assert called["resume"] is True
         assert called["granularity"] == "mixed"
 
-    @pytest.mark.parametrize("mode", ["auto", "file", "test"])
-    def test_test_isolation_rejects_non_rich_output(self, tmp_path: Path, mode: str) -> None:
+    @pytest.mark.parametrize(
+        ("mode", "output_name", "expected_name"),
+        [
+            ("auto", "json", "p11test-results.json"),
+            ("file", "junit", "p11test-results.xml"),
+            ("test", "json", "p11test-results.json"),
+        ],
+    )
+    def test_test_isolation_builds_report_config(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        output_name: str,
+        expected_name: str,
+    ) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("")
+        called: dict[str, object] = {}
+
+        def fake_run(
+            units: list[str],
+            pytest_args: list[str],
+            *,
+            timeout: int,
+            state_file: Path,
+            policy_file: Path | None,
+            report_config: object | None,
+            resume: bool,
+            stop_on_failure: bool,
+            console: object,
+            granularity: str,
+        ) -> int:
+            del (
+                units,
+                pytest_args,
+                timeout,
+                state_file,
+                policy_file,
+                resume,
+                stop_on_failure,
+                console,
+                granularity,
+            )
+            called["report_config"] = report_config
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_auto_isolation_units",
+            lambda targets, default_root, *, pytest_args, policy_file: [
+                str(default_root / "test_alpha.py")
+            ],  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [
+                str(default_root / "test_alpha.py")
+            ],  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
 
         result = runner.invoke(
             app,
-            ["test", "--module", str(module), "--isolation", mode, "--output", "junit"],
+            ["test", "--module", str(module), "--isolation", mode, "--output", output_name],
         )
 
-        assert result.exit_code == 2
-        assert f"--isolation {mode} currently supports only --output rich" in result.output
+        assert result.exit_code == 0
+        report_config = called["report_config"]
+        assert report_config is not None
+        assert getattr(report_config, "output_format") == output_name
+        assert Path(getattr(report_config, "output_path")).name == expected_name
 
     def test_test_file_isolation_resume_mismatch_is_reported(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

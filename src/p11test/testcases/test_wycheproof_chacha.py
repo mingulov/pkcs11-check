@@ -22,7 +22,7 @@ from p11test.testcases.conftest import mech_name
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v30]
 
-WYCHEPROOF_DIR = Path(__file__).parent / "vectors" / "wycheproof" / "testvectors_v1"
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 _CKM_CHACHA20_POLY1305 = 0x00004021
 

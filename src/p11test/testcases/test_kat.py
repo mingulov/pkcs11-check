@@ -13,7 +13,7 @@ from p11test.testcases.conftest import import_aes_key
 
 pytestmark = pytest.mark.kat
 
-VECTORS_DIR = Path(__file__).parent / "vectors"
+from p11test.testcases.data import KAT_DIR as VECTORS_DIR
 
 
 def load_vectors(filename: str) -> list[dict[str, str]]:
