@@ -4,12 +4,19 @@ Date: 2026-03-19
 
 ## Definition of 100%
 
-- **575 function-specific CkrExpectation entries** — one per non-universal CKR code per C_* function
-- **12 universal CKR verification tests** — prove infrastructure handles CKR_GENERAL_ERROR, CKR_HOST_MEMORY, etc.
-- **Total: 587 entries** in `_ckr_spec.py`
-- Currently: 244 entries. Gap: **343 entries to add.**
+**Every function-specific CKR code listed in the OASIS PKCS#11 spec has a CkrExpectation entry.** No fixed target number — the spec is the source of truth. A validation script continuously checks for gaps.
 
-Source: OASIS PKCS#11 spec, 76 C_* functions, 1334 total CKR entries, 575 function-specific.
+The OASIS spec defines ~100+ C_* functions (v2.40 + v3.0 message-based + v3.2 KEM/async) with ~800+ function-specific CKR entries (excluding universals). Currently: 244 entries across 15 dicts.
+
+### What counts as "covered"
+
+- **Function-specific CKR**: has a CkrExpectation entry in `_ckr_spec.py` with correct spec_ref
+- **Universal CKR** (CKR_GENERAL_ERROR, CKR_HOST_MEMORY, CKR_FUNCTION_FAILED, CKR_DEVICE_ERROR, CKR_DEVICE_MEMORY, CKR_DEVICE_REMOVED, CKR_SESSION_HANDLE_INVALID, CKR_SESSION_CLOSED, CKR_TOKEN_NOT_PRESENT, CKR_CRYPTOKI_NOT_INITIALIZED, CKR_OPERATION_NOT_VALIDATED, CKR_TOKEN_NOT_INITIALIZED, CKR_OK, CKR_PENDING): covered by `full_compat()` + infrastructure tests
+- **Truly untestable**: documented with rationale (CKR_MUTEX_BAD, CKR_CANCEL, CKR_FUNCTION_NOT_PARALLEL)
+
+### Validation script
+
+`scripts/ckr-coverage-check.py` parses the OASIS spec, extracts ALL (function, CKR) pairs, compares against `_ckr_spec.py`, and reports gaps. Run after every batch to ensure nothing is missed.
 
 ## Universal CKR Handling
 
@@ -26,33 +33,57 @@ Source: OASIS PKCS#11 spec, 76 C_* functions, 1334 total CKR entries, 575 functi
 
 ### New function families needed (not yet in any dict)
 
-| Functions | CKR Count | Dict Name |
-|-----------|----------|-----------|
-| C_DecryptFinal | 8 | Add to CKR_DECRYPT |
-| C_EncryptFinal | 6 | Add to CKR_ENCRYPT |
-| C_VerifySignatureInit/Update/Final | 28 | New CKR_VERIFY_SIGNATURE |
-| C_DigestXofInit/Update/Extract/Final/KeyValue | 23 | New CKR_DIGEST_XOF |
-| C_SessionCancel | 2 | Add to CKR_SESSION |
-| C_LoginUser | 12 | Add to CKR_SESSION |
-| C_WrapKeyAuthenticated/UnwrapKeyAuthenticated | 46 | New CKR_WRAP_AUTH |
-| C_GetInterface/C_GetInterfaceList | 4 | Add to CKR_GENERAL |
-| C_GetSessionValidationFlags | 1 | Add to CKR_SESSION |
-| C_EncapsulateKey/C_DecapsulateKey (remaining) | ~15 | Add to CKR_KEM |
+| Family | Functions | Dict Name |
+|--------|-----------|-----------|
+| v3.0 VerifySignature | C_VerifySignatureInit, C_VerifySignature, C_VerifySignatureUpdate, C_VerifySignatureFinal | New CKR_VERIFY_SIGNATURE |
+| v3.0 DigestXof | C_DigestXofInit, C_DigestXof, C_DigestXofUpdate, C_DigestXofExtract, C_DigestXofFinal, C_DigestXofKeyValue | New CKR_DIGEST_XOF |
+| v3.0 Message-based encrypt | C_MessageEncryptInit, C_EncryptMessage, C_EncryptMessageBegin, C_EncryptMessageNext, C_MessageEncryptFinal | New CKR_MSG_ENCRYPT |
+| v3.0 Message-based decrypt | C_MessageDecryptInit, C_DecryptMessage, etc. | New CKR_MSG_DECRYPT |
+| v3.0 Message-based sign | C_MessageSignInit, C_SignMessage, etc. | New CKR_MSG_SIGN |
+| v3.0 Message-based verify | C_MessageVerifyInit, C_VerifyMessage, etc. | New CKR_MSG_VERIFY |
+| v3.2 Authenticated wrap | C_WrapKeyAuthenticated, C_UnwrapKeyAuthenticated | New CKR_WRAP_AUTH |
+| v3.2 Async | C_AsyncComplete, C_AsyncGetID, C_AsyncJoin | New CKR_ASYNC |
+| Dual-function | C_DigestEncryptUpdate, C_DecryptDigestUpdate, C_SignEncryptUpdate, C_DecryptVerifyUpdate | New CKR_DUAL |
+| Legacy parallel | C_GetFunctionStatus, C_CancelFunction | Add to CKR_GENERAL |
+| Session extras | C_SessionCancel, C_LoginUser, C_GetSessionValidationFlags | Add to CKR_SESSION |
+| Interface | C_GetInterface, C_GetInterfaceList | Add to CKR_GENERAL |
 
 ### Existing dicts needing more entries
 
-Per-function analysis shows most dicts are 40-70% complete. The remaining entries are mostly:
+All 15 existing dicts are 40-70% complete. Common missing entries:
 - `CKR_FUNCTION_CANCELED` (every *Init function)
 - `CKR_PIN_EXPIRED` (every session-using function)
 - `CKR_USER_NOT_LOGGED_IN` (every key-using function)
 - `CKR_OPERATION_ACTIVE` (every *Init function)
-- Mechanism-specific variants not yet covered
+- Mechanism-specific variants (RSA-PSS params, AES-GCM IV, ECDH KDF, etc.)
+- All C_*Update/C_*Final entries for multipart operations
+
+### Special cases
+
+- **C_AsyncComplete**: return values are dynamic (same as the function it completes). Document as special case, not individual entries.
+- **C_GetFunctionStatus / C_CancelFunction**: legacy, always return CKR_FUNCTION_NOT_PARALLEL. One entry each.
+- **C_LoginUser**: same CKR set as C_Login. Can share entries or duplicate.
 
 ## Implementation Strategy
 
-### Phase 1: Batch-add all missing entries to `_ckr_spec.py` (~331 entries)
+### Phase 0: Validation script
 
-Mechanical expansion — read each function's Return values list, add an entry for every specific CKR not yet present. Most entries will be `testable=False` initially for conditions requiring raw ctypes or special setup. This gets us to 575.
+Create `scripts/ckr-coverage-check.py` that:
+1. Parses ALL spec files in `/tmp/pkcs11/working/doc/spec/`
+2. Extracts every `### C_*` function and its `Return values:` CKR list
+3. Loads `_ckr_spec.py` and checks which (function, CKR) pairs exist
+4. Reports: covered / missing / universal / total
+5. Run after every batch to track progress toward 100%
+
+### Phase 1: Batch-add all missing entries to `_ckr_spec.py`
+
+Split into sub-batches by function family (one commit per dict expansion):
+- 1a: Expand existing 15 dicts to full coverage
+- 1b: Add new dicts for v3.0 families (VerifySignature, DigestXof, message-based)
+- 1c: Add new dicts for v3.2 families (WrapAuth, Async)
+- 1d: Add dual-function, legacy, session extras
+
+After each sub-batch: run validation script to track progress. Most new entries start as `testable=False`.
 
 ### Phase 2: Convert testable=False → testable=True (~90 entries)
 
@@ -95,6 +126,8 @@ Mark as `testable=False, rationale="..."` in spec table.
 ## File Changes
 
 ```
+scripts/ckr-coverage-check.py           # NEW: validation script — the source of truth
+
 python-pkcs11/pkcs11/raw.py            # Already done
 
 src/p11test/testcases/ckr/
@@ -108,6 +141,10 @@ src/p11test/testcases/ckr/
     test_ckr_verify_signature.py        # NEW: v3.0+ VerifySignature* tests
     test_ckr_digest_xof.py             # NEW: v3.0+ DigestXof* tests (if supported)
     test_ckr_wrap_auth.py              # NEW: v3.2 WrapKeyAuthenticated tests
+    test_ckr_msg_encrypt.py            # NEW: v3.0 message-based encrypt tests
+    test_ckr_msg_decrypt.py            # NEW: v3.0 message-based decrypt tests
+    test_ckr_msg_sign.py               # NEW: v3.0 message-based sign tests
+    test_ckr_msg_verify.py             # NEW: v3.0 message-based verify tests
 
 local-builds/fault-proxy/
     fault-proxy.c                       # UPGRADE: all 68 functions with injection
@@ -115,12 +152,14 @@ local-builds/fault-proxy/
 
 ## Coverage Projection
 
-| Phase | Entries | Tests | Coverage |
-|-------|---------|-------|---------|
-| Current | 244 | 119 | 42.4% of 575 |
-| Phase 1 (batch add) | 575 | 119 | 100% entries, 42% tested |
-| Phase 2 (raw tests) | 575 | ~165 | 100% entries, ~60% tested |
-| Phase 3 (destructive) | 575 | ~190 | 100% entries, ~70% tested |
-| Phase 4 (fault-proxy) | 575 | ~205 | 100% entries, ~75% tested |
-| Phase 5 (universal) | 587 | ~217 | 100% documented |
-| Phase 6 (untestable) | 587 | ~217 | 100% — with ~10 documented exclusions |
+| Phase | What | Outcome |
+|-------|------|---------|
+| Phase 0 | Validation script | Exact gap count known |
+| Phase 1a-d | Batch-add entries | 100% entries in spec table, most testable=False |
+| Phase 2 | Raw ctypes tests | ~60% entries have real tests |
+| Phase 3 | Destructive subprocess | ~70% entries have real tests |
+| Phase 4 | Fault-proxy upgrade | ~75% entries have real tests |
+| Phase 5 | Universal infrastructure | All CKRs verified at least once |
+| Phase 6 | Document untestable | 100% — every entry documented, ~10 with exclusion rationale |
+
+**"100% coverage" = validation script reports 0 missing entries + all testable entries have tests + untestable entries have rationale.**
