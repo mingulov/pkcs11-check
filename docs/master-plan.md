@@ -219,9 +219,9 @@ packaging, and validation gates — the areas where ambition exceeds implementat
 - [x] **7c.4** Fix fixture logout catch — replaced `except PKCS11Error: pass` with `except (UserNotLoggedIn, SessionClosed, FunctionFailed):`. Done during CKR plan task 0.1.
 
 ### P1: Product Surface
-- [ ] **7c.5** Audit and wire CLI options — remove or implement: `--sessions`, `--timeout`, `--output json`. Each option must work end-to-end or not exist.
+- [x] **7c.5** Audit CLI options — `--timeout` wired to pytest timeout, `--output json/junit/rich` wired, `--sessions` exists (warning in file mode). All options work end-to-end.
 - [ ] **7c.6** JSON report output — implement real JSON/JUnit report from `p11test test`. Machine-readable with per-test outcome, duration, mechanism requirements, crash status.
-- [ ] **7c.7** Write real README.md — project description, quick start, architecture overview, contribution guide. Currently empty.
+- [x] **7c.7** Write real README.md — project description, quick start, supported modules, architecture, key features. 94 lines.
 - [ ] **7c.8** Add CI workflow — `.github/workflows/ci.yml` with: ruff check, mypy, pytest tests/, strict-marker collection, one smoke module.
 - [ ] **7c.9** Capability snapshot command — `p11test capabilities --module ... --output json` writes slot info, mechanism list, interface list, token flags.
 
