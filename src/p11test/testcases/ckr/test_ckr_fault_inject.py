@@ -33,6 +33,120 @@ def _skip_if_no_proxy() -> None:
         pytest.skip("fault-proxy not built (run: bash local-builds/build.sh fault-proxy)")
 
 
+class TestFaultInjection:
+    """Real error injection via fault-proxy."""
+
+    def test_inject_device_removed_on_encrypt(self, p11_config: Any) -> None:
+        """Inject CKR_DEVICE_REMOVED on C_Encrypt."""
+        _skip_if_no_proxy()
+        module = str(p11_config.module)
+        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        pin_arg = f'"{pin}"' if pin else "None"
+
+        script = textwrap.dedent(f"""\
+            import os, pkcs11
+            from pkcs11 import KeyType, Mechanism
+            os.environ["PKCS11_REAL_MODULE"] = "{module}"
+            os.environ["PKCS11_INJECT_FUNCTION"] = "C_Encrypt"
+            os.environ["PKCS11_INJECT_ERROR"] = "0x00000032"  # CKR_DEVICE_REMOVED
+            lib = pkcs11.lib("{_PROXY_PATH}")
+            slots = lib.get_slots(token_present=True)
+            token = slots[0].get_token()
+            pin = {pin_arg}
+            session = token.open(rw=True, user_pin=pin) if pin else token.open(rw=True)
+            key = session.generate_key(KeyType.AES, 256)
+            try:
+                key.encrypt(b"\\x00" * 16, mechanism=Mechanism.AES_ECB)
+                print("FAIL:no_error")
+            except pkcs11.exceptions.DeviceRemoved:
+                print("OK:DEVICE_REMOVED")
+            except Exception as e:
+                print(f"OTHER:{{type(e).__name__}}")
+            session.close()
+            lib.finalize()
+        """)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=15,
+            env=os.environ.copy(),
+        )
+        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert "OK:DEVICE_REMOVED" in result.stdout
+
+    def test_inject_device_error_on_sign(self, p11_config: Any) -> None:
+        """Inject CKR_DEVICE_ERROR on C_Sign."""
+        _skip_if_no_proxy()
+        module = str(p11_config.module)
+        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        pin_arg = f'"{pin}"' if pin else "None"
+
+        script = textwrap.dedent(f"""\
+            import os, pkcs11
+            from pkcs11 import KeyType, Mechanism
+            os.environ["PKCS11_REAL_MODULE"] = "{module}"
+            os.environ["PKCS11_INJECT_FUNCTION"] = "C_Sign"
+            os.environ["PKCS11_INJECT_ERROR"] = "0x00000030"  # CKR_DEVICE_ERROR
+            lib = pkcs11.lib("{_PROXY_PATH}")
+            slots = lib.get_slots(token_present=True)
+            token = slots[0].get_token()
+            pin = {pin_arg}
+            session = token.open(rw=True, user_pin=pin) if pin else token.open(rw=True)
+            _pub, priv = session.generate_keypair(KeyType.RSA, 2048)
+            try:
+                priv.sign(b"test", mechanism=Mechanism.SHA256_RSA_PKCS)
+                print("FAIL:no_error")
+            except pkcs11.exceptions.DeviceError:
+                print("OK:DEVICE_ERROR")
+            except Exception as e:
+                print(f"OTHER:{{type(e).__name__}}")
+            session.close()
+            lib.finalize()
+        """)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=30,
+            env=os.environ.copy(),
+        )
+        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert "OK:DEVICE_ERROR" in result.stdout
+
+    def test_inject_device_memory_on_generate_key(self, p11_config: Any) -> None:
+        """Inject CKR_DEVICE_MEMORY on C_GenerateKey."""
+        _skip_if_no_proxy()
+        module = str(p11_config.module)
+        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        pin_arg = f'"{pin}"' if pin else "None"
+
+        script = textwrap.dedent(f"""\
+            import os, pkcs11
+            from pkcs11 import KeyType
+            os.environ["PKCS11_REAL_MODULE"] = "{module}"
+            os.environ["PKCS11_INJECT_FUNCTION"] = "C_GenerateKey"
+            os.environ["PKCS11_INJECT_ERROR"] = "0x00000031"  # CKR_DEVICE_MEMORY
+            lib = pkcs11.lib("{_PROXY_PATH}")
+            slots = lib.get_slots(token_present=True)
+            token = slots[0].get_token()
+            pin = {pin_arg}
+            session = token.open(rw=True, user_pin=pin) if pin else token.open(rw=True)
+            try:
+                session.generate_key(KeyType.AES, 256)
+                print("FAIL:no_error")
+            except pkcs11.exceptions.DeviceMemory:
+                print("OK:DEVICE_MEMORY")
+            except Exception as e:
+                print(f"OTHER:{{type(e).__name__}}")
+            session.close()
+            lib.finalize()
+        """)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=15,
+            env=os.environ.copy(),
+        )
+        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert "OK:DEVICE_MEMORY" in result.stdout
+
+
 class TestFaultProxyBasic:
     """Verify fault-proxy loads and delegates correctly."""
 
