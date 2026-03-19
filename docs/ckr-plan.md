@@ -240,6 +240,19 @@ Complete the remaining function families.
 - [ ] **15.4** C_GetOperationState/C_SetOperationState gaps — add: (a) CKR_STATE_UNSAVEABLE for complex operations. (b) CKR_KEY_NEEDED: restore state needing encryption key. (c) CKR_KEY_NOT_NEEDED: supply key when not needed. Verify on 3 local targets.
 - [ ] **15.5** Final validation checkpoint — full CKR suite on all 4 targets. Update ckr-coverage.md with final numbers.
 
+## Tier 15b — python-pkcs11 Bypass Mode for CKR Testing
+
+The python-pkcs11 wrapper blocks some PKCS#11 error conditions at the Python level (e.g., `NotImplementedError` for unknown attributes, missing `.encrypt()` method for `CKA_ENCRYPT=False` keys). To test these CKR conditions against real modules, we need a "raw mode" or bypass in the fork.
+
+**Requirements:** Must NOT break the wrapper's normal safety checks. The bypass should be opt-in (e.g., a flag or separate API), so normal users still get the safe interface. The fork must remain clean and maintainable for upstream PR.
+
+- [ ] **15b.1** Design python-pkcs11 bypass approach — options: (a) `session.raw_call("C_EncryptInit", session_handle, mechanism, key_handle)` method that skips Python-level checks. (b) `lib.raw_function_list` property exposing ctypes-callable function pointers. (c) A separate `pkcs11.raw` module with thin ctypes wrappers. **Pick the cleanest approach that doesn't pollute the main API.**
+- [ ] **15b.2** Implement bypass in python-pkcs11 fork — add the chosen mechanism. Ensure normal tests still pass (`cd python-pkcs11 && python -m pytest tests/`).
+- [ ] **15b.3** Update `_ctypes_raw.py` to use the new bypass instead of independent ctypes loading — eliminates CK_FUNCTION_LIST offset calculation. Much cleaner.
+- [ ] **15b.4** Convert wrapper-blocked CKR tests — tests that currently `pytest.skip("wrapper blocks")` can now use the bypass. Convert: key_function_not_permitted (encrypt/decrypt/sign), attribute_type_invalid, etc.
+- [ ] **15b.5** Recount CkrExpectation entries — the bypass should unlock ~20-30 previously untestable conditions.
+- [ ] **15b.6** Validation — all 3 local targets + Docker OpenCryptoki.
+
 ## Tier 16 — Deep Gap Analysis Round 2
 
 After Tiers 10-15 are done, coverage should be ~175/487 (~36%). This tier audits what's still missing and creates new tasks to push past 50%.
