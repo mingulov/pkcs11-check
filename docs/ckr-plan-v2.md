@@ -55,22 +55,22 @@ The script is the source of truth. It parses the OASIS spec, extracts all (funct
 
 For each existing dict, add ALL missing function-specific CKR entries from the spec. Run validation script after each task. Mark multipart/wrapper-blocked entries as `testable=False`.
 
-- [ ] **1a.1** Expand CKR_ENCRYPT — add every missing CKR for C_EncryptInit, C_Encrypt, C_EncryptUpdate, C_EncryptFinal. Run `scripts/ckr-coverage-check.py | grep C_Encrypt` to verify 0 gaps for these functions.
-- [ ] **1a.2** Expand CKR_DECRYPT — same pattern for C_DecryptInit, C_Decrypt, C_DecryptUpdate, C_DecryptFinal.
-- [ ] **1a.3** Expand CKR_SIGN — C_SignInit, C_Sign, C_SignUpdate, C_SignFinal, C_SignRecoverInit, C_SignRecover.
-- [ ] **1a.4** Expand CKR_VERIFY — C_VerifyInit, C_Verify, C_VerifyUpdate, C_VerifyFinal, C_VerifyRecoverInit, C_VerifyRecover.
-- [ ] **1a.5** Expand CKR_DIGEST — C_DigestInit, C_Digest, C_DigestUpdate, C_DigestKey, C_DigestFinal.
-- [ ] **1a.6** Expand CKR_KEYGEN — C_GenerateKey, C_GenerateKeyPair.
-- [ ] **1a.7** Expand CKR_WRAP — C_WrapKey, C_UnwrapKey.
-- [ ] **1a.8** Expand CKR_DERIVE — C_DeriveKey.
-- [ ] **1a.9** Expand CKR_KEM — C_EncapsulateKey, C_DecapsulateKey.
-- [ ] **1a.10** Expand CKR_OBJECT — C_CreateObject, C_CopyObject, C_DestroyObject, C_GetObjectSize, C_GetAttributeValue, C_SetAttributeValue, C_FindObjectsInit, C_FindObjects, C_FindObjectsFinal.
-- [ ] **1a.11** Expand CKR_SESSION — C_OpenSession, C_CloseSession, C_CloseAllSessions, C_GetSessionInfo, C_Login, C_Logout.
-- [ ] **1a.12** Expand CKR_SLOT_TOKEN — C_GetSlotList, C_GetSlotInfo, C_GetTokenInfo, C_GetMechanismList, C_GetMechanismInfo, C_InitToken, C_InitPIN, C_SetPIN, C_WaitForSlotEvent.
-- [ ] **1a.13** Expand CKR_RANDOM — C_SeedRandom, C_GenerateRandom.
-- [ ] **1a.14** Expand CKR_STATE — C_GetOperationState, C_SetOperationState.
-- [ ] **1a.15** Expand CKR_GENERAL — C_Initialize, C_Finalize, C_GetInfo, C_GetFunctionList, C_GetFunctionStatus, C_CancelFunction.
-- [ ] **1a.16** Validation checkpoint — run `scripts/ckr-coverage-check.py`. All v2.40 functions should show 0 gaps. Commit.
+- [x] **1a.1** Expand CKR_ENCRYPT — add every missing CKR for C_EncryptInit, C_Encrypt, C_EncryptUpdate, C_EncryptFinal. Run `scripts/ckr-coverage-check.py | grep C_Encrypt` to verify 0 gaps for these functions.
+- [x] **1a.2** Expand CKR_DECRYPT — same pattern for C_DecryptInit, C_Decrypt, C_DecryptUpdate, C_DecryptFinal.
+- [x] **1a.3** Expand CKR_SIGN — C_SignInit, C_Sign, C_SignUpdate, C_SignFinal, C_SignRecoverInit, C_SignRecover.
+- [x] **1a.4** Expand CKR_VERIFY — C_VerifyInit, C_Verify, C_VerifyUpdate, C_VerifyFinal, C_VerifyRecoverInit, C_VerifyRecover.
+- [x] **1a.5** Expand CKR_DIGEST — C_DigestInit, C_Digest, C_DigestUpdate, C_DigestKey, C_DigestFinal.
+- [x] **1a.6** Expand CKR_KEYGEN — C_GenerateKey, C_GenerateKeyPair.
+- [x] **1a.7** Expand CKR_WRAP — C_WrapKey, C_UnwrapKey.
+- [x] **1a.8** Expand CKR_DERIVE — C_DeriveKey.
+- [x] **1a.9** Expand CKR_KEM — C_EncapsulateKey, C_DecapsulateKey.
+- [x] **1a.10** Expand CKR_OBJECT — C_CreateObject, C_CopyObject, C_DestroyObject, C_GetObjectSize, C_GetAttributeValue, C_SetAttributeValue, C_FindObjectsInit, C_FindObjects, C_FindObjectsFinal.
+- [x] **1a.11** Expand CKR_SESSION — C_OpenSession, C_CloseSession, C_CloseAllSessions, C_GetSessionInfo, C_Login, C_Logout.
+- [x] **1a.12** Expand CKR_SLOT_TOKEN — C_GetSlotList, C_GetSlotInfo, C_GetTokenInfo, C_GetMechanismList, C_GetMechanismInfo, C_InitToken, C_InitPIN, C_SetPIN, C_WaitForSlotEvent.
+- [x] **1a.13** Expand CKR_RANDOM — C_SeedRandom, C_GenerateRandom.
+- [x] **1a.14** Expand CKR_STATE — C_GetOperationState, C_SetOperationState.
+- [x] **1a.15** Expand CKR_GENERAL — C_Initialize, C_Finalize, C_GetInfo, C_GetFunctionList, C_GetFunctionStatus, C_CancelFunction.
+- [x] **1a.16** Validation checkpoint — run `scripts/ckr-coverage-check.py`. All v2.40 functions should show 0 gaps. Commit.
 
 ## Phase 1b — New Dicts for v3.0 Functions
 
