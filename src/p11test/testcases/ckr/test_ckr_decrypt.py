@@ -113,6 +113,36 @@ class TestDecryptDataErrors:
         except PKCS11Error as e:
             assert_ckr(exp, e, ckr_strict)
 
+    def test_cbc_pad_bad_padding(
+        self, p11_session: Any, p11_module: Any, ckr_strict: bool
+    ) -> None:
+        """AES-CBC-PAD decrypt garbage → CKR_ENCRYPTED_DATA_INVALID (bad padding)."""
+        from p11test.testcases.conftest import has_mechanism
+        if not has_mechanism(p11_module, "AES_CBC_PAD"):
+            pytest.skip("AES_CBC_PAD not supported")
+        key = p11_session.generate_key(KeyType.AES, 256)
+        iv = p11_session.generate_random(128)
+        # Garbage 16 bytes — will have invalid PKCS#7 padding
+        try:
+            key.decrypt(b"\xDD" * 16, mechanism=Mechanism.AES_CBC_PAD, mechanism_param=iv)
+            # Some modules may "decrypt" garbage without checking padding
+        except PKCS11Error as e:
+            assert_ckr(CKR_DECRYPT["encrypted_data_cbc_wrong_padding"], e, ckr_strict)
+
+    def test_rsa_oaep_garbage(
+        self, p11_session: Any, p11_module: Any, ckr_strict: bool
+    ) -> None:
+        """RSA-OAEP decrypt garbage → CKR_ENCRYPTED_DATA_INVALID."""
+        from p11test.testcases.conftest import has_mechanism
+        if not has_mechanism(p11_module, "RSA_PKCS_OAEP"):
+            pytest.skip("RSA_PKCS_OAEP not supported")
+        _pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
+        try:
+            priv.decrypt(b"\xEE" * 256, mechanism=Mechanism.RSA_PKCS_OAEP)
+            pytest.fail("Should have rejected garbage OAEP ciphertext")
+        except PKCS11Error as e:
+            assert_ckr(CKR_DECRYPT["rsa_oaep_garbage"], e, ckr_strict)
+
     def test_key_handle_invalid(
         self, p11_session: Any, ckr_strict: bool
     ) -> None:

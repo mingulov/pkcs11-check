@@ -130,6 +130,22 @@ class TestEncryptDataErrors:
         except PKCS11Error as e:
             assert_ckr(CKR_ENCRYPT["data_too_long_rsa"], e, ckr_strict)
 
+    def test_cbc_pad_non_aligned(
+        self, p11_session: Any, p11_module: Any, ckr_strict: bool
+    ) -> None:
+        """AES-CBC-PAD with 15 bytes — should succeed (padding handles it)."""
+        from p11test.testcases.conftest import has_mechanism
+        if not has_mechanism(p11_module, "AES_CBC_PAD"):
+            pytest.skip("AES_CBC_PAD not supported")
+        key = p11_session.generate_key(KeyType.AES, 256)
+        iv = p11_session.generate_random(128)
+        exp = CKR_ENCRYPT["data_invalid_cbc_padding"]
+        try:
+            ct = key.encrypt(b"\xAA" * 15, mechanism=Mechanism.AES_CBC_PAD, mechanism_param=iv)
+            assert len(ct) == 16  # Padded to one block
+        except PKCS11Error as e:
+            assert_ckr(exp, e, ckr_strict)
+
     def test_key_size_range(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool
     ) -> None:

@@ -271,6 +271,24 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=KEY_SIZE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.8.1",
     ),
+    "data_invalid_cbc_padding": CkrExpectation(
+        function="C_Encrypt",
+        condition="AES_CBC_PAD_non_block_aligned_accepted",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.8.2",
+        mechanisms=["AES_CBC_PAD"],
+        allow_success=True,  # CBC-PAD handles non-aligned data by design
+    ),
+    "data_gcm_aad_only": CkrExpectation(
+        function="C_Encrypt",
+        condition="AES_GCM_empty_plaintext_with_AAD",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.8.2",
+        mechanisms=["AES_GCM"],
+        allow_success=True,  # GCM can encrypt 0 bytes with just AAD
+    ),
 }
 
 
@@ -338,6 +356,22 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 §5.9.2",
         mechanisms=["RSA_PKCS"],
         allow_success=True,  # Kryoptic accepts wrong-length ciphertext (spec deviation)
+    ),
+    "encrypted_data_cbc_wrong_padding": CkrExpectation(
+        function="C_Decrypt",
+        condition="AES_CBC_PAD_ciphertext_with_bad_padding",
+        spec_ckr=EncryptedDataInvalid,
+        compat_tuple=_DECRYPT_DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.2",
+        mechanisms=["AES_CBC_PAD"],
+    ),
+    "rsa_oaep_garbage": CkrExpectation(
+        function="C_Decrypt",
+        condition="RSA_OAEP_garbage_ciphertext",
+        spec_ckr=EncryptedDataInvalid,
+        compat_tuple=_DECRYPT_DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.2",
+        mechanisms=["RSA_PKCS_OAEP"],
     ),
     "init_key_function_not_permitted": CkrExpectation(
         function="C_DecryptInit",
