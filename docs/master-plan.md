@@ -220,9 +220,9 @@ packaging, and validation gates — the areas where ambition exceeds implementat
 
 ### P1: Product Surface
 - [x] **7c.5** Audit CLI options — `--timeout` wired to pytest timeout, `--output json/junit/rich` wired, `--sessions` exists (warning in file mode). All options work end-to-end.
-- [ ] **7c.6** JSON report output — implement real JSON/JUnit report from `p11test test`. Machine-readable with per-test outcome, duration, mechanism requirements, crash status.
+- [x] **7c.6** JSON report output — `--output json` uses pytest-json-report, generates p11test-results.json with per-test outcomes. — implement real JSON/JUnit report from `p11test test`. Machine-readable with per-test outcome, duration, mechanism requirements, crash status.
 - [x] **7c.7** Write real README.md — project description, quick start, supported modules, architecture, key features. 94 lines.
-- [ ] **7c.8** Add CI workflow — `.github/workflows/ci.yml` with: ruff check, mypy, pytest tests/, strict-marker collection, one smoke module.
+- [x] **7c.8** Add CI workflow — `.github/workflows/ci.yml` with 5 jobs: ruff lint, mypy, meta-tests, strict-markers, SoftHSM2 smoke. — `.github/workflows/ci.yml` with: ruff check, mypy, pytest tests/, strict-marker collection, one smoke module.
 - [ ] **7c.9** Capability snapshot command — `p11test capabilities --module ... --output json` writes slot info, mechanism list, interface list, token flags.
 
 ### P2: Depth and Polish

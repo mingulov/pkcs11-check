@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen
+      - run: uv run ruff check src/ tests/
+      - run: uv run ruff format --check src/ tests/
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen
+      - run: uv run mypy src/
+
+  meta-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen
+      - run: uv run pytest tests/ -v --timeout=60
+
+  strict-markers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen
+      - run: uv run pytest --strict-markers src/p11test/testcases/ --collect-only -q
+
+  smoke-softhsm2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: sudo apt-get update && sudo apt-get install -y softhsm2
+      - run: uv sync --frozen
+      - name: Setup SoftHSM2 token
+        run: |
+          mkdir -p /tmp/p11test-tokens
+          printf 'directories.tokendir = /tmp/p11test-tokens\nobjectstore.backend = file\n' > /tmp/softhsm2.conf
+          export SOFTHSM2_CONF=/tmp/softhsm2.conf
+          softhsm2-util --init-token --slot 0 --label p11test --so-pin 87654321 --pin 1234
+      - name: Run smoke tests
+        env:
+          SOFTHSM2_CONF: /tmp/softhsm2.conf
+        run: |
+          uv run pytest src/p11test/testcases/ \
+            --p11-module=/usr/lib/softhsm/libsofthsm2.so \
+            --p11-pin=1234 \
+            -k "test_encrypt or test_sign or test_digest" \
+            --timeout=60 -q
