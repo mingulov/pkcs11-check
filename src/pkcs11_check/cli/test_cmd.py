@@ -142,6 +142,9 @@ def test_command(
         console.print(f"[red]Error:[/red] Unsupported isolation mode: {isolation}")
         raise typer.Exit(code=2)
 
+    original_pin = os.environ.get("P11TEST_PIN")
+    had_original_pin = "P11TEST_PIN" in os.environ
+
     # Pass PIN via env so pytest fixtures pick it up
     if pin:
         os.environ["P11TEST_PIN"] = pin
@@ -234,3 +237,8 @@ def test_command(
         raise typer.Exit(code=int(exit_code))
     finally:
         manifest_path.unlink(missing_ok=True)
+        if pin:
+            if had_original_pin:
+                os.environ["P11TEST_PIN"] = original_pin or ""
+            else:
+                os.environ.pop("P11TEST_PIN", None)
