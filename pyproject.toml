@@ -8,6 +8,17 @@ authors = [
 ]
 requires-python = ">=3.11"
 license = "MIT"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Software Development :: Testing",
+]
 
 dependencies = [
     "python-pkcs11>=0.9.3",
@@ -28,6 +39,12 @@ dev = [
     "mypy",
     "ruff",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mingulov/p11test"
+Repository = "https://github.com/mingulov/p11test"
+Documentation = "https://github.com/mingulov/p11test/tree/main/docs"
+Issues = "https://github.com/mingulov/p11test/issues"
 
 [project.scripts]
 p11test = "p11test.cli.app:main"

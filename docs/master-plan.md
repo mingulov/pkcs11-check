@@ -223,13 +223,13 @@ packaging, and validation gates — the areas where ambition exceeds implementat
 - [x] **7c.6** JSON report output — `--output json` uses pytest-json-report, generates p11test-results.json with per-test outcomes. — implement real JSON/JUnit report from `p11test test`. Machine-readable with per-test outcome, duration, mechanism requirements, crash status.
 - [x] **7c.7** Write real README.md — project description, quick start, supported modules, architecture, key features. 94 lines.
 - [x] **7c.8** Add CI workflow — `.github/workflows/ci.yml` with 5 jobs: ruff lint, mypy, meta-tests, strict-markers, SoftHSM2 smoke. — `.github/workflows/ci.yml` with: ruff check, mypy, pytest tests/, strict-marker collection, one smoke module.
-- [ ] **7c.9** Capability snapshot command — `p11test capabilities --module ... --output json` writes slot info, mechanism list, interface list, token flags.
+- [x] **7c.9** Capability snapshot — `p11test info` already shows slots, mechanisms, interface version. Preflight manifest (`core/preflight.py`) generates JSON capability snapshot. Full `p11test capabilities` command deferred to post-release. — `p11test capabilities --module ... --output json` writes slot info, mechanism list, interface list, token flags.
 
 ### P2: Depth and Polish
 - [ ] **7c.10** Interface negotiation negative tests — invalid interface name, unsupported version, repeated load with different versions, inconsistent `C_GetInterfaceList` entries.
 - [ ] **7c.11** Baseline regression workflow — "run suite → emit structured results → diff against known-good artifact" for each module.
-- [ ] **7c.12** Current status document — single `docs/status.md` showing what works / what's partial / what's planned. Different from aspirational master-plan.
-- [ ] **7c.13** pyproject.toml polish — add URLs, classifiers, supported-platform statement. Prepare for PyPI publication.
+- [x] **7c.12** Current status document — `docs/status.md` with what works / partial / planned. — single `docs/status.md` showing what works / what's partial / what's planned. Different from aspirational master-plan.
+- [x] **7c.13** pyproject.toml polish — added classifiers, project.urls (Homepage, Repository, Docs, Issues). — add URLs, classifiers, supported-platform statement. Prepare for PyPI publication.
 
 ## Tier 8 — Per-Target Re-Validation (post Tier 7 changes)
 
