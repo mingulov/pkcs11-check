@@ -178,3 +178,69 @@ class TestMultipartNotInitialized:
         )
         assert rc == 0, f"Crash or error: {err[-200:]}"
         assert "OK" in out
+
+    def test_decrypt_final_no_init(self, p11_config: Any) -> None:
+        """C_DecryptFinal without C_DecryptInit."""
+        rc, out, err = _run_raw_test(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+            out = (ctypes.c_ubyte * 32)()
+            out_len = ctypes.c_ulong(32)
+            rv = raw.C_DecryptFinal(sh, out, ctypes.byref(out_len))
+            print(f"CKR:0x{rv:08x}")
+            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
+            print("OK")
+            """,
+        )
+        assert rc == 0, f"Crash or error: {err[-200:]}"
+        assert "OK" in out
+
+    def test_sign_final_no_init(self, p11_config: Any) -> None:
+        """C_SignFinal without C_SignInit."""
+        rc, out, err = _run_raw_test(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+            out = (ctypes.c_ubyte * 256)()
+            out_len = ctypes.c_ulong(256)
+            rv = raw.C_SignFinal(sh, out, ctypes.byref(out_len))
+            print(f"CKR:0x{rv:08x}")
+            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
+            print("OK")
+            """,
+        )
+        assert rc == 0, f"Crash or error: {err[-200:]}"
+        assert "OK" in out
+
+    def test_verify_update_no_init(self, p11_config: Any) -> None:
+        """C_VerifyUpdate without C_VerifyInit."""
+        rc, out, err = _run_raw_test(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+            data = (ctypes.c_ubyte * 16)(*([0]*16))
+            rv = raw.C_VerifyUpdate(sh, data, 16)
+            print(f"CKR:0x{rv:08x}")
+            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
+            print("OK")
+            """,
+        )
+        assert rc == 0, f"Crash or error: {err[-200:]}"
+        assert "OK" in out
+
+    def test_verify_final_no_init(self, p11_config: Any) -> None:
+        """C_VerifyFinal without C_VerifyInit."""
+        rc, out, err = _run_raw_test(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+            sig = (ctypes.c_ubyte * 32)(*([0]*32))
+            rv = raw.C_VerifyFinal(sh, sig, 32)
+            print(f"CKR:0x{rv:08x}")
+            assert rv == CKR_OPERATION_NOT_INITIALIZED, f"Expected NOT_INIT, got 0x{rv:08x}"
+            print("OK")
+            """,
+        )
+        assert rc == 0, f"Crash or error: {err[-200:]}"
+        assert "OK" in out
