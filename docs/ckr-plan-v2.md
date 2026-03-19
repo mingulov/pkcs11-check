@@ -44,7 +44,7 @@ ALL of these must be true:
 1. Validation script reports **0 missing function-specific entries** (802/802)
 2. Every Phase 3-6 task has a **real implementation** (file exists, tests run, not just marked done)
 3. testable=True entries all have **real tests that execute on at least one module**
-4. testable=False entries each have a **documented rationale** (v3.0+ not supported by any local module, truly untestable from Python, etc.)
+4. testable=False entries < 70 remaining, each with **documented rationale** (function_canceled=callback, pin_expired=can't force, cant_lock=mutex)
 5. Zero test regressions on SoftHSM2 + Kryoptic + NSS softokn
 
 ---
@@ -150,7 +150,27 @@ Upgrade fault-proxy.c to intercept all C_* functions for device/token error inje
 - [x] **6.2** Update `docs/ckr-coverage.md` — final numbers from validation script. Per-function matrix. Per-module deviation summary.
 - [x] **6.3** Final regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Zero failures.
 - [x] **6.4** Update `docs/master-plan.md` — mark CKR coverage as complete.
-- [x] **6.5** **Handoff to master-plan.md** — CKR 100% coverage achieved.
+- [x] **6.5** Spec entries + core tests complete. Phases 7-8 for testable=False conversion.
+
+## Phase 7 — Convert testable=False to Real Tests (v2.40 functions)
+
+587 of 661 testable=False entries CAN be tested with RawPKCS11. Convert in batches.
+
+- [ ] **7.1** Convert "other" v2.40 entries (~177) — ARGUMENTS_BAD, USER_NOT_LOGGED_IN on Init functions. Use RawPKCS11 subprocess. Batch by family. Flip testable=False → True.
+- [ ] **7.2** Convert remaining multipart (~72) — Update/Final with wrong data. Use RawPKCS11.
+- [ ] **7.3** Convert remaining operation_state (~36) — double Init for all families. Use RawPKCS11.
+- [ ] **7.4** Convert remaining buffer_sizing (~11) — Decrypt, Verify, GetAttributeValue small buffers.
+- [ ] **7.5** Convert legacy_parallel (3) — GetFunctionStatus, CancelFunction → FUNCTION_NOT_PARALLEL.
+- [ ] **7.6** Validation + recount testable=False.
+
+## Phase 8 — Convert testable=False v3.0/v3.2 on Kryoptic
+
+- [ ] **8.1** Convert v3.0 message-based (~235) — use RawPKCS11 + funclist3_ptr. Each *Init with wrong mechanism, *Message without Init. Kryoptic only.
+- [ ] **8.2** Convert v3.0 session (~15) — LoginUser, SessionCancel. RawPKCS11 + funclist3_ptr.
+- [ ] **8.3** Convert v3.2 wrap_auth (~23) — extend raw.py with funclist32_ptr indices 92-103. Test on Kryoptic.
+- [ ] **8.4** Document genuinely untestable (~66) — function_canceled (48, callback), pin_expired (17, can't force), cant_lock (1, mutex). Add `rationale="..."` to each.
+- [ ] **8.5** Final count — target: <70 testable=False (only genuinely untestable).
+- [ ] **8.6** **Final handoff to master-plan.md.**
 
 ---
 
