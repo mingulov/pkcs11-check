@@ -130,7 +130,7 @@ scripts/ckr-coverage-check.py           # NEW: validation script — the source 
 
 python-pkcs11/pkcs11/raw.py            # Already done
 
-src/p11test/testcases/ckr/
+src/pkcs11-check/testcases/ckr/
     _ckr_spec.py                        # +331 entries (244→575)
     test_ckr_universal.py               # NEW: 12 universal CKR verification tests
     test_ckr_raw_multipart.py           # Already done (6 tests)

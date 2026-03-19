@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 
-from p11test.core.file_runner import (
+from pkcs11_check.core.file_runner import (
     BackendIsolationPolicy,
     FileRunResult,
     FileRunState,
@@ -91,7 +91,7 @@ def test_discover_pytest_units_test_granularity_collects_nodeids(
     target.write_text("def test_case():\n    assert True\n")
 
     monkeypatch.setattr(
-        "p11test.core.file_runner.collect_pytest_nodeids",
+        "pkcs11_check.core.file_runner.collect_pytest_nodeids",
         lambda targets, pytest_args, *, env=None: [f"{target}::test_case"],  # type: ignore[arg-type]
     )
 
@@ -169,7 +169,7 @@ def test_discover_auto_isolation_units_expands_per_test_marked_files(
     target.write_text("import pytest\npytestmark = [pytest.mark.subprocess_per_test]\n")
 
     monkeypatch.setattr(
-        "p11test.core.file_runner.collect_pytest_nodeids",
+        "pkcs11_check.core.file_runner.collect_pytest_nodeids",
         lambda targets, pytest_args, *, env=None: [f"{target}::test_one", f"{target}::test_two"],  # type: ignore[arg-type]
     )
 
@@ -203,7 +203,7 @@ def test_discover_auto_isolation_units_expands_policy_promoted_files(
     )
 
     monkeypatch.setattr(
-        "p11test.core.file_runner.collect_pytest_nodeids",
+        "pkcs11_check.core.file_runner.collect_pytest_nodeids",
         lambda targets, pytest_args, *, env=None: [f"{target}::test_one"],  # type: ignore[arg-type]
     )
 
@@ -417,7 +417,7 @@ def test_run_isolated_pytest_units_escalates_crashed_file_in_same_run(
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     monkeypatch.setattr(
-        "p11test.core.file_runner.discover_pytest_units",
+        "pkcs11_check.core.file_runner.discover_pytest_units",
         lambda targets, default_root, *, granularity, pytest_args, env=None: (
             [  # type: ignore[arg-type]
                 f"{target}::test_one",
@@ -490,7 +490,7 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     monkeypatch.setattr(
-        "p11test.core.file_runner.discover_pytest_units",
+        "pkcs11_check.core.file_runner.discover_pytest_units",
         lambda targets, default_root, *, granularity, pytest_args, env=None: (
             [  # type: ignore[arg-type]
                 f"{target}::test_one",
@@ -858,7 +858,7 @@ def test_run_isolated_pytest_units_writes_junit_report(
 
     assert exit_code == 1
     payload = report_path.read_text()
-    assert '<testsuite name="p11test-isolated"' in payload
+    assert '<testsuite name="pkcs11-check-isolated"' in payload
     assert 'type="failure"' in payload
     assert 'type="crashed"' in payload
 

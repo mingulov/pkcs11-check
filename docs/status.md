@@ -1,4 +1,4 @@
-# p11test Current Status
+# pkcs11-check Current Status
 
 Last updated: 2026-03-19
 
@@ -11,7 +11,7 @@ Last updated: 2026-03-19
 - **PQC support** — ML-KEM, ML-DSA, SLH-DSA tested on Kryoptic
 - **Adaptive isolated runner** — `--isolation auto|file|test` survives crashes, escalates crashing files in-run, and remembers crash-prone files per backend
 - **JSON/JUnit isolated reports** — `--output json` or `--output junit`
-- **State inspection command** — `p11test state` summarizes saved isolation state and policy files
+- **State inspection command** — `pkcs11-check state` summarizes saved isolation state and policy files
 - **10 local build providers** — SoftHSM2, Kryoptic, NSS, pkcs11-mock, qryptotoken, tpm2-pkcs11, BouncyHSM, OpenCryptoki, swtpm, tpm2-swtpm
 - **12 Docker test targets** for CI validation
 - **CI workflow** — GitHub Actions with lint, typecheck, tests, strict markers, smoke
@@ -22,7 +22,7 @@ Last updated: 2026-03-19
 - **Per-target validation** — SoftHSM2 + Kryoptic fully validated, others need re-run post CKR changes
 - **Fault injection proxy** — works for v2.40 functions, v3.0+ not yet intercepted
 - **v3.0 message-based tests** — 6 tests proven on Kryoptic, more possible
-- **Crash-prone Docker paths** — now use `p11test test`, but the full matrix still needs a fresh pass
+- **Crash-prone Docker paths** — now use `pkcs11-check test`, but the full matrix still needs a fresh pass
 
 ## What's Planned
 

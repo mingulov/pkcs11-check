@@ -115,7 +115,7 @@ setup() {
     echo ""
     echo "Create a slot via API:"
     echo '  curl -X POST http://127.0.0.1:5011/Slot -H "Content-Type: application/json" \'
-    echo '    -d '"'"'{"IsHwDevice":false,"Description":"p11test","Token":{"Label":"p11test","SerialNumber":"0001","UserPin":"1234","SoPin":"12345678"}}'"'"
+    echo '    -d '"'"'{"IsHwDevice":false,"Description":"pkcs11-check","Token":{"Label":"pkcs11-check","SerialNumber":"0001","UserPin":"1234","SoPin":"12345678"}}'"'"
 
     MODULE="$so"
     PIN="1234"

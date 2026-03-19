@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from p11test.core.isolation import IsolatedRunner, TestResult
+from pkcs11_check.core.isolation import IsolatedRunner, TestResult
 
 
 # Module-level functions required for multiprocessing pickling

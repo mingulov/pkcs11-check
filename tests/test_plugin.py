@@ -7,15 +7,15 @@ from types import SimpleNamespace
 
 import pytest
 
-import p11test.plugin as plugin_mod
-from p11test.core.preflight import CapabilityManifest
-from p11test.fixtures import p11_config
+import pkcs11_check.plugin as plugin_mod
+from pkcs11_check.core.preflight import CapabilityManifest
+from pkcs11_check.fixtures import p11_config
 
 
 class TestPluginRegistration:
     def test_plugin_is_registered(self, pytestconfig: pytest.Config) -> None:
-        """Verify p11test plugin is loaded."""
-        plugin = pytestconfig.pluginmanager.get_plugin("p11test")
+        """Verify pkcs11-check plugin is loaded."""
+        plugin = pytestconfig.pluginmanager.get_plugin("pkcs11-check")
         assert plugin is not None
 
     def test_p11_module_option_exists(self, pytestconfig: pytest.Config) -> None:

@@ -36,11 +36,11 @@ RUN usermod -a -G pkcs11 root
 CMD ["sh", "-c", "\
   echo 'OpenCryptoki:' && rpm -q opencryptoki opencryptoki-swtok && \
   pkcsslotd && sleep 2 && \
-  echo 'p11test' | pkcsconf -I -c 0 -S 87654321 2>&1 || true && \
+  echo 'pkcs11-check' | pkcsconf -I -c 0 -S 87654321 2>&1 || true && \
   printf '87654321\\n1234\\n1234\\n' | pkcsconf -u -c 0 2>&1 || true && \
   pkcsconf -t -c 0 2>&1 && \
-  uv run p11test test \
+  uv run pkcs11-check test \
     --module /usr/lib64/pkcs11/libopencryptoki.so \
     --pin 1234 --isolation auto \
-    src/p11test/testcases/; \
+    src/pkcs11_check/testcases/; \
   RC=$?; killall pkcsslotd 2>/dev/null; exit $RC"]

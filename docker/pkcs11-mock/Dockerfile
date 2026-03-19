@@ -2,7 +2,7 @@
 # https://github.com/Pkcs11Interop/pkcs11-mock
 #
 # A single-file C stub that implements the PKCS#11 v3.1 interface with
-# stub/minimal responses. Useful for testing that p11test handles modules
+# stub/minimal responses. Useful for testing that pkcs11-check handles modules
 # that return CKR_FUNCTION_NOT_SUPPORTED or minimal data gracefully.
 #
 # No token initialization needed — the mock accepts any call and returns
@@ -42,6 +42,6 @@ RUN uv python pin 3.12 && uv sync --frozen
 CMD ["sh", "-c", "\
   echo 'pkcs11-mock library:' && \
   ls -lh /usr/lib64/libpkcs11-mock.so && \
-  uv run pytest src/p11test/testcases/ \
+  uv run pytest src/pkcs11_check/testcases/ \
     --p11-module=/usr/lib64/libpkcs11-mock.so \
     -q --tb=short 2>&1 || true"]

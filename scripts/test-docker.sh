@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run p11test against all Docker-based PKCS#11 modules.
+# Run pkcs11-check against all Docker-based PKCS#11 modules.
 #
 # Usage:
 #   ./scripts/test-docker.sh                    # run all

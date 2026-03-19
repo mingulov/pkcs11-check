@@ -1,4 +1,4 @@
-# p11test — Test Coverage Summary
+# pkcs11-check — Test Coverage Summary
 
 Run `pytest --co -q` for current counts. Tests auto-skip for unsupported mechanisms.
 
@@ -135,7 +135,7 @@ Verify PKCS#11 output against Python `cryptography` library.
 - **Mechanism availability**: All tests query `slot.get_mechanisms()` before attempting operations. Unsupported mechanisms skip cleanly with descriptive message.
 - **Version gating**: `@pytest.mark.requires_v30` skips on v2.40 modules. PQC tests require v3.2.
 - **Limit probing**: `test_surface_audit.py` intentionally tests beyond advertised key size limits to find undocumented capabilities.
-- **Compliance notes**: Tests log findings via `p11test.compliance.note()` when modules accept non-standard operations.
+- **Compliance notes**: Tests log findings via `pkcs11-check.compliance.note()` when modules accept non-standard operations.
 - **Cross-module xfail**: AES-KWP uses xfail when wrap output differs across modules (OpenCryptoki vs SoftHSM2).
 
 ## Module Compatibility

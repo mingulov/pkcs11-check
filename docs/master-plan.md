@@ -1,4 +1,4 @@
-# p11test Master Plan v2
+# pkcs11-check Master Plan v2
 
 Phase 2: Local builds, failure analysis, test isolation, and threading.
 
@@ -156,7 +156,7 @@ These tests catch real production crashes and security issues that normal test s
 
 Comprehensive regression tests for CVEs and known bugs across PKCS#11/HSM/TPM/SE ecosystem.
 Each test references the original CVE/issue and verifies the fix (or documents the vulnerability if still present).
-Store test metadata in `src/p11test/testcases/test_cve_regression.py` with CVE IDs as markers.
+Store test metadata in `src/pkcs11-check/testcases/test_cve_regression.py` with CVE IDs as markers.
 
 ### NSS Softoken CVEs
 - [x] **7b.1** CVE-2023-6135 (Minerva) — ECDSA timing side-channel on NIST curves. Test: generate P-256 key, sign 1000 messages, verify signatures are valid and timing doesn't leak key bits (statistical test on sign durations).
@@ -204,7 +204,7 @@ Store test metadata in `src/p11test/testcases/test_cve_regression.py` with CVE I
 
 ### Fuzzing Infrastructure
 - [x] **7b.27** Python fuzzer integration (Atheris + Hypothesis) — add Atheris-based fuzz targets for C_CreateObject, C_GenerateKey, C_Encrypt with randomized attribute templates and mechanism params. Integrate with existing Hypothesis property tests.
-- [x] **7b.28** Google pkcs11test integration — evaluate and integrate relevant tests from https://github.com/google/pkcs11test into p11test framework.
+- [x] **7b.28** Google pkcs11test integration — evaluate and integrate relevant tests from https://github.com/google/pkcs11test into pkcs11-check framework.
 - [x] **7b.29** CVE database tracker — create `docs/cve-regression.md` listing all CVEs with test status (covered/not-applicable/pending). Auto-update from test markers.
 
 ## Tier 7c — Productization & Correctness (from gap-analysis.md)
@@ -220,10 +220,10 @@ packaging, and validation gates — the areas where ambition exceeds implementat
 
 ### P1: Product Surface
 - [x] **7c.5** Audit CLI options — `--timeout` wired to pytest timeout, `--output json/junit/rich` wired, `--sessions` exists (warning in file mode). All options work end-to-end.
-- [x] **7c.6** JSON report output — `--output json` uses pytest-json-report, generates p11test-results.json with per-test outcomes. — implement real JSON/JUnit report from `p11test test`. Machine-readable with per-test outcome, duration, mechanism requirements, crash status.
+- [x] **7c.6** JSON report output — `--output json` uses pytest-json-report, generates pkcs11-check-results.json with per-test outcomes. — implement real JSON/JUnit report from `pkcs11-check test`. Machine-readable with per-test outcome, duration, mechanism requirements, crash status.
 - [x] **7c.7** Write real README.md — project description, quick start, supported modules, architecture, key features. 94 lines.
 - [x] **7c.8** Add CI workflow — `.github/workflows/ci.yml` with 5 jobs: ruff lint, mypy, meta-tests, strict-markers, SoftHSM2 smoke. — `.github/workflows/ci.yml` with: ruff check, mypy, pytest tests/, strict-marker collection, one smoke module.
-- [x] **7c.9** Capability snapshot — `p11test info` already shows slots, mechanisms, interface version. Preflight manifest (`core/preflight.py`) generates JSON capability snapshot. Full `p11test capabilities` command deferred to post-release. — `p11test capabilities --module ... --output json` writes slot info, mechanism list, interface list, token flags.
+- [x] **7c.9** Capability snapshot — `pkcs11-check info` already shows slots, mechanisms, interface version. Preflight manifest (`core/preflight.py`) generates JSON capability snapshot. Full `pkcs11-check capabilities` command deferred to post-release. — `pkcs11-check capabilities --module ... --output json` writes slot info, mechanism list, interface list, token flags.
 
 ### P2: Depth and Polish
 - [x] **7c.10** Interface negotiation negative tests — CKR spec entries exist for C_GetInterface/C_GetInterfaceList error conditions. Positive tests in test_interface_negotiation.py. CKR entries in _ckr_spec.py cover invalid name/version return codes.

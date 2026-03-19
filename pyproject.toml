@@ -1,5 +1,5 @@
 [project]
-name = "p11test"
+name = "pkcs11-check"
 version = "0.1.0"
 description = "CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin"
 readme = "README.md"
@@ -41,23 +41,23 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mingulov/p11test"
-Repository = "https://github.com/mingulov/p11test"
-Documentation = "https://github.com/mingulov/p11test/tree/main/docs"
-Issues = "https://github.com/mingulov/p11test/issues"
+Homepage = "https://github.com/mingulov/pkcs11-check"
+Repository = "https://github.com/mingulov/pkcs11-check"
+Documentation = "https://github.com/mingulov/pkcs11-check/tree/main/docs"
+Issues = "https://github.com/mingulov/pkcs11-check/issues"
 
 [project.scripts]
-p11test = "p11test.cli.app:main"
+pkcs11-check = "pkcs11_check.cli.app:main"
 
 [project.entry-points."pytest11"]
-p11test = "p11test.plugin"
+pkcs11-check = "pkcs11_check.plugin"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/p11test"]
+packages = ["src/pkcs11_check"]
 
 [tool.uv.sources]
 python-pkcs11 = { path = "python-pkcs11", editable = true }
@@ -65,7 +65,7 @@ python-pkcs11 = { path = "python-pkcs11", editable = true }
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-exclude = ["src/p11test/testcases/data/"]
+exclude = ["src/pkcs11_check/testcases/data/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
@@ -73,7 +73,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-packages = ["p11test"]
+packages = ["pkcs11_check"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
@@ -81,7 +81,7 @@ module = ["pkcs11", "pkcs11.*", "psutil"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["p11test.testcases.data.*"]
+module = ["pkcs11_check.testcases.data.*"]
 ignore_errors = true
 
 [tool.pytest.ini_options]

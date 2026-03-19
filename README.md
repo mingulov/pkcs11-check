@@ -1,10 +1,10 @@
-# p11test
+# pkcs11-check
 
 CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin.
 
 ## What it does
 
-p11test runs comprehensive tests against PKCS#11 modules (hardware HSMs, software tokens, smart cards). It catches:
+pkcs11-check runs comprehensive tests against PKCS#11 modules (hardware HSMs, software tokens, smart cards). It catches:
 
 - **Crashes and segfaults** — per-file subprocess isolation recovers from SIGSEGV
 - **CKR return code violations** — 802 spec conditions checked against OASIS PKCS#11 standard
@@ -16,8 +16,8 @@ p11test runs comprehensive tests against PKCS#11 modules (hardware HSMs, softwar
 
 ```bash
 # Install
-git clone --recurse-submodules https://github.com/mingulov/p11test
-cd p11test
+git clone --recurse-submodules https://github.com/mingulov/pkcs11-check
+cd pkcs11-check
 uv sync
 
 # Run against SoftHSM2
@@ -60,7 +60,7 @@ bash local-builds/test.sh nss-softokn
 ## Architecture
 
 ```
-src/p11test/
+src/pkcs11_check/
   cli/          — typer CLI (test, info, version commands)
   core/         — module loader, isolation runner, preflight
   testcases/    — 105+ test files (the product)

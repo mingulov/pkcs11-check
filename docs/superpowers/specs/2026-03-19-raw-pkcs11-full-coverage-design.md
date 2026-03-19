@@ -4,7 +4,7 @@ Date: 2026-03-19
 
 ## Problem
 
-p11test has 244/487 CkrExpectation entries (50.1%), but 48 are marked `testable=False` because the python-pkcs11 wrapper prevents triggering them. Another ~94 conditions are achievable with raw ctypes access, destructive subprocess tests, and an upgraded fault-proxy. Total achievable: ~338/487 (69.4%).
+pkcs11-check has 244/487 CkrExpectation entries (50.1%), but 48 are marked `testable=False` because the python-pkcs11 wrapper prevents triggering them. Another ~94 conditions are achievable with raw ctypes access, destructive subprocess tests, and an upgraded fault-proxy. Total achievable: ~338/487 (69.4%).
 
 ## Solution: Three Components
 
@@ -102,7 +102,7 @@ local-builds/
   fault-proxy/
     fault-proxy.c             # UPGRADE: all 68 functions with injection
 
-src/p11test/testcases/ckr/
+src/pkcs11-check/testcases/ckr/
     _ctypes_raw.py            # UPDATE: use RawPKCS11 instead of manual offsets
     test_ckr_multipart.py     # NEW: multipart operation error tests
     test_ckr_raw_attrs.py     # NEW: attribute permission tests via raw calls

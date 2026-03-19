@@ -4,7 +4,7 @@
 
 **Date:** 2026-03-16
 
-**Goal:** Make `p11test test` survive PKCS#11 module crashes in real runs without blocking future support for multiple simultaneous sessions, pytest workers, and richer timeout/reporting behavior.
+**Goal:** Make `pkcs11-check test` survive PKCS#11 module crashes in real runs without blocking future support for multiple simultaneous sessions, pytest workers, and richer timeout/reporting behavior.
 
 **Primary references:**
 - `docs/superpowers/specs/2026-03-16-comprehensive-testing-design.md`
@@ -16,10 +16,10 @@
 
 The current implementation does not satisfy the runtime-isolation behavior described in the specs:
 
-- `src/p11test/cli/test_cmd.py` invokes `pytest.main(...)` in-process.
-- `src/p11test/fixtures.py` loads the module and opens sessions directly in the normal pytest runtime.
-- `src/p11test/plugin.py` probes mechanisms by calling `load_module()` during collection.
-- `src/p11test/core/isolation.py` exists, but it is not integrated into the pytest execution path.
+- `src/pkcs11-check/cli/test_cmd.py` invokes `pytest.main(...)` in-process.
+- `src/pkcs11-check/fixtures.py` loads the module and opens sessions directly in the normal pytest runtime.
+- `src/pkcs11-check/plugin.py` probes mechanisms by calling `load_module()` during collection.
+- `src/pkcs11-check/core/isolation.py` exists, but it is not integrated into the pytest execution path.
 
 This means a real PKCS#11 crash can still kill collection or the whole test run.
 
@@ -29,10 +29,10 @@ This means a real PKCS#11 crash can still kill collection or the whole test run.
 
 Use a hybrid approach:
 
-1. **Immediate fix:** use `pytest-forked` as the default crash-containment layer for `p11test test` on POSIX.
+1. **Immediate fix:** use `pytest-forked` as the default crash-containment layer for `pkcs11-check test` on POSIX.
 2. **Required companion fix:** remove all PKCS#11 module access from collection time.
 3. **Default runtime model:** keep parallel pytest workers disabled by default until token/slot isolation is implemented.
-4. **Future work:** keep `src/p11test/core/isolation.py` as the basis for richer timeout/result semantics if `pytest-forked` becomes insufficient.
+4. **Future work:** keep `src/pkcs11-check/core/isolation.py` as the basis for richer timeout/result semantics if `pytest-forked` becomes insufficient.
 
 This gives a small, practical fix for the current crash-survival problem while preserving a path toward the more ambitious behavior described in the specs.
 
@@ -44,7 +44,7 @@ This gives a small, practical fix for the current crash-survival problem while p
 
 - Segfaults during fixture setup, test execution, or teardown are contained to the forked test process.
 - The main pytest runner can continue to the next test.
-- This is the shortest path to making `p11test test` materially safer on Linux/macOS.
+- This is the shortest path to making `pkcs11-check test` materially safer on Linux/macOS.
 
 ### What `pytest-forked` does not solve
 
@@ -56,7 +56,7 @@ This gives a small, practical fix for the current crash-survival problem while p
 ### Why not jump straight to a custom pytest isolation plugin
 
 - It is a larger design and test effort.
-- The repo already has an immediate practical gap in normal `p11test test` execution.
+- The repo already has an immediate practical gap in normal `pkcs11-check test` execution.
 - A staged approach reduces risk and gets crash containment in place first.
 
 ---
@@ -96,7 +96,7 @@ The specs call for:
 ## Phase 1: Immediate Crash-Survival Fix
 
 - [ ] Add `pytest-forked` as a dependency.
-- [ ] Make `p11test test` pass `--forked` by default on POSIX.
+- [ ] Make `pkcs11-check test` pass `--forked` by default on POSIX.
 - [ ] Keep normal pytest plugin usage unchanged for users who run pytest directly.
 - [ ] Document that forked isolation is the default CLI safety mechanism on POSIX.
 
@@ -116,7 +116,7 @@ The specs call for:
 
 ## Phase 3: Make Parallelism Explicit and Safe
 
-- [ ] Keep worker count at 1 by default for `p11test test`.
+- [ ] Keep worker count at 1 by default for `pkcs11-check test`.
 - [ ] Design worker-safe isolation before enabling xdist by default.
 - [ ] Add worker-aware namespacing for labels and temporary objects.
 - [ ] Define whether multi-worker execution requires separate slots, separate tokens, or per-worker token reset.
@@ -143,7 +143,7 @@ The specs call for:
 
 Until Phase 3 is complete:
 
-- `p11test test` should default to forked per-test isolation on POSIX.
+- `pkcs11-check test` should default to forked per-test isolation on POSIX.
 - xdist workers should stay off by default.
 - stress and concurrency tests should remain opt-in.
 - destructive tests should remain opt-in.

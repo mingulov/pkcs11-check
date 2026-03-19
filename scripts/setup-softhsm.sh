@@ -1,5 +1,5 @@
 #!/bin/bash
-# Set up SoftHSM2 for p11test development and testing.
+# Set up SoftHSM2 for pkcs11-check development and testing.
 # Creates a temporary token directory and initializes a test token.
 #
 # Usage:
@@ -7,11 +7,11 @@
 #   bash scripts/setup-softhsm.sh      # prints env vars to export
 set -euo pipefail
 
-TOKEN_DIR="${P11TEST_TOKEN_DIR:-/tmp/p11test-tokens}"
-CONF_FILE="${SOFTHSM2_CONF:-/tmp/p11test-softhsm2.conf}"
+TOKEN_DIR="${P11TEST_TOKEN_DIR:-/tmp/pkcs11-check-tokens}"
+CONF_FILE="${SOFTHSM2_CONF:-/tmp/pkcs11-check-softhsm2.conf}"
 PIN="${P11TEST_PIN:-1234}"
 SO_PIN="${P11TEST_SO_PIN:-12345678}"
-LABEL="${P11TEST_LABEL:-p11test}"
+LABEL="${P11TEST_LABEL:-pkcs11-check}"
 
 mkdir -p "$TOKEN_DIR"
 
@@ -46,7 +46,7 @@ if [ -z "$MODULE" ]; then
     exit 1
 fi
 
-echo "# SoftHSM2 configured for p11test"
+echo "# SoftHSM2 configured for pkcs11-check"
 echo "export SOFTHSM2_CONF=$CONF_FILE"
 echo "export P11TEST_MODULE=$MODULE"
 echo "export P11TEST_PIN=$PIN"

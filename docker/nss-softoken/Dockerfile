@@ -23,4 +23,4 @@ COPY . .
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv python pin 3.12 && uv sync --frozen
 
-CMD ["sh", "-c", "echo 'NSS (stable):' && rpm -q nss && uv run p11test test --module=$(cat /tmp/module_path) --slot 1 --isolation auto src/p11test/testcases/"]
+CMD ["sh", "-c", "echo 'NSS (stable):' && rpm -q nss && uv run pkcs11-check test --module=$(cat /tmp/module_path) --slot 1 --isolation auto src/pkcs11_check/testcases/"]

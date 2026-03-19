@@ -12,7 +12,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-DATA_DIR="src/p11test/testcases/data"
+DATA_DIR="src/pkcs11_check/testcases/data"
 
 fetch_acvp() {
     if [ -d "$DATA_DIR/acvp/.git" ]; then

@@ -1,4 +1,4 @@
-# p11test Design Specification
+# pkcs11-check Design Specification
 
 **Date:** 2026-03-16
 **Status:** Draft
@@ -6,13 +6,13 @@
 
 ## 1. Overview
 
-p11test is a CLI-first PKCS#11 test suite that also installs as a pytest plugin.
+pkcs11-check is a CLI-first PKCS#11 test suite that also installs as a pytest plugin.
 It tests PKCS#11 modules across interface versions 2.40, 3.0, and 3.2, survives
 module crashes (segfaults, hangs), and provides full v3.2 coverage including PQC.
 
 ## 2. Architecture Decision: Single Package
 
-**Decision:** Ship as one installable package (`p11test`) containing CLI, pytest plugin,
+**Decision:** Ship as one installable package (`pkcs11-check`) containing CLI, pytest plugin,
 core engine, and all test cases.
 
 **Rationale:**
@@ -24,7 +24,7 @@ core engine, and all test cases.
 
 **Package layout:**
 ```
-src/p11test/
+src/pkcs11-check/
   __init__.py
   config.py              # pydantic-settings: TOML + CLI + env merge
   plugin.py              # pytest11 entry point
@@ -32,8 +32,8 @@ src/p11test/
   cli/
     __init__.py
     app.py               # typer app, main entry
-    test_cmd.py           # `p11test test`
-    daemon_cmd.py         # `p11test daemon` (Phase 2)
+    test_cmd.py           # `pkcs11-check test`
+    daemon_cmd.py         # `pkcs11-check daemon` (Phase 2)
   core/
     __init__.py
     loader.py             # Interface negotiation + module loading
@@ -55,7 +55,7 @@ src/p11test/
     test_async.py         # Async operations (v3.2)
     test_concurrency.py   # Multi-thread / multi-session stress
     test_errors.py        # Error handling & edge cases
-tests/                    # Meta-tests (testing p11test itself)
+tests/                    # Meta-tests (testing pkcs11-check itself)
   conftest.py
   test_config.py
   test_loader.py
@@ -74,7 +74,7 @@ tests/                    # Meta-tests (testing p11test itself)
   (same field offsets, new functions appended)
 - Adding v3.x support requires ~150-200 lines of Cython (struct definitions +
   function wrappers following existing patterns)
-- No ctypes glue needed in p11test itself
+- No ctypes glue needed in pkcs11-check itself
 
 **Fork scope:**
 - `_pkcs11.pxd`: Add CK_INTERFACE, CK_FUNCTION_LIST_3_0, CK_FUNCTION_LIST_3_2 structs
@@ -240,7 +240,7 @@ custom source ordering.
 class P11TestConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="P11TEST_",
-        toml_file="p11test.toml",
+        toml_file="pkcs11-check.toml",
     )
 
     module: Path                          # required
@@ -262,8 +262,8 @@ CLI offers both `--safe` and `--destructive` as aliases mapping to the same fiel
 ### TOML search path (first found wins)
 
 1. `$P11TEST_CONFIG` (env var pointing to specific file — highest priority)
-2. `./p11test.toml` (current working directory)
-3. `~/.config/p11test/config.toml` (user default)
+2. `./pkcs11-check.toml` (current working directory)
+3. `~/.config/pkcs11-check/config.toml` (user default)
 
 ### PIN security
 
@@ -279,16 +279,16 @@ CLI offers both `--safe` and `--destructive` as aliases mapping to the same fiel
 ### Commands
 
 ```
-p11test test     [--module PATH] [--interface VER] [--sessions N] [--timeout N]
+pkcs11-check test     [--module PATH] [--interface VER] [--sessions N] [--timeout N]
                  [--category CAT] [--match PATTERN] [--destructive] [--output FORMAT]
-p11test info     [--module PATH]     # module info (see below)
-p11test list     [--module PATH]     # list available tests (dry run)
-p11test daemon                       # Phase 2
-p11test session  list|cancel|close-all  # Phase 2
-p11test version                      # show p11test version
+pkcs11-check info     [--module PATH]     # module info (see below)
+pkcs11-check list     [--module PATH]     # list available tests (dry run)
+pkcs11-check daemon                       # Phase 2
+pkcs11-check session  list|cancel|close-all  # Phase 2
+pkcs11-check version                      # show pkcs11-check version
 ```
 
-### `p11test info` output
+### `pkcs11-check info` output
 
 Displays module metadata without running tests:
 - Library description, version, manufacturer ID
@@ -327,7 +327,7 @@ Displays module metadata without running tests:
 
 ```toml
 [project.entry-points."pytest11"]
-p11test = "p11test.plugin"
+pkcs11-check = "pkcs11_check.plugin"
 ```
 
 ### Provided fixtures
@@ -377,7 +377,7 @@ p11test = "p11test.plugin"
 
 ### Crash-test module (custom, Phase 2)
 - Minimal .so that segfaults/hangs on configurable functions
-- For testing p11test's own isolation and recovery
+- For testing pkcs11-check's own isolation and recovery
 - Not needed for MVP — real buggy modules provide this naturally
 
 ## 11. Safe Mode vs Destructive
@@ -425,10 +425,10 @@ p11test = "p11test.plugin"
 | 5 | Daemon IPC unspecified | Deferred to Phase 2 |
 | 6 | "Sessions" ambiguous | --sessions = PKCS#11 sessions; pytest -n = workers |
 | 7 | Safe/destructive boundary | Defined in Section 11 |
-| 8 | Config search path | ./p11test.toml > $P11TEST_CONFIG > ~/.config/p11test/ |
+| 8 | Config search path | ./pkcs11-check.toml > $P11TEST_CONFIG > ~/.config/pkcs11-check/ |
 | 9 | No test filtering in CLI | --category, --match, --tag, --skip-unsupported |
 | 10 | No exit codes | Defined in Section 8 |
-| 11 | No `p11test info` command | Added to CLI (Section 8) |
+| 11 | No `pkcs11-check info` command | Added to CLI (Section 8) |
 | 12 | PIN security unaddressed | SecretStr, env var, prompt, never logged (Section 7) |
 | 13 | C_VerifySignature* vs C_Verify* | Separate test coverage in test_sign.py |
 | 14 | Async operations (v3.2) not mentioned | Added test_async.py |
@@ -475,7 +475,7 @@ p11test = "p11test.plugin"
 - Daemon mode with session management
 - Crash-test module (libcrashtest.so)
 - Complete v3.2 test coverage (as modules mature)
-- `p11test compare` (diff two runs)
+- `pkcs11-check compare` (diff two runs)
 - 32-bit CI (Docker linux/386)
 
 ## 17. Technical Stack

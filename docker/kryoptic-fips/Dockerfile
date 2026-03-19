@@ -61,7 +61,7 @@ ENV KRYOPTIC_CONF=/etc/kryoptic/token.conf
 
 # Init token — may need LD_LIBRARY_PATH for OpenSSL 4.0
 RUN LD_LIBRARY_PATH=/usr/lib pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
-    --init-token --label "p11test" --so-pin 12345678 2>&1 && \
+    --init-token --label "pkcs11-check" --so-pin 12345678 2>&1 && \
     LD_LIBRARY_PATH=/usr/lib pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
     --init-pin --pin 1234 --so-pin 12345678 2>&1 || \
     echo "Token init needs runtime fix"
@@ -79,4 +79,4 @@ RUN printf '[openssl_init]\nproviders = provider_sect\n\n[provider_sect]\nfips =
 ENV OPENSSL_CONF=/etc/openssl-fips.cnf
 ENV OPENSSL_MODULES=/usr/lib/ossl-modules
 
-CMD ["sh", "-c", "echo 'Kryoptic FIPS (main + OpenSSL 4.0):' && LD_LIBRARY_PATH=/usr/lib uv run pytest src/p11test/testcases/ --p11-module=/usr/lib/libkryoptic_pkcs11.so --p11-pin=1234 -q --tb=no"]
+CMD ["sh", "-c", "echo 'Kryoptic FIPS (main + OpenSSL 4.0):' && LD_LIBRARY_PATH=/usr/lib uv run pytest src/pkcs11_check/testcases/ --p11-module=/usr/lib/libkryoptic_pkcs11.so --p11-pin=1234 -q --tb=no"]

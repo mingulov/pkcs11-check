@@ -1,9 +1,9 @@
-# p11test Comprehensive Testing Design — Standards Addendum
+# pkcs11-check Comprehensive Testing Design — Standards Addendum
 
 **Date:** 2026-03-16
 **Status:** Draft
 **Supplements:** `2026-03-16-comprehensive-testing-design.md`
-**Depends on:** `2026-03-16-p11test-design.md` (Phase 1 spec)
+**Depends on:** `2026-03-16-pkcs11-check-design.md` (Phase 1 spec)
 
 ---
 
@@ -116,7 +116,7 @@ Committee Specification 01, June 2015) wording is cited explicitly.
 
 ## 3. KDF & Key Establishment (`test_kdf.py`) — ~50 tests
 
-**File:** `src/p11test/testcases/test_kdf.py`
+**File:** `src/pkcs11-check/testcases/test_kdf.py`
 **Marker:** `@pytest.mark.requires_v30` where HKDF or SP 800-108 mechanisms are used;
 `@pytest.mark.requires_v32` for mechanisms first defined in v3.2.
 **Cross-verification library:** `cryptography` (PyCA), `hkdf` reference vectors,
@@ -259,7 +259,7 @@ carry `@pytest.mark.skip_if_mechanism_absent("CKM_ECMQV_DERIVE")`.
 
 ## 4. SHA-3, SHAKE, KMAC & XOF (`test_sha3.py`) — ~40 tests
 
-**File:** `src/p11test/testcases/test_sha3.py`
+**File:** `src/pkcs11-check/testcases/test_sha3.py`
 **Standards:** FIPS 202 (SHA-3/SHAKE), SP 800-185 (KMAC/cSHAKE)
 **KAT vector source:** NIST CAVP SHA-3 byte-oriented byte message test (BMT) files;
 SP 800-185 Appendix A (KMAC examples)
@@ -387,7 +387,7 @@ before the signing operation (analogous to CKM_SHA256_RSA_PKCS for classical RSA
 
 ## 5. Template & Provenance Attributes (`test_attrs.py`) — ~35 tests
 
-**File:** `src/p11test/testcases/test_attrs.py`
+**File:** `src/pkcs11-check/testcases/test_attrs.py`
 **OASIS references:** PKCS#11 v3.2 sections 4.2 (Attribute types), 4.4.2
 (CKA_WRAP_TEMPLATE), 4.4.3 (CKA_UNWRAP_TEMPLATE), 4.4.4 (CKA_DERIVE_TEMPLATE),
 4.3.3 (CKA_LOCAL), 4.3.4 (CKA_KEY_GEN_MECHANISM), 4.3.6 (CKA_PUBLIC_KEY_INFO).
@@ -517,7 +517,7 @@ must not be used as a key identity oracle.
 
 ## 6. Cryptoki Init & Threading (`test_init.py`) — ~25 tests
 
-**File:** `src/p11test/testcases/test_init.py`
+**File:** `src/pkcs11-check/testcases/test_init.py`
 **OASIS references:** PKCS#11 v3.2 section 5.4 (C_Initialize, C_Finalize),
 section 5.4.4 (threading model), section 9.4 (C_GetFunctionStatus, C_CancelFunction).
 
@@ -599,7 +599,7 @@ they may not be NULL.
 
 ## 7. Token Info Flags Matrix (`test_token_flags.py`) — ~20 tests
 
-**File:** `src/p11test/testcases/test_token_flags.py`
+**File:** `src/pkcs11-check/testcases/test_token_flags.py`
 **OASIS references:** PKCS#11 v3.2 section 5.5.1 (CK_TOKEN_INFO structure),
 table of CKF_* flag values and their semantics.
 **Note:** Tests that trigger PIN lockout require `@pytest.mark.destructive`.
@@ -654,7 +654,7 @@ the change. The following tests verify this invariant.
 
 ## 8. Buffer Management (`test_buffers.py`) — ~30 tests
 
-**File:** `src/p11test/testcases/test_buffers.py`
+**File:** `src/pkcs11-check/testcases/test_buffers.py`
 **OASIS references:** PKCS#11 v3.2 section 5.2 (Conventions for functions returning
 data) defines the two-call convention: first call with NULL output pointer returns
 required length in the length parameter; second call with allocated buffer of at least
@@ -755,7 +755,7 @@ type." This is the clean-cancel pattern.
 
 ## 9. Non-Key Object Classes (`test_objects.py`) — ~25 tests
 
-**File:** `src/p11test/testcases/test_objects.py`
+**File:** `src/pkcs11-check/testcases/test_objects.py`
 **OASIS references:** PKCS#11 v3.2 section 4.5 (CKO_DATA), section 4.6
 (CKO_HW_FEATURE), section 4.8 (CKO_DOMAIN_PARAMETERS), section 6.16 (CKO_OTP_KEY).
 
@@ -838,7 +838,7 @@ Given limited software token support, all tests carry
 
 ## 10. FIPS Compliance Expanded (`test_fips.py` expanded) — ~15 tests
 
-**File:** `src/p11test/testcases/test_fips.py`
+**File:** `src/pkcs11-check/testcases/test_fips.py`
 **Note:** Tests that require FIPS-mode token behavior are marked
 `@pytest.mark.fips_mode_required` and auto-skip on non-FIPS tokens.
 
@@ -905,7 +905,7 @@ FIPS 140-3 section 10.3.A requires conditional self-tests on key generation and 
 
 ## 11. Extended Protocol Suite (`test_protocol.py` expanded) — ~15 tests
 
-**File:** `src/p11test/testcases/test_protocol.py`
+**File:** `src/pkcs11-check/testcases/test_protocol.py`
 **Python dependencies:** `python-cose` (COSE), `webauthn` or `fido2` (FIDO2),
 `paramiko` or `cryptography` (SSH), `joserfc` or `python-jose` (JWS/JWE),
 `pyopenssl` or `cryptography` (OCSP), `pyhanko` (PKCS#12).
@@ -1026,7 +1026,7 @@ this addendum. These are in addition to the ~2,400+ tests described in the main 
 | Main spec total | | ~2,400+ | From `2026-03-16-comprehensive-testing-design.md` |
 | **Combined total** | | **~2,665+** | |
 
-All file paths are under `src/p11test/testcases/`. New test files added by this
+All file paths are under `src/pkcs11-check/testcases/`. New test files added by this
 addendum follow the same naming, import, and marker conventions as existing test files
 documented in the main spec.
 

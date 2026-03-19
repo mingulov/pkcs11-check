@@ -1,4 +1,4 @@
-"""Tests for p11test configuration loading."""
+"""Tests for pkcs11-check configuration loading."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from p11test.config import P11TestConfig
+from pkcs11_check.config import P11TestConfig
 
 
 class TestP11TestConfigDefaults:

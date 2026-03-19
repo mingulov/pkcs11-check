@@ -42,9 +42,9 @@ CMD ["sh", "-c", "\
   export TPM2_PKCS11_TCTI='tabrmd:bus_type=system' && \
   tpm2_getcap properties-fixed 2>&1 | head -3 && \
   tpm2_ptool init 2>&1 && \
-  tpm2_ptool addtoken --pid=1 --sopin=12345678 --userpin=1234 --label=p11test 2>&1 && \
+  tpm2_ptool addtoken --pid=1 --sopin=12345678 --userpin=1234 --label=pkcs11-check 2>&1 && \
   MODULE=$(cat /tmp/module_path) && \
   echo \"Module: $MODULE\" && \
-  uv run pytest src/p11test/testcases/ \
+  uv run pytest src/pkcs11_check/testcases/ \
     --p11-module=\"$MODULE\" --p11-pin=1234 -q --tb=no || \
   echo 'Some tests may fail — TPM2 has limited mechanism support'"]

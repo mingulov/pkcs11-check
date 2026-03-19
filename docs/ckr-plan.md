@@ -43,9 +43,9 @@ bash local-builds/test.sh softhsm2 -k "ckr" --ckr-strict -v
 # Docker OpenCryptoki — CKR only (slow, run at checkpoints)
 docker compose -f docker/docker-compose.test.yml run --rm test-opencryptoki sh -c \
   'pkcsslotd && sleep 2 && \
-   echo "p11test" | pkcsconf -I -c 0 -S 87654321 2>&1 || true && \
+   echo "pkcs11-check" | pkcsconf -I -c 0 -S 87654321 2>&1 || true && \
    printf "87654321\n1234\n1234\n" | pkcsconf -u -c 0 2>&1 || true && \
-   uv run pytest src/p11test/testcases/ckr/ \
+   uv run pytest src/pkcs11-check/testcases/ckr/ \
      --p11-module=/usr/lib64/pkcs11/libopencryptoki.so \
      --p11-pin=1234 -v --tb=line --timeout=60; \
    RC=$?; killall pkcsslotd 2>/dev/null; exit $RC'
@@ -74,15 +74,15 @@ All tasks marked `[x]`, CkrExpectation entries >= 244 (50%+ of 487), and zero re
 Fix issues from gap-analysis.md that block CKR work.
 
 - [x] **0.1** Fix fixture logout catch — `fixtures.py` has broad `except PKCS11Error: pass` on logout. Replace with `except (UserNotLoggedIn, SessionClosed, FunctionFailed):`. Verify: `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`.
-- [x] **0.2** Register missing markers — add `thread_safe`, `subprocess`, `subprocess_per_test` to `markers.py`. Verify: `uv run pytest --strict-markers src/p11test/testcases/ --collect-only -q 2>&1 | tail -5`.
+- [x] **0.2** Register missing markers — add `thread_safe`, `subprocess`, `subprocess_per_test` to `markers.py`. Verify: `uv run pytest --strict-markers src/pkcs11-check/testcases/ --collect-only -q 2>&1 | tail -5`.
 - [x] **0.3** Migrate existing CKR tests — move tests from `test_ckr_spec_compliance.py` and `test_ckr_codes.py` into seed files in `testcases/ckr/`. Delete originals. Verify same test count.
 
 ## Tier 1 — Infrastructure
 
 Build the shared data model, assertion helpers, and conftest before any test files.
 
-- [x] **1.1** Create `testcases/ckr/__init__.py` and `testcases/ckr/conftest.py` — register `--ckr-strict` option, define `ckr_strict` fixture. Verify: `uv run pytest src/p11test/testcases/ckr/ --co -q` collects 0 tests (no test files yet) without errors.
-- [x] **1.2** Create `testcases/ckr/_ckr_spec.py` — `CkrExpectation` dataclass, `assert_ckr()` helper, `full_compat()`, universal CKR tuples. Start with `CKR_ENCRYPT` dict (4-5 entries) as the first family. Import from `_error_tuples.py`. Verify: `uv run python -c "from p11test.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr; print(len(CKR_ENCRYPT))"`.
+- [x] **1.1** Create `testcases/ckr/__init__.py` and `testcases/ckr/conftest.py` — register `--ckr-strict` option, define `ckr_strict` fixture. Verify: `uv run pytest src/pkcs11-check/testcases/ckr/ --co -q` collects 0 tests (no test files yet) without errors.
+- [x] **1.2** Create `testcases/ckr/_ckr_spec.py` — `CkrExpectation` dataclass, `assert_ckr()` helper, `full_compat()`, universal CKR tuples. Start with `CKR_ENCRYPT` dict (4-5 entries) as the first family. Import from `_error_tuples.py`. Verify: `uv run python -c "from pkcs11_check.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr; print(len(CKR_ENCRYPT))"`.
 - [x] **1.3** Create `test_ckr_encrypt.py` — first real CKR test file. 5-8 tests covering: unsupported mechanism, key missing CKA_ENCRYPT, key type inconsistent, non-aligned ECB data, empty data, RSA too-long data. Verify: `bash local-builds/test.sh softhsm2 -k "test_ckr_encrypt" -v && bash local-builds/test.sh kryoptic -k "test_ckr_encrypt" -v`.
 - [x] **1.4** Fix issues from 1.3 — Kryoptic ArgumentsBad for mechanism param (added to compat). Zero regressions: SoftHSM2 22706, Kryoptic 21620. — any unexpected CKR codes or crashes found on real tokens. Document module-specific deviations in `docs/module-issues.md` with `compliance.note()`, NOT with silent `pass`. Do NOT change expected error codes to match broken modules — use `xfail` or compliance notes.
 
@@ -124,7 +124,7 @@ One file per operation family. After each pair, validate on both tokens.
 
 **Approach:** Don't build a full CK_FUNCTION_LIST struct wrapper. Instead, each test runs a self-contained subprocess script that uses `ctypes.CDLL` to load the module, calls `C_GetFunctionList`, and invokes individual C_* functions via the function list pointer at known offsets. **The subprocess script is the test** — if it segfaults (returncode < 0), that's recorded as "module doesn't validate NULL params." If it returns a CKR code, check it's CKR_ARGUMENTS_BAD (0x00000007).
 
-- [x] **6.1** Create `testcases/ckr/_ctypes_raw.py` — helper that generates subprocess scripts for NULL param tests. Key function: `run_null_test(module_path: str, c_code: str) -> tuple[int, str]` that runs a Python script via `subprocess.run()`. The script uses `ctypes.CDLL(module_path)` to load the module and calls the specified C function with NULL. Returns `(returncode, stdout)`. Verify: `uv run python -c "from p11test.testcases.ckr._ctypes_raw import run_null_test; print('OK')"`.
+- [x] **6.1** Create `testcases/ckr/_ctypes_raw.py` — helper that generates subprocess scripts for NULL param tests. Key function: `run_null_test(module_path: str, c_code: str) -> tuple[int, str]` that runs a Python script via `subprocess.run()`. The script uses `ctypes.CDLL(module_path)` to load the module and calls the specified C function with NULL. Returns `(returncode, stdout)`. Verify: `uv run python -c "from pkcs11_check.testcases.ckr._ctypes_raw import run_null_test; print('OK')"`.
 - [x] **6.2** Create `test_ckr_null_params.py` — mark all tests `@pytest.mark.subprocess`. Each test calls `run_null_test()` with a script that passes NULL to one C_* function. Cover: `C_GetInfo(NULL)`, `C_GetSlotList(1, NULL, NULL)`, `C_OpenSession(0, flags, NULL, NULL, NULL)`, `C_GenerateRandom(session, NULL, 32)`. Each expects CKR_ARGUMENTS_BAD (0x7) or segfault (returncode < 0). **Both outcomes are valid test results** — segfault means module fails to validate. Verify on SoftHSM2.
 - [x] **6.3** Run NULL param tests on Kryoptic + NSS softokn — all 4 pass on both. Document segfaults vs proper CKR codes in `docs/module-issues.md`.
 - [x] **6.4** Run NULL param tests on pkcs11-mock — all 4 pass. pkcs11-mock should return proper CKR codes (it's a stub designed for validation).

@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-TESTCASES_DIR = Path("src/p11test/testcases")
+TESTCASES_DIR = Path("src/pkcs11_check/testcases")
 
 
 def find_mechanisms_in_tests() -> dict[str, set[str]]:

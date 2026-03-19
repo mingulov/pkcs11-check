@@ -1,4 +1,4 @@
-# p11test Gap Analysis
+# pkcs11-check Gap Analysis
 
 Repo-grounded snapshot as of 2026-03-19.
 
@@ -6,10 +6,10 @@ This document is intentionally stricter than `docs/master-plan.md`. It focuses o
 
 ## Current Snapshot
 
-- The project already has a large product suite: `src/p11test/testcases/` currently contains 105 top-level test files.
+- The project already has a large product suite: `src/pkcs11-check/testcases/` currently contains 105 top-level test files.
 - Strict collection currently sees 29,644 testcase items in this environment.
 - The `python-pkcs11` fork now supports PKCS#11 v3.0/v3.1/v3.2 negotiation, `interface_version`, and `get_interface_list()`.
-- The package metadata already claims the project name `p11test`.
+- The package metadata already claims the project name `pkcs11-check`.
 - The project is strong on breadth, but the main remaining risk is execution-model completeness and productization polish.
 
 ## What Is Already Strong
@@ -17,7 +17,7 @@ This document is intentionally stricter than `docs/master-plan.md`. It focuses o
 - Broad test scope: classic crypto, PQC, Wycheproof, interop, CVE regressions, stress, stateful tests, and mechanism auditing.
 - Good local build ergonomics via `local-builds/`.
 - A serious `python-pkcs11` fork instead of thin wrappers around v2.40-only APIs.
-- Clear separation between product tests (`src/p11test/testcases/`) and meta-tests (`tests/`).
+- Clear separation between product tests (`src/pkcs11-check/testcases/`) and meta-tests (`tests/`).
 - Good direction on markers, categories, and module-matrix style reporting.
 
 ## Confirmed Gaps
@@ -28,11 +28,11 @@ The project promise is "CLI-first PKCS#11 test suite with segfault survival, int
 
 ### Confirmed issues
 
-- `src/p11test/cli/test_cmd.py` still calls `pytest.main(...)` in-process.
-- `src/p11test/plugin.py` no longer loads the PKCS#11 module during collection; it now uses a preflight manifest. Collection safety is materially better than before.
-- `src/p11test/fixtures.py` still loads modules and opens sessions directly in normal pytest execution.
-- `src/p11test/core/file_runner.py` provides practical per-file subprocess isolation and resume support, but plain `--isolation none` remains in-process.
-- `src/p11test/core/isolation.py` exists, uses `spawn`, and has tests, but it is not what `p11test test` actually uses for product execution today.
+- `src/pkcs11-check/cli/test_cmd.py` still calls `pytest.main(...)` in-process.
+- `src/pkcs11-check/plugin.py` no longer loads the PKCS#11 module during collection; it now uses a preflight manifest. Collection safety is materially better than before.
+- `src/pkcs11-check/fixtures.py` still loads modules and opens sessions directly in normal pytest execution.
+- `src/pkcs11-check/core/file_runner.py` provides practical per-file subprocess isolation and resume support, but plain `--isolation none` remains in-process.
+- `src/pkcs11-check/core/isolation.py` exists, uses `spawn`, and has tests, but it is not what `pkcs11-check test` actually uses for product execution today.
 
 ### Why this matters
 
@@ -52,9 +52,9 @@ There is a visible gap between the CLI surface, the config model, and what the c
 
 ### Confirmed issues
 
-- `--sessions` exists in `src/p11test/cli/test_cmd.py` but is not used.
-- `--timeout` exists in `src/p11test/cli/test_cmd.py` but is not used.
-- isolated modes now emit real aggregated JSON/JUnit reports and expose `p11test state` for inspection.
+- `--sessions` exists in `src/pkcs11-check/cli/test_cmd.py` but is not used.
+- `--timeout` exists in `src/pkcs11-check/cli/test_cmd.py` but is not used.
+- isolated modes now emit real aggregated JSON/JUnit reports and expose `pkcs11-check state` for inspection.
 - `--output json` in non-isolated mode still relies on `pytest-json-report`, so output semantics differ by runner path.
 - `P11TestConfig` contains `timeout_operation`, `timeout_test`, `max_sessions`, `skip_unsupported`, `log_level`, and `output`, but only part of that model is wired through the fixtures and CLI path.
 - `pyproject.toml` sets `testpaths = ["tests"]`, so plain `pytest` runs only meta-tests, not the product suite.
@@ -69,7 +69,7 @@ There is a visible gap between the CLI surface, the config model, and what the c
 
 - Either wire every advertised option end-to-end or remove/defer it.
 - Decide whether isolated and non-isolated JSON output should converge on one schema.
-- Add explicit docs for the difference between `pytest tests/`, `pytest src/p11test/testcases/`, and `p11test test`.
+- Add explicit docs for the difference between `pytest tests/`, `pytest src/pkcs11-check/testcases/`, and `pkcs11-check test`.
 
 ### 3. Marker Execution Policy Is Still Partial
 
@@ -100,9 +100,9 @@ The project rules are strong, but the codebase does not yet fully follow them.
 
 ### Confirmed issues
 
-- `src/p11test/fixtures.py` no longer contains the broad logout cleanup catch.
+- `src/pkcs11-check/fixtures.py` no longer contains the broad logout cleanup catch.
 - Many testcase files still catch broad `PKCS11Error` rather than named expected CKR-specific exception classes.
-- The repository already has `src/p11test/testcases/_error_tuples.py`, which means the intended direction is clear, but the migration is incomplete.
+- The repository already has `src/pkcs11-check/testcases/_error_tuples.py`, which means the intended direction is clear, but the migration is incomplete.
 
 ### Why this matters
 
@@ -120,14 +120,14 @@ The v3.x loader criticism is no longer valid. That part has advanced. The remain
 
 ### Confirmed positives
 
-- `src/p11test/core/loader.py` accepts `auto`, `2.40`, `3.0`, `3.1`, and `3.2`.
-- `src/p11test/cli/info_cmd.py` prints negotiated interface information and available interfaces when exposed by the library.
-- `src/p11test/testcases/test_interface.py` and `src/p11test/testcases/test_interface_negotiation.py` cover positive-path negotiation and basic capability checks.
+- `src/pkcs11-check/core/loader.py` accepts `auto`, `2.40`, `3.0`, `3.1`, and `3.2`.
+- `src/pkcs11-check/cli/info_cmd.py` prints negotiated interface information and available interfaces when exposed by the library.
+- `src/pkcs11-check/testcases/test_interface.py` and `src/pkcs11-check/testcases/test_interface_negotiation.py` cover positive-path negotiation and basic capability checks.
 
 ### Confirmed gaps
 
-- Negative `C_GetInterface` and `C_GetInterfaceList` behavior is not covered as explicitly as in OpenSC's `p11test_case_interface.c`.
-- `src/p11test/testcases/test_interface_negotiation.py` checks `hasattr(p11_module, "get_interface_list")`, but the current wrapper exposes that method on `p11_module.lib`, not on `P11Module` itself.
+- Negative `C_GetInterface` and `C_GetInterfaceList` behavior is not covered as explicitly as in OpenSC's `pkcs11-check_case_interface.c`.
+- `src/pkcs11-check/testcases/test_interface_negotiation.py` checks `hasattr(p11_module, "get_interface_list")`, but the current wrapper exposes that method on `p11_module.lib`, not on `P11Module` itself.
 - Explicit version-forcing behavior is not yet deeply regression-tested across mixed-process and repeated-load scenarios.
 
 ### Recommended direction
@@ -141,7 +141,7 @@ The v3.x loader criticism is no longer valid. That part has advanced. The remain
 
 ### 6. Reporting and Baseline Regression Workflow Are Still Thin
 
-OpenSC's `p11test` is narrower, but it has a more concrete JSON regression harness today.
+OpenSC's `pkcs11-check` is narrower, but it has a more concrete JSON regression harness today.
 
 ### Confirmed issues
 
@@ -203,7 +203,7 @@ Current quality depends heavily on local discipline.
 - `ruff check src/ tests/`
 - `mypy src/`
 - `pytest tests/`
-- `pytest --strict-markers src/p11test/testcases --collect-only -q`
+- `pytest --strict-markers src/pkcs11-check/testcases --collect-only -q`
 - one CLI smoke run against a known-good software token
 
 ## Edge Cases Still Worth Adding or Tightening
@@ -250,8 +250,8 @@ These are the cases most likely to expose runner or wrapper weaknesses rather th
 ### F. Install and Packaging Edge Cases
 
 - Wheel install without editable local submodule layout.
-- Running `p11test info` and `p11test test` from a clean virtualenv.
-- Version mismatch between published `p11test` and published `python-pkcs11`.
+- Running `pkcs11-check info` and `pkcs11-check test` from a clean virtualenv.
+- Version mismatch between published `pkcs11-check` and published `python-pkcs11`.
 
 ## Nice Additions Beyond the Current Plan
 
@@ -259,10 +259,10 @@ These are not the highest-risk gaps, but they would make the project materially 
 
 ### 1. User-Facing Additions
 
-- `p11test doctor` command for environment checks, module load sanity, slot listing, and dependency hints.
-- `p11test capabilities` command that writes a JSON capability snapshot.
-- `p11test matrix` command that aggregates multiple run results into one report.
-- `p11test explain <test-id>` output that shows marker set, mechanism requirements, and skip logic.
+- `pkcs11-check doctor` command for environment checks, module load sanity, slot listing, and dependency hints.
+- `pkcs11-check capabilities` command that writes a JSON capability snapshot.
+- `pkcs11-check matrix` command that aggregates multiple run results into one report.
+- `pkcs11-check explain <test-id>` output that shows marker set, mechanism requirements, and skip logic.
 
 ### 2. Engineering Additions
 
@@ -273,7 +273,7 @@ These are not the highest-risk gaps, but they would make the project materially 
 
 ### 3. Ecosystem Additions
 
-- Stable baseline comparisons against OpenSC `p11test` where overlap exists.
+- Stable baseline comparisons against OpenSC `pkcs11-check` where overlap exists.
 - Optional import of external vector/corpus sets beyond Wycheproof.
 - More explicit support policy for hardware HSMs vs software tokens.
 
@@ -301,6 +301,6 @@ These are not the highest-risk gaps, but they would make the project materially 
 
 ## Bottom Line
 
-`p11test` is already a serious framework, not a toy. The current weakness is not lack of test breadth or lack of PKCS#11 v3.x support. The weakness is that the execution backbone, user-facing packaging, and validation gates still lag behind the ambition of the suite.
+`pkcs11-check` is already a serious framework, not a toy. The current weakness is not lack of test breadth or lack of PKCS#11 v3.x support. The weakness is that the execution backbone, user-facing packaging, and validation gates still lag behind the ambition of the suite.
 
 That is good news in one sense: the project does not need a new direction. It needs consolidation, enforcement, and productization.

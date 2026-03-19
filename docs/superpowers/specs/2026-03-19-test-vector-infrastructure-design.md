@@ -4,7 +4,7 @@ Date: 2026-03-19
 
 ## Problem
 
-p11test has one external vector source (wycheproof) using only 111 of 336 available files. No SLH-DSA vectors exist anywhere in the project. The folder structure mixes test data with test code. Multiple high-quality public vector sources are unused.
+pkcs11-check has one external vector source (wycheproof) using only 111 of 336 available files. No SLH-DSA vectors exist anywhere in the project. The folder structure mixes test data with test code. Multiple high-quality public vector sources are unused.
 
 ## Solution
 
@@ -13,7 +13,7 @@ Reorganize test data into `testcases/data/`, add new external sources, expand te
 ## Folder Structure
 
 ```
-src/p11test/testcases/
+src/pkcs11-check/testcases/
     data/                              # ALL external data sources
         __init__.py                    # DATA_DIR, WYCHEPROOF_DIR, KAT_DIR constants
         wycheproof/                    # submodule: C2SP/wycheproof (73MB, always cloned)
@@ -73,7 +73,7 @@ scripts/fetch-optional-data.sh x509-limbo
 The script does:
 ```bash
 git submodule add --depth 1 https://github.com/usnistgov/ACVP-Server.git \
-    src/p11test/testcases/data/acvp
+    src/pkcs11-check/testcases/data/acvp
 ```
 
 Tests skip gracefully when opt-in data not present:
@@ -141,8 +141,8 @@ Tests marked `@pytest.mark.stress` — not run by default. Batched (not 7000 ind
 Add `.dockerignore` to prevent copying large data into images:
 
 ```
-src/p11test/testcases/data/acvp/
-src/p11test/testcases/data/x509-limbo/
+src/pkcs11-check/testcases/data/acvp/
+src/pkcs11-check/testcases/data/x509-limbo/
 local-builds/*/src/
 python-pkcs11/.git/
 .git/
@@ -157,12 +157,12 @@ The always-cloned submodules (wycheproof 73MB, cctv 2.3MB) are copied into Docke
 Exact git commands (submodule move is NOT a simple rename):
 ```bash
 # Move submodule (git 2.34+)
-git mv src/p11test/testcases/vectors/wycheproof src/p11test/testcases/data/wycheproof
+git mv src/pkcs11-check/testcases/vectors/wycheproof src/pkcs11-check/testcases/data/wycheproof
 git submodule sync
 
 # Move non-submodule JSON files
-mv src/p11test/testcases/vectors/*.json src/p11test/testcases/data/
-rmdir src/p11test/testcases/vectors
+mv src/pkcs11-check/testcases/vectors/*.json src/pkcs11-check/testcases/data/
+rmdir src/pkcs11-check/testcases/vectors
 ```
 
 Also fix python-pkcs11 submodule absolute path in `.gitmodules` if present.
@@ -185,7 +185,7 @@ Also fix python-pkcs11 submodule absolute path in `.gitmodules` if present.
 
 ### Phase 3: Add new submodules
 
-13. Add CCTV submodule (always cloned): `git submodule add https://github.com/C2SP/CCTV.git src/p11test/testcases/data/cctv`
+13. Add CCTV submodule (always cloned): `git submodule add https://github.com/C2SP/CCTV.git src/pkcs11-check/testcases/data/cctv`
 14. Create `scripts/fetch-optional-data.sh` for ACVP and x509-limbo
 15. Add `.dockerignore`
 

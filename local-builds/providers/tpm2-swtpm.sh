@@ -31,7 +31,7 @@ PROVIDER_NAME="tpm2-swtpm"
 #   export TPM2_PKCS11_TCTI='swtpm:host=127.0.0.1,port=2321'
 #   export TPM2_PKCS11_STORE=local-builds/tokens/tpm2-swtpm
 #   python3 -m tpm2_pkcs11.tpm2_ptool init
-#   python3 -m tpm2_pkcs11.tpm2_ptool addtoken --pid=1 --sopin=12345678 --userpin=1234 --label=p11test
+#   python3 -m tpm2_pkcs11.tpm2_ptool addtoken --pid=1 --sopin=12345678 --userpin=1234 --label=pkcs11-check
 #
 #   # 4. Test
 #   bash local-builds/test.sh tpm2-swtpm -k test_slot -v
@@ -122,7 +122,7 @@ _init_token() {
 
     echo "Initializing tpm2-pkcs11 token..."
     python3 -m tpm2_pkcs11.tpm2_ptool init 2>&1
-    python3 -m tpm2_pkcs11.tpm2_ptool addtoken --pid=1 --sopin=12345678 --userpin=1234 --label=p11test 2>&1
+    python3 -m tpm2_pkcs11.tpm2_ptool addtoken --pid=1 --sopin=12345678 --userpin=1234 --label=pkcs11-check 2>&1
 }
 
 setup() {

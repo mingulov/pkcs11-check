@@ -4,7 +4,7 @@ Date: 2026-03-18
 
 ## Problem
 
-p11test has 101 test files and 29K+ tests with strong happy-path and security coverage, but systematic per-operation error parameter testing is thin. The PKCS#11 spec defines ~487 (function, error condition) pairs across 65 C_* functions, each with a mandated CKR return code. Current coverage:
+pkcs11-check has 101 test files and 29K+ tests with strong happy-path and security coverage, but systematic per-operation error parameter testing is thin. The PKCS#11 spec defines ~487 (function, error condition) pairs across 65 C_* functions, each with a mandated CKR return code. Current coverage:
 
 - `test_ckr_spec_compliance.py` — 10 tests (6 functions)
 - `test_ckr_codes.py` — basic CKR validation
@@ -41,7 +41,7 @@ Before implementing this spec:
 ## conftest.py — Flag and Fixtures
 
 ```python
-# src/p11test/testcases/ckr/conftest.py
+# src/pkcs11-check/testcases/ckr/conftest.py
 
 import pytest
 
@@ -60,7 +60,7 @@ def ckr_strict(request) -> bool:
     return request.config.getoption("--ckr-strict")
 ```
 
-New markers to register in `src/p11test/markers.py`:
+New markers to register in `src/pkcs11-check/markers.py`:
 
 ```python
 "subprocess": "Test always runs in isolated subprocess (crash-prone operations)",
@@ -70,7 +70,7 @@ New markers to register in `src/p11test/markers.py`:
 ## File Structure
 
 ```
-src/p11test/testcases/ckr/
+src/pkcs11-check/testcases/ckr/
     __init__.py
     _ckr_spec.py              # Centralized spec tables + assertion helpers
     _ctypes_raw.py            # Raw ctypes PKCS#11 caller for NULL param tests
@@ -172,7 +172,7 @@ def assert_ckr(expectation: CkrExpectation, actual: PKCS11Error, strict: bool) -
                 f"got {type(actual).__name__}, not in acceptable set"
             )
         if not isinstance(actual, spec_types):
-            from p11test.compliance import ComplianceLevel, note
+            from pkcs11-check.compliance import ComplianceLevel, note
             note(
                 f"{expectation.function}({expectation.condition}): "
                 f"spec says {[t.__name__ for t in spec_types]}, "
@@ -258,8 +258,8 @@ Each test file follows a consistent structure:
 ```python
 """CKR compliance tests for C_EncryptInit, C_Encrypt, C_EncryptUpdate, C_EncryptFinal."""
 
-from p11test.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr
-from p11test.testcases._error_tuples import MECHANISM_ERRORS, DATA_ERRORS
+from pkcs11_check.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr
+from pkcs11_check.testcases._error_tuples import MECHANISM_ERRORS, DATA_ERRORS
 
 pytestmark = pytest.mark.access
 
@@ -402,7 +402,7 @@ No configuration flag needed. The runner adapts automatically:
 ### Flow
 
 ```
-p11test test --module softhsm2.so
+pkcs11-check test --module softhsm2.so
 
 1. Mode 1 (in-process)
    test_ckr_encrypt.py .......... 35 passed
@@ -433,10 +433,10 @@ Tests in `test_ckr_null_params.py` and `test_ckr_fault_inject.py` are always `@s
 
 ### Implementation: outer orchestrator, not pytest plugin
 
-A crash (SIGSEGV) kills the entire pytest process — no hook can intercept it from inside. The adaptive isolation lives in the **`p11test test` CLI command** (`src/p11test/cli/test_cmd.py`), which is an outer process that launches pytest as a subprocess:
+A crash (SIGSEGV) kills the entire pytest process — no hook can intercept it from inside. The adaptive isolation lives in the **`pkcs11-check test` CLI command** (`src/pkcs11-check/cli/test_cmd.py`), which is an outer process that launches pytest as a subprocess:
 
 ```python
-# src/p11test/cli/test_cmd.py (simplified)
+# src/pkcs11-check/cli/test_cmd.py (simplified)
 class AdaptiveRunner:
     """Outer orchestrator that survives child crashes."""
 

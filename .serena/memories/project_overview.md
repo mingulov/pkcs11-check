@@ -1,4 +1,4 @@
-# p11test Project Overview
+# pkcs11-check Project Overview
 
 CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin.
 
@@ -12,13 +12,13 @@ CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pyte
 - Linting: ruff, Type checking: mypy --strict
 
 ## Structure
-- `src/p11test/` — the package
+- `src/pkcs11-check/` — the package
   - `cli/` — typer CLI (app.py, test_cmd.py, info_cmd.py, list_cmd.py)
   - `core/` — engine (loader.py, isolation.py, timeout.py, session.py)
   - `testcases/` — PRODUCT: PKCS#11 tests run against hardware/software modules
   - `config.py` — pydantic-settings config
   - `plugin.py` — pytest11 entry point
   - `fixtures.py` — pytest fixtures
-- `tests/` — META-TESTS: tests for p11test's own code
+- `tests/` — META-TESTS: tests for pkcs11-check's own code
 - `docs/superpowers/specs/` — design specification
 - `docs/superpowers/plans/` — implementation plans

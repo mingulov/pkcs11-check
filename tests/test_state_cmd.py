@@ -1,4 +1,4 @@
-"""Tests for p11test state command."""
+"""Tests for pkcs11-check state command."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from p11test.cli.app import app
+from pkcs11_check.cli.app import app
 
 runner = CliRunner()
 

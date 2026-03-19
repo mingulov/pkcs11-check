@@ -2,31 +2,31 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Complete all Phase 1 MVP functionality: working `p11test test` and `info` commands, pytest markers, mechanism filtering, output formats, logging, and expanded test coverage (~50-80 PKCS#11 tests).
+**Goal:** Complete all Phase 1 MVP functionality: working `pkcs11-check test` and `info` commands, pytest markers, mechanism filtering, output formats, logging, and expanded test coverage (~50-80 PKCS#11 tests).
 
-**Architecture:** Wire CLI `test` command to invoke pytest programmatically against `src/p11test/testcases/`. Add rich info display via python-pkcs11 introspection. Register custom markers in the plugin. Add JSON/JUnit output via pytest's built-in reporters. Auto-skip tests based on mechanism availability.
+**Architecture:** Wire CLI `test` command to invoke pytest programmatically against `src/pkcs11-check/testcases/`. Add rich info display via python-pkcs11 introspection. Register custom markers in the plugin. Add JSON/JUnit output via pytest's built-in reporters. Auto-skip tests based on mechanism availability.
 
 **Tech Stack:** pytest (programmatic invocation), python-pkcs11, typer, rich (tables, panels), Python logging
 
-**Spec:** `docs/superpowers/specs/2026-03-16-p11test-design.md`
+**Spec:** `docs/superpowers/specs/2026-03-16-pkcs11-check-design.md`
 
 ---
 
 ## File Structure
 
 ### Files to modify
-- `src/p11test/cli/test_cmd.py` — wire to run pytest programmatically
-- `src/p11test/cli/info_cmd.py` — implement module info display
-- `src/p11test/plugin.py` — register markers, add mechanism skip logic
-- `src/p11test/testcases/conftest.py` — add skip-unsupported fixture, marker defs
+- `src/pkcs11-check/cli/test_cmd.py` — wire to run pytest programmatically
+- `src/pkcs11-check/cli/info_cmd.py` — implement module info display
+- `src/pkcs11-check/plugin.py` — register markers, add mechanism skip logic
+- `src/pkcs11-check/testcases/conftest.py` — add skip-unsupported fixture, marker defs
 
 ### Files to create
-- `src/p11test/markers.py` — marker definitions and version-check logic
-- `src/p11test/core/logging.py` — logging setup with rich handler and trace mode
-- `src/p11test/testcases/test_object.py` — object/key/attribute tests
-- `src/p11test/testcases/test_mechanism.py` — mechanism enumeration + edge cases
-- `src/p11test/testcases/test_digest.py` — digest, HMAC, wrap/unwrap tests
-- `src/p11test/testcases/test_errors.py` — error handling and edge cases
+- `src/pkcs11-check/markers.py` — marker definitions and version-check logic
+- `src/pkcs11-check/core/logging.py` — logging setup with rich handler and trace mode
+- `src/pkcs11-check/testcases/test_object.py` — object/key/attribute tests
+- `src/pkcs11-check/testcases/test_mechanism.py` — mechanism enumeration + edge cases
+- `src/pkcs11-check/testcases/test_digest.py` — digest, HMAC, wrap/unwrap tests
+- `src/pkcs11-check/testcases/test_errors.py` — error handling and edge cases
 - `tests/test_markers.py` — tests for marker skip logic
 - `tests/test_info_cmd.py` — tests for info command output
 
@@ -37,7 +37,7 @@
 ### Task 1: Create marker definitions
 
 **Files:**
-- Create: `src/p11test/markers.py`
+- Create: `src/pkcs11-check/markers.py`
 - Test: `tests/test_markers.py`
 
 - [ ] **Step 1: Write failing tests for marker logic**
@@ -48,7 +48,7 @@
 from __future__ import annotations
 
 import pytest
-from p11test.markers import should_skip_for_version, MARKER_DEFINITIONS
+from pkcs11_check.markers import should_skip_for_version, MARKER_DEFINITIONS
 
 
 class TestVersionSkipLogic:
@@ -88,8 +88,8 @@ Run: `uv run pytest tests/test_markers.py -v`
 - [ ] **Step 3: Implement markers.py**
 
 ```python
-# src/p11test/markers.py
-"""pytest marker definitions for p11test."""
+# src/pkcs11-check/markers.py
+"""pytest marker definitions for pkcs11-check."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -134,15 +134,15 @@ Run: `uv run pytest tests/test_markers.py -v`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/p11test/markers.py tests/test_markers.py
+git add src/pkcs11-check/markers.py tests/test_markers.py
 git commit -m "feat: add pytest marker definitions and version-skip logic"
 ```
 
 ### Task 2: Register markers and auto-skip in plugin
 
 **Files:**
-- Modify: `src/p11test/plugin.py`
-- Modify: `src/p11test/testcases/conftest.py`
+- Modify: `src/pkcs11-check/plugin.py`
+- Modify: `src/pkcs11-check/testcases/conftest.py`
 
 - [ ] **Step 1: Update plugin.py to register markers and implement skip hooks**
 
@@ -163,21 +163,21 @@ Run: `uv run pytest tests/ -v`
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/p11test/plugin.py src/p11test/testcases/conftest.py
+git add src/pkcs11-check/plugin.py src/pkcs11-check/testcases/conftest.py
 git commit -m "feat: register markers and auto-skip by version/destructive flag"
 ```
 
 ---
 
-## Chunk 2: Wire `p11test test` Command
+## Chunk 2: Wire `pkcs11-check test` Command
 
 ### Task 3: Implement test command via programmatic pytest
 
 **Files:**
-- Modify: `src/p11test/cli/test_cmd.py`
+- Modify: `src/pkcs11-check/cli/test_cmd.py`
 - Modify: `tests/test_cli.py`
 
-- [ ] **Step 1: Write test for `p11test test` invoking pytest**
+- [ ] **Step 1: Write test for `pkcs11-check test` invoking pytest**
 
 Add to `tests/test_cli.py`:
 
@@ -207,7 +207,7 @@ class TestTestCommandExecution:
 Replace the stub with pytest programmatic invocation:
 
 ```python
-"""p11test test command — run PKCS#11 test suite."""
+"""pkcs11-check test command — run PKCS#11 test suite."""
 from __future__ import annotations
 
 import sys
@@ -264,7 +264,7 @@ def test_command(
     if output == "json":
         args.extend(["--tb=no", "-q"])
     elif output == "junit":
-        args.extend(["--junit-xml=p11test-results.xml"])
+        args.extend(["--junit-xml=pkcs11-check-results.xml"])
 
     # Run pytest programmatically
     exit_code = pytest.main(args)
@@ -279,8 +279,8 @@ Run: `uv run pytest tests/test_cli.py -v`
 
 ```bash
 bash scripts/setup-softhsm.sh
-export SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf
-uv run p11test test --module /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin 1234
+export SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf
+uv run pkcs11-check test --module /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin 1234
 ```
 
 Expected: runs all testcases, shows results.
@@ -291,32 +291,32 @@ as env var `P11TEST_PIN` before invoking pytest, since pytest.main() runs in-pro
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/p11test/cli/test_cmd.py tests/test_cli.py
-git commit -m "feat: wire p11test test command to run pytest programmatically"
+git add src/pkcs11-check/cli/test_cmd.py tests/test_cli.py
+git commit -m "feat: wire pkcs11-check test command to run pytest programmatically"
 ```
 
 ---
 
-## Chunk 3: Implement `p11test info`
+## Chunk 3: Implement `pkcs11-check info`
 
 ### Task 4: Implement info command
 
 **Files:**
-- Modify: `src/p11test/cli/info_cmd.py`
+- Modify: `src/pkcs11-check/cli/info_cmd.py`
 - Create: `tests/test_info_cmd.py`
 
 - [ ] **Step 1: Write failing tests**
 
 ```python
 # tests/test_info_cmd.py
-"""Tests for p11test info command."""
+"""Tests for pkcs11-check info command."""
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
-from p11test.cli.app import app
+from pkcs11_check.cli.app import app
 
 runner = CliRunner()
 
@@ -334,7 +334,7 @@ class TestInfoCommand:
         mock_lib.library_description = "Test Library"
         mock_lib.library_version = (2, 40)
         mock_lib.get_slots.return_value = []
-        with patch("p11test.cli.info_cmd.load_module") as mock_load:
+        with patch("pkcs11_check.cli.info_cmd.load_module") as mock_load:
             mock_module = MagicMock()
             mock_module.lib = mock_lib
             mock_module.path = fake_so
@@ -354,7 +354,7 @@ Use `load_module` to load, then `rich.table.Table` to display:
 - Mechanisms per slot (with key size ranges)
 
 ```python
-"""p11test info command — show module information."""
+"""pkcs11-check info command — show module information."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -363,7 +363,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from p11test.core.loader import load_module
+from pkcs11_check.core.loader import load_module
 
 console = Console()
 
@@ -425,15 +425,15 @@ Run: `uv run pytest tests/test_info_cmd.py -v`
 - [ ] **Step 4: Manual verification**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run p11test info \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pkcs11-check info \
   --module /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/p11test/cli/info_cmd.py tests/test_info_cmd.py
-git commit -m "feat: implement p11test info command with rich table output"
+git add src/pkcs11-check/cli/info_cmd.py tests/test_info_cmd.py
+git commit -m "feat: implement pkcs11-check info command with rich table output"
 ```
 
 ---
@@ -443,14 +443,14 @@ git commit -m "feat: implement p11test info command with rich table output"
 ### Task 5: Add logging infrastructure
 
 **Files:**
-- Create: `src/p11test/core/logging.py`
-- Modify: `src/p11test/cli/app.py` (add --log-level and --trace global options)
+- Create: `src/pkcs11-check/core/logging.py`
+- Modify: `src/pkcs11-check/cli/app.py` (add --log-level and --trace global options)
 
 - [ ] **Step 1: Create logging.py**
 
 ```python
-# src/p11test/core/logging.py
-"""Logging setup for p11test."""
+# src/pkcs11-check/core/logging.py
+"""Logging setup for pkcs11-check."""
 from __future__ import annotations
 
 import logging
@@ -485,7 +485,7 @@ def callback(
     trace: bool = typer.Option(False, "--trace", help="Trace PKCS#11 calls"),
 ) -> None:
     """CLI-first PKCS#11 test suite."""
-    from p11test.core.logging import setup_logging
+    from pkcs11_check.core.logging import setup_logging
     setup_logging(level=log_level, trace=trace)
 ```
 
@@ -496,7 +496,7 @@ Run: `uv run pytest tests/ -v`
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/p11test/core/logging.py src/p11test/cli/app.py
+git add src/pkcs11-check/core/logging.py src/pkcs11-check/cli/app.py
 git commit -m "feat: add logging infrastructure with rich handler and trace mode"
 ```
 
@@ -509,7 +509,7 @@ Add test_object, test_mechanism, test_digest, test_errors to reach ~50+ PKCS#11 
 ### Task 6: test_object.py — Object and key attribute tests
 
 **Files:**
-- Create: `src/p11test/testcases/test_object.py`
+- Create: `src/pkcs11-check/testcases/test_object.py`
 
 - [ ] **Step 1: Write test_object.py**
 
@@ -522,7 +522,7 @@ Tests for:
 - Object size query
 
 ```python
-# src/p11test/testcases/test_object.py
+# src/pkcs11-check/testcases/test_object.py
 """Tests for PKCS#11 object and key attribute management."""
 from __future__ import annotations
 
@@ -584,8 +584,8 @@ class TestKeyPairAttributes:
 - [ ] **Step 2: Run against SoftHSM2**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
-  src/p11test/testcases/test_object.py \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest \
+  src/pkcs11-check/testcases/test_object.py \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so \
   --p11-pin=1234 -v
 ```
@@ -593,19 +593,19 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/p11test/testcases/test_object.py
+git add src/pkcs11-check/testcases/test_object.py
 git commit -m "feat: add object and key attribute test cases"
 ```
 
 ### Task 7: test_mechanism.py — Mechanism discovery edge cases
 
 **Files:**
-- Create: `src/p11test/testcases/test_mechanism.py`
+- Create: `src/pkcs11-check/testcases/test_mechanism.py`
 
 - [ ] **Step 1: Write test_mechanism.py**
 
 ```python
-# src/p11test/testcases/test_mechanism.py
+# src/pkcs11-check/testcases/test_mechanism.py
 """Tests for PKCS#11 mechanism discovery and info retrieval."""
 from __future__ import annotations
 
@@ -679,19 +679,19 @@ class TestMechanismCount:
 - [ ] **Step 2: Run against SoftHSM2 and commit**
 
 ```bash
-git add src/p11test/testcases/test_mechanism.py
+git add src/pkcs11-check/testcases/test_mechanism.py
 git commit -m "feat: add mechanism discovery and info test cases"
 ```
 
 ### Task 8: test_digest.py — Digest, HMAC, Wrap/Unwrap
 
 **Files:**
-- Create: `src/p11test/testcases/test_digest.py`
+- Create: `src/pkcs11-check/testcases/test_digest.py`
 
 - [ ] **Step 1: Write test_digest.py**
 
 ```python
-# src/p11test/testcases/test_digest.py
+# src/pkcs11-check/testcases/test_digest.py
 """Tests for PKCS#11 digest, HMAC, and key wrap/unwrap operations."""
 from __future__ import annotations
 
@@ -760,19 +760,19 @@ class TestKeyWrap:
 - [ ] **Step 2: Run and commit**
 
 ```bash
-git add src/p11test/testcases/test_digest.py
+git add src/pkcs11-check/testcases/test_digest.py
 git commit -m "feat: add digest, hash, and key wrap/unwrap test cases"
 ```
 
 ### Task 9: test_errors.py — Error handling and edge cases
 
 **Files:**
-- Create: `src/p11test/testcases/test_errors.py`
+- Create: `src/pkcs11-check/testcases/test_errors.py`
 
 - [ ] **Step 1: Write test_errors.py**
 
 ```python
-# src/p11test/testcases/test_errors.py
+# src/pkcs11-check/testcases/test_errors.py
 """Tests for PKCS#11 error handling and edge cases."""
 from __future__ import annotations
 
@@ -843,7 +843,7 @@ class TestSessionEdgeCases:
 - [ ] **Step 2: Run and commit**
 
 ```bash
-git add src/p11test/testcases/test_errors.py
+git add src/pkcs11-check/testcases/test_errors.py
 git commit -m "feat: add error handling and edge case test cases"
 ```
 
@@ -854,8 +854,8 @@ git commit -m "feat: add error handling and edge case test cases"
 ### Task 10: Implement --skip-unsupported mechanism filtering
 
 **Files:**
-- Modify: `src/p11test/testcases/conftest.py`
-- Modify: `src/p11test/plugin.py`
+- Modify: `src/pkcs11-check/testcases/conftest.py`
+- Modify: `src/pkcs11-check/plugin.py`
 
 - [ ] **Step 1: Add mechanism-based skip fixture**
 
@@ -896,7 +896,7 @@ git commit -m "feat: add mechanism-based auto-skip for unsupported operations"
 ### Task 11: Add JUnit XML output support to CLI
 
 **Files:**
-- Modify: `src/p11test/cli/test_cmd.py`
+- Modify: `src/pkcs11-check/cli/test_cmd.py`
 
 The JUnit XML output is already built into pytest (`--junit-xml=FILE`).
 The test_cmd already passes `--junit-xml` when `--output junit` is specified.
@@ -908,7 +908,7 @@ output_file: str | None = typer.Option(None, "--output-file", help="Output file 
 
 When `output == "junit"`:
 ```python
-args.extend(["--junit-xml", output_file or "p11test-results.xml"])
+args.extend(["--junit-xml", output_file or "pkcs11-check-results.xml"])
 ```
 
 - [ ] **Step 1: Add output-file option and verify**
@@ -947,27 +947,27 @@ uv run pytest tests/ -v
 
 ```bash
 bash scripts/setup-softhsm.sh
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf \
-  uv run pytest src/p11test/testcases/ \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf \
+  uv run pytest src/pkcs11-check/testcases/ \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so \
   --p11-pin=1234 -v
 ```
 
 Expected: 50+ PKCS#11 tests passing.
 
-- [ ] **Step 5: Run `p11test test` CLI end-to-end**
+- [ ] **Step 5: Run `pkcs11-check test` CLI end-to-end**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf \
-  uv run p11test test \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf \
+  uv run pkcs11-check test \
   --module /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so
 ```
 
-- [ ] **Step 6: Run `p11test info` CLI**
+- [ ] **Step 6: Run `pkcs11-check info` CLI**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf \
-  uv run p11test info \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf \
+  uv run pkcs11-check info \
   --module /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so
 ```
 

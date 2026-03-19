@@ -7,7 +7,7 @@ Date: 2026-03-19
 This check focused on the recent runner changes:
 
 - collection-safe PKCS#11 preflight manifest
-- optional isolated modes via `p11test test --isolation auto|file|test`
+- optional isolated modes via `pkcs11-check test --isolation auto|file|test`
 - `local-builds/test.sh` integration with the new runner path
 - adaptive isolation policy persistence across repeated local runs
 - same-run file-to-test escalation in `auto`
@@ -30,10 +30,10 @@ overrides `P11TEST_ISOLATION` or passes `--isolation`.
 Before this fix, a command such as:
 
 ```bash
-bash local-builds/test.sh softhsm2 src/p11test/testcases/test_interface.py::TestInterfaceV30::test_v30_interface_negotiated -q
+bash local-builds/test.sh softhsm2 src/pkcs11-check/testcases/test_interface.py::TestInterfaceV30::test_v30_interface_negotiated -q
 ```
 
-still expanded to the entire `src/p11test/testcases/` tree. That made targeted validation misleading and much slower than intended.
+still expanded to the entire `src/pkcs11-check/testcases/` tree. That made targeted validation misleading and much slower than intended.
 
 ## Commands Used
 
@@ -47,16 +47,16 @@ bash local-builds/test.sh pkcs11-mock -q --tb=no
 bash local-builds/test.sh qryptotoken -q --tb=no
 
 P11TEST_ISOLATION=auto \
-P11TEST_STATE_FILE=/tmp/p11test-nss-crash-resume.json \
+P11TEST_STATE_FILE=/tmp/pkcs11-check-nss-crash-resume.json \
 bash local-builds/test.sh nss-softokn \
-  src/p11test/testcases/test_wycheproof_pbkdf2.py \
-  src/p11test/testcases/test_interface.py
+  src/pkcs11-check/testcases/test_wycheproof_pbkdf2.py \
+  src/pkcs11-check/testcases/test_interface.py
 
 P11TEST_ISOLATION=auto \
-P11TEST_STATE_FILE=/tmp/p11test-qryptotoken-crash-resume.json \
+P11TEST_STATE_FILE=/tmp/pkcs11-check-qryptotoken-crash-resume.json \
 bash local-builds/test.sh qryptotoken \
-  src/p11test/testcases/test_aead.py \
-  src/p11test/testcases/test_interface.py
+  src/pkcs11-check/testcases/test_aead.py \
+  src/pkcs11-check/testcases/test_interface.py
 ```
 
 For BouncyHSM, the local server was started manually and a manifest-heavy slice was used instead of a full suite run.

@@ -1,15 +1,15 @@
-[submodule "/home/user/src/m/p11test/python-pkcs11"]
-	path = /home/user/src/m/p11test/python-pkcs11
+[submodule "python-pkcs11"]
+	path = python-pkcs11
 	url = git@github.com:mingulov/python-pkcs11.git
-[submodule "src/p11test/testcases/vectors/wycheproof"]
-	path = src/p11test/testcases/data/wycheproof
+[submodule "src/pkcs11_check/testcases/vectors/wycheproof"]
+	path = src/pkcs11_check/testcases/data/wycheproof
 	url = https://github.com/C2SP/wycheproof.git
-[submodule "src/p11test/testcases/data/cctv"]
-	path = src/p11test/testcases/data/cctv
+[submodule "src/pkcs11_check/testcases/data/cctv"]
+	path = src/pkcs11_check/testcases/data/cctv
 	url = https://github.com/C2SP/CCTV.git
-[submodule "src/p11test/testcases/data/x509-limbo"]
-	path = src/p11test/testcases/data/x509-limbo
+[submodule "src/pkcs11_check/testcases/data/x509-limbo"]
+	path = src/pkcs11_check/testcases/data/x509-limbo
 	url = https://github.com/C2SP/x509-limbo.git
-[submodule "src/p11test/testcases/data/acvp"]
-	path = src/p11test/testcases/data/acvp
+[submodule "src/pkcs11_check/testcases/data/acvp"]
+	path = src/pkcs11_check/testcases/data/acvp
 	url = https://github.com/usnistgov/ACVP-Server.git

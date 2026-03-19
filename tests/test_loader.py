@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from p11test.core.loader import P11Module, load_module
+from pkcs11_check.core.loader import P11Module, load_module
 
 
 class TestLoadModule:
@@ -17,7 +17,7 @@ class TestLoadModule:
         mock_lib = MagicMock()
         mock_lib.interface_version = "2.40"
         mock_lib.get_slots.return_value = [MagicMock()]
-        with patch("p11test.core.loader.pkcs11_lib", return_value=mock_lib):
+        with patch("pkcs11_check.core.loader.pkcs11_lib", return_value=mock_lib):
             module = load_module(fake_so)
         assert isinstance(module, P11Module)
         assert module.interface_version == "2.40"
@@ -31,7 +31,7 @@ class TestLoadModule:
         fake_so.touch()
         mock_lib = MagicMock()
         mock_lib.interface_version = "3.2"
-        with patch("p11test.core.loader.pkcs11_lib", return_value=mock_lib):
+        with patch("pkcs11_check.core.loader.pkcs11_lib", return_value=mock_lib):
             module = load_module(fake_so, interface="auto")
         assert module.interface_version == "3.2"
 
@@ -41,7 +41,7 @@ class TestLoadModule:
         fake_so.touch()
         mock_lib = MagicMock()
         mock_lib.interface_version = iface if iface != "auto" else "3.2"
-        with patch("p11test.core.loader.pkcs11_lib", return_value=mock_lib):
+        with patch("pkcs11_check.core.loader.pkcs11_lib", return_value=mock_lib):
             module = load_module(fake_so, interface=iface)
         assert isinstance(module, P11Module)
 

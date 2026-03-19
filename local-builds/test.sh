@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run p11test against a locally-built soft token.
+# Run pkcs11-check against a locally-built soft token.
 # Usage: bash local-builds/test.sh <target> [pytest-args...]
 #
 # Each provider is defined in local-builds/providers/<name>.sh
@@ -59,7 +59,7 @@ if [ -z "$TARGET" ] || [ "$TARGET" = "help" ] || [ "$TARGET" = "--help" ]; then
     echo "  $0 kryoptic                      # full suite"
     echo "  $0 kryoptic -k test_encrypt -v   # specific tests"
     echo "  $0 softhsm2-local -x --tb=short  # stop on first fail"
-    echo "  P11TEST_ISOLATION=auto $0 nss-softokn src/p11test/testcases/test_wycheproof_pbkdf2.py"
+    echo "  P11TEST_ISOLATION=auto $0 nss-softokn src/pkcs11_check/testcases/test_wycheproof_pbkdf2.py"
     exit 1
 fi
 
@@ -89,12 +89,12 @@ if type -t get_default_isolation &>/dev/null; then
     provider_default_isolation="$(get_default_isolation)"
 fi
 
-provider_default_state_file="/tmp/p11test-${TARGET}-isolation-state.json"
+provider_default_state_file="/tmp/pkcs11-check-${TARGET}-isolation-state.json"
 if type -t get_default_state_file &>/dev/null; then
     provider_default_state_file="$(get_default_state_file)"
 fi
 
-provider_default_policy_file="/tmp/p11test-${TARGET}-isolation-policy.json"
+provider_default_policy_file="/tmp/pkcs11-check-${TARGET}-isolation-policy.json"
 if type -t get_default_policy_file &>/dev/null; then
     provider_default_policy_file="$(get_default_policy_file)"
 fi
@@ -122,7 +122,7 @@ else
     isolation_from_provider=0
 fi
 
-echo "=== Running p11test ==="
+echo "=== Running pkcs11-check ==="
 echo "Provider: $PROVIDER_NAME"
 echo "Module:   $MODULE"
 echo "PIN:      ${PIN:-<none>}"
@@ -229,7 +229,7 @@ if [ "$use_isolation_runner" -eq 1 ]; then
                 ;;
             -*)
                 echo "ERROR: unsupported argument in isolation mode: $1" >&2
-                echo "Use 'uv run p11test test ...' for arbitrary pytest flags." >&2
+                echo "Use 'uv run pkcs11-check test ...' for arbitrary pytest flags." >&2
                 exit 2
                 ;;
             *)
@@ -277,7 +277,7 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     [ -n "$match" ] && CLI_ARGS+=("--match" "$match")
     [ "${#targets[@]}" -gt 0 ] && CLI_ARGS+=("${targets[@]}")
 
-    exec uv run p11test "${CLI_ARGS[@]}"
+    exec uv run pkcs11-check "${CLI_ARGS[@]}"
 fi
 
 echo "Isolation: none"
@@ -319,7 +319,7 @@ for arg in "$@"; do
 done
 
 if [ "${#targets[@]}" -eq 0 ]; then
-    targets=(src/p11test/testcases/)
+    targets=(src/pkcs11_check/testcases/)
 fi
 
 PYTEST_ARGS=("${targets[@]}" "--p11-module=$MODULE" "--benchmark-disable")

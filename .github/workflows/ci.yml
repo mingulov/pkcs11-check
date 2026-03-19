@@ -46,7 +46,7 @@ jobs:
           submodules: recursive
       - uses: astral-sh/setup-uv@v4
       - run: uv sync --frozen
-      - run: uv run pytest --strict-markers src/p11test/testcases/ --collect-only -q
+      - run: uv run pytest --strict-markers src/pkcs11_check/testcases/ --collect-only -q
 
   smoke-softhsm2:
     runs-on: ubuntu-latest
@@ -59,15 +59,15 @@ jobs:
       - run: uv sync --frozen
       - name: Setup SoftHSM2 token
         run: |
-          mkdir -p /tmp/p11test-tokens
-          printf 'directories.tokendir = /tmp/p11test-tokens\nobjectstore.backend = file\n' > /tmp/softhsm2.conf
+          mkdir -p /tmp/pkcs11-check-tokens
+          printf 'directories.tokendir = /tmp/pkcs11-check-tokens\nobjectstore.backend = file\n' > /tmp/softhsm2.conf
           export SOFTHSM2_CONF=/tmp/softhsm2.conf
-          softhsm2-util --init-token --slot 0 --label p11test --so-pin 87654321 --pin 1234
+          softhsm2-util --init-token --slot 0 --label pkcs11-check --so-pin 87654321 --pin 1234
       - name: Run smoke tests
         env:
           SOFTHSM2_CONF: /tmp/softhsm2.conf
         run: |
-          uv run p11test test \
+          uv run pkcs11-check test \
             --module /usr/lib/softhsm/libsofthsm2.so \
             --pin 1234 \
             --timeout 60 \

@@ -41,7 +41,7 @@ RUN mkdir -p /root/.local/share/qryptotoken && \
     MODULE=$(cat /tmp/module_path) && \
     if [ -n "$MODULE" ] && [ -f "$MODULE" ]; then \
       pkcs11-tool --module "$MODULE" \
-        --init-token --label "p11test" --so-pin 12345678 2>&1 && \
+        --init-token --label "pkcs11-check" --so-pin 12345678 2>&1 && \
       pkcs11-tool --module "$MODULE" \
         --init-pin --pin 1234 --so-pin 12345678 2>&1; \
     fi
@@ -62,8 +62,8 @@ CMD ["sh", "-c", "\
   fi && \
   echo \"qryptotoken module: $MODULE\" && \
   ls -lh \"$MODULE\" && \
-  uv run p11test test \
+  uv run pkcs11-check test \
     --module \"$MODULE\" \
     --isolation auto \
-    src/p11test/testcases/ 2>&1 || \
+    src/pkcs11_check/testcases/ 2>&1 || \
   echo 'qryptotoken: some tests failed — experimental module'"]

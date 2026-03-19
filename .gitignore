@@ -11,7 +11,7 @@ build/
 .hypothesis/
 .claude/*.local.md
 results/
-.p11test-isolation-state.json
-.p11test-isolation-policy.json
+.pkcs11-check-isolation-state.json
+.pkcs11-check-isolation-policy.json
 local-builds/bouncyhsm/
 local-builds/data/

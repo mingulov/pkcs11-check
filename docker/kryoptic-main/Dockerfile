@@ -24,7 +24,7 @@ RUN mkdir -p /var/lib/kryoptic /etc/kryoptic && \
 ENV KRYOPTIC_CONF=/etc/kryoptic/token.conf
 
 RUN pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
-    --init-token --label "p11test" --so-pin 12345678 && \
+    --init-token --label "pkcs11-check" --so-pin 12345678 && \
     pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
     --init-pin --pin 1234 --so-pin 12345678
 
@@ -34,4 +34,4 @@ COPY . .
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
 
-CMD ["sh", "-c", "echo 'Kryoptic main (latest dev):' && uv run pytest src/p11test/testcases/ --p11-module=/usr/lib/libkryoptic_pkcs11.so --p11-pin=1234 -q --tb=no"]
+CMD ["sh", "-c", "echo 'Kryoptic main (latest dev):' && uv run pytest src/pkcs11_check/testcases/ --p11-module=/usr/lib/libkryoptic_pkcs11.so --p11-pin=1234 -q --tb=no"]

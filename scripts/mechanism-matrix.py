@@ -6,7 +6,7 @@ showing mechanism × module × pass/skip/fail/xfail.
 
 Usage:
     # First, run tests with --junitxml:
-    SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
+    SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest src/pkcs11_check/testcases/ \
       --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234 \
       --junitxml=results/softhsm2.xml -q --benchmark-disable
 

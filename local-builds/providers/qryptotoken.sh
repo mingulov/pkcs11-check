@@ -42,7 +42,7 @@ setup() {
     if [ ! -f "$token_dir/token.sql" ]; then
         echo "Initializing qryptotoken..."
         QRYPTOTOKEN_CONF="$token_dir/token.sql" pkcs11-tool --module "$so" \
-            --init-token --label "p11test" --so-pin 12345678 2>/dev/null || true
+            --init-token --label "pkcs11-check" --so-pin 12345678 2>/dev/null || true
         QRYPTOTOKEN_CONF="$token_dir/token.sql" pkcs11-tool --module "$so" \
             --init-pin --pin 1234 --so-pin 12345678 2>/dev/null || true
     fi

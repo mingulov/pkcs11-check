@@ -51,7 +51,7 @@ setup() {
         echo "Initializing tpm2-pkcs11 token (may need sudo for TPM access)..."
         sudo TPM2_PKCS11_STORE="$token_dir" python3 -m tpm2_pkcs11.tpm2_ptool init 2>/dev/null || true
         sudo TPM2_PKCS11_STORE="$token_dir" python3 -m tpm2_pkcs11.tpm2_ptool addtoken \
-            --pid=1 --label=p11test --sopin=12345678 --userpin=1234 2>/dev/null || true
+            --pid=1 --label=pkcs11-check --sopin=12345678 --userpin=1234 2>/dev/null || true
         sudo chown -R "$(whoami)" "$token_dir"
     fi
 

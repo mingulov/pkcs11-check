@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from p11test.core.preflight import (
+from pkcs11_check.core.preflight import (
     CapabilityManifest,
     load_manifest,
     probe_capabilities,
@@ -28,7 +28,7 @@ def test_probe_capabilities_returns_manifest(tmp_path: Path) -> None:
     mock_module.interface_version = "3.2"
     mock_module.get_slots.return_value = [mock_slot]
 
-    with patch("p11test.core.preflight.load_module", return_value=mock_module):
+    with patch("pkcs11_check.core.preflight.load_module", return_value=mock_module):
         manifest = probe_capabilities(module_path, interface="auto", slot=0)
 
     assert manifest == CapabilityManifest(
@@ -46,7 +46,7 @@ def test_probe_capabilities_returns_error_manifest(tmp_path: Path) -> None:
     module_path = tmp_path / "module.so"
     module_path.touch()
 
-    with patch("p11test.core.preflight.load_module", side_effect=RuntimeError("boom")):
+    with patch("pkcs11_check.core.preflight.load_module", side_effect=RuntimeError("boom")):
         manifest = probe_capabilities(module_path, interface="3.2", slot=0)
 
     assert manifest.status == "error"

@@ -28,7 +28,7 @@ ENV SOFTHSM2_CONF=/etc/softhsm2.conf
 RUN mkdir -p /var/lib/softhsm/tokens && \
     echo "directories.tokendir = /var/lib/softhsm/tokens" > $SOFTHSM2_CONF && \
     echo "objectstore.backend = file" >> $SOFTHSM2_CONF && \
-    softhsm2-util --init-token --slot 0 --label "p11test" --pin 1234 --so-pin 12345678
+    softhsm2-util --init-token --slot 0 --label "pkcs11-check" --pin 1234 --so-pin 12345678
 
 RUN find /usr/lib -name "libsofthsm2.so" | head -1 > /tmp/module_path
 
@@ -38,4 +38,4 @@ COPY . .
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
 
-CMD ["sh", "-c", "softhsm2-util --version && echo 'SoftHSM2 main (latest dev):' && uv run pytest src/p11test/testcases/ --p11-module=$(cat /tmp/module_path) --p11-pin=1234 -q --tb=no"]
+CMD ["sh", "-c", "softhsm2-util --version && echo 'SoftHSM2 main (latest dev):' && uv run pytest src/pkcs11_check/testcases/ --p11-module=$(cat /tmp/module_path) --p11-pin=1234 -q --tb=no"]

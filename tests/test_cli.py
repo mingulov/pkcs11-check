@@ -1,4 +1,4 @@
-"""Tests for p11test CLI commands."""
+"""Tests for pkcs11-check CLI commands."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from p11test.cli import test_cmd
-from p11test.cli.app import app
-from p11test.core.preflight import CapabilityManifest
+from pkcs11_check.cli import test_cmd
+from pkcs11_check.cli.app import app
+from pkcs11_check.core.preflight import CapabilityManifest
 
 runner = CliRunner()
 
@@ -19,7 +19,7 @@ class TestVersionCommand:
     def test_version_output(self) -> None:
         result = runner.invoke(app, ["version"])
         assert result.exit_code == 0
-        assert "p11test 0.1.0" in result.output
+        assert "pkcs11-check 0.1.0" in result.output
 
 
 class TestTestCommand:
@@ -114,7 +114,7 @@ class TestTestCommand:
         assert called["units"] == [str(Path(test_cmd._TESTCASES_DIR) / "test_alpha.py")]
         assert called["timeout"] == 33
         assert called["state_file"] == state_file
-        assert called["policy_file"] == Path(".p11test-isolation-policy.json")
+        assert called["policy_file"] == Path(".pkcs11-check-isolation-policy.json")
         assert called["resume"] is True
         assert called["stop_on_failure"] is True
         assert called["granularity"] == "file"
@@ -161,7 +161,7 @@ class TestTestCommand:
             test_cmd,
             "discover_pytest_units",
             lambda targets, default_root, *, granularity, pytest_args: [  # type: ignore[arg-type]
-                "src/p11test/testcases/test_demo.py::test_case"
+                "src/pkcs11_check/testcases/test_demo.py::test_case"
             ],
         )
         monkeypatch.setattr(
@@ -183,11 +183,11 @@ class TestTestCommand:
 
         result = runner.invoke(
             app,
-            ["test", "--module", str(module), "--isolation", "test", "src/p11test/testcases"],
+            ["test", "--module", str(module), "--isolation", "test", "src/pkcs11_check/testcases"],
         )
 
         assert result.exit_code == 0
-        assert called["units"] == ["src/p11test/testcases/test_demo.py::test_case"]
+        assert called["units"] == ["src/pkcs11_check/testcases/test_demo.py::test_case"]
         assert called["granularity"] == "test"
 
     def test_test_auto_isolation_invokes_mixed_runner(
@@ -231,8 +231,8 @@ class TestTestCommand:
             test_cmd,
             "discover_auto_isolation_units",
             lambda targets, default_root, *, pytest_args, policy_file: [  # type: ignore[arg-type]
-                "src/p11test/testcases/test_demo.py",
-                "src/p11test/testcases/test_marked.py::test_case",
+                "src/pkcs11_check/testcases/test_demo.py",
+                "src/pkcs11_check/testcases/test_marked.py::test_case",
             ],
         )
         monkeypatch.setattr(
@@ -254,13 +254,13 @@ class TestTestCommand:
 
         result = runner.invoke(
             app,
-            ["test", "--module", str(module), "--isolation", "auto", "src/p11test/testcases"],
+            ["test", "--module", str(module), "--isolation", "auto", "src/pkcs11_check/testcases"],
         )
 
         assert result.exit_code == 0
         assert called["units"] == [
-            "src/p11test/testcases/test_demo.py",
-            "src/p11test/testcases/test_marked.py::test_case",
+            "src/pkcs11_check/testcases/test_demo.py",
+            "src/pkcs11_check/testcases/test_marked.py::test_case",
         ]
         assert called["granularity"] == "mixed"
 
@@ -353,9 +353,9 @@ class TestTestCommand:
     @pytest.mark.parametrize(
         ("mode", "output_name", "expected_name"),
         [
-            ("auto", "json", "p11test-results.json"),
-            ("file", "junit", "p11test-results.xml"),
-            ("test", "json", "p11test-results.json"),
+            ("auto", "json", "pkcs11-check-results.json"),
+            ("file", "junit", "pkcs11-check-results.xml"),
+            ("test", "json", "pkcs11-check-results.json"),
         ],
     )
     def test_test_isolation_builds_report_config(

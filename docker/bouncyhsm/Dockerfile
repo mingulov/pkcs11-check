@@ -54,8 +54,8 @@ CMD ["sh", "-c", "\
     echo 'BouncyHSM: native PKCS#11 lib not available'; exit 0; fi && \
   curl -sf -X POST http://localhost:5000/Slot \
     -H 'Content-Type: application/json' \
-    -d '{\"IsHwDevice\":false,\"Description\":\"p11test\",\"Token\":{\"Label\":\"p11test\",\"SerialNumber\":\"0001\",\"UserPin\":\"1234\",\"SoPin\":\"12345678\",\"SimulateHwRng\":true,\"SimulateHwMechanism\":true,\"SimulateProtectedAuthPath\":false,\"SimulateQualifiedArea\":false,\"SpeedMode\":\"WithoutRestriction\"}}' && \
+    -d '{\"IsHwDevice\":false,\"Description\":\"pkcs11-check\",\"Token\":{\"Label\":\"pkcs11-check\",\"SerialNumber\":\"0001\",\"UserPin\":\"1234\",\"SoPin\":\"12345678\",\"SimulateHwRng\":true,\"SimulateHwMechanism\":true,\"SimulateProtectedAuthPath\":false,\"SimulateQualifiedArea\":false,\"SpeedMode\":\"WithoutRestriction\"}}' && \
   echo '' && echo 'Slot created — 206 mechanisms' && \
-  uv run p11test test \
+  uv run pkcs11-check test \
     --module /usr/lib/libbouncyhsm_pkcs11.so --pin 1234 --isolation auto \
-    src/p11test/testcases/"]
+    src/pkcs11_check/testcases/"]

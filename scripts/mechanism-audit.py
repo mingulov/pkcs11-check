@@ -17,7 +17,7 @@ import pkcs11
 
 def get_tested_mechanisms() -> set[str]:
     """Scan test files for Mechanism.XXX references."""
-    testcases_dir = Path("src/p11test/testcases")
+    testcases_dir = Path("src/pkcs11_check/testcases")
     pattern = re.compile(r"Mechanism\.(\w+)")
     tested: set[str] = set()
     for f in testcases_dir.glob("test_*.py"):

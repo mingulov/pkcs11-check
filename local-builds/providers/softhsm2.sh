@@ -70,7 +70,7 @@ EOF
         local util="$BASE_DIR/softhsm2/install/bin/softhsm2-util"
         [ -f "$util" ] || util="softhsm2-util"
         SOFTHSM2_CONF="$conf" "$util" --init-token --slot 0 \
-            --label "p11test" --pin 1234 --so-pin 12345678
+            --label "pkcs11-check" --pin 1234 --so-pin 12345678
     fi
 
     export SOFTHSM2_CONF="$conf"
@@ -82,7 +82,7 @@ EOF
 setup_system() {
     local so="/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so"
     [ -f "$so" ] || { echo "ERROR: System SoftHSM2 not found"; exit 1; }
-    local conf="/tmp/p11test-softhsm2.conf"
+    local conf="/tmp/pkcs11-check-softhsm2.conf"
     [ -f "$conf" ] || bash "$PROJECT_DIR/scripts/setup-softhsm.sh"
     export SOFTHSM2_CONF="$conf"
     MODULE="$so"

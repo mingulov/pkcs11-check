@@ -1,12 +1,12 @@
-# p11test Comprehensive Testing Design Specification
+# pkcs11-check Comprehensive Testing Design Specification
 
 **Date:** 2026-03-16
 **Status:** Draft
-**Depends on:** `2026-03-16-p11test-design.md` (Phase 1 spec)
+**Depends on:** `2026-03-16-pkcs11-check-design.md` (Phase 1 spec)
 
 ## 1. Overview
 
-Expand p11test from ~85 basic tests to a comprehensive PKCS#11 test suite covering
+Expand pkcs11-check from ~85 basic tests to a comprehensive PKCS#11 test suite covering
 cryptographic correctness, security attack vectors, robustness, performance, compliance,
 and full v3.0/v3.2 coverage including PQC, plus vendor mechanism extensibility
 (8 vendors, 71 vendor-specific mechanisms), and surface audit probing for hidden
@@ -66,7 +66,7 @@ Static test vectors from NIST CAVP — import key, compute, compare with known a
 - ML-DSA: NIST FIPS 204 (final, August 2024) KAT vectors (key generation, sign, verify)
 - SLH-DSA: NIST FIPS 205 (final, August 2024) KAT vectors
 
-**Implementation:** JSON files in `src/p11test/testcases/vectors/` loaded via
+**Implementation:** JSON files in `src/pkcs11-check/testcases/vectors/` loaded via
 `@pytest.mark.parametrize`.
 
 Estimated: ~60 tests (original ~30 + ~30 PQC KAT vectors).
@@ -91,7 +91,7 @@ to catch cryptographic implementation bugs at boundary conditions.
 | HMAC-SHA* | ~50 | Truncated MACs, key length edge cases |
 | AES-KW (RFC 3394) | ~50 | Invalid unwrap, integrity check |
 
-**Implementation:** Download Wycheproof JSON files into `src/p11test/testcases/vectors/wycheproof/`,
+**Implementation:** Download Wycheproof JSON files into `src/pkcs11-check/testcases/vectors/wycheproof/`,
 parse with a shared loader, parametrize tests. Each JSON file becomes one parametrized test function.
 
 **Expected result handling:** Wycheproof vectors have `result: "valid"|"acceptable"|"invalid"`.
@@ -928,10 +928,10 @@ or runs sequentially if multiple modules are specified.
 | ML-KEM encapsulate (same keypair + randomness) | If derandomized test vector, output identical |
 | Public key export encoding | DER encoding identical across backends |
 
-**Configuration:** Differential testing backends are declared in `p11test.toml`:
+**Configuration:** Differential testing backends are declared in `pkcs11-check.toml`:
 
 ```toml
-# p11test.toml
+# pkcs11-check.toml
 [differential]
 modules = [
     { name = "softhsm2", path = "/usr/lib/softhsm/libsofthsm2.so", pin = "1234", env = { SOFTHSM2_CONF = "/tmp/softhsm2.conf" } },
@@ -939,7 +939,7 @@ modules = [
 ]
 ```
 
-**CLI:** `p11test test --differential --module-config p11test.toml` or
+**CLI:** `pkcs11-check test --differential --module-config pkcs11-check.toml` or
 `pytest --p11-differential`
 
 **Results:** Per-test matrix showing pass/fail per backend; disagreements between
@@ -1054,12 +1054,12 @@ Estimated: ~25 tests (requires crash-test stub module; skipped if stub unavailab
 ## 9. Interoperability Testing (`test_interop.py`)
 
 Tests import/export paths using externally-encoded key material and certificates,
-and verify that p11test correctly handles encoding variants and malformed inputs.
+and verify that pkcs11-check correctly handles encoding variants and malformed inputs.
 
 ### 9.1 Encoding Corpora
 
 The following corpora of pre-generated blobs are stored in
-`src/p11test/testcases/vectors/encoding/`:
+`src/pkcs11-check/testcases/vectors/encoding/`:
 
 **Malformed DER/SPKI:**
 - Truncated DER (cut at various byte offsets)
@@ -1178,11 +1178,11 @@ pytest.ini_options.markers = [
 **As CLI option:**
 
 ```
-p11test test --profile smoke      # equivalent to: pytest -m "not (fuzz or benchmark or stress or timing or wycheproof or security or destructive)"
-p11test test --profile full       # equivalent to: pytest -m "not (benchmark or stress or timing or fuzz or destructive)"
-p11test test --profile security   # security-focused subset
-p11test test --profile lab        # everything
-p11test test --profile hardware   # HSM-safe subset (excludes destructive, stress, fuzz, timing, surface_audit, benchmark)
+pkcs11-check test --profile smoke      # equivalent to: pytest -m "not (fuzz or benchmark or stress or timing or wycheproof or security or destructive)"
+pkcs11-check test --profile full       # equivalent to: pytest -m "not (benchmark or stress or timing or fuzz or destructive)"
+pkcs11-check test --profile security   # security-focused subset
+pkcs11-check test --profile lab        # everything
+pkcs11-check test --profile hardware   # HSM-safe subset (excludes destructive, stress, fuzz, timing, surface_audit, benchmark)
 ```
 
 Note on `hardware` profile: `surface_audit` is excluded because it brute-forces
@@ -1222,7 +1222,7 @@ quality to FIPS 140-3 or NIST SP 800-22 standards.
 
 ### 11.1 Configuration Parameters
 
-All statistical tests read from a `[statistics]` section in `p11test.toml`:
+All statistical tests read from a `[statistics]` section in `pkcs11-check.toml`:
 
 ```toml
 [statistics]
@@ -1263,12 +1263,12 @@ Section 13.2) so that results can be compared across devices and over time.
 
 Operators can record a baseline run:
 ```
-p11test test --profile lab --save-baseline baseline-2026-03-16.json
+pkcs11-check test --profile lab --save-baseline baseline-2026-03-16.json
 ```
 
 Subsequent runs compare against the baseline:
 ```
-p11test test --compare-baseline baseline-2026-03-16.json
+pkcs11-check test --compare-baseline baseline-2026-03-16.json
 ```
 
 Timing regressions (>2σ change from baseline) are flagged as `WARNING`.
@@ -1286,7 +1286,7 @@ stats = [
 ```
 
 Statistical tests are skipped with a `SKIP (scipy not installed)` message if
-scipy is unavailable. Install with: `pip install p11test[stats]`.
+scipy is unavailable. Install with: `pip install pkcs11-check[stats]`.
 
 ### 11.6 Explicit Disclaimer
 
@@ -1486,7 +1486,7 @@ Estimated: ~10 tests.
 
 ## 16. Vendor Mechanism Extensibility
 
-p11test must be extensible for vendor-specific mechanisms (CKM_VENDOR_DEFINED + offset)
+pkcs11-check must be extensible for vendor-specific mechanisms (CKM_VENDOR_DEFINED + offset)
 without modifying core test code. This is critical because real-world HSMs expose 70+
 vendor mechanisms across 8+ vendors.
 
@@ -1495,7 +1495,7 @@ vendor mechanisms across 8+ vendors.
 Vendor mechanisms and their parameters are defined in TOML files:
 
 ```
-src/p11test/
+src/pkcs11-check/
 ├── vendors/
 │   ├── __init__.py
 │   ├── registry.py            # loads TOML profiles, registers mechanisms
@@ -1556,11 +1556,11 @@ description = "SP800-108 Counter KDF"
 
 **CLI usage:**
 ```bash
-p11test test --module /path/to.so --vendor aws-cloudhsm --pin 1234
-p11test test --module /path/to.so --vendor-profile custom-vendor.toml
+pkcs11-check test --module /path/to.so --vendor aws-cloudhsm --pin 1234
+pkcs11-check test --module /path/to.so --vendor-profile custom-vendor.toml
 ```
 
-**Automatic detection:** If `--vendor` is not specified, p11test queries `C_GetMechanismList`
+**Automatic detection:** If `--vendor` is not specified, pkcs11-check queries `C_GetMechanismList`
 and matches mechanism IDs against known vendor profiles.
 
 **Test generation per vendor mechanism:**
@@ -1592,12 +1592,12 @@ Where possible, cross-verify vendor mechanisms against known implementations:
 Users can create custom `.toml` profiles for unsupported HSMs:
 ```bash
 # Create custom profile
-p11test vendor-init --module /path/to.so --output my-hsm.toml
+pkcs11-check vendor-init --module /path/to.so --output my-hsm.toml
 # Auto-discovers vendor mechanisms via C_GetMechanismList
 # User fills in parameter types and test expectations
 
 # Run with custom profile
-p11test test --vendor-profile my-hsm.toml --module /path/to.so
+pkcs11-check test --vendor-profile my-hsm.toml --module /path/to.so
 ```
 
 Estimated: ~30 base tests per vendor profile × 8 vendors = ~240 vendor tests.
@@ -1605,7 +1605,7 @@ Estimated: ~30 base tests per vendor profile × 8 vendors = ~240 vendor tests.
 ## 17. Test File Organization
 
 ```
-src/p11test/testcases/
+src/pkcs11-check/testcases/
 ├── vectors/                    # Static test vector data
 │   ├── nist/                   # NIST CAVP vectors (JSON)
 │   │   ├── aes_cbc.json
@@ -1676,7 +1676,7 @@ src/p11test/testcases/
 
 **Vendor mechanism profiles:**
 ```
-src/p11test/vendors/
+src/pkcs11-check/vendors/
 ├── __init__.py
 ├── registry.py                 # TOML loader, mechanism registration, auto-detection
 ├── profiles/
@@ -1719,7 +1719,7 @@ gost = [
 Users must install relevant extras before running tests that require them:
 
 ```
-pip install p11test[pqc,gost,stats]
+pip install pkcs11-check[pqc,gost,stats]
 ```
 
 Optional dependency groups:
@@ -1791,9 +1791,9 @@ Implementation: Custom pytest plugin hook that annotates test results with sever
 The `--fail-on` CLI option controls which severity levels cause a non-zero exit code:
 
 ```
-p11test test --fail-on FAIL         # default: only hard failures fail the run
-p11test test --fail-on SECURITY     # security findings also fail the run
-p11test test --fail-on WARNING      # warnings also fail the run
+pkcs11-check test --fail-on FAIL         # default: only hard failures fail the run
+pkcs11-check test --fail-on SECURITY     # security findings also fail the run
+pkcs11-check test --fail-on WARNING      # warnings also fail the run
 ```
 
 When `--fail-on SECURITY` is set, any `SECURITY`-level finding causes exit code 1
@@ -1868,7 +1868,7 @@ For KAT and Wycheproof tests, `vector_manifest` contains:
 ```
 
 The commit and hash pin the exact vector set used, enabling reproducible audit trails.
-Vector manifest files are stored in `src/p11test/testcases/vectors/manifests/`.
+Vector manifest files are stored in `src/pkcs11-check/testcases/vectors/manifests/`.
 
 ## 21. Phasing
 
@@ -1909,7 +1909,7 @@ Vector manifest files are stored in `src/p11test/testcases/vectors/manifests/`.
 - `test_fault.py` — crash/fault injection (requires crash-test stub)
 
 ### Phase 2f — Vendor Mechanism Testing
-- `src/p11test/vendors/` — TOML profiles for 8 vendors (71 mechanisms)
+- `src/pkcs11-check/vendors/` — TOML profiles for 8 vendors (71 mechanisms)
 - `test_vendor.py` — parametrized vendor mechanism tests
 - `--vendor` and `--vendor-profile` CLI options
 - Auto-detection of vendor mechanisms from C_GetMechanismList

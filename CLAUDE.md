@@ -1,4 +1,4 @@
-# p11test
+# pkcs11-check
 
 CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin.
 
@@ -9,7 +9,7 @@ CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pyte
 - **Build backend:** hatchling (src/ layout)
 - **CLI framework:** typer + rich
 - **Config:** pydantic-settings (TOML + CLI + env)
-- **Testing:** pytest (meta-tests in `tests/`, product test cases in `src/p11test/testcases/`)
+- **Testing:** pytest (meta-tests in `tests/`, product test cases in `src/pkcs11_check/testcases/`)
 - **Linting:** ruff
 - **Type checking:** mypy --strict
 - **PKCS#11 binding:** python-pkcs11 fork (git submodule at `python-pkcs11/`)
@@ -25,8 +25,8 @@ bash local-builds/test.sh softhsm2            # system SoftHSM2
 bash local-builds/reset.sh kryoptic           # reset token data
 
 # Standard commands
-uv run p11test version              # check CLI works
-uv run pytest tests/                # run meta-tests (p11test's own tests)
+uv run pkcs11-check version              # check CLI works
+uv run pytest tests/                # run meta-tests (pkcs11-check's own tests)
 uv run ruff check src/ tests/       # lint
 uv run ruff format src/ tests/      # format
 uv run mypy src/                    # type check
@@ -39,8 +39,8 @@ docker compose -f docker/docker-compose.test.yml run test-kryoptic
 ## Architecture
 
 ### Two test directories
-- `src/p11test/testcases/` — the PRODUCT: PKCS#11 tests run against hardware/software modules
-- `tests/` — META-TESTS: tests for p11test's own code (config parsing, markers, CLI)
+- `src/pkcs11_check/testcases/` — the PRODUCT: PKCS#11 tests run against hardware/software modules
+- `tests/` — META-TESTS: tests for pkcs11-check's own code (config parsing, markers, CLI)
 
 ### Core modules
 - `core/loader.py` — PKCS#11 module loading with v2.40/v3.0/v3.1/v3.2 interface negotiation

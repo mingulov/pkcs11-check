@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run p11test Docker test matrix and collect results.
+# Run pkcs11-check Docker test matrix and collect results.
 #
 # Usage:
 #   bash scripts/run-docker-matrix.sh                    # all targets
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 COMPOSE_FILE="docker/docker-compose.test.yml"
-RESULTS_DIR="/tmp/p11test-results"
+RESULTS_DIR="/tmp/pkcs11-check-results"
 mkdir -p "$RESULTS_DIR"
 
 # Default targets (stable releases)
@@ -32,7 +32,7 @@ else
     TARGETS=("${DEFAULT_TARGETS[@]}")
 fi
 
-echo "=== p11test Docker Test Matrix ==="
+echo "=== pkcs11-check Docker Test Matrix ==="
 echo "Targets: ${TARGETS[*]}"
 echo ""
 

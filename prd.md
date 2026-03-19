@@ -1,11 +1,11 @@
 ### **Product Requirements Document (PRD)**  
-**Product Name:** p11test  
+**Product Name:** pkcs11-check  
 **Version:** 0.1.0 (MVP)  
 **Date:** March 2026  
 **Status:** Ready for implementation  
 
 #### 1. Executive Summary
-**p11test** is a modern, CLI-first PKCS#11 test suite (that also installs as a pytest plugin).  
+**pkcs11-check** is a modern, CLI-first PKCS#11 test suite (that also installs as a pytest plugin).  
 It is the first tool that:
 - Automatically negotiates and **forces** any PKCS#11 interface (2.40 / 3.0 / 3.2)
 - **Survives segfaults, crashes, and hangs** in the loaded .so / .dll module (the tester itself never dies)
@@ -57,13 +57,13 @@ It builds on the still-maintained `python-pkcs11` library and adds the robustnes
 - **Timeouts**: Configurable per-operation, per-test, and global (defaults: 30 s operation / 120 s test). Hanging calls are killed cleanly.
 - **Multiple concurrent sessions**: 
   - `--sessions N` or pytest `-n N` (via pytest-xdist)
-  - Daemon mode: `p11test daemon` with subcommands `session list`, `session cancel <id>`, `session close-all`
+  - Daemon mode: `pkcs11-check daemon` with subcommands `session list`, `session cancel <id>`, `session close-all`
 - **Graceful shutdown**: Ctrl-C / SIGTERM cancels everything cleanly.
 
 #### 7. Configurability
 Three-layer config (CLI > TOML > env > defaults).
 
-Example `p11test.toml`:
+Example `pkcs11-check.toml`:
 ```toml
 module = "/usr/lib64/p11-kit-proxy.so"
 slot = 0
@@ -79,7 +79,7 @@ output = "json"
 
 CLI example:
 ```bash
-p11test test --module mymodule.so --interface 3.2 --sessions 4 --timeout 15
+pkcs11-check test --module mymodule.so --interface 3.2 --sessions 4 --timeout 15
 ```
 
 #### 8. Technical Stack
@@ -110,10 +110,10 @@ Safe mode (default) vs `--destructive` (with explicit warning + confirmation).
 #### 10. CLI & pytest Usage
 ```bash
 # Primary CLI (recommended)
-p11test test --module /path/to/module.so --interface 3.2 --sessions 4
+pkcs11-check test --module /path/to/module.so --interface 3.2 --sessions 4
 
 # Daemon mode
-p11test daemon
+pkcs11-check daemon
 p11test session list
 p11test session cancel 123
 

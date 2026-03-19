@@ -97,7 +97,7 @@ def load_ckr_spec() -> dict[str, set[str]]:
     # Import the spec module
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     try:
-        from p11test.testcases.ckr import _ckr_spec
+        from pkcs11_check.testcases.ckr import _ckr_spec
     except ImportError as e:
         print(f"ERROR: Cannot import _ckr_spec: {e}", file=sys.stderr)
         return {}

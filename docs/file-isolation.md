@@ -1,9 +1,9 @@
 # Isolated Modes
 
-`p11test test` now supports resumable isolated modes for crash-prone modules:
+`pkcs11-check test` now supports resumable isolated modes for crash-prone modules:
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation auto
 ```
@@ -11,7 +11,7 @@ uv run p11test test \
 or:
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation file
 ```
@@ -19,7 +19,7 @@ uv run p11test test \
 or:
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation test
 ```
@@ -30,8 +30,8 @@ uv run p11test test \
 - Probes PKCS#11 capabilities in a short-lived helper subprocess and passes the
   resulting manifest into pytest instead of loading the module during collection.
 - Runs each unit in a fresh `python -m pytest` subprocess.
-- Writes progress to `.p11test-isolation-state.json` by default.
-- Learns crash-prone files in `.p11test-isolation-policy.json` by default and
+- Writes progress to `.pkcs11-check-isolation-state.json` by default.
+- Learns crash-prone files in `.pkcs11-check-isolation-policy.json` by default and
   promotes them to per-test isolation in later `--isolation auto` runs.
 - Continues past a crashing unit because the unit process, not the main runner, dies.
 - Creates parent directories for `--state-file` automatically.
@@ -57,7 +57,7 @@ marks the remaining test units from that file as `crash_limited` and moves on.
 Use `--resume` to continue from the first unit that did not finish cleanly:
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation file \
   --resume
@@ -71,7 +71,7 @@ non-resume runs are the point where newly learned policy promotions take effect.
 If you want the run to stop immediately when it hits a bad unit, use:
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation file \
   --stop-on-failure
@@ -84,16 +84,16 @@ Then rerun with `--resume` after fixing or investigating the problem.
 The default state file is:
 
 ```text
-.p11test-isolation-state.json
+.pkcs11-check-isolation-state.json
 ```
 
 You can override it:
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation file \
-  --state-file /tmp/p11test-bouncyhsm.json
+  --state-file /tmp/pkcs11-check-bouncyhsm.json
 ```
 
 Starting a fresh run without `--resume` overwrites the old state file immediately.
@@ -103,7 +103,7 @@ Starting a fresh run without `--resume` overwrites the old state file immediatel
 The default adaptive policy file is:
 
 ```text
-.p11test-isolation-policy.json
+.pkcs11-check-isolation-policy.json
 ```
 
 `--isolation auto` uses it to remember files that previously crashed or timed out
@@ -116,7 +116,7 @@ Use `--max-crashes-per-file` to cap how many crashing per-test units the runner
 will attribute before skipping the rest of that file:
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation auto \
   --max-crashes-per-file 2
@@ -127,10 +127,10 @@ uv run p11test test \
 You can override it:
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation auto \
-  --policy-file /tmp/p11test-policy.json
+  --policy-file /tmp/pkcs11-check-policy.json
 ```
 
 ## Reports And State Inspection
@@ -138,32 +138,32 @@ uv run p11test test \
 Isolated modes can now emit aggregated machine-readable reports too:
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation auto \
   --output json
 ```
 
 ```bash
-uv run p11test test \
+uv run pkcs11-check test \
   --module /path/to/module.so \
   --isolation file \
   --output junit \
-  --output-file /tmp/p11test.xml
+  --output-file /tmp/pkcs11-check.xml
 ```
 
 For isolated runs:
 
-- `--output json` writes an aggregated `p11test-results.json`
-- `--output junit` writes an aggregated `p11test-results.xml`
+- `--output json` writes an aggregated `pkcs11-check-results.json`
+- `--output junit` writes an aggregated `pkcs11-check-results.xml`
 - `--output rich` keeps console-only output
 
 You can inspect saved state or adaptive policy files directly:
 
 ```bash
-uv run p11test state .p11test-isolation-state.json
-uv run p11test state .p11test-isolation-policy.json
-uv run p11test state --output json .p11test-isolation-state.json
+uv run pkcs11-check state .pkcs11-check-isolation-state.json
+uv run pkcs11-check state .pkcs11-check-isolation-policy.json
+uv run pkcs11-check state --output json .pkcs11-check-isolation-state.json
 ```
 
 ## Scope And Limits
@@ -202,17 +202,17 @@ Use `test` when:
 
 ```bash
 P11TEST_ISOLATION=auto \
-bash local-builds/test.sh qryptotoken src/p11test/testcases/test_aead.py
+bash local-builds/test.sh qryptotoken src/pkcs11-check/testcases/test_aead.py
 ```
 
 ```bash
 P11TEST_ISOLATION=file \
-bash local-builds/test.sh bouncyhsm src/p11test/testcases/ckr/test_ckr_codes.py
+bash local-builds/test.sh bouncyhsm src/pkcs11-check/testcases/ckr/test_ckr_codes.py
 ```
 
 ```bash
 P11TEST_ISOLATION=test \
-bash local-builds/test.sh qryptotoken src/p11test/testcases/test_aead.py
+bash local-builds/test.sh qryptotoken src/pkcs11-check/testcases/test_aead.py
 ```
 
 Some crash-prone providers now default to `auto` isolation automatically when the
@@ -224,13 +224,13 @@ user does not override the mode:
 Those provider defaults use a stable state file under `/tmp`, for example:
 
 ```text
-/tmp/p11test-nss-softokn-isolation-state.json
+/tmp/pkcs11-check-nss-softokn-isolation-state.json
 ```
 
 and a matching adaptive policy file, for example:
 
 ```text
-/tmp/p11test-nss-softokn-isolation-policy.json
+/tmp/pkcs11-check-nss-softokn-isolation-policy.json
 ```
 
 You can still override the default explicitly:
@@ -239,7 +239,7 @@ You can still override the default explicitly:
 P11TEST_ISOLATION=none bash local-builds/test.sh nss-softokn -k ckr
 P11TEST_ISOLATION=auto bash local-builds/test.sh nss-softokn -k ckr
 P11TEST_ISOLATION=file bash local-builds/test.sh qryptotoken -x
-P11TEST_ISOLATION=test bash local-builds/test.sh qryptotoken src/p11test/testcases/test_aead.py
+P11TEST_ISOLATION=test bash local-builds/test.sh qryptotoken src/pkcs11-check/testcases/test_aead.py
 ```
 
 Useful companion variables:
@@ -248,8 +248,8 @@ Useful companion variables:
 P11TEST_ISOLATION=file
 P11TEST_RESUME=1
 P11TEST_STOP_ON_FAILURE=1
-P11TEST_STATE_FILE=/tmp/p11test-bouncyhsm.json
-P11TEST_POLICY_FILE=/tmp/p11test-bouncyhsm-policy.json
+P11TEST_STATE_FILE=/tmp/pkcs11-check-bouncyhsm.json
+P11TEST_POLICY_FILE=/tmp/pkcs11-check-bouncyhsm-policy.json
 P11TEST_MAX_CRASHES_PER_FILE=2
 ```
 
@@ -263,7 +263,7 @@ The shell helper supports the common local workflow options in isolation mode:
 - `-x` / `--stop-on-failure`
 - `--destructive`
 
-For arbitrary pytest flags, use `uv run p11test test ...` directly.
+For arbitrary pytest flags, use `uv run pkcs11-check test ...` directly.
 
 ## BouncyHSM Local Example
 
@@ -284,18 +284,18 @@ Create a token:
 ```bash
 curl -X POST http://127.0.0.1:5011/Slot \
   -H "Content-Type: application/json" \
-  -d '{"IsHwDevice":false,"Description":"p11test","Token":{"Label":"p11test","SerialNumber":"0001","UserPin":"1234","SoPin":"12345678"}}'
+  -d '{"IsHwDevice":false,"Description":"pkcs11-check","Token":{"Label":"pkcs11-check","SerialNumber":"0001","UserPin":"1234","SoPin":"12345678"}}'
 ```
 
 Point the native shim at the local TCP endpoint and run the isolated mode:
 
 ```bash
 BOUNCY_HSM_CFG_STRING='Server=127.0.0.1;Port=8765;' \
-uv run p11test test \
+uv run pkcs11-check test \
   --module local-builds/bouncyhsm/lib/libbouncyhsm_pkcs11.so \
   --pin 1234 \
   --isolation file \
-  src/p11test/testcases/ckr
+  src/pkcs11-check/testcases/ckr
 ```
 
 The same flow also works through the local helper:
@@ -303,5 +303,5 @@ The same flow also works through the local helper:
 ```bash
 BOUNCY_HSM_CFG_STRING='Server=127.0.0.1;Port=8765;' \
 P11TEST_ISOLATION=file \
-bash local-builds/test.sh bouncyhsm src/p11test/testcases/ckr/test_ckr_codes.py
+bash local-builds/test.sh bouncyhsm src/pkcs11-check/testcases/ckr/test_ckr_codes.py
 ```

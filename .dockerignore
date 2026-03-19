@@ -1,6 +1,6 @@
 # Large opt-in test vector submodules
-src/p11test/testcases/data/acvp/
-src/p11test/testcases/data/x509-limbo/
+src/pkcs11_check/testcases/data/acvp/
+src/pkcs11_check/testcases/data/x509-limbo/
 
 # Build artifacts from local-builds
 local-builds/*/src/

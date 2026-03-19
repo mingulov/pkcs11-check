@@ -4,22 +4,22 @@ Date: 2026-03-19
 
 ## Scope Re-Checked
 
-This review started with `p11test test --isolation file` and now also covers
+This review started with `pkcs11-check test --isolation file` and now also covers
 the newer `--isolation auto` and `--isolation test` modes:
 
-- CLI wiring in `src/p11test/cli/test_cmd.py`
-- per-unit runner in `src/p11test/core/file_runner.py`
-- subprocess base helper in `src/p11test/core/isolation.py`
-- current pytest plugin behavior in `src/p11test/plugin.py`
-- collection-safe capability probing in `src/p11test/core/preflight.py`
+- CLI wiring in `src/pkcs11-check/cli/test_cmd.py`
+- per-unit runner in `src/pkcs11-check/core/file_runner.py`
+- subprocess base helper in `src/pkcs11-check/core/isolation.py`
+- current pytest plugin behavior in `src/pkcs11-check/plugin.py`
+- collection-safe capability probing in `src/pkcs11-check/core/preflight.py`
 - local BouncyHSM smoke validation with the patched native shim
 - local helper validation through `local-builds/test.sh`
 
 Checks run during this review:
 
 - `uv run pytest tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py tests/test_plugin.py tests/test_preflight.py tests/test_loader.py -q`
-- `uv run ruff check src/p11test/cli/test_cmd.py src/p11test/core/file_runner.py src/p11test/core/isolation.py src/p11test/core/preflight.py src/p11test/plugin.py src/p11test/fixtures.py tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py tests/test_plugin.py tests/test_preflight.py tests/test_loader.py`
-- `uv run mypy src/p11test/core/file_runner.py src/p11test/cli/test_cmd.py src/p11test/core/isolation.py src/p11test/core/preflight.py src/p11test/plugin.py src/p11test/fixtures.py`
+- `uv run ruff check src/pkcs11-check/cli/test_cmd.py src/pkcs11-check/core/file_runner.py src/pkcs11-check/core/isolation.py src/pkcs11-check/core/preflight.py src/pkcs11-check/plugin.py src/pkcs11-check/fixtures.py tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py tests/test_plugin.py tests/test_preflight.py tests/test_loader.py`
+- `uv run mypy src/pkcs11-check/core/file_runner.py src/pkcs11-check/cli/test_cmd.py src/pkcs11-check/core/isolation.py src/pkcs11-check/core/preflight.py src/pkcs11-check/plugin.py src/pkcs11-check/fixtures.py`
 - local BouncyHSM stop-and-resume smoke:
   - first run stopped at a real failing file
   - second run resumed from that file and continued to the next one
@@ -33,11 +33,11 @@ Checks run during this review:
 - direct pytest smoke:
   - `uv run pytest ... test_interface.py::TestInterfaceV30::test_v30_interface_negotiated ...`
     passed against local BouncyHSM
-  - BouncyHSM server logs confirmed a separate `python -m p11test.core.preflight` helper
+  - BouncyHSM server logs confirmed a separate `python -m pkcs11_check.core.preflight` helper
     loaded the module before the pytest process ran the test
 - rebuilt Docker smokes:
-  - `test-softhsm2` passed `test_interface.py` through `p11test test --isolation auto`
-  - `test-nss` passed the filtered PBKDF2 + interface slice through `p11test test --isolation auto`
+  - `test-softhsm2` passed `test_interface.py` through `pkcs11-check test --isolation auto`
+  - `test-nss` passed the filtered PBKDF2 + interface slice through `pkcs11-check test --isolation auto`
   - Dockerfiles now set `SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0` so
     `uv sync` works even though the vendored `python-pkcs11` checkout does not carry its nested `.git`
 
@@ -54,7 +54,7 @@ The current solution is useful and real. It is not just a draft.
 - resume now rejects mismatched state files via a fingerprint of the requested units and pytest arguments.
 - the subprocess helper now consistently uses `spawn`, which is the safer default for PKCS#11 isolation.
 - the state fingerprint now also covers relevant environment plus test/module file metadata.
-- `auto` now persists backend-specific crash knowledge in `.p11test-isolation-policy.json`.
+- `auto` now persists backend-specific crash knowledge in `.pkcs11-check-isolation-policy.json`.
 - files marked `subprocess` now stay on the file-isolated path in `auto`, even when the user
   targets a single nodeid from that file.
 - files marked `subprocess_per_test` are expanded to nodeids automatically in `auto` mode.
@@ -120,7 +120,7 @@ The isolated modes now support:
 
 - aggregated JSON output
 - aggregated JUnit XML
-- `p11test state` for saved-state and adaptive-policy inspection
+- `pkcs11-check state` for saved-state and adaptive-policy inspection
 
 The remaining gaps are narrower:
 
@@ -141,7 +141,7 @@ This is acceptable as a safety valve, but it is not a principled timeout model.
 
 ### P1: `subprocess` marker support is now minimal, not rich
 
-`src/p11test/markers.py` registers `subprocess` and `subprocess_per_test`, and both now affect
+`src/pkcs11-check/markers.py` registers `subprocess` and `subprocess_per_test`, and both now affect
 `--isolation auto`.
 
 - `subprocess` keeps the file on the file-isolated path

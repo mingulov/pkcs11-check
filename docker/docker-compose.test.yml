@@ -1,5 +1,5 @@
 ---
-# Docker Compose for p11test multi-module testing
+# Docker Compose for pkcs11-check multi-module testing
 #
 # Versioned releases:
 #   docker compose -f docker/docker-compose.test.yml run test-softhsm2

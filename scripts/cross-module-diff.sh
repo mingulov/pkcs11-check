@@ -14,7 +14,7 @@ mkdir -p "$RESULTS_DIR"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 echo "=== Running SoftHSM2 (local) ==="
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest src/p11test/testcases/ \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest src/pkcs11_check/testcases/ \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234 \
   --junitxml="$RESULTS_DIR/softhsm2-${TIMESTAMP}.xml" \
   -q --benchmark-disable --timeout=300 2>&1 | tail -3

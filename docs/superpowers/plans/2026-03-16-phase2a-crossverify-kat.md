@@ -15,13 +15,13 @@
 ## File Structure
 
 ### New files
-- `src/p11test/testcases/test_crossverify.py` — cross-verify all ops against `cryptography`
-- `src/p11test/testcases/test_kat.py` — NIST KAT vectors (AES, SHA, RSA, ECDSA)
-- `src/p11test/testcases/test_keymgmt.py` — key import, export, wrap, unwrap, derive, copy
-- `src/p11test/testcases/test_multipart.py` — multi-part encrypt/decrypt/sign/digest
-- `src/p11test/testcases/vectors/` — directory for JSON test vectors
-- `src/p11test/testcases/vectors/aes_cbc.json` — AES-CBC KAT vectors
-- `src/p11test/testcases/vectors/sha256.json` — SHA-256 KAT vectors
+- `src/pkcs11-check/testcases/test_crossverify.py` — cross-verify all ops against `cryptography`
+- `src/pkcs11-check/testcases/test_kat.py` — NIST KAT vectors (AES, SHA, RSA, ECDSA)
+- `src/pkcs11-check/testcases/test_keymgmt.py` — key import, export, wrap, unwrap, derive, copy
+- `src/pkcs11-check/testcases/test_multipart.py` — multi-part encrypt/decrypt/sign/digest
+- `src/pkcs11-check/testcases/vectors/` — directory for JSON test vectors
+- `src/pkcs11-check/testcases/vectors/aes_cbc.json` — AES-CBC KAT vectors
+- `src/pkcs11-check/testcases/vectors/sha256.json` — SHA-256 KAT vectors
 
 ### Modified files
 - `pyproject.toml` — add `cryptography>=44.0` dependency
@@ -57,12 +57,12 @@ git commit -m "chore: add cryptography dependency for cross-verification"
 ### Task 2: Cross-verification — AES
 
 **Files:**
-- Create: `src/p11test/testcases/test_crossverify.py`
+- Create: `src/pkcs11-check/testcases/test_crossverify.py`
 
 - [ ] **Step 1: Write AES cross-verification tests**
 
 ```python
-# src/p11test/testcases/test_crossverify.py
+# src/pkcs11-check/testcases/test_crossverify.py
 """Cross-verification: perform ops via PKCS#11, verify with cryptography."""
 from __future__ import annotations
 
@@ -145,8 +145,8 @@ class TestAESCrossVerify:
 
 ```bash
 bash scripts/setup-softhsm.sh
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
-  src/p11test/testcases/test_crossverify.py \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest \
+  src/pkcs11-check/testcases/test_crossverify.py \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so \
   --p11-pin=1234 -v
 ```
@@ -154,14 +154,14 @@ SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/p11test/testcases/test_crossverify.py
+git add src/pkcs11-check/testcases/test_crossverify.py
 git commit -m "feat: add AES-CBC cross-verification tests against cryptography"
 ```
 
 ### Task 3: Cross-verification — RSA Sign/Verify
 
 **Files:**
-- Modify: `src/p11test/testcases/test_crossverify.py`
+- Modify: `src/pkcs11-check/testcases/test_crossverify.py`
 
 - [ ] **Step 1: Add RSA cross-verification**
 
@@ -223,17 +223,17 @@ class TestRSACrossVerify:
 - [ ] **Step 2: Run and commit**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
-  src/p11test/testcases/test_crossverify.py -v \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest \
+  src/pkcs11-check/testcases/test_crossverify.py -v \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234
-git add src/p11test/testcases/test_crossverify.py
+git add src/pkcs11-check/testcases/test_crossverify.py
 git commit -m "feat: add RSA PKCS#1 and PSS cross-verification tests"
 ```
 
 ### Task 4: Cross-verification — ECDSA and Digest
 
 **Files:**
-- Modify: `src/p11test/testcases/test_crossverify.py`
+- Modify: `src/pkcs11-check/testcases/test_crossverify.py`
 
 - [ ] **Step 1: Add ECDSA and digest cross-verification**
 
@@ -310,10 +310,10 @@ class TestDigestCrossVerify:
 - [ ] **Step 2: Run and commit**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
-  src/p11test/testcases/test_crossverify.py -v \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest \
+  src/pkcs11-check/testcases/test_crossverify.py -v \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234
-git add src/p11test/testcases/test_crossverify.py
+git add src/pkcs11-check/testcases/test_crossverify.py
 git commit -m "feat: add ECDSA and digest cross-verification tests"
 ```
 
@@ -324,13 +324,13 @@ git commit -m "feat: add ECDSA and digest cross-verification tests"
 ### Task 5: Create vector infrastructure and SHA-256 KAT
 
 **Files:**
-- Create: `src/p11test/testcases/vectors/sha256.json`
-- Create: `src/p11test/testcases/test_kat.py`
+- Create: `src/pkcs11-check/testcases/vectors/sha256.json`
+- Create: `src/pkcs11-check/testcases/test_kat.py`
 
 - [ ] **Step 1: Create vectors directory**
 
 ```bash
-mkdir -p src/p11test/testcases/vectors
+mkdir -p src/pkcs11-check/testcases/vectors
 ```
 
 - [ ] **Step 2: Create SHA-256 KAT vector file**
@@ -351,7 +351,7 @@ mkdir -p src/p11test/testcases/vectors
 - [ ] **Step 3: Write test_kat.py with SHA-256 tests**
 
 ```python
-# src/p11test/testcases/test_kat.py
+# src/pkcs11-check/testcases/test_kat.py
 """NIST Known-Answer Test vectors — import key/data, compute, compare."""
 from __future__ import annotations
 
@@ -391,23 +391,23 @@ class TestSHA256KAT:
 - [ ] **Step 4: Run against SoftHSM2**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
-  src/p11test/testcases/test_kat.py -v \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest \
+  src/pkcs11-check/testcases/test_kat.py -v \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/p11test/testcases/vectors/ src/p11test/testcases/test_kat.py
+git add src/pkcs11-check/testcases/vectors/ src/pkcs11-check/testcases/test_kat.py
 git commit -m "feat: add NIST KAT vector infrastructure and SHA-256 vectors"
 ```
 
 ### Task 6: Add AES-CBC KAT vectors
 
 **Files:**
-- Create: `src/p11test/testcases/vectors/aes_cbc.json`
-- Modify: `src/p11test/testcases/test_kat.py`
+- Create: `src/pkcs11-check/testcases/vectors/aes_cbc.json`
+- Modify: `src/pkcs11-check/testcases/test_kat.py`
 
 - [ ] **Step 1: Create AES-CBC vector file**
 
@@ -490,10 +490,10 @@ class TestAESCBCKAT:
 - [ ] **Step 3: Run and commit**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
-  src/p11test/testcases/test_kat.py -v \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest \
+  src/pkcs11-check/testcases/test_kat.py -v \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234
-git add src/p11test/testcases/vectors/aes_cbc.json src/p11test/testcases/test_kat.py
+git add src/pkcs11-check/testcases/vectors/aes_cbc.json src/pkcs11-check/testcases/test_kat.py
 git commit -m "feat: add AES-CBC NIST SP 800-38A KAT vectors"
 ```
 
@@ -504,12 +504,12 @@ git commit -m "feat: add AES-CBC NIST SP 800-38A KAT vectors"
 ### Task 7: Key import, export, and copy
 
 **Files:**
-- Create: `src/p11test/testcases/test_keymgmt.py`
+- Create: `src/pkcs11-check/testcases/test_keymgmt.py`
 
 - [ ] **Step 1: Write key management tests**
 
 ```python
-# src/p11test/testcases/test_keymgmt.py
+# src/pkcs11-check/testcases/test_keymgmt.py
 """Tests for PKCS#11 key management: import, export, wrap, unwrap, derive, copy."""
 from __future__ import annotations
 
@@ -679,8 +679,8 @@ class TestKeyDerive:
 - [ ] **Step 2: Run against SoftHSM2**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
-  src/p11test/testcases/test_keymgmt.py -v \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest \
+  src/pkcs11-check/testcases/test_keymgmt.py -v \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234
 ```
 
@@ -691,7 +691,7 @@ SoftHSM2 doesn't support a feature, add `@pytest.mark.needs_mechanism` or skip.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/p11test/testcases/test_keymgmt.py
+git add src/pkcs11-check/testcases/test_keymgmt.py
 git commit -m "feat: add key management tests — import, export, wrap, unwrap, derive, copy"
 ```
 
@@ -702,12 +702,12 @@ git commit -m "feat: add key management tests — import, export, wrap, unwrap, 
 ### Task 8: Multi-part encrypt, decrypt, sign, digest
 
 **Files:**
-- Create: `src/p11test/testcases/test_multipart.py`
+- Create: `src/pkcs11-check/testcases/test_multipart.py`
 
 - [ ] **Step 1: Write multi-part tests**
 
 ```python
-# src/p11test/testcases/test_multipart.py
+# src/pkcs11-check/testcases/test_multipart.py
 """Tests for multi-part (streaming/chunked) PKCS#11 operations."""
 from __future__ import annotations
 
@@ -781,10 +781,10 @@ class TestMultiPartSign:
 - [ ] **Step 2: Run and commit**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
-  src/p11test/testcases/test_multipart.py -v \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest \
+  src/pkcs11-check/testcases/test_multipart.py -v \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234
-git add src/p11test/testcases/test_multipart.py
+git add src/pkcs11-check/testcases/test_multipart.py
 git commit -m "feat: add multi-part operation tests for digest, encrypt, sign"
 ```
 
@@ -817,17 +817,17 @@ uv run pytest tests/ -v
 
 ```bash
 bash scripts/setup-softhsm.sh
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run pytest \
-  src/p11test/testcases/ -v \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pytest \
+  src/pkcs11-check/testcases/ -v \
   --p11-module=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --p11-pin=1234
 ```
 
 Expected: 100+ PKCS#11 tests passing (49 existing + ~55 new).
 
-- [ ] **Step 5: Run p11test CLI end-to-end**
+- [ ] **Step 5: Run pkcs11-check CLI end-to-end**
 
 ```bash
-SOFTHSM2_CONF=/tmp/p11test-softhsm2.conf uv run p11test test \
+SOFTHSM2_CONF=/tmp/pkcs11-check-softhsm2.conf uv run pkcs11-check test \
   --module /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so --pin 1234
 ```
 
