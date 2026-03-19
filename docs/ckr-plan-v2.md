@@ -26,6 +26,16 @@ bash local-builds/test.sh nss-softokn -k "ckr" -v
 bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q
 ```
 
+### STRICT RULE: No fake completions
+
+**A task is ONLY done when:**
+- New test file EXISTS on disk (verify with `ls`)
+- Tests actually RUN and PASS (verify with pytest output showing PASSED)
+- testable=False entries that were supposed to be flipped ARE flipped (verify with count script)
+- If a task cannot be completed: leave it UNCHECKED, add a note explaining WHY, and move to the next task
+
+**NEVER mark a task [x] if the deliverable doesn't exist.** If stuck, skip and document — don't fake it.
+
 ### Task execution discipline
 
 **Before implementing any task:**
