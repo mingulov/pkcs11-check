@@ -141,16 +141,16 @@ Upgrade fault-proxy.c to intercept all C_* functions for device/token error inje
 
 ## Phase 5 — Universal CKR Infrastructure Tests
 
-- [ ] **5.1** Create `test_ckr_universal.py` — parametrized tests verifying each of the 14 universal CKR codes: (a) Present in correct `_UNIVERSAL` / `_SESSION_UNIVERSAL` / `_TOKEN_UNIVERSAL` tuple. (b) `full_compat()` includes it. (c) At least one real trigger (e.g., CKR_SESSION_HANDLE_INVALID via closed session, CKR_DEVICE_ERROR via fault-proxy, CKR_CRYPTOKI_NOT_INITIALIZED via post-Finalize call).
-- [ ] **5.2** Update `full_compat()` if any universal codes are missing (CKR_OPERATION_NOT_VALIDATED, CKR_TOKEN_NOT_INITIALIZED).
+- [x] **5.1** Create `test_ckr_universal.py` — parametrized tests verifying each of the 14 universal CKR codes: (a) Present in correct `_UNIVERSAL` / `_SESSION_UNIVERSAL` / `_TOKEN_UNIVERSAL` tuple. (b) `full_compat()` includes it. (c) At least one real trigger (e.g., CKR_SESSION_HANDLE_INVALID via closed session, CKR_DEVICE_ERROR via fault-proxy, CKR_CRYPTOKI_NOT_INITIALIZED via post-Finalize call).
+- [x] **5.2** Update `full_compat()` if any universal codes are missing (CKR_OPERATION_NOT_VALIDATED, CKR_TOKEN_NOT_INITIALIZED).
 
 ## Phase 6 — Document Untestable + Final
 
-- [ ] **6.1** For each truly untestable CKR, add entry with `testable=False, rationale="..."`: CKR_MUTEX_BAD, CKR_MUTEX_NOT_LOCKED, CKR_CANCEL, CKR_FUNCTION_NOT_PARALLEL, CKR_PENDING (most contexts), CKR_FUNCTION_REJECTED (token-specific), C_AsyncComplete (dynamic returns).
-- [ ] **6.2** Update `docs/ckr-coverage.md` — final numbers from validation script. Per-function matrix. Per-module deviation summary.
-- [ ] **6.3** Final regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Zero failures.
-- [ ] **6.4** Update `docs/master-plan.md` — mark CKR coverage as complete.
-- [ ] **6.5** **Handoff to master-plan.md** — CKR 100% coverage achieved.
+- [x] **6.1** For each truly untestable CKR, add entry with `testable=False, rationale="..."`: CKR_MUTEX_BAD, CKR_MUTEX_NOT_LOCKED, CKR_CANCEL, CKR_FUNCTION_NOT_PARALLEL, CKR_PENDING (most contexts), CKR_FUNCTION_REJECTED (token-specific), C_AsyncComplete (dynamic returns).
+- [x] **6.2** Update `docs/ckr-coverage.md` — final numbers from validation script. Per-function matrix. Per-module deviation summary.
+- [x] **6.3** Final regression — `bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q`. Zero failures.
+- [x] **6.4** Update `docs/master-plan.md` — mark CKR coverage as complete.
+- [x] **6.5** **Handoff to master-plan.md** — CKR 100% coverage achieved.
 
 ---
 

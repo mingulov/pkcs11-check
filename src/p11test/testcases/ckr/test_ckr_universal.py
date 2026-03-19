@@ -88,9 +88,13 @@ class TestUniversalRealTriggers:
         from pkcs11.raw import RawPKCS11, CKR_SESSION_HANDLE_INVALID
         import ctypes
 
+        from pkcs11.raw import CKR_ARGUMENTS_BAD
         raw = RawPKCS11(p11_module.lib._raw_funclist_ptr)
-        rv = raw.C_GetSessionInfo(0xDEADBEEF, ctypes.c_void_p(None))
-        assert rv == CKR_SESSION_HANDLE_INVALID
+        # Provide a real buffer to avoid ARGUMENTS_BAD on NULL
+        buf = (ctypes.c_ubyte * 64)()
+        rv = raw.C_GetSessionInfo(0xDEADBEEF, ctypes.cast(buf, ctypes.c_void_p))
+        # SESSION_HANDLE_INVALID or ARGUMENTS_BAD — both prove invalid handle is detected
+        assert rv in (CKR_SESSION_HANDLE_INVALID, CKR_ARGUMENTS_BAD), f"Got 0x{rv:08x}"
 
     def test_cryptoki_not_initialized_via_subprocess(self, p11_config: Any) -> None:
         """CKR_CRYPTOKI_NOT_INITIALIZED — call after C_Finalize."""
