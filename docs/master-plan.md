@@ -3,7 +3,8 @@
 Phase 2: Local builds, failure analysis, test isolation, and threading.
 
 Previous phase (v1) completed 43 tasks across 6 tiers — see git history for details.
-Current baseline: **22,615 passed / 0 failed** (SoftHSM2), **21,533 passed / 0 failed** (Kryoptic with PQC).
+Current baseline: **22,774 passed / 0 failed** (SoftHSM2), **21,690 passed / 0 failed** (Kryoptic with PQC).
+CKR error coverage suite completed — see `docs/ckr-plan.md` (61 tasks, 105 tests, 55 spec entries).
 
 ---
 
@@ -33,12 +34,13 @@ bash local-builds/reset.sh all                # reset all
 
 | Provider | Version | Status | Passed | Failed |
 |----------|---------|--------|--------|--------|
-| **SoftHSM2** | 2.7.0 | Working | 22,615 | **0** |
-| **Kryoptic** | 1.5.0+PQC | Working | 21,533 | **0** |
+| **SoftHSM2** | 2.7.0 | Working | 22,774 | **0** |
+| **Kryoptic** | 1.5.0+PQC | Working | 21,690 | **0** |
+| **NSS softokn** | system | Working | ~21K (slot 0) | 5 (slot-0 limits) |
 | **pkcs11-mock** | 2.0.0 | Working | 26 | 2 (mock behavior) |
 | **qryptotoken** | 0.4.1 | Working | 20 | 46 (limited PQC) |
 | **tpm2-pkcs11** | 1.9.0 | Working | 11+ | needs `sg tss` |
-| **BouncyHSM** | 2.0.1 | Partial | — | segfault + CKF_TOKEN_PRESENT bug |
+| **BouncyHSM** | 2.0.1 | Partial | — | stale-handle attr segfault (native shim bug) |
 | **OpenCryptoki** | 3.26.0 | Docker only | — | CKR_HOST_MEMORY locally |
 
 ## Completion promise
@@ -62,7 +64,7 @@ Use `bash local-builds/test.sh <target>` for fast iteration. Docker for OpenCryp
 - [x] **2.2** **Kryoptic 1.5.0** — 0 failures with PQC enabled. CKR_DEVICE_ERROR on verify (documented bug). See docs/module-issues.md.
 - [x] **2.3** **NSS 3.120.1** — Fixed slot (0→1), pin handling. 356 failures remain (296 DSA + 60 module limits). Docker only.
 - [x] **2.4** **OpenCryptoki 3.26** — PIN lockout root cause found. Marked test_pin.py @destructive. Docker only (needs pkcsslotd).
-- [x] **2.5** **BouncyHSM 2.0.1** — Segfaults on v3.2 attr query (python-pkcs11 fork bug). CKF_TOKEN_PRESENT not set (BouncyHSM bug).
+- [x] **2.5** **BouncyHSM 2.0.1** — Segfault on stale-handle `C_GetAttributeValue` path. Root cause is in BouncyHSM's native shim (`bouncy-pkcs11.c`), not the Python wrapper. `token_present=True` works in current Docker probe.
 - [x] **2.6** **pkcs11-mock 2.0.0** — 26 passed, 2 failed (constant RNG — mock behavior, expected).
 - [x] **2.7** **tpm2-pkcs11 1.9.0** — 33 passed/61 failed (core tests). 26 mechanisms. DA lockout cleared. Hardware TPM limitations documented in module-issues.md.
 - [x] **2.8** **qryptotoken 0.4.1** — 20 passed, 46 failed. Experimental PQC token, limited mechanism support.
@@ -211,10 +213,10 @@ Based on deep gap analysis in `docs/gap-analysis.md`. Focuses on execution backb
 packaging, and validation gates — the areas where ambition exceeds implementation.
 
 ### P0: Correctness and Trust
-- [ ] **7c.1** Fix marker drift — register `thread_safe` in `markers.py`. Run `pytest --strict-markers --collect-only` as validation. Add to CI gate.
-- [ ] **7c.2** Remove collection-time module loading — `plugin.py` currently loads PKCS#11 module during `pytest_collection_modifyitems`. Move capability probing to runtime-only (fixture time) or a preflight subprocess.
-- [ ] **7c.3** Wire crash isolation into CLI — `p11test test` should use `isolation.py` subprocess runner, not in-process `pytest.main()`. Crash in one test must not kill the suite.
-- [ ] **7c.4** Fix fixture logout catch — `fixtures.py` has broad `except PKCS11Error: pass` on logout. Replace with specific `(UserNotLoggedIn, SessionClosed)`.
+- [x] **7c.1** Fix marker drift — registered `thread_safe`, `subprocess`, `subprocess_per_test` in `markers.py`. Strict-markers collection passes (29K+ tests). Done during CKR plan task 0.2.
+- [ ] **7c.2** Remove collection-time module loading — `plugin.py` still loads module during `pytest_collection_modifyitems` (line 96). Has safe fallback on failure, but design says move to fixture time. **Remaining: refactor plugin.py to defer loading.**
+- [ ] **7c.3** Wire crash isolation into CLI — design spec written (`docs/superpowers/specs/2026-03-18-ckr-error-coverage-design.md`), `core/isolation.py` exists with `IsolatedRunner`, but `test_cmd.py` still calls `pytest.main()` in-process (line 71). **Remaining: implement `AdaptiveRunner` in test_cmd.py, wire subprocess fallback, handle @subprocess marker deferral in plugin.py.**
+- [x] **7c.4** Fix fixture logout catch — replaced `except PKCS11Error: pass` with `except (UserNotLoggedIn, SessionClosed, FunctionFailed):`. Done during CKR plan task 0.1.
 
 ### P1: Product Surface
 - [ ] **7c.5** Audit and wire CLI options — remove or implement: `--sessions`, `--timeout`, `--output json`. Each option must work end-to-end or not exist.
@@ -259,5 +261,5 @@ Run after ALL other tiers. Rebuild every Docker image with `--no-cache`. One cle
 ## Recommended loop prompt
 
 ```
-/ralph-loop:ralph-loop "/using-superpowers Pick the highest-priority unfinished task from docs/master-plan.md. Implementation rules: (1) Use local builds (local-builds/test.sh) for fast iteration — avoid Docker unless required. (2) For security/edge-case tests (Tier 7): run in subprocess where crashes are expected, use pytest.mark for CVE IDs. (3) For CVE regression tests (Tier 7b): reference the CVE/issue number in test docstring, test the specific fix condition. (4) Fix bugs in p11test or python-pkcs11 fork — document module-side issues in docs/module-issues.md. (5) Verify zero regressions: bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q. (6) Commit with descriptive message referencing the task ID, then mark done in the plan." --completion-promise "All tasks in docs/master-plan.md are marked done"
+/ralph-loop:ralph-loop "/using-superpowers Pick the highest-priority unfinished task from docs/master-plan.md. Implementation rules: (1) Use local builds for fast iteration — avoid Docker unless required. (2) If /tmp/pkcs11/ doesn't exist, clone it: git clone --depth 1 https://github.com/oasis-tcs/pkcs11.git /tmp/pkcs11. (3) Use _error_tuples.py — NEVER generic PKCS11Error catches. (4) Unexpected CKR: document in module-issues.md with compliance.note(), NOT silent pass. (5) Verify zero regressions: bash local-builds/test.sh softhsm2 -q && bash local-builds/test.sh kryoptic -q && bash local-builds/test.sh nss-softokn -q. (6) For medium/large tasks: plan first, implement, verify on all 3 local targets, gap-check, commit. (7) Commit with descriptive message referencing the task ID, then mark done." --completion-promise "All tasks in docs/master-plan.md are marked done"
 ```
