@@ -2271,7 +2271,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=MechanismInvalid,
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.12.7",
-        testable=False,  # v3.0+ only, not widely supported
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestUpdate additional errors ---
     "update_data_len_range": CkrExpectation(
@@ -2493,7 +2493,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_init_function_canceled": CkrExpectation(
         function="C_DigestXofInit",
@@ -2509,7 +2509,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_init_operation_active": CkrExpectation(
         function="C_DigestXofInit",
@@ -2517,7 +2517,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_init_operation_cancel_failed": CkrExpectation(
         function="C_DigestXofInit",
@@ -2542,7 +2542,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.7",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXof errors (v3.0+) ---
     "xof_arguments_bad": CkrExpectation(
@@ -2551,7 +2551,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.8",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_function_canceled": CkrExpectation(
         function="C_DigestXof",
@@ -2567,7 +2567,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.8",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_operation_not_initialized": CkrExpectation(
         function="C_DigestXof",
@@ -2575,7 +2575,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.8",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXofUpdate errors (v3.0+) ---
     "xof_update_arguments_bad": CkrExpectation(
@@ -2584,7 +2584,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_update_exceeded_max_iterations": CkrExpectation(
         function="C_DigestXofUpdate",
@@ -2592,7 +2592,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ExceededMaxIterations,
         compat_tuple=(ExceededMaxIterations, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.9",
-        testable=False,  # v3.0+ — requires XOF with iteration limits
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_update_function_canceled": CkrExpectation(
         function="C_DigestXofUpdate",
@@ -2608,7 +2608,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_update_operation_not_initialized": CkrExpectation(
         function="C_DigestXofUpdate",
@@ -2616,7 +2616,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXofExtract errors (v3.0+) ---
     "xof_extract_arguments_bad": CkrExpectation(
@@ -2625,7 +2625,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.10",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_extract_function_canceled": CkrExpectation(
         function="C_DigestXofExtract",
@@ -2641,7 +2641,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.10",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_extract_operation_not_initialized": CkrExpectation(
         function="C_DigestXofExtract",
@@ -2649,7 +2649,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.10",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXofFinal errors (v3.0+) ---
     "xof_final_arguments_bad": CkrExpectation(
@@ -2658,7 +2658,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.11",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_final_function_canceled": CkrExpectation(
         function="C_DigestXofFinal",
@@ -2674,7 +2674,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.11",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_final_operation_not_initialized": CkrExpectation(
         function="C_DigestXofFinal",
@@ -2682,7 +2682,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.11",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DigestXofKeyValue errors (v3.0+) ---
     "xof_key_value_function_canceled": CkrExpectation(
@@ -2699,7 +2699,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=KeyHandleInvalid,
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.12.12",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_key_value_key_indigestible": CkrExpectation(
         function="C_DigestXofKeyValue",
@@ -2707,7 +2707,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=KeyIndigestible,
         compat_tuple=(KeyIndigestible, KeyFunctionNotPermitted, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.12",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_key_value_key_size_range": CkrExpectation(
         function="C_DigestXofKeyValue",
@@ -2715,7 +2715,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=KeySizeRange,
         compat_tuple=KEY_SIZE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.12.12",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_key_value_operation_active": CkrExpectation(
         function="C_DigestXofKeyValue",
@@ -2723,7 +2723,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.12",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "xof_key_value_operation_not_initialized": CkrExpectation(
         function="C_DigestXofKeyValue",
@@ -2731,7 +2731,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.12",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
 }
 
@@ -4607,7 +4607,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_function_canceled": CkrExpectation(
         function="C_LoginUser",
@@ -4623,7 +4623,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_operation_not_initialized": CkrExpectation(
         function="C_LoginUser",
@@ -4631,7 +4631,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_pin_incorrect": CkrExpectation(
         function="C_LoginUser",
@@ -4639,7 +4639,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=PinIncorrect,
         compat_tuple=(PinIncorrect, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_pin_locked": CkrExpectation(
         function="C_LoginUser",
@@ -4647,7 +4647,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=PinLocked,
         compat_tuple=(PinLocked, PinIncorrect, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — would lock the token
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_session_read_only_exists": CkrExpectation(
         function="C_LoginUser",
@@ -4655,7 +4655,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=SessionReadOnlyExists,
         compat_tuple=(SessionReadOnlyExists, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — requires SO login with open RO sessions
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_already_logged_in": CkrExpectation(
         function="C_LoginUser",
@@ -4663,7 +4663,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=UserAlreadyLoggedIn,
         compat_tuple=(UserAlreadyLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "login_user_another_already_logged_in": CkrExpectation(
         function="C_LoginUser",
@@ -4671,7 +4671,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=AnotherUserAlreadyLoggedIn,
         compat_tuple=(AnotherUserAlreadyLoggedIn, UserAlreadyLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "c_login_user_pin_not_initialized": CkrExpectation(
         function="C_LoginUser",
@@ -4679,7 +4679,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=UserPinNotInitialized,
         compat_tuple=(UserPinNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — requires uninitialized user PIN state
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "c_login_user_too_many_types": CkrExpectation(
         function="C_LoginUser",
@@ -4687,7 +4687,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=UserTooManyTypes,
         compat_tuple=(UserTooManyTypes, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — requires multi-user token support
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "c_login_user_type_invalid": CkrExpectation(
         function="C_LoginUser",
@@ -4695,7 +4695,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=UserTypeInvalid,
         compat_tuple=(UserTypeInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_SessionCancel errors (v3.0+) ---
     "session_cancel_operation_active": CkrExpectation(
@@ -4704,7 +4704,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "session_cancel_operation_cancel_failed": CkrExpectation(
         function="C_SessionCancel",
@@ -5472,7 +5472,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_init_function_canceled": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5488,7 +5488,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=KeyFunctionNotPermitted,
         compat_tuple=(KeyFunctionNotPermitted, KeyTypeInconsistent, MechanismInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_init_key_handle_invalid": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5496,7 +5496,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=KeyHandleInvalid,
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_init_key_size_range": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5504,7 +5504,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=KeySizeRange,
         compat_tuple=KEY_SIZE_ERRORS,
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_init_key_type_inconsistent": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5512,7 +5512,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=KeyTypeInconsistent,
         compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_init_mechanism_invalid": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5520,7 +5520,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=MechanismInvalid,
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_init_mechanism_param_invalid": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5528,7 +5528,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_init_operation_active": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5536,7 +5536,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_init_operation_cancel_failed": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5561,7 +5561,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=SignatureLenRange,
         compat_tuple=(SignatureLenRange, SignatureInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_init_user_not_logged_in": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5569,7 +5569,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.7",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_VerifySignature errors ---
     "verify_signature_arguments_bad": CkrExpectation(
@@ -5578,7 +5578,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.8",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_data_invalid": CkrExpectation(
         function="C_VerifySignature",
@@ -5586,7 +5586,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=DataInvalid,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.2 §5.11.8",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_data_len_range": CkrExpectation(
         function="C_VerifySignature",
@@ -5594,7 +5594,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.2 §5.11.8",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_function_canceled": CkrExpectation(
         function="C_VerifySignature",
@@ -5610,7 +5610,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.8",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_signature_invalid": CkrExpectation(
         function="C_VerifySignature",
@@ -5618,7 +5618,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=SignatureInvalid,
         compat_tuple=(SignatureInvalid, SignatureLenRange, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.8",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_signature_len_range": CkrExpectation(
         function="C_VerifySignature",
@@ -5626,7 +5626,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=SignatureLenRange,
         compat_tuple=(SignatureLenRange, SignatureInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.8",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_token_resource_exceeded": CkrExpectation(
         function="C_VerifySignature",
@@ -5634,7 +5634,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.2 §5.11.8",
-        testable=False,  # v3.2 — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     # --- C_VerifySignatureUpdate errors ---
@@ -5644,7 +5644,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.9",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_update_data_len_range": CkrExpectation(
         function="C_VerifySignatureUpdate",
@@ -5652,7 +5652,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.2 §5.11.9",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_update_function_canceled": CkrExpectation(
         function="C_VerifySignatureUpdate",
@@ -5668,7 +5668,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.9",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_update_token_resource_exceeded": CkrExpectation(
         function="C_VerifySignatureUpdate",
@@ -5676,7 +5676,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.2 §5.11.9",
-        testable=False,  # v3.2 — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     # --- C_VerifySignatureFinal errors ---
@@ -5686,7 +5686,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.10",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_final_data_len_range": CkrExpectation(
         function="C_VerifySignatureFinal",
@@ -5694,7 +5694,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.2 §5.11.10",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_final_function_canceled": CkrExpectation(
         function="C_VerifySignatureFinal",
@@ -5710,7 +5710,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.10",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_final_signature_invalid": CkrExpectation(
         function="C_VerifySignatureFinal",
@@ -5718,7 +5718,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=SignatureInvalid,
         compat_tuple=(SignatureInvalid, SignatureLenRange, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.10",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_final_signature_len_range": CkrExpectation(
         function="C_VerifySignatureFinal",
@@ -5726,7 +5726,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=SignatureLenRange,
         compat_tuple=(SignatureLenRange, SignatureInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.10",
-        testable=False,  # v3.2 — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_signature_final_token_resource_exceeded": CkrExpectation(
         function="C_VerifySignatureFinal",
@@ -5734,7 +5734,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.2 §5.11.10",
-        testable=False,  # v3.2 — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
 }
@@ -5760,7 +5760,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=KeyFunctionNotPermitted,
         compat_tuple=(KeyFunctionNotPermitted, KeyTypeInconsistent, MechanismInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_key_handle_invalid": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -5768,7 +5768,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=KeyHandleInvalid,
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_key_size_range": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -5776,7 +5776,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=KeySizeRange,
         compat_tuple=KEY_SIZE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_key_type_inconsistent": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -5784,7 +5784,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=KeyTypeInconsistent,
         compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_mechanism_invalid": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -5792,7 +5792,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismInvalid,
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_mechanism_param_invalid": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -5800,7 +5800,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_operation_active": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -5808,7 +5808,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_init_operation_cancel_failed": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -5833,7 +5833,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_EncryptMessage errors ---
     "encrypt_message_arguments_bad": CkrExpectation(
@@ -5842,7 +5842,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_buffer_too_small": CkrExpectation(
         function="C_EncryptMessage",
@@ -5850,7 +5850,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_data_invalid": CkrExpectation(
         function="C_EncryptMessage",
@@ -5858,7 +5858,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=DataInvalid,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_data_len_range": CkrExpectation(
         function="C_EncryptMessage",
@@ -5866,7 +5866,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_function_canceled": CkrExpectation(
         function="C_EncryptMessage",
@@ -5882,7 +5882,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_operation_active": CkrExpectation(
         function="C_EncryptMessage",
@@ -5890,7 +5890,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_operation_not_initialized": CkrExpectation(
         function="C_EncryptMessage",
@@ -5898,7 +5898,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_EncryptMessageBegin errors ---
     "encrypt_message_begin_function_canceled": CkrExpectation(
@@ -5915,7 +5915,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_begin_operation_active": CkrExpectation(
         function="C_EncryptMessageBegin",
@@ -5923,7 +5923,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_begin_operation_not_initialized": CkrExpectation(
         function="C_EncryptMessageBegin",
@@ -5931,7 +5931,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_begin_pin_expired": CkrExpectation(
         function="C_EncryptMessageBegin",
@@ -5947,7 +5947,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_EncryptMessageNext errors ---
     "encrypt_message_next_arguments_bad": CkrExpectation(
@@ -5956,7 +5956,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_buffer_too_small": CkrExpectation(
         function="C_EncryptMessageNext",
@@ -5964,7 +5964,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_data_len_range": CkrExpectation(
         function="C_EncryptMessageNext",
@@ -5972,7 +5972,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_function_canceled": CkrExpectation(
         function="C_EncryptMessageNext",
@@ -5988,7 +5988,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_operation_active": CkrExpectation(
         function="C_EncryptMessageNext",
@@ -5996,7 +5996,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "encrypt_message_next_operation_not_initialized": CkrExpectation(
         function="C_EncryptMessageNext",
@@ -6004,7 +6004,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_MessageEncryptFinal errors ---
     "msg_encrypt_final_arguments_bad": CkrExpectation(
@@ -6013,7 +6013,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_final_function_canceled": CkrExpectation(
         function="C_MessageEncryptFinal",
@@ -6029,7 +6029,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_encrypt_final_operation_not_initialized": CkrExpectation(
         function="C_MessageEncryptFinal",
@@ -6037,7 +6037,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
 }
 
@@ -6054,7 +6054,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_function_canceled": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6070,7 +6070,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=KeyFunctionNotPermitted,
         compat_tuple=(KeyFunctionNotPermitted, KeyTypeInconsistent, MechanismInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_key_handle_invalid": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6078,7 +6078,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=KeyHandleInvalid,
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_key_size_range": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6086,7 +6086,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=KeySizeRange,
         compat_tuple=KEY_SIZE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_key_type_inconsistent": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6094,7 +6094,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=KeyTypeInconsistent,
         compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_mechanism_invalid": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6102,7 +6102,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismInvalid,
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_mechanism_param_invalid": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6110,7 +6110,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_operation_active": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6118,7 +6118,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_init_operation_cancel_failed": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6143,7 +6143,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DecryptMessage errors ---
     "decrypt_message_aead_decrypt_failed": CkrExpectation(
@@ -6152,7 +6152,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_AEAD_DECRYPT_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_AEAD_DECRYPT_FAILED",
     ),
     "decrypt_message_arguments_bad": CkrExpectation(
@@ -6161,7 +6161,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_buffer_too_small": CkrExpectation(
         function="C_DecryptMessage",
@@ -6169,7 +6169,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_encrypted_data_invalid": CkrExpectation(
         function="C_DecryptMessage",
@@ -6177,7 +6177,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=EncryptedDataInvalid,
         compat_tuple=(EncryptedDataInvalid, EncryptedDataLenRange, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_encrypted_data_len_range": CkrExpectation(
         function="C_DecryptMessage",
@@ -6185,7 +6185,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=EncryptedDataLenRange,
         compat_tuple=(EncryptedDataLenRange, EncryptedDataInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_function_canceled": CkrExpectation(
         function="C_DecryptMessage",
@@ -6201,7 +6201,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_operation_active": CkrExpectation(
         function="C_DecryptMessage",
@@ -6209,7 +6209,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_operation_cancel_failed": CkrExpectation(
         function="C_DecryptMessage",
@@ -6226,7 +6226,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_user_not_logged_in": CkrExpectation(
         function="C_DecryptMessage",
@@ -6234,7 +6234,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DecryptMessageBegin errors ---
     "decrypt_message_begin_arguments_bad": CkrExpectation(
@@ -6243,7 +6243,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_begin_function_canceled": CkrExpectation(
         function="C_DecryptMessageBegin",
@@ -6259,7 +6259,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_begin_operation_active": CkrExpectation(
         function="C_DecryptMessageBegin",
@@ -6267,7 +6267,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_begin_operation_not_initialized": CkrExpectation(
         function="C_DecryptMessageBegin",
@@ -6275,7 +6275,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_begin_pin_expired": CkrExpectation(
         function="C_DecryptMessageBegin",
@@ -6291,7 +6291,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_DecryptMessageNext errors ---
     "decrypt_message_next_aead_decrypt_failed": CkrExpectation(
@@ -6300,7 +6300,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_AEAD_DECRYPT_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_AEAD_DECRYPT_FAILED",
     ),
     "decrypt_message_next_arguments_bad": CkrExpectation(
@@ -6309,7 +6309,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_buffer_too_small": CkrExpectation(
         function="C_DecryptMessageNext",
@@ -6317,7 +6317,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_encrypted_data_invalid": CkrExpectation(
         function="C_DecryptMessageNext",
@@ -6325,7 +6325,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=EncryptedDataInvalid,
         compat_tuple=(EncryptedDataInvalid, EncryptedDataLenRange, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_encrypted_data_len_range": CkrExpectation(
         function="C_DecryptMessageNext",
@@ -6333,7 +6333,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=EncryptedDataLenRange,
         compat_tuple=(EncryptedDataLenRange, EncryptedDataInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_function_canceled": CkrExpectation(
         function="C_DecryptMessageNext",
@@ -6349,7 +6349,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_operation_active": CkrExpectation(
         function="C_DecryptMessageNext",
@@ -6357,7 +6357,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_operation_not_initialized": CkrExpectation(
         function="C_DecryptMessageNext",
@@ -6365,7 +6365,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "decrypt_message_next_user_not_logged_in": CkrExpectation(
         function="C_DecryptMessageNext",
@@ -6373,7 +6373,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_MessageDecryptFinal errors ---
     "msg_decrypt_final_arguments_bad": CkrExpectation(
@@ -6382,7 +6382,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_final_function_canceled": CkrExpectation(
         function="C_MessageDecryptFinal",
@@ -6398,7 +6398,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_final_operation_not_initialized": CkrExpectation(
         function="C_MessageDecryptFinal",
@@ -6406,7 +6406,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_decrypt_final_user_not_logged_in": CkrExpectation(
         function="C_MessageDecryptFinal",
@@ -6414,7 +6414,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
 }
 
@@ -6431,7 +6431,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_function_canceled": CkrExpectation(
         function="C_MessageSignInit",
@@ -6447,7 +6447,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=KeyFunctionNotPermitted,
         compat_tuple=(KeyFunctionNotPermitted, KeyTypeInconsistent, MechanismInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_key_handle_invalid": CkrExpectation(
         function="C_MessageSignInit",
@@ -6455,7 +6455,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=KeyHandleInvalid,
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_key_size_range": CkrExpectation(
         function="C_MessageSignInit",
@@ -6463,7 +6463,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=KeySizeRange,
         compat_tuple=KEY_SIZE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_key_type_inconsistent": CkrExpectation(
         function="C_MessageSignInit",
@@ -6471,7 +6471,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=KeyTypeInconsistent,
         compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_mechanism_invalid": CkrExpectation(
         function="C_MessageSignInit",
@@ -6479,7 +6479,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=MechanismInvalid,
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_mechanism_param_invalid": CkrExpectation(
         function="C_MessageSignInit",
@@ -6487,7 +6487,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_operation_active": CkrExpectation(
         function="C_MessageSignInit",
@@ -6495,7 +6495,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_init_pin_expired": CkrExpectation(
         function="C_MessageSignInit",
@@ -6511,7 +6511,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_SignMessage errors ---
     "sign_message_arguments_bad": CkrExpectation(
@@ -6520,7 +6520,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_buffer_too_small": CkrExpectation(
         function="C_SignMessage",
@@ -6528,7 +6528,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_data_invalid": CkrExpectation(
         function="C_SignMessage",
@@ -6536,7 +6536,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=DataInvalid,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_data_len_range": CkrExpectation(
         function="C_SignMessage",
@@ -6544,7 +6544,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_function_canceled": CkrExpectation(
         function="C_SignMessage",
@@ -6560,7 +6560,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionRejected,
         compat_tuple=(FunctionRejected, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # v3.0+ — requires token with approval callback
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_mechanism_param_invalid": CkrExpectation(
         function="C_SignMessage",
@@ -6568,7 +6568,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_operation_active": CkrExpectation(
         function="C_SignMessage",
@@ -6576,7 +6576,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_operation_not_initialized": CkrExpectation(
         function="C_SignMessage",
@@ -6584,7 +6584,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_token_resource_exceeded": CkrExpectation(
         function="C_SignMessage",
@@ -6592,7 +6592,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # v3.0+ — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "sign_message_user_not_logged_in": CkrExpectation(
@@ -6601,7 +6601,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_SignMessageBegin errors ---
     "sign_message_begin_arguments_bad": CkrExpectation(
@@ -6610,7 +6610,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_begin_function_canceled": CkrExpectation(
         function="C_SignMessageBegin",
@@ -6626,7 +6626,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_begin_operation_active": CkrExpectation(
         function="C_SignMessageBegin",
@@ -6634,7 +6634,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_begin_operation_not_initialized": CkrExpectation(
         function="C_SignMessageBegin",
@@ -6642,7 +6642,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_begin_pin_expired": CkrExpectation(
         function="C_SignMessageBegin",
@@ -6658,7 +6658,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.14.3",
-        testable=False,  # v3.0+ — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "sign_message_begin_user_not_logged_in": CkrExpectation(
@@ -6667,7 +6667,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.3",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_SignMessageNext errors ---
     "sign_message_next_arguments_bad": CkrExpectation(
@@ -6676,7 +6676,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_buffer_too_small": CkrExpectation(
         function="C_SignMessageNext",
@@ -6684,7 +6684,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_data_len_range": CkrExpectation(
         function="C_SignMessageNext",
@@ -6692,7 +6692,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_function_canceled": CkrExpectation(
         function="C_SignMessageNext",
@@ -6708,7 +6708,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionRejected,
         compat_tuple=(FunctionRejected, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # v3.0+ — requires token with approval callback
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_mechanism_param_invalid": CkrExpectation(
         function="C_SignMessageNext",
@@ -6716,7 +6716,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_operation_active": CkrExpectation(
         function="C_SignMessageNext",
@@ -6724,7 +6724,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_operation_not_initialized": CkrExpectation(
         function="C_SignMessageNext",
@@ -6732,7 +6732,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "sign_message_next_token_resource_exceeded": CkrExpectation(
         function="C_SignMessageNext",
@@ -6740,7 +6740,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # v3.0+ — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "sign_message_next_user_not_logged_in": CkrExpectation(
@@ -6749,7 +6749,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_MessageSignFinal errors ---
     "msg_sign_final_arguments_bad": CkrExpectation(
@@ -6758,7 +6758,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_final_function_canceled": CkrExpectation(
         function="C_MessageSignFinal",
@@ -6774,7 +6774,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionRejected,
         compat_tuple=(FunctionRejected, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
-        testable=False,  # v3.0+ — requires token with approval callback
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_final_operation_active": CkrExpectation(
         function="C_MessageSignFinal",
@@ -6782,7 +6782,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_final_operation_not_initialized": CkrExpectation(
         function="C_MessageSignFinal",
@@ -6790,7 +6790,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_sign_final_token_resource_exceeded": CkrExpectation(
         function="C_MessageSignFinal",
@@ -6798,7 +6798,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.14.5",
-        testable=False,  # v3.0+ — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "msg_sign_final_user_not_logged_in": CkrExpectation(
@@ -6807,7 +6807,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
 }
 
@@ -6824,7 +6824,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_function_canceled": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6840,7 +6840,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=KeyFunctionNotPermitted,
         compat_tuple=(KeyFunctionNotPermitted, KeyTypeInconsistent, MechanismInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_key_handle_invalid": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6848,7 +6848,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=KeyHandleInvalid,
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.16.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_key_size_range": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6856,7 +6856,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=KeySizeRange,
         compat_tuple=KEY_SIZE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.16.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_key_type_inconsistent": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6864,7 +6864,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=KeyTypeInconsistent,
         compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_mechanism_invalid": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6872,7 +6872,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=MechanismInvalid,
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.16.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_mechanism_param_invalid": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6880,7 +6880,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_operation_active": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6888,7 +6888,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.1",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_init_pin_expired": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6904,7 +6904,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_VerifyMessage errors ---
     "verify_message_arguments_bad": CkrExpectation(
@@ -6913,7 +6913,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_data_invalid": CkrExpectation(
         function="C_VerifyMessage",
@@ -6921,7 +6921,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=DataInvalid,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.16.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_data_len_range": CkrExpectation(
         function="C_VerifyMessage",
@@ -6929,7 +6929,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.16.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_function_canceled": CkrExpectation(
         function="C_VerifyMessage",
@@ -6945,7 +6945,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_operation_active": CkrExpectation(
         function="C_VerifyMessage",
@@ -6953,7 +6953,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_operation_not_initialized": CkrExpectation(
         function="C_VerifyMessage",
@@ -6961,7 +6961,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_signature_invalid": CkrExpectation(
         function="C_VerifyMessage",
@@ -6969,7 +6969,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=SignatureInvalid,
         compat_tuple=(SignatureInvalid, SignatureLenRange, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_signature_len_range": CkrExpectation(
         function="C_VerifyMessage",
@@ -6977,7 +6977,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=SignatureLenRange,
         compat_tuple=(SignatureLenRange, SignatureInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_token_resource_exceeded": CkrExpectation(
         function="C_VerifyMessage",
@@ -6985,7 +6985,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.16.2",
-        testable=False,  # v3.0+ — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     # --- C_VerifyMessageBegin errors ---
@@ -6995,7 +6995,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_begin_function_canceled": CkrExpectation(
         function="C_VerifyMessageBegin",
@@ -7011,7 +7011,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_begin_operation_active": CkrExpectation(
         function="C_VerifyMessageBegin",
@@ -7019,7 +7019,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_begin_operation_not_initialized": CkrExpectation(
         function="C_VerifyMessageBegin",
@@ -7027,7 +7027,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_begin_pin_expired": CkrExpectation(
         function="C_VerifyMessageBegin",
@@ -7043,7 +7043,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.3",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     # --- C_VerifyMessageNext errors ---
     "verify_message_next_arguments_bad": CkrExpectation(
@@ -7052,7 +7052,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_data_len_range": CkrExpectation(
         function="C_VerifyMessageNext",
@@ -7060,7 +7060,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.16.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_function_canceled": CkrExpectation(
         function="C_VerifyMessageNext",
@@ -7076,7 +7076,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_operation_active": CkrExpectation(
         function="C_VerifyMessageNext",
@@ -7084,7 +7084,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_operation_not_initialized": CkrExpectation(
         function="C_VerifyMessageNext",
@@ -7092,7 +7092,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_signature_invalid": CkrExpectation(
         function="C_VerifyMessageNext",
@@ -7100,7 +7100,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=SignatureInvalid,
         compat_tuple=(SignatureInvalid, SignatureLenRange, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_signature_len_range": CkrExpectation(
         function="C_VerifyMessageNext",
@@ -7108,7 +7108,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=SignatureLenRange,
         compat_tuple=(SignatureLenRange, SignatureInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.4",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "verify_message_next_token_resource_exceeded": CkrExpectation(
         function="C_VerifyMessageNext",
@@ -7116,7 +7116,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.16.4",
-        testable=False,  # v3.0+ — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     # --- C_MessageVerifyFinal errors ---
@@ -7126,7 +7126,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_final_data_len_range": CkrExpectation(
         function="C_MessageVerifyFinal",
@@ -7134,7 +7134,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.16.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_final_function_canceled": CkrExpectation(
         function="C_MessageVerifyFinal",
@@ -7150,7 +7150,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_final_operation_not_initialized": CkrExpectation(
         function="C_MessageVerifyFinal",
@@ -7158,7 +7158,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.5",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
     ),
     "msg_verify_final_token_resource_exceeded": CkrExpectation(
         function="C_MessageVerifyFinal",
@@ -7166,7 +7166,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.16.5",
-        testable=False,  # v3.0+ — requires token resource exhaustion
+        testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
 }
@@ -7184,7 +7184,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_attribute_read_only": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7192,7 +7192,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=AttributeReadOnly,
         compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_attribute_type_invalid": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7200,7 +7200,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=AttributeTypeInvalid,
         compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_attribute_value_invalid": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7208,7 +7208,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=AttributeValueInvalid,
         compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_buffer_too_small": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7216,7 +7216,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_curve_not_supported": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7224,7 +7224,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=CurveNotSupported,
         compat_tuple=(CurveNotSupported, MechanismInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_domain_params_invalid": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7232,7 +7232,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=DomainParamsInvalid,
         compat_tuple=(DomainParamsInvalid, MechanismParamInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_function_canceled": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7248,7 +7248,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=MechanismInvalid,
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_mechanism_param_invalid": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7256,7 +7256,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=MechanismParamInvalid,
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_operation_active": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7264,7 +7264,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_parameter_set_not_supported": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7272,7 +7272,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=ParameterSetNotSupported,
         compat_tuple=(ParameterSetNotSupported, MechanismInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_pin_expired": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7288,7 +7288,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=SessionReadOnly,
         compat_tuple=(SessionReadOnly, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — requires RO session
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_template_incomplete": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7296,7 +7296,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=TemplateIncomplete,
         compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_template_inconsistent": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7304,7 +7304,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=TemplateInconsistent,
         compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_token_write_protected": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7312,7 +7312,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=TokenWriteProtected,
         compat_tuple=(TokenWriteProtected, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — requires write-protected token
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_unwrapping_key_handle_invalid": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7320,7 +7320,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=UnwrappingKeyHandleInvalid,
         compat_tuple=(UnwrappingKeyHandleInvalid, KeyHandleInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_unwrapping_key_size_range": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7328,7 +7328,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=UnwrappingKeySizeRange,
         compat_tuple=(UnwrappingKeySizeRange, KeySizeRange, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_unwrapping_key_type_inconsistent": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7336,7 +7336,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=UnwrappingKeyTypeInconsistent,
         compat_tuple=(UnwrappingKeyTypeInconsistent, KeyTypeInconsistent, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_user_not_logged_in": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7344,7 +7344,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_wrapped_key_invalid": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7352,7 +7352,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=WrappedKeyInvalid,
         compat_tuple=(WrappedKeyInvalid, WrappedKeyLenRange, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "unwrap_auth_wrapped_key_len_range": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7360,7 +7360,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=WrappedKeyLenRange,
         compat_tuple=(WrappedKeyLenRange, WrappedKeyInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
 }
 
@@ -7377,7 +7377,7 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.21.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "async_get_id_state_unsaveable": CkrExpectation(
         function="C_AsyncGetID",
@@ -7385,7 +7385,7 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         spec_ckr=StateUnsaveable,
         compat_tuple=(StateUnsaveable, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.21.2",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     # --- C_AsyncJoin errors ---
     "async_join_arguments_bad": CkrExpectation(
@@ -7394,7 +7394,7 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.21.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "async_join_buffer_too_small": CkrExpectation(
         function="C_AsyncJoin",
@@ -7402,7 +7402,7 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.21.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
     "async_join_saved_state_invalid": CkrExpectation(
         function="C_AsyncJoin",
@@ -7410,6 +7410,6 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         spec_ckr=SavedStateInvalid,
         compat_tuple=(SavedStateInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.21.3",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Testable on Kryoptic via funclist32_ptr
     ),
 }

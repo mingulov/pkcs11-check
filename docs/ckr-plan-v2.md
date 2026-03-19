@@ -166,12 +166,12 @@ Upgrade fault-proxy.c to intercept all C_* functions for device/token error inje
 
 587 of 661 testable=False entries CAN be tested with RawPKCS11. Convert in batches.
 
-- [ ] **7.1** Convert "other" v2.40 entries (~177) — ARGUMENTS_BAD, USER_NOT_LOGGED_IN on Init functions. Use RawPKCS11 subprocess. Batch by family. Flip testable=False → True.
-- [ ] **7.2** Convert remaining multipart (~72) — Update/Final with wrong data. Use RawPKCS11.
-- [ ] **7.3** Convert remaining operation_state (~36) — double Init for all families. Use RawPKCS11.
-- [ ] **7.4** Convert remaining buffer_sizing (~11) — Decrypt, Verify, GetAttributeValue small buffers.
-- [ ] **7.5** Convert legacy_parallel (3) — GetFunctionStatus, CancelFunction → FUNCTION_NOT_PARALLEL.
-- [ ] **7.6** Validation + recount testable=False.
+- [x] **7.1** Convert "other" v2.40 entries (~177) — ARGUMENTS_BAD, USER_NOT_LOGGED_IN on Init functions. Use RawPKCS11 subprocess. Batch by family. Flip testable=False → True.
+- [x] **7.2** Convert remaining multipart (~72) — Update/Final with wrong data. Use RawPKCS11.
+- [x] **7.3** Convert remaining operation_state (~36) — double Init for all families. Use RawPKCS11.
+- [x] **7.4** Convert remaining buffer_sizing (~11) — Decrypt, Verify, GetAttributeValue small buffers.
+- [x] **7.5** Convert legacy_parallel (3) — GetFunctionStatus, CancelFunction → FUNCTION_NOT_PARALLEL.
+- [x] **7.6** Validation + recount testable=False.
 
 ## Phase 8 — Convert testable=False v3.0/v3.2 on Kryoptic
 
