@@ -4,7 +4,7 @@ Run `pytest --co -q` for current counts. Tests auto-skip for unsupported mechani
 
 ## Test Categories
 
-### Wycheproof Edge-Case Vectors (15 files)
+### Wycheproof Edge-Case Vectors (18 files)
 
 All Wycheproof tests check mechanism availability at runtime and skip cleanly.
 
@@ -14,16 +14,20 @@ All Wycheproof tests check mechanism availability at runtime and skip cleanly.
 | test_wycheproof_aes.py | AES-CMAC, Key Wrap, KWP, CCM, GMAC, XTS |
 | test_wycheproof_chacha.py | ChaCha20-Poly1305 AEAD |
 | test_wycheproof_dsa.py | DSA 2048/3072 × SHA-224/256 |
-| test_wycheproof_ecdh.py | ECDH P-224/256/384/521 key agreement |
-| test_wycheproof_ecdsa.py | ECDSA P-224/256/384/521 × SHA-224/256/384/512 + SHA-3 |
+| test_wycheproof_ecdh.py | ECDH across secp*r1, secp256k1, brainpool, binary curves, ASN.1/PEM/WebCrypto/ecpoint |
+| test_wycheproof_ecdsa.py | ECDSA across secp*k1, secp*r1, brainpool, SHA-2/SHA-3/SHAKE, DER + P1363 |
 | test_wycheproof_ed25519.py | Ed25519 + Ed448 signature verification |
 | test_wycheproof_hkdf.py | HKDF SHA-1/256/384/512 |
 | test_wycheproof_hmac.py | HMAC SHA/SHA-3/SHA-512 truncated |
+| test_wycheproof_mldsa.py | ML-DSA verify vectors |
+| test_wycheproof_mldsa_sign.py | ML-DSA 44/65/87 sign vectors, seeded + non-seeded |
+| test_wycheproof_mlkem.py | ML-KEM decapsulation vectors, including semi-expanded decaps sets |
+| test_wycheproof_pbes2.py | PBES2 decrypt via PBKDF2 + AES-CBC-PAD composition |
 | test_wycheproof_rsa.py | RSA PKCS#1 v1.5 sigs: 2048-8192 × SHA/SHA-3 |
 | test_wycheproof_rsa_decrypt.py | RSA PKCS#1 v1.5 decryption (padding oracle vectors) |
-| test_wycheproof_rsa_oaep.py | RSA-OAEP: same and mixed hash/MGF combinations |
-| test_wycheproof_rsa_pss.py | RSA-PSS with proper CK_RSA_PKCS_PSS_PARAMS |
-| test_wycheproof_x25519.py | X25519 + X448 Montgomery curve key exchange |
+| test_wycheproof_rsa_oaep.py | RSA-OAEP including mixed hash/MGF and three-prime vectors |
+| test_wycheproof_rsa_pss.py | RSA-PSS with CK_RSA_PKCS_PSS_PARAMS, mixed MGF, parameterized vectors |
+| test_wycheproof_x25519.py | X25519 + X448 via raw, ASN.1, PEM, and JWK encodings |
 
 ### Post-Quantum Cryptography (3 files, requires v3.2)
 
@@ -114,20 +118,21 @@ Verify PKCS#11 output against Python `cryptography` library.
 | AES-XTS | Yes | - | - | Disk encryption mode |
 | RSA PKCS#1 v1.5 sign | Yes | Yes | Yes | 2048-8192, SHA + SHA-3 |
 | RSA PKCS#1 v1.5 decrypt | Yes | - | - | Padding oracle vectors |
-| RSA-PSS | Yes | Yes | Yes | Proper PSS params, misc salt lengths |
+| RSA-PSS | Yes | Yes | Yes | Proper PSS params, mixed MGF, misc salt lengths |
 | RSA-OAEP | Yes | Yes | Yes | Mixed hash/MGF |
-| ECDSA P-224/256/384/521 | Yes | Yes | Yes | SHA + SHA-3 multi-hash |
-| ECDH P-224/256/384/521 | Yes | - | Yes | Shared secret agreement |
-| X25519 / X448 | Yes | - | - | Montgomery curve ECDH |
+| ECDSA P-224/256/384/521, secp*k1, brainpool | Yes | Yes | Yes | SHA-2 + SHA-3 + SHAKE, DER + P1363 |
+| ECDH secp*r1, secp256k1, brainpool, binary curves | Yes | - | Yes | Raw secret agreement across multiple encodings |
+| X25519 / X448 | Yes | - | - | Raw, ASN.1, PEM, JWK |
 | Ed25519 | Yes | Yes | Yes | Deterministic sigs |
 | Ed448 | Yes | - | - | Skips if unsupported |
 | DSA 2048/3072 | Yes | - | Yes | SHA-224/256 |
 | HMAC SHA family | Yes | Yes | Yes | SHA, SHA-3, SHA-512 truncated |
 | ChaCha20-Poly1305 | Yes | - | - | Native CK params |
 | HKDF | Yes | - | - | Skips if unsupported |
+| PBES2 | Yes | - | - | PBKDF2 + AES-CBC-PAD composition |
 | SHA-1/224/256/384/512 | - | Yes | Yes | KAT + hashlib cross-verify |
-| ML-KEM | - | - | Yes | v3.2 encapsulate/decapsulate |
-| ML-DSA | - | - | Yes | v3.2 sign/verify |
+| ML-KEM | Yes | - | Yes | v3.2 decapsulation Wycheproof + native KEM tests |
+| ML-DSA | Yes | - | Yes | v3.2 verify + sign Wycheproof + native sign/verify |
 | SLH-DSA | - | - | Yes | v3.2 sign/verify |
 
 ## Testing Patterns

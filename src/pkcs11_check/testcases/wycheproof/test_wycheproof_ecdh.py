@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.mechanisms import KDF

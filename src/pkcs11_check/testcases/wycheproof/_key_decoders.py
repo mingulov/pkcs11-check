@@ -33,7 +33,7 @@ _EC_CURVE_ALIASES: dict[str, tuple[str, int]] = {
     "sect409k1": ("sect409k1", 409),
     "sect409r1": ("sect409r1", 409),
     "sect571k1": ("sect571k1", 571),
-    "sect571r1": ("sect571r1", 570),
+    "sect571r1": ("sect571r1", 571),
 }
 
 
