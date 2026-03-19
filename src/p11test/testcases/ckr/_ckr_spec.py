@@ -769,7 +769,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_function_canceled": CkrExpectation(
         function="C_DecryptInit",
@@ -810,7 +810,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "buffer_too_small": CkrExpectation(
         function="C_Decrypt",
@@ -850,7 +850,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "update_buffer_too_small": CkrExpectation(
         function="C_DecryptUpdate",
@@ -898,7 +898,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "final_buffer_too_small": CkrExpectation(
         function="C_DecryptFinal",
@@ -946,7 +946,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "decrypt_digest_update_buffer_too_small": CkrExpectation(
         function="C_DecryptDigestUpdate",
@@ -1002,7 +1002,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.4",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "decrypt_verify_update_buffer_too_small": CkrExpectation(
         function="C_DecryptVerifyUpdate",
@@ -1260,7 +1260,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_function_canceled": CkrExpectation(
         function="C_SignInit",
@@ -1301,7 +1301,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.2",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "buffer_too_small": CkrExpectation(
         function="C_Sign",
@@ -1358,7 +1358,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.3",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "update_function_canceled": CkrExpectation(
         function="C_SignUpdate",
@@ -1399,7 +1399,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.4",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "final_function_canceled": CkrExpectation(
         function="C_SignFinal",
@@ -1448,7 +1448,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.5",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "recover_init_function_canceled": CkrExpectation(
         function="C_SignRecoverInit",
@@ -1537,7 +1537,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.6",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "recover_buffer_too_small": CkrExpectation(
         function="C_SignRecover",
@@ -1594,7 +1594,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.3",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "sign_encrypt_update_buffer_too_small": CkrExpectation(
         function="C_SignEncryptUpdate",
@@ -1854,7 +1854,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_function_canceled": CkrExpectation(
         function="C_VerifyInit",
@@ -1895,7 +1895,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "function_canceled": CkrExpectation(
         function="C_Verify",
@@ -1928,7 +1928,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "update_function_canceled": CkrExpectation(
         function="C_VerifyUpdate",
@@ -1961,7 +1961,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "final_data_len_range": CkrExpectation(
         function="C_VerifyFinal",
@@ -2010,7 +2010,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "recover_init_function_canceled": CkrExpectation(
         function="C_VerifyRecoverInit",
@@ -2099,7 +2099,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.6",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "recover_buffer_too_small": CkrExpectation(
         function="C_VerifyRecover",
@@ -2307,7 +2307,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_function_canceled": CkrExpectation(
         function="C_DigestInit",
@@ -2348,7 +2348,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.2",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "function_canceled": CkrExpectation(
         function="C_Digest",
@@ -2372,7 +2372,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.3",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "update_function_canceled": CkrExpectation(
         function="C_DigestUpdate",
@@ -2420,7 +2420,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.5",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "final_function_canceled": CkrExpectation(
         function="C_DigestFinal",
@@ -2444,7 +2444,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.2",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "digest_encrypt_update_buffer_too_small": CkrExpectation(
         function="C_DigestEncryptUpdate",
@@ -2890,7 +2890,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "genkey_curve_not_supported_gen": CkrExpectation(
         function="C_GenerateKey",
@@ -2938,7 +2938,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "genkeypair_function_canceled": CkrExpectation(
         function="C_GenerateKeyPair",
@@ -3143,7 +3143,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "curve_not_supported": CkrExpectation(
         function="C_DeriveKey",
@@ -3299,7 +3299,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.7",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "encap_attribute_read_only": CkrExpectation(
         function="C_EncapsulateKey",
@@ -3403,7 +3403,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.8",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "decap_attribute_read_only": CkrExpectation(
         function="C_DecapsulateKey",
@@ -3694,7 +3694,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "unwrap_attribute_read_only": CkrExpectation(
         function="C_UnwrapKey",
@@ -4031,7 +4031,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "create_attribute_read_only": CkrExpectation(
         function="C_CreateObject",
@@ -4095,7 +4095,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.2",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "copy_attribute_read_only": CkrExpectation(
         function="C_CopyObject",
@@ -4183,7 +4183,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.4",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_size_information_sensitive": CkrExpectation(
         function="C_GetObjectSize",
@@ -4208,7 +4208,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.5",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_attr_type_invalid": CkrExpectation(
         function="C_GetAttributeValue",
@@ -4240,7 +4240,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.6",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "set_attr_object_handle_invalid": CkrExpectation(
         function="C_SetAttributeValue",
@@ -4288,7 +4288,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.7",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "find_init_attribute_type_invalid": CkrExpectation(
         function="C_FindObjectsInit",
@@ -4319,7 +4319,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.8",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "find_operation_active": CkrExpectation(
         function="C_FindObjects",
@@ -4526,7 +4526,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.4",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_session_info_operation_active": CkrExpectation(
         function="C_GetSessionInfo",
@@ -4542,7 +4542,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.7",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "login_function_canceled": CkrExpectation(
         function="C_Login",
@@ -4905,7 +4905,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.5",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_state_operation_active": CkrExpectation(
         function="C_GetOperationState",
@@ -4929,7 +4929,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.6",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "set_state_key_changed": CkrExpectation(
         function="C_SetOperationState",
@@ -5072,7 +5072,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.2",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_token_info_arguments_bad": CkrExpectation(
         function="C_GetTokenInfo",
@@ -5080,7 +5080,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.3",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_token_info_token_not_recognized": CkrExpectation(
         function="C_GetTokenInfo",
@@ -5096,7 +5096,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.5",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_mech_list_buffer_too_small": CkrExpectation(
         function="C_GetMechanismList",
@@ -5120,7 +5120,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.6",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_mech_info_slot_invalid": CkrExpectation(
         function="C_GetMechanismInfo",
@@ -5144,7 +5144,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.7",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_token_function_canceled": CkrExpectation(
         function="C_InitToken",
@@ -5192,7 +5192,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.8",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "init_pin_function_canceled": CkrExpectation(
         function="C_InitPIN",
@@ -5248,7 +5248,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.9",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "set_pin_function_canceled": CkrExpectation(
         function="C_SetPIN",
@@ -5296,7 +5296,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.4",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
 }
 
@@ -5363,7 +5363,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.4.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "initialize_cant_lock": CkrExpectation(
         function="C_Initialize",
@@ -5389,7 +5389,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.4.2",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_func_status_function_not_parallel": CkrExpectation(
         function="C_GetFunctionStatus",
@@ -5431,7 +5431,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.4.8",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_interface_list_buffer_too_small": CkrExpectation(
         function="C_GetInterfaceList",
@@ -5447,7 +5447,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.4.7",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Tested via test_ckr_raw_args_bad.py
     ),
     "get_interface_buffer_too_small": CkrExpectation(
         function="C_GetInterface",
