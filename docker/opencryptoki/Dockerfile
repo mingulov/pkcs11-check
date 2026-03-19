@@ -21,7 +21,8 @@ RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ \
 RUN printf 'version opencryptoki-3.26\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
     > /etc/opencryptoki/opencryptoki.conf
 
-ENV P11TEST_MODULE=/usr/lib64/pkcs11/libopencryptoki.so
+ENV PKCS11_CHECK_MODULE=/usr/lib64/pkcs11/libopencryptoki.so
+ENV PKCS11_CHECK_PIN=1234
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -33,14 +34,4 @@ RUN uv sync --frozen --python /usr/bin/python3
 # Add root to pkcs11 group so we can talk to pkcsslotd
 RUN usermod -a -G pkcs11 root
 
-CMD ["sh", "-c", "\
-  echo 'OpenCryptoki:' && rpm -q opencryptoki opencryptoki-swtok && \
-  pkcsslotd && sleep 2 && \
-  echo 'pkcs11-check' | pkcsconf -I -c 0 -S 87654321 2>&1 || true && \
-  printf '87654321\\n1234\\n1234\\n' | pkcsconf -u -c 0 2>&1 || true && \
-  pkcsconf -t -c 0 2>&1 && \
-  uv run pkcs11-check test \
-    --module /usr/lib64/pkcs11/libopencryptoki.so \
-    --pin 1234 --isolation auto \
-    src/pkcs11_check/testcases/; \
-  RC=$?; killall pkcsslotd 2>/dev/null; exit $RC"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/opencryptoki/run-opencryptoki.sh"]

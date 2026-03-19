@@ -17,10 +17,11 @@ RUN mkdir -p $NSS_DB_DIR && \
     certutil -d sql:$NSS_DB_DIR -N --empty-password
 
 RUN find /usr/lib64 /usr/lib -name "libsoftokn3.so" 2>/dev/null | head -1 > /tmp/module_path
+ENV PKCS11_CHECK_SLOT=1
 
 WORKDIR /app
 COPY . .
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv python pin 3.12 && uv sync --frozen
 
-CMD ["sh", "-c", "echo 'NSS (stable):' && rpm -q nss && uv run pkcs11-check test --module=$(cat /tmp/module_path) --slot 1 --isolation auto src/pkcs11_check/testcases/"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "sh", "-c", "echo 'NSS (stable):' && rpm -q nss && export PKCS11_CHECK_MODULE=$(cat /tmp/module_path) && bash /app/docker/run-pkcs11-check.sh"]

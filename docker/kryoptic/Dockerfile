@@ -30,8 +30,8 @@ RUN pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
     && pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
     --init-pin --pin 1234 --so-pin 12345678
 
-ENV P11TEST_MODULE=/usr/lib/libkryoptic_pkcs11.so
-ENV P11TEST_PIN=1234
+ENV PKCS11_CHECK_MODULE=/usr/lib/libkryoptic_pkcs11.so
+ENV PKCS11_CHECK_PIN=1234
 
 WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -40,4 +40,4 @@ COPY . .
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
 
-CMD ["uv", "run", "pytest", "src/pkcs11_check/testcases/", "--p11-module=/usr/lib/libkryoptic_pkcs11.so", "--p11-pin=1234", "-q"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/run-pkcs11-check.sh"]

@@ -52,18 +52,7 @@ WORKDIR /app
 COPY . .
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv python pin 3.12 && uv sync --frozen
+ENV PKCS11_CHECK_PIN=1234
 
 # Best-effort: run tests if the build produced a .so; report gracefully if not.
-CMD ["sh", "-c", "\
-  MODULE=$(cat /tmp/module_path 2>/dev/null) && \
-  if [ -z \"$MODULE\" ] || [ ! -f \"$MODULE\" ]; then \
-    echo 'qryptotoken: build did not produce a .so — skipping tests'; \
-    exit 0; \
-  fi && \
-  echo \"qryptotoken module: $MODULE\" && \
-  ls -lh \"$MODULE\" && \
-  uv run pkcs11-check test \
-    --module \"$MODULE\" \
-    --isolation auto \
-    src/pkcs11_check/testcases/ 2>&1 || \
-  echo 'qryptotoken: some tests failed — experimental module'"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/qryptotoken/run-qryptotoken.sh"]

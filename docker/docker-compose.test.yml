@@ -19,44 +19,63 @@
 #   docker compose -f docker/docker-compose.test.yml run test-pkcs11-mock
 #   docker compose -f docker/docker-compose.test.yml run test-qryptotoken
 
+x-artifacts: &artifacts
+  volumes:
+    - ../artifacts:/artifacts
+
 services:
+
   # ==========================================================
   # Versioned releases — stable, reproducible
   # ==========================================================
 
   # SoftHSM2 2.7.0 (v2.40, OpenSSL)
   test-softhsm2:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/softhsm2/Dockerfile
     environment:
-      - P11TEST_PIN=1234
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2
+      PKCS11_CHECK_PIN: "1234"
 
   # Kryoptic v1.5.0 (v3.2, Rust)
   test-kryoptic:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/kryoptic/Dockerfile
     environment:
-      - P11TEST_PIN=1234
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic
+      PKCS11_CHECK_PIN: "1234"
 
   # NSS stable (Fedora 43, v3.0)
   test-nss:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss
 
   # NSS PQC (Fedora Rawhide, v3.2 PQC)
   test-nss-pqc:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile.rawhide
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-pqc
 
-  # OpenCryptoki 3.25 (IBM, v3.0)
+  # OpenCryptoki 3.26 (IBM, v3.0)
   test-opencryptoki:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/opencryptoki/Dockerfile
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki
+      PKCS11_CHECK_PIN: "1234"
 
   # ==========================================================
   # Development branches — bleeding edge, may break
@@ -64,28 +83,34 @@ services:
 
   # SoftHSM2 main branch (latest development)
   test-softhsm2-main:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/softhsm2-main/Dockerfile
     environment:
-      - P11TEST_PIN=1234
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-main
+      PKCS11_CHECK_PIN: "1234"
 
   # Kryoptic main branch (latest dev, default features)
   test-kryoptic-main:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/kryoptic-main/Dockerfile
     environment:
-      - P11TEST_PIN=1234
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic-main
+      PKCS11_CHECK_PIN: "1234"
 
   # Kryoptic FIPS (main + simo5/openssl kryoptic_ossl40, --features fips,pqc)
   # Based on: github.com/parallaxsecond/rust-cryptoki/pull/362
   test-kryoptic-fips:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/kryoptic-fips/Dockerfile
     environment:
-      - P11TEST_PIN=1234
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic-fips
+      PKCS11_CHECK_PIN: "1234"
 
   # ==========================================================
   # Additional implementations
@@ -93,24 +118,39 @@ services:
 
   # tpm2-pkcs11 with swtpm + tpm2-abrmd
   test-tpm2:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/tpm2-pkcs11/Dockerfile
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/tpm2
+      PKCS11_CHECK_PIN: "1234"
 
   # BouncyHSM (.NET/BouncyCastle, v3.2, 206 mechanisms)
   test-bouncyhsm:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/bouncyhsm/Dockerfile
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/bouncyhsm
+      PKCS11_CHECK_PIN: "1234"
 
   # pkcs11-mock — minimal v3.1 stub
   test-pkcs11-mock:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/pkcs11-mock/Dockerfile
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/pkcs11-mock
 
   # qryptotoken — experimental Rust PQC token (QUBIP)
   test-qryptotoken:
+    <<: *artifacts
     build:
       context: ..
       dockerfile: docker/qryptotoken/Dockerfile
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/qryptotoken
+      PKCS11_CHECK_PIN: "1234"

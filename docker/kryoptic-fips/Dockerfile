@@ -78,5 +78,7 @@ RUN printf '[openssl_init]\nproviders = provider_sect\n\n[provider_sect]\nfips =
 
 ENV OPENSSL_CONF=/etc/openssl-fips.cnf
 ENV OPENSSL_MODULES=/usr/lib/ossl-modules
+ENV PKCS11_CHECK_MODULE=/usr/lib/libkryoptic_pkcs11.so
+ENV PKCS11_CHECK_PIN=1234
 
-CMD ["sh", "-c", "echo 'Kryoptic FIPS (main + OpenSSL 4.0):' && LD_LIBRARY_PATH=/usr/lib uv run pytest src/pkcs11_check/testcases/ --p11-module=/usr/lib/libkryoptic_pkcs11.so --p11-pin=1234 -q --tb=no"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "sh", "-c", "echo 'Kryoptic FIPS (main + OpenSSL 4.0):' && env LD_LIBRARY_PATH=/usr/lib bash /app/docker/run-pkcs11-check.sh"]

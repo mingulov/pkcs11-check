@@ -27,7 +27,7 @@ RUN git clone --depth 1 https://github.com/Pkcs11Interop/pkcs11-mock.git \
         2>&1 && \
     echo "Build OK: $(ls -lh /usr/lib64/libpkcs11-mock.so)"
 
-ENV P11TEST_MODULE=/usr/lib64/libpkcs11-mock.so
+ENV PKCS11_CHECK_MODULE=/usr/lib64/libpkcs11-mock.so
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -39,9 +39,4 @@ RUN uv python pin 3.12 && uv sync --frozen
 # No PIN needed — mock ignores it.
 # Tests are expected to skip or fail gracefully where the mock returns
 # CKR_FUNCTION_NOT_SUPPORTED; that is intentional and valuable signal.
-CMD ["sh", "-c", "\
-  echo 'pkcs11-mock library:' && \
-  ls -lh /usr/lib64/libpkcs11-mock.so && \
-  uv run pytest src/pkcs11_check/testcases/ \
-    --p11-module=/usr/lib64/libpkcs11-mock.so \
-    -q --tb=short 2>&1 || true"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "sh", "-c", "echo 'pkcs11-mock library:' && ls -lh /usr/lib64/libpkcs11-mock.so && bash /app/docker/run-pkcs11-check.sh || true"]

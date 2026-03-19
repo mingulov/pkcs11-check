@@ -41,21 +41,8 @@ WORKDIR /app
 COPY . .
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
+ENV PKCS11_CHECK_PIN=1234
 
 # BouncyHSM needs slots created via its management interface.
 # The PKCS#11 lib connects to the server via TCP socket.
-CMD ["sh", "-c", "\
-  echo 'BouncyHSM starting...' && \
-  cd /opt/bouncyhsm && \
-  ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS=http://localhost:5000 \
-  dotnet BouncyHsm.dll &>/dev/null & \
-  sleep 4 && cd /app && \
-  if [ ! -f /usr/lib/libbouncyhsm_pkcs11.so ]; then \
-    echo 'BouncyHSM: native PKCS#11 lib not available'; exit 0; fi && \
-  curl -sf -X POST http://localhost:5000/Slot \
-    -H 'Content-Type: application/json' \
-    -d '{\"IsHwDevice\":false,\"Description\":\"pkcs11-check\",\"Token\":{\"Label\":\"pkcs11-check\",\"SerialNumber\":\"0001\",\"UserPin\":\"1234\",\"SoPin\":\"12345678\",\"SimulateHwRng\":true,\"SimulateHwMechanism\":true,\"SimulateProtectedAuthPath\":false,\"SimulateQualifiedArea\":false,\"SpeedMode\":\"WithoutRestriction\"}}' && \
-  echo '' && echo 'Slot created — 206 mechanisms' && \
-  uv run pkcs11-check test \
-    --module /usr/lib/libbouncyhsm_pkcs11.so --pin 1234 --isolation auto \
-    src/pkcs11_check/testcases/"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/bouncyhsm/run-bouncyhsm.sh"]

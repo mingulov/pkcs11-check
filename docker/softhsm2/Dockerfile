@@ -33,7 +33,7 @@ RUN mkdir -p /var/lib/softhsm/tokens && \
     softhsm2-util --init-token --slot 0 --label "pkcs11-check" --pin 1234 --so-pin 12345678
 
 RUN find /usr/lib -name "libsofthsm2.so" | head -1 > /tmp/module_path
-ENV P11TEST_PIN=1234
+ENV PKCS11_CHECK_PIN=1234
 
 WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -43,4 +43,4 @@ COPY . .
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
 
-CMD ["sh", "-c", "softhsm2-util --version && uv run pytest src/pkcs11_check/testcases/ --p11-module=$(cat /tmp/module_path) --p11-pin=1234 -q"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "sh", "-c", "softhsm2-util --version && export PKCS11_CHECK_MODULE=$(cat /tmp/module_path) && bash /app/docker/run-pkcs11-check.sh"]
