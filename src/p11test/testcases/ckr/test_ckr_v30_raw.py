@@ -109,7 +109,7 @@ data = (ctypes.c_ubyte * 16)(*([0]*16))
 out = (ctypes.c_ubyte * 32)()
 out_len = ctypes.c_ulong(32)
 if "C_EncryptMessage" in raw._funcs:
-    rv = raw._call("C_EncryptMessage", sh, None, ctypes.c_ulong(0), data, ctypes.c_ulong(16), None, ctypes.c_ulong(0), out, ctypes.byref(out_len))
+    rv = raw.C_EncryptMessage(sh, None, 0, data, 16, None, 0, out, ctypes.byref(out_len))
     print(f"CKR:0x{rv:08x}")
     assert rv in (CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD), f"Got 0x{rv:08x}"
 else:
@@ -190,7 +190,7 @@ class TestSessionCancelErrors:
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 if "C_SessionCancel" in raw._funcs:
-    rv = raw._call("C_SessionCancel", sh, ctypes.c_ulong(0))
+    rv = raw.C_SessionCancel(sh, 0)
     print(f"CKR:0x{rv:08x}")
     # OK or OPERATION_ACTIVE — both acceptable
     print("OK")
