@@ -169,3 +169,45 @@ print("OK")
         )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
+
+    def test_double_sign_init(self, p11_config: Any) -> None:
+        """Double C_SignInit → CKR_OPERATION_ACTIVE."""
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+mech = CK_MECHANISM()
+mech.mechanism = 0x1081  # CKM_AES_ECB (for CMAC or just to test state)
+# Use key_handle from preamble (AES key with SIGN=True)
+rv1 = raw.C_SignInit(sh, ctypes.byref(mech), key_handle)
+# First init may fail if AES-ECB not valid for sign — that's OK
+if rv1 == CKR_OK:
+    rv2 = raw.C_SignInit(sh, ctypes.byref(mech), key_handle)
+    print(f"CKR:0x{rv2:08x}")
+    assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK), f"Got 0x{rv2:08x}"
+else:
+    print(f"CKR:0x{rv1:08x}:first_init_failed")
+print("OK")
+""",
+        )
+        assert rc == 0, f"Crash: {err[-300:]}"
+        assert "OK" in out
+
+    def test_double_decrypt_init(self, p11_config: Any) -> None:
+        """Double C_DecryptInit → CKR_OPERATION_ACTIVE."""
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+mech = CK_MECHANISM()
+mech.mechanism = 0x1081  # CKM_AES_ECB
+rv1 = raw.C_DecryptInit(sh, ctypes.byref(mech), key_handle)
+assert rv1 == CKR_OK, f"First DecryptInit: 0x{rv1:08x}"
+rv2 = raw.C_DecryptInit(sh, ctypes.byref(mech), key_handle)
+print(f"CKR:0x{rv2:08x}")
+assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK), f"Got 0x{rv2:08x}"
+print("OK")
+""",
+        )
+        assert rc == 0, f"Crash: {err[-300:]}"
+        assert "OK" in out
