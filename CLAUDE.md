@@ -26,14 +26,16 @@ bash local-builds/reset.sh kryoptic           # reset token data
 
 # Standard commands
 uv run pkcs11-check version              # check CLI works
-uv run pytest tests/                # run meta-tests (pkcs11-check's own tests)
+uv run python -m pytest tests/      # run meta-tests (pkcs11-check's own tests)
 uv run ruff check src/ tests/       # lint
 uv run ruff format src/ tests/      # format
 uv run mypy src/                    # type check
 
 # Docker (for final validation or modules needing daemons)
-docker compose -f docker/docker-compose.test.yml run test-softhsm2
-docker compose -f docker/docker-compose.test.yml run test-kryoptic
+bash docker/test.sh softhsm2
+bash docker/test.sh opencryptoki
+bash docker/test.sh nss --timeout 30 -- src/pkcs11_check/testcases/test_interface.py
+docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 ```
 
 ## Architecture
@@ -78,11 +80,20 @@ docker compose -f docker/docker-compose.test.yml run test-kryoptic
 - `test-softhsm2` / `test-softhsm2-main` — SoftHSM2 2.7.0 / main
 - `test-kryoptic` / `test-kryoptic-main` / `test-kryoptic-fips` — Kryoptic v1.5.0 / main / FIPS
 - `test-nss` / `test-nss-pqc` — NSS 3.120.1 / 3.121.0 PQC
-- `test-opencryptoki` — OpenCryptoki 3.25.0
+- `test-opencryptoki` — OpenCryptoki 3.26.0
 - `test-tpm2` — tpm2-pkcs11 + swtpm
 - `test-bouncyhsm` — BouncyHSM 2.0.1
 - `test-pkcs11-mock` — pkcs11-mock v3.1 stub
 - `test-qryptotoken` — qryptotoken Rust PQC
+
+### Docker test usage
+- Use [docker/test.sh](/home/user/src/m/pkcs11-check/docker/test.sh) as the common host-side entrypoint for all Docker providers
+- Provider names can be passed with or without the `test-` prefix
+- Arguments before `--` are extra `pkcs11-check test` options
+- Arguments after `--` are explicit pytest targets or nodeids
+- Docker runs write artifacts under `artifacts/<provider>/`
+- Standard artifact files are `console.log`, `results.json`, and `state.json`
+- Shared container-side runners are [docker/run-with-artifacts.sh](/home/user/src/m/pkcs11-check/docker/run-with-artifacts.sh) and [docker/run-pkcs11-check.sh](/home/user/src/m/pkcs11-check/docker/run-pkcs11-check.sh)
 
 ### Key design decisions
 - python-pkcs11 fork as git submodule with v3.0/3.1/3.2 interface negotiation, PQC mechanisms, 50+ new enums, specific CKR exception classes for ALL standard error codes
@@ -151,4 +162,5 @@ The OASIS PKCS#11 spec is available in Markdown format:
 - `docs/test-coverage.md` — Test coverage summary
 - `docs/test-coverage-generated.md` — Auto-generated from `scripts/generate-coverage-report.py`
 - `docs/python-pkcs11-fork.md` — Fork changes and upstream PR plan
+- `docs/docker-artifacts.md` — Standard Docker test runner, artifacts, and wrapper usage
 - `docs/superpowers/specs/` — Phase 1 architecture, comprehensive testing, standards addendum
