@@ -10,6 +10,7 @@ Last updated: 2026-03-19
 - **v3.0/v3.2 interface negotiation** — tested on Kryoptic
 - **PQC support** — ML-KEM, ML-DSA, SLH-DSA tested on Kryoptic
 - **Adaptive isolated runner** — `pkcs11-check test` now defaults to `--isolation auto`; `auto|file|test` survive crashes, escalate crashing files in-run, and remember crash-prone files per backend
+- **Isolation baseline accepted** — the current `auto|file|test` runner is now the project's default execution path; remaining isolation work is follow-up, not a blocker
 - **JSON/JUnit isolated reports** — `--output json` or `--output junit`
 - **State inspection command** — `pkcs11-check state` summarizes saved isolation state and policy files
 - **Marker-aware isolation planning** — `auto` learns `subprocess` and `subprocess_per_test` from collected pytest metadata, not source-text scans
@@ -28,6 +29,7 @@ Last updated: 2026-03-19
 
 ## What's Planned
 
+- **Isolation follow-up only** — richer crash policy, better report metadata, and a future worker model
 - **Per-target re-validation** — 11 targets need fresh validation runs
 - **Docker final pass** — rebuild all images, one clean pass
 - **pyproject.toml polish** — URLs, classifiers for PyPI

@@ -305,4 +305,15 @@ These are not the highest-risk gaps, but they would make the project materially 
 
 `pkcs11-check` is already a serious framework, not a toy. The current weakness is not lack of test breadth or lack of PKCS#11 v3.x support. The weakness is that the execution backbone, user-facing packaging, and validation gates still lag behind the ambition of the suite.
 
-That is good news in one sense: the project does not need a new direction. It needs consolidation, enforcement, and productization.
+That statement is now narrower than it was earlier in development. The default
+execution backbone is good enough to keep: `pkcs11-check test` now defaults to
+the adaptive isolated runner, and that path is accepted as the project's normal
+execution model.
+
+So the project does not need another runner redesign. The remaining work is
+consolidation and follow-up polish:
+
+- stronger policy semantics
+- better reporting metadata
+- broader validation across backends
+- a future worker/resource-isolation model

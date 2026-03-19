@@ -218,5 +218,17 @@ The isolated runner is worth keeping. It solves a real operational problem now:
 - the user can stop and resume from the failure point
 - unstable modules no longer require a single all-or-nothing pytest invocation
 
-But it is still not the final segfault-survival design. The biggest missing pieces
-are richer policy semantics, clearer report metadata, and a real worker model.
+The current project decision is to keep this runner as the default product path.
+`pkcs11-check test` now defaults to `--isolation auto`, and that is considered
+good enough for normal development, local validation, and Docker-backed module runs.
+
+This does not mean isolation work is "finished forever." It means the remaining
+items are no longer blockers for normal use. The follow-up work is now incremental:
+
+- richer policy semantics
+- clearer report metadata
+- a real worker/concurrency model
+- optional cleanup or deeper integration of `core/isolation.py`
+
+The only intentionally unsafe path left is explicit `--isolation none`, which stays
+available as an opt-in fast path for trusted backends and debugging.
