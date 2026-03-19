@@ -288,16 +288,16 @@ Uses `pkcs11.raw.RawPKCS11` to test conditions blocked by the python-pkcs11 wrap
 
 - [x] **19.1** Create `test_ckr_raw_multipart.py` — 6 tests, all pass on SoftHSM2 + Kryoptic. — multipart operation errors via raw calls: EncryptUpdate/Final without Init, DecryptUpdate/Final without Init, SignUpdate/Final without Init, DigestUpdate without Init, DigestFinal without Init. All → CKR_OPERATION_NOT_INITIALIZED. Verify on SoftHSM2 + Kryoptic.
 - [x] **19.2** Create `test_ckr_raw_state.py` — 3 tests (double Init, cross-op, double digest Init). — operation state violations via raw calls: double EncryptInit (OPERATION_ACTIVE), EncryptInit then SignInit (OPERATION_ACTIVE), cross-operation conflicts. Verify on SoftHSM2 + Kryoptic.
-- [ ] **19.3** Create `test_ckr_raw_attrs.py` — attribute permission tests: CKA_ENCRYPT=False key with C_EncryptInit, CKA_DECRYPT=False with DecryptInit, CKA_SIGN=False with SignInit, CKA_VERIFY=False with VerifyInit. All → CKR_KEY_FUNCTION_NOT_PERMITTED. Verify on SoftHSM2 + Kryoptic.
-- [ ] **19.4** Create `test_ckr_raw_buffer.py` — buffer sizing: C_Encrypt with 1-byte output (BUFFER_TOO_SMALL), C_Sign with 1-byte output, C_Digest with 1-byte output. Verify on SoftHSM2.
-- [ ] **19.5** Flip testable=False → testable=True for all entries now covered by raw tests. Recount entries.
-- [ ] **19.6** Validation checkpoint — all 3 local targets + Docker OpenCryptoki. Final count.
+- [x] **19.3** Create `test_ckr_raw_attrs.py` — attribute permission tests: CKA_ENCRYPT=False key with C_EncryptInit, CKA_DECRYPT=False with DecryptInit, CKA_SIGN=False with SignInit, CKA_VERIFY=False with VerifyInit. All → CKR_KEY_FUNCTION_NOT_PERMITTED. Verify on SoftHSM2 + Kryoptic.
+- [x] **19.4** Create `test_ckr_raw_buffer.py` — buffer sizing: C_Encrypt with 1-byte output (BUFFER_TOO_SMALL), C_Sign with 1-byte output, C_Digest with 1-byte output. Verify on SoftHSM2.
+- [x] **19.5** Flip testable=False → testable=True for all entries now covered by raw tests. Recount entries.
+- [x] **19.6** Validation checkpoint — all 3 local targets + Docker OpenCryptoki. Final count.
 
 ## Tier 20 — Final Handoff
 
-- [ ] **20.1** Update docs/ckr-coverage.md with final numbers.
-- [ ] **20.2** Full regression — SoftHSM2 + Kryoptic full suite. Zero failures.
-- [ ] **20.3** **Handoff to master-plan.md.**
+- [x] **20.1** Update docs/ckr-coverage.md with final numbers.
+- [x] **20.2** Full regression — SoftHSM2 + Kryoptic full suite. Zero failures.
+- [x] **20.3** **Handoff to master-plan.md.**
 
 ---
 
