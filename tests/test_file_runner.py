@@ -58,6 +58,15 @@ def test_state_round_trip(tmp_path: Path) -> None:
     assert loaded == state
 
 
+def test_save_run_state_creates_parent_directories(tmp_path: Path) -> None:
+    state_file = tmp_path / "nested" / "state.json"
+    state = FileRunState(units=["test_a.py"], fingerprint="abc123", results=[])
+
+    save_run_state(state_file, state)
+
+    assert state_file.exists()
+
+
 def test_units_remaining_for_resume_skips_passed_and_empty() -> None:
     units = ["test_a.py", "test_b.py", "test_c.py", "test_d.py"]
     state = FileRunState(
@@ -113,6 +122,54 @@ def test_run_isolated_pytest_units_records_results_and_stops(
     )
     assert [result.target for result in saved.results] == ["test_a.py", "test_b.py"]
     assert len(calls) == 2
+
+
+def test_build_state_fingerprint_changes_when_unit_file_changes(tmp_path: Path) -> None:
+    unit = tmp_path / "test_demo.py"
+    unit.write_text("def test_demo():\n    assert True\n")
+    env = {"P11TEST_PIN": "1234"}
+
+    first = build_state_fingerprint([str(unit)], ["--p11-module", "/tmp/module.so"], env)
+
+    unit.write_text("def test_demo():\n    assert False\n")
+    second = build_state_fingerprint([str(unit)], ["--p11-module", "/tmp/module.so"], env)
+
+    assert first != second
+
+
+def test_build_state_fingerprint_changes_when_module_changes(tmp_path: Path) -> None:
+    unit = tmp_path / "test_demo.py"
+    unit.write_text("def test_demo():\n    assert True\n")
+    module = tmp_path / "module.so"
+    module.write_text("v1")
+    env = {"P11TEST_PIN": "1234"}
+
+    first = build_state_fingerprint([str(unit)], ["--p11-module", str(module)], env)
+
+    module.write_text("v2")
+    second = build_state_fingerprint([str(unit)], ["--p11-module", str(module)], env)
+
+    assert first != second
+
+
+def test_build_state_fingerprint_changes_when_env_changes(tmp_path: Path) -> None:
+    unit = tmp_path / "test_demo.py"
+    unit.write_text("def test_demo():\n    assert True\n")
+    module = tmp_path / "module.so"
+    module.write_text("v1")
+
+    first = build_state_fingerprint(
+        [str(unit)],
+        ["--p11-module", str(module)],
+        {"BOUNCY_HSM_CFG_STRING": "Server=127.0.0.1;Port=8765;"},
+    )
+    second = build_state_fingerprint(
+        [str(unit)],
+        ["--p11-module", str(module)],
+        {"BOUNCY_HSM_CFG_STRING": "Server=127.0.0.1;Port=9999;"},
+    )
+
+    assert first != second
 
 
 def test_run_isolated_pytest_units_resume_skips_passed(monkeypatch: object, tmp_path: Path) -> None:

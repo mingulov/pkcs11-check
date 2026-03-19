@@ -8,10 +8,24 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from rich.console import Console
+
+_FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
+_FINGERPRINT_ENV_PREFIXES = (
+    "P11TEST_",
+    "BOUNCY_HSM_",
+    "NSS_",
+    "OPENCRYPTOKI_",
+    "PKCS11_",
+    "QRYPTOTOKEN_",
+    "SOFTHSM2_",
+    "TPM2_",
+)
+_REDACTED_ENV_KEYS = {"P11TEST_PIN"}
 
 
 @dataclass(frozen=True)
@@ -84,6 +98,7 @@ def load_run_state(path: Path) -> FileRunState | None:
 
 def save_run_state(path: Path, state: FileRunState) -> None:
     """Persist the current runner state to disk."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "fingerprint": state.fingerprint,
         "units": state.units,
@@ -92,7 +107,60 @@ def save_run_state(path: Path, state: FileRunState) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def build_state_fingerprint(units: list[str], pytest_args: list[str]) -> str:
+def _extract_option_value(args: list[str], option: str) -> str | None:
+    for index, arg in enumerate(args):
+        if arg == option:
+            if index + 1 < len(args):
+                return args[index + 1]
+            return None
+        if arg.startswith(f"{option}="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _path_snapshot(path_str: str) -> dict[str, int | str] | None:
+    path = Path(path_str)
+    if not path.exists():
+        return None
+
+    stat = path.stat()
+    return {
+        "path": str(path.resolve()),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _fingerprint_units(units: list[str]) -> list[dict[str, int | str]]:
+    snapshots: list[dict[str, int | str]] = []
+    seen: set[str] = set()
+    for unit in units:
+        file_part = unit.split("::", 1)[0]
+        snapshot = _path_snapshot(file_part)
+        if snapshot is None:
+            continue
+        path_key = str(snapshot["path"])
+        if path_key in seen:
+            continue
+        snapshots.append(snapshot)
+        seen.add(path_key)
+    return snapshots
+
+
+def _fingerprint_env(env: Mapping[str, str]) -> dict[str, str]:
+    snapshot: dict[str, str] = {}
+    for key in sorted(env):
+        if key in _FINGERPRINT_ENV_KEYS or key.startswith(_FINGERPRINT_ENV_PREFIXES):
+            if key in _REDACTED_ENV_KEYS:
+                snapshot[key] = "<set>" if env[key] else "<unset>"
+            else:
+                snapshot[key] = env[key]
+    return snapshot
+
+
+def build_state_fingerprint(
+    units: list[str], pytest_args: list[str], env: Mapping[str, str] | None = None
+) -> str:
     """Build a stable fingerprint for resume validation."""
     redacted_args: list[str] = []
     redact_next = False
@@ -105,8 +173,19 @@ def build_state_fingerprint(units: list[str], pytest_args: list[str]) -> str:
         if arg == "--p11-pin":
             redact_next = True
 
+    module_snapshot = None
+    module_path = _extract_option_value(pytest_args, "--p11-module")
+    if module_path is not None:
+        module_snapshot = _path_snapshot(module_path)
+
     payload = json.dumps(
-        {"pytest_args": redacted_args, "units": units},
+        {
+            "env": _fingerprint_env(env or os.environ),
+            "module": module_snapshot,
+            "pytest_args": redacted_args,
+            "unit_files": _fingerprint_units(units),
+            "units": units,
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -159,7 +238,8 @@ def run_isolated_pytest_units(
     console: Console,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
-    fingerprint = build_state_fingerprint(units, pytest_args)
+    env = os.environ.copy()
+    fingerprint = build_state_fingerprint(units, pytest_args, env)
     previous_state = load_run_state(state_file) if resume else None
     if previous_state is not None and previous_state.fingerprint != fingerprint:
         msg = (
@@ -196,7 +276,6 @@ def run_isolated_pytest_units(
 
     exit_code = 0
     total = len(units)
-    env = os.environ.copy()
 
     for index, unit in enumerate(units, start=1):
         if unit not in pending_units:

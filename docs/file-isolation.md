@@ -14,6 +14,7 @@ uv run p11test test \
 - Runs each unit in a fresh `python -m pytest` subprocess.
 - Writes progress to `.p11test-isolation-state.json` by default.
 - Continues past a crashing file because the file process, not the main runner, dies.
+- Creates parent directories for `--state-file` automatically.
 
 This is not full per-test isolation. It is a practical regression mode for unstable modules while the deeper pytest integration is still unfinished.
 
@@ -58,12 +59,44 @@ uv run p11test test \
   --state-file /tmp/p11test-bouncyhsm.json
 ```
 
+Starting a fresh run without `--resume` overwrites the old state file immediately.
+
 ## Scope And Limits
 
 - `--isolation file` currently supports only `--output rich`.
 - `--sessions` is ignored in file isolation mode.
 - The normal `--timeout` value is still passed through to pytest as per-test timeout.
 - The file runner also has an outer subprocess timeout so a dead file runner does not hang forever.
+- Resume safety checks include the requested units, pytest arguments, relevant environment,
+  and file/module metadata. A changed test file or changed module binary invalidates the old state.
+
+## Local Helper Script
+
+`local-builds/test.sh` can now opt into the same mode:
+
+```bash
+P11TEST_ISOLATION=file \
+bash local-builds/test.sh bouncyhsm src/p11test/testcases/ckr/test_ckr_codes.py
+```
+
+Useful companion variables:
+
+```bash
+P11TEST_ISOLATION=file
+P11TEST_RESUME=1
+P11TEST_STOP_ON_FAILURE=1
+P11TEST_STATE_FILE=/tmp/p11test-bouncyhsm.json
+```
+
+The shell helper supports the common local workflow options in isolation mode:
+
+- file or nodeid targets
+- `-k` / `--match`
+- `-v`
+- `-x` / `--stop-on-failure`
+- `--destructive`
+
+For arbitrary pytest flags, use `uv run p11test test ...` directly.
 
 ## BouncyHSM Local Example
 
@@ -96,4 +129,12 @@ uv run p11test test \
   --pin 1234 \
   --isolation file \
   src/p11test/testcases/ckr
+```
+
+The same flow also works through the local helper:
+
+```bash
+BOUNCY_HSM_CFG_STRING='Server=127.0.0.1;Port=8765;' \
+P11TEST_ISOLATION=file \
+bash local-builds/test.sh bouncyhsm src/p11test/testcases/ckr/test_ckr_codes.py
 ```

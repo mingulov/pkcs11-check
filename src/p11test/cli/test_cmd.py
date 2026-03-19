@@ -23,6 +23,7 @@ def _build_pytest_args(
     timeout: int,
     category: str | None,
     match: str | None,
+    include_pin_arg: bool,
     pin: str | None,
     slot: int,
     destructive: bool,
@@ -36,7 +37,7 @@ def _build_pytest_args(
     args.extend(["--p11-slot", str(slot)])
     args.extend(["--timeout", str(timeout)])
 
-    if pin:
+    if include_pin_arg and pin:
         args.extend(["--p11-pin", pin])
 
     if destructive:
@@ -112,6 +113,7 @@ def test_command(
         timeout=timeout,
         category=category,
         match=match,
+        include_pin_arg=isolation != "file",
         pin=pin,
         slot=slot,
         destructive=destructive,

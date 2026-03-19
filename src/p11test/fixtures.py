@@ -20,13 +20,15 @@ def p11_config(request: pytest.FixtureRequest) -> P11TestConfig:
     if module_path is None:
         pytest.skip("No --p11-module specified")
     pin_value = request.config.getoption("p11_pin")
-    return P11TestConfig(
-        module=Path(module_path),
-        interface=request.config.getoption("p11_interface"),
-        slot=request.config.getoption("p11_slot"),
-        pin=pin_value,
-        destructive=request.config.getoption("p11_destructive"),
-    )
+    kwargs: dict[str, Any] = {
+        "module": Path(module_path),
+        "interface": request.config.getoption("p11_interface"),
+        "slot": request.config.getoption("p11_slot"),
+        "destructive": request.config.getoption("p11_destructive"),
+    }
+    if pin_value is not None:
+        kwargs["pin"] = pin_value
+    return P11TestConfig(**kwargs)
 
 
 @pytest.fixture(scope="session")

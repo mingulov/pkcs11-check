@@ -66,6 +66,8 @@ class TestTestCommand:
                 "test",
                 "--module",
                 str(module),
+                "--pin",
+                "1234",
                 "--isolation",
                 "file",
                 "--timeout",
@@ -83,6 +85,7 @@ class TestTestCommand:
         assert called["state_file"] == state_file
         assert called["resume"] is True
         assert called["stop_on_failure"] is True
+        assert "--p11-pin" not in called["pytest_args"]
 
     def test_test_file_isolation_rejects_non_rich_output(self, tmp_path: Path) -> None:
         module = tmp_path / "dummy.so"

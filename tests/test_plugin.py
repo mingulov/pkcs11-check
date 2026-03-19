@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
+
+from p11test.fixtures import p11_config
 
 
 class TestPluginRegistration:
@@ -26,3 +31,23 @@ class TestPluginRegistration:
     def test_p11_destructive_option_exists(self, pytestconfig: pytest.Config) -> None:
         val = pytestconfig.getoption("p11_destructive", default="MISSING")
         assert val != "MISSING"
+
+
+def test_p11_config_uses_env_pin_when_cli_pin_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("P11TEST_PIN", "secret123")
+
+    options = {
+        "p11_module": str(tmp_path / "module.so"),
+        "p11_interface": "auto",
+        "p11_slot": 0,
+        "p11_pin": None,
+        "p11_destructive": False,
+    }
+    request = SimpleNamespace(config=SimpleNamespace(getoption=options.__getitem__))
+
+    config = p11_config.__wrapped__(request)
+
+    assert config.pin is not None
+    assert config.pin.get_secret_value() == "secret123"

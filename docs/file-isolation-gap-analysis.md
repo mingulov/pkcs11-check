@@ -11,15 +11,19 @@ This review is about the current `p11test test --isolation file` implementation:
 - subprocess base helper in `src/p11test/core/isolation.py`
 - current pytest plugin behavior in `src/p11test/plugin.py`
 - local BouncyHSM smoke validation with the patched native shim
+- local helper validation through `local-builds/test.sh`
 
 Checks run during this review:
 
-- `uv run pytest tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py -q`
-- `uv run ruff check src/p11test/cli/test_cmd.py src/p11test/core/file_runner.py src/p11test/core/isolation.py tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py`
-- `uv run mypy src/p11test/core/file_runner.py src/p11test/cli/test_cmd.py src/p11test/core/isolation.py`
+- `uv run pytest tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py tests/test_plugin.py -q`
+- `uv run ruff check src/p11test/cli/test_cmd.py src/p11test/core/file_runner.py src/p11test/core/isolation.py src/p11test/fixtures.py tests/test_cli.py tests/test_file_runner.py tests/test_isolation.py tests/test_plugin.py`
+- `uv run mypy src/p11test/core/file_runner.py src/p11test/cli/test_cmd.py src/p11test/core/isolation.py src/p11test/fixtures.py`
 - local BouncyHSM stop-and-resume smoke:
   - first run stopped at a real failing file
   - second run resumed from that file and continued to the next one
+- local shell helper smoke:
+  - `P11TEST_ISOLATION=file bash local-builds/test.sh ...` now reaches the same runner path
+  - caller-supplied transport env such as `BOUNCY_HSM_CFG_STRING` is preserved
 
 ## What Works Now
 
@@ -31,6 +35,9 @@ The current solution is useful and real. It is not just a draft.
 - rerunning a failed unit replaces the old state entry instead of appending duplicates.
 - resume now rejects mismatched state files via a fingerprint of the requested units and pytest arguments.
 - the subprocess helper now consistently uses `spawn`, which is the safer default for PKCS#11 isolation.
+- the state fingerprint now also covers relevant environment plus test/module file metadata.
+- file isolation now uses env-only PIN propagation to child pytest processes.
+- the local helper can opt into file isolation and stateful resume instead of always bypassing the CLI.
 
 The BouncyHSM smoke confirmed the intended workflow:
 
@@ -53,33 +60,22 @@ The biggest remaining gap is still in `src/p11test/plugin.py`.
 
 `--isolation file` contains that failure to one file-sized subprocess, which is much better than the old in-process run, but it is not full per-test isolation and it is not a collection-safe parent process design yet.
 
-### P0: `local-builds/test.sh` does not use the new path
-
-`local-builds/test.sh` still runs raw `uv run pytest ...`.
-
-That means the main fast local workflow does not benefit from:
-
-- per-file subprocess restarts
-- resume state
-- `--stop-on-failure`
-
-Today the new isolation mode is available only through `uv run p11test test ...`.
-
-### P0: Resume protection is good, but still not complete
+### P1: Resume protection is stronger, but still not complete
 
 The state fingerprint covers only:
 
 - requested units
-- pytest argument list with `--p11-pin` redacted
+- pytest arguments
+- relevant environment
+- test file metadata
+- module binary metadata
 
 It does not cover:
 
-- file contents or mtimes
-- module binary changes
-- environment changes such as `BOUNCY_HSM_CFG_STRING`
 - plugin or fixture code changes
+- non-file inputs such as token database contents or daemon state
 
-So a user can resume an old run after changing the module or the tests and still get a technically valid but stale continuation.
+So a user can still resume into a technically stale continuation after changing fixture/plugin code or after changing external token state without changing the module binary or test files.
 
 ### P1: Reporting is intentionally narrow
 
@@ -143,22 +139,23 @@ Current limitations:
 - provider setup prints instructions but does not launch the server
 - provider setup does not create a slot automatically
 - the in-memory default mode is still not the stable local path
+- the helper now respects caller-supplied `BOUNCY_HSM_CFG_STRING`, but the default printed instructions still describe the standard 8765/5011 path
 
 ## Edge Cases Worth Calling Out
 
 - Starting a fresh run without `--resume` overwrites the old state file immediately.
 - A resumed run intentionally reruns failed units, so state files should not be treated as immutable history.
-- The parent CLI still accepts `--pin`, and file mode currently propagates it into child pytest arguments as `--p11-pin`. That is functional, but it is a weaker secrecy story than env-only propagation.
+- The parent CLI still accepts `--pin`, but file mode now keeps it in environment propagation instead of child command-line arguments.
 - `discover_pytest_units()` accepts explicit nodeids and whole directories, but the default unit order is just filesystem order, not historical-failure order or duration-aware scheduling.
 
 ## Recommended Next Steps
 
 ### Short Term
 
-1. Make `local-builds/test.sh` optionally call `uv run p11test test --isolation file` instead of raw pytest.
-2. Remove PKCS#11 module loading from collection-time logic in `src/p11test/plugin.py`.
-3. Move child PIN propagation to environment variables only in file isolation mode.
-4. Document the state file overwrite behavior directly in CLI help text.
+1. Remove PKCS#11 module loading from collection-time logic in `src/p11test/plugin.py`.
+2. Document the state file overwrite behavior directly in CLI help text.
+3. Add a small helper to print saved-state summaries without opening the JSON manually.
+4. Decide whether the local shell helper should accept a broader set of pytest-style flags in isolation mode.
 
 ### Medium Term
 
@@ -181,4 +178,4 @@ The new file isolation mode is worth keeping. It solves a real operational probl
 - the user can stop and resume from the failure point
 - unstable modules no longer require a single all-or-nothing pytest invocation
 
-But it is still a tactical layer, not the final segfault-survival design. The biggest missing pieces are collection safety, integration into the main local workflow, and richer reporting.
+But it is still a tactical layer, not the final segfault-survival design. The biggest missing pieces are collection safety, richer reporting, and eventual per-test isolation.
