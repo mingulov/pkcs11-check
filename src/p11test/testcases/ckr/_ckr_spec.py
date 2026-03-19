@@ -356,6 +356,58 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 §5.8.2",
         allow_success=True,
     ),
+    # --- Mechanism-specific C_EncryptInit errors ---
+    "rsa_oaep_mechanism_param_invalid": CkrExpectation(
+        function="C_EncryptInit",
+        condition="RSA_OAEP_with_wrong_hash_in_params",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.1",
+        mechanisms=["RSA_PKCS_OAEP"],
+    ),
+    "aes_gcm_mechanism_param_invalid": CkrExpectation(
+        function="C_EncryptInit",
+        condition="AES_GCM_with_wrong_IV_length",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.1",
+        mechanisms=["AES_GCM"],
+    ),
+    "aes_cbc_iv_wrong_length": CkrExpectation(
+        function="C_EncryptInit",
+        condition="AES_CBC_with_8_byte_IV",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.1",
+        mechanisms=["AES_CBC"],
+    ),
+    # --- Mechanism-specific C_Encrypt errors ---
+    "rsa_pkcs_data_too_short": CkrExpectation(
+        function="C_Encrypt",
+        condition="RSA_PKCS_zero_byte_plaintext",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.8.2",
+        mechanisms=["RSA_PKCS"],
+        allow_success=True,  # Some modules accept empty plaintext for RSA-PKCS
+    ),
+    "rsa_oaep_data_too_long": CkrExpectation(
+        function="C_Encrypt",
+        condition="RSA_OAEP_plaintext_exceeds_k_minus_2hLen_minus_2",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.8.2",
+        mechanisms=["RSA_PKCS_OAEP"],
+    ),
+    "aes_gcm_data_overflow": CkrExpectation(
+        function="C_Encrypt",
+        condition="AES_GCM_plaintext_exceeds_theoretical_limit",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.8.2",
+        mechanisms=["AES_GCM"],
+        testable=False,  # Limit is 2^39-256 bits — impractical to test
+    ),
 }
 
 
@@ -509,6 +561,40 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
     ),
+    # --- Mechanism-specific C_DecryptInit errors ---
+    "rsa_oaep_mechanism_param_invalid": CkrExpectation(
+        function="C_DecryptInit",
+        condition="RSA_OAEP_with_wrong_hash_in_params",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.9.1",
+        mechanisms=["RSA_PKCS_OAEP"],
+    ),
+    # --- Mechanism-specific C_Decrypt errors ---
+    "aes_gcm_auth_failed": CkrExpectation(
+        function="C_Decrypt",
+        condition="AES_GCM_tampered_ciphertext_or_tag",
+        spec_ckr=EncryptedDataInvalid,
+        compat_tuple=_DECRYPT_DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.2",
+        mechanisms=["AES_GCM"],
+    ),
+    "aes_cbc_pad_wrong_length": CkrExpectation(
+        function="C_Decrypt",
+        condition="AES_CBC_PAD_ciphertext_not_block_aligned",
+        spec_ckr=EncryptedDataLenRange,
+        compat_tuple=_DECRYPT_DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.2",
+        mechanisms=["AES_CBC_PAD"],
+    ),
+    "rsa_pkcs_ciphertext_format_invalid": CkrExpectation(
+        function="C_Decrypt",
+        condition="RSA_PKCS_valid_length_but_malformed_ciphertext",
+        spec_ckr=EncryptedDataInvalid,
+        compat_tuple=_DECRYPT_DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.9.2",
+        mechanisms=["RSA_PKCS"],
+    ),
 }
 
 
@@ -656,6 +742,50 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.6",
         testable=False,  # python-pkcs11 wraps SignRecover internally
+    ),
+    # --- Mechanism-specific C_SignInit errors ---
+    "ecdsa_mechanism_invalid": CkrExpectation(
+        function="C_SignInit",
+        condition="ECDSA_mechanism_with_AES_key",
+        spec_ckr=KeyTypeInconsistent,
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted,
+                      FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.10.1",
+        mechanisms=["ECDSA"],
+    ),
+    "hmac_mechanism_param_invalid": CkrExpectation(
+        function="C_SignInit",
+        condition="HMAC_with_wrong_mechanism_params",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.10.1",
+        mechanisms=["SHA256_HMAC_GENERAL"],
+    ),
+    "rsa_pss_mechanism_param_invalid": CkrExpectation(
+        function="C_SignInit",
+        condition="RSA_PSS_with_wrong_salt_hash_combo",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.10.1",
+        mechanisms=["RSA_PKCS_PSS"],
+    ),
+    # --- Mechanism-specific C_Sign errors ---
+    "eddsa_data_too_long": CkrExpectation(
+        function="C_Sign",
+        condition="Ed25519_message_exceeds_max_size",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.10.2",
+        mechanisms=["EDDSA"],
+        allow_success=True,  # Ed25519 has no practical message size limit in most impls
+    ),
+    "rsa_pkcs_data_len_range": CkrExpectation(
+        function="C_Sign",
+        condition="RSA_PKCS_data_exceeds_k_minus_11",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.10.2",
+        mechanisms=["RSA_PKCS"],
     ),
 }
 
@@ -808,6 +938,57 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 §5.11.2",
         allow_success=True,  # Most mechanisms hash data, so format doesn't matter
     ),
+    # --- Mechanism-specific C_Verify errors ---
+    "ecdsa_signature_invalid": CkrExpectation(
+        function="C_Verify",
+        condition="ECDSA_tampered_signature",
+        spec_ckr=SignatureInvalid,
+        compat_tuple=(SignatureInvalid, SignatureLenRange, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.2",
+        mechanisms=["ECDSA"],
+    ),
+    "hmac_signature_invalid": CkrExpectation(
+        function="C_Verify",
+        condition="HMAC_tampered_signature",
+        spec_ckr=SignatureInvalid,
+        compat_tuple=(SignatureInvalid, SignatureLenRange, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.2",
+        mechanisms=["SHA256_HMAC"],
+    ),
+    "ecdsa_signature_len_range": CkrExpectation(
+        function="C_Verify",
+        condition="ECDSA_wrong_length_signature",
+        spec_ckr=SignatureLenRange,
+        compat_tuple=(SignatureLenRange, SignatureInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.2",
+        mechanisms=["ECDSA"],
+        priority_note="Higher priority than CKR_SIGNATURE_INVALID",
+    ),
+    "hmac_signature_len_range": CkrExpectation(
+        function="C_Verify",
+        condition="HMAC_truncated_signature",
+        spec_ckr=SignatureLenRange,
+        compat_tuple=(SignatureLenRange, SignatureInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.2",
+        mechanisms=["SHA256_HMAC"],
+        priority_note="Higher priority than CKR_SIGNATURE_INVALID",
+    ),
+    "rsa_pss_signature_invalid": CkrExpectation(
+        function="C_Verify",
+        condition="RSA_PSS_tampered_signature",
+        spec_ckr=SignatureInvalid,
+        compat_tuple=(SignatureInvalid, SignatureLenRange, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.2",
+        mechanisms=["RSA_PKCS_PSS"],
+    ),
+    # --- C_VerifyInit mechanism-specific errors ---
+    "init_mechanism_param_invalid": CkrExpectation(
+        function="C_VerifyInit",
+        condition="wrong_mechanism_parameter",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.1",
+    ),
 }
 
 
@@ -922,6 +1103,32 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.12.7",
         testable=False,  # v3.0+ only, not widely supported
+    ),
+    # --- C_DigestUpdate additional errors ---
+    "update_data_len_range": CkrExpectation(
+        function="C_DigestUpdate",
+        condition="partial_data_exceeds_limits",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.12.3",
+        testable=False,  # python-pkcs11 handles multipart internally
+    ),
+    # --- C_DigestKey additional errors ---
+    "key_function_not_permitted": CkrExpectation(
+        function="C_DigestKey",
+        condition="key_not_suitable_for_digest",
+        spec_ckr=KeyFunctionNotPermitted,
+        compat_tuple=(KeyFunctionNotPermitted, KeyIndigestible, FunctionFailed,
+                      FunctionNotSupported),
+        spec_ref="PKCS#11 v3.1 §5.12.4",
+        allow_success=True,  # Most modules don't restrict DigestKey by CKA flags
+    ),
+    "key_digest_operation_not_initialized": CkrExpectation(
+        function="C_DigestKey",
+        condition="DigestKey_without_DigestInit",
+        spec_ckr=OperationNotInitialized,
+        compat_tuple=(OperationNotInitialized, FunctionFailed, FunctionNotSupported),
+        spec_ref="PKCS#11 v3.1 §5.12.4",
     ),
 }
 
@@ -1117,6 +1324,100 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.5",
     ),
+    "domain_params_invalid": CkrExpectation(
+        function="C_DeriveKey",
+        condition="ECDH_with_invalid_domain_params",
+        spec_ckr=DomainParamsInvalid,
+        compat_tuple=(DomainParamsInvalid, MechanismParamInvalid, AttributeValueInvalid,
+                      FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+        mechanisms=["ECDH1_DERIVE"],
+    ),
+    "template_inconsistent": CkrExpectation(
+        function="C_DeriveKey",
+        condition="conflicting_output_attributes",
+        spec_ckr=TemplateInconsistent,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
+    "key_handle_invalid": CkrExpectation(
+        function="C_DeriveKey",
+        condition="destroyed_base_key_handle",
+        spec_ckr=KeyHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
+    "key_size_range": CkrExpectation(
+        function="C_DeriveKey",
+        condition="output_key_size_invalid",
+        spec_ckr=KeySizeRange,
+        compat_tuple=KEY_SIZE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
+    "operation_active": CkrExpectation(
+        function="C_DeriveKey",
+        condition="derive_while_operation_active",
+        spec_ckr=OperationActive,
+        compat_tuple=(OperationActive, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+        testable=False,  # python-pkcs11 manages operation state
+    ),
+    "session_read_only": CkrExpectation(
+        function="C_DeriveKey",
+        condition="derive_token_key_in_RO_session",
+        spec_ckr=SessionReadOnly,
+        compat_tuple=(SessionReadOnly, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
+    "user_not_logged_in": CkrExpectation(
+        function="C_DeriveKey",
+        condition="private_derived_key_without_login",
+        spec_ckr=UserNotLoggedIn,
+        compat_tuple=(UserNotLoggedIn, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+        allow_success=True,  # Modules without login requirements accept this
+    ),
+    "attribute_type_invalid": CkrExpectation(
+        function="C_DeriveKey",
+        condition="bogus_attr_in_derive_template",
+        spec_ckr=AttributeTypeInvalid,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+        allow_success=True,  # Some modules ignore unknown attributes
+    ),
+    "attribute_value_invalid": CkrExpectation(
+        function="C_DeriveKey",
+        condition="bad_value_in_derive_template",
+        spec_ckr=AttributeValueInvalid,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
+    "attribute_read_only": CkrExpectation(
+        function="C_DeriveKey",
+        condition="CKA_CLASS_in_derive_template",
+        spec_ckr=AttributeReadOnly,
+        compat_tuple=(AttributeReadOnly, AttributeTypeInvalid,
+                      TemplateInconsistent, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+        allow_success=True,  # Module may ignore CKA_CLASS in derive
+    ),
+    "ecdh_mechanism_param_invalid": CkrExpectation(
+        function="C_DeriveKey",
+        condition="wrong_KDF_in_ECDH_params",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+        mechanisms=["ECDH1_DERIVE"],
+    ),
+    "hkdf_mechanism_param_invalid": CkrExpectation(
+        function="C_DeriveKey",
+        condition="wrong_params_for_HKDF_derive",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+        mechanisms=["HKDF_DERIVE"],
+        testable=False,  # HKDF not widely supported yet
+    ),
 }
 
 
@@ -1157,6 +1458,79 @@ CKR_KEM: dict[str, CkrExpectation] = {
                       MechanismInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.8",
         allow_success=True,  # ML-KEM implicit rejection may produce a key anyway
+    ),
+    "encap_mechanism_param_invalid": CkrExpectation(
+        function="C_EncapsulateKey",
+        condition="wrong_mechanism_parameter",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.2 §5.14.7",
+    ),
+    "encap_key_handle_invalid": CkrExpectation(
+        function="C_EncapsulateKey",
+        condition="destroyed_public_key_handle",
+        spec_ckr=KeyHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.2 §5.14.7",
+    ),
+    "encap_operation_active": CkrExpectation(
+        function="C_EncapsulateKey",
+        condition="encapsulate_while_operation_active",
+        spec_ckr=OperationActive,
+        compat_tuple=(OperationActive, FunctionFailed),
+        spec_ref="PKCS#11 v3.2 §5.14.7",
+        testable=False,  # python-pkcs11 manages operation state
+    ),
+    "encap_template_incomplete": CkrExpectation(
+        function="C_EncapsulateKey",
+        condition="missing_output_key_attrs",
+        spec_ckr=TemplateIncomplete,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.2 §5.14.7",
+    ),
+    "encap_key_size_range": CkrExpectation(
+        function="C_EncapsulateKey",
+        condition="output_key_size_invalid",
+        spec_ckr=KeySizeRange,
+        compat_tuple=KEY_SIZE_ERRORS,
+        spec_ref="PKCS#11 v3.2 §5.14.7",
+    ),
+    "decap_key_handle_invalid": CkrExpectation(
+        function="C_DecapsulateKey",
+        condition="destroyed_private_key_handle",
+        spec_ckr=KeyHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.2 §5.14.8",
+    ),
+    "decap_operation_active": CkrExpectation(
+        function="C_DecapsulateKey",
+        condition="decapsulate_while_operation_active",
+        spec_ckr=OperationActive,
+        compat_tuple=(OperationActive, FunctionFailed),
+        spec_ref="PKCS#11 v3.2 §5.14.8",
+        testable=False,  # python-pkcs11 manages operation state
+    ),
+    "decap_template_incomplete": CkrExpectation(
+        function="C_DecapsulateKey",
+        condition="missing_output_key_attrs",
+        spec_ckr=TemplateIncomplete,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.2 §5.14.8",
+    ),
+    "decap_key_type_inconsistent": CkrExpectation(
+        function="C_DecapsulateKey",
+        condition="RSA_key_with_ML_KEM_mechanism",
+        spec_ckr=KeyTypeInconsistent,
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted,
+                      ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.2 §5.14.8",
+    ),
+    "decap_mechanism_param_invalid": CkrExpectation(
+        function="C_DecapsulateKey",
+        condition="wrong_mechanism_parameter",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.2 §5.14.8",
     ),
 }
 
@@ -1226,6 +1600,82 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         spec_ckr=TemplateIncomplete,
         compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.4",
+    ),
+    "wrap_key_handle_invalid": CkrExpectation(
+        function="C_WrapKey",
+        condition="destroyed_key_to_wrap",
+        spec_ckr=KeyHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.3",
+    ),
+    "wrap_key_not_wrappable": CkrExpectation(
+        function="C_WrapKey",
+        condition="key_CKA_WRAP_is_False_on_wrapping_key",
+        spec_ckr=KeyNotWrappable,
+        compat_tuple=(KeyNotWrappable, KeyUnextractable, KeyFunctionNotPermitted, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.3",
+    ),
+    "wrap_operation_active": CkrExpectation(
+        function="C_WrapKey",
+        condition="wrap_while_operation_active",
+        spec_ckr=OperationActive,
+        compat_tuple=(OperationActive, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.3",
+        testable=False,  # python-pkcs11 manages operation state
+    ),
+    "wrap_buffer_too_small": CkrExpectation(
+        function="C_WrapKey",
+        condition="output_buffer_too_small",
+        spec_ckr=BufferTooSmall,
+        compat_tuple=(BufferTooSmall, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.3",
+        testable=False,  # python-pkcs11 handles buffer sizing internally
+    ),
+    "wrap_session_read_only": CkrExpectation(
+        function="C_WrapKey",
+        condition="token_wrap_in_RO_session",
+        spec_ckr=SessionReadOnly,
+        compat_tuple=(SessionReadOnly, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.3",
+        allow_success=True,  # Wrap doesn't create token objects, most modules allow it
+    ),
+    "unwrap_mechanism_invalid": CkrExpectation(
+        function="C_UnwrapKey",
+        condition="unsupported_unwrap_mechanism",
+        spec_ckr=MechanismInvalid,
+        compat_tuple=MECHANISM_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.4",
+    ),
+    "unwrap_key_type_inconsistent": CkrExpectation(
+        function="C_UnwrapKey",
+        condition="wrong_key_type_for_unwrap_mechanism",
+        spec_ckr=KeyTypeInconsistent,
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted,
+                      FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.4",
+    ),
+    "unwrap_operation_active": CkrExpectation(
+        function="C_UnwrapKey",
+        condition="unwrap_while_operation_active",
+        spec_ckr=OperationActive,
+        compat_tuple=(OperationActive, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.4",
+        testable=False,  # python-pkcs11 manages operation state
+    ),
+    "unwrap_session_read_only": CkrExpectation(
+        function="C_UnwrapKey",
+        condition="unwrap_to_token_object_in_RO_session",
+        spec_ckr=SessionReadOnly,
+        compat_tuple=(SessionReadOnly, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.4",
+    ),
+    "unwrap_user_not_logged_in": CkrExpectation(
+        function="C_UnwrapKey",
+        condition="private_key_unwrap_without_login",
+        spec_ckr=UserNotLoggedIn,
+        compat_tuple=(UserNotLoggedIn, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.4",
+        allow_success=True,  # Modules without login requirements accept this
     ),
 }
 
@@ -1339,6 +1789,100 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.8",
+    ),
+    # --- C_CreateObject session/domain errors ---
+    "create_session_read_only": CkrExpectation(
+        function="C_CreateObject",
+        condition="token_object_in_RO_session",
+        spec_ckr=SessionReadOnly,
+        compat_tuple=(SessionReadOnly, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.1",
+    ),
+    "create_curve_not_supported": CkrExpectation(
+        function="C_CreateObject",
+        condition="EC_key_with_unsupported_curve",
+        spec_ckr=CurveNotSupported,
+        compat_tuple=(CurveNotSupported, DomainParamsInvalid, AttributeValueInvalid,
+                      MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.1",
+    ),
+    "create_domain_params_invalid": CkrExpectation(
+        function="C_CreateObject",
+        condition="EC_key_with_malformed_params",
+        spec_ckr=DomainParamsInvalid,
+        compat_tuple=(DomainParamsInvalid, CurveNotSupported, AttributeValueInvalid,
+                      FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.1",
+    ),
+    # --- C_CopyObject additional errors ---
+    "copy_template_inconsistent": CkrExpectation(
+        function="C_CopyObject",
+        condition="conflicting_copy_template_attrs",
+        spec_ckr=TemplateInconsistent,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.2",
+    ),
+    "copy_session_read_only": CkrExpectation(
+        function="C_CopyObject",
+        condition="copy_to_token_object_in_RO_session",
+        spec_ckr=SessionReadOnly,
+        compat_tuple=(SessionReadOnly, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.2",
+    ),
+    "copy_handle_invalid": CkrExpectation(
+        function="C_CopyObject",
+        condition="non_existent_object_handle",
+        spec_ckr=ObjectHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.2",
+    ),
+    # --- C_DestroyObject additional errors ---
+    "destroy_action_prohibited": CkrExpectation(
+        function="C_DestroyObject",
+        condition="CKA_DESTROYABLE_is_False",
+        spec_ckr=ActionProhibited,
+        compat_tuple=(ActionProhibited, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.3",
+        allow_success=True,  # Not all modules enforce CKA_DESTROYABLE
+    ),
+    "destroy_session_read_only": CkrExpectation(
+        function="C_DestroyObject",
+        condition="destroy_token_object_in_RO_session",
+        spec_ckr=SessionReadOnly,
+        compat_tuple=(SessionReadOnly, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.7.3",
+    ),
+    # --- C_SetAttributeValue additional errors ---
+    "set_attr_type_invalid": CkrExpectation(
+        function="C_SetAttributeValue",
+        condition="set_bogus_attribute_type",
+        spec_ckr=AttributeTypeInvalid,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.6",
+        allow_success=True,  # Module may ignore unknown attributes
+    ),
+    "set_attr_value_invalid": CkrExpectation(
+        function="C_SetAttributeValue",
+        condition="set_wrong_value_for_known_attr",
+        spec_ckr=AttributeValueInvalid,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.6",
+    ),
+    "set_attr_template_inconsistent": CkrExpectation(
+        function="C_SetAttributeValue",
+        condition="conflicting_attribute_modifications",
+        spec_ckr=TemplateInconsistent,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.6",
+    ),
+    # --- C_FindObjectsInit additional errors ---
+    "find_attr_value_invalid": CkrExpectation(
+        function="C_FindObjectsInit",
+        condition="search_with_bogus_attr_value",
+        spec_ckr=AttributeValueInvalid,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.7.7",
+        allow_success=True,  # Module may return empty results instead of error
     ),
 }
 
@@ -1454,6 +1998,30 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=AnotherUserAlreadyLoggedIn,
         compat_tuple=(AnotherUserAlreadyLoggedIn, UserAlreadyLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.7",
+    ),
+    # --- C_Login additional PIN errors ---
+    "login_pin_len_range": CkrExpectation(
+        function="C_Login",
+        condition="PIN_too_short_or_too_long",
+        spec_ckr=PinLenRange,
+        compat_tuple=(PinLenRange, PinIncorrect, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.6.7",
+    ),
+    # --- C_GetOperationState session error ---
+    "get_op_state_session_invalid": CkrExpectation(
+        function="C_GetOperationState",
+        condition="invalid_session_handle",
+        spec_ckr=SessionHandleInvalid,
+        compat_tuple=SESSION_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.6.5",
+    ),
+    # --- C_SetOperationState session error ---
+    "set_op_state_session_invalid": CkrExpectation(
+        function="C_SetOperationState",
+        condition="invalid_session_handle",
+        spec_ckr=SessionHandleInvalid,
+        compat_tuple=SESSION_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.6.6",
     ),
 }
 
