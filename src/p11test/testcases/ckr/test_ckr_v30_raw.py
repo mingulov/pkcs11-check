@@ -89,7 +89,7 @@ class TestMessageEncryptErrors:
 mech = CK_MECHANISM()
 mech.mechanism = 0x0250  # CKM_SHA256 — not an encrypt mechanism
 key = ctypes.c_ulong(0)  # dummy key handle
-rv = raw._call("C_MessageEncryptInit", sh, ctypes.byref(mech), ctypes.c_ulong(0))
+rv = raw.C_MessageEncryptInit(sh, ctypes.byref(mech), 0)
 print(f"CKR:0x{rv:08x}")
 # MECHANISM_INVALID, KEY_HANDLE_INVALID, FUNCTION_NOT_SUPPORTED — all acceptable
 assert rv != CKR_OK, f"Should have rejected SHA256 for message encrypt"
@@ -131,7 +131,7 @@ class TestMessageDecryptErrors:
             """\
 mech = CK_MECHANISM()
 mech.mechanism = 0x0250  # SHA256
-rv = raw._call("C_MessageDecryptInit", sh, ctypes.byref(mech), ctypes.c_ulong(0))
+rv = raw.C_MessageDecryptInit(sh, ctypes.byref(mech), 0)
 print(f"CKR:0x{rv:08x}")
 assert rv != CKR_OK
 print("OK")
@@ -151,7 +151,7 @@ class TestMessageSignErrors:
             """\
 mech = CK_MECHANISM()
 mech.mechanism = 0x1081  # AES_ECB — not a sign mechanism
-rv = raw._call("C_MessageSignInit", sh, ctypes.byref(mech), ctypes.c_ulong(0))
+rv = raw.C_MessageSignInit(sh, ctypes.byref(mech), 0)
 print(f"CKR:0x{rv:08x}")
 assert rv != CKR_OK
 print("OK")
@@ -171,7 +171,7 @@ class TestMessageVerifyErrors:
             """\
 mech = CK_MECHANISM()
 mech.mechanism = 0x1081  # AES_ECB
-rv = raw._call("C_MessageVerifyInit", sh, ctypes.byref(mech), ctypes.c_ulong(0))
+rv = raw.C_MessageVerifyInit(sh, ctypes.byref(mech), 0)
 print(f"CKR:0x{rv:08x}")
 assert rv != CKR_OK
 print("OK")
