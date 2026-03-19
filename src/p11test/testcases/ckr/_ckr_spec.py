@@ -355,7 +355,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.3",
-        testable=False,  # python-pkcs11 handles multipart internally
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_EncryptFinal errors ---
     "final_data_len_range": CkrExpectation(
@@ -373,7 +373,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.4",
-        testable=False,
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- Additional C_EncryptInit errors ---
     "init_operation_active": CkrExpectation(
@@ -382,7 +382,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.1",
-        testable=False,  # Wrapper manages state
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     "init_user_not_logged_in": CkrExpectation(
         function="C_EncryptInit",
@@ -657,7 +657,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
-        testable=False,
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     "final_encrypted_data_invalid": CkrExpectation(
         function="C_DecryptFinal",
@@ -673,7 +673,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     "init_operation_active": CkrExpectation(
         function="C_DecryptInit",
@@ -681,7 +681,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     "encrypted_data_cbc_wrong_padding": CkrExpectation(
         function="C_Decrypt",
@@ -1141,7 +1141,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.1",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     # --- C_SignUpdate errors ---
     "update_data_len_range": CkrExpectation(
@@ -1158,7 +1158,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.3",
-        testable=False,  # python-pkcs11 handles multipart internally
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_SignFinal errors ---
     "final_data_len_range": CkrExpectation(
@@ -1175,7 +1175,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.4",
-        testable=False,  # python-pkcs11 handles multipart internally
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     "final_buffer_too_small": CkrExpectation(
         function="C_SignFinal",
@@ -1309,7 +1309,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.2",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_buffer.py)
     ),
     "function_canceled": CkrExpectation(
         function="C_Sign",
@@ -1728,7 +1728,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     # --- C_VerifyUpdate errors ---
     "update_data_len_range": CkrExpectation(
@@ -1745,7 +1745,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
-        testable=False,  # python-pkcs11 handles multipart internally
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_VerifyFinal errors ---
     "final_signature_invalid": CkrExpectation(
@@ -1761,7 +1761,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # python-pkcs11 handles multipart internally
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_VerifyRecover errors ---
     "recover_init_mechanism_invalid": CkrExpectation(
@@ -2203,7 +2203,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.1",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_state.py)
     ),
     # --- C_Digest additional errors ---
     "digest_buffer_too_small": CkrExpectation(
@@ -2212,7 +2212,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.2",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_buffer.py)
     ),
     "empty_data": CkrExpectation(
         function="C_Digest",
@@ -2229,7 +2229,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.3",
-        testable=False,  # python-pkcs11 handles multipart internally
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     # --- C_DigestKey errors ---
     "key_indigestible": CkrExpectation(
@@ -2254,7 +2254,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationNotInitialized,
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.5",
-        testable=False,  # python-pkcs11 handles multipart internally
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_raw_multipart.py)
     ),
     "final_buffer_too_small": CkrExpectation(
         function="C_DigestFinal",
@@ -4478,7 +4478,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_null_params.py)
     ),
     "open_session_async_not_supported": CkrExpectation(
         function="C_OpenSession",
@@ -5064,7 +5064,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=ArgumentsBad,
         compat_tuple=(ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.1",
-        testable=False,  # Requires NULL pointer — not exposed by python-pkcs11
+        testable=True,  # Testable via RawPKCS11 (proven in test_ckr_null_params.py)
     ),
     "get_slot_info_arguments_bad": CkrExpectation(
         function="C_GetSlotInfo",
