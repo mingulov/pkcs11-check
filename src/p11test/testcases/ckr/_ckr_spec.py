@@ -512,6 +512,14 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=MECHANISM_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.12.1",
     ),
+    # --- C_Digest errors ---
+    "operation_not_initialized": CkrExpectation(
+        function="C_Digest",
+        condition="no_prior_C_DigestInit",
+        spec_ckr=OperationNotInitialized,
+        compat_tuple=(OperationNotInitialized, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.12.2",
+    ),
 }
 
 
@@ -550,6 +558,22 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.1",
     ),
+    "genkey_attribute_type_invalid": CkrExpectation(
+        function="C_GenerateKey",
+        condition="bogus_attribute_in_template",
+        spec_ckr=AttributeTypeInvalid,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.1",
+        allow_success=True,  # Some modules ignore unknown attributes
+    ),
+    "genkey_attribute_read_only": CkrExpectation(
+        function="C_GenerateKey",
+        condition="CKA_CLASS_in_keygen_template",
+        spec_ckr=AttributeReadOnly,
+        compat_tuple=(AttributeReadOnly, AttributeTypeInvalid, TemplateInconsistent, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.1",
+        allow_success=True,  # Module may ignore CKA_CLASS in keygen
+    ),
     # --- C_GenerateKeyPair errors ---
     "genkeypair_bad_size": CkrExpectation(
         function="C_GenerateKeyPair",
@@ -571,6 +595,21 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=CurveNotSupported,
         compat_tuple=(CurveNotSupported, DomainParamsInvalid, AttributeValueInvalid,
                       MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.2",
+    ),
+    "genkeypair_domain_params_invalid": CkrExpectation(
+        function="C_GenerateKeyPair",
+        condition="malformed_EC_params",
+        spec_ckr=DomainParamsInvalid,
+        compat_tuple=(DomainParamsInvalid, CurveNotSupported, AttributeValueInvalid,
+                      MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.2",
+    ),
+    "genkeypair_template_inconsistent": CkrExpectation(
+        function="C_GenerateKeyPair",
+        condition="conflicting_pub_priv_templates",
+        spec_ckr=TemplateInconsistent,
+        compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.2",
     ),
 }

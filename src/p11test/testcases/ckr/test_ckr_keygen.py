@@ -135,3 +135,42 @@ class TestGenerateKeyPairErrors:
             pytest.fail("Should have rejected bogus EC curve OID")
         except PKCS11Error as e:
             assert_ckr(CKR_KEYGEN["genkeypair_curve_not_supported"], e, ckr_strict)
+
+    def test_attribute_type_invalid(
+        self, p11_session: Any, ckr_strict: bool
+    ) -> None:
+        """Keygen with bogus attribute type -> CKR_ATTRIBUTE_TYPE_INVALID.
+
+        python-pkcs11 may reject at wrapper level (NotImplementedError).
+        """
+        exp = CKR_KEYGEN["genkey_attribute_type_invalid"]
+        try:
+            p11_session.generate_key(
+                KeyType.AES, 256,
+                template={0xFFFFFFFF: True},  # Bogus attribute type
+            )
+            if not exp.allow_success:
+                pytest.fail("Should have rejected bogus attribute type")
+        except NotImplementedError:
+            pass  # python-pkcs11 rejects before reaching module — acceptable
+        except PKCS11Error as e:
+            assert_ckr(exp, e, ckr_strict)
+
+    def test_domain_params_invalid(
+        self, p11_session: Any, p11_module: Any, ckr_strict: bool
+    ) -> None:
+        """EC keygen with malformed EC params -> CKR_DOMAIN_PARAMS_INVALID."""
+        if not has_mechanism(p11_module, "EC_KEY_PAIR_GEN"):
+            pytest.skip("EC key gen not supported")
+        # Malformed: valid OID header but truncated/corrupt content
+        bad_params = bytes([0x06, 0x03, 0x00, 0x00, 0x00])
+        params = p11_session.create_domain_parameters(
+            KeyType.EC,
+            {Attribute.EC_PARAMS: bad_params},
+            local=True,
+        )
+        try:
+            params.generate_keypair()
+            pytest.fail("Should have rejected malformed EC params")
+        except PKCS11Error as e:
+            assert_ckr(CKR_KEYGEN["genkeypair_domain_params_invalid"], e, ckr_strict)
