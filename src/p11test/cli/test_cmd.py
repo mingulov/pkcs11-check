@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+from typing import Literal, cast
 
 import pytest
 import typer
@@ -63,7 +64,13 @@ def _build_pytest_args(
         args.extend(["--junit-xml", output_file or "p11test-results.xml"])
     elif output == "json":
         json_file = output_file or "p11test-results.json"
-        args.extend(["--json-report", f"--json-report-file={json_file}", "--json-report-omit=collectors"])
+        args.extend(
+            [
+                "--json-report",
+                f"--json-report-file={json_file}",
+                "--json-report-omit=collectors",
+            ]
+        )
 
     args.append("--tb=short")
     args.append("--no-header")
@@ -83,17 +90,17 @@ def test_command(
     output: str = typer.Option("rich", "--output", "-o", help="Output: rich, json, junit"),
     output_file: str | None = typer.Option(None, "--output-file", help="Output file path"),
     verbose: bool = typer.Option(False, "--verbose", "-V", help="Verbose output"),
-    isolation: str = typer.Option("none", "--isolation", help="Isolation mode: none, file"),
-    resume: bool = typer.Option(False, "--resume", help="Resume an isolated file run"),
+    isolation: str = typer.Option("none", "--isolation", help="Isolation mode: none, file, test"),
+    resume: bool = typer.Option(False, "--resume", help="Resume an isolated run"),
     stop_on_failure: bool = typer.Option(
         False,
         "--stop-on-failure",
-        help="Stop isolated file mode at the first failing/crashing file",
+        help="Stop isolated mode at the first failing/crashing unit",
     ),
     state_file: Path = typer.Option(
         Path(".p11test-isolation-state.json"),
         "--state-file",
-        help="State file for isolated file runs",
+        help="State file for isolated runs",
     ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
@@ -102,12 +109,14 @@ def test_command(
         console.print(f"[red]Error:[/red] Module not found: {module}")
         raise typer.Exit(code=3)
 
-    if isolation not in {"none", "file"}:
+    if isolation not in {"none", "file", "test"}:
         console.print(f"[red]Error:[/red] Unsupported isolation mode: {isolation}")
         raise typer.Exit(code=2)
 
-    if isolation == "file" and output != "rich":
-        console.print("[red]Error:[/red] --isolation file currently supports only --output rich")
+    if isolation in {"file", "test"} and output != "rich":
+        console.print(
+            f"[red]Error:[/red] --isolation {isolation} currently supports only --output rich"
+        )
         raise typer.Exit(code=2)
 
     # Pass PIN via env so pytest fixtures pick it up
@@ -136,7 +145,7 @@ def test_command(
         timeout=timeout,
         category=category,
         match=match,
-        include_pin_arg=isolation != "file",
+        include_pin_arg=isolation == "none",
         pin=pin,
         slot=slot,
         destructive=destructive,
@@ -148,14 +157,21 @@ def test_command(
 
     target_args = targets or [_TESTCASES_DIR]
     try:
-        if isolation == "file":
+        if isolation in {"file", "test"}:
+            isolated_mode = cast(Literal["file", "test"], isolation)
             if sessions != 1:
                 console.print(
-                    "[yellow]Warning:[/yellow] --sessions is ignored in --isolation file mode"
+                    "[yellow]Warning:[/yellow] "
+                    f"--sessions is ignored in --isolation {isolation} mode"
                 )
 
             try:
-                units = discover_pytest_units(target_args, Path(_TESTCASES_DIR))
+                units = discover_pytest_units(
+                    target_args,
+                    Path(_TESTCASES_DIR),
+                    granularity=isolated_mode,
+                    pytest_args=pytest_args,
+                )
                 exit_code = run_isolated_pytest_units(
                     units,
                     pytest_args,
@@ -164,6 +180,7 @@ def test_command(
                     resume=resume,
                     stop_on_failure=stop_on_failure,
                     console=console,
+                    granularity=isolated_mode,
                 )
             except (FileNotFoundError, ValueError) as exc:
                 console.print(f"[red]Error:[/red] {exc}")

@@ -1,4 +1,4 @@
-"""Per-file pytest runner with subprocess isolation and resume support."""
+"""Per-unit pytest runner with subprocess isolation and resume support."""
 
 from __future__ import annotations
 
@@ -11,8 +11,11 @@ import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Literal
 
 from rich.console import Console
+
+IsolationGranularity = Literal["file", "test"]
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
 _FINGERPRINT_ENV_PREFIXES = (
@@ -47,9 +50,95 @@ class FileRunState:
     results: list[FileRunResult]
 
 
-def discover_pytest_units(targets: list[str], default_root: Path) -> list[str]:
-    """Expand pytest targets into an ordered list of file-or-node units."""
+def _validate_pytest_target_exists(target: str) -> None:
+    if "::" in target:
+        file_part = target.split("::", 1)[0]
+        if Path(file_part).exists():
+            return
+        msg = f"pytest target not found: {target}"
+        raise FileNotFoundError(msg)
+
+    if Path(target).exists():
+        return
+
+    msg = f"pytest target not found: {target}"
+    raise FileNotFoundError(msg)
+
+
+def _collection_args(pytest_args: list[str]) -> list[str]:
+    args: list[str] = []
+    skip_next = False
+    for arg in pytest_args:
+        if skip_next:
+            skip_next = False
+            continue
+
+        if arg in {"-q", "-v", "--no-header", "--json-report"}:
+            continue
+        if arg.startswith("--tb="):
+            continue
+        if arg.startswith("--json-report-file=") or arg.startswith("--json-report-omit="):
+            continue
+        if arg.startswith("--junit-xml="):
+            continue
+        if arg in {"--tb", "--json-report-file", "--json-report-omit", "--junit-xml"}:
+            skip_next = True
+            continue
+
+        args.append(arg)
+
+    args.extend(["--collect-only", "-qq"])
+    return args
+
+
+def collect_pytest_nodeids(
+    targets: list[str],
+    pytest_args: list[str],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Collect pytest nodeids for the requested targets using a subprocess."""
+    cmd = [sys.executable, "-m", "pytest", *targets, *_collection_args(pytest_args)]
+    completed = subprocess.run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=dict(env or os.environ),
+    )
+
+    if completed.returncode not in {0, 5}:
+        details = completed.stderr.strip() or completed.stdout.strip() or "unknown collection error"
+        msg = f"pytest collection failed: {details}"
+        raise ValueError(msg)
+
+    nodeids: list[str] = []
+    for raw_line in completed.stdout.splitlines():
+        line = raw_line.strip()
+        if not line or "::" not in line:
+            continue
+        nodeids.append(line)
+
+    return nodeids
+
+
+def discover_pytest_units(
+    targets: list[str],
+    default_root: Path,
+    *,
+    granularity: IsolationGranularity = "file",
+    pytest_args: list[str] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Expand pytest targets into an ordered list of file or test units."""
     requested = targets or [str(default_root)]
+
+    for target in requested:
+        _validate_pytest_target_exists(target)
+
+    if granularity == "test":
+        return collect_pytest_nodeids(requested, pytest_args or [], env=env)
+
     units: list[str] = []
     seen: set[str] = set()
 
@@ -75,9 +164,6 @@ def discover_pytest_units(targets: list[str], default_root: Path) -> list[str]:
                 units.append(unit)
                 seen.add(unit)
             continue
-
-        msg = f"pytest target not found: {target}"
-        raise FileNotFoundError(msg)
 
     return units
 
@@ -231,7 +317,9 @@ def _status_from_returncode(returncode: int) -> str:
     return "failed"
 
 
-def _file_timeout_seconds(test_timeout: int) -> int:
+def _unit_timeout_seconds(test_timeout: int, granularity: IsolationGranularity) -> int:
+    if granularity == "test":
+        return max(test_timeout + 60, 120)
     return max(test_timeout * 10, 300)
 
 
@@ -252,6 +340,7 @@ def run_isolated_pytest_units(
     resume: bool,
     stop_on_failure: bool,
     console: Console,
+    granularity: IsolationGranularity = "file",
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
     env = os.environ.copy()
@@ -281,8 +370,10 @@ def run_isolated_pytest_units(
     else:
         state = FileRunState(units=units, fingerprint=fingerprint, results=[])
         save_run_state(state_file, state)
+        unit_noun = "tests" if granularity == "test" else "files"
         console.print(
-            f"[cyan]Running[/cyan] {len(units)} pytest units with per-file isolation "
+            f"[cyan]Running[/cyan] {len(units)} pytest {unit_noun} "
+            f"with per-{granularity} isolation "
             f"(state: [bold]{state_file}[/bold])"
         )
 
@@ -306,7 +397,7 @@ def run_isolated_pytest_units(
                 cmd,
                 check=False,
                 env=env,
-                timeout=_file_timeout_seconds(timeout),
+                timeout=_unit_timeout_seconds(timeout, granularity),
             )
             returncode = completed.returncode
             status = _status_from_returncode(returncode)

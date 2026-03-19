@@ -1,6 +1,6 @@
-# Per-File Isolation Mode
+# Isolated Modes
 
-`p11test test` now supports a resumable per-file isolation mode for crash-prone modules:
+`p11test test` now supports resumable isolated modes for crash-prone modules:
 
 ```bash
 uv run p11test test \
@@ -8,17 +8,31 @@ uv run p11test test \
   --isolation file
 ```
 
+or:
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
+  --isolation test
+```
+
 ## What it does
 
-- Expands the requested pytest targets into an ordered list of files or nodeids.
+- Expands the requested pytest targets into an ordered list of files or individual pytest nodeids.
 - Probes PKCS#11 capabilities in a short-lived helper subprocess and passes the
   resulting manifest into pytest instead of loading the module during collection.
 - Runs each unit in a fresh `python -m pytest` subprocess.
 - Writes progress to `.p11test-isolation-state.json` by default.
-- Continues past a crashing file because the file process, not the main runner, dies.
+- Continues past a crashing unit because the unit process, not the main runner, dies.
 - Creates parent directories for `--state-file` automatically.
 
-This is not full per-test isolation. It is a practical regression mode for unstable modules while the deeper pytest integration is still unfinished.
+Mode summary:
+
+- `--isolation file`: one subprocess per file
+- `--isolation test`: one subprocess per collected pytest test nodeid
+
+`test` mode is slower, but it gives much better crash attribution and lets the
+runner skip only the one crashing test on resume instead of rerunning a whole file.
 
 ## Resume From The Broken Place
 
@@ -33,7 +47,7 @@ uv run p11test test \
 
 The runner treats only `passed` and `empty` units as complete. Files that failed, crashed, or timed out are rerun on resume.
 
-If you want the run to stop immediately when it hits a bad file, use:
+If you want the run to stop immediately when it hits a bad unit, use:
 
 ```bash
 uv run p11test test \
@@ -65,20 +79,36 @@ Starting a fresh run without `--resume` overwrites the old state file immediatel
 
 ## Scope And Limits
 
-- `--isolation file` currently supports only `--output rich`.
-- `--sessions` is ignored in file isolation mode.
+- isolated modes currently support only `--output rich`.
+- `--sessions` is ignored in isolated modes.
 - The normal `--timeout` value is still passed through to pytest as per-test timeout.
 - The file runner also has an outer subprocess timeout so a dead file runner does not hang forever.
 - Resume safety checks include the requested units, pytest arguments, relevant environment,
   and file/module metadata. A changed test file or changed module binary invalidates the old state.
 
+Use `file` when:
+
+- the provider is crash-prone but you still want decent speed
+- failures cluster by file or fixture setup
+
+Use `test` when:
+
+- you need precise crash attribution
+- you want resume to skip only one bad test
+- a single file contains both crashing and useful tests
+
 ## Local Helper Script
 
-`local-builds/test.sh` can now opt into the same mode:
+`local-builds/test.sh` can now opt into the same modes:
 
 ```bash
 P11TEST_ISOLATION=file \
 bash local-builds/test.sh bouncyhsm src/p11test/testcases/ckr/test_ckr_codes.py
+```
+
+```bash
+P11TEST_ISOLATION=test \
+bash local-builds/test.sh qryptotoken src/p11test/testcases/test_aead.py
 ```
 
 Some crash-prone providers now default to file isolation automatically when the
@@ -98,6 +128,7 @@ You can still override the default explicitly:
 ```bash
 P11TEST_ISOLATION=none bash local-builds/test.sh nss-softokn -k ckr
 P11TEST_ISOLATION=file bash local-builds/test.sh qryptotoken -x
+P11TEST_ISOLATION=test bash local-builds/test.sh qryptotoken src/p11test/testcases/test_aead.py
 ```
 
 Useful companion variables:

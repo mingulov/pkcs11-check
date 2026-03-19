@@ -1,13 +1,14 @@
-# File Isolation Gap Analysis
+# Isolated Runner Gap Analysis
 
 Date: 2026-03-19
 
 ## Scope Re-Checked
 
-This review is about the current `p11test test --isolation file` implementation:
+This review started with `p11test test --isolation file` and now also covers
+the newer `--isolation test` mode:
 
 - CLI wiring in `src/p11test/cli/test_cmd.py`
-- per-file runner in `src/p11test/core/file_runner.py`
+- per-unit runner in `src/p11test/core/file_runner.py`
 - subprocess base helper in `src/p11test/core/isolation.py`
 - current pytest plugin behavior in `src/p11test/plugin.py`
 - collection-safe capability probing in `src/p11test/core/preflight.py`
@@ -35,7 +36,8 @@ Checks run during this review:
 
 The current solution is useful and real. It is not just a draft.
 
-- `--isolation file` runs each requested file or nodeid in a fresh `python -m pytest` subprocess.
+- `--isolation file` runs each requested file in a fresh `python -m pytest` subprocess.
+- `--isolation test` collects nodeids first and then runs each test in its own subprocess.
 - `--stop-on-failure` stops at the first failing, crashing, or timing-out unit and leaves a resumable state file.
 - `--resume` skips only units already marked `passed` or `empty`.
 - rerunning a failed unit replaces the old state entry instead of appending duplicates.
@@ -58,15 +60,19 @@ That is already useful for unstable modules and for long regression sweeps.
 
 ## Confirmed Gaps
 
-### P0: This is still per-file isolation, not per-test isolation
+### P0: Per-test isolation now exists, but marker-driven policy is still missing
 
-The most important remaining architectural gap is now granularity, not collection safety.
+The biggest architectural gap is no longer "there is no per-test mode." It is
+that the runner still relies on explicit CLI choice instead of marker-driven or
+adaptive escalation.
 
-- one crash during collection inside a file-sized child still loses that whole file
-- one crash in an early test still prevents the rest of that file from running
-- marker-driven `subprocess_per_test` is still metadata only
+- `--isolation file` still loses the rest of a crashing file by design
+- `subprocess` and `subprocess_per_test` are still metadata only
+- there is still no adaptive crash registry that promotes only bad units to stricter isolation
 
-The collection-safe preflight manifest fixed the old parent-process collection hazard, but the runner is still a per-file tactical layer rather than the final per-test isolation design.
+The collection-safe preflight manifest fixed the old parent-process collection hazard,
+and `--isolation test` now gives true per-test subprocess execution. The missing
+piece is making the runner choose that granularity automatically when appropriate.
 
 ### P1: Resume protection is stronger, but still not complete
 
@@ -87,7 +93,7 @@ So a user can still resume into a technically stale continuation after changing 
 
 ### P1: Reporting is intentionally narrow
 
-`--isolation file` currently supports only `--output rich`.
+The isolated modes currently support only `--output rich`.
 
 Missing pieces:
 
@@ -98,29 +104,16 @@ Missing pieces:
 
 For local debugging this is fine. For CI and dashboards it is not enough yet.
 
-### P1: Timeout behavior is coarse
+### P1: Timeout behavior is still heuristic
 
-The outer file timeout is currently `max(per_test_timeout * 10, 300)`.
+The outer timeout is still heuristic:
 
-That is pragmatic but blunt:
+- file mode: `max(per_test_timeout * 10, 300)`
+- test mode: `max(per_test_timeout + 60, 120)`
 
-- a tiny file still waits up to 300 seconds
-- a large file with many slow tests may need more than `10x`
-- the multiplier is not tied to the actual number of tests in the file
+That is pragmatic but still blunt.
 
 This is acceptable as a safety valve, but it is not a principled timeout model.
-
-### P1: File isolation is not the same as per-test isolation
-
-The new mode isolates files or explicit nodeids, not individual collected tests inside a file.
-
-Consequences:
-
-- one crash during collection loses the whole file
-- one crash in an early test means the rest of that file does not run
-- very large files are still relatively coarse failure domains
-
-This is still a good regression mode, but it is not the end state described by the long-term isolation plans.
 
 ### P1: Marker-driven subprocess behavior is still not wired
 
@@ -174,16 +167,17 @@ Current limitations:
 
 ### Long Term
 
-1. Move from per-file to true per-test subprocess isolation for marked crash-prone tests or for the whole product suite.
+1. Add adaptive isolation policy so previously crashing units get promoted from `none` or `file` to `test`.
 2. Define a real worker-isolation model before enabling concurrent file execution.
 3. Decide whether preflight data should be reused across workers through a shared manifest cache.
 
 ## Bottom Line
 
-The new file isolation mode is worth keeping. It solves a real operational problem now:
+The isolated runner is worth keeping. It solves a real operational problem now:
 
 - long runs can continue after a broken file
 - the user can stop and resume from the failure point
 - unstable modules no longer require a single all-or-nothing pytest invocation
 
-But it is still a tactical layer, not the final segfault-survival design. The biggest missing pieces are per-test isolation, richer reporting, and a real worker model.
+But it is still not the final segfault-survival design. The biggest missing pieces
+are marker-driven/adaptive policy, richer reporting, and a real worker model.

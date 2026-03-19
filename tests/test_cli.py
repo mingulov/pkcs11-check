@@ -45,6 +45,7 @@ class TestTestCommand:
             resume: bool,
             stop_on_failure: bool,
             console: object,
+            granularity: str,
         ) -> int:
             del console
             called["units"] = units
@@ -53,13 +54,16 @@ class TestTestCommand:
             called["state_file"] = state_file
             called["resume"] = resume
             called["stop_on_failure"] = stop_on_failure
+            called["granularity"] = granularity
             return 7
 
         monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
         monkeypatch.setattr(
             test_cmd,
             "discover_pytest_units",
-            lambda targets, default_root: [str(default_root / "test_alpha.py")],
+            lambda targets, default_root, *, granularity, pytest_args: [  # type: ignore[arg-type]
+                str(default_root / "test_alpha.py")
+            ],
         )
         monkeypatch.setattr(
             test_cmd,
@@ -103,20 +107,77 @@ class TestTestCommand:
         assert called["state_file"] == state_file
         assert called["resume"] is True
         assert called["stop_on_failure"] is True
+        assert called["granularity"] == "file"
         assert "--p11-pin" not in called["pytest_args"]
         assert "--p11-manifest" in called["pytest_args"]
 
-    def test_test_file_isolation_rejects_non_rich_output(self, tmp_path: Path) -> None:
+    def test_test_test_isolation_invokes_runner(self, tmp_path: Path, monkeypatch: object) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        called: dict[str, object] = {}
+
+        def fake_run(
+            units: list[str],
+            pytest_args: list[str],
+            *,
+            timeout: int,
+            state_file: Path,
+            resume: bool,
+            stop_on_failure: bool,
+            console: object,
+            granularity: str,
+        ) -> int:
+            del pytest_args, timeout, state_file, resume, stop_on_failure, console
+            called["units"] = units
+            called["granularity"] = granularity
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [  # type: ignore[arg-type]
+                "src/p11test/testcases/test_demo.py::test_case"
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--isolation", "test", "src/p11test/testcases"],
+        )
+
+        assert result.exit_code == 0
+        assert called["units"] == ["src/p11test/testcases/test_demo.py::test_case"]
+        assert called["granularity"] == "test"
+
+    @pytest.mark.parametrize("mode", ["file", "test"])
+    def test_test_isolation_rejects_non_rich_output(self, tmp_path: Path, mode: str) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("")
 
         result = runner.invoke(
             app,
-            ["test", "--module", str(module), "--isolation", "file", "--output", "junit"],
+            ["test", "--module", str(module), "--isolation", mode, "--output", "junit"],
         )
 
         assert result.exit_code == 2
-        assert "--isolation file currently supports only --output rich" in result.output
+        assert f"--isolation {mode} currently supports only --output rich" in result.output
 
     def test_test_file_isolation_resume_mismatch_is_reported(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

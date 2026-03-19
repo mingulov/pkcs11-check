@@ -7,7 +7,7 @@ Date: 2026-03-19
 This check focused on the recent runner changes:
 
 - collection-safe PKCS#11 preflight manifest
-- optional per-file isolation via `p11test test --isolation file`
+- optional isolated modes via `p11test test --isolation file|test`
 - `local-builds/test.sh` integration with the new runner path
 
 The goal was not to prove that every module passes the whole product suite. The goal was to separate:

@@ -14,6 +14,7 @@ from p11test.core.file_runner import (
     FileRunResult,
     FileRunState,
     build_state_fingerprint,
+    collect_pytest_nodeids,
     discover_pytest_units,
     load_run_state,
     run_isolated_pytest_units,
@@ -38,10 +39,86 @@ def test_discover_pytest_units_from_directory(tmp_path: Path) -> None:
 
 def test_discover_pytest_units_keeps_nodeid_target(tmp_path: Path) -> None:
     target = f"{tmp_path / 'test_demo.py'}::TestThing::test_case"
+    (tmp_path / "test_demo.py").write_text("")
 
     units = discover_pytest_units([target], tmp_path / "unused")
 
     assert units == [target]
+
+
+def test_collect_pytest_nodeids(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n")
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        env: dict[str, str],
+    ) -> SimpleNamespace:
+        del check, capture_output, text, env
+        assert cmd[-2:] == ["--collect-only", "-qq"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                f"{target}::test_case\n"
+                f"{target}::test_other[param]\n"
+                "\n2 tests collected in 0.03s\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+
+    units = collect_pytest_nodeids([str(target)], ["--p11-module", "/tmp/module.so"])
+
+    assert units == [f"{target}::test_case", f"{target}::test_other[param]"]
+
+
+def test_discover_pytest_units_test_granularity_collects_nodeids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n")
+
+    monkeypatch.setattr(
+        "p11test.core.file_runner.collect_pytest_nodeids",
+        lambda targets, pytest_args, *, env=None: [f"{target}::test_case"],  # type: ignore[arg-type]
+    )
+
+    units = discover_pytest_units(
+        [str(target)],
+        tmp_path / "unused",
+        granularity="test",
+        pytest_args=["--p11-module", "/tmp/module.so"],
+    )
+
+    assert units == [f"{target}::test_case"]
+
+
+def test_collect_pytest_nodeids_reports_collection_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n")
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        env: dict[str, str],
+    ) -> SimpleNamespace:
+        del cmd, check, capture_output, text, env
+        return SimpleNamespace(returncode=4, stdout="", stderr="usage error")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="pytest collection failed: usage error"):
+        collect_pytest_nodeids([str(target)], ["--p11-module", "/tmp/module.so"])
 
 
 def test_state_round_trip(tmp_path: Path) -> None:
@@ -111,6 +188,7 @@ def test_run_isolated_pytest_units_records_results_and_stops(
         resume=False,
         stop_on_failure=True,
         console=console,
+        granularity="file",
     )
 
     saved = load_run_state(state_file)
@@ -228,6 +306,7 @@ def test_run_isolated_pytest_units_resume_skips_passed(monkeypatch: object, tmp_
         resume=True,
         stop_on_failure=False,
         console=console,
+        granularity="file",
     )
 
     saved = load_run_state(state_file)
@@ -274,6 +353,7 @@ def test_run_isolated_pytest_units_resume_replaces_failed_result(
         resume=True,
         stop_on_failure=False,
         console=console,
+        granularity="file",
     )
 
     saved = load_run_state(state_file)
@@ -308,4 +388,39 @@ def test_run_isolated_pytest_units_resume_rejects_mismatched_state(
             resume=True,
             stop_on_failure=False,
             console=console,
+            granularity="file",
         )
+
+
+def test_run_isolated_pytest_units_test_granularity_uses_shorter_outer_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        check: bool,
+        env: dict[str, str],
+        timeout: int,
+    ) -> SimpleNamespace:
+        del cmd, check, env
+        seen["timeout"] = timeout
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    console = Console(file=StringIO(), force_terminal=False)
+
+    exit_code = run_isolated_pytest_units(
+        ["tests/test_demo.py::test_case"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=30,
+        state_file=tmp_path / "state.json",
+        resume=False,
+        stop_on_failure=False,
+        console=console,
+        granularity="test",
+    )
+
+    assert exit_code == 0
+    assert seen["timeout"] == 120
