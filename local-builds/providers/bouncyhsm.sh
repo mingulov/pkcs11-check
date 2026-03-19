@@ -5,11 +5,37 @@
 
 PROVIDER_NAME="bouncyhsm"
 REPO="https://github.com/harrison314/BouncyHsm.git"
+PATCH_FILE="$PROJECT_DIR/patches/bouncyhsm/0001-fix-getattributevalue-rvmethod.patch"
+
+_apply_local_patch() {
+    local src="$1"
+    local apply_flags=(--ignore-space-change --ignore-whitespace)
+
+    if [ ! -f "$PATCH_FILE" ]; then
+        echo "ERROR: Missing patch file: $PATCH_FILE"
+        exit 1
+    fi
+
+    if git -C "$src" apply "${apply_flags[@]}" --check "$PATCH_FILE" >/dev/null 2>&1; then
+        echo "Applying local BouncyHSM patch..."
+        git -C "$src" apply "${apply_flags[@]}" "$PATCH_FILE"
+        return
+    fi
+
+    if git -C "$src" apply "${apply_flags[@]}" --reverse --check "$PATCH_FILE" >/dev/null 2>&1; then
+        echo "Local BouncyHSM patch already applied."
+        return
+    fi
+
+    echo "ERROR: Could not apply local patch: $PATCH_FILE"
+    exit 1
+}
 
 build() {
     local src="$BASE_DIR/bouncyhsm/src"
     local server="$BASE_DIR/bouncyhsm/server"
     local lib="$BASE_DIR/bouncyhsm/lib"
+    local cc_bin=""
     mkdir -p "$lib" "$server"
 
     echo "=== Building BouncyHSM ==="
@@ -20,29 +46,37 @@ build() {
         exit 1
     fi
 
+    if ! command -v make &>/dev/null; then
+        echo "ERROR: make not found."
+        exit 1
+    fi
+
+    if command -v gcc &>/dev/null; then
+        cc_bin="gcc"
+    elif command -v clang &>/dev/null; then
+        cc_bin="clang"
+    else
+        echo "ERROR: gcc or clang is required to build the native PKCS#11 shim."
+        exit 1
+    fi
+
     if [ ! -d "$src" ]; then
         git clone --depth 1 "$REPO" "$src"
     fi
 
+    _apply_local_patch "$src"
+
     cd "$src"
     echo "Building server..."
-    dotnet publish src/Src/BouncyHsm/BouncyHsm.csproj -c Release -o "$server" 2>&1 | tail -3
+    dotnet publish src/Src/BouncyHsm/BouncyHsm.csproj -c Release -o "$server" \
+        >"$BASE_DIR/bouncyhsm/dotnet-publish.log"
+    tail -3 "$BASE_DIR/bouncyhsm/dotnet-publish.log"
 
-    # Get native PKCS#11 shim from NuGet (BouncyHsm.Client package)
-    echo "Extracting native PKCS#11 lib from NuGet..."
-    local tmpdir=$(mktemp -d)
-    cd "$tmpdir"
-    dotnet new console -o . --force 2>/dev/null
-    dotnet add package BouncyHsm.Client 2>/dev/null
-    local so=$(find ~/.nuget -name "*.so" -path "*/linux-x64/*" 2>/dev/null | head -1)
-    if [ -n "$so" ]; then
-        cp "$so" "$lib/libbouncyhsm_pkcs11.so"
-        echo "Built: $lib/libbouncyhsm_pkcs11.so"
-        ls -lh "$lib/libbouncyhsm_pkcs11.so"
-    else
-        echo "WARNING: native .so not found in NuGet"
-    fi
-    rm -rf "$tmpdir"
+    echo "Building native PKCS#11 shim from patched source..."
+    make -C build_linux CC="$cc_bin"
+    cp build_linux/BouncyHsm.Pkcs11Lib-x64.so "$lib/libbouncyhsm_pkcs11.so"
+    echo "Built: $lib/libbouncyhsm_pkcs11.so"
+    ls -lh "$lib/libbouncyhsm_pkcs11.so"
 
     echo ""
     echo "Server: dotnet $server/BouncyHsm.dll"
@@ -53,12 +87,21 @@ setup() {
     [ -f "$so" ] || { echo "ERROR: Build first: bash local-builds/build.sh bouncyhsm"; exit 1; }
 
     echo "NOTE: BouncyHSM server must be running."
+    echo "  mkdir -p $BASE_DIR/bouncyhsm/data"
+    echo "  ASPNETCORE_ENVIRONMENT=Docker \\"
+    echo "  ASPNETCORE_URLS=http://127.0.0.1:5011 \\"
+    echo "  BouncyHsm_LiteDbPersistentRepositorySetup__DbFilePath=$BASE_DIR/bouncyhsm/data/BouncyHsm.db \\"
+    echo "  BouncyHsm_BouncyHsmSetup__TcpEndpoint__Endpoint=127.0.0.1:8765 \\"
     echo "  dotnet $BASE_DIR/bouncyhsm/server/BouncyHsm.dll"
     echo ""
     echo "Create a slot via API:"
-    echo '  curl -X POST http://localhost:5000/Slot -H "Content-Type: application/json" \'
+    echo '  curl -X POST http://127.0.0.1:5011/Slot -H "Content-Type: application/json" \'
     echo '    -d '"'"'{"IsHwDevice":false,"Description":"p11test","Token":{"Label":"p11test","SerialNumber":"0001","UserPin":"1234","SoPin":"12345678"}}'"'"
 
     MODULE="$so"
     PIN="1234"
+}
+
+get_env() {
+    echo "BOUNCY_HSM_CFG_STRING=Server=127.0.0.1;Port=8765;"
 }

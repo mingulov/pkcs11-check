@@ -2,19 +2,19 @@
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends git unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends git build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+COPY patches/bouncyhsm/0001-fix-getattributevalue-rvmethod.patch /tmp/bouncyhsm-patches/
 RUN git clone --depth 1 https://github.com/harrison314/BouncyHsm.git /build/bouncyhsm
 WORKDIR /build/bouncyhsm
-RUN dotnet publish src/Src/BouncyHsm/BouncyHsm.csproj -c Release -o /app/server 2>&1 | tail -3
-
-# Extract native PKCS#11 lib from NuGet
-RUN dotnet new console -o /tmp/nuget-extract && \
-    cd /tmp/nuget-extract && \
-    dotnet add package BouncyHsm.Client 2>&1 | tail -3 && \
-    LIBPATH=$(find ~/.nuget -name "*.so" -path "*/linux-x64/*" 2>/dev/null | head -1) && \
-    if [ -n "$LIBPATH" ]; then cp "$LIBPATH" /app/libbouncyhsm_pkcs11.so; fi
+RUN git apply --ignore-space-change --ignore-whitespace \
+        /tmp/bouncyhsm-patches/0001-fix-getattributevalue-rvmethod.patch && \
+    dotnet publish src/Src/BouncyHsm/BouncyHsm.csproj -c Release -o /app/server \
+        >/tmp/dotnet-publish.log && \
+    tail -3 /tmp/dotnet-publish.log && \
+    make -C build_linux CC=gcc && \
+    cp build_linux/BouncyHsm.Pkcs11Lib-x64.so /app/libbouncyhsm_pkcs11.so
 
 FROM python:3.12-slim
 
