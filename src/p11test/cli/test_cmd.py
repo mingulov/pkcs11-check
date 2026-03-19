@@ -11,7 +11,12 @@ import pytest
 import typer
 from rich.console import Console
 
-from p11test.core.file_runner import discover_pytest_units, run_isolated_pytest_units
+from p11test.core.file_runner import (
+    discover_auto_isolation_units,
+    discover_pytest_units,
+    load_run_state,
+    run_isolated_pytest_units,
+)
 from p11test.core.preflight import run_preflight_subprocess
 
 console = Console(stderr=True)
@@ -90,7 +95,9 @@ def test_command(
     output: str = typer.Option("rich", "--output", "-o", help="Output: rich, json, junit"),
     output_file: str | None = typer.Option(None, "--output-file", help="Output file path"),
     verbose: bool = typer.Option(False, "--verbose", "-V", help="Verbose output"),
-    isolation: str = typer.Option("none", "--isolation", help="Isolation mode: none, file, test"),
+    isolation: str = typer.Option(
+        "none", "--isolation", help="Isolation mode: none, auto, file, test"
+    ),
     resume: bool = typer.Option(False, "--resume", help="Resume an isolated run"),
     stop_on_failure: bool = typer.Option(
         False,
@@ -102,6 +109,11 @@ def test_command(
         "--state-file",
         help="State file for isolated runs",
     ),
+    policy_file: Path = typer.Option(
+        Path(".p11test-isolation-policy.json"),
+        "--policy-file",
+        help="Adaptive isolation policy file for isolated runs",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
@@ -109,11 +121,11 @@ def test_command(
         console.print(f"[red]Error:[/red] Module not found: {module}")
         raise typer.Exit(code=3)
 
-    if isolation not in {"none", "file", "test"}:
+    if isolation not in {"none", "auto", "file", "test"}:
         console.print(f"[red]Error:[/red] Unsupported isolation mode: {isolation}")
         raise typer.Exit(code=2)
 
-    if isolation in {"file", "test"} and output != "rich":
+    if isolation in {"auto", "file", "test"} and output != "rich":
         console.print(
             f"[red]Error:[/red] --isolation {isolation} currently supports only --output rich"
         )
@@ -157,8 +169,7 @@ def test_command(
 
     target_args = targets or [_TESTCASES_DIR]
     try:
-        if isolation in {"file", "test"}:
-            isolated_mode = cast(Literal["file", "test"], isolation)
+        if isolation in {"auto", "file", "test"}:
             if sessions != 1:
                 console.print(
                     "[yellow]Warning:[/yellow] "
@@ -166,21 +177,37 @@ def test_command(
                 )
 
             try:
-                units = discover_pytest_units(
-                    target_args,
-                    Path(_TESTCASES_DIR),
-                    granularity=isolated_mode,
-                    pytest_args=pytest_args,
-                )
+                if isolation == "auto":
+                    prior_state = load_run_state(state_file) if resume else None
+                    if prior_state is not None:
+                        units = prior_state.units
+                    else:
+                        units = discover_auto_isolation_units(
+                            target_args,
+                            Path(_TESTCASES_DIR),
+                            pytest_args=pytest_args,
+                            policy_file=policy_file,
+                        )
+                    runner_granularity: Literal["mixed"] | Literal["file", "test"] = "mixed"
+                else:
+                    isolated_mode = cast(Literal["file", "test"], isolation)
+                    units = discover_pytest_units(
+                        target_args,
+                        Path(_TESTCASES_DIR),
+                        granularity=isolated_mode,
+                        pytest_args=pytest_args,
+                    )
+                    runner_granularity = isolated_mode
                 exit_code = run_isolated_pytest_units(
                     units,
                     pytest_args,
                     timeout=timeout,
                     state_file=state_file,
+                    policy_file=policy_file,
                     resume=resume,
                     stop_on_failure=stop_on_failure,
                     console=console,
-                    granularity=isolated_mode,
+                    granularity=runner_granularity,
                 )
             except (FileNotFoundError, ValueError) as exc:
                 console.print(f"[red]Error:[/red] {exc}")

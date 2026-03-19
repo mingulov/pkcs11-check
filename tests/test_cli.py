@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -42,6 +43,7 @@ class TestTestCommand:
             *,
             timeout: int,
             state_file: Path,
+            policy_file: Path | None,
             resume: bool,
             stop_on_failure: bool,
             console: object,
@@ -52,6 +54,7 @@ class TestTestCommand:
             called["pytest_args"] = pytest_args
             called["timeout"] = timeout
             called["state_file"] = state_file
+            called["policy_file"] = policy_file
             called["resume"] = resume
             called["stop_on_failure"] = stop_on_failure
             called["granularity"] = granularity
@@ -105,6 +108,7 @@ class TestTestCommand:
         assert called["units"] == [str(Path(test_cmd._TESTCASES_DIR) / "test_alpha.py")]
         assert called["timeout"] == 33
         assert called["state_file"] == state_file
+        assert called["policy_file"] == Path(".p11test-isolation-policy.json")
         assert called["resume"] is True
         assert called["stop_on_failure"] is True
         assert called["granularity"] == "file"
@@ -122,12 +126,13 @@ class TestTestCommand:
             *,
             timeout: int,
             state_file: Path,
+            policy_file: Path | None,
             resume: bool,
             stop_on_failure: bool,
             console: object,
             granularity: str,
         ) -> int:
-            del pytest_args, timeout, state_file, resume, stop_on_failure, console
+            del pytest_args, timeout, state_file, policy_file, resume, stop_on_failure, console
             called["units"] = units
             called["granularity"] = granularity
             return 0
@@ -166,7 +171,144 @@ class TestTestCommand:
         assert called["units"] == ["src/p11test/testcases/test_demo.py::test_case"]
         assert called["granularity"] == "test"
 
-    @pytest.mark.parametrize("mode", ["file", "test"])
+    def test_test_auto_isolation_invokes_mixed_runner(
+        self, tmp_path: Path, monkeypatch: object
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        called: dict[str, object] = {}
+
+        def fake_run(
+            units: list[str],
+            pytest_args: list[str],
+            *,
+            timeout: int,
+            state_file: Path,
+            policy_file: Path | None,
+            resume: bool,
+            stop_on_failure: bool,
+            console: object,
+            granularity: str,
+        ) -> int:
+            del pytest_args, timeout, state_file, policy_file, resume, stop_on_failure, console
+            called["units"] = units
+            called["granularity"] = granularity
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_auto_isolation_units",
+            lambda targets, default_root, *, pytest_args, policy_file: [  # type: ignore[arg-type]
+                "src/p11test/testcases/test_demo.py",
+                "src/p11test/testcases/test_marked.py::test_case",
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--isolation", "auto", "src/p11test/testcases"],
+        )
+
+        assert result.exit_code == 0
+        assert called["units"] == [
+            "src/p11test/testcases/test_demo.py",
+            "src/p11test/testcases/test_marked.py::test_case",
+        ]
+        assert called["granularity"] == "mixed"
+
+    def test_test_auto_resume_reuses_saved_units(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        state_file = tmp_path / "state.json"
+        called: dict[str, object] = {}
+
+        def fake_run(
+            units: list[str],
+            pytest_args: list[str],
+            *,
+            timeout: int,
+            state_file: Path,
+            policy_file: Path | None,
+            resume: bool,
+            stop_on_failure: bool,
+            console: object,
+            granularity: str,
+        ) -> int:
+            del pytest_args, timeout, state_file, policy_file, stop_on_failure, console
+            called["units"] = units
+            called["resume"] = resume
+            called["granularity"] = granularity
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "load_run_state",
+            lambda path: SimpleNamespace(units=["saved.py", "saved.py::test_case"]),  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_auto_isolation_units",
+            lambda targets, default_root, *, pytest_args, policy_file: pytest.fail(  # type: ignore[arg-type]
+                "auto discovery should not run for resume with saved state"
+            ),
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "auto",
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert called["units"] == ["saved.py", "saved.py::test_case"]
+        assert called["resume"] is True
+        assert called["granularity"] == "mixed"
+
+    @pytest.mark.parametrize("mode", ["auto", "file", "test"])
     def test_test_isolation_rejects_non_rich_output(self, tmp_path: Path, mode: str) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("")

@@ -59,7 +59,7 @@ if [ -z "$TARGET" ] || [ "$TARGET" = "help" ] || [ "$TARGET" = "--help" ]; then
     echo "  $0 kryoptic                      # full suite"
     echo "  $0 kryoptic -k test_encrypt -v   # specific tests"
     echo "  $0 softhsm2-local -x --tb=short  # stop on first fail"
-    echo "  P11TEST_ISOLATION=file $0 bouncyhsm src/p11test/testcases/ckr/test_ckr_codes.py"
+    echo "  P11TEST_ISOLATION=auto $0 nss-softokn src/p11test/testcases/test_wycheproof_pbkdf2.py"
     exit 1
 fi
 
@@ -94,6 +94,11 @@ if type -t get_default_state_file &>/dev/null; then
     provider_default_state_file="$(get_default_state_file)"
 fi
 
+provider_default_policy_file="/tmp/p11test-${TARGET}-isolation-policy.json"
+if type -t get_default_policy_file &>/dev/null; then
+    provider_default_policy_file="$(get_default_policy_file)"
+fi
+
 use_isolation_runner=0
 isolation_requested=0
 if [ -n "${P11TEST_ISOLATION+x}" ]; then
@@ -104,7 +109,7 @@ if [ "${P11TEST_ISOLATION:-none}" != "none" ]; then
 fi
 for arg in "$@"; do
     case "$arg" in
-        --isolation|--isolation=*|--resume|--stop-on-failure|--state-file|--state-file=*)
+        --isolation|--isolation=*|--resume|--stop-on-failure|--state-file|--state-file=*|--policy-file|--policy-file=*)
             use_isolation_runner=1
             isolation_requested=1
             ;;
@@ -129,6 +134,7 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     resume="${P11TEST_RESUME:-0}"
     stop_on_failure="${P11TEST_STOP_ON_FAILURE:-0}"
     state_file="${P11TEST_STATE_FILE:-}"
+    policy_file="${P11TEST_POLICY_FILE:-}"
     match=""
     verbose=0
     destructive=0
@@ -158,6 +164,14 @@ if [ "$use_isolation_runner" -eq 1 ]; then
                 ;;
             --state-file=*)
                 state_file="${1#*=}"
+                shift
+                ;;
+            --policy-file)
+                policy_file="${2:-}"
+                shift 2
+                ;;
+            --policy-file=*)
+                policy_file="${1#*=}"
                 shift
                 ;;
             -k|--match)
@@ -201,12 +215,20 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     if [ -z "$state_file" ] && [ "$isolation_from_provider" -eq 1 ]; then
         state_file="$provider_default_state_file"
     fi
+    if [ -z "$policy_file" ] && [ "$isolation_from_provider" -eq 1 ]; then
+        policy_file="$provider_default_policy_file"
+    fi
 
     echo "Isolation: $isolation_mode"
     if [ "$isolation_from_provider" -eq 1 ] && [ -z "${P11TEST_ISOLATION+x}" ]; then
         echo "State:     $state_file (provider default)"
     elif [ -n "$state_file" ]; then
         echo "State:     $state_file"
+    fi
+    if [ "$isolation_from_provider" -eq 1 ] && [ -z "${P11TEST_POLICY_FILE+x}" ] && [ -n "$policy_file" ]; then
+        echo "Policy:    $policy_file (provider default)"
+    elif [ -n "$policy_file" ]; then
+        echo "Policy:    $policy_file"
     fi
     echo ""
 
@@ -216,6 +238,7 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     [ "$resume" != "0" ] && CLI_ARGS+=("--resume")
     [ "$stop_on_failure" != "0" ] && CLI_ARGS+=("--stop-on-failure")
     [ -n "$state_file" ] && CLI_ARGS+=("--state-file" "$state_file")
+    [ -n "$policy_file" ] && CLI_ARGS+=("--policy-file" "$policy_file")
     [ "$verbose" != "0" ] && CLI_ARGS+=("--verbose")
     [ "$destructive" != "0" ] && CLI_ARGS+=("--destructive")
     [ -n "$match" ] && CLI_ARGS+=("--match" "$match")

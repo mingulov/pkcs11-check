@@ -52,5 +52,5 @@ setup() {
 }
 
 get_default_isolation() {
-    echo "file"
+    echo "auto"
 }

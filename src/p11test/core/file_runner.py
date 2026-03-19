@@ -16,6 +16,8 @@ from typing import Literal
 from rich.console import Console
 
 IsolationGranularity = Literal["file", "test"]
+RunnerGranularity = Literal["file", "test", "mixed"]
+CrashStatus = Literal["crashed", "timeout"]
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
 _FINGERPRINT_ENV_PREFIXES = (
@@ -29,6 +31,13 @@ _FINGERPRINT_ENV_PREFIXES = (
     "TPM2_",
 )
 _REDACTED_ENV_KEYS = {"P11TEST_PIN"}
+_POLICY_IGNORED_ENV_KEYS = {
+    "P11TEST_ISOLATION",
+    "P11TEST_POLICY_FILE",
+    "P11TEST_RESUME",
+    "P11TEST_STATE_FILE",
+    "P11TEST_STOP_ON_FAILURE",
+}
 
 
 @dataclass(frozen=True)
@@ -48,6 +57,15 @@ class FileRunState:
     units: list[str]
     fingerprint: str
     results: list[FileRunResult]
+
+
+@dataclass
+class BackendIsolationPolicy:
+    """Persistent adaptive isolation policy for one backend fingerprint."""
+
+    fingerprint: str
+    promoted_files: list[str]
+    crashed_tests: list[str]
 
 
 def _validate_pytest_target_exists(target: str) -> None:
@@ -168,6 +186,100 @@ def discover_pytest_units(
     return units
 
 
+def file_isolation_mode(path: Path) -> IsolationGranularity:
+    """Return the preferred isolated granularity for a collected test file."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return "file"
+
+    if "pytest.mark.subprocess_per_test" in text:
+        return "test"
+    return "file"
+
+
+def discover_auto_isolation_units(
+    targets: list[str],
+    default_root: Path,
+    *,
+    pytest_args: list[str],
+    policy_file: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Expand targets into a mixed file/test unit list for auto isolation."""
+    file_units = discover_pytest_units(targets, default_root, granularity="file")
+    units: list[str] = []
+    promoted_files = load_promoted_files(policy_file, pytest_args, env)
+
+    for file_unit in file_units:
+        file_path = Path(file_unit.split("::", 1)[0])
+        mode = file_isolation_mode(file_path)
+        if normalize_policy_file_key(str(file_path)) in promoted_files:
+            mode = "test"
+        if mode == "test":
+            units.extend(
+                discover_pytest_units(
+                    [file_unit],
+                    default_root,
+                    granularity="test",
+                    pytest_args=pytest_args,
+                    env=env,
+                )
+            )
+        else:
+            units.append(file_unit)
+
+    return units
+
+
+def load_isolation_policy(path: Path) -> dict[str, BackendIsolationPolicy]:
+    """Load the adaptive isolation policy file."""
+    if not path.exists():
+        return {}
+
+    raw = json.loads(path.read_text())
+    if not isinstance(raw, dict):
+        msg = f"invalid isolation policy file: {path}"
+        raise ValueError(msg)
+    raw_backends = raw.get("backends", {})
+    if not isinstance(raw_backends, dict):
+        msg = f"invalid isolation policy file: {path}"
+        raise ValueError(msg)
+
+    policies: dict[str, BackendIsolationPolicy] = {}
+    for fingerprint, item in raw_backends.items():
+        if not isinstance(fingerprint, str) or not isinstance(item, dict):
+            continue
+        promoted_files = [
+            str(value) for value in item.get("promoted_files", []) if isinstance(value, str)
+        ]
+        crashed_tests = [
+            str(value) for value in item.get("crashed_tests", []) if isinstance(value, str)
+        ]
+        policies[fingerprint] = BackendIsolationPolicy(
+            fingerprint=fingerprint,
+            promoted_files=promoted_files,
+            crashed_tests=crashed_tests,
+        )
+
+    return policies
+
+
+def save_isolation_policy(path: Path, policies: Mapping[str, BackendIsolationPolicy]) -> None:
+    """Persist the adaptive isolation policy file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "backends": {
+            fingerprint: {
+                "promoted_files": policy.promoted_files,
+                "crashed_tests": policy.crashed_tests,
+            }
+            for fingerprint, policy in sorted(policies.items())
+        }
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
 def load_run_state(path: Path) -> FileRunState | None:
     """Load a resumable runner state from disk."""
     if not path.exists():
@@ -215,6 +327,96 @@ def _manifest_digest(pytest_args: list[str]) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _backend_args_snapshot(pytest_args: list[str]) -> list[str]:
+    args: list[str] = []
+    skip_next = False
+    for index, arg in enumerate(pytest_args):
+        if skip_next:
+            skip_next = False
+            continue
+
+        if arg in {
+            "--p11-module",
+            "--p11-interface",
+            "--p11-slot",
+            "--p11-pin",
+            "--p11-manifest",
+        }:
+            value = pytest_args[index + 1] if index + 1 < len(pytest_args) else ""
+            if arg == "--p11-pin":
+                value = "<redacted>"
+            elif arg == "--p11-manifest":
+                value = "<manifest>"
+            args.extend([arg, value])
+            skip_next = True
+            continue
+
+        if any(
+            arg.startswith(f"{option}=")
+            for option in {
+                "--p11-module",
+                "--p11-interface",
+                "--p11-slot",
+                "--p11-pin",
+                "--p11-manifest",
+            }
+        ):
+            option, value = arg.split("=", 1)
+            if option == "--p11-pin":
+                value = "<redacted>"
+            elif option == "--p11-manifest":
+                value = "<manifest>"
+            args.append(f"{option}={value}")
+            continue
+
+        if arg == "--p11-destructive":
+            args.append(arg)
+
+    return args
+
+
+def build_policy_fingerprint(pytest_args: list[str], env: Mapping[str, str] | None = None) -> str:
+    """Build a stable backend fingerprint for adaptive isolation policy."""
+    module_snapshot = None
+    module_path = _extract_option_value(pytest_args, "--p11-module")
+    if module_path is not None:
+        module_snapshot = _path_snapshot(module_path)
+
+    payload = json.dumps(
+        {
+            "backend_args": _backend_args_snapshot(pytest_args),
+            "env": _fingerprint_env(env or os.environ, ignored_keys=_POLICY_IGNORED_ENV_KEYS),
+            "manifest_digest": _manifest_digest(pytest_args),
+            "module": module_snapshot,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def normalize_policy_file_key(path_str: str) -> str:
+    """Normalize a test file path for policy matching."""
+    return str(Path(path_str).resolve())
+
+
+def load_promoted_files(
+    path: Path | None,
+    pytest_args: list[str],
+    env: Mapping[str, str] | None = None,
+) -> set[str]:
+    """Return files promoted to per-test isolation for this backend."""
+    if path is None:
+        return set()
+
+    policies = load_isolation_policy(path)
+    fingerprint = build_policy_fingerprint(pytest_args, env)
+    policy = policies.get(fingerprint)
+    if policy is None:
+        return set()
+    return {normalize_policy_file_key(file_path) for file_path in policy.promoted_files}
+
+
 def _path_snapshot(path_str: str) -> dict[str, int | str] | None:
     path = Path(path_str)
     if not path.exists():
@@ -244,9 +446,13 @@ def _fingerprint_units(units: list[str]) -> list[dict[str, int | str]]:
     return snapshots
 
 
-def _fingerprint_env(env: Mapping[str, str]) -> dict[str, str]:
+def _fingerprint_env(
+    env: Mapping[str, str], *, ignored_keys: set[str] | frozenset[str] = frozenset()
+) -> dict[str, str]:
     snapshot: dict[str, str] = {}
     for key in sorted(env):
+        if key in ignored_keys:
+            continue
         if key in _FINGERPRINT_ENV_KEYS or key.startswith(_FINGERPRINT_ENV_PREFIXES):
             if key in _REDACTED_ENV_KEYS:
                 snapshot[key] = "<set>" if env[key] else "<unset>"
@@ -300,9 +506,7 @@ def units_remaining_for_resume(units: list[str], state: FileRunState | None) -> 
         return units
 
     completed_ok = {
-        result.target
-        for result in state.results
-        if result.status in {"passed", "empty"}
+        result.target for result in state.results if result.status in {"passed", "empty"}
     }
     return [unit for unit in units if unit not in completed_ok]
 
@@ -323,6 +527,61 @@ def _unit_timeout_seconds(test_timeout: int, granularity: IsolationGranularity) 
     return max(test_timeout * 10, 300)
 
 
+def _effective_granularity(unit: str, granularity: RunnerGranularity) -> IsolationGranularity:
+    if granularity == "mixed":
+        return "test" if "::" in unit else "file"
+    return granularity
+
+
+def _promote_crashing_unit(
+    policy_file: Path | None,
+    pytest_args: list[str],
+    env: Mapping[str, str],
+    unit: str,
+    unit_granularity: IsolationGranularity,
+    status: CrashStatus,
+    console: Console,
+) -> None:
+    if policy_file is None:
+        return
+
+    policies = load_isolation_policy(policy_file)
+    fingerprint = build_policy_fingerprint(pytest_args, env)
+    policy = policies.get(
+        fingerprint,
+        BackendIsolationPolicy(fingerprint=fingerprint, promoted_files=[], crashed_tests=[]),
+    )
+
+    file_key = normalize_policy_file_key(unit.split("::", 1)[0])
+    changed = False
+
+    if file_key not in policy.promoted_files:
+        policy.promoted_files.append(file_key)
+        policy.promoted_files.sort()
+        changed = True
+
+    if unit_granularity == "test" and unit not in policy.crashed_tests:
+        policy.crashed_tests.append(unit)
+        policy.crashed_tests.sort()
+        changed = True
+
+    if not changed:
+        return
+
+    policies[fingerprint] = policy
+    save_isolation_policy(policy_file, policies)
+
+    if unit_granularity == "file":
+        console.print(
+            f"[yellow]Adaptive isolation:[/yellow] {unit} {status}; "
+            "future auto runs will promote this file to per-test isolation."
+        )
+    else:
+        console.print(
+            f"[yellow]Adaptive isolation:[/yellow] recorded crashing test {unit} after {status}."
+        )
+
+
 def _record_result(state: FileRunState, result: FileRunResult) -> None:
     for index, existing in enumerate(state.results):
         if existing.target == result.target:
@@ -337,10 +596,11 @@ def run_isolated_pytest_units(
     *,
     timeout: int,
     state_file: Path,
+    policy_file: Path | None,
     resume: bool,
     stop_on_failure: bool,
     console: Console,
-    granularity: IsolationGranularity = "file",
+    granularity: RunnerGranularity = "file",
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
     env = os.environ.copy()
@@ -370,10 +630,15 @@ def run_isolated_pytest_units(
     else:
         state = FileRunState(units=units, fingerprint=fingerprint, results=[])
         save_run_state(state_file, state)
-        unit_noun = "tests" if granularity == "test" else "files"
+        if granularity == "test":
+            unit_noun = "tests"
+        elif granularity == "file":
+            unit_noun = "files"
+        else:
+            unit_noun = "units"
         console.print(
             f"[cyan]Running[/cyan] {len(units)} pytest {unit_noun} "
-            f"with per-{granularity} isolation "
+            f"with {granularity} isolation "
             f"(state: [bold]{state_file}[/bold])"
         )
 
@@ -391,13 +656,14 @@ def run_isolated_pytest_units(
         console.print(f"[cyan][{index}/{total}][/cyan] {unit}")
         start = time.monotonic()
         cmd = [sys.executable, "-m", "pytest", unit, *pytest_args]
+        unit_granularity = _effective_granularity(unit, granularity)
 
         try:
             completed = subprocess.run(
                 cmd,
                 check=False,
                 env=env,
-                timeout=_unit_timeout_seconds(timeout, granularity),
+                timeout=_unit_timeout_seconds(timeout, unit_granularity),
             )
             returncode = completed.returncode
             status = _status_from_returncode(returncode)
@@ -411,6 +677,15 @@ def run_isolated_pytest_units(
             )
             _record_result(state, result)
             save_run_state(state_file, state)
+            _promote_crashing_unit(
+                policy_file,
+                pytest_args,
+                env,
+                unit,
+                unit_granularity,
+                "timeout",
+                console,
+            )
             console.print(f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)")
             exit_code = 1
             if stop_on_failure:
@@ -434,6 +709,17 @@ def run_isolated_pytest_units(
         if status in {"passed", "empty"}:
             console.print(f"[green]{status.upper()}[/green] {unit} ({duration_s:.1f}s)")
             continue
+
+        if status == "crashed":
+            _promote_crashing_unit(
+                policy_file,
+                pytest_args,
+                env,
+                unit,
+                unit_granularity,
+                "crashed",
+                console,
+            )
 
         exit_code = 1
         console.print(f"[red]{status.upper()}[/red] {unit} ({duration_s:.1f}s)")

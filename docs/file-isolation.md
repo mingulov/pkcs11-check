@@ -5,6 +5,14 @@
 ```bash
 uv run p11test test \
   --module /path/to/module.so \
+  --isolation auto
+```
+
+or:
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
   --isolation file
 ```
 
@@ -23,16 +31,22 @@ uv run p11test test \
   resulting manifest into pytest instead of loading the module during collection.
 - Runs each unit in a fresh `python -m pytest` subprocess.
 - Writes progress to `.p11test-isolation-state.json` by default.
+- Learns crash-prone files in `.p11test-isolation-policy.json` by default and
+  promotes them to per-test isolation in later `--isolation auto` runs.
 - Continues past a crashing unit because the unit process, not the main runner, dies.
 - Creates parent directories for `--state-file` automatically.
 
 Mode summary:
 
+- `--isolation auto`: safe default, using per-file isolation unless a file is marked
+  `subprocess_per_test` or was previously promoted by the adaptive policy file
 - `--isolation file`: one subprocess per file
 - `--isolation test`: one subprocess per collected pytest test nodeid
 
 `test` mode is slower, but it gives much better crash attribution and lets the
 runner skip only the one crashing test on resume instead of rerunning a whole file.
+`auto` is the best default recovery mode when you want safety without paying full
+per-test cost across the entire target set.
 
 ## Resume From The Broken Place
 
@@ -46,6 +60,8 @@ uv run p11test test \
 ```
 
 The runner treats only `passed` and `empty` units as complete. Files that failed, crashed, or timed out are rerun on resume.
+In `--isolation auto`, resume keeps the saved unit plan from the state file. Fresh
+non-resume runs are the point where newly learned policy promotions take effect.
 
 If you want the run to stop immediately when it hits a bad unit, use:
 
@@ -77,6 +93,27 @@ uv run p11test test \
 
 Starting a fresh run without `--resume` overwrites the old state file immediately.
 
+## Adaptive Policy File
+
+The default adaptive policy file is:
+
+```text
+.p11test-isolation-policy.json
+```
+
+`--isolation auto` uses it to remember files that previously crashed or timed out
+for the same backend fingerprint. Those files are promoted to per-test isolation
+on later runs while the rest of the target set stays at file granularity.
+
+You can override it:
+
+```bash
+uv run p11test test \
+  --module /path/to/module.so \
+  --isolation auto \
+  --policy-file /tmp/p11test-policy.json
+```
+
 ## Scope And Limits
 
 - isolated modes currently support only `--output rich`.
@@ -85,11 +122,20 @@ Starting a fresh run without `--resume` overwrites the old state file immediatel
 - The file runner also has an outer subprocess timeout so a dead file runner does not hang forever.
 - Resume safety checks include the requested units, pytest arguments, relevant environment,
   and file/module metadata. A changed test file or changed module binary invalidates the old state.
+- Adaptive policy keys off backend-relevant inputs only: module/interface/slot/manifest/env, not the
+  current target list. That lets different target selections reuse the same crash knowledge.
 
 Use `file` when:
 
 - the provider is crash-prone but you still want decent speed
 - failures cluster by file or fixture setup
+
+Use `auto` when:
+
+- you want the run to recover from token/module crashes
+- you want the runner to keep file-level speed for most tests
+- you want existing `subprocess_per_test` files promoted automatically
+- you want files that crashed earlier on the same backend to be promoted automatically
 
 Use `test` when:
 
@@ -102,6 +148,11 @@ Use `test` when:
 `local-builds/test.sh` can now opt into the same modes:
 
 ```bash
+P11TEST_ISOLATION=auto \
+bash local-builds/test.sh qryptotoken src/p11test/testcases/test_aead.py
+```
+
+```bash
 P11TEST_ISOLATION=file \
 bash local-builds/test.sh bouncyhsm src/p11test/testcases/ckr/test_ckr_codes.py
 ```
@@ -111,7 +162,7 @@ P11TEST_ISOLATION=test \
 bash local-builds/test.sh qryptotoken src/p11test/testcases/test_aead.py
 ```
 
-Some crash-prone providers now default to file isolation automatically when the
+Some crash-prone providers now default to `auto` isolation automatically when the
 user does not override the mode:
 
 - `nss-softokn`
@@ -123,10 +174,17 @@ Those provider defaults use a stable state file under `/tmp`, for example:
 /tmp/p11test-nss-softokn-isolation-state.json
 ```
 
+and a matching adaptive policy file, for example:
+
+```text
+/tmp/p11test-nss-softokn-isolation-policy.json
+```
+
 You can still override the default explicitly:
 
 ```bash
 P11TEST_ISOLATION=none bash local-builds/test.sh nss-softokn -k ckr
+P11TEST_ISOLATION=auto bash local-builds/test.sh nss-softokn -k ckr
 P11TEST_ISOLATION=file bash local-builds/test.sh qryptotoken -x
 P11TEST_ISOLATION=test bash local-builds/test.sh qryptotoken src/p11test/testcases/test_aead.py
 ```
@@ -138,6 +196,7 @@ P11TEST_ISOLATION=file
 P11TEST_RESUME=1
 P11TEST_STOP_ON_FAILURE=1
 P11TEST_STATE_FILE=/tmp/p11test-bouncyhsm.json
+P11TEST_POLICY_FILE=/tmp/p11test-bouncyhsm-policy.json
 ```
 
 The shell helper supports the common local workflow options in isolation mode:

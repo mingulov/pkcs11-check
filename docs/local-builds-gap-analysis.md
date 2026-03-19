@@ -7,8 +7,9 @@ Date: 2026-03-19
 This check focused on the recent runner changes:
 
 - collection-safe PKCS#11 preflight manifest
-- optional isolated modes via `p11test test --isolation file|test`
+- optional isolated modes via `p11test test --isolation auto|file|test`
 - `local-builds/test.sh` integration with the new runner path
+- adaptive isolation policy persistence across repeated local runs
 
 The goal was not to prove that every module passes the whole product suite. The goal was to separate:
 
@@ -17,7 +18,7 @@ The goal was not to prove that every module passes the whole product suite. The 
 - module-specific product failures or native crashes
 
 Follow-up: after this validation, `local-builds/test.sh` was updated to auto-enable
-file isolation for `nss-softokn` and `qryptotoken` unless the user explicitly
+`auto` isolation for `nss-softokn` and `qryptotoken` unless the user explicitly
 overrides `P11TEST_ISOLATION` or passes `--isolation`.
 
 ## Fix Included In This Validation
@@ -43,13 +44,13 @@ bash local-builds/test.sh nss-softokn -q --tb=no
 bash local-builds/test.sh pkcs11-mock -q --tb=no
 bash local-builds/test.sh qryptotoken -q --tb=no
 
-P11TEST_ISOLATION=file \
+P11TEST_ISOLATION=auto \
 P11TEST_STATE_FILE=/tmp/p11test-nss-crash-resume.json \
 bash local-builds/test.sh nss-softokn \
   src/p11test/testcases/test_wycheproof_pbkdf2.py \
   src/p11test/testcases/test_interface.py
 
-P11TEST_ISOLATION=file \
+P11TEST_ISOLATION=auto \
 P11TEST_STATE_FILE=/tmp/p11test-qryptotoken-crash-resume.json \
 bash local-builds/test.sh qryptotoken \
   src/p11test/testcases/test_aead.py \
@@ -65,9 +66,9 @@ For BouncyHSM, the local server was started manually and a manifest-heavy slice 
 | SoftHSM2 | default `local-builds/test.sh` | Full suite completed | `22796 passed, 6303 skipped, 658 xfailed, 1 warning` in `109.12s` |
 | Kryoptic | default `local-builds/test.sh` | Full suite completed | `21712 passed, 7665 skipped, 380 xfailed, 1 warning` in `80.84s` |
 | NSS softokn | default `local-builds/test.sh` | Full suite crashed | Segfault in `test_wycheproof_pbkdf2.py` around 70% |
-| NSS softokn | `P11TEST_ISOLATION=file` | Crash contained | `test_wycheproof_pbkdf2.py` recorded as `crashed`, next file still ran and passed |
+| NSS softokn | `P11TEST_ISOLATION=auto` | Crash contained | `test_wycheproof_pbkdf2.py` recorded as `crashed`, next file still ran and passed |
 | qryptotoken | default `local-builds/test.sh` | Full suite aborted | Abort in `test_aead.py` almost immediately |
-| qryptotoken | `P11TEST_ISOLATION=file` | Crash contained | `test_aead.py` recorded as `crashed`, next file still ran and exposed a real `MechanismInvalid` failure |
+| qryptotoken | `P11TEST_ISOLATION=auto` | Crash contained | `test_aead.py` recorded as `crashed`, next file still ran and exposed a real `MechanismInvalid` failure |
 | pkcs11-mock | default `local-builds/test.sh` | Full suite completed with massive product errors | `47 failed, 74 passed, 309 skipped, 29327 errors` |
 | BouncyHSM | manual local server + default helper | Targeted manifest-heavy slice completed | `837 passed, 8 skipped, 121 xfailed, 2 failed` in `128.73s`; no loader/collection crash |
 | OpenCryptoki | local helper only | Not fully revalidated in this pass | Provider still requires manual `pkcsslotd` startup and token init |
@@ -83,7 +84,8 @@ The new preflight manifest path no longer dies in pytest collection for the chec
 `local-builds/test.sh` can now:
 
 - run targeted files or nodeids directly in the default path
-- opt into the file-isolation runner with `P11TEST_ISOLATION=file`
+- opt into the isolated runner with `P11TEST_ISOLATION=auto|file|test`
+- pass through `P11TEST_POLICY_FILE` when a provider needs a dedicated adaptive policy store
 - preserve provider environment such as `NSS_LIB_PARAMS`, `SOFTHSM2_CONF`, and `BOUNCY_HSM_CFG_STRING`
 
 ### 3. File isolation does the right thing on real native crashes
@@ -106,10 +108,11 @@ That is the strongest evidence from this pass that the new file-isolation path i
 ### 1. Default local runs are now split by provider stability
 
 After the follow-up helper change, crash-prone providers no longer need a manual
-`P11TEST_ISOLATION=file` for the common path:
+`P11TEST_ISOLATION=auto` for the common path:
 
-- `nss-softokn` defaults to `file`
-- `qryptotoken` defaults to `file`
+- `nss-softokn` defaults to `auto`
+- `qryptotoken` defaults to `auto`
+- provider-default isolated runs also get provider-specific `/tmp` state and policy files
 - stable fast providers like `softhsm2` and `kryoptic` still default to in-process mode
 
 That is the right shape for the local helper. The remaining gap is broader
@@ -142,7 +145,7 @@ Older planning/docs still imply that `nss-softokn` is a routine local full-suite
 Recommendation:
 
 - keep `softhsm2` and `kryoptic` as the primary local full-suite gates
-- move `nss-softokn` to `P11TEST_ISOLATION=file` guidance
+- move `nss-softokn` to `P11TEST_ISOLATION=auto` guidance
 - describe `qryptotoken` and `pkcs11-mock` as targeted or crash-prone validation backends
 
 ## Practical Conclusion
@@ -172,8 +175,8 @@ For crash-prone providers, the helper now chooses file isolation automatically,
 but the explicit form is still valid:
 
 ```bash
-P11TEST_ISOLATION=file bash local-builds/test.sh nss-softokn ...
-P11TEST_ISOLATION=file bash local-builds/test.sh qryptotoken ...
+P11TEST_ISOLATION=auto bash local-builds/test.sh nss-softokn ...
+P11TEST_ISOLATION=auto bash local-builds/test.sh qryptotoken ...
 ```
 
 For BouncyHSM and OpenCryptoki, local use is still possible, but the service lifecycle remains a separate gap from the runner changes validated here.

@@ -5,7 +5,7 @@ Date: 2026-03-19
 ## Scope Re-Checked
 
 This review started with `p11test test --isolation file` and now also covers
-the newer `--isolation test` mode:
+the newer `--isolation auto` and `--isolation test` modes:
 
 - CLI wiring in `src/p11test/cli/test_cmd.py`
 - per-unit runner in `src/p11test/core/file_runner.py`
@@ -26,6 +26,9 @@ Checks run during this review:
 - local shell helper smoke:
   - `P11TEST_ISOLATION=file bash local-builds/test.sh ...` now reaches the same runner path
   - caller-supplied transport env such as `BOUNCY_HSM_CFG_STRING` is preserved
+- local NSS adaptive smoke:
+  - first `auto` run on `test_wycheproof_pbkdf2.py` crashed and wrote a promotion into the policy file
+  - second helper-driven `auto` run expanded that file to 298 per-test units and recorded the crashing nodeid
 - direct pytest smoke:
   - `uv run pytest ... test_interface.py::TestInterfaceV30::test_v30_interface_negotiated ...`
     passed against local BouncyHSM
@@ -38,12 +41,17 @@ The current solution is useful and real. It is not just a draft.
 
 - `--isolation file` runs each requested file in a fresh `python -m pytest` subprocess.
 - `--isolation test` collects nodeids first and then runs each test in its own subprocess.
+- `--isolation auto` now combines file-level speed with marker-aware and crash-aware promotion.
 - `--stop-on-failure` stops at the first failing, crashing, or timing-out unit and leaves a resumable state file.
 - `--resume` skips only units already marked `passed` or `empty`.
 - rerunning a failed unit replaces the old state entry instead of appending duplicates.
 - resume now rejects mismatched state files via a fingerprint of the requested units and pytest arguments.
 - the subprocess helper now consistently uses `spawn`, which is the safer default for PKCS#11 isolation.
 - the state fingerprint now also covers relevant environment plus test/module file metadata.
+- `auto` now persists backend-specific crash knowledge in `.p11test-isolation-policy.json`.
+- files marked `subprocess_per_test` are expanded to nodeids automatically in `auto` mode.
+- files that crash or time out in isolated mode are promoted to per-test isolation for later `auto` runs.
+- crash-prone local helper runs can now keep provider-specific policy files under `/tmp` instead of sharing one repo-root file.
 - file isolation now uses env-only PIN propagation to child pytest processes.
 - the local helper can opt into file isolation and stateful resume instead of always bypassing the CLI.
 - dynamic version/mechanism skips no longer load the PKCS#11 module during pytest collection.
@@ -60,19 +68,21 @@ That is already useful for unstable modules and for long regression sweeps.
 
 ## Confirmed Gaps
 
-### P0: Per-test isolation now exists, but marker-driven policy is still missing
+### P0: Adaptive policy now exists, but same-run escalation is still missing
 
 The biggest architectural gap is no longer "there is no per-test mode." It is
-that the runner still relies on explicit CLI choice instead of marker-driven or
-adaptive escalation.
+that the runner still does not re-plan the remainder of the same run after the
+first crash.
 
+- `--isolation auto` uses `subprocess_per_test` markers and a persistent crash policy
 - `--isolation file` still loses the rest of a crashing file by design
-- `subprocess` and `subprocess_per_test` are still metadata only
-- there is still no adaptive crash registry that promotes only bad units to stricter isolation
+- if a file crashes in `auto`, the promotion helps the next run, not the current one
+- there is still no "restart remaining work immediately at stricter granularity" path
 
 The collection-safe preflight manifest fixed the old parent-process collection hazard,
 and `--isolation test` now gives true per-test subprocess execution. The missing
-piece is making the runner choose that granularity automatically when appropriate.
+piece is making the runner escalate within the current session rather than only
+for future runs.
 
 ### P1: Resume protection is stronger, but still not complete
 
@@ -115,11 +125,14 @@ That is pragmatic but still blunt.
 
 This is acceptable as a safety valve, but it is not a principled timeout model.
 
-### P1: Marker-driven subprocess behavior is still not wired
+### P1: `subprocess` marker is still not wired
 
-`src/p11test/markers.py` registers `subprocess` and `subprocess_per_test`, but the runner does not interpret them yet.
+`src/p11test/markers.py` registers `subprocess` and `subprocess_per_test`.
+Only the stronger one is wired today.
 
-Right now subprocess behavior is chosen only by CLI mode, not by test metadata.
+- `subprocess_per_test` now promotes a file to per-test execution in `auto`
+- plain `subprocess` still has no special handling
+- there is still no marker-based "always per-file subprocess" promotion path
 
 ### P2: `--sessions` remains ignored in file mode
 
@@ -146,6 +159,8 @@ Current limitations:
 
 - Starting a fresh run without `--resume` overwrites the old state file immediately.
 - A resumed run intentionally reruns failed units, so state files should not be treated as immutable history.
+- `--isolation auto --resume` intentionally keeps the saved unit plan even if the adaptive
+  policy file would now promote one of those files differently.
 - The parent CLI still accepts `--pin`, but file mode now keeps it in environment propagation instead of child command-line arguments.
 - `discover_pytest_units()` accepts explicit nodeids and whole directories, but the default unit order is just filesystem order, not historical-failure order or duration-aware scheduling.
 
@@ -155,7 +170,7 @@ Current limitations:
 
 1. Add a small helper to print saved-state summaries without opening the JSON manually.
 2. Decide whether the local shell helper should accept a broader set of pytest-style flags in isolation mode.
-3. Add a lightweight marker-aware mode for `@subprocess` and `@subprocess_per_test`.
+3. Add a lightweight marker-aware mode for `@subprocess`, not just `@subprocess_per_test`.
 4. Document the collection-safe preflight manifest path more explicitly for direct `pytest` users.
 
 ### Medium Term
@@ -167,7 +182,7 @@ Current limitations:
 
 ### Long Term
 
-1. Add adaptive isolation policy so previously crashing units get promoted from `none` or `file` to `test`.
+1. Add same-run escalation so a crash in `auto` can immediately requeue that file at per-test granularity.
 2. Define a real worker-isolation model before enabling concurrent file execution.
 3. Decide whether preflight data should be reused across workers through a shared manifest cache.
 
@@ -180,4 +195,4 @@ The isolated runner is worth keeping. It solves a real operational problem now:
 - unstable modules no longer require a single all-or-nothing pytest invocation
 
 But it is still not the final segfault-survival design. The biggest missing pieces
-are marker-driven/adaptive policy, richer reporting, and a real worker model.
+are same-run adaptive escalation, richer reporting, and a real worker model.
