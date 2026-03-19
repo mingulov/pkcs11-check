@@ -178,6 +178,78 @@ After per-target validation, audit what's actually covered vs what the spec requ
 
 ---
 
+## Tier 10 — Coverage Expansion Phase 1: Missing Init Conditions
+
+Add missing *Init error conditions that are testable through the wrapper. Each crypto Init function has ~5 additional testable CKR codes beyond what's currently covered.
+
+- [ ] **10.1** Encrypt/Decrypt Init gaps — add to `_ckr_spec.py` + `test_ckr_encrypt.py`/`test_ckr_decrypt.py`: (a) CKR_KEY_SIZE_RANGE: AES-128 key with mechanism requiring 256-bit. (b) CKR_OPERATION_ACTIVE: try double EncryptInit without completing first (may need subprocess). (c) CKR_KEY_HANDLE_INVALID for decrypt (already exists for encrypt). Verify on 3 local targets.
+- [ ] **10.2** Sign/Verify Init gaps — add to `_ckr_spec.py` + `test_ckr_sign.py`/`test_ckr_verify.py`: (a) CKR_KEY_FUNCTION_NOT_PERMITTED: key with CKA_SIGN=False (may be wrapper-blocked, skip if so). (b) CKR_KEY_HANDLE_INVALID: destroyed key for sign/verify. (c) CKR_KEY_SIZE_RANGE: RSA-512 key (too small for modern sign). Verify on 3 local targets.
+- [ ] **10.3** Digest Init gaps — add to `_ckr_spec.py` + `test_ckr_digest.py`: (a) CKR_OPERATION_ACTIVE: double DigestInit. (b) Add C_Digest operation_not_initialized test. Verify on 3 local targets.
+- [ ] **10.4** Keygen additional conditions — add to `_ckr_spec.py` + `test_ckr_keygen.py`: (a) CKR_ATTRIBUTE_TYPE_INVALID: bogus attribute in template. (b) CKR_ATTRIBUTE_READ_ONLY: try setting CKA_CLASS in keygen template. (c) CKR_DOMAIN_PARAMS_INVALID: EC keygen with malformed params. (d) CKR_PARAMETER_SET_NOT_SUPPORTED: PQC keygen with bogus param set (v3.2). Verify on 3 local targets.
+- [ ] **10.5** Validation checkpoint — CKR suite on all 3 local + Docker OpenCryptoki. Update ckr-coverage.md.
+
+## Tier 11 — Coverage Expansion Phase 2: Operation-Level Errors
+
+Add missing C_Encrypt/C_Decrypt/C_Sign/C_Verify/C_Digest operation errors (not Init, but the actual operation calls).
+
+- [ ] **11.1** Encrypt operation gaps — add: (a) CKR_DATA_INVALID: AES-GCM with invalid AAD structure. (b) CKR_BUFFER_TOO_SMALL (if testable through wrapper). (c) Additional parametrized mechanisms: AES-CBC, AES-GCM data length errors. Verify on 3 local targets.
+- [ ] **11.2** Decrypt operation gaps — add: (a) CKR_ENCRYPTED_DATA_INVALID: AES-CBC with wrong padding. (b) CKR_ENCRYPTED_DATA_LEN_RANGE: AES-CBC ciphertext not block-aligned. (c) RSA-OAEP with garbage ciphertext. Verify on 3 local targets.
+- [ ] **11.3** Sign operation gaps — add: (a) CKR_DATA_INVALID: data format error. (b) operation_not_initialized test. Verify on 3 local targets.
+- [ ] **11.4** Verify operation gaps — add: (a) CKR_DATA_LEN_RANGE: oversized data for verify. (b) CKR_SIGNATURE_LEN_RANGE: parametrize across RSA, ECDSA. (c) operation_not_initialized test. Verify on 3 local targets.
+- [ ] **11.5** Digest operation gaps — add: (a) CKR_OPERATION_NOT_INITIALIZED for C_Digest. (b) Empty data digest (valid per spec). (c) DigestKey with non-digestible key type. Verify on 3 local targets.
+- [ ] **11.6** Validation checkpoint — CKR suite on all 3 local + Docker OpenCryptoki. Update ckr-coverage.md.
+
+## Tier 12 — Coverage Expansion Phase 3: Wrap/Unwrap/Derive Depth
+
+Expand wrap, unwrap, and derive error coverage — currently 3 entries each.
+
+- [ ] **12.1** WrapKey gaps — add: (a) CKR_KEY_NOT_WRAPPABLE: non-extractable key. (b) CKR_WRAPPING_KEY_TYPE_INCONSISTENT: AES key as wrapping key for RSA-PKCS. (c) CKR_KEY_SIZE_RANGE: wrap key too small for target. (d) CKR_MECHANISM_PARAM_INVALID: wrong IV for AES-KW. Verify on 3 local targets.
+- [ ] **12.2** UnwrapKey gaps — add: (a) CKR_WRAPPED_KEY_LEN_RANGE: wrong-length wrapped data. (b) CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT: RSA key to unwrap AES-KW. (c) CKR_TEMPLATE_INCOMPLETE: unwrap without required attrs. (d) CKR_TEMPLATE_INCONSISTENT: unwrap with conflicting attrs. Verify on 3 local targets.
+- [ ] **12.3** DeriveKey gaps — add: (a) CKR_KEY_FUNCTION_NOT_PERMITTED: key without CKA_DERIVE. (b) CKR_DOMAIN_PARAMS_INVALID: ECDH with wrong curve params. (c) CKR_TEMPLATE_INCOMPLETE: derive without specifying output key type. Verify on 3 local targets.
+- [ ] **12.4** Validation checkpoint.
+
+## Tier 13 — Coverage Expansion Phase 4: Object Management Depth
+
+Expand C_CreateObject, C_CopyObject, C_GetObjectSize, C_SetAttributeValue, C_FindObjects*.
+
+- [ ] **13.1** CreateObject gaps — add: (a) CKR_ATTRIBUTE_TYPE_INVALID: bogus attribute type 0xFFFF. (b) CKR_SESSION_READ_ONLY: create token object in R/O session. (c) CKR_USER_NOT_LOGGED_IN: create private object without login. (d) CKR_DOMAIN_PARAMS_INVALID: EC key with bad curve. Verify on 3 local targets.
+- [ ] **13.2** CopyObject gaps — add: (a) CKR_ACTION_PROHIBITED: CKA_COPYABLE=False. (b) CKR_TEMPLATE_INCONSISTENT: copy with conflicting attrs. (c) CKR_SESSION_READ_ONLY: copy to token object in R/O session. Verify on 3 local targets.
+- [ ] **13.3** GetObjectSize + GetAttributeValue gaps — add: (a) CKR_OBJECT_HANDLE_INVALID for GetObjectSize. (b) CKR_ATTRIBUTE_TYPE_INVALID: query non-existent attribute type. (c) CKR_INFORMATION_SENSITIVE: query size of sensitive key. Verify on 3 local targets.
+- [ ] **13.4** SetAttributeValue gaps — add: (a) CKR_ACTION_PROHIBITED: CKA_MODIFIABLE=False. (b) CKR_ATTRIBUTE_TYPE_INVALID: set bogus attribute. (c) CKR_TEMPLATE_INCONSISTENT: set conflicting attrs. Verify on 3 local targets.
+- [ ] **13.5** FindObjects gaps — add: (a) CKR_OPERATION_NOT_INITIALIZED: FindObjects without FindObjectsInit. (b) FindObjectsFinal without FindObjectsInit. (c) Search with invalid attribute type in template. Verify on 3 local targets.
+- [ ] **13.6** Validation checkpoint.
+
+## Tier 14 — Coverage Expansion Phase 5: Session & Slot Management
+
+Add C_OpenSession, C_CloseSession, C_GetSessionInfo, C_Login variants, slot/token management.
+
+- [ ] **14.1** OpenSession errors — add: (a) CKR_SLOT_ID_INVALID: non-existent slot. (b) CKR_SESSION_COUNT: exhaust session limit. (c) CKR_TOKEN_NOT_PRESENT: slot without token (if testable). (d) CKR_SESSION_PARALLEL_NOT_SUPPORTED: missing CKF_SERIAL_SESSION flag. Verify on 3 local targets.
+- [ ] **14.2** CloseSession + CloseAllSessions errors — add: (a) CKR_SESSION_HANDLE_INVALID: close invalid handle. (b) CKR_SLOT_ID_INVALID for CloseAllSessions. Verify on 3 local targets.
+- [ ] **14.3** Login/Logout extended — add: (a) CKR_USER_ANOTHER_ALREADY_LOGGED_IN: SO login when user logged in. (b) CKR_USER_TYPE_INVALID: invalid user type. (c) CKR_PIN_LOCKED: too many wrong attempts (mark @destructive). (d) CKR_SESSION_READ_ONLY_EXISTS: SO login with R/O session exists. Verify on 3 local targets.
+- [ ] **14.4** Slot/Token info errors — add: (a) CKR_SLOT_ID_INVALID for GetSlotInfo, GetTokenInfo, GetMechanismList. (b) CKR_MECHANISM_INVALID for GetMechanismInfo with bogus mechanism. (c) CKR_NO_EVENT for WaitForSlotEvent non-blocking. Verify on 3 local targets.
+- [ ] **14.5** InitToken/InitPIN/SetPIN — add (all @destructive): (a) CKR_SESSION_EXISTS: InitToken with open session. (b) CKR_PIN_LEN_RANGE: SetPIN with too-short PIN. (c) CKR_PIN_INCORRECT: SetPIN with wrong old PIN. Verify on 3 local targets (or subprocess).
+- [ ] **14.6** Validation checkpoint — full CKR suite on all 4 targets.
+
+## Tier 15 — Coverage Expansion Phase 6: General Purpose + Random + State
+
+Complete the remaining function families.
+
+- [ ] **15.1** C_Initialize/C_Finalize gaps — add: (a) CKR_CRYPTOKI_ALREADY_INITIALIZED: double init. (b) CKR_CRYPTOKI_NOT_INITIALIZED: finalize without init. (c) CKR_ARGUMENTS_BAD: init with bad reserved pointer (ctypes). All in subprocess. Verify on 3 local targets.
+- [ ] **15.2** C_GetInfo/C_GetFunctionList gaps — add: (a) CKR_ARGUMENTS_BAD: GetInfo(NULL) (ctypes, already partially tested). (b) GetFunctionList returns valid list. Verify on 3 local targets.
+- [ ] **15.3** C_SeedRandom/C_GenerateRandom gaps — add: (a) CKR_RANDOM_SEED_NOT_SUPPORTED for SeedRandom. (b) GenerateRandom with 0 length. (c) GenerateRandom with very large length (1MB). Verify on 3 local targets.
+- [ ] **15.4** C_GetOperationState/C_SetOperationState gaps — add: (a) CKR_STATE_UNSAVEABLE for complex operations. (b) CKR_KEY_NEEDED: restore state needing encryption key. (c) CKR_KEY_NOT_NEEDED: supply key when not needed. Verify on 3 local targets.
+- [ ] **15.5** Final validation checkpoint — full CKR suite on all 4 targets. Update ckr-coverage.md with final numbers.
+
+## Tier 16 — Final Completeness Audit & Handoff
+
+- [ ] **16.1** Recount all CkrExpectation entries and compare against 487 spec target. Produce final coverage percentage.
+- [ ] **16.2** Run strict mode audit on all 4 modules. Document all compliance deviations in module-issues.md.
+- [ ] **16.3** Full regression — SoftHSM2 + Kryoptic + NSS softokn full suite. Zero failures.
+- [ ] **16.4** Update docs/ckr-coverage.md with final matrix.
+- [ ] **16.5** **Handoff to master-plan.md** — CKR coverage maximized. Resume master-plan.
+
+---
+
 ## Recommended loop prompt
 
 ```
