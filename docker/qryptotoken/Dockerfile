@@ -50,6 +50,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 COPY . .
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv python pin 3.12 && uv sync --frozen
 
 # Best-effort: run tests if the build produced a .so; report gracefully if not.

@@ -31,6 +31,7 @@ RUN pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 COPY . .
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
 
 CMD ["sh", "-c", "echo 'Kryoptic main (latest dev):' && uv run pytest src/p11test/testcases/ --p11-module=/usr/lib/libkryoptic_pkcs11.so --p11-pin=1234 -q --tb=no"]

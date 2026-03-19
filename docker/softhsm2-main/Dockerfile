@@ -35,6 +35,7 @@ RUN find /usr/lib -name "libsofthsm2.so" | head -1 > /tmp/module_path
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 COPY . .
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
 
 CMD ["sh", "-c", "softhsm2-util --version && echo 'SoftHSM2 main (latest dev):' && uv run pytest src/p11test/testcases/ --p11-module=$(cat /tmp/module_path) --p11-pin=1234 -q --tb=no"]

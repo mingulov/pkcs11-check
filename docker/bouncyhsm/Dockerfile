@@ -39,6 +39,7 @@ RUN mkdir -p /opt/bouncyhsm/data && \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 COPY . .
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
 
 # BouncyHSM needs slots created via its management interface.

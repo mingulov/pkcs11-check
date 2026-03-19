@@ -35,6 +35,11 @@ Checks run during this review:
     passed against local BouncyHSM
   - BouncyHSM server logs confirmed a separate `python -m p11test.core.preflight` helper
     loaded the module before the pytest process ran the test
+- rebuilt Docker smokes:
+  - `test-softhsm2` passed `test_interface.py` through `p11test test --isolation auto`
+  - `test-nss` passed the filtered PBKDF2 + interface slice through `p11test test --isolation auto`
+  - Dockerfiles now set `SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0` so
+    `uv sync` works even though the vendored `python-pkcs11` checkout does not carry its nested `.git`
 
 ## What Works Now
 
@@ -62,6 +67,7 @@ The current solution is useful and real. It is not just a draft.
 - the local helper can opt into file isolation and stateful resume instead of always bypassing the CLI.
 - dynamic version/mechanism skips no longer load the PKCS#11 module during pytest collection.
 - direct `pytest` runs now use the same subprocess preflight path when they need dynamic skip data.
+- rebuilt Docker images can now install the vendored `python-pkcs11` reliably again.
 
 The BouncyHSM smoke confirmed the intended workflow:
 
