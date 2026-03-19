@@ -60,6 +60,18 @@ class TestSignInitErrors:
             assert_ckr(CKR_SIGN["init_mechanism_param_invalid"], e, ckr_strict)
 
 
+    def test_key_handle_invalid(
+        self, p11_session: Any, ckr_strict: bool
+    ) -> None:
+        """Sign with destroyed key handle -> CKR_KEY_HANDLE_INVALID."""
+        _pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
+        priv.destroy()
+        try:
+            priv.sign(b"test", mechanism=Mechanism.SHA256_RSA_PKCS)
+        except PKCS11Error as e:
+            assert_ckr(CKR_SIGN["init_key_handle_invalid"], e, ckr_strict)
+
+
 class TestSignDataErrors:
     """Data-level error conditions for C_Sign (§5.10.2)."""
 

@@ -397,12 +397,33 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.1",
     ),
+    "init_key_handle_invalid": CkrExpectation(
+        function="C_SignInit",
+        condition="invalid_key_handle",
+        spec_ckr=KeyHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.10.1",
+    ),
+    "init_key_function_not_permitted": CkrExpectation(
+        function="C_SignInit",
+        condition="key_CKA_SIGN_is_False",
+        spec_ckr=KeyFunctionNotPermitted,
+        compat_tuple=(KeyFunctionNotPermitted, KeyTypeInconsistent, MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.10.1",
+    ),
     # --- C_Sign errors ---
     "data_len_range": CkrExpectation(
         function="C_Sign",
         condition="data_too_long_for_mechanism",
         spec_ckr=DataLenRange,
         compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.10.2",
+    ),
+    "operation_not_initialized": CkrExpectation(
+        function="C_Sign",
+        condition="no_prior_C_SignInit",
+        spec_ckr=OperationNotInitialized,
+        compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.2",
     ),
 }
@@ -428,6 +449,21 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
         allow_success=True,  # SoftHSM2 accepts AES key with RSA verify mechanism
+    ),
+    "init_key_handle_invalid": CkrExpectation(
+        function="C_VerifyInit",
+        condition="invalid_key_handle",
+        spec_ckr=KeyHandleInvalid,
+        compat_tuple=HANDLE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.11.1",
+    ),
+    "init_key_function_not_permitted": CkrExpectation(
+        function="C_VerifyInit",
+        condition="key_CKA_VERIFY_is_False",
+        spec_ckr=KeyFunctionNotPermitted,
+        compat_tuple=(KeyFunctionNotPermitted, KeyTypeInconsistent, MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.1",
+        allow_success=True,  # SoftHSM2 doesn't check CKA_VERIFY at init
     ),
     # --- C_Verify errors ---
     "signature_invalid": CkrExpectation(

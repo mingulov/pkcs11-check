@@ -50,6 +50,18 @@ class TestVerifyInitErrors:
             assert_ckr(exp, e, ckr_strict)
 
 
+    def test_key_handle_invalid(
+        self, p11_session: Any, ckr_strict: bool
+    ) -> None:
+        """Verify with destroyed key handle -> CKR_KEY_HANDLE_INVALID."""
+        pub, _priv = p11_session.generate_keypair(KeyType.RSA, 2048)
+        pub.destroy()
+        try:
+            pub.verify(b"test", b"\x00" * 256, mechanism=Mechanism.SHA256_RSA_PKCS)
+        except PKCS11Error as e:
+            assert_ckr(CKR_VERIFY["init_key_handle_invalid"], e, ckr_strict)
+
+
 class TestVerifyErrors:
     """Error conditions for C_Verify (§5.11.2)."""
 
