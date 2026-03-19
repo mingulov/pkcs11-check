@@ -101,12 +101,13 @@ For each existing dict, add ALL missing function-specific CKR entries from the s
 
 Use `pkcs11.raw.RawPKCS11` to test conditions blocked by wrapper. All run in subprocess.
 
-- [ ] **2.1** Attribute permission tests — create `test_ckr_raw_attrs.py`: CKA_ENCRYPT=False + C_EncryptInit, CKA_DECRYPT=False + C_DecryptInit, CKA_SIGN=False + C_SignInit, CKA_VERIFY=False + C_VerifyInit, CKA_DERIVE=False + C_DeriveKey. Each → CKR_KEY_FUNCTION_NOT_PERMITTED. Verify on SoftHSM2 + Kryoptic.
+- [x] **2.1** Attribute permission tests — create `test_ckr_raw_attrs.py`: CKA_ENCRYPT=False + C_EncryptInit, CKA_DECRYPT=False + C_DecryptInit, CKA_SIGN=False + C_SignInit, CKA_VERIFY=False + C_VerifyInit, CKA_DERIVE=False + C_DeriveKey. Each → CKR_KEY_FUNCTION_NOT_PERMITTED. Verify on SoftHSM2 + Kryoptic.
 - [ ] **2.2** Additional multipart tests — expand `test_ckr_raw_multipart.py`: C_DecryptFinal without Init, C_SignFinal without Init, C_VerifyUpdate without Init, C_VerifyFinal without Init. All → CKR_OPERATION_NOT_INITIALIZED.
 - [ ] **2.3** Additional state tests — expand `test_ckr_raw_state.py`: double C_SignInit, double C_DecryptInit, C_DigestInit then C_EncryptInit (cross-op).
 - [ ] **2.4** Additional buffer tests — expand `test_ckr_raw_buffer.py`: C_Sign with 1-byte output, C_SignFinal with 1-byte output, C_GetAttributeValue with 1-byte buffer.
-- [ ] **2.5** Flip testable=False → testable=True for all entries now covered by raw tests. Run validation script to confirm.
-- [ ] **2.6** Validation checkpoint — all 3 local targets. Count tests.
+- [ ] **2.5** Flip testable=False → testable=True for all entries now covered by raw tests.
+- [ ] **2.5b** Gap audit: count remaining testable=False by category. For v2.40 functions where RawPKCS11 COULD test but no test exists — add more raw tests. For v3.0/v3.2 (no module support) — leave testable=False with note. For FunctionCanceled — documented exclusion. Add new tasks if gaps found.
+- [ ] **2.6** Validation checkpoint — all 3 local targets. Count tests + testable=True percentage.
 
 ## Phase 3 — Destructive Subprocess Tests
 
