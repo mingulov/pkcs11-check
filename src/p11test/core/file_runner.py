@@ -118,6 +118,17 @@ def _extract_option_value(args: list[str], option: str) -> str | None:
     return None
 
 
+def _manifest_digest(pytest_args: list[str]) -> str | None:
+    manifest_path = _extract_option_value(pytest_args, "--p11-manifest")
+    if manifest_path is None:
+        return None
+
+    path = Path(manifest_path)
+    if not path.exists():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _path_snapshot(path_str: str) -> dict[str, int | str] | None:
     path = Path(path_str)
     if not path.exists():
@@ -164,13 +175,17 @@ def build_state_fingerprint(
     """Build a stable fingerprint for resume validation."""
     redacted_args: list[str] = []
     redact_next = False
+    manifest_digest = _manifest_digest(pytest_args)
     for arg in pytest_args:
         if redact_next:
             redacted_args.append("<redacted>")
             redact_next = False
             continue
+        if arg.startswith("--p11-manifest="):
+            redacted_args.append("--p11-manifest=<manifest>")
+            continue
         redacted_args.append(arg)
-        if arg == "--p11-pin":
+        if arg in {"--p11-pin", "--p11-manifest"}:
             redact_next = True
 
     module_snapshot = None
@@ -181,6 +196,7 @@ def build_state_fingerprint(
     payload = json.dumps(
         {
             "env": _fingerprint_env(env or os.environ),
+            "manifest_digest": manifest_digest,
             "module": module_snapshot,
             "pytest_args": redacted_args,
             "unit_files": _fingerprint_units(units),

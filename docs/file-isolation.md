@@ -11,6 +11,8 @@ uv run p11test test \
 ## What it does
 
 - Expands the requested pytest targets into an ordered list of files or nodeids.
+- Probes PKCS#11 capabilities in a short-lived helper subprocess and passes the
+  resulting manifest into pytest instead of loading the module during collection.
 - Runs each unit in a fresh `python -m pytest` subprocess.
 - Writes progress to `.p11test-isolation-state.json` by default.
 - Continues past a crashing file because the file process, not the main runner, dies.

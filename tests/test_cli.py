@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from p11test.cli import test_cmd
 from p11test.cli.app import app
+from p11test.core.preflight import CapabilityManifest
 
 runner = CliRunner()
 
@@ -59,6 +61,22 @@ class TestTestCommand:
             "discover_pytest_units",
             lambda targets, default_root: [str(default_root / "test_alpha.py")],
         )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
 
         result = runner.invoke(
             app,
@@ -86,6 +104,7 @@ class TestTestCommand:
         assert called["resume"] is True
         assert called["stop_on_failure"] is True
         assert "--p11-pin" not in called["pytest_args"]
+        assert "--p11-manifest" in called["pytest_args"]
 
     def test_test_file_isolation_rejects_non_rich_output(self, tmp_path: Path) -> None:
         module = tmp_path / "dummy.so"
@@ -99,11 +118,29 @@ class TestTestCommand:
         assert result.exit_code == 2
         assert "--isolation file currently supports only --output rich" in result.output
 
-    def test_test_file_isolation_resume_mismatch_is_reported(self, tmp_path: Path) -> None:
+    def test_test_file_isolation_resume_mismatch_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("")
         state_file = tmp_path / "state.json"
         state_file.write_text('{"fingerprint":"old","results":[],"units":["a.py"]}\n')
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
 
         result = runner.invoke(
             app,
@@ -121,6 +158,29 @@ class TestTestCommand:
 
         assert result.exit_code == 2
         assert "belongs to a different isolated run" in " ".join(result.output.split())
+
+    def test_test_preflight_failure_is_reported(self, tmp_path: Path, monkeypatch: object) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
+                status="error",
+                module_path=str(module),
+                requested_interface=interface,
+                interface_version=None,
+                slot_index=slot,
+                slot_count=None,
+                mechanisms=[],
+                error="RuntimeError: boom",
+            ),
+        )
+
+        result = runner.invoke(app, ["test", "--module", str(module)])
+
+        assert result.exit_code == 2
+        assert "PKCS#11 preflight error" in result.output
 
 
 class TestInfoCommand:

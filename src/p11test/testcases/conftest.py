@@ -1,7 +1,8 @@
 """Shared fixtures and helpers for p11test PKCS#11 test cases.
 
-Note: Test skipping for missing module, version, and destructive markers
-is handled in plugin.py's pytest_collection_modifyitems hook.
+Note: Static skips such as missing-module and destructive gating are handled in
+plugin.py collection hooks. Dynamic version/mechanism skips are handled from the
+collection-safe capability manifest before test setup.
 """
 
 from __future__ import annotations

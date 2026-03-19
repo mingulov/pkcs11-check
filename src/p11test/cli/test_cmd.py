@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -10,10 +11,15 @@ import typer
 from rich.console import Console
 
 from p11test.core.file_runner import discover_pytest_units, run_isolated_pytest_units
+from p11test.core.preflight import run_preflight_subprocess
 
 console = Console(stderr=True)
 
 _TESTCASES_DIR = str(Path(__file__).parent.parent / "testcases")
+
+
+def _preflight_timeout_seconds(test_timeout: int) -> int:
+    return max(10, min(test_timeout, 60))
 
 
 def _build_pytest_args(
@@ -107,6 +113,22 @@ def test_command(
     if pin:
         os.environ["P11TEST_PIN"] = pin
 
+    manifest_fd, manifest_raw_path = tempfile.mkstemp(prefix="p11test-manifest-", suffix=".json")
+    os.close(manifest_fd)
+    manifest_path = Path(manifest_raw_path)
+
+    manifest = run_preflight_subprocess(
+        module,
+        interface=interface,
+        slot=slot,
+        timeout=_preflight_timeout_seconds(timeout),
+        output_path=manifest_path,
+    )
+    if manifest.status != "ok":
+        console.print(f"[red]Error:[/red] PKCS#11 preflight {manifest.status}: {manifest.error}")
+        manifest_path.unlink(missing_ok=True)
+        raise typer.Exit(code=1 if manifest.status in {"crashed", "timeout"} else 2)
+
     pytest_args = _build_pytest_args(
         module=module,
         interface=interface,
@@ -121,31 +143,34 @@ def test_command(
         output_file=output_file,
         verbose=verbose,
     )
+    pytest_args.extend(["--p11-manifest", str(manifest_path)])
 
     target_args = targets or [_TESTCASES_DIR]
+    try:
+        if isolation == "file":
+            if sessions != 1:
+                console.print(
+                    "[yellow]Warning:[/yellow] --sessions is ignored in --isolation file mode"
+                )
 
-    if isolation == "file":
-        if sessions != 1:
-            console.print(
-                "[yellow]Warning:[/yellow] --sessions is ignored in --isolation file mode"
-            )
+            try:
+                units = discover_pytest_units(target_args, Path(_TESTCASES_DIR))
+                exit_code = run_isolated_pytest_units(
+                    units,
+                    pytest_args,
+                    timeout=timeout,
+                    state_file=state_file,
+                    resume=resume,
+                    stop_on_failure=stop_on_failure,
+                    console=console,
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                console.print(f"[red]Error:[/red] {exc}")
+                raise typer.Exit(code=2) from exc
+            raise typer.Exit(code=exit_code)
 
-        try:
-            units = discover_pytest_units(target_args, Path(_TESTCASES_DIR))
-            exit_code = run_isolated_pytest_units(
-                units,
-                pytest_args,
-                timeout=timeout,
-                state_file=state_file,
-                resume=resume,
-                stop_on_failure=stop_on_failure,
-                console=console,
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            console.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(code=2) from exc
-        raise typer.Exit(code=exit_code)
-
-    args = [*target_args, *pytest_args]
-    exit_code = pytest.main(args)
-    raise typer.Exit(code=int(exit_code))
+        args = [*target_args, *pytest_args]
+        exit_code = pytest.main(args)
+        raise typer.Exit(code=int(exit_code))
+    finally:
+        manifest_path.unlink(missing_ok=True)

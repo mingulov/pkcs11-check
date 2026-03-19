@@ -172,6 +172,28 @@ def test_build_state_fingerprint_changes_when_env_changes(tmp_path: Path) -> Non
     assert first != second
 
 
+def test_build_state_fingerprint_uses_manifest_content_not_manifest_path(tmp_path: Path) -> None:
+    unit = tmp_path / "test_demo.py"
+    unit.write_text("def test_demo():\n    assert True\n")
+    module = tmp_path / "module.so"
+    module.write_text("v1")
+    manifest_a = tmp_path / "manifest-a.json"
+    manifest_b = tmp_path / "manifest-b.json"
+    manifest_a.write_text('{"status":"ok"}\n')
+    manifest_b.write_text('{"status":"ok"}\n')
+
+    first = build_state_fingerprint(
+        [str(unit)],
+        ["--p11-module", str(module), "--p11-manifest", str(manifest_a)],
+    )
+    second = build_state_fingerprint(
+        [str(unit)],
+        ["--p11-module", str(module), "--p11-manifest", str(manifest_b)],
+    )
+
+    assert first == second
+
+
 def test_run_isolated_pytest_units_resume_skips_passed(monkeypatch: object, tmp_path: Path) -> None:
     def fake_run(
         cmd: list[str],
