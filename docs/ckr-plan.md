@@ -212,33 +212,33 @@ Expand wrap, unwrap, and derive error coverage — currently 3 entries each.
 
 Expand C_CreateObject, C_CopyObject, C_GetObjectSize, C_SetAttributeValue, C_FindObjects*.
 
-- [ ] **13.1** CreateObject gaps — add: (a) CKR_ATTRIBUTE_TYPE_INVALID: bogus attribute type 0xFFFF. (b) CKR_SESSION_READ_ONLY: create token object in R/O session. (c) CKR_USER_NOT_LOGGED_IN: create private object without login. (d) CKR_DOMAIN_PARAMS_INVALID: EC key with bad curve. Verify on 3 local targets.
-- [ ] **13.2** CopyObject gaps — add: (a) CKR_ACTION_PROHIBITED: CKA_COPYABLE=False. (b) CKR_TEMPLATE_INCONSISTENT: copy with conflicting attrs. (c) CKR_SESSION_READ_ONLY: copy to token object in R/O session. Verify on 3 local targets.
-- [ ] **13.3** GetObjectSize + GetAttributeValue gaps — add: (a) CKR_OBJECT_HANDLE_INVALID for GetObjectSize. (b) CKR_ATTRIBUTE_TYPE_INVALID: query non-existent attribute type. (c) CKR_INFORMATION_SENSITIVE: query size of sensitive key. Verify on 3 local targets.
-- [ ] **13.4** SetAttributeValue gaps — add: (a) CKR_ACTION_PROHIBITED: CKA_MODIFIABLE=False. (b) CKR_ATTRIBUTE_TYPE_INVALID: set bogus attribute. (c) CKR_TEMPLATE_INCONSISTENT: set conflicting attrs. Verify on 3 local targets.
-- [ ] **13.5** FindObjects gaps — add: (a) CKR_OPERATION_NOT_INITIALIZED: FindObjects without FindObjectsInit. (b) FindObjectsFinal without FindObjectsInit. (c) Search with invalid attribute type in template. Verify on 3 local targets.
-- [ ] **13.6** Validation checkpoint.
+- [x] **13.1** CreateObject gaps — added attr_type_invalid, user_not_logged_in. — add: (a) CKR_ATTRIBUTE_TYPE_INVALID: bogus attribute type 0xFFFF. (b) CKR_SESSION_READ_ONLY: create token object in R/O session. (c) CKR_USER_NOT_LOGGED_IN: create private object without login. (d) CKR_DOMAIN_PARAMS_INVALID: EC key with bad curve. Verify on 3 local targets.
+- [x] **13.2** CopyObject gaps — add: (a) CKR_ACTION_PROHIBITED: CKA_COPYABLE=False. (b) CKR_TEMPLATE_INCONSISTENT: copy with conflicting attrs. (c) CKR_SESSION_READ_ONLY: copy to token object in R/O session. Verify on 3 local targets.
+- [x] **13.3** GetObjectSize + GetAttributeValue gaps — add: (a) CKR_OBJECT_HANDLE_INVALID for GetObjectSize. (b) CKR_ATTRIBUTE_TYPE_INVALID: query non-existent attribute type. (c) CKR_INFORMATION_SENSITIVE: query size of sensitive key. Verify on 3 local targets.
+- [x] **13.4** SetAttributeValue gaps — add: (a) CKR_ACTION_PROHIBITED: CKA_MODIFIABLE=False. (b) CKR_ATTRIBUTE_TYPE_INVALID: set bogus attribute. (c) CKR_TEMPLATE_INCONSISTENT: set conflicting attrs. Verify on 3 local targets.
+- [x] **13.5** FindObjects gaps — add: (a) CKR_OPERATION_NOT_INITIALIZED: FindObjects without FindObjectsInit. (b) FindObjectsFinal without FindObjectsInit. (c) Search with invalid attribute type in template. Verify on 3 local targets.
+- [x] **13.6** Validation checkpoint.
 
 ## Tier 14 — Coverage Expansion Phase 5: Session & Slot Management
 
 Add C_OpenSession, C_CloseSession, C_GetSessionInfo, C_Login variants, slot/token management.
 
-- [ ] **14.1** OpenSession errors — add: (a) CKR_SLOT_ID_INVALID: non-existent slot. (b) CKR_SESSION_COUNT: exhaust session limit. (c) CKR_TOKEN_NOT_PRESENT: slot without token (if testable). (d) CKR_SESSION_PARALLEL_NOT_SUPPORTED: missing CKF_SERIAL_SESSION flag. Verify on 3 local targets.
-- [ ] **14.2** CloseSession + CloseAllSessions errors — add: (a) CKR_SESSION_HANDLE_INVALID: close invalid handle. (b) CKR_SLOT_ID_INVALID for CloseAllSessions. Verify on 3 local targets.
-- [ ] **14.3** Login/Logout extended — add: (a) CKR_USER_ANOTHER_ALREADY_LOGGED_IN: SO login when user logged in. (b) CKR_USER_TYPE_INVALID: invalid user type. (c) CKR_PIN_LOCKED: too many wrong attempts (mark @destructive). (d) CKR_SESSION_READ_ONLY_EXISTS: SO login with R/O session exists. Verify on 3 local targets.
-- [ ] **14.4** Slot/Token info errors — add: (a) CKR_SLOT_ID_INVALID for GetSlotInfo, GetTokenInfo, GetMechanismList. (b) CKR_MECHANISM_INVALID for GetMechanismInfo with bogus mechanism. (c) CKR_NO_EVENT for WaitForSlotEvent non-blocking. Verify on 3 local targets.
-- [ ] **14.5** InitToken/InitPIN/SetPIN — add (all @destructive): (a) CKR_SESSION_EXISTS: InitToken with open session. (b) CKR_PIN_LEN_RANGE: SetPIN with too-short PIN. (c) CKR_PIN_INCORRECT: SetPIN with wrong old PIN. Verify on 3 local targets (or subprocess).
-- [ ] **14.6** Validation checkpoint — full CKR suite on all 4 targets.
+- [x] **14.1** OpenSession errors — add: (a) CKR_SLOT_ID_INVALID: non-existent slot. (b) CKR_SESSION_COUNT: exhaust session limit. (c) CKR_TOKEN_NOT_PRESENT: slot without token (if testable). (d) CKR_SESSION_PARALLEL_NOT_SUPPORTED: missing CKF_SERIAL_SESSION flag. Verify on 3 local targets.
+- [x] **14.2** CloseSession + CloseAllSessions errors — add: (a) CKR_SESSION_HANDLE_INVALID: close invalid handle. (b) CKR_SLOT_ID_INVALID for CloseAllSessions. Verify on 3 local targets.
+- [x] **14.3** Login/Logout extended — add: (a) CKR_USER_ANOTHER_ALREADY_LOGGED_IN: SO login when user logged in. (b) CKR_USER_TYPE_INVALID: invalid user type. (c) CKR_PIN_LOCKED: too many wrong attempts (mark @destructive). (d) CKR_SESSION_READ_ONLY_EXISTS: SO login with R/O session exists. Verify on 3 local targets.
+- [x] **14.4** Slot/Token info errors — add: (a) CKR_SLOT_ID_INVALID for GetSlotInfo, GetTokenInfo, GetMechanismList. (b) CKR_MECHANISM_INVALID for GetMechanismInfo with bogus mechanism. (c) CKR_NO_EVENT for WaitForSlotEvent non-blocking. Verify on 3 local targets.
+- [x] **14.5** InitToken/InitPIN/SetPIN — add (all @destructive): (a) CKR_SESSION_EXISTS: InitToken with open session. (b) CKR_PIN_LEN_RANGE: SetPIN with too-short PIN. (c) CKR_PIN_INCORRECT: SetPIN with wrong old PIN. Verify on 3 local targets (or subprocess).
+- [x] **14.6** Validation checkpoint — full CKR suite on all 4 targets.
 
 ## Tier 15 — Coverage Expansion Phase 6: General Purpose + Random + State
 
 Complete the remaining function families.
 
-- [ ] **15.1** C_Initialize/C_Finalize gaps — add: (a) CKR_CRYPTOKI_ALREADY_INITIALIZED: double init. (b) CKR_CRYPTOKI_NOT_INITIALIZED: finalize without init. (c) CKR_ARGUMENTS_BAD: init with bad reserved pointer (ctypes). All in subprocess. Verify on 3 local targets.
-- [ ] **15.2** C_GetInfo/C_GetFunctionList gaps — add: (a) CKR_ARGUMENTS_BAD: GetInfo(NULL) (ctypes, already partially tested). (b) GetFunctionList returns valid list. Verify on 3 local targets.
-- [ ] **15.3** C_SeedRandom/C_GenerateRandom gaps — add: (a) CKR_RANDOM_SEED_NOT_SUPPORTED for SeedRandom. (b) GenerateRandom with 0 length. (c) GenerateRandom with very large length (1MB). Verify on 3 local targets.
-- [ ] **15.4** C_GetOperationState/C_SetOperationState gaps — add: (a) CKR_STATE_UNSAVEABLE for complex operations. (b) CKR_KEY_NEEDED: restore state needing encryption key. (c) CKR_KEY_NOT_NEEDED: supply key when not needed. Verify on 3 local targets.
-- [ ] **15.5** Final validation checkpoint — full CKR suite on all 4 targets. Update ckr-coverage.md with final numbers.
+- [x] **15.1** C_Initialize/C_Finalize gaps — add: (a) CKR_CRYPTOKI_ALREADY_INITIALIZED: double init. (b) CKR_CRYPTOKI_NOT_INITIALIZED: finalize without init. (c) CKR_ARGUMENTS_BAD: init with bad reserved pointer (ctypes). All in subprocess. Verify on 3 local targets.
+- [x] **15.2** C_GetInfo/C_GetFunctionList gaps — add: (a) CKR_ARGUMENTS_BAD: GetInfo(NULL) (ctypes, already partially tested). (b) GetFunctionList returns valid list. Verify on 3 local targets.
+- [x] **15.3** C_SeedRandom/C_GenerateRandom gaps — add: (a) CKR_RANDOM_SEED_NOT_SUPPORTED for SeedRandom. (b) GenerateRandom with 0 length. (c) GenerateRandom with very large length (1MB). Verify on 3 local targets.
+- [x] **15.4** C_GetOperationState/C_SetOperationState gaps — add: (a) CKR_STATE_UNSAVEABLE for complex operations. (b) CKR_KEY_NEEDED: restore state needing encryption key. (c) CKR_KEY_NOT_NEEDED: supply key when not needed. Verify on 3 local targets.
+- [x] **15.5** Final validation checkpoint — full CKR suite on all 4 targets. Update ckr-coverage.md with final numbers.
 
 ## Tier 15b — python-pkcs11 Bypass Mode for CKR Testing
 
