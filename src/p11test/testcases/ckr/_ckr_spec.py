@@ -461,6 +461,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.1",
         testable=False,  # Requires registered callback to cancel — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
         function="C_EncryptInit",
@@ -469,6 +470,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.8.1",
         testable=False,  # Requires active operation + cancel attempt — not exposed by python-pkcs11
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
@@ -478,6 +480,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.1",
         testable=False,  # Requires token with PIN expiration policy — not available in test tokens
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     # --- Additional C_Encrypt errors ---
     "arguments_bad": CkrExpectation(
@@ -501,6 +504,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.2",
         testable=False,  # Requires registered callback to cancel — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "operation_active": CkrExpectation(
         function="C_Encrypt",
@@ -533,6 +537,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.3",
         testable=False,  # Requires registered callback to cancel — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
         function="C_EncryptUpdate",
@@ -565,6 +570,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.4",
         testable=False,  # Requires registered callback to cancel — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_operation_active": CkrExpectation(
         function="C_EncryptFinal",
@@ -778,6 +784,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
         function="C_DecryptInit",
@@ -786,6 +793,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.9.1",
         testable=False,  # Requires active operation + cancel attempt — not exposed
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
@@ -795,6 +803,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "init_user_not_logged_in": CkrExpectation(
         function="C_DecryptInit",
@@ -827,6 +836,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "operation_active": CkrExpectation(
         function="C_Decrypt",
@@ -875,6 +885,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
         function="C_DecryptUpdate",
@@ -923,6 +934,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_operation_active": CkrExpectation(
         function="C_DecryptFinal",
@@ -979,6 +991,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_digest_update_operation_active": CkrExpectation(
         function="C_DecryptDigestUpdate",
@@ -1043,6 +1056,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_verify_update_operation_active": CkrExpectation(
         function="C_DecryptVerifyUpdate",
@@ -1269,6 +1283,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
         function="C_SignInit",
@@ -1277,6 +1292,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.10.1",
         testable=False,  # Requires active operation + cancel attempt — not exposed
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
@@ -1286,6 +1302,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "init_user_not_logged_in": CkrExpectation(
         function="C_SignInit",
@@ -1318,6 +1335,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "function_rejected": CkrExpectation(
         function="C_Sign",
@@ -1367,6 +1385,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.3",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
         function="C_SignUpdate",
@@ -1408,6 +1427,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_function_rejected": CkrExpectation(
         function="C_SignFinal",
@@ -1457,6 +1477,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.5",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "recover_init_key_function_not_permitted": CkrExpectation(
         function="C_SignRecoverInit",
@@ -1513,6 +1534,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.10.5",
         testable=False,  # Requires active operation + cancel attempt — not exposed
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "recover_init_pin_expired": CkrExpectation(
@@ -1522,6 +1544,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.5",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "recover_init_user_not_logged_in": CkrExpectation(
         function="C_SignRecoverInit",
@@ -1562,6 +1585,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.6",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "recover_operation_active": CkrExpectation(
         function="C_SignRecover",
@@ -1619,6 +1643,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.3",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "sign_encrypt_update_operation_active": CkrExpectation(
         function="C_SignEncryptUpdate",
@@ -1863,6 +1888,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
         function="C_VerifyInit",
@@ -1871,6 +1897,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.1",
         testable=False,  # Requires active operation + cancel attempt — not exposed
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
@@ -1880,6 +1907,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "init_user_not_logged_in": CkrExpectation(
         function="C_VerifyInit",
@@ -1904,6 +1932,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "operation_active": CkrExpectation(
         function="C_Verify",
@@ -1937,6 +1966,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
         function="C_VerifyUpdate",
@@ -1978,6 +2008,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_operation_active": CkrExpectation(
         function="C_VerifyFinal",
@@ -2019,6 +2050,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "recover_init_key_function_not_permitted": CkrExpectation(
         function="C_VerifyRecoverInit",
@@ -2075,6 +2107,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.5",
         testable=False,  # Requires active operation + cancel attempt — not exposed
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "recover_init_pin_expired": CkrExpectation(
@@ -2084,6 +2117,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "recover_init_user_not_logged_in": CkrExpectation(
         function="C_VerifyRecoverInit",
@@ -2132,6 +2166,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.6",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "recover_operation_active": CkrExpectation(
         function="C_VerifyRecover",
@@ -2316,6 +2351,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
         function="C_DigestInit",
@@ -2324,6 +2360,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.12.1",
         testable=False,  # Requires active operation + cancel attempt — not exposed
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
@@ -2333,6 +2370,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "init_user_not_logged_in": CkrExpectation(
         function="C_DigestInit",
@@ -2357,6 +2395,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "operation_active": CkrExpectation(
         function="C_Digest",
@@ -2381,6 +2420,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.3",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
         function="C_DigestUpdate",
@@ -2397,6 +2437,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "key_key_size_range": CkrExpectation(
         function="C_DigestKey",
@@ -2429,6 +2470,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.5",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_operation_active": CkrExpectation(
         function="C_DigestFinal",
@@ -2469,6 +2511,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "digest_encrypt_update_operation_active": CkrExpectation(
         function="C_DigestEncryptUpdate",
@@ -2502,6 +2545,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.7",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_init_mechanism_param_invalid": CkrExpectation(
         function="C_DigestXofInit",
@@ -2526,6 +2570,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.12.7",
         testable=False,  # v3.0+ — not widely implemented
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "xof_init_pin_expired": CkrExpectation(
@@ -2535,6 +2580,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.7",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "xof_init_user_not_logged_in": CkrExpectation(
         function="C_DigestXofInit",
@@ -2560,6 +2606,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.8",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_operation_active": CkrExpectation(
         function="C_DigestXof",
@@ -2601,6 +2648,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.9",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_update_operation_active": CkrExpectation(
         function="C_DigestXofUpdate",
@@ -2634,6 +2682,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.10",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_extract_operation_active": CkrExpectation(
         function="C_DigestXofExtract",
@@ -2667,6 +2716,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.11",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_final_operation_active": CkrExpectation(
         function="C_DigestXofFinal",
@@ -2692,6 +2742,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.12",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_key_value_key_handle_invalid": CkrExpectation(
         function="C_DigestXofKeyValue",
@@ -2907,6 +2958,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "genkey_mechanism_param_invalid": CkrExpectation(
         function="C_GenerateKey",
@@ -2923,6 +2975,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "genkey_token_write_protected": CkrExpectation(
         function="C_GenerateKey",
@@ -2947,6 +3000,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "genkeypair_mechanism_param_invalid": CkrExpectation(
         function="C_GenerateKeyPair",
@@ -2971,6 +3025,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "genkeypair_template_incomplete": CkrExpectation(
         function="C_GenerateKeyPair",
@@ -3160,6 +3215,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "pin_expired": CkrExpectation(
         function="C_DeriveKey",
@@ -3168,6 +3224,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "token_write_protected": CkrExpectation(
         function="C_DeriveKey",
@@ -3348,6 +3405,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.7",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "encap_parameter_set_not_supported": CkrExpectation(
         function="C_EncapsulateKey",
@@ -3364,6 +3422,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.7",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "encap_session_read_only": CkrExpectation(
         function="C_EncapsulateKey",
@@ -3460,6 +3519,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.8",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decap_parameter_set_not_supported": CkrExpectation(
         function="C_DecapsulateKey",
@@ -3476,6 +3536,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.8",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "decap_session_read_only": CkrExpectation(
         function="C_DecapsulateKey",
@@ -3751,6 +3812,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "unwrap_mechanism_param_invalid": CkrExpectation(
         function="C_UnwrapKey",
@@ -3775,6 +3837,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "unwrap_template_inconsistent": CkrExpectation(
         function="C_UnwrapKey",
@@ -4064,6 +4127,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "create_template_inconsistent": CkrExpectation(
         function="C_CreateObject",
@@ -4136,6 +4200,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.2",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "copy_token_write_protected": CkrExpectation(
         function="C_CopyObject",
@@ -4168,6 +4233,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.3",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "destroy_token_write_protected": CkrExpectation(
         function="C_DestroyObject",
@@ -4312,6 +4378,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.7",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "find_arguments_bad": CkrExpectation(
         function="C_FindObjects",
@@ -4487,6 +4554,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         compat_tuple=(SessionAsyncNotSupported, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.1",
         testable=False,  # v3.0+ async sessions — not widely supported
+        # Untestable: v3.2 async sessions not widely supported
     ),
     "open_session_parallel_not_supported": CkrExpectation(
         function="C_OpenSession",
@@ -4495,6 +4563,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         compat_tuple=(ParallelNotSupported, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.1",
         testable=False,  # Legacy parallel sessions — not testable
+        # Untestable: legacy deprecated function
     ),
     "open_session_rw_so_exists": CkrExpectation(
         function="C_OpenSession",
@@ -4511,6 +4580,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         compat_tuple=(TokenNotRecognised, SlotIDInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.1",
         testable=False,  # Requires physical token state change
+        # Untestable: requires unrecognized token hardware event
     ),
     "close_operation_active": CkrExpectation(
         function="C_CloseSession",
@@ -4551,6 +4621,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.7",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "login_operation_active": CkrExpectation(
         function="C_Login",
@@ -4616,6 +4687,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.9",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "login_user_operation_active": CkrExpectation(
         function="C_LoginUser",
@@ -4713,6 +4785,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.6.5",
         testable=False,  # v3.0+ — not widely implemented
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     # --- C_GetSessionValidationFlags errors (v3.0+) ---
@@ -4783,6 +4856,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.18.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "seed_operation_active": CkrExpectation(
         function="C_SeedRandom",
@@ -4815,6 +4889,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.18.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "generate_operation_active": CkrExpectation(
         function="C_GenerateRandom",
@@ -5008,6 +5083,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         compat_tuple=(TokenNotPresent, SlotIDInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.3",
         testable=False,  # Requires physical token removal
+        # Untestable: requires physical token removal
     ),
     # --- C_InitToken errors ---
     "init_token_session_exists": CkrExpectation(
@@ -5089,6 +5165,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         compat_tuple=(TokenNotRecognised, SlotIDInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.3",
         testable=False,  # Requires physical token state change
+        # Untestable: requires unrecognized token hardware event
     ),
     "get_mech_list_arguments_bad": CkrExpectation(
         function="C_GetMechanismList",
@@ -5113,6 +5190,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         compat_tuple=(TokenNotRecognised, SlotIDInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.5",
         testable=False,  # Requires physical token state change
+        # Untestable: requires unrecognized token hardware event
     ),
     "get_mech_info_arguments_bad": CkrExpectation(
         function="C_GetMechanismInfo",
@@ -5137,6 +5215,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         compat_tuple=(TokenNotRecognised, SlotIDInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.6",
         testable=False,  # Requires physical token state change
+        # Untestable: requires unrecognized token hardware event
     ),
     "init_token_arguments_bad": CkrExpectation(
         function="C_InitToken",
@@ -5153,6 +5232,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.7",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_token_pin_locked": CkrExpectation(
         function="C_InitToken",
@@ -5177,6 +5257,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         compat_tuple=(TokenNotRecognised, SlotIDInvalid, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.7",
         testable=False,  # Requires physical token state change
+        # Untestable: requires unrecognized token hardware event
     ),
     "init_token_token_write_protected": CkrExpectation(
         function="C_InitToken",
@@ -5201,6 +5282,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.8",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_pin_operation_active": CkrExpectation(
         function="C_InitPIN",
@@ -5257,6 +5339,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.9",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "set_pin_operation_active": CkrExpectation(
         function="C_SetPIN",
@@ -5398,6 +5481,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.4.5",
         testable=False,  # Legacy v2.01 parallel function — not testable
+        # Untestable: legacy deprecated function
         spec_ckr_code="CKR_FUNCTION_NOT_PARALLEL",
     ),
     "get_func_status_operation_active": CkrExpectation(
@@ -5415,6 +5499,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.4.6",
         testable=False,  # Legacy v2.01 parallel function — not testable
+        # Untestable: legacy deprecated function
         spec_ckr_code="CKR_FUNCTION_NOT_PARALLEL",
     ),
     "cancel_func_operation_active": CkrExpectation(
@@ -5481,6 +5566,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.7",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_signature_init_key_function_not_permitted": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5545,6 +5631,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.2 §5.11.7",
         testable=False,  # v3.2 — not widely implemented
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "verify_signature_init_pin_expired": CkrExpectation(
@@ -5554,6 +5641,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.7",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "verify_signature_init_signature_len_range": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -5603,6 +5691,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.8",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_signature_operation_not_initialized": CkrExpectation(
         function="C_VerifySignature",
@@ -5661,6 +5750,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.9",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_signature_update_operation_not_initialized": CkrExpectation(
         function="C_VerifySignatureUpdate",
@@ -5703,6 +5793,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.11.10",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_signature_final_operation_not_initialized": CkrExpectation(
         function="C_VerifySignatureFinal",
@@ -5753,6 +5844,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
         testable=False,  # v3.0+ — not widely implemented
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_encrypt_init_key_function_not_permitted": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -5817,6 +5909,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.9.1",
         testable=False,  # v3.0+ — not widely implemented
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "msg_encrypt_init_pin_expired": CkrExpectation(
@@ -5826,6 +5919,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "msg_encrypt_init_user_not_logged_in": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -5875,6 +5969,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "encrypt_message_mechanism_param_invalid": CkrExpectation(
         function="C_EncryptMessage",
@@ -5908,6 +6003,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "encrypt_message_begin_mechanism_param_invalid": CkrExpectation(
         function="C_EncryptMessageBegin",
@@ -5940,6 +6036,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "encrypt_message_begin_user_not_logged_in": CkrExpectation(
         function="C_EncryptMessageBegin",
@@ -5981,6 +6078,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "encrypt_message_next_mechanism_param_invalid": CkrExpectation(
         function="C_EncryptMessageNext",
@@ -6022,6 +6120,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.5",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_encrypt_final_operation_active": CkrExpectation(
         function="C_MessageEncryptFinal",
@@ -6063,6 +6162,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_decrypt_init_key_function_not_permitted": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6127,6 +6227,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.1",
         testable=False,  # v3.0+ — not widely implemented
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "msg_decrypt_init_pin_expired": CkrExpectation(
@@ -6136,6 +6237,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "msg_decrypt_init_user_not_logged_in": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6194,6 +6296,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_message_mechanism_param_invalid": CkrExpectation(
         function="C_DecryptMessage",
@@ -6218,6 +6321,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.2",
         testable=False,  # v3.0+ — not widely implemented
+        # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "decrypt_message_operation_not_initialized": CkrExpectation(
@@ -6252,6 +6356,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_message_begin_mechanism_param_invalid": CkrExpectation(
         function="C_DecryptMessageBegin",
@@ -6284,6 +6389,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "decrypt_message_begin_user_not_logged_in": CkrExpectation(
         function="C_DecryptMessageBegin",
@@ -6342,6 +6448,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_message_next_mechanism_param_invalid": CkrExpectation(
         function="C_DecryptMessageNext",
@@ -6391,6 +6498,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_decrypt_final_operation_active": CkrExpectation(
         function="C_MessageDecryptFinal",
@@ -6440,6 +6548,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_sign_init_key_function_not_permitted": CkrExpectation(
         function="C_MessageSignInit",
@@ -6504,6 +6613,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "msg_sign_init_user_not_logged_in": CkrExpectation(
         function="C_MessageSignInit",
@@ -6553,6 +6663,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "sign_message_function_rejected": CkrExpectation(
         function="C_SignMessage",
@@ -6619,6 +6730,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.3",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "sign_message_begin_mechanism_param_invalid": CkrExpectation(
         function="C_SignMessageBegin",
@@ -6651,6 +6763,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.3",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "sign_message_begin_token_resource_exceeded": CkrExpectation(
         function="C_SignMessageBegin",
@@ -6701,6 +6814,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "sign_message_next_function_rejected": CkrExpectation(
         function="C_SignMessageNext",
@@ -6767,6 +6881,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_sign_final_function_rejected": CkrExpectation(
         function="C_MessageSignFinal",
@@ -6833,6 +6948,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.1",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_verify_init_key_function_not_permitted": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6897,6 +7013,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.1",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "msg_verify_init_user_not_logged_in": CkrExpectation(
         function="C_MessageVerifyInit",
@@ -6938,6 +7055,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.2",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_message_mechanism_param_invalid": CkrExpectation(
         function="C_VerifyMessage",
@@ -7004,6 +7122,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.3",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_message_begin_mechanism_param_invalid": CkrExpectation(
         function="C_VerifyMessageBegin",
@@ -7036,6 +7155,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.3",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "verify_message_begin_user_not_logged_in": CkrExpectation(
         function="C_VerifyMessageBegin",
@@ -7069,6 +7189,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.4",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_message_next_mechanism_param_invalid": CkrExpectation(
         function="C_VerifyMessageNext",
@@ -7143,6 +7264,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.16.5",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_verify_final_operation_active": CkrExpectation(
         function="C_MessageVerifyFinal",
@@ -7241,6 +7363,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
         testable=False,  # Requires registered callback — not exposed by python-pkcs11
+        # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "unwrap_auth_mechanism_invalid": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",
@@ -7281,6 +7404,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.7",
         testable=False,  # Requires token with PIN expiration policy
+        # Untestable: cannot force PIN expiry on software tokens
     ),
     "unwrap_auth_session_read_only": CkrExpectation(
         function="C_UnwrapKeyAuthenticated",

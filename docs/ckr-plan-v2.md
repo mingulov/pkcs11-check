@@ -175,12 +175,12 @@ Upgrade fault-proxy.c to intercept all C_* functions for device/token error inje
 
 ## Phase 8 — Convert testable=False v3.0/v3.2 on Kryoptic
 
-- [ ] **8.1** Convert v3.0 message-based (~235) — use RawPKCS11 + funclist3_ptr. Each *Init with wrong mechanism, *Message without Init. Kryoptic only.
-- [ ] **8.2** Convert v3.0 session (~15) — LoginUser, SessionCancel. RawPKCS11 + funclist3_ptr.
-- [ ] **8.3** Convert v3.2 wrap_auth (~23) — extend raw.py with funclist32_ptr indices 92-103. Test on Kryoptic.
-- [ ] **8.4** Document genuinely untestable (~66) — function_canceled (48, callback), pin_expired (17, can't force), cant_lock (1, mutex). Add `rationale="..."` to each.
-- [ ] **8.5** Final count — target: <70 testable=False (only genuinely untestable).
-- [ ] **8.6** **Final handoff to master-plan.md.**
+- [x] **8.1** Convert v3.0 message-based (~235) — use RawPKCS11 + funclist3_ptr. Each *Init with wrong mechanism, *Message without Init. Kryoptic only.
+- [x] **8.2** Convert v3.0 session (~15) — LoginUser, SessionCancel. RawPKCS11 + funclist3_ptr.
+- [x] **8.3** Convert v3.2 wrap_auth (~23) — extend raw.py with funclist32_ptr indices 92-103. Test on Kryoptic.
+- [x] **8.4** Document genuinely untestable (~66) — function_canceled (48, callback), pin_expired (17, can't force), cant_lock (1, mutex). Add `rationale="..."` to each.
+- [x] **8.5** Final count — target: <70 testable=False (only genuinely untestable).
+- [x] **8.6** **Final handoff to master-plan.md.**
 
 ---
 
