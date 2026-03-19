@@ -460,6 +460,14 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         compat_tuple=(OperationNotInitialized, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.2",
     ),
+    "data_invalid": CkrExpectation(
+        function="C_Sign",
+        condition="data_format_error",
+        spec_ckr=DataInvalid,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.10.2",
+        allow_success=True,  # Most mechanisms hash data, so format doesn't matter
+    ),
 }
 
 
@@ -515,6 +523,20 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 §5.11.2",
         priority_note="Higher priority than CKR_SIGNATURE_INVALID",
         allow_success=True,  # SoftHSM2 + Kryoptic accept wrong-length, then fail at verify
+    ),
+    "data_len_range": CkrExpectation(
+        function="C_Verify",
+        condition="oversized_data_for_raw_verify",
+        spec_ckr=DataLenRange,
+        compat_tuple=DATA_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.11.2",
+    ),
+    "operation_not_initialized": CkrExpectation(
+        function="C_Verify",
+        condition="no_prior_C_VerifyInit",
+        spec_ckr=OperationNotInitialized,
+        compat_tuple=(OperationNotInitialized, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.11.2",
     ),
 }
 

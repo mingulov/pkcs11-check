@@ -192,8 +192,8 @@ Add missing *Init error conditions that are testable through the wrapper. Each c
 
 Add missing C_Encrypt/C_Decrypt/C_Sign/C_Verify/C_Digest operation errors (not Init, but the actual operation calls).
 
-- [ ] **11.1** Encrypt operation gaps — add: (a) CKR_DATA_INVALID: AES-GCM with invalid AAD structure. (b) CKR_BUFFER_TOO_SMALL (if testable through wrapper). (c) Additional parametrized mechanisms: AES-CBC, AES-GCM data length errors. Verify on 3 local targets.
-- [ ] **11.2** Decrypt operation gaps — add: (a) CKR_ENCRYPTED_DATA_INVALID: AES-CBC with wrong padding. (b) CKR_ENCRYPTED_DATA_LEN_RANGE: AES-CBC ciphertext not block-aligned. (c) RSA-OAEP with garbage ciphertext. Verify on 3 local targets.
+- [x] **11.1** Encrypt operation gaps — AES-CBC-PAD non-aligned, AES-GCM empty plaintext. — add: (a) CKR_DATA_INVALID: AES-GCM with invalid AAD structure. (b) CKR_BUFFER_TOO_SMALL (if testable through wrapper). (c) Additional parametrized mechanisms: AES-CBC, AES-GCM data length errors. Verify on 3 local targets.
+- [x] **11.2** Decrypt operation gaps — AES-CBC-PAD bad padding, RSA-OAEP garbage. — add: (a) CKR_ENCRYPTED_DATA_INVALID: AES-CBC with wrong padding. (b) CKR_ENCRYPTED_DATA_LEN_RANGE: AES-CBC ciphertext not block-aligned. (c) RSA-OAEP with garbage ciphertext. Verify on 3 local targets.
 - [ ] **11.3** Sign operation gaps — add: (a) CKR_DATA_INVALID: data format error. (b) operation_not_initialized test. Verify on 3 local targets.
 - [ ] **11.4** Verify operation gaps — add: (a) CKR_DATA_LEN_RANGE: oversized data for verify. (b) CKR_SIGNATURE_LEN_RANGE: parametrize across RSA, ECDSA. (c) operation_not_initialized test. Verify on 3 local targets.
 - [ ] **11.5** Digest operation gaps — add: (a) CKR_OPERATION_NOT_INITIALIZED for C_Digest. (b) Empty data digest (valid per spec). (c) DigestKey with non-digestible key type. Verify on 3 local targets.
