@@ -192,9 +192,48 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     exec uv run p11test "${CLI_ARGS[@]}"
 fi
 
-PYTEST_ARGS=(src/p11test/testcases/ "--p11-module=$MODULE" "--benchmark-disable")
+value_option=""
+targets=()
+passthrough_args=()
+for arg in "$@"; do
+    if [ "$value_option" = "--" ]; then
+        targets+=("$arg")
+        continue
+    fi
+
+    if [ -n "$value_option" ]; then
+        passthrough_args+=("$arg")
+        value_option=""
+        continue
+    fi
+
+    case "$arg" in
+        -k|-m|-o|-c|--maxfail|--tb|--durations|--rootdir|--p11-slot|--timeout|--log-level|--override-ini|--benchmark-group-by|--benchmark-sort)
+            passthrough_args+=("$arg")
+            value_option="$arg"
+            continue
+            ;;
+        --)
+            value_option="--"
+            continue
+            ;;
+    esac
+
+    if [[ "$arg" == *"::"* ]] || [ -e "$arg" ]; then
+        targets+=("$arg")
+        continue
+    fi
+
+    passthrough_args+=("$arg")
+done
+
+if [ "${#targets[@]}" -eq 0 ]; then
+    targets=(src/p11test/testcases/)
+fi
+
+PYTEST_ARGS=("${targets[@]}" "--p11-module=$MODULE" "--benchmark-disable")
 [ -n "${PIN:-}" ] && PYTEST_ARGS+=("--p11-pin=$PIN")
 [ -n "${local_slot:-}" ] && PYTEST_ARGS+=("--p11-slot=$local_slot")
-PYTEST_ARGS+=("$@")
+PYTEST_ARGS+=("${passthrough_args[@]}")
 
 exec uv run pytest "${PYTEST_ARGS[@]}"
