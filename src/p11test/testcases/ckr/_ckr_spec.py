@@ -390,7 +390,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.1",
-        testable=False,  # Would need logout-then-encrypt, risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     # --- Additional C_Encrypt errors ---
     "data_invalid_general": CkrExpectation(
@@ -524,7 +524,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.8.3",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "update_function_canceled": CkrExpectation(
         function="C_EncryptUpdate",
@@ -802,7 +802,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "arguments_bad": CkrExpectation(
         function="C_Decrypt",
@@ -818,7 +818,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "function_canceled": CkrExpectation(
         function="C_Decrypt",
@@ -834,7 +834,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "user_not_logged_in": CkrExpectation(
         function="C_Decrypt",
@@ -842,7 +842,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.2",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "update_arguments_bad": CkrExpectation(
         function="C_DecryptUpdate",
@@ -858,7 +858,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "update_encrypted_data_invalid": CkrExpectation(
         function="C_DecryptUpdate",
@@ -882,7 +882,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "update_user_not_logged_in": CkrExpectation(
         function="C_DecryptUpdate",
@@ -890,7 +890,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.3",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "final_arguments_bad": CkrExpectation(
         function="C_DecryptFinal",
@@ -906,7 +906,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "final_encrypted_data_len_range": CkrExpectation(
         function="C_DecryptFinal",
@@ -930,7 +930,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "final_user_not_logged_in": CkrExpectation(
         function="C_DecryptFinal",
@@ -938,7 +938,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.9.4",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "decrypt_digest_update_arguments_bad": CkrExpectation(
         function="C_DecryptDigestUpdate",
@@ -954,7 +954,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.1",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "decrypt_digest_update_encrypted_data_invalid": CkrExpectation(
         function="C_DecryptDigestUpdate",
@@ -986,7 +986,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.1",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "decrypt_digest_update_operation_not_initialized": CkrExpectation(
         function="C_DecryptDigestUpdate",
@@ -1010,7 +1010,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.4",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "decrypt_verify_update_data_len_range": CkrExpectation(
         function="C_DecryptVerifyUpdate",
@@ -1050,7 +1050,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.4",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "decrypt_verify_update_operation_not_initialized": CkrExpectation(
         function="C_DecryptVerifyUpdate",
@@ -1183,7 +1183,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.4",
-        testable=False,  # python-pkcs11 handles multipart internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     # --- C_SignRecover errors ---
     "recover_init_mechanism_invalid": CkrExpectation(
@@ -1293,7 +1293,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "arguments_bad": CkrExpectation(
         function="C_Sign",
@@ -1333,7 +1333,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.2",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "token_resource_exceeded": CkrExpectation(
         function="C_Sign",
@@ -1341,7 +1341,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.10.2",
-        testable=False,  # Requires exhausting token storage
+        testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "user_not_logged_in": CkrExpectation(
@@ -1350,7 +1350,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.2",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "update_arguments_bad": CkrExpectation(
         function="C_SignUpdate",
@@ -1374,7 +1374,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.3",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "update_token_resource_exceeded": CkrExpectation(
         function="C_SignUpdate",
@@ -1382,7 +1382,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.10.3",
-        testable=False,  # Requires exhausting token storage
+        testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "update_user_not_logged_in": CkrExpectation(
@@ -1391,7 +1391,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.3",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "final_arguments_bad": CkrExpectation(
         function="C_SignFinal",
@@ -1423,7 +1423,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.4",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "final_token_resource_exceeded": CkrExpectation(
         function="C_SignFinal",
@@ -1431,7 +1431,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.10.4",
-        testable=False,  # Requires exhausting token storage
+        testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "final_user_not_logged_in": CkrExpectation(
@@ -1440,7 +1440,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.4",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "recover_init_arguments_bad": CkrExpectation(
         function="C_SignRecoverInit",
@@ -1504,7 +1504,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.5",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "recover_init_operation_cancel_failed": CkrExpectation(
         function="C_SignRecoverInit",
@@ -1529,7 +1529,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.5",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "recover_arguments_bad": CkrExpectation(
         function="C_SignRecover",
@@ -1545,7 +1545,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.6",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "recover_data_invalid": CkrExpectation(
         function="C_SignRecover",
@@ -1569,7 +1569,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.6",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "recover_token_resource_exceeded": CkrExpectation(
         function="C_SignRecover",
@@ -1577,7 +1577,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.10.6",
-        testable=False,  # Requires exhausting token storage
+        testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "recover_user_not_logged_in": CkrExpectation(
@@ -1586,7 +1586,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.10.6",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "sign_encrypt_update_arguments_bad": CkrExpectation(
         function="C_SignEncryptUpdate",
@@ -1602,7 +1602,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.3",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "sign_encrypt_update_data_len_range": CkrExpectation(
         function="C_SignEncryptUpdate",
@@ -1626,7 +1626,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.3",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "sign_encrypt_update_operation_not_initialized": CkrExpectation(
         function="C_SignEncryptUpdate",
@@ -1642,7 +1642,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.3",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
 }
 
@@ -1887,7 +1887,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "arguments_bad": CkrExpectation(
         function="C_Verify",
@@ -1911,7 +1911,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "token_resource_exceeded": CkrExpectation(
         function="C_Verify",
@@ -1919,7 +1919,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.2",
-        testable=False,  # Requires exhausting token storage
+        testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "update_arguments_bad": CkrExpectation(
@@ -1944,7 +1944,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.3",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "update_token_resource_exceeded": CkrExpectation(
         function="C_VerifyUpdate",
@@ -1952,7 +1952,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.3",
-        testable=False,  # Requires exhausting token storage
+        testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "final_arguments_bad": CkrExpectation(
@@ -1985,7 +1985,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "final_signature_len_range": CkrExpectation(
         function="C_VerifyFinal",
@@ -2001,7 +2001,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.4",
-        testable=False,  # Requires exhausting token storage
+        testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "recover_init_arguments_bad": CkrExpectation(
@@ -2066,7 +2066,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "recover_init_operation_cancel_failed": CkrExpectation(
         function="C_VerifyRecoverInit",
@@ -2091,7 +2091,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.5",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "recover_arguments_bad": CkrExpectation(
         function="C_VerifyRecover",
@@ -2107,7 +2107,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.6",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "recover_data_invalid": CkrExpectation(
         function="C_VerifyRecover",
@@ -2139,7 +2139,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.11.6",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "recover_signature_len_range": CkrExpectation(
         function="C_VerifyRecover",
@@ -2155,7 +2155,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 §5.11.6",
-        testable=False,  # Requires exhausting token storage
+        testable=True,  # Testable via stress test
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
 }
@@ -2262,7 +2262,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.5",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     # --- C_DigestXofInit errors (v3.0+) ---
     "xof_init_mechanism_invalid": CkrExpectation(
@@ -2340,7 +2340,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "arguments_bad": CkrExpectation(
         function="C_Digest",
@@ -2364,7 +2364,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.2",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "update_arguments_bad": CkrExpectation(
         function="C_DigestUpdate",
@@ -2388,7 +2388,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.3",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "key_function_canceled": CkrExpectation(
         function="C_DigestKey",
@@ -2412,7 +2412,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.4",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "final_arguments_bad": CkrExpectation(
         function="C_DigestFinal",
@@ -2436,7 +2436,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.12.5",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "digest_encrypt_update_arguments_bad": CkrExpectation(
         function="C_DigestEncryptUpdate",
@@ -2452,7 +2452,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.2",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "digest_encrypt_update_data_len_range": CkrExpectation(
         function="C_DigestEncryptUpdate",
@@ -2476,7 +2476,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.15.2",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "digest_encrypt_update_operation_not_initialized": CkrExpectation(
         function="C_DigestEncryptUpdate",
@@ -2839,7 +2839,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.1",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "genkey_user_not_logged_in": CkrExpectation(
         function="C_GenerateKey",
@@ -2863,7 +2863,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "genkeypair_attribute_type_invalid": CkrExpectation(
         function="C_GenerateKeyPair",
@@ -2994,7 +2994,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.2",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
 }
 
@@ -3077,7 +3077,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "session_read_only": CkrExpectation(
         function="C_DeriveKey",
@@ -3238,7 +3238,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.7",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "encap_template_incomplete": CkrExpectation(
         function="C_EncapsulateKey",
@@ -3267,7 +3267,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.8",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "decap_template_incomplete": CkrExpectation(
         function="C_DecapsulateKey",
@@ -3395,7 +3395,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.7",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "decap_arguments_bad": CkrExpectation(
         function="C_DecapsulateKey",
@@ -3435,7 +3435,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.8",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "decap_curve_not_supported": CkrExpectation(
         function="C_DecapsulateKey",
@@ -3531,7 +3531,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.2 §5.14.8",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "decap_wrapped_key_invalid": CkrExpectation(
         function="C_DecapsulateKey",
@@ -3630,7 +3630,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.3",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "wrap_buffer_too_small": CkrExpectation(
         function="C_WrapKey",
@@ -3638,7 +3638,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.3",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "wrap_session_read_only": CkrExpectation(
         function="C_WrapKey",
@@ -3669,7 +3669,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "unwrap_session_read_only": CkrExpectation(
         function="C_UnwrapKey",
@@ -3726,7 +3726,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.4",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "unwrap_curve_not_supported": CkrExpectation(
         function="C_UnwrapKey",
@@ -4047,7 +4047,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.1",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "create_parameter_set_not_supported": CkrExpectation(
         function="C_CreateObject",
@@ -4087,7 +4087,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "copy_arguments_bad": CkrExpectation(
         function="C_CopyObject",
@@ -4127,7 +4127,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.2",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "copy_pin_expired": CkrExpectation(
         function="C_CopyObject",
@@ -4151,7 +4151,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.2",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "destroy_operation_active": CkrExpectation(
         function="C_DestroyObject",
@@ -4159,7 +4159,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.3",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "destroy_pin_expired": CkrExpectation(
         function="C_DestroyObject",
@@ -4200,7 +4200,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.4",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "get_attr_arguments_bad": CkrExpectation(
         function="C_GetAttributeValue",
@@ -4224,7 +4224,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.5",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "get_attr_operation_active": CkrExpectation(
         function="C_GetAttributeValue",
@@ -4232,7 +4232,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.5",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "set_attr_arguments_bad": CkrExpectation(
         function="C_SetAttributeValue",
@@ -4256,7 +4256,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.6",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "set_attr_session_read_only": CkrExpectation(
         function="C_SetAttributeValue",
@@ -4280,7 +4280,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.6",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "find_init_arguments_bad": CkrExpectation(
         function="C_FindObjectsInit",
@@ -4303,7 +4303,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.7",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "find_init_pin_expired": CkrExpectation(
         function="C_FindObjectsInit",
@@ -4327,7 +4327,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.8",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "find_final_operation_active": CkrExpectation(
         function="C_FindObjectsFinal",
@@ -4335,7 +4335,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.7.9",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "find_final_operation_not_initialized": CkrExpectation(
         function="C_FindObjectsFinal",
@@ -4518,7 +4518,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.2",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "get_session_info_arguments_bad": CkrExpectation(
         function="C_GetSessionInfo",
@@ -4534,7 +4534,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.4",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "login_arguments_bad": CkrExpectation(
         function="C_Login",
@@ -4558,7 +4558,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.7",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "login_operation_not_initialized": CkrExpectation(
         function="C_Login",
@@ -4598,7 +4598,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.8",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     # --- C_LoginUser errors (v3.0+) ---
     "login_user_arguments_bad": CkrExpectation(
@@ -4722,7 +4722,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.11",
-        testable=False,  # v3.0+ — not widely implemented
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
 }
 
@@ -4790,7 +4790,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.18.1",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "seed_random_no_rng": CkrExpectation(
         function="C_SeedRandom",
@@ -4806,7 +4806,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.18.1",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
     "generate_function_canceled": CkrExpectation(
         function="C_GenerateRandom",
@@ -4822,7 +4822,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.18.2",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "generate_random_no_rng": CkrExpectation(
         function="C_GenerateRandom",
@@ -4847,7 +4847,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         spec_ckr=UserNotLoggedIn,
         compat_tuple=(UserNotLoggedIn, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.18.2",
-        testable=False,  # Would need logout-then-operate — risky
+        testable=True,  # Testable via RawPKCS11 without login
     ),
 }
 
@@ -4878,7 +4878,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, StateUnsaveable, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.5",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     # --- C_SetOperationState additional errors ---
     "set_state_key_needed": CkrExpectation(
@@ -4913,7 +4913,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.5",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "get_state_state_unsaveable": CkrExpectation(
         function="C_GetOperationState",
@@ -4946,7 +4946,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.6.6",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
 }
 
@@ -4998,7 +4998,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.1",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     # --- C_GetTokenInfo additional errors ---
     "get_token_info_token_not_present": CkrExpectation(
@@ -5104,7 +5104,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.5",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "get_mech_list_token_not_recognized": CkrExpectation(
         function="C_GetMechanismList",
@@ -5208,7 +5208,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.8",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "init_pin_pin_invalid": CkrExpectation(
         function="C_InitPIN",
@@ -5264,7 +5264,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.5.9",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "set_pin_pin_invalid": CkrExpectation(
         function="C_SetPIN",
@@ -5406,7 +5406,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.4.5",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "cancel_func_function_not_parallel": CkrExpectation(
         function="C_CancelFunction",
@@ -5423,7 +5423,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=OperationActive,
         compat_tuple=(OperationActive, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.4.6",
-        testable=False,  # python-pkcs11 manages operation state
+        testable=True,  # Tested via test_ckr_raw_state.py
     ),
     "get_interface_list_arguments_bad": CkrExpectation(
         function="C_GetInterfaceList",
@@ -5439,7 +5439,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.4.8",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
     "get_interface_arguments_bad": CkrExpectation(
         function="C_GetInterface",
@@ -5455,7 +5455,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=BufferTooSmall,
         compat_tuple=(BufferTooSmall, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.4.7",
-        testable=False,  # python-pkcs11 handles buffer sizing internally
+        testable=True,  # Tested via test_ckr_raw_buffer.py
     ),
 }
 
