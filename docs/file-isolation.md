@@ -240,6 +240,8 @@ The shell helper supports the common local workflow options in isolation mode:
 
 - file or nodeid targets
 - `-k` / `--match`
+- `-o` / `--output`
+- `--output-file`
 - `-v`
 - `-x` / `--stop-on-failure`
 - `--destructive`

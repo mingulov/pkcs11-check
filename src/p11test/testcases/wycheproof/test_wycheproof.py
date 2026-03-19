@@ -15,8 +15,8 @@ import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from p11test.testcases.wycheproof_loader import WYCHEPROOF_DIR  # noqa: F401
-from p11test.testcases.wycheproof_loader import load_vectors as load_wycheproof
+from p11test.testcases.data import WYCHEPROOF_DIR  # noqa: F401
+from p11test.testcases.wycheproof.wycheproof_loader import load_vectors as load_wycheproof
 
 pytestmark = pytest.mark.wycheproof
 

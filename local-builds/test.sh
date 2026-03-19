@@ -136,6 +136,8 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     state_file="${P11TEST_STATE_FILE:-}"
     policy_file="${P11TEST_POLICY_FILE:-}"
     match=""
+    output="rich"
+    output_file=""
     verbose=0
     destructive=0
     targets=()
@@ -180,6 +182,22 @@ if [ "$use_isolation_runner" -eq 1 ]; then
                 ;;
             --match=*)
                 match="${1#*=}"
+                shift
+                ;;
+            -o|--output)
+                output="${2:-}"
+                shift 2
+                ;;
+            --output=*)
+                output="${1#*=}"
+                shift
+                ;;
+            --output-file)
+                output_file="${2:-}"
+                shift 2
+                ;;
+            --output-file=*)
+                output_file="${1#*=}"
                 shift
                 ;;
             -v|--verbose)
@@ -239,6 +257,8 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     [ "$stop_on_failure" != "0" ] && CLI_ARGS+=("--stop-on-failure")
     [ -n "$state_file" ] && CLI_ARGS+=("--state-file" "$state_file")
     [ -n "$policy_file" ] && CLI_ARGS+=("--policy-file" "$policy_file")
+    [ -n "$output" ] && CLI_ARGS+=("--output" "$output")
+    [ -n "$output_file" ] && CLI_ARGS+=("--output-file" "$output_file")
     [ "$verbose" != "0" ] && CLI_ARGS+=("--verbose")
     [ "$destructive" != "0" ] && CLI_ARGS+=("--destructive")
     [ -n "$match" ] && CLI_ARGS+=("--match" "$match")
