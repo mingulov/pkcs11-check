@@ -62,7 +62,8 @@ def _build_pytest_args(
     if output == "junit":
         args.extend(["--junit-xml", output_file or "p11test-results.xml"])
     elif output == "json":
-        args.extend(["--tb=no", "-q"])
+        json_file = output_file or "p11test-results.json"
+        args.extend(["--json-report", f"--json-report-file={json_file}", "--json-report-omit=collectors"])
 
     args.append("--tb=short")
     args.append("--no-header")

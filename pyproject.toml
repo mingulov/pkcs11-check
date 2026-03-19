@@ -19,6 +19,7 @@ dependencies = [
     "pytest-xdist>=3.5",
     "pytest-timeout>=2.3",
     "cryptography>=46.0.5",
+    "pytest-json-report>=1.5.0",
 ]
 
 [project.optional-dependencies]
