@@ -53,7 +53,7 @@ docker compose -f docker/docker-compose.test.yml run --rm test-opencryptoki sh -
 
 ## Completion promise
 
-All tasks marked `[x]` and zero regressions on SoftHSM2 + Kryoptic + NSS softokn (local builds).
+All tasks marked `[x]`, CkrExpectation entries >= 244 (50%+ of 487), and zero regressions on SoftHSM2 + Kryoptic + NSS softokn (local builds).
 
 ### Validation targets
 
@@ -240,13 +240,19 @@ Complete the remaining function families.
 - [ ] **15.4** C_GetOperationState/C_SetOperationState gaps — add: (a) CKR_STATE_UNSAVEABLE for complex operations. (b) CKR_KEY_NEEDED: restore state needing encryption key. (c) CKR_KEY_NOT_NEEDED: supply key when not needed. Verify on 3 local targets.
 - [ ] **15.5** Final validation checkpoint — full CKR suite on all 4 targets. Update ckr-coverage.md with final numbers.
 
-## Tier 16 — Final Completeness Audit & Handoff
+## Tier 16 — Deep Gap Analysis Round 2
 
-- [ ] **16.1** Recount all CkrExpectation entries and compare against 487 spec target. Produce final coverage percentage.
-- [ ] **16.2** Run strict mode audit on all 4 modules. Document all compliance deviations in module-issues.md.
-- [ ] **16.3** Full regression — SoftHSM2 + Kryoptic + NSS softokn full suite. Zero failures.
-- [ ] **16.4** Update docs/ckr-coverage.md with final matrix.
-- [ ] **16.5** **Handoff to master-plan.md** — CKR coverage maximized. Resume master-plan.
+After Tiers 10-15 are done, coverage should be ~175/487 (~36%). This tier audits what's still missing and creates new tasks to push past 50%.
+
+- [ ] **16.1** Recount CkrExpectation entries. If below 244 (50%), continue to 16.2. If >= 244, skip to 16.6.
+- [ ] **16.2** Parse OASIS spec programmatically — for each C_* function in `/tmp/pkcs11/working/doc/spec/`, extract ALL conditions from the prose (not just Return values list). Each "MUST" or "MUST NOT" in the spec text is a potential test condition. Write the results to `docs/ckr-coverage.md` as a per-function checklist.
+- [ ] **16.3** Add new Tier 17 tasks to this plan — for EVERY missing condition found in 16.2 that is Python-testable (through wrapper or ctypes), create a new checkbox task. Group by file. The plan grows. Target: enough tasks to reach 244+ entries when all are done.
+- [ ] **16.4** Implement Tier 17 tasks — work through each new task. Test on SoftHSM2 + Kryoptic + NSS softokn. Fix issues. **This task is done when all Tier 17 tasks are marked [x].**
+- [ ] **16.5** Recount again. If still below 244, add Tier 18 tasks following same pattern (parse spec deeper — look at mechanism-specific conditions, e.g., AES-GCM IV length, RSA-PSS salt length, ECDH KDF params). Implement until >= 244 or all testable conditions exhausted.
+- [ ] **16.6** Final coverage report — update `docs/ckr-coverage.md` with exact numbers: (a) total CkrExpectation entries, (b) total tests, (c) coverage percentage, (d) list of conditions intentionally excluded (untestable from Python, require hardware events, etc.).
+- [ ] **16.7** Strict mode audit on all 4 modules. Document all compliance deviations in `docs/module-issues.md`.
+- [ ] **16.8** Full regression — SoftHSM2 + Kryoptic + NSS softokn + Docker OpenCryptoki. Zero failures.
+- [ ] **16.9** **Handoff to master-plan.md** — CKR coverage at maximum achievable level (target: >50% = 244+/487).
 
 ---
 
