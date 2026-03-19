@@ -67,17 +67,19 @@ Updated as Docker targets are analyzed.
 
 ## BouncyHSM 2.0.1 (v3.2)
 
-**Status: Segfaults on attribute query (python-pkcs11 fork issue)**
+**Status: Segfault on stale-handle attribute read (BouncyHSM PKCS#11 shim bug)**
 
 ### Known bugs
-- **Segfault on CKA_ENCAPSULATE/CKA_DECAPSULATE**: python-pkcs11 crashes when BouncyHSM returns attribute errors for v3.2 attributes. Needs fix in fork attribute handling.
-- **CKF_TOKEN_PRESENT not set**: Slot flags are 0x0 even when a token is present. `get_slots(token_present=True)` returns empty. This violates PKCS#11 spec — `CKF_TOKEN_PRESENT` should be set. Workaround: use `get_slots(token_present=False)`.
+- **Segfault on `C_GetAttributeValue` after `C_DestroyObject`**: reproduced on `key.destroy(); key[Attribute.LABEL]` and also via a direct `ctypes` call to `libbouncyhsm_pkcs11.so`. Root cause is in BouncyHSM's native PKCS#11 shim (`src/Src/BouncyHsm.Pkcs11Lib/bouncy-pkcs11.c`): `C_GetAttributeValue()` stores the real PKCS#11 return value in `rvMethod`, but checks `if (rv == CKR_OK || ...)` using the RPC transport status instead. Because `rv` is `0` on RPC success, the shim always enters the response-processing block and dereferences `envelope.Data` even when the method return is `CKR_OBJECT_HANDLE_INVALID`.
+- **Correct shim fix**: change the condition to use `rvMethod`, not `rv`, and guard `envelope.Data != NULL` before dereferencing it. The server side already reports `CKR_OBJECT_HANDLE_INVALID` correctly.
 
 ### Known quirks
 - .NET server + native PKCS#11 shim (TCP proxy architecture)
 - 206 mechanisms supported
 - Requires .NET 10.0 SDK for building
 - InMemory or LiteDb storage modes
+- `get_slots(token_present=True)` works in the current Docker setup
+- Reading `CKA_ENCAPSULATE` / `CKA_DECAPSULATE` from an AES key now returns `CKR_ATTRIBUTE_TYPE_INVALID` cleanly
 
 ---
 

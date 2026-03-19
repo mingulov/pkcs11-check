@@ -1,11 +1,11 @@
-# OpenCryptoki with SWToken — IBM's PKCS#11 implementation
+# OpenCryptoki 3.26 with SWToken — IBM's PKCS#11 implementation
 # v3.0 support, software token backed by OpenSSL
 
-FROM fedora:43
+FROM fedora:44
 
 RUN dnf install -y \
     opencryptoki opencryptoki-swtok \
-    python3.12 python3.12-devel \
+    python3 python3-devel \
     gcc openssl-devel git procps-ng \
     && dnf clean all
 
@@ -18,7 +18,7 @@ RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ \
 
 # Use only the SW token (slot 3 in default config uses libpkcs11_sw.so)
 # Override config to put SW token at slot 0
-RUN printf 'version opencryptoki-3.25\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
+RUN printf 'version opencryptoki-3.26\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
     > /etc/opencryptoki/opencryptoki.conf
 
 ENV P11TEST_MODULE=/usr/lib64/pkcs11/libopencryptoki.so
@@ -27,7 +27,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 COPY . .
-RUN uv python pin 3.12 && uv sync --frozen
+RUN uv sync --frozen --python /usr/bin/python3
 
 # Add root to pkcs11 group so we can talk to pkcsslotd
 RUN usermod -a -G pkcs11 root

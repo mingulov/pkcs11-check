@@ -81,6 +81,25 @@ P11TEST_ISOLATION=file \
 bash local-builds/test.sh bouncyhsm src/p11test/testcases/ckr/test_ckr_codes.py
 ```
 
+Some crash-prone providers now default to file isolation automatically when the
+user does not override the mode:
+
+- `nss-softokn`
+- `qryptotoken`
+
+Those provider defaults use a stable state file under `/tmp`, for example:
+
+```text
+/tmp/p11test-nss-softokn-isolation-state.json
+```
+
+You can still override the default explicitly:
+
+```bash
+P11TEST_ISOLATION=none bash local-builds/test.sh nss-softokn -k ckr
+P11TEST_ISOLATION=file bash local-builds/test.sh qryptotoken -x
+```
+
 Useful companion variables:
 
 ```bash

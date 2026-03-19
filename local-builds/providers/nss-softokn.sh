@@ -40,6 +40,7 @@ get_module() { echo "$MODULE"; }
 get_slot()   { echo "$SLOT"; }
 get_pin()    { echo "$PIN"; }
 get_label()  { echo "$TOKEN_LABEL"; }
+get_default_isolation() { echo "file"; }
 
 get_env() {
     echo "NSS_LIB_PARAMS=configDir=sql:$DATA_DIR"

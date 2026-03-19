@@ -61,6 +61,7 @@ Fork: `github.com/mingulov/python-pkcs11` (git submodule at `python-pkcs11/`)
 - **CKO_PROFILE support**: `ProfileID` enum, `CKA_PROFILE_ID` attribute
 - **GCM IV fix**: Removed incorrect 12-byte IV length restriction (NIST recommends, not mandates)
 - **Attribute registry**: Handles v3.2 attributes in `make_object` for mixed-version compat
+- **Safe `C_GetAttributeValue` hard-error handling**: only inspect returned `ulValueLen` on `CKR_OK`, `CKR_ATTRIBUTE_SENSITIVE`, `CKR_ATTRIBUTE_TYPE_INVALID`, or `CKR_BUFFER_TOO_SMALL`, per PKCS#11 spec. This hardens the wrapper when a module returns hard errors cleanly; it does not fix lower-level native shim bugs that crash before control returns to Python.
 
 ## Files Changed
 

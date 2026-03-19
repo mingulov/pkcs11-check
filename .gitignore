@@ -11,3 +11,5 @@ build/
 .hypothesis/
 .claude/*.local.md
 results/
+local-builds/bouncyhsm/
+local-builds/data/

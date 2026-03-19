@@ -13,7 +13,7 @@ Test results from local builds and Docker runs. Updated 2026-03-18.
 | **pkcs11-mock** | 2.0.0 | v3.1 | 26 | 2 | — | — | Mock stub. Constant RNG, limited ops |
 | **qryptotoken** | 0.4.1 | — | 20 | 46 | — | — | Experimental PQC (QUBIP) |
 | **tpm2-pkcs11** | 1.9.0 | v2.40 | 33 | 61 | 4 | — | Hardware TPM. 26 mechanisms only |
-| **BouncyHSM** | 2.0.1 | v3.2 | — | — | — | — | Segfault on v3.2 attr query (fork bug) |
+| **BouncyHSM** | 2.0.1 | v3.2 | — | — | — | — | Segfault on stale-handle attr read (native shim bug) |
 | **OpenCryptoki** | 3.26.0 | v3.0 | — | — | — | — | Docker only (needs pkcsslotd) |
 
 ## Docker Results (latest run)

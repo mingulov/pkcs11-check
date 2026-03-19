@@ -4,6 +4,7 @@
 # Architecture: .NET server + native PKCS#11 shim (TCP proxy)
 
 PROVIDER_NAME="bouncyhsm"
+DEFAULT_BRANCH="v2.0.1"
 REPO="https://github.com/harrison314/BouncyHsm.git"
 PATCH_FILE="$PROJECT_DIR/patches/bouncyhsm/0001-fix-getattributevalue-rvmethod.patch"
 
@@ -32,13 +33,14 @@ _apply_local_patch() {
 }
 
 build() {
+    local branch="${1:-$DEFAULT_BRANCH}"
     local src="$BASE_DIR/bouncyhsm/src"
     local server="$BASE_DIR/bouncyhsm/server"
     local lib="$BASE_DIR/bouncyhsm/lib"
     local cc_bin=""
     mkdir -p "$lib" "$server"
 
-    echo "=== Building BouncyHSM ==="
+    echo "=== Building BouncyHSM ($branch) ==="
 
     if ! command -v dotnet &>/dev/null; then
         echo "ERROR: dotnet SDK not found."
@@ -61,7 +63,23 @@ build() {
     fi
 
     if [ ! -d "$src" ]; then
-        git clone --depth 1 "$REPO" "$src"
+        git clone --depth 1 --branch "$branch" "$REPO" "$src"
+    else
+        git -C "$src" fetch --depth 1 origin "$branch" >/dev/null 2>&1 || git -C "$src" fetch --tags origin
+
+        local current_commit=""
+        local desired_commit=""
+        current_commit="$(git -C "$src" rev-parse HEAD)"
+        desired_commit="$(git -C "$src" rev-parse "$branch^{commit}")"
+
+        if [ "$current_commit" != "$desired_commit" ]; then
+            if [ -n "$(git -C "$src" status --porcelain)" ]; then
+                echo "ERROR: local BouncyHSM source tree has local changes: $src"
+                echo "Reset or remove it before switching to $branch."
+                exit 1
+            fi
+            git -C "$src" checkout "$branch"
+        fi
     fi
 
     _apply_local_patch "$src"

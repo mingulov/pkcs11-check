@@ -32,7 +32,7 @@ Each file in `providers/` defines `build()` and `setup()` for one token:
 | **tpm2-pkcs11** | `tpm2-pkcs11.sh` | C | 1.9.2 | Uses hardware TPM or swtpm |
 | **pkcs11-mock** | `pkcs11-mock.sh` | C | v2.0.0 | v3.1 stub, single file |
 | **qryptotoken** | `qryptotoken.sh` | Rust | v0.4.1 | Experimental PQC (QUBIP) |
-| **BouncyHSM** | `bouncyhsm.sh` | .NET | latest | Needs dotnet SDK 10.0, TCP server |
+| **BouncyHSM** | `bouncyhsm.sh` | .NET | v2.0.1 | Needs dotnet SDK 10.0, TCP server |
 
 ## Custom OpenSSL
 

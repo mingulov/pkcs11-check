@@ -50,3 +50,7 @@ setup() {
     MODULE="$so"
     PIN="1234"
 }
+
+get_default_isolation() {
+    echo "file"
+}

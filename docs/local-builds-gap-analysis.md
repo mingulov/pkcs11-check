@@ -16,6 +16,10 @@ The goal was not to prove that every module passes the whole product suite. The 
 - local helper regressions
 - module-specific product failures or native crashes
 
+Follow-up: after this validation, `local-builds/test.sh` was updated to auto-enable
+file isolation for `nss-softokn` and `qryptotoken` unless the user explicitly
+overrides `P11TEST_ISOLATION` or passes `--isolation`.
+
 ## Fix Included In This Validation
 
 `local-builds/test.sh` now preserves explicit pytest file/nodeid targets in the default non-isolated path.
@@ -99,19 +103,17 @@ That is the strongest evidence from this pass that the new file-isolation path i
 
 ## Real Gaps Found
 
-### 1. Default local runs are still in-process
+### 1. Default local runs are now split by provider stability
 
-`bash local-builds/test.sh <provider>` remains an in-process pytest run unless `P11TEST_ISOLATION=file` is set. That means known-crashy providers still kill the whole run by default.
+After the follow-up helper change, crash-prone providers no longer need a manual
+`P11TEST_ISOLATION=file` for the common path:
 
-This is visible right now on:
+- `nss-softokn` defaults to `file`
+- `qryptotoken` defaults to `file`
+- stable fast providers like `softhsm2` and `kryoptic` still default to in-process mode
 
-- `nss-softokn`
-- `qryptotoken`
-
-Recommendation:
-
-- keep default in-process mode for clean fast providers like `softhsm2` and `kryoptic`
-- auto-enable file isolation for known-crashy providers, or at least print a stronger warning/recommendation
+That is the right shape for the local helper. The remaining gap is broader
+provider automation, not the isolation default itself.
 
 ### 2. Not every local provider is a good full-suite regression target
 
@@ -166,7 +168,8 @@ bash local-builds/test.sh softhsm2 -q
 bash local-builds/test.sh kryoptic -q
 ```
 
-For crash-prone providers, prefer:
+For crash-prone providers, the helper now chooses file isolation automatically,
+but the explicit form is still valid:
 
 ```bash
 P11TEST_ISOLATION=file bash local-builds/test.sh nss-softokn ...

@@ -66,14 +66,6 @@ fi
 _load_provider "$TARGET"
 $SETUP_FUNC
 
-echo "=== Running p11test ==="
-echo "Provider: $PROVIDER_NAME"
-echo "Module:   $MODULE"
-echo "PIN:      ${PIN:-<none>}"
-echo ""
-
-cd "$PROJECT_DIR"
-
 # Export provider-specific environment variables (e.g., NSS_LIB_PARAMS)
 if type -t get_env &>/dev/null; then
     while IFS= read -r envline; do
@@ -92,7 +84,21 @@ if type -t get_slot &>/dev/null; then
     local_slot="$(get_slot)"
 fi
 
+provider_default_isolation="none"
+if type -t get_default_isolation &>/dev/null; then
+    provider_default_isolation="$(get_default_isolation)"
+fi
+
+provider_default_state_file="/tmp/p11test-${TARGET}-isolation-state.json"
+if type -t get_default_state_file &>/dev/null; then
+    provider_default_state_file="$(get_default_state_file)"
+fi
+
 use_isolation_runner=0
+isolation_requested=0
+if [ -n "${P11TEST_ISOLATION+x}" ]; then
+    isolation_requested=1
+fi
 if [ "${P11TEST_ISOLATION:-none}" != "none" ]; then
     use_isolation_runner=1
 fi
@@ -100,12 +106,26 @@ for arg in "$@"; do
     case "$arg" in
         --isolation|--isolation=*|--resume|--stop-on-failure|--state-file|--state-file=*)
             use_isolation_runner=1
+            isolation_requested=1
             ;;
     esac
 done
+if [ "$use_isolation_runner" -eq 0 ] && [ "$isolation_requested" -eq 0 ] && [ "$provider_default_isolation" != "none" ]; then
+    use_isolation_runner=1
+    isolation_from_provider=1
+else
+    isolation_from_provider=0
+fi
+
+echo "=== Running p11test ==="
+echo "Provider: $PROVIDER_NAME"
+echo "Module:   $MODULE"
+echo "PIN:      ${PIN:-<none>}"
+
+cd "$PROJECT_DIR"
 
 if [ "$use_isolation_runner" -eq 1 ]; then
-    isolation_mode="${P11TEST_ISOLATION:-none}"
+    isolation_mode="${P11TEST_ISOLATION:-$provider_default_isolation}"
     resume="${P11TEST_RESUME:-0}"
     stop_on_failure="${P11TEST_STOP_ON_FAILURE:-0}"
     state_file="${P11TEST_STATE_FILE:-}"
@@ -178,6 +198,18 @@ if [ "$use_isolation_runner" -eq 1 ]; then
         esac
     done
 
+    if [ -z "$state_file" ] && [ "$isolation_from_provider" -eq 1 ]; then
+        state_file="$provider_default_state_file"
+    fi
+
+    echo "Isolation: $isolation_mode"
+    if [ "$isolation_from_provider" -eq 1 ] && [ -z "${P11TEST_ISOLATION+x}" ]; then
+        echo "State:     $state_file (provider default)"
+    elif [ -n "$state_file" ]; then
+        echo "State:     $state_file"
+    fi
+    echo ""
+
     CLI_ARGS=(test --module "$MODULE" --isolation "$isolation_mode")
     [ -n "${PIN:-}" ] && CLI_ARGS+=("--pin" "$PIN")
     [ -n "${local_slot:-}" ] && CLI_ARGS+=("--slot" "$local_slot")
@@ -191,6 +223,9 @@ if [ "$use_isolation_runner" -eq 1 ]; then
 
     exec uv run p11test "${CLI_ARGS[@]}"
 fi
+
+echo "Isolation: none"
+echo ""
 
 value_option=""
 targets=()
