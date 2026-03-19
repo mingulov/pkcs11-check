@@ -699,6 +699,20 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
         spec_ref="PKCS#11 v3.1 §5.14.5",
     ),
+    "key_function_not_permitted": CkrExpectation(
+        function="C_DeriveKey",
+        condition="key_CKA_DERIVE_is_False",
+        spec_ckr=KeyFunctionNotPermitted,
+        compat_tuple=(KeyFunctionNotPermitted, KeyTypeInconsistent, MechanismInvalid, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
+    "template_incomplete": CkrExpectation(
+        function="C_DeriveKey",
+        condition="missing_output_key_type",
+        spec_ckr=TemplateIncomplete,
+        compat_tuple=TEMPLATE_ERRORS,
+        spec_ref="PKCS#11 v3.1 §5.14.5",
+    ),
 }
 
 
@@ -776,6 +790,37 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         spec_ckr=WrappedKeyInvalid,
         compat_tuple=(WrappedKeyInvalid, WrappedKeyLenRange, EncryptedDataInvalid,
                       ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.4",
+    ),
+    "wrap_key_type_inconsistent": CkrExpectation(
+        function="C_WrapKey",
+        condition="wrapping_key_wrong_type_for_mechanism",
+        spec_ckr=KeyTypeInconsistent,
+        compat_tuple=(KeyTypeInconsistent, MechanismInvalid, KeyFunctionNotPermitted,
+                      FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.3",
+    ),
+    "wrap_mechanism_param_invalid": CkrExpectation(
+        function="C_WrapKey",
+        condition="wrong_mechanism_parameter",
+        spec_ckr=MechanismParamInvalid,
+        compat_tuple=(MechanismParamInvalid, MechanismInvalid, ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.3",
+    ),
+    "unwrap_wrapped_key_len_range": CkrExpectation(
+        function="C_UnwrapKey",
+        condition="wrapped_data_wrong_length",
+        spec_ckr=WrappedKeyLenRange,
+        compat_tuple=(WrappedKeyLenRange, WrappedKeyInvalid, EncryptedDataInvalid,
+                      ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.14.4",
+        priority_note="Higher priority than CKR_WRAPPED_KEY_INVALID",
+    ),
+    "unwrap_template_incomplete": CkrExpectation(
+        function="C_UnwrapKey",
+        condition="missing_required_unwrap_attrs",
+        spec_ckr=TemplateIncomplete,
+        compat_tuple=TEMPLATE_ERRORS,
         spec_ref="PKCS#11 v3.1 §5.14.4",
     ),
 }
