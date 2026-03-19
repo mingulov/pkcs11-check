@@ -8,18 +8,16 @@ p11test has one external vector source (wycheproof) using only 111 of 336 availa
 
 ## Solution
 
-Reorganize test data into `testcases/data/`, add 3 new external sources as git submodules, expand test coverage using unused vectors.
+Reorganize test data into `testcases/data/`, add new external sources, expand test coverage using unused vectors.
 
 ## Folder Structure
 
 ```
 src/p11test/testcases/
     data/                              # ALL external data sources
-        __init__.py                    # DATA_DIR = Path(__file__).parent
-        wycheproof/                    # submodule: C2SP/wycheproof (73MB, always)
-        cctv/                          # submodule: C2SP/CCTV (2.3MB, always)
-        acvp/                          # submodule: usnistgov/ACVP-Server (1.1GB, opt-in)
-        x509-limbo/                    # submodule: C2SP/x509-limbo (194MB, opt-in)
+        __init__.py                    # DATA_DIR, WYCHEPROOF_DIR, KAT_DIR constants
+        wycheproof/                    # submodule: C2SP/wycheproof (73MB, always cloned)
+        cctv/                          # submodule: C2SP/CCTV (2.3MB, always cloned)
         sha1.json                      # existing NIST KAT files
         sha256.json
         sha224.json
@@ -31,8 +29,9 @@ src/p11test/testcases/
 
     wycheproof/                        # wycheproof test files (moved from root)
         __init__.py
-        conftest.py                    # WYCHEPROOF_DIR pointing to data/wycheproof
-        test_wycheproof_aes.py         # 16 files moved here
+        conftest.py                    # imports WYCHEPROOF_DIR from data/
+        wycheproof_loader.py           # moved from testcases root
+        test_wycheproof_aes.py         # 16 test files moved here
         test_wycheproof_ecdsa.py
         ...
 
@@ -44,31 +43,62 @@ src/p11test/testcases/
 
 ## Submodule Configuration
 
-### Always cloned (small repos)
+### Always cloned (registered in .gitmodules)
 
 | Submodule | URL | Size | Content |
 |-----------|-----|------|---------|
 | `data/wycheproof` | `C2SP/wycheproof` | 73MB | 336 JSON vector files + schemas + PQC vectors |
 | `data/cctv` | `C2SP/CCTV` | 2.3MB | Ed25519 914 edge cases, ML-KEM intermediate |
 
-### Opt-in (large repos, `update = none`)
+### Opt-in (NOT in .gitmodules — added via script)
 
-| Submodule | URL | Size | Content |
-|-----------|-----|------|---------|
-| `data/acvp` | `usnistgov/ACVP-Server` | 1.1GB | NIST official: SLH-DSA, LMS, DRBG, HKDF, PQC keygen |
-| `data/x509-limbo` | `C2SP/x509-limbo` | 194MB | 7000+ pathological X.509 certificates |
+Large repos are NOT registered in `.gitmodules` to prevent `git clone --recurse-submodules` from downloading them. Instead, a helper script adds them on demand.
 
-Opt-in submodules cloned with:
+| Repo | URL | Size | Content |
+|------|-----|------|---------|
+| ACVP-Server | `usnistgov/ACVP-Server` | 1.1GB | NIST official: SLH-DSA, LMS, DRBG, HKDF, PQC |
+| x509-limbo | `C2SP/x509-limbo` | 194MB | 7000+ pathological X.509 certificates |
+
+**Why not in .gitmodules:** `update = none` does NOT prevent `--recurse-submodules` from cloning them. The only reliable way to keep them opt-in is to not register them.
+
+Opt-in usage:
 ```bash
-git submodule update --init src/p11test/testcases/data/acvp
-git submodule update --init src/p11test/testcases/data/x509-limbo
+# Add ACVP vectors (one-time)
+scripts/fetch-optional-data.sh acvp
+
+# Add x509-limbo (one-time)
+scripts/fetch-optional-data.sh x509-limbo
 ```
 
-Tests skip gracefully when opt-in submodules not present:
-```python
-if not (DATA_DIR / "acvp" / "json-files").exists():
-    pytest.skip("ACVP vectors not cloned")
+The script does:
+```bash
+git submodule add --depth 1 https://github.com/usnistgov/ACVP-Server.git \
+    src/p11test/testcases/data/acvp
 ```
+
+Tests skip gracefully when opt-in data not present:
+```python
+ACVP_DIR = DATA_DIR / "acvp" / "json-files"
+if not ACVP_DIR.exists():
+    pytest.skip("ACVP vectors not cloned (run: scripts/fetch-optional-data.sh acvp)")
+```
+
+## Centralized Path Constants
+
+`data/__init__.py` is the single source of truth for ALL data paths:
+
+```python
+from pathlib import Path
+
+DATA_DIR = Path(__file__).parent
+WYCHEPROOF_DIR = DATA_DIR / "wycheproof" / "testvectors_v1"
+CCTV_DIR = DATA_DIR / "cctv"
+ACVP_DIR = DATA_DIR / "acvp" / "json-files"
+X509_LIMBO_DIR = DATA_DIR / "x509-limbo"
+KAT_DIR = DATA_DIR  # sha1.json, aes_ecb.json live here
+```
+
+All test files import from here — no more hardcoded paths in 15+ files.
 
 ## What Each Source Enables
 
@@ -93,7 +123,7 @@ Currently using 111 of 336 files. Key unused:
 - **DRBG**: ctrDRBG, hashDRBG, hmacDRBG — for C_GenerateRandom validation
 - **HKDF/KDF**: key derivation vectors for CKM_HKDF_* mechanisms
 
-ACVP JSON format: `prompt.json` (inputs) + `expectedResults.json` (outputs) per algorithm. Needs adapter layer — different from wycheproof single-file format.
+**ACVP JSON format adapter:** Lives at `testcases/data/acvp_loader.py`. Loads `prompt.json` + `expectedResults.json` pairs and returns a list of `dict` with unified keys (`input`, `expected`, `algorithm`, `test_type`). Pytest parametrize consumes this list. The adapter handles per-algorithm directory structure and test group dependencies.
 
 ### x509-limbo (opt-in) — certificate crash testing
 
@@ -104,40 +134,78 @@ ACVP JSON format: `prompt.json` (inputs) + `expectedResults.json` (outputs) per 
 - CVE regression certificates
 - Oversized fields
 
-Tests: call `C_CreateObject(CKO_CERTIFICATE, CKA_VALUE=der_cert)` with each cert. Module must not crash. Document which certs are accepted vs rejected per module.
+Tests marked `@pytest.mark.stress` — not run by default. Batched (not 7000 individual parametrized tests). A "pass" is any CKR return code that is NOT a crash/segfault. CKR_ATTRIBUTE_VALUE_INVALID = pass (module correctly rejects). Module-specific acceptance documented in `docs/module-issues.md`.
+
+## Docker Impact
+
+Add `.dockerignore` to prevent copying large data into images:
+
+```
+src/p11test/testcases/data/acvp/
+src/p11test/testcases/data/x509-limbo/
+local-builds/*/src/
+python-pkcs11/.git/
+.git/
+```
+
+The always-cloned submodules (wycheproof 73MB, cctv 2.3MB) are copied into Docker images — acceptable.
 
 ## Migration Plan
 
-### Phase 1: Rename and reorganize
-1. Rename `vectors/` → `data/`
-2. Update `.gitmodules` wycheproof path
-3. Update all path references (18 files)
-4. Create `data/__init__.py`
+### Phase 1: Rename vectors/ → data/ and fix submodule
 
-### Phase 2: Move wycheproof tests
-5. Create `testcases/wycheproof/` with `__init__.py` + `conftest.py`
-6. Move 16 `test_wycheproof_*.py` files
-7. Update `WYCHEPROOF_DIR` paths (parent → parent.parent)
-8. Verify all wycheproof tests pass
+Exact git commands (submodule move is NOT a simple rename):
+```bash
+# Move submodule (git 2.34+)
+git mv src/p11test/testcases/vectors/wycheproof src/p11test/testcases/data/wycheproof
+git submodule sync
+
+# Move non-submodule JSON files
+mv src/p11test/testcases/vectors/*.json src/p11test/testcases/data/
+rmdir src/p11test/testcases/vectors
+```
+
+Also fix python-pkcs11 submodule absolute path in `.gitmodules` if present.
+
+1. Execute git mv + submodule sync
+2. Move JSON files to `data/`
+3. Create `data/__init__.py` with centralized path constants
+4. Update `pyproject.toml` — ruff exclude and mypy overrides (`vectors/` → `data/`)
+5. Update `test_kat.py` — `VECTORS_DIR` → import from `data`
+6. Verify all tests pass
+
+### Phase 2: Move wycheproof tests + consolidate paths
+
+7. Create `testcases/wycheproof/` with `__init__.py`
+8. Move `wycheproof_loader.py` into `wycheproof/`
+9. Create `wycheproof/conftest.py` importing `WYCHEPROOF_DIR` from `data`
+10. Move 16 `test_wycheproof_*.py` files
+11. **Consolidate**: remove all hardcoded `WYCHEPROOF_DIR = Path(__file__).parent / ...` from test files. Import from `data` or `conftest.py` instead.
+12. Verify all wycheproof tests pass
 
 ### Phase 3: Add new submodules
-9. Add CCTV submodule (always cloned)
-10. Add ACVP submodule (opt-in)
-11. Add x509-limbo submodule (opt-in)
+
+13. Add CCTV submodule (always cloned): `git submodule add https://github.com/C2SP/CCTV.git src/p11test/testcases/data/cctv`
+14. Create `scripts/fetch-optional-data.sh` for ACVP and x509-limbo
+15. Add `.dockerignore`
 
 ### Phase 4: New test files — wycheproof expansion
-12. Add ML-KEM wycheproof tests (encaps/decaps/keygen)
-13. Add RSA-PSS wycheproof tests (expanded)
-14. Add ML-DSA sign wycheproof tests
+
+16. Add ML-KEM wycheproof tests (encaps/decaps/keygen)
+17. Add RSA-PSS wycheproof tests (expanded)
+18. Add ML-DSA sign wycheproof tests
 
 ### Phase 5: New test files — CCTV
-15. Add Ed25519 edge case tests from CCTV
+
+19. Add Ed25519 edge case tests from CCTV
 
 ### Phase 6: New test files — ACVP (opt-in)
-16. Create ACVP JSON parser (`scripts/parse_acvp.py` or `testcases/data/acvp_loader.py`)
-17. Add SLH-DSA tests from ACVP vectors
-18. Add DRBG/HKDF tests if relevant
+
+20. Create `testcases/data/acvp_loader.py` — ACVP JSON format adapter
+21. Add SLH-DSA tests from ACVP vectors
+22. Add DRBG/HKDF tests if relevant
 
 ### Phase 7: New test files — x509-limbo (opt-in)
-19. Create x509-limbo cert loader
-20. Add C_CreateObject cert crash tests
+
+23. Create x509-limbo cert loader (`testcases/data/x509_limbo_loader.py`)
+24. Add C_CreateObject cert crash tests (`@pytest.mark.stress`)
