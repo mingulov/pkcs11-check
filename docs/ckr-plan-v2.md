@@ -135,9 +135,9 @@ Each test runs in subprocess with temporary token. Main token untouched.
 
 Upgrade fault-proxy.c to intercept all C_* functions for device/token error injection.
 
-- [ ] **4.1** Upgrade `fault-proxy.c` — instead of pass-through, build full CK_FUNCTION_LIST with intercepting wrappers for ALL 68 functions. Each checks `should_inject(func_name)` before delegating. ~600 lines C. Verify: build + basic encrypt/decrypt through proxy.
-- [ ] **4.2** Expand `test_ckr_fault_inject.py` — inject: CKR_DEVICE_REMOVED on C_Encrypt, CKR_DEVICE_ERROR on C_Sign, CKR_DEVICE_MEMORY on C_GenerateKey, CKR_TOKEN_NOT_PRESENT on C_GetTokenInfo. Verify actual injection works (not just pass-through).
-- [ ] **4.3** Flip testable=False for device/token entries covered.
+- [x] **4.1** Upgrade `fault-proxy.c` — instead of pass-through, build full CK_FUNCTION_LIST with intercepting wrappers for ALL 68 functions. Each checks `should_inject(func_name)` before delegating. ~600 lines C. Verify: build + basic encrypt/decrypt through proxy.
+- [x] **4.2** Expand `test_ckr_fault_inject.py` — inject: CKR_DEVICE_REMOVED on C_Encrypt, CKR_DEVICE_ERROR on C_Sign, CKR_DEVICE_MEMORY on C_GenerateKey, CKR_TOKEN_NOT_PRESENT on C_GetTokenInfo. Verify actual injection works (not just pass-through).
+- [x] **4.3** Flip testable=False for device/token entries covered.
 
 ## Phase 5 — Universal CKR Infrastructure Tests
 
