@@ -4,3 +4,6 @@
 [submodule "src/p11test/testcases/vectors/wycheproof"]
 	path = src/p11test/testcases/data/wycheproof
 	url = https://github.com/C2SP/wycheproof.git
+[submodule "src/p11test/testcases/data/cctv"]
+	path = src/p11test/testcases/data/cctv
+	url = https://github.com/C2SP/CCTV.git

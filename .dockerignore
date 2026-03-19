@@ -1,0 +1,19 @@
+# Large opt-in test vector submodules
+src/p11test/testcases/data/acvp/
+src/p11test/testcases/data/x509-limbo/
+
+# Build artifacts from local-builds
+local-builds/*/src/
+local-builds/*/build/
+local-builds/openssl/
+
+# Git internals
+.git/
+python-pkcs11/.git/
+
+# Python caches
+**/__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
