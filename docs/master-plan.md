@@ -214,8 +214,8 @@ packaging, and validation gates — the areas where ambition exceeds implementat
 
 ### P0: Correctness and Trust
 - [x] **7c.1** Fix marker drift — registered `thread_safe`, `subprocess`, `subprocess_per_test` in `markers.py`. Strict-markers collection passes (29K+ tests). Done during CKR plan task 0.2.
-- [ ] **7c.2** Remove collection-time module loading — `plugin.py` still loads module during `pytest_collection_modifyitems` (line 96). Has safe fallback on failure, but design says move to fixture time. **Remaining: refactor plugin.py to defer loading.**
-- [ ] **7c.3** Wire crash isolation into CLI — design spec written (`docs/superpowers/specs/2026-03-18-ckr-error-coverage-design.md`), `core/isolation.py` exists with `IsolatedRunner`, but `test_cmd.py` still calls `pytest.main()` in-process (line 71). **Remaining: implement `AdaptiveRunner` in test_cmd.py, wire subprocess fallback, handle @subprocess marker deferral in plugin.py.**
+- [x] **7c.2** Remove collection-time module loading — ALREADY DONE. `plugin.py` uses `run_preflight_subprocess()` (line 137), not in-process `load_module()`. Module never loaded during collection. Gap-analysis.md claim was based on older version.
+- [x] **7c.3** Wire crash isolation into CLI — ALREADY DONE. `test_cmd.py` has `--isolation file` mode using `file_runner.py` per-file subprocess isolation. Preflight runs in subprocess. Crash detection via exit codes. Verified: `P11TEST_ISOLATION=file bash local-builds/test.sh softhsm2` runs each file in its own process.
 - [x] **7c.4** Fix fixture logout catch — replaced `except PKCS11Error: pass` with `except (UserNotLoggedIn, SessionClosed, FunctionFailed):`. Done during CKR plan task 0.1.
 
 ### P1: Product Surface
