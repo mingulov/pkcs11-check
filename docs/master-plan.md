@@ -238,23 +238,23 @@ Re-run full suite on every target after Tier 7 security tests are added. Use loc
 - [x] **8.1** **SoftHSM2 2.7.0** — local build full suite. Confirm 0 failures.
 - [x] **8.2** **Kryoptic 1.5.0+PQC** — local build full suite. Confirm 0 failures.
 - [x] **8.3** **pkcs11-mock 2.0.0** — local build. Document expected mock failures.
-- [ ] **8.4** **qryptotoken 0.4.1** — local build. Document PQC-only limitations.
-- [ ] **8.5** **tpm2-pkcs11 (hardware)** — `sg tss`. Document TPM limitations.
-- [ ] **8.6** **tpm2-swtpm 0.10.1** — local swtpm build. Full suite with abrmd.
-- [ ] **8.7** **BouncyHSM 2.0.1** — local build. Fix or document segfault + CKF_TOKEN_PRESENT.
-- [ ] **8.8** **SoftHSM2 main** — local build dev branch. Compare with 2.7.0.
-- [ ] **8.9** **Kryoptic main** — local build dev branch. Compare with 1.5.0.
+- [x] **8.4** **qryptotoken 0.4.1** — local build. Document PQC-only limitations.
+- [x] **8.5** **tpm2-pkcs11 (hardware)** — `sg tss`. Document TPM limitations.
+- [x] **8.6** **tpm2-swtpm 0.10.1** — local swtpm build. Full suite with abrmd.
+- [x] **8.7** **BouncyHSM 2.0.1** — local build. Fix or document segfault + CKF_TOKEN_PRESENT.
+- [x] **8.8** **SoftHSM2 main** — local build dev branch. Compare with 2.7.0.
+- [x] **8.9** **Kryoptic main** — local build dev branch. Compare with 1.5.0.
 - [x] **8.10** **NSS softokn (local)** — `bash local-builds/test.sh nss-softokn -q`. System NSS slot 0 (crypto services, no PIN). Fast validation target.
-- [ ] **8.10b** **NSS 3.120.1** — Docker slot 1 (cert DB). Analyze remaining failures.
-- [ ] **8.11** **OpenCryptoki 3.26** — Docker. Verify PIN lockout fix works.
-- [ ] **8.12** **NSS-PQC (Rawhide)** — Docker. Check ML-KEM/ML-DSA support.
-- [ ] **8.13** **Kryoptic FIPS** — Docker. Analyze FIPS-specific behavior.
+- [x] **8.10b** **NSS 3.120.1** — Docker slot 1 (cert DB). Analyze remaining failures.
+- [x] **8.11** **OpenCryptoki 3.26** — Docker. Verify PIN lockout fix works.
+- [x] **8.12** **NSS-PQC (Rawhide)** — Docker. Check ML-KEM/ML-DSA support.
+- [x] **8.13** **Kryoptic FIPS** — Docker. Analyze FIPS-specific behavior.
 
 ## Tier 9 — Docker Final Validation
 
 Run after ALL other tiers. Rebuild every Docker image with `--no-cache`. One clean pass.
 
-- [ ] **9.1–9.13** Final validation for all 12 Docker targets + sign-off summary in `docs/module-matrix.md`.
+- [x] **9.1–9.13** Final validation for all 12 Docker targets + sign-off summary in `docs/module-matrix.md`.
 
 ---
 
