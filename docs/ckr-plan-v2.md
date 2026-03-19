@@ -48,8 +48,8 @@ Validation script reports **0 missing function-specific entries** AND zero test 
 
 The script is the source of truth. It parses the OASIS spec, extracts all (function, CKR) pairs, compares against `_ckr_spec.py`, and reports gaps.
 
-- [ ] **0.1** Create `scripts/ckr-coverage-check.py` — parse all spec files in `/tmp/pkcs11/working/doc/spec/`, extract every `### C_*` function and its `Return values:` CKR list. Define universal CKR set (14 codes). For each function, compute: total CKRs, universal CKRs, function-specific CKRs. Load `_ckr_spec.py` and match entries. Output: per-function gap report + summary. If `/tmp/pkcs11/` doesn't exist, clone it first. Verify: `uv run python scripts/ckr-coverage-check.py` outputs current coverage and gap list.
-- [ ] **0.2** Run script, record baseline. Document exact gap count in this plan.
+- [x] **0.1** Create `scripts/ckr-coverage-check.py` — 107 functions, 802 specific CKRs, 184 covered (22.9%), 618 gaps. — parse all spec files in `/tmp/pkcs11/working/doc/spec/`, extract every `### C_*` function and its `Return values:` CKR list. Define universal CKR set (14 codes). For each function, compute: total CKRs, universal CKRs, function-specific CKRs. Load `_ckr_spec.py` and match entries. Output: per-function gap report + summary. If `/tmp/pkcs11/` doesn't exist, clone it first. Verify: `uv run python scripts/ckr-coverage-check.py` outputs current coverage and gap list.
+- [x] **0.2** Baseline: 107 functions, 802 specific CKRs, 184/802 covered (22.9%), 618 gaps. Target: 0 gaps.
 
 ## Phase 1a — Expand Existing Dicts (v2.40 core functions)
 

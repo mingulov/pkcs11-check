@@ -189,6 +189,7 @@ from pkcs11.exceptions import (  # noqa: E402
     ObjectHandleInvalid,
     OperationActive,
     OperationNotInitialized,
+    PinExpired,
     SessionReadOnly,
     SignatureInvalid,
     SignatureLenRange,
@@ -407,6 +408,126 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 §5.8.2",
         mechanisms=["AES_GCM"],
         testable=False,  # Limit is 2^39-256 bits — impractical to test
+    ),
+    # --- Additional C_EncryptInit errors ---
+    "init_function_canceled": CkrExpectation(
+        function="C_EncryptInit",
+        condition="operation_canceled_by_callback",
+        spec_ckr=FunctionFailed,  # FunctionCanceled not in fork — use FunctionFailed
+        compat_tuple=(FunctionFailed,),
+        spec_ref="PKCS#11 v3.1 §5.8.1",
+        testable=False,  # Requires registered callback to cancel — not exposed by python-pkcs11
+    ),
+    "init_operation_cancel_failed": CkrExpectation(
+        function="C_EncryptInit",
+        condition="cannot_cancel_active_operation",
+        spec_ckr=FunctionFailed,  # OperationCancelFailed not in fork — use FunctionFailed
+        compat_tuple=(FunctionFailed,),
+        spec_ref="PKCS#11 v3.1 §5.8.1",
+        testable=False,  # Requires active operation + cancel attempt — not exposed by python-pkcs11
+    ),
+    "init_pin_expired": CkrExpectation(
+        function="C_EncryptInit",
+        condition="PIN_has_expired",
+        spec_ckr=PinExpired,
+        compat_tuple=(PinExpired, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.1",
+        testable=False,  # Requires token with PIN expiration policy — not available in test tokens
+    ),
+    # --- Additional C_Encrypt errors ---
+    "arguments_bad": CkrExpectation(
+        function="C_Encrypt",
+        condition="NULL_pointer_argument",
+        spec_ckr=ArgumentsBad,
+        compat_tuple=(ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.2",
+    ),
+    "buffer_too_small": CkrExpectation(
+        function="C_Encrypt",
+        condition="output_buffer_too_small",
+        spec_ckr=BufferTooSmall,
+        compat_tuple=(BufferTooSmall, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.2",
+    ),
+    "function_canceled": CkrExpectation(
+        function="C_Encrypt",
+        condition="operation_canceled",
+        spec_ckr=FunctionFailed,  # FunctionCanceled not in fork — use FunctionFailed
+        compat_tuple=(FunctionFailed,),
+        spec_ref="PKCS#11 v3.1 §5.8.2",
+        testable=False,  # Requires registered callback to cancel — not exposed by python-pkcs11
+    ),
+    "operation_active": CkrExpectation(
+        function="C_Encrypt",
+        condition="called_during_multipart",
+        spec_ckr=OperationActive,
+        compat_tuple=(OperationActive, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.2",
+        testable=False,  # python-pkcs11 manages multipart state internally
+    ),
+    # --- Additional C_EncryptUpdate errors ---
+    "update_arguments_bad": CkrExpectation(
+        function="C_EncryptUpdate",
+        condition="NULL_pointer",
+        spec_ckr=ArgumentsBad,
+        compat_tuple=(ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.3",
+    ),
+    "update_buffer_too_small": CkrExpectation(
+        function="C_EncryptUpdate",
+        condition="output_buffer_too_small",
+        spec_ckr=BufferTooSmall,
+        compat_tuple=(BufferTooSmall, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.3",
+        testable=False,  # python-pkcs11 handles buffer sizing internally
+    ),
+    "update_function_canceled": CkrExpectation(
+        function="C_EncryptUpdate",
+        condition="canceled",
+        spec_ckr=FunctionFailed,  # FunctionCanceled not in fork — use FunctionFailed
+        compat_tuple=(FunctionFailed,),
+        spec_ref="PKCS#11 v3.1 §5.8.3",
+        testable=False,  # Requires registered callback to cancel — not exposed by python-pkcs11
+    ),
+    "update_operation_active": CkrExpectation(
+        function="C_EncryptUpdate",
+        condition="called_after_C_Encrypt",
+        spec_ckr=OperationActive,
+        compat_tuple=(OperationActive, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.3",
+        testable=False,  # python-pkcs11 manages multipart state internally
+    ),
+    # --- Additional C_EncryptFinal errors ---
+    "final_arguments_bad": CkrExpectation(
+        function="C_EncryptFinal",
+        condition="NULL_pointer",
+        spec_ckr=ArgumentsBad,
+        compat_tuple=(ArgumentsBad, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.4",
+    ),
+    "final_buffer_too_small": CkrExpectation(
+        function="C_EncryptFinal",
+        condition="output_too_small",
+        spec_ckr=BufferTooSmall,
+        compat_tuple=(BufferTooSmall, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.4",
+        testable=False,  # python-pkcs11 handles buffer sizing internally
+    ),
+    "final_function_canceled": CkrExpectation(
+        function="C_EncryptFinal",
+        condition="canceled",
+        spec_ckr=FunctionFailed,  # FunctionCanceled not in fork — use FunctionFailed
+        compat_tuple=(FunctionFailed,),
+        spec_ref="PKCS#11 v3.1 §5.8.4",
+        testable=False,  # Requires registered callback to cancel — not exposed by python-pkcs11
+    ),
+    "final_operation_active": CkrExpectation(
+        function="C_EncryptFinal",
+        condition="called_during_single_part",
+        spec_ckr=OperationActive,
+        compat_tuple=(OperationActive, FunctionFailed),
+        spec_ref="PKCS#11 v3.1 §5.8.4",
+        testable=False,  # python-pkcs11 manages single-part vs multipart state internally
     ),
 }
 
