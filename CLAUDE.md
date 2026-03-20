@@ -119,6 +119,13 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 - Standard artifact files are `console.log`, `results.json`, and `state.json`
 - Shared container-side runners are [docker/run-with-artifacts.sh](/home/user/src/m/pkcs11-check/docker/run-with-artifacts.sh) and [docker/run-pkcs11-check.sh](/home/user/src/m/pkcs11-check/docker/run-pkcs11-check.sh)
 
+### Git workflow — CRITICAL
+- **Development branch:** `dev` — ALL work merges here. NEVER merge directly to `main`.
+- **Main branch:** `main` — production snapshot, updated from `dev` only when the user says so
+- Feature branches (e.g., `phase-a/api-completeness`) → merge to `dev`, not `main`
+- Worktrees: use `.worktrees/` directory (gitignored)
+- When finishing a branch: `git checkout dev && git merge <branch>` — NEVER `git checkout main`
+
 ### Key design decisions
 - python-pkcs11 fork as git submodule with v3.0/3.1/3.2 interface negotiation, PQC mechanisms, 50+ new enums, specific CKR exception classes for ALL standard error codes
 - `pkcs11-check test` defaults to `--isolation auto`; explicit `--isolation none` is the unsafe fast path
