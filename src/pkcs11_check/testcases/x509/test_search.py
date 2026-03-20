@@ -12,7 +12,7 @@ import pytest
 from pkcs11 import Attribute, ObjectClass
 from pkcs11.exceptions import PKCS11Error
 
-from pkcs11_check.testcases.x509.conftest import load_limbo_testcases, pem_to_der
+from pkcs11_check.testcases.x509.conftest import import_cert_object, load_limbo_testcases, pem_to_der
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
@@ -36,7 +36,7 @@ class TestCertificateSearchExtended:
     """Verify module's ability to search certificates by derived attributes."""
 
     @pytest.mark.parametrize("tc", _searchable_testcases, ids=lambda tc: tc["id"])
-    def test_search_by_attributes_extracted(self, tc: dict[str, Any], p11_session: Any, limbo_available: Any) -> None:
+    def test_search_by_attributes_extracted(self, tc: dict[str, Any], p11_session: Any, limbo_available: Any, p11_interface_version: str) -> None:
         """If the module extracts attributes, verify they can be used for searching."""
         der = pem_to_der(tc["peer_certificate"])
         if not der:
@@ -44,12 +44,8 @@ class TestCertificateSearchExtended:
             
         label = f"search-test-attr-{tc['id']}"
         try:
-            obj = p11_session.create_object({
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.CERTIFICATE_TYPE: 0,
-                Attribute.VALUE: der,
-                Attribute.LABEL: label,
-            })
+            obj = import_cert_object(p11_session, der, interface_version=p11_interface_version,
+                                     extra_attrs={Attribute.LABEL: label, Attribute.TOKEN: False})
         except PKCS11Error:
             pytest.skip(f"Module rejected certificate {tc['id']}")
             return

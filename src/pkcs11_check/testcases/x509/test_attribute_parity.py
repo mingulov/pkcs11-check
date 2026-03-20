@@ -2,25 +2,28 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
-from pkcs11 import Attribute, CertificateType, ObjectClass
+from pkcs11 import Attribute
 from pkcs11.exceptions import PKCS11Error
-from pkcs11_check.testcases.x509.conftest import pem_to_der, verify_attribute_parity
+from pkcs11_check.testcases.x509.conftest import import_cert_object, pem_to_der, verify_attribute_parity, x509_to_p11_template
 
 pytestmark = [pytest.mark.cert, pytest.mark.compliance]
 
-def test_limbo_attribute_parity(p11_session: Any, cert_support: bool, all_limbo_cases: list[dict[str, Any]], limbo_filter: Any) -> None:
+def test_limbo_attribute_parity(p11_session: Any, cert_support: bool, all_limbo_cases: list[dict[str, Any]], limbo_filter: Any, p11_interface_version: str) -> None:
     """Import certificates from Limbo and verify attribute extraction parity.
     
     This test focuses on whether the PKCS#11 module correctly parses the 
-    certificates and returns the expected Subject, Issuer, and Serial Number.
+    certificates and returns the expected attributes (Subject, Issuer, Serial).
+    
+    Follows OASIS PKCS#11 v3.0+ requirements for CKC_X_509 objects.
     """
     if not cert_support:
         pytest.skip("Module does not support X.509 certificates")
         
-    # We sample significant cases to keep the test run time reasonable during iteration
-    # but we can increase limit for full exhaustive runs.
-    cases = limbo_filter(all_limbo_cases, limit=50) # Sampling for now
+    # Increase sampling for comprehensive verification
+    cases = limbo_filter(all_limbo_cases, limit=100)
     
     errors = []
     for tc in cases:
@@ -29,23 +32,19 @@ def test_limbo_attribute_parity(p11_session: Any, cert_support: bool, all_limbo_
             continue
             
         try:
-            obj = p11_session.create_object({
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.CERTIFICATE_TYPE: CertificateType.X_509,
-                Attribute.VALUE: der,
-                Attribute.LABEL: tc['id'],
-                Attribute.TOKEN: False,
-            })
+            obj = import_cert_object(p11_session, der, interface_version=p11_interface_version,
+                                     extra_attrs={Attribute.LABEL: tc['id'], Attribute.TOKEN: False})
             
-            parity = verify_attribute_parity(obj, der)
+            # Verify parity against ground truth
+            parity = verify_attribute_parity(obj, der, interface_version=p11_interface_version)
             
-            # Check for mismatches
-            for attr, (matches, p11_val, expected_val) in parity.items():
+            # Check for mismatches and mandatory missing attributes
+            for attr, (matches, p11_val, expected_val, required) in parity.items():
                 if matches is False:
-                    errors.append(f"TC {tc['id']} - {attr} mismatch: P11={p11_val} Expected={expected_val}")
-                elif matches is None:
-                    # Optional compliance check: skip if attribute not supported
-                    pass
+                    errors.append(f"TC {tc['id']} - {attr} mismatch:\n  Observed: {p11_val}\n  Expected: {expected_val}")
+                elif matches is None and required:
+                    # OASIS requires this attribute for X.509 certificates
+                    errors.append(f"TC {tc['id']} - {attr} NOT EXTRACTED (Mandatory per OASIS)")
             
             obj.destroy()
         except PKCS11Error as e:
@@ -53,6 +52,9 @@ def test_limbo_attribute_parity(p11_session: Any, cert_support: bool, all_limbo_
             # or a genuine module bug.
             if tc['expected_result'] == 'SUCCESS':
                 errors.append(f"TC {tc['id']} - Failed to import valid certificate: {e}")
+            continue
+        except Exception as e:
+            errors.append(f"TC {tc['id']} - Unexpected exception: {e}")
             continue
 
     if errors:

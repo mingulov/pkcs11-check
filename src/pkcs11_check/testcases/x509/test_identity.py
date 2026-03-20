@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
-from pkcs11 import Attribute, CertificateType, KeyType, ObjectClass, Mechanism
+from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.exceptions import PKCS11Error
-from pkcs11_check.testcases.x509.conftest import pem_to_der
+from pkcs11_check.testcases.x509.conftest import import_cert_object, pem_to_der
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, ec
 from cryptography import x509
 
 pytestmark = [pytest.mark.cert, pytest.mark.keymgmt, pytest.mark.object]
 
-def test_limbo_identity_closeness(p11_session: Any, cert_support: bool, all_limbo_cases: list[dict[str, Any]], limbo_filter: Any) -> None:
+def test_limbo_identity_closeness(p11_session: Any, cert_support: bool, all_limbo_cases: list[dict[str, Any]], limbo_filter: Any, p11_interface_version: str) -> None:
     """Import Cert + Key from Limbo, link with CKA_ID, and Sign/Verify.
     
     This test verifies that:
@@ -39,14 +41,8 @@ def test_limbo_identity_closeness(p11_session: Any, cert_support: bool, all_limb
         
         try:
             # 1. Import Certificate
-            cert_obj = p11_session.create_object({
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.CERTIFICATE_TYPE: CertificateType.X_509,
-                Attribute.VALUE: cert_der,
-                Attribute.ID: cid,
-                Attribute.LABEL: f"Cert {tc['id']}",
-                Attribute.TOKEN: False,
-            })
+            cert_obj = import_cert_object(p11_session, cert_der, interface_version=p11_interface_version,
+                                          extra_attrs={Attribute.ID: cid, Attribute.LABEL: f"Cert {tc['id']}", Attribute.TOKEN: False})
             
             # 2. Import Private Key
             # We need to detect key type from cert or Limbo features

@@ -21,8 +21,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 from pkcs11 import Attribute, CertificateType, ObjectClass
 from pkcs11.exceptions import (ArgumentsBad, AttributeTypeInvalid,
-                               FunctionNotSupported, ObjectHandleInvalid,
-                               PKCS11Error)
+                                FunctionNotSupported, ObjectHandleInvalid,
+                                PKCS11Error)
+from pkcs11_check.testcases.x509.conftest import import_cert_object
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
@@ -67,18 +68,12 @@ def _get_crl_class() -> int:
 class TestCertificateLifecycle:
     """Verify certificate object persistence and modifiability."""
 
-    def test_cert_token_persistence(self, p11_session: Any, sample_cert_der: bytes) -> None:
+    def test_cert_token_persistence(self, p11_session: Any, sample_cert_der: bytes, p11_interface_version: str) -> None:
         """Import with CKA_TOKEN=True (if supported) and verify persistence."""
         label = f"token-cert-{uuid.uuid4().hex[:8]}"
         try:
-            # We first try with TOKEN=True
-            obj = p11_session.create_object({
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.CERTIFICATE_TYPE: CertificateType.X_509,
-                Attribute.VALUE: sample_cert_der,
-                Attribute.LABEL: label,
-                Attribute.TOKEN: True,
-            })
+            obj = import_cert_object(p11_session, sample_cert_der, interface_version=p11_interface_version,
+                                     extra_attrs={Attribute.LABEL: label, Attribute.TOKEN: True})
             
             # If successful, check if it's there
             assert obj[Attribute.TOKEN] is True
@@ -87,18 +82,14 @@ class TestCertificateLifecycle:
             # Module might not support token objects or requires login
             pytest.skip("Module does not support session-level token object creation for certs")
 
-    def test_cert_modifiability(self, p11_session: Any, sample_cert_der: bytes) -> None:
+    def test_cert_modifiability(self, p11_session: Any, sample_cert_der: bytes, p11_interface_version: str) -> None:
         """Verify CKA_MODIFIABLE prevents label updates."""
         label_orig = f"mod-orig-{uuid.uuid4().hex[:8]}"
         label_new = f"mod-new-{uuid.uuid4().hex[:8]}"
-        
+
         try:
-            obj = p11_session.create_object({
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.VALUE: sample_cert_der,
-                Attribute.LABEL: label_orig,
-                Attribute.MODIFIABLE: False,
-            })
+            obj = import_cert_object(p11_session, sample_cert_der, interface_version=p11_interface_version,
+                                     extra_attrs={Attribute.LABEL: label_orig, Attribute.MODIFIABLE: False, Attribute.TOKEN: False})
         except PKCS11Error:
             pytest.skip("Module rejected CKA_MODIFIABLE=False on creation")
             return
@@ -115,15 +106,12 @@ class TestCertificateLifecycle:
         finally:
             obj.destroy()
 
-    def test_cert_id_assignment(self, p11_session: Any, sample_cert_der: bytes) -> None:
+    def test_cert_id_assignment(self, p11_session: Any, sample_cert_der: bytes, p11_interface_version: str) -> None:
         """Verify we can set and read CKA_ID on a certificate."""
         cid = b"cert-voter-id-123"
         try:
-            obj = p11_session.create_object({
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.VALUE: sample_cert_der,
-                Attribute.ID: cid,
-            })
+            obj = import_cert_object(p11_session, sample_cert_der, interface_version=p11_interface_version,
+                                     extra_attrs={Attribute.ID: cid, Attribute.TOKEN: False})
             assert obj[Attribute.ID] == cid
             obj.destroy()
         except (PKCS11Error, KeyError):

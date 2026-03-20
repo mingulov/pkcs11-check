@@ -12,6 +12,7 @@ from pkcs11.exceptions import PKCS11Error, FunctionNotSupported, ArgumentsBad
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from pkcs11_check.testcases.data import X509_LIMBO_DIR
+from pkcs11.util.x509 import decode_x509_certificate
 
 _LIMBO_FILE = X509_LIMBO_DIR / "limbo.json"
 
@@ -34,53 +35,67 @@ def pem_to_der(pem: str | dict[str, Any] | None) -> bytes | None:
     except Exception:
         return None
 
-def verify_attribute_parity(p11_obj: Any, der_data: bytes) -> dict[str, Any]:
+def verify_attribute_parity(p11_obj: Any, der_data: bytes, interface_version: str = "2.40") -> dict[str, Any]:
     """Compare PKCS#11 attributes against ground truth from cryptography.
     
-    Returns a dict of {attribute_name: (matches, p11_val, expected_val)}.
+    Returns a dict of {attribute_name: (matches, p11_val, expected_val, required)}.
+    'required' is based on the OASIS spec for CKC_X_509.
     """
     cert = x509.load_der_x509_certificate(der_data)
     results = {}
     
-    # CKA_SUBJECT
+    def _to_hex(val: Any) -> str:
+        if isinstance(val, (bytes, bytearray)):
+            return val.hex()
+        return str(val)
+
+    # CKA_SUBJECT (Mandatory)
     try:
         p11_subject = p11_obj[Attribute.SUBJECT]
         expected_subject = cert.subject.public_bytes(serialization.Encoding.DER)
-        results['SUBJECT'] = (p11_subject == expected_subject, p11_subject.hex(), expected_subject.hex())
+        results['SUBJECT'] = (p11_subject == expected_subject, _to_hex(p11_subject), _to_hex(expected_subject), True)
     except (PKCS11Error, KeyError):
-        results['SUBJECT'] = (None, None, None)
+        results['SUBJECT'] = (None, None, _to_hex(cert.subject.public_bytes(serialization.Encoding.DER)), True)
         
-    # CKA_ISSUER
+    # CKA_ISSUER (Mandatory in v3.0+)
     try:
         p11_issuer = p11_obj[Attribute.ISSUER]
         expected_issuer = cert.issuer.public_bytes(serialization.Encoding.DER)
-        results['ISSUER'] = (p11_issuer == expected_issuer, p11_issuer.hex(), expected_issuer.hex())
+        results['ISSUER'] = (p11_issuer == expected_issuer, _to_hex(p11_issuer), _to_hex(expected_issuer), True)
     except (PKCS11Error, KeyError):
-        results['ISSUER'] = (None, None, None)
+        results['ISSUER'] = (None, None, _to_hex(cert.issuer.public_bytes(serialization.Encoding.DER)), True)
         
-    # CKA_SERIAL_NUMBER
+    # CKA_SERIAL_NUMBER (Mandatory in v3.0+)
     try:
         p11_serial = p11_obj[Attribute.SERIAL_NUMBER]
-        # PKCS#11 CKA_SERIAL_NUMBER is DER-encoded INTEGER
-        expected_serial = x509.load_der_x509_certificate(der_data).serial_number
-        # DER encoding of integer: 0x02 <len> <bytes>
-        # We can just use cryptography to encode a dummy to get the DER if needed, 
-        # or just compare the values if python-pkcs11 handles conversion.
-        # python-pkcs11 returns bytes for SERIAL_NUMBER if not mapped to int.
-        # Actually it's mapped to handle_bytes in our new attributes.py.
-        # So it SHOULD be the raw DER integer.
-        
-        # Helper to get DER integer bytes
         def to_der_int(n):
+            if n == 0: return b'\x02\x01\x00'
             b = n.to_bytes((n.bit_length() + 8) // 8, 'big', signed=True)
             return b'\x02' + bytes([len(b)]) + b
             
         expected_serial_der = to_der_int(cert.serial_number)
-        results['SERIAL_NUMBER'] = (p11_serial == expected_serial_der, p11_serial.hex() if p11_serial else None, expected_serial_der.hex())
+        results['SERIAL_NUMBER'] = (p11_serial == expected_serial_der, _to_hex(p11_serial), _to_hex(expected_serial_der), True)
     except (PKCS11Error, KeyError):
-        results['SERIAL_NUMBER'] = (None, None, None)
+        results['SERIAL_NUMBER'] = (None, None, _to_hex(to_der_int(cert.serial_number)), True)
 
-    # v3.0+ attributes
+    # CKA_START_DATE (Optional, default empty)
+    try:
+        p11_start = p11_obj[Attribute.START_DATE]
+        # Use UTC for modern cryptography
+        expected_start = cert.not_valid_before_utc.strftime("%Y%m%d").encode("ascii")
+        results['START_DATE'] = (p11_start == expected_start if p11_start else None, _to_hex(p11_start), _to_hex(expected_start), False)
+    except (PKCS11Error, KeyError, AttributeError):
+        results['START_DATE'] = (None, None, None, False)
+
+    # CKA_END_DATE (Optional, default empty)
+    try:
+        p11_end = p11_obj[Attribute.END_DATE]
+        expected_end = cert.not_valid_after_utc.strftime("%Y%m%d").encode("ascii")
+        results['END_DATE'] = (p11_end == expected_end if p11_end else None, _to_hex(p11_end), _to_hex(expected_end), False)
+    except (PKCS11Error, KeyError, AttributeError):
+        results['END_DATE'] = (None, None, None, False)
+
+    # v3.0+ attributes (optional — many modules don't populate these even on v3.0+)
     # CKA_PUBLIC_KEY_INFO
     try:
         p11_pk_info = p11_obj[Attribute.PUBLIC_KEY_INFO]
@@ -88,21 +103,80 @@ def verify_attribute_parity(p11_obj: Any, der_data: bytes) -> dict[str, Any]:
             serialization.Encoding.DER,
             serialization.PublicFormat.SubjectPublicKeyInfo
         )
-        results['PUBLIC_KEY_INFO'] = (p11_pk_info == expected_pk_info, p11_pk_info.hex() if p11_pk_info else None, expected_pk_info.hex())
+        results['PUBLIC_KEY_INFO'] = (p11_pk_info == expected_pk_info if p11_pk_info else None, _to_hex(p11_pk_info), _to_hex(expected_pk_info), False)
     except (PKCS11Error, KeyError, AttributeError):
-        results['PUBLIC_KEY_INFO'] = (None, None, None)
+        results['PUBLIC_KEY_INFO'] = (None, None, None, False)
 
-    # CKA_SKID (Subject Key Identifier)
+    # CKA_SKID (Optional)
     try:
         p11_skid = p11_obj[Attribute.SKID]
-        # In cryptography, we extract the extension
         skid_ext = cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
         expected_skid = skid_ext.key_identifier
-        results['SKID'] = (p11_skid == expected_skid, p11_skid.hex() if p11_skid else None, expected_skid.hex())
+        results['SKID'] = (p11_skid == expected_skid if p11_skid else None, _to_hex(p11_skid), _to_hex(expected_skid), False)
     except (PKCS11Error, KeyError, x509.ExtensionNotFound):
-        results['SKID'] = (None, None, None)
+        results['SKID'] = (None, None, None, False)
 
     return results
+
+def x509_to_p11_template(der_data: bytes, interface_version: str = "2.40") -> dict[Attribute, Any]:
+    """Convert DER certificate to PKCS#11 attribute template.
+    
+    Filters out attributes not supported by the specified interface version.
+    """
+    template = decode_x509_certificate(der_data)
+    
+    # Filter out v3.0+ attributes if interface is older
+    v30_attrs = {
+        Attribute.PUBLIC_KEY_INFO,
+        Attribute.SKID,
+        Attribute.AKID,
+        Attribute.HASH_OF_SUBJECT_PUBLIC_KEY,
+        Attribute.HASH_OF_ISSUER_PUBLIC_KEY,
+    }
+    
+    if interface_version < "3.0":
+        for attr in v30_attrs:
+            if attr in template:
+                del template[attr]
+                
+    return template
+
+def import_cert_object(
+    p11_session: Any,
+    der_data: bytes,
+    interface_version: str = "2.40",
+    extra_attrs: dict[Attribute, Any] | None = None,
+) -> Any:
+    """Import a DER certificate into PKCS#11, handling v3.0+ attribute bugs.
+
+    Tries with full v3.0+ attributes first. If the module returns
+    AttributeValueInvalid (known Kryoptic bug), retries with v3.0+ attrs
+    stripped and records a compliance note.
+    """
+    from pkcs11.exceptions import AttributeValueInvalid
+    from pkcs11_check.compliance import note, ComplianceLevel
+
+    template = x509_to_p11_template(der_data, interface_version=interface_version)
+    if extra_attrs:
+        template.update(extra_attrs)
+
+    try:
+        return p11_session.create_object(template)
+    except AttributeValueInvalid:
+        if interface_version < "3.0":
+            raise
+        # Retry with v3.0+ attributes stripped
+        template_v240 = x509_to_p11_template(der_data, interface_version="2.40")
+        if extra_attrs:
+            template_v240.update(extra_attrs)
+        obj = p11_session.create_object(template_v240)
+        note(
+            "Module claims v3.0+ but rejects v3.0+ cert attributes "
+            "(CKA_PUBLIC_KEY_INFO/CKA_SKID/CKA_AKID) — falling back to v2.40 template",
+            ComplianceLevel.VENDOR,
+        )
+        return obj
+
 
 def get_crl_class(p11_session: Any) -> int | None:
     """Probe for the correct CKO_X_509_CRL value on this module."""
@@ -175,7 +249,7 @@ def limbo_available() -> None:
         pytest.skip("x509-limbo data not found. Run scripts/fetch-optional-data.sh x509-limbo")
 
 @pytest.fixture
-def cert_support(p11_session: Any) -> bool:
+def cert_support(p11_session: Any, p11_interface_version: str) -> bool:
     """Probe if the PKCS#11 module supports CKO_CERTIFICATE objects.
     
     Returns True if supported, False otherwise.
@@ -184,22 +258,36 @@ def cert_support(p11_session: Any) -> bool:
     # A very simple self-signed cert placeholder for probing
     # If the module rejects this with CKR_FUNCTION_NOT_SUPPORTED or template inconsistent
     # then we assume no certificate support.
-    probe_der = b"\x30\x82\x01\x0a\x30\x82\x01\x21\x02\x01\x01\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x0b\x05\x00\x30\x1f\x31\x1d" # Truncated but enough to probe create_object
+    # Generate a minimal valid self-signed cert for probing
     try:
-        obj = p11_session.create_object({
-            Attribute.CLASS: ObjectClass.CERTIFICATE,
-            Attribute.CERTIFICATE_TYPE: 0,
-            Attribute.VALUE: probe_der,
-            Attribute.LABEL: "probe",
-            Attribute.TOKEN: False,
-        })
+        from cryptography import x509 as _x509
+        from cryptography.hazmat.primitives import hashes as _hashes, serialization as _ser
+        from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+        from cryptography.x509.oid import NameOID as _NameOID
+        import datetime as _dt
+
+        key = _rsa.generate_private_key(65537, 2048)
+        subject = issuer = _x509.Name([_x509.NameAttribute(_NameOID.COMMON_NAME, "probe")])
+        probe_cert = (
+            _x509.CertificateBuilder()
+            .subject_name(subject).issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(_x509.random_serial_number())
+            .not_valid_before(_dt.datetime.now(_dt.UTC))
+            .not_valid_after(_dt.datetime.now(_dt.UTC) + _dt.timedelta(days=1))
+            .sign(key, _hashes.SHA256())
+        )
+        probe_der = probe_cert.public_bytes(_ser.Encoding.DER)
+    except Exception:
+        return False
+
+    try:
+        obj = import_cert_object(p11_session, probe_der, interface_version=p11_interface_version,
+                                 extra_attrs={Attribute.LABEL: "probe", Attribute.TOKEN: False})
         obj.destroy()
         return True
     except (PKCS11Error, Exception):
-        # Many modules return CKR_TEMPLATE_INCONSISTENT or CKR_DATA_INVALID
-        # We check if they even support the class.
         try:
-             # Just try finding anything of class CERTIFICATE
              list(p11_session.get_objects({Attribute.CLASS: ObjectClass.CERTIFICATE}))
              return True
         except (PKCS11Error, Exception):

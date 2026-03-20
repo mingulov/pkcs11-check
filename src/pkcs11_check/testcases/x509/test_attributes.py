@@ -12,7 +12,7 @@ import pytest
 from pkcs11 import Attribute, ObjectClass
 from pkcs11.exceptions import PKCS11Error
 
-from pkcs11_check.testcases.x509.conftest import load_limbo_testcases, pem_to_der
+from pkcs11_check.testcases.x509.conftest import import_cert_object, load_limbo_testcases, pem_to_der, x509_to_p11_template
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
@@ -42,7 +42,7 @@ class TestCertificateAttributes:
     """Verify extraction of standard PKCS#11 certificate attributes."""
 
     @pytest.mark.parametrize("tc", _selected_testcases, ids=lambda tc: tc["id"])
-    def test_verify_attributes(self, tc: dict[str, Any], p11_session: Any, limbo_available: Any) -> None:
+    def test_verify_attributes(self, tc: dict[str, Any], p11_session: Any, limbo_available: Any, p11_interface_version: str) -> None:
         """Check that the module can import and then read back the cert's value."""
         der = pem_to_der(tc["peer_certificate"])
         if not der:
@@ -51,12 +51,8 @@ class TestCertificateAttributes:
         label = f"attr-test-{tc['id']}"
         
         try:
-            obj = p11_session.create_object({
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.CERTIFICATE_TYPE: 0, # CKC_X_509
-                Attribute.VALUE: der,
-                Attribute.LABEL: label,
-            })
+            obj = import_cert_object(p11_session, der, interface_version=p11_interface_version,
+                                     extra_attrs={Attribute.LABEL: label, Attribute.TOKEN: False})
         except PKCS11Error:
             # Some modules might reject malformed certs during import
             # If Limbo expected success but PKCS#11 failed, it's worth noting
@@ -119,7 +115,7 @@ class TestCertificateAttributes:
         finally:
             obj.destroy()
 
-    def test_import_with_trusted_flag(self, p11_session: Any, limbo_available: Any) -> None:
+    def test_import_with_trusted_flag(self, p11_session: Any, limbo_available: Any, p11_interface_version: str) -> None:
         """Verify behavior of CKA_TRUSTED attribute during import."""
         # Use a simple valid root from Limbo for this
         all_cases = load_limbo_testcases()
@@ -133,13 +129,8 @@ class TestCertificateAttributes:
         # According to PKCS#11 spec, only SO should be able to set CKA_TRUSTED
         # However, some modules might implement this differently or return CKR_USER_NOT_AUTHORIZED
         try:
-            obj = p11_session.create_object({
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.CERTIFICATE_TYPE: 0,
-                Attribute.VALUE: der,
-                Attribute.LABEL: "trusted-test-fail",
-                Attribute.TRUSTED: True,
-            })
+            obj = import_cert_object(p11_session, der, interface_version=p11_interface_version,
+                                     extra_attrs={Attribute.LABEL: "trusted-test-fail", Attribute.TRUSTED: True})
             # If it succeeded, check if it actually set it to True
             trusted = obj[Attribute.TRUSTED]
             if trusted:

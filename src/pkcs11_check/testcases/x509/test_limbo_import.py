@@ -12,7 +12,7 @@ import pytest
 from pkcs11 import Attribute, ObjectClass
 from pkcs11.exceptions import PKCS11Error
 
-from pkcs11_check.testcases.x509.conftest import load_limbo_testcases, pem_to_der
+from pkcs11_check.testcases.x509.conftest import import_cert_object, load_limbo_testcases, pem_to_der, x509_to_p11_template
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
@@ -23,31 +23,26 @@ class TestLimboCertImport:
     """Tests for importing certificates from x509-limbo."""
 
     @pytest.mark.parametrize("tc", _testcases, ids=lambda tc: tc["id"])
-    def test_import_peer_cert(self, tc: dict[str, Any], p11_session: Any, limbo_available: Any) -> None:
+    def test_import_peer_cert(self, tc: dict[str, Any], p11_session: Any, limbo_available: Any, p11_interface_version: str) -> None:
         """Test importing the peer certificate from a limbo testcase."""
         der = pem_to_der(tc["peer_certificate"])
         if not der:
             pytest.skip("Failed to decode peer certificate")
-            
+
         try:
-            obj = p11_session.create_object({
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.CERTIFICATE_TYPE: 0,  # CKC_X_509
-                Attribute.VALUE: der,
-                Attribute.LABEL: tc["id"],
-            })
+            obj = import_cert_object(p11_session, der, interface_version=p11_interface_version,
+                                     extra_attrs={Attribute.LABEL: tc["id"], Attribute.TOKEN: False})
             assert obj is not None
-            
+
             # Note: pkcs11-mock always returns "Pkcs11Interop" for CKA_LABEL
             label = obj[Attribute.LABEL]
             if label != "Pkcs11Interop":
                 assert label == tc["id"]
-            
+
             obj.destroy()
         except PKCS11Error as e:
             if tc["expected_result"] == "FAILURE":
                 from pkcs11_check.compliance import note, ComplianceLevel
-                # Using VENDOR as it's a known deviation/behavior
                 note(f"Module rejected malformed cert {tc['id']}: {e}", ComplianceLevel.VENDOR)
             else:
                 pytest.fail(f"Module rejected valid Limbo cert {tc['id']}: {e}")
