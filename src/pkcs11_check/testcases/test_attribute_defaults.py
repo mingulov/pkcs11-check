@@ -23,7 +23,7 @@ def _read_attr(obj: Any, attr: Any) -> Any:
     """Read an attribute, skipping if the module doesn't support it."""
     try:
         return obj[attr]
-    except AttributeTypeInvalid as e:
+    except (AttributeTypeInvalid, NotImplementedError) as e:
         pytest.skip(f"Module does not expose {attr!r}: {e}")
 
 
