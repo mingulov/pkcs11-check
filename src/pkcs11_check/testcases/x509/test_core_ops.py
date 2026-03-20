@@ -16,7 +16,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-from pkcs11 import Attribute, CertificateType, ObjectClass
+from pkcs11 import Attribute, ObjectClass
 from pkcs11.exceptions import (
     ArgumentsBad,
     AttributeTypeInvalid,
@@ -25,7 +25,6 @@ from pkcs11.exceptions import (
     ObjectHandleInvalid,
     PKCS11Error,
 )
-from pkcs11.util.x509 import decode_x509_certificate
 from pkcs11_check.testcases.x509.conftest import import_cert_object, x509_to_p11_template
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
@@ -271,9 +270,7 @@ class TestCertificateDestroy:
         assert len(found) == 0
 
 
-def _build_v30_attr(
-    ca_cert_der: bytes, ca_key: rsa.RSAPrivateKey, attr_name: str
-) -> tuple[int, bytes]:
+def _build_v30_attr(ca_cert_der: bytes, attr_name: str) -> tuple[int, bytes]:
     """Build a single v3.0+ attribute value from the test CA cert."""
     cert = x509.load_der_x509_certificate(ca_cert_der)
     if attr_name == "PUBLIC_KEY_INFO":
@@ -287,7 +284,9 @@ def _build_v30_attr(
         return (Attribute.SKID, ext.value.key_identifier)
     if attr_name == "AKID":
         ext = cert.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier)
-        return (Attribute.AKID, ext.value.key_identifier)
+        key_id = ext.value.key_identifier
+        assert key_id is not None, "AuthorityKeyIdentifier.key_identifier is None"
+        return (Attribute.AKID, key_id)
     if attr_name == "HASH_OF_SUBJECT_PUBLIC_KEY":
         spki_der = cert.public_key().public_bytes(
             serialization.Encoding.DER,
@@ -332,11 +331,10 @@ class TestV30CertAttributes:
         attr_name: str,
         p11_session: Any,
         ca_cert_der: bytes,
-        ca_key: rsa.RSAPrivateKey,
     ) -> None:
         """Module advertising v3.0+ MUST accept CKA_{attr_name} on cert import."""
 
-        attr_id, attr_val = _build_v30_attr(ca_cert_der, ca_key, attr_name)
+        attr_id, attr_val = _build_v30_attr(ca_cert_der, attr_name)
 
         # Start from a v2.40 base template (known to work everywhere)
         template = x509_to_p11_template(ca_cert_der, interface_version="2.40")
