@@ -85,6 +85,12 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 - `test.sh` — dispatcher: `bash local-builds/test.sh kryoptic [pytest-args]`
 - `reset.sh` — reset token data: `bash local-builds/reset.sh kryoptic`
 - Available: OpenSSL 3.6.1, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.26, pkcs11-mock 2.0.0, qryptotoken 0.4.1, tpm2-pkcs11 1.9.0, BouncyHSM 2.0.1, swtpm 0.10.1
+- **Worktree Kryoptic testing:** Kryoptic requires OpenSSL 3.5.0+. In worktrees, use the pre-built module from the main repo instead of rebuilding:
+  ```bash
+  LD_LIBRARY_PATH=/home/user/src/m/pkcs11-check/local-builds/openssl/install/lib64 \
+  P11TEST_MODULE=/home/user/src/m/pkcs11-check/local-builds/kryoptic/lib/libkryoptic_pkcs11.so \
+  P11TEST_PIN=1234 uv run python -m pytest src/pkcs11_check/testcases/<test_file>.py -v
+  ```
 
 ### Test categories (101 files, ~29K tests)
 - Core: interface, slot, object, mechanism, encrypt, sign, digest, errors
