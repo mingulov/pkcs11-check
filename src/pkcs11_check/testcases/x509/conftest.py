@@ -7,12 +7,13 @@ import json
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, CertificateType, ObjectClass
-from pkcs11.exceptions import PKCS11Error, FunctionNotSupported, ArgumentsBad
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from pkcs11_check.testcases.data import X509_LIMBO_DIR
+from pkcs11 import Attribute, ObjectClass
+from pkcs11.exceptions import PKCS11Error
 from pkcs11.util.x509 import decode_x509_certificate
+
+from pkcs11_check.testcases.data import X509_LIMBO_DIR
 
 _LIMBO_FILE = X509_LIMBO_DIR / "limbo.json"
 
@@ -23,10 +24,10 @@ def pem_to_der(pem: str | dict[str, Any] | None) -> bytes | None:
     if isinstance(pem, dict):
         # Limbo certificates have 'cert' key, keys have 'key' key
         pem = pem.get("cert") or pem.get("key") or ""
-    
+
     if not isinstance(pem, str) or not pem:
         return None
-        
+
     try:
         lines = pem.strip().split("\n")
         # Handle cases where PEM is already just base64 or has headers
@@ -43,7 +44,7 @@ def verify_attribute_parity(p11_obj: Any, der_data: bytes, interface_version: st
     """
     cert = x509.load_der_x509_certificate(der_data)
     results = {}
-    
+
     def _to_hex(val: Any) -> str:
         if isinstance(val, (bytes, bytearray)):
             return val.hex()
@@ -56,7 +57,7 @@ def verify_attribute_parity(p11_obj: Any, der_data: bytes, interface_version: st
         results['SUBJECT'] = (p11_subject == expected_subject, _to_hex(p11_subject), _to_hex(expected_subject), True)
     except (PKCS11Error, KeyError):
         results['SUBJECT'] = (None, None, _to_hex(cert.subject.public_bytes(serialization.Encoding.DER)), True)
-        
+
     # CKA_ISSUER (Mandatory in v3.0+)
     try:
         p11_issuer = p11_obj[Attribute.ISSUER]
@@ -64,7 +65,7 @@ def verify_attribute_parity(p11_obj: Any, der_data: bytes, interface_version: st
         results['ISSUER'] = (p11_issuer == expected_issuer, _to_hex(p11_issuer), _to_hex(expected_issuer), True)
     except (PKCS11Error, KeyError):
         results['ISSUER'] = (None, None, _to_hex(cert.issuer.public_bytes(serialization.Encoding.DER)), True)
-        
+
     # CKA_SERIAL_NUMBER (Mandatory in v3.0+)
     try:
         p11_serial = p11_obj[Attribute.SERIAL_NUMBER]
@@ -72,7 +73,7 @@ def verify_attribute_parity(p11_obj: Any, der_data: bytes, interface_version: st
             if n == 0: return b'\x02\x01\x00'
             b = n.to_bytes((n.bit_length() + 8) // 8, 'big', signed=True)
             return b'\x02' + bytes([len(b)]) + b
-            
+
         expected_serial_der = to_der_int(cert.serial_number)
         results['SERIAL_NUMBER'] = (p11_serial == expected_serial_der, _to_hex(p11_serial), _to_hex(expected_serial_der), True)
     except (PKCS11Error, KeyError):
@@ -124,7 +125,7 @@ def x509_to_p11_template(der_data: bytes, interface_version: str = "2.40") -> di
     Filters out attributes not supported by the specified interface version.
     """
     template = decode_x509_certificate(der_data)
-    
+
     # Filter out v3.0+ attributes if interface is older
     v30_attrs = {
         Attribute.PUBLIC_KEY_INFO,
@@ -133,13 +134,59 @@ def x509_to_p11_template(der_data: bytes, interface_version: str = "2.40") -> di
         Attribute.HASH_OF_SUBJECT_PUBLIC_KEY,
         Attribute.HASH_OF_ISSUER_PUBLIC_KEY,
     }
-    
+
     if interface_version < "3.0":
         for attr in v30_attrs:
             if attr in template:
                 del template[attr]
-                
+
     return template
+
+def import_cert_raw(
+    p11_session: Any,
+    der_data: bytes,
+    extra_attrs: dict[Attribute, Any] | None = None,
+) -> tuple[Any, bool]:
+    """Import a DER certificate using a minimal template (CKA_VALUE only).
+
+    Sends the raw DER bytes directly to C_CreateObject without pre-parsing or
+    pre-extracting any attributes. This forces the module to deal with the cert
+    as-is — exposing any parsing bugs, over-strict validation, or silent mangling.
+
+    Returns (obj, needed_explicit_attrs):
+      - needed_explicit_attrs=False: module accepted raw CKA_VALUE without help
+      - needed_explicit_attrs=True: module returned TemplateIncomplete so
+        SUBJECT/ISSUER/SERIAL_NUMBER were added (required by some modules)
+
+    Raises any PKCS11Error other than TemplateIncomplete without retrying —
+    callers must handle module rejections explicitly.
+    """
+    from asn1crypto.x509 import Certificate as Asn1Cert
+    from pkcs11.constants import CertificateType
+    from pkcs11.exceptions import TemplateIncomplete
+
+    minimal: dict[Attribute, Any] = {
+        Attribute.CLASS: ObjectClass.CERTIFICATE,
+        Attribute.CERTIFICATE_TYPE: CertificateType.X_509,
+        Attribute.VALUE: der_data,
+    }
+    if extra_attrs:
+        minimal.update(extra_attrs)
+
+    try:
+        return p11_session.create_object(minimal), False
+    except TemplateIncomplete:
+        pass  # Module requires explicit SUBJECT/ISSUER/SERIAL_NUMBER — add them
+
+    # asn1crypto parses leniently: if the cert is syntactically malformed enough
+    # to fail here, that is itself a finding — let the exception propagate.
+    cert_asn1 = Asn1Cert.load(der_data)
+    full: dict[Attribute, Any] = dict(minimal)
+    full[Attribute.SUBJECT] = cert_asn1.subject.dump()
+    full[Attribute.ISSUER] = cert_asn1.issuer.dump()
+    full[Attribute.SERIAL_NUMBER] = cert_asn1["tbs_certificate"]["serial_number"].dump()
+    return p11_session.create_object(full), True
+
 
 def import_cert_object(
     p11_session: Any,
@@ -154,7 +201,8 @@ def import_cert_object(
     stripped and records a compliance note.
     """
     from pkcs11.exceptions import AttributeValueInvalid
-    from pkcs11_check.compliance import note, ComplianceLevel
+
+    from pkcs11_check.compliance import ComplianceLevel, note
 
     template = x509_to_p11_template(der_data, interface_version=interface_version)
     if extra_attrs:
@@ -182,7 +230,7 @@ def get_crl_class(p11_session: Any) -> int | None:
     """Probe for the correct CKO_X_509_CRL value on this module."""
     # Common vendor values: 0x00000004 (NSS conflict!), 0x10000001, etc.
     # If the module doesn't support a specific class, applications use CKO_DATA.
-    
+
     # We try to find any existing CRL first
     possible_classes = [0x00000004, 0x10000001, 0x10000002] # Add more if known
     for cls in possible_classes:
@@ -192,7 +240,7 @@ def get_crl_class(p11_session: Any) -> int | None:
                 return cls
         except Exception:
             continue
-            
+
     # If nothing found, we return a default but warn about the 0x4 conflict
     return getattr(ObjectClass, 'X_509_CRL', 0x00000004)
 
@@ -200,10 +248,10 @@ def load_limbo_testcases() -> list[dict[str, Any]]:
     """Load all testcases from limbo.json."""
     if not _LIMBO_FILE.exists():
         return []
-        
+
     with open(_LIMBO_FILE) as f:
         data = json.load(f)
-        
+
     return data.get("testcases", [])
 
 def get_unique_limbo_certs(cases: list[dict[str, Any]]) -> list[tuple[str, bytes]]:
@@ -216,11 +264,11 @@ def get_unique_limbo_certs(cases: list[dict[str, Any]]) -> list[tuple[str, bytes
         # Support peer_certificate as either dict or str (old/new Limbo)
         peer = tc.get("peer_certificate")
         all_pems = [peer] + list(chain)
-        
+
         # Add trusted and intermediates
         all_pems += list(tc.get("trusted_certs", []) or [])
         all_pems += list(tc.get("untrusted_intermediates", []) or [])
-        
+
         for pem in all_pems:
             if not pem: continue
             der = pem_to_der(pem)
@@ -260,11 +308,13 @@ def cert_support(p11_session: Any, p11_interface_version: str) -> bool:
     # then we assume no certificate support.
     # Generate a minimal valid self-signed cert for probing
     try:
+        import datetime as _dt
+
         from cryptography import x509 as _x509
-        from cryptography.hazmat.primitives import hashes as _hashes, serialization as _ser
+        from cryptography.hazmat.primitives import hashes as _hashes
+        from cryptography.hazmat.primitives import serialization as _ser
         from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
         from cryptography.x509.oid import NameOID as _NameOID
-        import datetime as _dt
 
         key = _rsa.generate_private_key(65537, 2048)
         subject = issuer = _x509.Name([_x509.NameAttribute(_NameOID.COMMON_NAME, "probe")])
@@ -300,8 +350,8 @@ def all_limbo_cases(limbo_available: Any) -> list[dict[str, Any]]:
 @pytest.fixture
 def limbo_filter():
     """Returns a function to filter limbo testcases."""
-    def _filter(cases: list[dict[str, Any]], 
-                features: list[str] | None = None, 
+    def _filter(cases: list[dict[str, Any]],
+                features: list[str] | None = None,
                 importance: list[str] | None = None,
                 expected_result: str | None = None,
                 limit: int | None = None) -> list[dict[str, Any]]:
@@ -312,7 +362,7 @@ def limbo_filter():
             result = [tc for tc in result if tc.get("importance") in importance]
         if expected_result:
             result = [tc for tc in result if tc.get("expected_result") == expected_result]
-        
+
         if limit:
             result = result[:limit]
         return result
