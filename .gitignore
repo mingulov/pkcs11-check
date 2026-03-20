@@ -16,3 +16,4 @@ artifacts/
 .pkcs11-check-isolation-policy.json
 local-builds/bouncyhsm/
 local-builds/data/
+.worktrees/
