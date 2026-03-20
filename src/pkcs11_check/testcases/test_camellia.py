@@ -24,7 +24,6 @@ from pkcs11_check.testcases.conftest import has_mechanism
 pytestmark = pytest.mark.full
 
 # 16-byte Camellia block — ECB/CBC data must be block-aligned
-_BLOCK = b"sixteen bytes!!" + b"\x01"  # exactly 16 bytes
 _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 
 

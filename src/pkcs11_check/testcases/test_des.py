@@ -24,8 +24,8 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.exceptions import MechanismInvalid
 from pkcs11.constants import MechanismFlag
+from pkcs11.exceptions import MechanismInvalid
 
 from pkcs11_check.testcases.conftest import has_mechanism
 
@@ -237,9 +237,7 @@ class TestDESEncryption:
         plaintext = b"DES CBC PAD test data!"  # 22 bytes, not a multiple of 8
         try:
             try:
-                ct = key.encrypt(
-                    plaintext, mechanism=Mechanism.DES_CBC_PAD, mechanism_param=iv
-                )
+                ct = key.encrypt(plaintext, mechanism=Mechanism.DES_CBC_PAD, mechanism_param=iv)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_CBC_PAD advertised but rejected at use"
@@ -270,9 +268,7 @@ class TestDESEncryption:
         plaintext = b"OFB test data!!"  # 15 bytes — stream mode, no alignment needed
         try:
             try:
-                ct = key.encrypt(
-                    plaintext, mechanism=Mechanism.DES_OFB64, mechanism_param=iv
-                )
+                ct = key.encrypt(plaintext, mechanism=Mechanism.DES_OFB64, mechanism_param=iv)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_OFB64 advertised but rejected at use"
@@ -305,8 +301,7 @@ class TestDESEncryption:
                 ct = key.encrypt(plaintext, mechanism=Mechanism.DES_CFB8, mechanism_param=iv)
             except MechanismInvalid:
                 pytest.skip(
-                    "CKM_DES_CFB8 advertised but rejected at use"
-                    " (OpenSSL 3 legacy provider absent)"
+                    "CKM_DES_CFB8 advertised but rejected at use (OpenSSL 3 legacy provider absent)"
                 )
             assert ct != plaintext
             pt = key.decrypt(ct, mechanism=Mechanism.DES_CFB8, mechanism_param=iv)
@@ -331,9 +326,7 @@ class TestDESEncryption:
         plaintext = b"CFB64 test data!"  # 16 bytes
         try:
             try:
-                ct = key.encrypt(
-                    plaintext, mechanism=Mechanism.DES_CFB64, mechanism_param=iv
-                )
+                ct = key.encrypt(plaintext, mechanism=Mechanism.DES_CFB64, mechanism_param=iv)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_CFB64 advertised but rejected at use"
@@ -373,8 +366,7 @@ class TestDESMAC:
                 mac = key.sign(data, mechanism=Mechanism.DES_MAC)
             except MechanismInvalid:
                 pytest.skip(
-                    "CKM_DES_MAC advertised but rejected at use"
-                    " (OpenSSL 3 legacy provider absent)"
+                    "CKM_DES_MAC advertised but rejected at use (OpenSSL 3 legacy provider absent)"
                 )
             assert len(mac) > 0
             assert key.verify(data, mac, mechanism=Mechanism.DES_MAC)
@@ -398,9 +390,7 @@ class TestDESMAC:
         mac_len = 4  # request 4-byte MAC (half block)
         try:
             try:
-                mac = key.sign(
-                    data, mechanism=Mechanism.DES_MAC_GENERAL, mechanism_param=mac_len
-                )
+                mac = key.sign(data, mechanism=Mechanism.DES_MAC_GENERAL, mechanism_param=mac_len)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_MAC_GENERAL advertised but rejected at use"
@@ -421,12 +411,18 @@ class TestDESMAC:
             pytest.skip("CKM_DES_MAC not supported")
         tmpl = {Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False}
         key1 = p11_session.generate_key(
-            KeyType._DES, key_length=64, mechanism=Mechanism.DES_KEY_GEN,
-            capabilities=_DES_CAPABILITIES, template=tmpl,
+            KeyType._DES,
+            key_length=64,
+            mechanism=Mechanism.DES_KEY_GEN,
+            capabilities=_DES_CAPABILITIES,
+            template=tmpl,
         )
         key2 = p11_session.generate_key(
-            KeyType._DES, key_length=64, mechanism=Mechanism.DES_KEY_GEN,
-            capabilities=_DES_CAPABILITIES, template=tmpl,
+            KeyType._DES,
+            key_length=64,
+            mechanism=Mechanism.DES_KEY_GEN,
+            capabilities=_DES_CAPABILITIES,
+            template=tmpl,
         )
         data = b"MAC key independence test data"
         try:
@@ -434,8 +430,7 @@ class TestDESMAC:
                 mac1 = key1.sign(data, mechanism=Mechanism.DES_MAC)
             except MechanismInvalid:
                 pytest.skip(
-                    "CKM_DES_MAC advertised but rejected at use"
-                    " (OpenSSL 3 legacy provider absent)"
+                    "CKM_DES_MAC advertised but rejected at use (OpenSSL 3 legacy provider absent)"
                 )
             mac2 = key2.sign(data, mechanism=Mechanism.DES_MAC)
             assert mac1 != mac2
