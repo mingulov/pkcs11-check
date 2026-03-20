@@ -16,15 +16,7 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.exceptions import (
-    AttributeTypeInvalid,
-    AttributeValueInvalid,
-    FunctionFailed,
-    KeySizeRange,
-    MechanismInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-)
+from pkcs11.exceptions import FunctionFailed, MechanismInvalid
 
 from pkcs11_check.testcases.conftest import has_mechanism
 
@@ -39,16 +31,6 @@ _CHACHA20_BLOCK_COUNTER = b"\x00\x00\x00\x00"
 # Block counter: 8 bytes (64 bits).
 _SALSA20_NONCE = b"\x00" * 8
 _SALSA20_BLOCK_COUNTER = b"\x00\x00\x00\x00\x00\x00\x00\x00"
-
-_KEY_GEN_ERRORS = (
-    AttributeTypeInvalid,
-    AttributeValueInvalid,
-    KeySizeRange,
-    MechanismInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-)
-
 
 class TestSalsa20:
     """Tests for CKM_SALSA20_KEY_GEN and CKM_SALSA20 stream cipher."""
