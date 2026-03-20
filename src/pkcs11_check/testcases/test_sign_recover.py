@@ -333,14 +333,7 @@ def _run_script(
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
-def _parse_output(stdout: str) -> dict[str, str]:
-    """Parse KEY:value lines from subprocess stdout into a dict."""
-    result: dict[str, str] = {}
-    for line in stdout.splitlines():
-        if ":" in line:
-            key, _, value = line.partition(":")
-            result[key.strip()] = value.strip()
-    return result
+from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 
 
 def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
