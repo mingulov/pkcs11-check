@@ -56,7 +56,28 @@ docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 - `testcases/conftest.py` — shared helpers: mech_name(), import_aes_key(), has_mechanism(), extract_ec_point(), open_session()
 - `testcases/ckr/` — CKR error coverage tests (102 tests, 21 files). Use `--ckr-strict` for exact spec compliance. Spec: `docs/superpowers/specs/2026-03-18-ckr-error-coverage-design.md`
 - `testcases/ckr/_ckr_spec.py` — CkrExpectation dataclass, assert_ckr() helper, spec tables
-- `testcases/ckr/_ctypes_raw.py` — raw ctypes PKCS#11 caller for NULL parameter tests
+- `testcases/ckr/_ctypes_raw.py` — raw ctypes PKCS#11 caller for NULL parameter tests (legacy, prefer `pkcs11.raw.RawPKCS11`)
+
+### Raw PKCS#11 access (pkcs11.raw.RawPKCS11)
+For tests that need to bypass python-pkcs11's safety checks (NULL pointers, invalid handles, state corruption, wrapper-blocked CKR conditions), use `RawPKCS11` from the fork — pure Python ctypes, no C compilation needed.
+
+```python
+# In-process (shares session with python-pkcs11):
+from pkcs11.raw import RawPKCS11
+raw = RawPKCS11(lib._raw_funclist_ptr)  # lib is pkcs11.lib() return
+rv = raw.C_GetTokenInfo(slot_id, byref(token_info))
+
+# Standalone (subprocess, for crash-safe NULL tests):
+from pkcs11.raw import RawPKCS11
+raw = RawPKCS11.from_lib("/path/to/module.so")
+raw.C_Initialize()
+rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
+```
+
+- All 68 v2.40 functions + v3.0 message-based + v3.2 KEM functions available as methods
+- Returns raw CK_RV integers — caller must check against CKR_* constants
+- Use in subprocess for NULL/segfault tests (`subprocess.run([sys.executable, "-c", script])`)
+- CKR tests in `testcases/ckr/` use this pattern extensively — see `test_ckr_raw_args_bad.py` for examples
 
 ### Local builds (`local-builds/`)
 - `providers/<name>.sh` — one file per token with `build()` and `setup()` functions
