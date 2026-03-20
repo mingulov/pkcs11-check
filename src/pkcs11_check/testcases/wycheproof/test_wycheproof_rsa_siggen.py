@@ -18,6 +18,7 @@ from typing import Any
 
 import pkcs11 as p11
 import pytest
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from cryptography.hazmat.primitives.serialization import load_der_private_key
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
@@ -116,8 +117,9 @@ def test_rsa_pkcs1_siggen(
 
     # Parse PKCS#8 DER to extract full CRT private key components
     priv_der = bytes.fromhex(vec["_pkcs8_hex"])
-    priv_key_obj = load_der_private_key(priv_der, password=None)
-    nums = priv_key_obj.private_numbers()
+    priv_key_raw = load_der_private_key(priv_der, password=None)
+    assert isinstance(priv_key_raw, RSAPrivateKey), "Expected RSA private key in sig_gen vector"
+    nums = priv_key_raw.private_numbers()
     pub_nums = nums.public_numbers
 
     key_obj = None
@@ -144,12 +146,7 @@ def test_rsa_pkcs1_siggen(
         except p11.exceptions.PKCS11Error as e:
             pytest.skip(f"Cannot import RSA private key ({key_size}-bit, {sha}): {e}")
 
-        try:
-            sig = key_obj.sign(msg, mechanism=mechanism)
-        except p11.exceptions.PKCS11Error as e:
-            pytest.xfail(f"Signing failed for {vec_id} ({key_size}-bit, {sha}): {e}")
-            return
-
+        sig = key_obj.sign(msg, mechanism=mechanism)
         assert sig == expected_sig, (
             f"Signature mismatch for {vec_id} ({key_size}-bit {sha}): "
             f"got {sig.hex()[:32]}… expected {expected_sig.hex()[:32]}…"
