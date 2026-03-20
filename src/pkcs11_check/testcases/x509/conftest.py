@@ -190,7 +190,7 @@ def get_crl_class(p11_session: Any) -> int | None:
             objs = list(p11_session.get_objects({Attribute.CLASS: cls}))
             if objs:
                 return cls
-        except:
+        except Exception:
             continue
             
     # If nothing found, we return a default but warn about the 0x4 conflict
