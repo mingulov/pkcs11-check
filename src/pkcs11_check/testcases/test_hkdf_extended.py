@@ -22,9 +22,6 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.keymgmt
 
-# Common error tuple for key generation failures
-_KEYGEN_ERRORS = (MechanismInvalid, FunctionFailed)
-
 # Common error tuple for derivation failures
 _DERIVE_ERRORS = (MechanismInvalid, MechanismParamInvalid, FunctionFailed)
 
