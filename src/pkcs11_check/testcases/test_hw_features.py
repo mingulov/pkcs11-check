@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, ObjectClass
+from pkcs11.exceptions import PKCS11Error
 
 # Hardware feature type constants (no enum in python-pkcs11)
 CKH_MONOTONIC_COUNTER = 0x00000001
@@ -44,7 +45,7 @@ class TestHwFeatureEnumeration:
             return list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.HW_FEATURE})
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail("Module does not support CKO_HW_FEATURE enumeration")
             return []  # unreachable, satisfies mypy
 
@@ -64,7 +65,7 @@ class TestHwFeatureEnumeration:
                 assert isinstance(hw_type, int), (
                     f"Expected int HW_FEATURE_TYPE, got {type(hw_type)}"
                 )
-            except Exception:
+            except PKCS11Error:
                 pytest.xfail("Cannot read CKA_HW_FEATURE_TYPE from HW_FEATURE object")
 
     def test_known_hw_feature_types(self, p11_session: Any) -> None:
@@ -75,7 +76,7 @@ class TestHwFeatureEnumeration:
         for feat in features:
             try:
                 hw_type = int(feat[Attribute.HW_FEATURE_TYPE])
-            except Exception:
+            except PKCS11Error:
                 continue
             if hw_type < CKH_VENDOR_DEFINED:
                 assert hw_type in _KNOWN_HW_FEATURE_TYPES, (
@@ -92,7 +93,7 @@ class TestHwFeatureClock:
             features = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.HW_FEATURE})
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail("Module does not support CKO_HW_FEATURE enumeration")
             return []
         clocks = []
@@ -100,7 +101,7 @@ class TestHwFeatureClock:
             try:
                 if int(feat[Attribute.HW_FEATURE_TYPE]) == CKH_CLOCK:
                     clocks.append(feat)
-            except Exception:
+            except PKCS11Error:
                 continue
         return clocks
 
@@ -134,7 +135,7 @@ class TestHwFeatureCounter:
             features = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.HW_FEATURE})
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail("Module does not support CKO_HW_FEATURE enumeration")
             return []
         counters = []
@@ -142,7 +143,7 @@ class TestHwFeatureCounter:
             try:
                 if int(feat[Attribute.HW_FEATURE_TYPE]) == CKH_MONOTONIC_COUNTER:
                     counters.append(feat)
-            except Exception:
+            except PKCS11Error:
                 continue
         return counters
 
@@ -166,12 +167,12 @@ class TestHwFeatureCounter:
                 assert isinstance(reset_on_init, bool), (
                     f"CKA_RESET_ON_INIT should be bool, got {type(reset_on_init)}"
                 )
-            except Exception:
+            except PKCS11Error:
                 pytest.xfail("Cannot read CKA_RESET_ON_INIT from counter object")
             try:
                 has_reset = counter[Attribute.HAS_RESET]
                 assert isinstance(has_reset, bool), (
                     f"CKA_HAS_RESET should be bool, got {type(has_reset)}"
                 )
-            except Exception:
+            except PKCS11Error:
                 pytest.xfail("Cannot read CKA_HAS_RESET from counter object")

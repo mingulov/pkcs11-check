@@ -21,6 +21,7 @@ from pkcs11 import Attribute, KeyType, ObjectClass
 from pkcs11.exceptions import (
     FunctionNotSupported,
     MechanismInvalid,
+    PKCS11Error,
 )
 
 from pkcs11_check.testcases.conftest import has_mechanism
@@ -110,7 +111,12 @@ class TestEcDomainParameters:
     def test_ec_domain_params_local_true(
         self, p11_session: Any, p11_module: Any
     ) -> None:
-        """Created EC domain params with local=True have CKA_LOCAL=True."""
+        """EC domain params created with local=True have CKA_LOCAL=True.
+
+        Note: create_domain_parameters(local=True) creates a wrapper-level
+        LocalDomainParameters object. This tests the wrapper's attribute
+        simulation, not the module's C_CreateObject handling of CKA_LOCAL.
+        """
         if not has_mechanism(p11_module, "EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
         try:
@@ -131,7 +137,7 @@ class TestEcDomainParameters:
                 assert local is True, (
                     f"Expected CKA_LOCAL=True for local domain params, got {local}"
                 )
-            except Exception:
+            except PKCS11Error:
                 pytest.xfail("Module does not expose CKA_LOCAL on domain params")
         finally:
             params.destroy()
@@ -160,7 +166,7 @@ class TestEcDomainParameters:
                 assert local is False, (
                     f"Expected CKA_LOCAL=False for non-local domain params, got {local}"
                 )
-            except Exception:
+            except PKCS11Error:
                 pytest.xfail("Module does not expose CKA_LOCAL on domain params")
         finally:
             params.destroy()
@@ -177,7 +183,7 @@ class TestDomainParameterEnumeration:
                     {Attribute.CLASS: ObjectClass.DOMAIN_PARAMETERS}
                 )
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail(
                 "Module does not support CKO_DOMAIN_PARAMETERS enumeration"
             )
@@ -191,7 +197,7 @@ class TestDomainParameterEnumeration:
                     {Attribute.CLASS: ObjectClass.DOMAIN_PARAMETERS}
                 )
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail(
                 "Module does not support CKO_DOMAIN_PARAMETERS enumeration"
             )
@@ -203,7 +209,7 @@ class TestDomainParameterEnumeration:
                 assert isinstance(key_type, (int, KeyType)), (
                     f"Expected int/KeyType for KEY_TYPE, got {type(key_type)}"
                 )
-            except Exception:
+            except PKCS11Error:
                 pytest.xfail(
                     "Cannot read CKA_KEY_TYPE from domain parameter object"
                 )
