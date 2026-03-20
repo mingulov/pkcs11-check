@@ -183,7 +183,6 @@ def test_acvp_aes_gcm_encrypt(
         pytest.xfail(
             f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B"
         )
-        return  # unreachable, for type checkers
 
     key = None
     try:
@@ -201,7 +200,6 @@ def test_acvp_aes_gcm_encrypt(
                 f"Module limitation: GCM iv={len(iv)}B tag={tag_bytes}B "
                 f"not supported ({type(exc).__name__})"
             )
-            return
 
         # python-pkcs11 returns ciphertext||tag as a single bytestring
         if len(result) < tag_bytes:

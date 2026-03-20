@@ -342,7 +342,6 @@ def test_acvp_eddsa_siggen(
             sig = priv_key.sign(vec["msg"], mechanism=Mechanism.EDDSA)
         except p11.exceptions.PKCS11Error as e:
             pytest.xfail(f"{vec_id}: Ed25519 sign raised unexpected error: {e}")
-            return  # unreachable; satisfies type checker
 
         expected_sig: bytes = vec["expected_sig"]
 
