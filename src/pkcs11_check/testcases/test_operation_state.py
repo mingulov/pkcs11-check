@@ -34,9 +34,6 @@ from pkcs11.exceptions import (
 
 pytestmark = pytest.mark.operation_state
 
-# CKM_SHA256 (PKCS#11 spec §2.7)
-_CKM_SHA256 = 0x00000250
-
 # ---------------------------------------------------------------------------
 # Subprocess runner
 # ---------------------------------------------------------------------------
@@ -51,11 +48,22 @@ CK_RV = c_ulong
 CKR_OK = 0x00000000
 CKR_FUNCTION_NOT_SUPPORTED = 0x00000054
 CKR_STATE_UNSAVEABLE = 0x00000180
+CKR_SAVED_STATE_INVALID = 0x00000160
 CKR_USER_ALREADY_LOGGED_IN = 0x00000100
 CKR_CRYPTOKI_ALREADY_INITIALIZED = 0x00000191
 CKF_SERIAL_SESSION = 0x00000004
 CKF_RW_SESSION = 0x00000002
 CKM_SHA256 = 0x00000250
+CKM_AES_KEY_GEN = 0x00001080
+CKM_AES_CBC = 0x00001082
+CKA_CLASS = 0x00000000
+CKA_KEY_TYPE = 0x00000100
+CKA_TOKEN = 0x00000001
+CKA_ENCRYPT = 0x00000104
+CKA_DECRYPT = 0x00000105
+CKA_VALUE_LEN = 0x00000161
+CKO_SECRET_KEY = 0x00000004
+CKK_AES = 0x0000001F
 
 lib = ctypes.CDLL({module_path!r})
 
@@ -82,7 +90,9 @@ def _get_func(index):
 # 12=C_OpenSession, 13=C_CloseSession,
 # 16=C_GetOperationState, 17=C_SetOperationState,
 # 18=C_Login, 19=C_Logout,
-# 37=C_DigestInit, 39=C_DigestUpdate, 41=C_DigestFinal
+# 29=C_EncryptInit, 31=C_EncryptUpdate, 32=C_EncryptFinal,
+# 37=C_DigestInit, 39=C_DigestUpdate, 41=C_DigestFinal,
+# 58=C_GenerateKey
 
 _cache = {{}}
 
@@ -127,6 +137,25 @@ def C_DigestFinal(hSession, pDigest, pulDigestLen):
     return _cfunc("C_DigestFinal", CK_RV,
         [c_ulong, c_void_p, POINTER(c_ulong)], 41)(hSession, pDigest, pulDigestLen)
 
+def C_EncryptInit(hSession, pMechanism, hKey):
+    return _cfunc("C_EncryptInit", CK_RV,
+        [c_ulong, c_void_p, c_ulong], 29)(hSession, pMechanism, hKey)
+
+def C_EncryptUpdate(hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen):
+    return _cfunc("C_EncryptUpdate", CK_RV,
+        [c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong)], 31)(
+        hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen)
+
+def C_EncryptFinal(hSession, pLastEncryptedPart, pulLastEncryptedPartLen):
+    return _cfunc("C_EncryptFinal", CK_RV,
+        [c_ulong, c_void_p, POINTER(c_ulong)], 32)(
+        hSession, pLastEncryptedPart, pulLastEncryptedPartLen)
+
+def C_GenerateKey(hSession, pMechanism, pTemplate, ulCount, phKey):
+    return _cfunc("C_GenerateKey", CK_RV,
+        [c_ulong, c_void_p, c_void_p, c_ulong, POINTER(c_ulong)], 58)(
+        hSession, pMechanism, pTemplate, ulCount, phKey)
+
 def C_GetOperationState(hSession, pState, pulStateLen):
     return _cfunc("C_GetOperationState", CK_RV,
         [c_ulong, c_void_p, POINTER(c_ulong)], 16)(hSession, pState, pulStateLen)
@@ -143,6 +172,13 @@ class CK_MECHANISM(ctypes.Structure):
         ("mechanism", c_ulong),
         ("pParameter", c_void_p),
         ("ulParameterLen", c_ulong),
+    ]
+
+class CK_ATTRIBUTE(ctypes.Structure):
+    _fields_ = [
+        ("type", c_ulong),
+        ("pValue", c_void_p),
+        ("ulValueLen", c_ulong),
     ]
 
 # Initialise
@@ -302,7 +338,7 @@ class TestDigestStateRoundTrip:
     directly.  This also mirrors how real applications use state save/restore.
     """
 
-    def _get_params(self, p11_module: Any, p11_config: Any) -> tuple[str, int, bytes]:
+    def _get_params(self, p11_config: Any) -> tuple[str, int, bytes]:
         """Extract (module_path, slot_index, pin_bytes) from fixtures."""
         module_path = str(p11_config.module)
         slot_index = p11_config.slot if p11_config.slot is not None else 0
@@ -321,7 +357,7 @@ class TestDigestStateRoundTrip:
         Skips when the module returns CKR_STATE_UNSAVEABLE (most software tokens
         including SoftHSM2 and many hardware tokens do not support state save).
         """
-        module_path, slot_index, pin_bytes = self._get_params(p11_module, p11_config)
+        module_path, slot_index, pin_bytes = self._get_params(p11_config)
 
         script = """\
             import hashlib
@@ -448,7 +484,7 @@ class TestDigestStateRoundTrip:
 
         Skips when the module returns CKR_STATE_UNSAVEABLE at the save step.
         """
-        module_path, slot_index, pin_bytes = self._get_params(p11_module, p11_config)
+        module_path, slot_index, pin_bytes = self._get_params(p11_config)
 
         script = """\
             mech = CK_MECHANISM()
@@ -525,4 +561,244 @@ class TestDigestStateRoundTrip:
 
         assert "CROSS_SESSION_ACCEPTED" in lines_map or "CROSS_SESSION_REJECTED" in lines_map, (
             f"Expected CROSS_SESSION_ACCEPTED or CROSS_SESSION_REJECTED; stdout={stdout!r}"
+        )
+
+        if "CROSS_SESSION_REJECTED" in lines_map:
+            # Verify the rejection code is an expected CKR value.
+            # CKR_SAVED_STATE_INVALID (0x160) is mandated by spec §5.6.6 for
+            # cross-session restore.  Some modules may also return
+            # CKR_STATE_UNSAVEABLE (0x180) or CKR_FUNCTION_NOT_SUPPORTED (0x54).
+            acceptable_reject_codes = {0x160, 0x180, 0x54}
+            rejected_hex = lines_map["CROSS_SESSION_REJECTED"]
+            try:
+                rejected_code = int(rejected_hex, 16)
+            except ValueError:
+                rejected_code = -1
+            assert rejected_code in acceptable_reject_codes, (
+                f"Cross-session restore rejected with unexpected CKR 0x{rejected_code:08x}; "
+                f"expected one of {[hex(c) for c in acceptable_reject_codes]}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tests: encrypt state round-trip via ctypes subprocess
+# ---------------------------------------------------------------------------
+
+
+class TestEncryptStateRoundTrip:
+    """State save/restore round-trip for an AES-CBC multi-part encrypt operation.
+
+    The python-pkcs11 high-level encrypt API does not expose C_EncryptInit /
+    C_EncryptUpdate / C_EncryptFinal as individually callable Python steps, so
+    these tests use a ctypes subprocess to exercise the C-level functions
+    directly.
+
+    Most modules return CKR_STATE_UNSAVEABLE for active encrypt operations — the
+    tests skip gracefully when the module does not support saving encrypt state.
+    """
+
+    def _get_params(self, p11_config: Any) -> tuple[str, int, bytes]:
+        """Extract (module_path, slot_index, pin_bytes) from fixtures."""
+        module_path = str(p11_config.module)
+        slot_index = p11_config.slot if p11_config.slot is not None else 0
+        pin_bytes = p11_config.pin.get_secret_value().encode() if p11_config.pin else b""
+        return module_path, slot_index, pin_bytes
+
+    def test_encrypt_state_same_session(self, p11_module: Any, p11_config: Any) -> None:
+        """AES-CBC state save/restore on the same session produces correct ciphertext.
+
+        Steps:
+        1. Generate an AES-256 key via C_GenerateKey.
+        2. C_EncryptInit(AES-CBC, IV) → C_EncryptUpdate(part1) → C_GetOperationState.
+        3. C_SetOperationState (restore, passing the key handle) → C_EncryptUpdate(part2)
+           → C_EncryptFinal.
+        4. Compare with a reference encryption that does not use state save/restore.
+
+        Skips when the module returns CKR_STATE_UNSAVEABLE or
+        CKR_FUNCTION_NOT_SUPPORTED (most software tokens do not save encrypt state).
+
+        Source: PKCS#11 v3.1 §5.6.5–§5.6.6.
+        """
+        module_path, slot_index, pin_bytes = self._get_params(p11_config)
+
+        script = """\
+            # 16-byte IV and two 16-byte plaintext blocks (AES-CBC block-aligned)
+            iv = b"\\x00" * 16
+            part1 = b"Block-one-data!!"  # 16 bytes
+            part2 = b"Block-two-data!!"  # 16 bytes
+
+            # Build AES key-gen template
+            cls_val = c_ulong(CKO_SECRET_KEY)
+            ktype_val = c_ulong(CKK_AES)
+            vlen_val = c_ulong(32)
+            enc_val = c_ubyte(1)
+            dec_val = c_ubyte(1)
+            tok_val = c_ubyte(0)  # session key
+
+            def _attr(atype, val):
+                return CK_ATTRIBUTE(
+                    atype,
+                    ctypes.cast(ctypes.byref(val), c_void_p),
+                    ctypes.sizeof(val),
+                )
+            template = (CK_ATTRIBUTE * 6)(
+                _attr(CKA_CLASS,     cls_val),
+                _attr(CKA_KEY_TYPE,  ktype_val),
+                _attr(CKA_VALUE_LEN, vlen_val),
+                _attr(CKA_ENCRYPT,   enc_val),
+                _attr(CKA_DECRYPT,   dec_val),
+                _attr(CKA_TOKEN,     tok_val),
+            )
+
+            kg_mech = CK_MECHANISM()
+            kg_mech.mechanism = CKM_AES_KEY_GEN
+
+            hKey = c_ulong(0)
+            rv = C_GenerateKey(hSession, ctypes.byref(kg_mech), template, 6, byref(hKey))
+            if rv in (CKR_FUNCTION_NOT_SUPPORTED,):
+                print(f"SKIP:GenerateKeyUnsupported:0x{rv:08x}")
+                sys.exit(0)
+            if rv != CKR_OK:
+                print(f"FATAL:GenerateKey:0x{rv:08x}")
+                sys.exit(1)
+            print(f"KEY_GENERATED:{hKey.value}")
+
+            # Build AES-CBC mechanism with IV as parameter
+            iv_buf = (c_ubyte * 16)(*iv)
+            enc_mech = CK_MECHANISM()
+            enc_mech.mechanism = CKM_AES_CBC
+            enc_mech.pParameter = ctypes.cast(iv_buf, c_void_p)
+            enc_mech.ulParameterLen = 16
+
+            # --- Reference encryption (no state save) ---
+            rv = C_EncryptInit(hSession, ctypes.byref(enc_mech), hKey)
+            if rv in (CKR_FUNCTION_NOT_SUPPORTED,):
+                print(f"SKIP:EncryptInitUnsupported:0x{rv:08x}")
+                sys.exit(0)
+            if rv != CKR_OK:
+                print(f"FATAL:EncryptInit_ref:0x{rv:08x}")
+                sys.exit(1)
+
+            ref_out = bytearray()
+            out_len = c_ulong(32)
+            out_buf = (c_ubyte * 32)()
+
+            rv = C_EncryptUpdate(hSession, c_char_p(part1), c_ulong(len(part1)),
+                                 out_buf, byref(out_len))
+            if rv != CKR_OK:
+                print(f"FATAL:EncryptUpdate_ref1:0x{rv:08x}")
+                sys.exit(1)
+            ref_out += bytes(out_buf[:out_len.value])
+
+            out_len2 = c_ulong(32)
+            out_buf2 = (c_ubyte * 32)()
+            rv = C_EncryptUpdate(hSession, c_char_p(part2), c_ulong(len(part2)),
+                                 out_buf2, byref(out_len2))
+            if rv != CKR_OK:
+                print(f"FATAL:EncryptUpdate_ref2:0x{rv:08x}")
+                sys.exit(1)
+            ref_out += bytes(out_buf2[:out_len2.value])
+
+            final_len = c_ulong(32)
+            final_buf = (c_ubyte * 32)()
+            rv = C_EncryptFinal(hSession, final_buf, byref(final_len))
+            if rv != CKR_OK:
+                print(f"FATAL:EncryptFinal_ref:0x{rv:08x}")
+                sys.exit(1)
+            ref_out += bytes(final_buf[:final_len.value])
+            ref_hex = binascii.hexlify(bytes(ref_out)).decode()
+            print(f"REFERENCE:{ref_hex}")
+
+            # --- Multi-part encryption with state save/restore ---
+            rv = C_EncryptInit(hSession, ctypes.byref(enc_mech), hKey)
+            if rv != CKR_OK:
+                print(f"FATAL:EncryptInit_mp:0x{rv:08x}")
+                sys.exit(1)
+
+            mp_out = bytearray()
+            mp_len1 = c_ulong(32)
+            mp_buf1 = (c_ubyte * 32)()
+            rv = C_EncryptUpdate(hSession, c_char_p(part1), c_ulong(len(part1)),
+                                 mp_buf1, byref(mp_len1))
+            if rv != CKR_OK:
+                print(f"FATAL:EncryptUpdate_mp1:0x{rv:08x}")
+                sys.exit(1)
+            mp_out += bytes(mp_buf1[:mp_len1.value])
+
+            # Save encrypt state (length query)
+            state_len = c_ulong(0)
+            rv = C_GetOperationState(hSession, None, byref(state_len))
+            if rv in (CKR_STATE_UNSAVEABLE, CKR_FUNCTION_NOT_SUPPORTED):
+                print(f"SKIP:UNSAVEABLE_OR_UNSUPPORTED:0x{rv:08x}")
+                sys.exit(0)
+            if rv != CKR_OK:
+                print(f"FATAL:GetState_len:0x{rv:08x}")
+                sys.exit(1)
+
+            # Save encrypt state (data)
+            state_buf = (c_ubyte * state_len.value)()
+            rv = C_GetOperationState(hSession, state_buf, byref(state_len))
+            if rv in (CKR_STATE_UNSAVEABLE, CKR_FUNCTION_NOT_SUPPORTED):
+                print(f"SKIP:UNSAVEABLE_OR_UNSUPPORTED:0x{rv:08x}")
+                sys.exit(0)
+            if rv != CKR_OK:
+                print(f"FATAL:GetState_data:0x{rv:08x}")
+                sys.exit(1)
+            state_bytes = bytes(state_buf[:state_len.value])
+            print(f"STATE_SAVED:{len(state_bytes)}")
+
+            # Restore state on the same session, supplying the encryption key handle
+            rv = C_SetOperationState(
+                hSession,
+                c_char_p(state_bytes),
+                c_ulong(len(state_bytes)),
+                hKey,       # hEncryptionKey
+                c_ulong(0), # hAuthenticationKey (not used)
+            )
+            if rv != CKR_OK:
+                print(f"FATAL:SetOperationState:0x{rv:08x}")
+                sys.exit(1)
+            print("STATE_RESTORED")
+
+            # Continue encryption from restored state
+            mp_len2 = c_ulong(32)
+            mp_buf2 = (c_ubyte * 32)()
+            rv = C_EncryptUpdate(hSession, c_char_p(part2), c_ulong(len(part2)),
+                                 mp_buf2, byref(mp_len2))
+            if rv != CKR_OK:
+                print(f"FATAL:EncryptUpdate_mp2:0x{rv:08x}")
+                sys.exit(1)
+            mp_out += bytes(mp_buf2[:mp_len2.value])
+
+            mp_final_len = c_ulong(32)
+            mp_final_buf = (c_ubyte * 32)()
+            rv = C_EncryptFinal(hSession, mp_final_buf, byref(mp_final_len))
+            if rv != CKR_OK:
+                print(f"FATAL:EncryptFinal_mp:0x{rv:08x}")
+                sys.exit(1)
+            mp_out += bytes(mp_final_buf[:mp_final_len.value])
+
+            restored_hex = binascii.hexlify(bytes(mp_out)).decode()
+            print(f"RESTORED:{restored_hex}")
+        """
+
+        returncode, stdout, stderr = _run_state_script(module_path, slot_index, pin_bytes, script)
+
+        lines_map = _parse_output(stdout)
+
+        if "SKIP" in lines_map:
+            pytest.skip(f"Module skipped encrypt state test: {lines_map['SKIP']}")
+
+        if returncode != 0:
+            fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
+            detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
+            pytest.fail(f"Subprocess failed: {detail}")
+
+        assert "REFERENCE" in lines_map, f"Missing REFERENCE in output: {stdout!r}"
+        assert "RESTORED" in lines_map, f"Missing RESTORED in output: {stdout!r}"
+
+        ref = lines_map["REFERENCE"]
+        restored = lines_map["RESTORED"]
+        assert restored == ref, (
+            f"Encrypt state round-trip mismatch: expected {ref!r}, got {restored!r}"
         )
