@@ -63,6 +63,9 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("v30", "PKCS#11 v3.0-specific test"),
     MarkerDef("v32", "PKCS#11 v3.2-specific test"),
     MarkerDef("vendor", "Vendor-specific extension or mechanism test"),
+    MarkerDef("cert", "X.509 certificate operation test"),
+    MarkerDef("object", "Generic PKCS#11 object operation test"),
+    MarkerDef("compliance", "PKCS#11 standard or profile compliance verification"),
     MarkerDef("wycheproof", "Wycheproof edge-case vector test"),
 ]
 

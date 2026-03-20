@@ -14,7 +14,5 @@ results/
 artifacts/
 .pkcs11-check-isolation-state.json
 .pkcs11-check-isolation-policy.json
-.p11test-isolation-state.json
-.p11test-isolation-policy.json
 local-builds/bouncyhsm/
 local-builds/data/
