@@ -14,13 +14,14 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-import pkcs11
 import pytest
 from pkcs11 import KeyType, Mechanism
 from pkcs11.exceptions import (
+    ArgumentsBad,
     DataLenRange,
     FunctionFailed,
     MechanismInvalid,
+    PKCS11Error,
     SignatureInvalid,
     SignatureLenRange,
 )
@@ -44,7 +45,7 @@ _DSA_HASH_MECHS = [
 ]
 
 
-def _generate_dsa_keypair(session: Any, p11_module: Any) -> tuple[Any, Any, Any]:
+def _generate_dsa_keypair(session: Any) -> tuple[Any, Any, Any]:
     """Generate DSA domain parameters and keypair.
 
     Returns (params, public_key, private_key).
@@ -53,7 +54,7 @@ def _generate_dsa_keypair(session: Any, p11_module: Any) -> tuple[Any, Any, Any]
     try:
         params = session.generate_domain_parameters(KeyType.DSA, 2048)
         public, private = params.generate_keypair()
-    except pkcs11.exceptions.PKCS11Error as e:
+    except PKCS11Error as e:
         pytest.skip(f"DSA parameter/key generation not supported: {e}")
     return params, public, private
 
@@ -66,7 +67,7 @@ class TestDSARaw:
         if not has_mechanism(p11_module, "DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        params, public, private = _generate_dsa_keypair(p11_session, p11_module)
+        params, public, private = _generate_dsa_keypair(p11_session)
         try:
             digest = hashlib.sha1(b"raw DSA test data").digest()  # noqa: S324
             assert len(digest) == 20
@@ -86,7 +87,7 @@ class TestDSARaw:
         if not has_mechanism(p11_module, "DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        params, public, private = _generate_dsa_keypair(p11_session, p11_module)
+        params, public, private = _generate_dsa_keypair(p11_session)
         try:
             digest = hashlib.sha1(b"original data").digest()  # noqa: S324
             wrong_digest = hashlib.sha1(b"tampered data").digest()  # noqa: S324
@@ -107,7 +108,7 @@ class TestDSARaw:
         if not has_mechanism(p11_module, "DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        params, public, private = _generate_dsa_keypair(p11_session, p11_module)
+        params, public, private = _generate_dsa_keypair(p11_session)
         try:
             digest = hashlib.sha1(b"nonce test").digest()  # noqa: S324
 
@@ -124,15 +125,13 @@ class TestDSARaw:
         if not has_mechanism(p11_module, "DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        params, public, private = _generate_dsa_keypair(p11_session, p11_module)
+        params, public, private = _generate_dsa_keypair(p11_session)
         try:
             # 32 bytes (SHA-256 size) is too long for standard DSA raw signing
             # which expects exactly the subprime size (typically 20 or 32 bytes)
             bad_digest = b"\x00" * 7  # Too short for any subprime size
 
-            with pytest.raises(
-                (DataLenRange, MechanismInvalid, FunctionFailed, pkcs11.exceptions.PKCS11Error)
-            ):
+            with pytest.raises((DataLenRange, MechanismInvalid, FunctionFailed, ArgumentsBad)):
                 private.sign(bad_digest, mechanism=Mechanism.DSA)
         finally:
             public.destroy()
@@ -155,7 +154,7 @@ class TestDSAPrehash:
         if not has_mechanism(p11_module, mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        params, public, private = _generate_dsa_keypair(p11_session, p11_module)
+        params, public, private = _generate_dsa_keypair(p11_session)
         try:
             data = b"DSA prehash sign/verify roundtrip test data"
             sig = private.sign(data, mechanism=mechanism)
@@ -180,7 +179,7 @@ class TestDSAPrehash:
         if not has_mechanism(p11_module, mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        params, public, private = _generate_dsa_keypair(p11_session, p11_module)
+        params, public, private = _generate_dsa_keypair(p11_session)
         try:
             data = b"original prehash data"
             sig = private.sign(data, mechanism=mechanism)
@@ -208,7 +207,7 @@ class TestDSAPrehash:
         if not has_mechanism(p11_module, mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        params, public, private = _generate_dsa_keypair(p11_session, p11_module)
+        params, public, private = _generate_dsa_keypair(p11_session)
         try:
             data = b"signature tamper test"
             sig = private.sign(data, mechanism=mechanism)
@@ -240,7 +239,7 @@ class TestDSAPrehash:
         if not has_mechanism(p11_module, mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        params, public, private = _generate_dsa_keypair(p11_session, p11_module)
+        params, public, private = _generate_dsa_keypair(p11_session)
         try:
             data = b""
             sig = private.sign(data, mechanism=mechanism)
@@ -265,7 +264,7 @@ class TestDSAPrehash:
         if not has_mechanism(p11_module, mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        params, public, private = _generate_dsa_keypair(p11_session, p11_module)
+        params, public, private = _generate_dsa_keypair(p11_session)
         try:
             data = b"A" * 10240
             sig = private.sign(data, mechanism=mechanism)
@@ -289,7 +288,7 @@ class TestDSAParameterGen:
 
         try:
             params = p11_session.generate_domain_parameters(KeyType.DSA, 2048)
-        except pkcs11.exceptions.PKCS11Error as e:
+        except PKCS11Error as e:
             pytest.skip(f"DSA parameter generation failed: {e}")
 
         try:
@@ -304,13 +303,13 @@ class TestDSAParameterGen:
 
         try:
             params = p11_session.generate_domain_parameters(KeyType.DSA, 2048)
-        except pkcs11.exceptions.PKCS11Error as e:
+        except PKCS11Error as e:
             pytest.skip(f"DSA parameter generation failed: {e}")
 
         try:
             try:
                 public, private = params.generate_keypair()
-            except pkcs11.exceptions.PKCS11Error as e:
+            except PKCS11Error as e:
                 pytest.skip(f"DSA keypair generation from params failed: {e}")
 
             try:
@@ -335,13 +334,13 @@ class TestDSAParameterGen:
 
         try:
             params = p11_session.generate_domain_parameters(KeyType.DSA, 2048)
-        except pkcs11.exceptions.PKCS11Error as e:
+        except PKCS11Error as e:
             pytest.skip(f"DSA parameter generation failed: {e}")
 
         try:
             try:
                 public, private = params.generate_keypair()
-            except pkcs11.exceptions.PKCS11Error as e:
+            except PKCS11Error as e:
                 pytest.skip(f"DSA keypair generation from params failed: {e}")
 
             try:
