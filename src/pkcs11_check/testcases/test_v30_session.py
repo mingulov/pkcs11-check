@@ -15,6 +15,9 @@ Source: PKCS#11 v3.0 §5.5  C_Login / C_LoginUser
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 from typing import Any
 
 import pkcs11
@@ -444,3 +447,247 @@ class TestLoginLogoutCycle:
             except (UserNotLoggedIn, pkcs11.exceptions.SessionClosed):
                 pass
             session.close()
+
+
+# ---------------------------------------------------------------------------
+# C_SessionCancel tests (v3.0+)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.requires_v30
+class TestSessionCancel:
+    """C_SessionCancel (v3.0+) cancels active cryptographic operations.
+
+    C_SessionCancel is a PKCS#11 v3.0 extension that terminates any active
+    operation on a session.  The python-pkcs11 binding exposes it as
+    ``session.cancel(flags=0)`` and raises ``NotImplementedError`` on v2.40
+    modules.
+
+    Source: PKCS#11 v3.0 §5.15  C_SessionCancel
+    """
+
+    def test_cancel_with_no_active_operation(self, p11_session: Any) -> None:
+        """C_SessionCancel with no active operation returns CKR_OK.
+
+        The PKCS#11 v3.0 spec states that C_SessionCancel with flags=0
+        cancels all active operations.  When no operation is in progress,
+        a conformant module must still return CKR_OK.
+
+        Source: PKCS#11 v3.0 §5.15 — no CKR error defined for the case where
+        no operation is active; the call is a no-op that returns CKR_OK.
+        """
+        try:
+            p11_session.cancel()
+        except NotImplementedError:
+            pytest.skip("cancel() requires v3.0 interface — not available on this module")
+        except FunctionNotSupported:
+            pytest.xfail(
+                "Module exposes v3.0 interface but C_SessionCancel returns "
+                "CKR_FUNCTION_NOT_SUPPORTED"
+            )
+        # No exception means CKR_OK was returned — correct.
+
+    def test_cancel_leaves_session_usable(self, p11_session: Any) -> None:
+        """After C_SessionCancel the session can be used for a new operation.
+
+        Verify that calling cancel() does not corrupt session state.  A digest
+        started after cancel() must complete successfully.
+        """
+        try:
+            p11_session.cancel()
+        except NotImplementedError:
+            pytest.skip("cancel() requires v3.0 interface — not available on this module")
+        except FunctionNotSupported:
+            pytest.xfail(
+                "Module exposes v3.0 interface but C_SessionCancel returns "
+                "CKR_FUNCTION_NOT_SUPPORTED"
+            )
+
+        # Session must still be usable: perform a SHA-256 digest.
+        result = p11_session.digest(b"pkcs11-cancel-test", mechanism=pkcs11.Mechanism.SHA256)
+        assert len(result) == 32, f"Expected 32-byte SHA-256 digest, got {len(result)} bytes"
+
+    def test_cancel_with_flags_zero(self, p11_session: Any) -> None:
+        """C_SessionCancel(flags=0) cancels all active operations per spec.
+
+        Passing flags=0 is the conventional way to cancel all ongoing
+        cryptographic operations on a session.  This test explicitly passes
+        the value to exercise the flags parameter path in the binding.
+        """
+        try:
+            p11_session.cancel(flags=0)
+        except NotImplementedError:
+            pytest.skip("cancel() requires v3.0 interface — not available on this module")
+        except FunctionNotSupported:
+            pytest.xfail(
+                "Module exposes v3.0 interface but C_SessionCancel returns "
+                "CKR_FUNCTION_NOT_SUPPORTED"
+            )
+
+    def test_cancel_after_digest_init_subprocess(self, p11_module: Any, p11_config: Any) -> None:
+        """C_SessionCancel clears a pending DigestInit state.
+
+        Starts a digest operation via raw ctypes (C_DigestInit), then calls
+        C_SessionCancel(flags=0), and verifies the session accepts a fresh
+        C_DigestInit afterwards.  The subprocess isolates us from potential
+        module state corruption.
+
+        Source: PKCS#11 v3.0 §5.15 — after C_SessionCancel, the session may
+        be used for new operations without a C_Finalize/C_Initialize cycle.
+        """
+        module_path = str(p11_config.module)
+        pin_value = p11_config.pin.get_secret_value() if p11_config.pin is not None else ""
+        # Resolve the actual slot ID via python-pkcs11 (which already has the
+        # correct KRYOPTIC_CONF / NSS_LIB_PARAMS / etc. environment applied).
+        token = p11_module.get_token()
+        actual_slot_id: int = token.slot.slot_id
+        configured_slot = repr(actual_slot_id)
+
+        script = textwrap.dedent(
+            f"""\
+            import ctypes
+            from ctypes import c_ulong, c_void_p, c_ubyte, POINTER, byref, Structure
+
+            CK_RV = c_ulong
+            CKR_OK = 0x00000000
+            CKF_SERIAL_SESSION = 0x00000004
+            CKF_RW_SESSION     = 0x00000002
+            CKU_USER           = 1
+            CKM_SHA256         = 0x00000250
+
+            lib = ctypes.CDLL("{module_path}")
+
+            C_GetFunctionList = lib.C_GetFunctionList
+            C_GetFunctionList.restype = CK_RV
+            C_GetFunctionList.argtypes = [POINTER(c_void_p)]
+
+            funclist_ptr = c_void_p()
+            rv = C_GetFunctionList(byref(funclist_ptr))
+            assert rv == CKR_OK, f"C_GetFunctionList failed: 0x{{rv:08x}}"
+
+            ptr_size = ctypes.sizeof(c_void_p)
+            base = funclist_ptr.value
+
+            def get_func(index):
+                offset = ptr_size + (index * ptr_size)
+                addr = ctypes.cast(base + offset, POINTER(c_void_p)).contents.value
+                return addr
+
+            FTYPE_RV_UL       = ctypes.CFUNCTYPE(CK_RV, c_ulong)
+            FTYPE_INIT        = ctypes.CFUNCTYPE(CK_RV, c_void_p)
+            FTYPE_OPEN        = ctypes.CFUNCTYPE(
+                CK_RV, c_ulong, c_ulong, c_void_p, c_void_p, POINTER(c_ulong)
+            )
+            FTYPE_LOGIN       = ctypes.CFUNCTYPE(
+                CK_RV, c_ulong, c_ulong, POINTER(c_ubyte), c_ulong
+            )
+            FTYPE_DIGEST_INIT = ctypes.CFUNCTYPE(CK_RV, c_ulong, c_void_p)
+
+            C_Initialize   = FTYPE_INIT(get_func(0))
+            C_Finalize     = FTYPE_INIT(get_func(1))
+            C_OpenSession  = FTYPE_OPEN(get_func(12))
+            C_CloseSession = FTYPE_RV_UL(get_func(13))
+            C_Login        = FTYPE_LOGIN(get_func(18))
+            C_DigestInit   = FTYPE_DIGEST_INIT(get_func(37))
+
+            rv = C_Initialize(None)
+            # CKR_CRYPTOKI_ALREADY_INITIALIZED = 0x191 is acceptable
+            assert rv in (CKR_OK, 0x00000191), f"C_Initialize: 0x{{rv:08x}}"
+
+            # Slot ID resolved by the parent process via python-pkcs11.
+            slot_id = {configured_slot}
+
+            session_handle = c_ulong(0)
+            rv = C_OpenSession(slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                               None, None, byref(session_handle))
+            assert rv == CKR_OK, f"C_OpenSession slot={{slot_id}}: 0x{{rv:08x}}"
+            hSession = session_handle.value
+
+            pin = "{pin_value}".encode()
+            if pin:
+                pin_buf = (c_ubyte * len(pin))(*pin)
+                # CKR_USER_ALREADY_LOGGED_IN = 0x100
+                rv = C_Login(hSession, CKU_USER, pin_buf, len(pin))
+                assert rv in (CKR_OK, 0x00000100), f"C_Login: 0x{{rv:08x}}"
+
+            class CK_MECHANISM(Structure):
+                _fields_ = [("mechanism", c_ulong),
+                             ("pParameter", c_void_p),
+                             ("ulParameterLen", c_ulong)]
+
+            mech = CK_MECHANISM(CKM_SHA256, None, 0)
+            rv = C_DigestInit(hSession, byref(mech))
+            if rv != CKR_OK:
+                print(f"SKIP:C_DigestInit=0x{{rv:08x}}")
+                C_Finalize(None)
+                exit(0)
+
+            # Attempt C_SessionCancel via the directly exported symbol.
+            try:
+                C_SessionCancel = lib.C_SessionCancel
+                C_SessionCancel.restype = CK_RV
+                C_SessionCancel.argtypes = [c_ulong, c_ulong]
+                rv_cancel = C_SessionCancel(hSession, 0)
+                if rv_cancel == CKR_OK:
+                    print("CANCEL:OK")
+                elif rv_cancel == 0x00000054:
+                    # CKR_FUNCTION_NOT_SUPPORTED
+                    print("CANCEL:NOT_SUPPORTED")
+                else:
+                    print(f"CANCEL:0x{{rv_cancel:08x}}")
+            except AttributeError:
+                print("CANCEL:NOT_EXPORTED")
+                C_Finalize(None)
+                exit(0)
+
+            # Session should accept a new DigestInit after cancel.
+            rv2 = C_DigestInit(hSession, byref(mech))
+            if rv2 == CKR_OK:
+                print("REDIGEST:OK")
+            else:
+                print(f"REDIGEST:0x{{rv2:08x}}")
+
+            C_CloseSession(hSession)
+            C_Finalize(None)
+            """
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        if result.returncode < 0:
+            pytest.fail(
+                f"Module crashed (signal {result.returncode}) during "
+                f"C_DigestInit/C_SessionCancel sequence\nstderr: {result.stderr!r}"
+            )
+
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+
+        if "SKIP:" in stdout:
+            pytest.skip(f"C_DigestInit not supported: {stdout}")
+
+        if "CANCEL:NOT_EXPORTED" in stdout:
+            pytest.skip(
+                "Module does not export C_SessionCancel as a direct symbol — "
+                "cannot test cancel-after-DigestInit via ctypes"
+            )
+
+        if "CANCEL:NOT_SUPPORTED" in stdout:
+            pytest.xfail(
+                "Module exposes v3.0 interface but C_SessionCancel returns "
+                "CKR_FUNCTION_NOT_SUPPORTED"
+            )
+
+        assert "CANCEL:OK" in stdout, (
+            f"Expected C_SessionCancel to return CKR_OK after DigestInit, "
+            f"got: {stdout!r}\nstderr: {stderr!r}"
+        )
+        assert "REDIGEST:OK" in stdout, (
+            f"Expected session to accept new DigestInit after C_SessionCancel, "
+            f"got: {stdout!r}\nstderr: {stderr!r}"
+        )
