@@ -22,7 +22,6 @@ from pkcs11.exceptions import (
     FunctionFailed,
     GeneralError,
     HostMemory,
-    PKCS11Error,
     SessionClosed,
     SessionHandleInvalid,
     TokenNotPresent,
@@ -85,10 +84,9 @@ class TestUniversalRealTriggers:
 
     def test_session_handle_invalid(self, p11_module: Any) -> None:
         """CKR_SESSION_HANDLE_INVALID — use invalid session handle via raw."""
-        from pkcs11.raw import RawPKCS11, CKR_SESSION_HANDLE_INVALID
         import ctypes
 
-        from pkcs11.raw import CKR_ARGUMENTS_BAD
+        from pkcs11.raw import CKR_ARGUMENTS_BAD, CKR_SESSION_HANDLE_INVALID, RawPKCS11
         raw = RawPKCS11(p11_module.lib._raw_funclist_ptr)
         # Provide a real buffer to avoid ARGUMENTS_BAD on NULL
         buf = (ctypes.c_ubyte * 64)()
@@ -122,8 +120,8 @@ class TestUniversalRealTriggers:
 
     def test_device_removed_via_fault_proxy(self, p11_config: Any) -> None:
         """CKR_DEVICE_REMOVED — triggered via fault-proxy."""
-        from pathlib import Path
         import os
+        from pathlib import Path
         proxy = Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so"
         if not proxy.exists():
             pytest.skip("fault-proxy not built")

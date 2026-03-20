@@ -25,6 +25,7 @@ from pkcs11.exceptions import (
     ObjectHandleInvalid,
     PKCS11Error,
 )
+
 from pkcs11_check.testcases.x509.conftest import import_cert_object, x509_to_p11_template
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
@@ -127,7 +128,7 @@ class TestCertificateSearch:
 
         if not found:
             # Try searching specifically for Pkcs11Interop using DATA class (MOCK ONLY)
-            from pkcs11_check.compliance import note, ComplianceLevel
+            from pkcs11_check.compliance import ComplianceLevel, note
 
             try:
                 # pkcs11-mock ONLY finds objects if class is DATA/SECRET/PUBLIC/PRIVATE

@@ -11,7 +11,6 @@ import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.exceptions import PKCS11Error
 
-from pkcs11_check.testcases._error_tuples import MECHANISM_ERRORS
 from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.access

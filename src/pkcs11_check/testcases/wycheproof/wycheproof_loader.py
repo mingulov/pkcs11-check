@@ -18,7 +18,6 @@ References:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402

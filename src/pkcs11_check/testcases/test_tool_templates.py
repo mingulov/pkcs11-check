@@ -9,13 +9,11 @@ rep11.md Iteration 2 (session/object hidden failures).
 
 from __future__ import annotations
 
-import concurrent.futures
 import uuid
 from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import PKCS11Error
 
 pytestmark = pytest.mark.security
 

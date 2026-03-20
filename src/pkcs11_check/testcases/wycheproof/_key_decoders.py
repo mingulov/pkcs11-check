@@ -9,8 +9,12 @@ from typing import Any
 from asn1crypto import pem
 from asn1crypto.keys import ECPrivateKey, PrivateKeyInfo, PublicKeyInfo
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption
-from cryptography.hazmat.primitives.serialization import PrivateFormat, PublicFormat
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+)
 from pkcs11 import util as p11_util
 
 _EC_CURVE_ALIASES: dict[str, tuple[str, int]] = {

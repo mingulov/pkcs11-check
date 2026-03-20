@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11 import Attribute, KeyType, Mechanism
 
 from pkcs11_check.testcases._error_tuples import MECHANISM_ERRORS, SECURITY_POLICY_ERRORS
 from pkcs11_check.testcases.conftest import has_mechanism

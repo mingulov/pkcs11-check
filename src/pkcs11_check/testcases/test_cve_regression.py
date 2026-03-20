@@ -12,9 +12,9 @@ import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.exceptions import PKCS11Error
-from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS, DATA_ERRORS, MECHANISM_ERRORS
 from pkcs11.util.ec import encode_named_curve_parameters
 
+from pkcs11_check.testcases._error_tuples import DATA_ERRORS, MECHANISM_ERRORS, TEMPLATE_ERRORS
 from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.security
@@ -360,7 +360,6 @@ class TestSoftHSM2Issue596:
         if not has_mechanism(p11_module, "AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
 
-        from pkcs11_check.testcases._error_tuples import MECHANISM_ERRORS
 
         wrap_key = p11_session.generate_key(
             KeyType.AES, 256,
@@ -387,7 +386,9 @@ class TestSoftHSM2Issue722:
 
     def test_rsa_encrypt_decrypt_no_crash(self, p11_config: Any) -> None:
         """RSA encrypt/decrypt cycle in subprocess — must not crash."""
-        import subprocess, sys, textwrap
+        import subprocess
+        import sys
+        import textwrap
 
         module = str(p11_config.module)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else "None"

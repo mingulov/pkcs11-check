@@ -13,15 +13,11 @@ from typing import Any
 import pytest
 from pkcs11 import Attribute, KeyType, ObjectClass
 from pkcs11.exceptions import (
-    ActionProhibited,
     AttributeReadOnly,
     AttributeSensitive,
     AttributeTypeInvalid,
-    AttributeValueInvalid,
     ObjectHandleInvalid,
     PKCS11Error,
-    TemplateIncomplete,
-    TemplateInconsistent,
 )
 
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS

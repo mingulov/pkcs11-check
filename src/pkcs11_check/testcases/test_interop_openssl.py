@@ -57,7 +57,7 @@ class TestOpenSSLPkcs11Provider:
 
         # Use PKCS11_PROVIDER_MODULE env var
         rc, out, err = _run(
-            f"openssl list -providers -provider pkcs11",
+            "openssl list -providers -provider pkcs11",
             env={"PKCS11_PROVIDER_MODULE": module},
         )
         # Provider may or may not load depending on token state

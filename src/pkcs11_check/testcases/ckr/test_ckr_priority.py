@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11 import KeyType, Mechanism
 from pkcs11.exceptions import (
     KeyHandleInvalid,
     KeyTypeInconsistent,

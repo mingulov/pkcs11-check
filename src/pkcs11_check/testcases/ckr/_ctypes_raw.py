@@ -14,7 +14,6 @@ import subprocess
 import sys
 import textwrap
 
-
 # CKR constants
 CKR_OK = 0x00000000
 CKR_ARGUMENTS_BAD = 0x00000007

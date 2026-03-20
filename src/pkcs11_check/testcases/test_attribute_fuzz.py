@@ -24,7 +24,6 @@ from pkcs11.exceptions import (
     FunctionFailed,
     KeySizeRange,
     MechanismInvalid,
-    PKCS11Error,
     TemplateIncomplete,
     TemplateInconsistent,
 )

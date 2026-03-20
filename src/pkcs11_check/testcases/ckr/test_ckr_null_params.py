@@ -99,7 +99,9 @@ class TestNullParameters:
         """
         module = str(p11_config.module)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-        import subprocess, sys, textwrap
+        import subprocess
+        import sys
+        import textwrap
         script = textwrap.dedent(f"""\
             import pkcs11
             import ctypes
@@ -137,7 +139,9 @@ class TestNullParameters:
         module = str(p11_config.module)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
         pin_arg = f'"{pin}"' if pin else "None"
-        import subprocess, sys, textwrap
+        import subprocess
+        import sys
+        import textwrap
         script = textwrap.dedent(f"""\
             import pkcs11
             import ctypes

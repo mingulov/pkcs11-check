@@ -45,6 +45,7 @@ pytestmark = [pytest.mark.cert, pytest.mark.object]
 
 _all_cases = load_limbo_testcases()
 
+
 # "online" cases require live network (CRL/OCSP fetches) — skip them entirely.
 # "bettertls" is a corpus of 9,572 TLS hostname-validation variants; sample 50.
 # All other categories (rfc5280, webpki, pathlen, crl, pathological, cve, invalid)
@@ -85,6 +86,7 @@ def _build_testcase_sample(
 
 _testcases = _build_testcase_sample(_all_cases)
 
+
 # FAILURE-only sample for the dedicated raw-import test.
 # All non-bettertls FAILURE certs (136) + 30 evenly-spaced bettertls FAILURE certs.
 def _build_failure_sample(
@@ -114,6 +116,7 @@ _failure_sample = _build_failure_sample(_all_cases)
 # ---------------------------------------------------------------------------
 # Core import test: all offline structured cases + bettertls sample
 # ---------------------------------------------------------------------------
+
 
 class TestLimboCertImport:
     """Tests for importing certificates from x509-limbo in their real state."""
@@ -228,6 +231,7 @@ class TestLimboCertImport:
 # ---------------------------------------------------------------------------
 # Dedicated FAILURE cert test: raw import of semantically invalid certs
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("tc", _failure_sample, ids=lambda tc: tc["id"])
 def test_import_limbo_failure_cert_raw(

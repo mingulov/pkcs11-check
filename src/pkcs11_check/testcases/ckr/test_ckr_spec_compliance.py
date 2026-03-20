@@ -12,10 +12,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11 import Attribute, KeyType, Mechanism
 from pkcs11.exceptions import (
     AttributeSensitive,
-    AttributeTypeInvalid,
     AttributeValueInvalid,
     DataLenRange,
     MechanismInvalid,
@@ -23,7 +22,6 @@ from pkcs11.exceptions import (
     PKCS11Error,
     SignatureInvalid,
     TemplateIncomplete,
-    TemplateInconsistent,
 )
 
 from pkcs11_check.testcases.conftest import has_mechanism

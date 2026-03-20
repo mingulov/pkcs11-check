@@ -10,7 +10,6 @@ from __future__ import annotations
 import concurrent.futures
 from typing import Any
 
-import pkcs11 as p11
 import pytest
 from pkcs11 import KeyType, Mechanism
 

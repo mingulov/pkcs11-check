@@ -20,7 +20,6 @@ from typing import Any
 
 import pytest
 from pkcs11 import KeyType, Mechanism
-from pkcs11.exceptions import PKCS11Error
 
 pytestmark = pytest.mark.access
 

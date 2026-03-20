@@ -19,13 +19,17 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-from pkcs11 import Attribute, CertificateType, ObjectClass
-from pkcs11.exceptions import (ArgumentsBad, AttributeTypeInvalid,
-                                FunctionNotSupported, ObjectHandleInvalid,
-                                PKCS11Error)
+from pkcs11 import Attribute, ObjectClass
+from pkcs11.exceptions import (
+    ArgumentsBad,
+    FunctionNotSupported,
+    PKCS11Error,
+)
+
 from pkcs11_check.testcases.x509.conftest import import_cert_object
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
+
 
 @pytest.fixture(scope="module")
 def sample_cert_der() -> bytes:
@@ -44,6 +48,7 @@ def sample_cert_der() -> bytes:
     )
     return cert.public_bytes(serialization.Encoding.DER)
 
+
 @pytest.fixture(scope="module")
 def sample_crl_der() -> bytes:
     """Generate a simple DER CRL for lifecycle testing."""
@@ -58,23 +63,32 @@ def sample_crl_der() -> bytes:
     )
     return crl.public_bytes(serialization.Encoding.DER)
 
+
 def _get_cert_class() -> int:
     return ObjectClass.CERTIFICATE
 
+
 def _get_crl_class() -> int:
     # CK_OBJECT_CLASS_CRL is 4. python-pkcs11 ObjectClass might not have it.
-    return getattr(ObjectClass, 'X_509_CRL', 0x00000004)
+    return getattr(ObjectClass, "X_509_CRL", 0x00000004)
+
 
 class TestCertificateLifecycle:
     """Verify certificate object persistence and modifiability."""
 
-    def test_cert_token_persistence(self, p11_session: Any, sample_cert_der: bytes, p11_interface_version: str) -> None:
+    def test_cert_token_persistence(
+        self, p11_session: Any, sample_cert_der: bytes, p11_interface_version: str
+    ) -> None:
         """Import with CKA_TOKEN=True (if supported) and verify persistence."""
         label = f"token-cert-{uuid.uuid4().hex[:8]}"
         try:
-            obj = import_cert_object(p11_session, sample_cert_der, interface_version=p11_interface_version,
-                                     extra_attrs={Attribute.LABEL: label, Attribute.TOKEN: True})
-            
+            obj = import_cert_object(
+                p11_session,
+                sample_cert_der,
+                interface_version=p11_interface_version,
+                extra_attrs={Attribute.LABEL: label, Attribute.TOKEN: True},
+            )
+
             # If successful, check if it's there
             assert obj[Attribute.TOKEN] is True
             obj.destroy()
@@ -82,14 +96,24 @@ class TestCertificateLifecycle:
             # Module might not support token objects or requires login
             pytest.skip("Module does not support session-level token object creation for certs")
 
-    def test_cert_modifiability(self, p11_session: Any, sample_cert_der: bytes, p11_interface_version: str) -> None:
+    def test_cert_modifiability(
+        self, p11_session: Any, sample_cert_der: bytes, p11_interface_version: str
+    ) -> None:
         """Verify CKA_MODIFIABLE prevents label updates."""
         label_orig = f"mod-orig-{uuid.uuid4().hex[:8]}"
         label_new = f"mod-new-{uuid.uuid4().hex[:8]}"
 
         try:
-            obj = import_cert_object(p11_session, sample_cert_der, interface_version=p11_interface_version,
-                                     extra_attrs={Attribute.LABEL: label_orig, Attribute.MODIFIABLE: False, Attribute.TOKEN: False})
+            obj = import_cert_object(
+                p11_session,
+                sample_cert_der,
+                interface_version=p11_interface_version,
+                extra_attrs={
+                    Attribute.LABEL: label_orig,
+                    Attribute.MODIFIABLE: False,
+                    Attribute.TOKEN: False,
+                },
+            )
         except PKCS11Error:
             pytest.skip("Module rejected CKA_MODIFIABLE=False on creation")
             return
@@ -100,22 +124,29 @@ class TestCertificateLifecycle:
                 obj[Attribute.LABEL] = label_new
                 # If it succeeds, verify it actually CHANGED
                 if obj[Attribute.LABEL] == label_new:
-                     pytest.fail("Successfully modified label on non-modifiable certificate")
+                    pytest.fail("Successfully modified label on non-modifiable certificate")
             except PKCS11Error:
-                pass # Expected
+                pass  # Expected
         finally:
             obj.destroy()
 
-    def test_cert_id_assignment(self, p11_session: Any, sample_cert_der: bytes, p11_interface_version: str) -> None:
+    def test_cert_id_assignment(
+        self, p11_session: Any, sample_cert_der: bytes, p11_interface_version: str
+    ) -> None:
         """Verify we can set and read CKA_ID on a certificate."""
         cid = b"cert-voter-id-123"
         try:
-            obj = import_cert_object(p11_session, sample_cert_der, interface_version=p11_interface_version,
-                                     extra_attrs={Attribute.ID: cid, Attribute.TOKEN: False})
+            obj = import_cert_object(
+                p11_session,
+                sample_cert_der,
+                interface_version=p11_interface_version,
+                extra_attrs={Attribute.ID: cid, Attribute.TOKEN: False},
+            )
             assert obj[Attribute.ID] == cid
             obj.destroy()
         except (PKCS11Error, KeyError):
             pytest.skip("Module does not support CKA_ID for certificates")
+
 
 class TestCRLLifecycle:
     """Verify CKO_CRL object handling."""
@@ -125,14 +156,18 @@ class TestCRLLifecycle:
         crl_class = _get_crl_class()
         label = f"test-crl-{uuid.uuid4().hex[:8]}"
         try:
-            obj = p11_session.create_object({
-                Attribute.CLASS: crl_class,
-                Attribute.VALUE: sample_crl_der,
-                Attribute.LABEL: label,
-            })
+            obj = p11_session.create_object(
+                {
+                    Attribute.CLASS: crl_class,
+                    Attribute.VALUE: sample_crl_der,
+                    Attribute.LABEL: label,
+                }
+            )
             assert obj is not None
             # Search for it
-            found = list(p11_session.get_objects({Attribute.CLASS: crl_class, Attribute.LABEL: label}))
+            found = list(
+                p11_session.get_objects({Attribute.CLASS: crl_class, Attribute.LABEL: label})
+            )
             assert len(found) >= 1
             obj.destroy()
         except (PKCS11Error, FunctionNotSupported, ArgumentsBad):

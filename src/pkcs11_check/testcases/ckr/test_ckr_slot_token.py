@@ -16,7 +16,6 @@ from pkcs11.exceptions import (
     MechanismInvalid,
     NoEvent,
     PKCS11Error,
-    SlotIDInvalid,
 )
 
 pytestmark = pytest.mark.access

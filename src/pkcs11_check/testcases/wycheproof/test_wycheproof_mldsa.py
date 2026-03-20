@@ -7,7 +7,6 @@ Requires PKCS#11 v3.2 with ML-DSA support.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import pkcs11 as p11

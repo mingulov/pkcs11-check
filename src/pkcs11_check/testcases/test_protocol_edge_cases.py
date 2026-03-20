@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11 import Attribute, KeyType, ObjectClass
 from pkcs11.exceptions import PKCS11Error
+
 from pkcs11_check.testcases._error_tuples import RESOURCE_ERRORS
 
 pytestmark = pytest.mark.security
