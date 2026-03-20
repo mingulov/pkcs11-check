@@ -30,7 +30,7 @@ class TestMechanismObjects:
             mechs = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.MECHANISM})
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail("Module does not support CKO_MECHANISM enumeration")
         assert isinstance(mechs, list)
 
@@ -42,7 +42,7 @@ class TestMechanismObjects:
             mechs = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.MECHANISM})
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail("Module does not support CKO_MECHANISM enumeration")
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
@@ -52,7 +52,7 @@ class TestMechanismObjects:
                 assert isinstance(mtype, int), (
                     f"Expected int MECHANISM_TYPE, got {type(mtype)}"
                 )
-            except Exception:
+            except PKCS11Error:
                 pytest.xfail(
                     "Cannot read CKA_MECHANISM_TYPE from mechanism object"
                 )
@@ -63,7 +63,7 @@ class TestMechanismObjects:
             mechs = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.MECHANISM})
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail("Module does not support CKO_MECHANISM enumeration")
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
@@ -72,7 +72,7 @@ class TestMechanismObjects:
         for obj in mechs:
             try:
                 mtype = int(obj[Attribute.MECHANISM_TYPE])
-            except Exception:
+            except PKCS11Error:
                 continue
             if mtype < vendor_base:
                 assert mtype in known, (
@@ -85,7 +85,7 @@ class TestMechanismObjects:
             mechs = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.MECHANISM})
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail("Module does not support CKO_MECHANISM enumeration")
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")

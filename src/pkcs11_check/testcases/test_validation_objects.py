@@ -33,7 +33,7 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail(
                 "Module does not support CKO_VALIDATION enumeration"
             )
@@ -47,7 +47,7 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail(
                 "Module does not support CKO_VALIDATION enumeration"
             )
@@ -58,7 +58,7 @@ class TestValidationObjects:
         for obj in validations:
             try:
                 vtype = int(obj[Attribute.VALIDATION_TYPE])
-            except Exception:
+            except PKCS11Error:
                 pytest.xfail(
                     "Cannot read CKA_VALIDATION_TYPE from validation object"
                 )
@@ -75,7 +75,7 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail(
                 "Module does not support CKO_VALIDATION enumeration"
             )
@@ -87,7 +87,7 @@ class TestValidationObjects:
                 assert isinstance(level, int), (
                     f"Expected int VALIDATION_LEVEL, got {type(level)}"
                 )
-            except Exception:
+            except PKCS11Error:
                 pytest.xfail(
                     "Cannot read CKA_VALIDATION_LEVEL from validation object"
                 )
@@ -102,7 +102,7 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail(
                 "Module does not support CKO_VALIDATION enumeration"
             )
@@ -113,7 +113,7 @@ class TestValidationObjects:
         for obj in validations:
             try:
                 auth = int(obj[Attribute.VALIDATION_AUTHORITY_TYPE])
-            except Exception:
+            except PKCS11Error:
                 # Not all modules expose this optional attribute
                 continue
             if auth < vendor_base:
@@ -129,7 +129,7 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail(
                 "Module does not support CKO_VALIDATION enumeration"
             )
@@ -141,7 +141,7 @@ class TestValidationObjects:
                 assert isinstance(mod_id, (str, bytes)), (
                     f"Expected str/bytes MODULE_ID, got {type(mod_id)}"
                 )
-            except Exception:
+            except PKCS11Error:
                 # Optional attribute — some modules may not expose it
                 continue
 
@@ -155,7 +155,7 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except Exception:
+        except PKCS11Error:
             pytest.xfail(
                 "Module does not support CKO_VALIDATION enumeration"
             )
