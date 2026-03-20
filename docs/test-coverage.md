@@ -73,9 +73,9 @@ Require `src/pkcs11_check/testcases/data/cctv/` directory.
 
 ### Classic KAT (2 files — subsumed by ACVP section above)
 
-### Cryptographic Property Tests (6 files)
+### Cryptographic Property Tests (7 files)
 
-- **test_digest.py** — Hash length, determinism, cross-verify all SHA against hashlib, 1 MiB data
+- **test_digest.py** — Hash length, determinism, cross-verify all SHA against hashlib, 1 MiB data, C_DigestKey cross-verify
 - **test_encrypt.py** — AES roundtrip (ECB/CBC), key sizes, ciphertext properties, RSA PKCS/OAEP
 - **test_sign.py** — RSA multi-hash, RSA-PSS, ECDSA multi-curve, determinism, HMAC, DSA
 - **test_eddsa.py** — Ed25519 keygen, sign/verify, determinism, cross-verify with cryptography
@@ -100,18 +100,22 @@ Require `src/pkcs11_check/testcases/data/cctv/` directory.
 
 - **test_rng.py** — Uniqueness, lengths, monobit, byte distribution, Shannon entropy, runs test, seed_random
 
-### Standards & Interface (5 files)
+### Standards & Interface (8 files)
 
 - **test_interface.py** — PKCS#11 interface detection, version negotiation
 - **test_slot.py** — Slot info, token info, mechanism list
 - **test_mechanism.py** — Mechanism flags, info, capabilities
 - **test_init.py** — Module load/init, session open/close
-- **test_token_flags.py** — Token flags, RW/RO session, login state
+- **test_token_flags.py** — Token flags, version validation, flag enumeration, session/memory counters
+- **test_operation_state.py** — C_GetOperationState/C_SetOperationState: digest + encrypt state save/restore round-trip
+- **test_v30_session.py** — C_LoginUser (v3.0+), CKU_CONTEXT_SPECIFIC, C_SessionCancel
+- **test_sign_recover.py** — C_SignRecover/C_VerifyRecover with RSA X.509 (raw RSA)
 
-### Data Handling (3 files)
+### Data Handling (4 files)
 
 - **test_buffers.py** — Block boundaries, multi-block, empty input, large data
 - **test_multipart.py** — Multi-part encrypt/decrypt/digest operations
+- **test_dual_function.py** — C_DigestEncryptUpdate, C_DecryptDigestUpdate round-trip
 - **test_object.py** — Object create, search, attributes, destroy, key import/export
 
 ### Stress & Performance (3 files)

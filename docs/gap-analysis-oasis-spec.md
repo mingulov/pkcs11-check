@@ -11,7 +11,7 @@
 | Domain | Spec Items | Tested | Coverage | Status |
 |--------|-----------|--------|----------|--------|
 | **Mechanisms** | ~370 | 70 | 19% | Major gaps in legacy/regional/protocol ciphers |
-| **API Functions** | ~68 core | ~45 | 66% | Gaps in state mgmt, recovery, async |
+| **API Functions** | ~68 core | ~57 | 84% | Remaining gaps: unwrap, async, legacy |
 | **Object Types** | 12 | 6 | 50% | 6 types completely untested |
 | **Attributes** | 190+ | ~58 | 30% | Template/constraint attrs missing |
 | **CKR Return Codes** | 802 entries | 802 | 100% | Documented; 148+ with active tests |
@@ -106,44 +106,38 @@ Total spec: ~370 mechanisms
 
 ## Domain 2: API Function Coverage
 
-### What's Tested (~45 of 68 core functions)
+### What's Tested (~57 of 68 core functions)
 
 **Fully covered categories:**
 - Encryption: C_EncryptInit, C_Encrypt, C_EncryptUpdate, C_EncryptFinal
 - Signing: C_SignInit, C_Sign, C_SignUpdate, C_SignFinal
 - Verification: C_VerifyInit, C_Verify, C_VerifyUpdate, C_VerifyFinal
-- Digesting: C_DigestInit, C_Digest, C_DigestUpdate, C_DigestFinal
-- Key management: C_GenerateKey, C_GenerateKeyPair, C_WrapKey, C_DeriveKey
+- Digesting: C_DigestInit, C_Digest, C_DigestUpdate, C_DigestFinal, C_DigestKey
+- Key management: C_GenerateKey, C_GenerateKeyPair, C_WrapKey, C_DeriveKey, C_CopyObject
 - KEM: C_EncapsulateKey, C_DecapsulateKey (v3.2)
 - RNG: C_GenerateRandom
 - Init: C_Initialize, C_Finalize, C_GetFunctionList
+- State: C_GetOperationState, C_SetOperationState
+- Recovery: C_SignRecoverInit, C_SignRecover, C_VerifyRecoverInit, C_VerifyRecover
+- Dual-function: C_DigestEncryptUpdate, C_DecryptDigestUpdate
+- v3.0 session: C_LoginUser, C_SessionCancel
 
 **Partially covered:**
-- Object management: C_CreateObject, C_DestroyObject, C_GetAttributeValue, C_SetAttributeValue (tested via test_object.py, test_set_attribute.py, test_api_security.py), C_FindObjects* (tested via test_search.py), C_GetObjectSize (tested via test_object_size.py), but C_CopyObject has minimal coverage
+- Object management: C_CreateObject, C_DestroyObject, C_GetAttributeValue, C_SetAttributeValue (tested via test_object.py, test_set_attribute.py, test_api_security.py), C_FindObjects* (tested via test_search.py), C_GetObjectSize (tested via test_object_size.py), C_CopyObject (tested via test_access_control.py)
 - Session: C_OpenSession, C_CloseSession, C_Login, C_Logout tested; C_GetSessionInfo partial
-- Slot/Token: C_GetSlotList, C_GetMechanismList, C_GetMechanismInfo tested; C_GetTokenInfo partial
+- Slot/Token: C_GetSlotList, C_GetSlotInfo, C_GetTokenInfo, C_GetInfo, C_GetMechanismList, C_GetMechanismInfo tested
 
-### What's NOT Tested (~23 functions)
+### What's NOT Tested (~11 functions)
 
 | Function | Version | Why It Matters |
 |----------|---------|----------------|
-| **C_GetInfo** | v2.40 | Library version info — basic but untested |
 | **C_GetInterface / C_GetInterfaceList** | v3.0 | Interface negotiation (tested at loader level, not function level) |
-| **C_GetSlotInfo** | v2.40 | Slot hardware/firmware info |
-| **C_GetTokenInfo** | v2.40 | Token capabilities, flags, memory |
 | **C_WaitForSlotEvent** | v2.40 | Hot-plug detection |
 | **C_CloseAllSessions** | v2.40 | Bulk session teardown |
-| **C_GetOperationState** | v2.40 | Save crypto operation state |
-| **C_SetOperationState** | v2.40 | Restore crypto operation state |
-| **C_LoginUser** | v3.0 | Context-specific login |
-| **C_SessionCancel** | v3.0 | Cancel active operation |
-| **C_CopyObject** | v2.40 | Clone objects with attribute changes |
-| **C_SignRecoverInit / C_SignRecover** | v2.40 | RSA raw signature (data recovery) |
-| **C_VerifyRecoverInit / C_VerifyRecover** | v2.40 | RSA raw verify (data recovery) |
-| **C_DecryptInit (single-part path)** | v2.40 | Single-shot decrypt (multi-part covered) |
-| **C_DigestKey** | v2.40 | Digest a key's value |
 | **C_UnwrapKey** | v2.40 | Decrypt + import wrapped keys |
 | **C_SeedRandom** | v2.40 | RNG seeding |
+| **C_SignEncryptUpdate** | v2.40 | Dual-function sign+encrypt |
+| **C_DecryptVerifyUpdate** | v2.40 | Dual-function decrypt+verify |
 | **Message-based finalizers** | v3.0 | C_MessageEncryptFinal, etc. (4 functions) |
 | **Async operations** | v3.0 | C_AsyncComplete, C_AsyncJoin, etc. (4 functions) |
 | **Parallel functions** | v2.40 | C_GetFunctionStatus, C_CancelFunction (legacy) |
@@ -151,13 +145,10 @@ Total spec: ~370 mechanisms
 ### API Function Summary
 
 ```
-Tested:     ~45 functions (66%)
-Gap:        ~23 functions (34%)
-  Critical: C_GetOperationState/C_SetOperationState (state preservation)
+Tested:     ~57 functions (84%)
+Gap:        ~11 functions (16%)
   Critical: C_UnwrapKey (key import workflow)
-  Important: Recovery functions (C_SignRecover, C_VerifyRecover)
-  Important: v3.0+ functions (C_LoginUser, C_SessionCancel, async)
-  Low:      Legacy parallel functions, C_WaitForSlotEvent
+  Low:      Legacy parallel functions, C_WaitForSlotEvent, async ops
 ```
 
 ---

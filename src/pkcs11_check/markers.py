@@ -43,6 +43,7 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("mechflags", "Mechanism flags validation test"),
     MarkerDef("metamorphic", "Metamorphic relation test"),
     MarkerDef("multipart", "Multi-part or dual-function operation test"),
+    MarkerDef("operation_state", "C_GetOperationState / C_SetOperationState test"),
     MarkerDef("pqc", "Post-quantum cryptography test"),
     MarkerDef("nonce_quality", "ECDSA/DSA nonce quality or reuse analysis"),
     MarkerDef("padding_oracle", "Padding-oracle detection test"),
