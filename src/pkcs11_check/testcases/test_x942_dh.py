@@ -16,18 +16,6 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.exceptions import (
-    ArgumentsBad,
-    AttributeTypeInvalid,
-    AttributeValueInvalid,
-    DomainParamsInvalid,
-    FunctionNotSupported,
-    KeySizeRange,
-    MechanismInvalid,
-    MechanismParamInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-)
 
 from pkcs11_check.testcases.conftest import has_mechanism
 
@@ -134,35 +122,6 @@ def _make_x942_derive_param(
 def _params_to_bytes(params: X942DH1DeriveParams) -> bytes:
     """Serialize a CK_X9_42_DH1_DERIVE_PARAMS struct to raw bytes."""
     return bytes(ctypes.string_at(ctypes.addressof(params), ctypes.sizeof(params)))
-
-
-# Error tuples for common patterns
-_KEYGEN_ERRORS = (
-    MechanismInvalid,
-    FunctionNotSupported,
-    DomainParamsInvalid,
-    AttributeValueInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-)
-
-_DERIVE_ERRORS = (
-    MechanismInvalid,
-    MechanismParamInvalid,
-    FunctionNotSupported,
-    ArgumentsBad,
-    AttributeValueInvalid,
-    KeySizeRange,
-    DomainParamsInvalid,
-)
-
-_TEMPLATE_ERRORS = (
-    AttributeTypeInvalid,
-    AttributeValueInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-    ArgumentsBad,
-)
 
 
 def _skip_no_x942_keygen(p11_module: Any) -> None:
