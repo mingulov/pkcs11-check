@@ -10,7 +10,8 @@ import hashlib
 from typing import Any
 
 import pytest
-from pkcs11 import Mechanism
+from pkcs11 import Attribute, KeyType, Mechanism
+from pkcs11.exceptions import FunctionNotSupported
 
 pytestmark = pytest.mark.full
 
@@ -106,3 +107,60 @@ class TestDigestCrossVerify:
         p11_digest = p11_session.digest(data, mechanism=mechanism)
         expected = hashlib.new(hashlib_name, data).digest()
         assert p11_digest == expected
+
+
+class TestDigestKey:
+    """Tests for C_DigestKey — digesting key material directly.
+
+    Source: PKCS#11 v3.2 §5.13.4 (C_DigestKey).
+
+    C_DigestKey continues an ongoing digest operation by digesting the value of
+    a secret key, as if that value had been passed to C_DigestUpdate.  The python-
+    pkcs11 fork calls C_DigestKey internally when a Key object is passed to
+    session.digest().
+    """
+
+    def test_digest_key_matches_hashlib(self, p11_session: Any) -> None:
+        """DigestKey of extractable AES-128 key matches hashlib digest of key bytes."""
+        key = p11_session.generate_key(
+            KeyType.AES,
+            128,
+            template={Attribute.SENSITIVE: False, Attribute.EXTRACTABLE: True},
+        )
+        try:
+            p11_digest = p11_session.digest(key, mechanism=Mechanism.SHA256)
+        except FunctionNotSupported:
+            pytest.skip("C_DigestKey not supported by this module")
+        key_bytes = key[Attribute.VALUE]
+        ref_digest = hashlib.sha256(key_bytes).digest()
+        assert p11_digest == ref_digest
+
+    def test_digest_key_with_data(self, p11_session: Any) -> None:
+        """DigestKey mixed with data: SHA-256(data_prefix + key_bytes)."""
+        key = p11_session.generate_key(
+            KeyType.AES,
+            128,
+            template={Attribute.SENSITIVE: False, Attribute.EXTRACTABLE: True},
+        )
+        data_prefix = b"prefix-data-for-digest"
+        try:
+            p11_digest = p11_session.digest(iter([data_prefix, key]), mechanism=Mechanism.SHA256)
+        except FunctionNotSupported:
+            pytest.skip("C_DigestKey not supported by this module")
+        key_bytes = key[Attribute.VALUE]
+        ref_digest = hashlib.sha256(data_prefix + key_bytes).digest()
+        assert p11_digest == ref_digest
+
+    def test_digest_key_256bit(self, p11_session: Any) -> None:
+        """DigestKey works with AES-256 key."""
+        key = p11_session.generate_key(
+            KeyType.AES,
+            256,
+            template={Attribute.SENSITIVE: False, Attribute.EXTRACTABLE: True},
+        )
+        try:
+            p11_digest = p11_session.digest(key, mechanism=Mechanism.SHA256)
+        except FunctionNotSupported:
+            pytest.skip("C_DigestKey not supported by this module")
+        ref_digest = hashlib.sha256(key[Attribute.VALUE]).digest()
+        assert p11_digest == ref_digest
