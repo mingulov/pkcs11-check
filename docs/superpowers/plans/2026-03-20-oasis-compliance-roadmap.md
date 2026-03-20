@@ -43,6 +43,37 @@ Every phase follows the same autonomous execution cycle:
 
 ---
 
+## Cross-Cutting Rules (ALL Phases Must Follow)
+
+### Module-Specific Behavior Protocol
+- Document module quirks in `docs/module-issues.md` (NOT as silent `pass` in code)
+- Use `compliance.note()` for spec deviations that aren't bugs
+- Use `pytest.xfail()` with explanation for known module bugs
+- **NEVER** use generic `except PKCS11Error: pass` — always catch specific CKR subclasses
+
+### Marker Assignment
+- Mechanism availability: use `has_mechanism(p11_module, "MECHANISM_NAME")` + `pytest.skip()` (not `@pytest.mark.needs_mechanism`)
+- v3.0+ tests: add `@pytest.mark.requires_v30` or `@pytest.mark.requires_v32`
+- Assign `pytestmark` per file: `pytest.mark.cert`, `pytest.mark.keymgmt`, `pytest.mark.pqc`, etc.
+- Mark destructive tests (PIN changes, finalize): `@pytest.mark.destructive`
+
+### python-pkcs11 Fork Enum Coverage
+- If a mechanism is in the OASIS spec but NOT in `python-pkcs11/pkcs11/mechanisms.py`, the enum must be added to the fork BEFORE tests can be written
+- Do NOT use raw integer mechanism values for standard mechanisms
+- Check `python-pkcs11/pkcs11/mechanisms.py` and `python-pkcs11/pkcs11/constants.py` first
+
+### Documentation Updates
+- Update `docs/test-coverage.md` after each phase (add new test files to the category tables)
+- Run `scripts/generate-coverage-report.py` if it exists
+- Update `docs/gap-analysis-oasis-spec.md` with corrected coverage numbers
+
+### Extending vs Creating Test Files
+- **Extend existing files** when the mechanism/function is already partially tested (e.g., test_token_flags.py for C_GetTokenInfo enhancements)
+- **Create new files** only for entirely new mechanism families or object types
+- Before creating a file, grep for existing coverage: `grep -r "MECHANISM_NAME" src/pkcs11_check/testcases/`
+
+---
+
 ## Phase Dependencies
 
 ```
@@ -71,32 +102,38 @@ Phases A+B should go first. C-G can run in any order after A+B. Phase H goes las
 
 ### Scope
 
-**Functions to add tests for (missing from current suite):**
+**Functions needing NEW tests (not currently tested at all):**
 
 | Function | Category | OASIS Spec File | Priority |
 |----------|----------|----------------|----------|
-| C_GetInfo | General | general_purpose_functions.md | Medium |
-| C_GetInterfaceList | General (v3.0) | general_purpose_functions.md | Medium |
-| C_GetSlotInfo | Slot/Token | slot_and_token_mgmt_functions.md | Medium |
-| C_GetTokenInfo | Slot/Token | slot_and_token_mgmt_functions.md | Medium |
-| C_WaitForSlotEvent | Slot/Token | slot_and_token_mgmt_functions.md | Low |
-| C_CloseAllSessions | Session | session_mgmt_functions.md | Medium |
 | C_GetOperationState | Session | session_mgmt_functions.md | High |
 | C_SetOperationState | Session | session_mgmt_functions.md | High |
 | C_LoginUser | Session (v3.0) | session_mgmt_functions.md | Medium |
 | C_SessionCancel | Session (v3.0) | session_mgmt_functions.md | Medium |
-| C_CopyObject | Object | object_mgmt_functions.md | High |
 | C_DigestKey | Digest | message_digesting_functions.md | Medium |
-| C_SignRecoverInit | Sign | signing_and_macing_functions.md | Medium |
-| C_SignRecover | Sign | signing_and_macing_functions.md | Medium |
-| C_VerifyRecoverInit | Verify | functions_for_verifying_signatures_and_macs.md | Medium |
-| C_VerifyRecover | Verify | functions_for_verifying_signatures_and_macs.md | Medium |
-| C_UnwrapKey | Key Mgmt | key_management_functions.md | High |
-| C_SeedRandom | RNG | random_number_generation_functions.md | Low |
-| C_GetFunctionStatus | Parallel (legacy) | parallel_function_management_functions.md | Low |
-| C_CancelFunction | Parallel (legacy) | parallel_function_management_functions.md | Low |
+| C_SignRecoverInit / C_SignRecover | Sign | signing_and_macing_functions.md | Medium |
+| C_VerifyRecoverInit / C_VerifyRecover | Verify | functions_for_verifying_signatures_and_macs.md | Medium |
+| C_WaitForSlotEvent | Slot/Token | slot_and_token_mgmt_functions.md | Low |
+| C_GetFunctionStatus / C_CancelFunction | Parallel (legacy) | parallel_function_management_functions.md | Low |
+| C_DigestEncryptUpdate | Dual-function | dual-function_cryptographic_functions.md | Medium |
+| C_DecryptDigestUpdate | Dual-function | dual-function_cryptographic_functions.md | Medium |
+| C_SignEncryptUpdate | Dual-function | dual-function_cryptographic_functions.md | Medium |
+| C_DecryptVerifyUpdate | Dual-function | dual-function_cryptographic_functions.md | Medium |
 | Message-based finalizers | v3.0 | message_based_*_functions.md | Medium |
 | Async lifecycle | v3.0 | asynchronous_function_management_functions.md | Low |
+
+**Functions needing ENHANCED tests (partial coverage exists — extend, don't duplicate):**
+
+| Function | Existing Test File | What's Missing |
+|----------|-------------------|----------------|
+| C_GetInfo | test_token_flags.py, test_interface.py | Version field validation, flag semantics |
+| C_GetSlotInfo | test_token_flags.py | Hardware/firmware version, flag semantics |
+| C_GetTokenInfo | test_token_flags.py | Memory counters, all flag bits, session counts |
+| C_GetInterfaceList | test_interface.py | Negative cases, interface enumeration depth |
+| C_CopyObject | test_access_control.py, test_api_security.py | Attribute modification during copy, cross-session copy |
+| C_CloseAllSessions | test_session_edge_cases.py | Multi-session cleanup, object visibility after |
+| C_UnwrapKey | test_keymgmt.py, test_rsa_key_wrapping.py | Template enforcement, cross-mechanism unwrap |
+| C_SeedRandom | test_rng.py | Entropy quality after seed, error paths |
 
 ### Existing Patterns to Follow
 
@@ -107,14 +144,15 @@ Phases A+B should go first. C-G can run in any order after A+B. Phase H goes las
 - `src/pkcs11_check/testcases/test_keymgmt.py` — key management (wrap/unwrap/derive)
 - `src/pkcs11_check/testcases/test_multipart.py` — multi-part crypto operations
 
-### Files to Create
+### Files to Create or Extend
 
-- `src/pkcs11_check/testcases/test_token_info.py` — C_GetInfo, C_GetSlotInfo, C_GetTokenInfo
-- `src/pkcs11_check/testcases/test_operation_state.py` — C_GetOperationState / C_SetOperationState
-- `src/pkcs11_check/testcases/test_copy_object.py` — C_CopyObject
-- `src/pkcs11_check/testcases/test_unwrap.py` — C_UnwrapKey
-- `src/pkcs11_check/testcases/test_sign_recover.py` — C_SignRecover / C_VerifyRecover
-- `src/pkcs11_check/testcases/test_v30_session.py` — C_LoginUser, C_SessionCancel (v3.0+)
+- **Create** `src/pkcs11_check/testcases/test_operation_state.py` — C_GetOperationState / C_SetOperationState (entirely new)
+- **Create** `src/pkcs11_check/testcases/test_sign_recover.py` — C_SignRecover / C_VerifyRecover (entirely new)
+- **Create** `src/pkcs11_check/testcases/test_v30_session.py` — C_LoginUser, C_SessionCancel (v3.0+, entirely new)
+- **Create** `src/pkcs11_check/testcases/test_dual_function.py` — Dual-function operations (entirely new)
+- **Extend** `src/pkcs11_check/testcases/test_token_flags.py` — Enhance C_GetInfo, C_GetSlotInfo, C_GetTokenInfo
+- **Extend** `src/pkcs11_check/testcases/test_access_control.py` — Enhance C_CopyObject coverage
+- **Extend** `src/pkcs11_check/testcases/test_rng.py` — Enhance C_SeedRandom coverage
 
 ### Acceptance Criteria
 
@@ -162,7 +200,7 @@ bash local-builds/test.sh kryoptic
 | CKO_TRUST | — | v2.40 | trust_objects.md |
 | CKO_VALIDATION | 0x3A | v3.1 | validation_objects.md |
 | CKO_OTP_KEY | 0x08 | v2.40 | otp_key_objects.md |
-| CKO_DOMAIN_PARAMETERS | 0x06 | v2.40 | domain_parameter_objects.md |
+| CKO_DOMAIN_PARAMETERS | 0x06 | v2.40 | domain_parameter_objects.md (note: domain param *usage* is well-tested in test_dh_key_agreement.py etc. — the gap is object *attribute* coverage: CKA_PRIME, CKA_BASE, CKA_LOCAL as stored objects) |
 
 **Attribute enforcement to test (across all object types):**
 
@@ -252,7 +290,7 @@ bash local-builds/test.sh kryoptic
 - CKM_XEDDSA
 - OASIS spec: elliptic_curves.md
 
-**DH/X9.42 (5):**
+**X9.42 DH only (5) — note: CKM_DH_PKCS_* is already tested in test_dh_key_agreement.py:**
 - CKM_X9_42_DH_KEY_PAIR_GEN, CKM_X9_42_DH_DERIVE, CKM_X9_42_DH_HYBRID_DERIVE
 - CKM_X9_42_DH_PARAMETER_GEN, CKM_X9_42_MQV_DERIVE
 - OASIS spec: diffie-hellman.md
@@ -516,7 +554,7 @@ bash local-builds/test.sh kryoptic
 
 **NULL mechanism (1):** CKM_RSA_PKCS_NULL — OASIS spec: null_mechanism.md
 
-**BLAKE2 (4):** CKM_BLAKE2B_160/256/384/512 — OASIS spec: (referenced in elliptic_curves.md)
+**BLAKE2 (4):** CKM_BLAKE2B_160/256/384/512 — OASIS spec: digests.md
 
 ### Files to Create
 
