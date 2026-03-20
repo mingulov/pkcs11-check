@@ -23,8 +23,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, MechanismFlag
+from pkcs11 import Attribute, KeyType, Mechanism
 from pkcs11.exceptions import MechanismInvalid
+from pkcs11.constants import MechanismFlag
 
 from pkcs11_check.testcases.conftest import has_mechanism
 
@@ -42,7 +43,6 @@ _DES_CAPABILITIES = (
 )
 
 # 8-byte DES block — ECB/CBC data must be block-aligned
-_BLOCK = b"12345678"  # exactly 8 bytes
 _TWO_BLOCKS = b"12345678abcdefgh"  # exactly 16 bytes
 
 
@@ -61,12 +61,12 @@ class TestDESKeyGen:
 
     def test_des_key_gen(self, p11_session: Any, p11_module: Any) -> None:
         """Generate a DES session key."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.TOKEN: False},
         )
@@ -78,12 +78,12 @@ class TestDESKeyGen:
 
     def test_des_key_gen_not_null(self, p11_session: Any, p11_module: Any) -> None:
         """DES key generation produces a usable, non-null key object."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.TOKEN: False},
         )
@@ -106,60 +106,60 @@ class TestDESEncryption:
 
     def test_des_ecb_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
         """DES-ECB encrypt/decrypt roundtrip with block-aligned data."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_ECB"):
+        if not has_mechanism(p11_module, "DES_ECB"):
             pytest.skip("CKM_DES_ECB not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
         try:
             try:
-                ct = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism._DES_ECB)
+                ct = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism.DES_ECB)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_ECB advertised but rejected at use (OpenSSL 3 legacy provider absent)"
                 )
             assert ct != _TWO_BLOCKS
             assert len(ct) == len(_TWO_BLOCKS)
-            pt = key.decrypt(ct, mechanism=Mechanism._DES_ECB)
+            pt = key.decrypt(ct, mechanism=Mechanism.DES_ECB)
             assert pt == _TWO_BLOCKS
         finally:
             key.destroy()
 
     def test_des_ecb_different_keys(self, p11_session: Any, p11_module: Any) -> None:
         """DES-ECB: same plaintext encrypted with different keys should differ."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_ECB"):
+        if not has_mechanism(p11_module, "DES_ECB"):
             pytest.skip("CKM_DES_ECB not supported")
         tmpl = {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False}
         key1 = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template=tmpl,
         )
         key2 = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template=tmpl,
         )
         try:
             try:
-                ct1 = key1.encrypt(_TWO_BLOCKS, mechanism=Mechanism._DES_ECB)
+                ct1 = key1.encrypt(_TWO_BLOCKS, mechanism=Mechanism.DES_ECB)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_ECB advertised but rejected at use (OpenSSL 3 legacy provider absent)"
                 )
-            ct2 = key2.encrypt(_TWO_BLOCKS, mechanism=Mechanism._DES_ECB)
+            ct2 = key2.encrypt(_TWO_BLOCKS, mechanism=Mechanism.DES_ECB)
             assert ct1 != ct2
         finally:
             key1.destroy()
@@ -167,41 +167,41 @@ class TestDESEncryption:
 
     def test_des_cbc_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
         """DES-CBC encrypt/decrypt roundtrip with 8-byte IV and block-aligned data."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_CBC"):
+        if not has_mechanism(p11_module, "DES_CBC"):
             pytest.skip("CKM_DES_CBC not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
         iv = _des_iv(p11_session)
         try:
             try:
-                ct = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism._DES_CBC, mechanism_param=iv)
+                ct = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism.DES_CBC, mechanism_param=iv)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_CBC advertised but rejected at use (OpenSSL 3 legacy provider absent)"
                 )
             assert ct != _TWO_BLOCKS
-            pt = key.decrypt(ct, mechanism=Mechanism._DES_CBC, mechanism_param=iv)
+            pt = key.decrypt(ct, mechanism=Mechanism.DES_CBC, mechanism_param=iv)
             assert pt == _TWO_BLOCKS
         finally:
             key.destroy()
 
     def test_des_cbc_different_ivs(self, p11_session: Any, p11_module: Any) -> None:
         """DES-CBC with different IVs produces different ciphertexts."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_CBC"):
+        if not has_mechanism(p11_module, "DES_CBC"):
             pytest.skip("CKM_DES_CBC not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
@@ -209,26 +209,26 @@ class TestDESEncryption:
         iv2 = _des_iv(p11_session)
         try:
             try:
-                ct1 = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism._DES_CBC, mechanism_param=iv1)
+                ct1 = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism.DES_CBC, mechanism_param=iv1)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_CBC advertised but rejected at use (OpenSSL 3 legacy provider absent)"
                 )
-            ct2 = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism._DES_CBC, mechanism_param=iv2)
+            ct2 = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism.DES_CBC, mechanism_param=iv2)
             assert ct1 != ct2
         finally:
             key.destroy()
 
     def test_des_cbc_pad_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
         """DES-CBC-PAD encrypt/decrypt roundtrip with arbitrary-length data."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_CBC_PAD"):
+        if not has_mechanism(p11_module, "DES_CBC_PAD"):
             pytest.skip("CKM_DES_CBC_PAD not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
@@ -238,7 +238,7 @@ class TestDESEncryption:
         try:
             try:
                 ct = key.encrypt(
-                    plaintext, mechanism=Mechanism._DES_CBC_PAD, mechanism_param=iv
+                    plaintext, mechanism=Mechanism.DES_CBC_PAD, mechanism_param=iv
                 )
             except MechanismInvalid:
                 pytest.skip(
@@ -248,21 +248,21 @@ class TestDESEncryption:
             assert ct != plaintext
             # Ciphertext is padded to block boundary
             assert len(ct) % 8 == 0
-            pt = key.decrypt(ct, mechanism=Mechanism._DES_CBC_PAD, mechanism_param=iv)
+            pt = key.decrypt(ct, mechanism=Mechanism.DES_CBC_PAD, mechanism_param=iv)
             assert pt == plaintext
         finally:
             key.destroy()
 
     def test_des_ofb64_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
         """DES-OFB64 encrypt/decrypt roundtrip with 8-byte IV."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_OFB64"):
+        if not has_mechanism(p11_module, "DES_OFB64"):
             pytest.skip("CKM_DES_OFB64 not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
@@ -271,7 +271,7 @@ class TestDESEncryption:
         try:
             try:
                 ct = key.encrypt(
-                    plaintext, mechanism=Mechanism._DES_OFB64, mechanism_param=iv
+                    plaintext, mechanism=Mechanism.DES_OFB64, mechanism_param=iv
                 )
             except MechanismInvalid:
                 pytest.skip(
@@ -280,21 +280,21 @@ class TestDESEncryption:
                 )
             assert ct != plaintext
             assert len(ct) == len(plaintext)
-            pt = key.decrypt(ct, mechanism=Mechanism._DES_OFB64, mechanism_param=iv)
+            pt = key.decrypt(ct, mechanism=Mechanism.DES_OFB64, mechanism_param=iv)
             assert pt == plaintext
         finally:
             key.destroy()
 
     def test_des_cfb8_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
         """DES-CFB8 encrypt/decrypt roundtrip with 8-byte IV."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_CFB8"):
+        if not has_mechanism(p11_module, "DES_CFB8"):
             pytest.skip("CKM_DES_CFB8 not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
@@ -302,28 +302,28 @@ class TestDESEncryption:
         plaintext = b"CFB8 test data!!"  # 16 bytes
         try:
             try:
-                ct = key.encrypt(plaintext, mechanism=Mechanism._DES_CFB8, mechanism_param=iv)
+                ct = key.encrypt(plaintext, mechanism=Mechanism.DES_CFB8, mechanism_param=iv)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_CFB8 advertised but rejected at use"
                     " (OpenSSL 3 legacy provider absent)"
                 )
             assert ct != plaintext
-            pt = key.decrypt(ct, mechanism=Mechanism._DES_CFB8, mechanism_param=iv)
+            pt = key.decrypt(ct, mechanism=Mechanism.DES_CFB8, mechanism_param=iv)
             assert pt == plaintext
         finally:
             key.destroy()
 
     def test_des_cfb64_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
         """DES-CFB64 encrypt/decrypt roundtrip with 8-byte IV."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_CFB64"):
+        if not has_mechanism(p11_module, "DES_CFB64"):
             pytest.skip("CKM_DES_CFB64 not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
@@ -332,7 +332,7 @@ class TestDESEncryption:
         try:
             try:
                 ct = key.encrypt(
-                    plaintext, mechanism=Mechanism._DES_CFB64, mechanism_param=iv
+                    plaintext, mechanism=Mechanism.DES_CFB64, mechanism_param=iv
                 )
             except MechanismInvalid:
                 pytest.skip(
@@ -340,7 +340,7 @@ class TestDESEncryption:
                     " (OpenSSL 3 legacy provider absent)"
                 )
             assert ct != plaintext
-            pt = key.decrypt(ct, mechanism=Mechanism._DES_CFB64, mechanism_param=iv)
+            pt = key.decrypt(ct, mechanism=Mechanism.DES_CFB64, mechanism_param=iv)
             assert pt == plaintext
         finally:
             key.destroy()
@@ -356,41 +356,41 @@ class TestDESMAC:
 
     def test_des_mac_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
         """DES-MAC sign and verify roundtrip."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_MAC"):
+        if not has_mechanism(p11_module, "DES_MAC"):
             pytest.skip("CKM_DES_MAC not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
         )
         data = b"DES MAC test data for signing"
         try:
             try:
-                mac = key.sign(data, mechanism=Mechanism._DES_MAC)
+                mac = key.sign(data, mechanism=Mechanism.DES_MAC)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_MAC advertised but rejected at use"
                     " (OpenSSL 3 legacy provider absent)"
                 )
             assert len(mac) > 0
-            assert key.verify(data, mac, mechanism=Mechanism._DES_MAC)
+            assert key.verify(data, mac, mechanism=Mechanism.DES_MAC)
         finally:
             key.destroy()
 
     def test_des_mac_general_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
         """DES-MAC-GENERAL sign and verify roundtrip with explicit MAC length."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_MAC_GENERAL"):
+        if not has_mechanism(p11_module, "DES_MAC_GENERAL"):
             pytest.skip("CKM_DES_MAC_GENERAL not supported")
         key = p11_session.generate_key(
             KeyType._DES,
             key_length=64,
-            mechanism=Mechanism._DES_KEY_GEN,
+            mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES,
             template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
         )
@@ -399,7 +399,7 @@ class TestDESMAC:
         try:
             try:
                 mac = key.sign(
-                    data, mechanism=Mechanism._DES_MAC_GENERAL, mechanism_param=mac_len
+                    data, mechanism=Mechanism.DES_MAC_GENERAL, mechanism_param=mac_len
                 )
             except MechanismInvalid:
                 pytest.skip(
@@ -408,36 +408,36 @@ class TestDESMAC:
                 )
             assert len(mac) == mac_len
             assert key.verify(
-                data, mac, mechanism=Mechanism._DES_MAC_GENERAL, mechanism_param=mac_len
+                data, mac, mechanism=Mechanism.DES_MAC_GENERAL, mechanism_param=mac_len
             )
         finally:
             key.destroy()
 
     def test_des_mac_different_keys(self, p11_session: Any, p11_module: Any) -> None:
         """Different DES keys produce different MAC values."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "_DES_MAC"):
+        if not has_mechanism(p11_module, "DES_MAC"):
             pytest.skip("CKM_DES_MAC not supported")
         tmpl = {Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False}
         key1 = p11_session.generate_key(
-            KeyType._DES, key_length=64, mechanism=Mechanism._DES_KEY_GEN,
+            KeyType._DES, key_length=64, mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES, template=tmpl,
         )
         key2 = p11_session.generate_key(
-            KeyType._DES, key_length=64, mechanism=Mechanism._DES_KEY_GEN,
+            KeyType._DES, key_length=64, mechanism=Mechanism.DES_KEY_GEN,
             capabilities=_DES_CAPABILITIES, template=tmpl,
         )
         data = b"MAC key independence test data"
         try:
             try:
-                mac1 = key1.sign(data, mechanism=Mechanism._DES_MAC)
+                mac1 = key1.sign(data, mechanism=Mechanism.DES_MAC)
             except MechanismInvalid:
                 pytest.skip(
                     "CKM_DES_MAC advertised but rejected at use"
                     " (OpenSSL 3 legacy provider absent)"
                 )
-            mac2 = key2.sign(data, mechanism=Mechanism._DES_MAC)
+            mac2 = key2.sign(data, mechanism=Mechanism.DES_MAC)
             assert mac1 != mac2
         finally:
             key1.destroy()
@@ -745,24 +745,24 @@ class TestDESKeyDerivation:
     the key derivation test suite.
     """
 
-    def test_des_ecb_encrypt_data_available(self, p11_session: Any, p11_module: Any) -> None:
+    def test_des_ecb_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_DES_ECB_ENCRYPT_DATA is advertised when DES is supported."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported — skipping derivation check")
         if not has_mechanism(p11_module, "DES_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_DES_ECB_ENCRYPT_DATA not supported")
         # Mechanism is present — no further operation needed for availability check
         assert True
 
-    def test_des_cbc_encrypt_data_available(self, p11_session: Any, p11_module: Any) -> None:
+    def test_des_cbc_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_DES_CBC_ENCRYPT_DATA is advertised when DES is supported."""
-        if not has_mechanism(p11_module, "_DES_KEY_GEN"):
+        if not has_mechanism(p11_module, "DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported — skipping derivation check")
         if not has_mechanism(p11_module, "DES_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_DES_CBC_ENCRYPT_DATA not supported")
         assert True
 
-    def test_des3_ecb_encrypt_data_available(self, p11_session: Any, p11_module: Any) -> None:
+    def test_des3_ecb_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_DES3_ECB_ENCRYPT_DATA is advertised when DES3 is supported."""
         if not has_mechanism(p11_module, "DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported — skipping derivation check")
@@ -770,7 +770,7 @@ class TestDESKeyDerivation:
             pytest.skip("CKM_DES3_ECB_ENCRYPT_DATA not supported")
         assert True
 
-    def test_des3_cbc_encrypt_data_available(self, p11_session: Any, p11_module: Any) -> None:
+    def test_des3_cbc_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_DES3_CBC_ENCRYPT_DATA is advertised when DES3 is supported."""
         if not has_mechanism(p11_module, "DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported — skipping derivation check")
