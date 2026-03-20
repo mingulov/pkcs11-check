@@ -10,7 +10,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from pkcs11_check.core.file_runner import load_isolation_policy, load_run_state, state_results_by_status
+from pkcs11_check.core.file_runner import (
+    load_isolation_policy,
+    load_run_state,
+    state_results_by_status,
+)
 
 console = Console()
 

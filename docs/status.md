@@ -1,6 +1,6 @@
 # pkcs11-check Current Status
 
-Last updated: 2026-03-19
+Last updated: 2026-03-20
 
 ## What Works
 
@@ -17,6 +17,10 @@ Last updated: 2026-03-19
 - **10 local build providers** — SoftHSM2, Kryoptic, NSS, pkcs11-mock, qryptotoken, tpm2-pkcs11, BouncyHSM, OpenCryptoki, swtpm, tpm2-swtpm
 - **12 Docker test targets** for CI validation
 - **CI workflow** — GitHub Actions with lint, typecheck, tests, strict markers, smoke
+- **NIST ACVP vectors** — 8 test files covering AES-GCM, ECDSA, EdDSA, HMAC, SLH-DSA, ML-DSA from official NIST ACVP test suites; invalid-signature rejection tested as security property
+- **CCTV edge-case vectors** — RFC 6979 P-256 rejection-sampling verify test + ML-DSA-44/65/87 sign+verify round-trip from CCTV benchmark messages
+- **X.509 certificate test suite** — 8 test files covering CRL, identity, lifecycle, limbo import, attribute parity, core ops, and object search
+- **Security findings** — ACVP SigVer tests surface EDDSA invalid-signature acceptance bugs in SoftHSM2 and Kryoptic (documented in module-issues.md)
 
 ## What's Partial
 

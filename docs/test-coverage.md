@@ -46,10 +46,32 @@ Verify PKCS#11 output against Python `cryptography` library.
 - **test_aead.py** — AES-GCM cross-verify, tamper detection, AAD integrity
 - **test_ec_curves.py** — P-224/256/384/521 keygen + ECDSA cross-verify
 
-### Known-Answer Tests (2 files)
+### NIST ACVP KAT Vectors (8 files)
 
-- **test_kat.py** — SHA-1/224/256/384/512 from NIST vectors, AES-ECB from SP 800-38A
-- **test_sha3.py** — SHA3-224/256/384/512 cross-verify against hashlib
+Official NIST Automated Cryptographic Validation Protocol vectors. Require `scripts/fetch-optional-data.sh acvp`. Skip gracefully when not cloned.
+
+| File | Algorithms | Security property |
+|------|------------|-------------------|
+| test_kat.py | SHA-1/224/256/384/512, AES-ECB | Correctness vs SP 800-38A |
+| test_sha3.py | SHA3-224/256/384/512 | Cross-verify vs hashlib |
+| test_acvp_aes.py | AES-GCM encrypt/decrypt | Correctness + tag auth (invalid tag must be rejected) |
+| test_acvp_ecdsa.py | ECDSA P-256/384/521 × SHA-256/384/512 SigVer | FIPS 186-5 §6.4 — invalid sigs must be rejected |
+| test_acvp_eddsa.py | Ed25519/Ed448 SigVer + Ed25519 SigGen | RFC 8032 — invalid sigs must be rejected |
+| test_acvp_hmac.py | HMAC-SHA-{1,224,256,384,512}, HMAC-SHA3-{256,512} | FIPS 198-1 correctness |
+| test_acvp_slhdsa.py | SLH-DSA-SHA2-128f/192f SigVer + SigGen | FIPS 205 — invalid sigs must be rejected |
+| test_acvp_mldsa.py | ML-DSA-{44,65,87} SigGen | FIPS 204 — correct signing |
+
+### CCTV Edge-Case Vectors (2 files)
+
+Cryptographic Compliance Test Vectors for adversarial and edge-case scenarios.
+Require `src/pkcs11_check/testcases/data/cctv/` directory.
+
+| File | Algorithms | Purpose |
+|------|------------|---------|
+| test_cctv_rfc6979.py | ECDSA P-256 | RFC 6979 rejection-sampling path; verify is unconditional, sign is xfail |
+| test_cctv_mldsa.py | ML-DSA-44/65/87 | Sign+verify round-trip using CCTV benchmark messages |
+
+### Classic KAT (2 files — subsumed by ACVP section above)
 
 ### Cryptographic Property Tests (6 files)
 
@@ -105,35 +127,36 @@ Verify PKCS#11 output against Python `cryptography` library.
 
 ## Mechanism Coverage
 
-| Mechanism | Wycheproof | Cross-verify | Property | Notes |
-|-----------|:---:|:---:|:---:|-------|
-| AES-ECB | - | Yes | Yes | KAT + cross-verify |
-| AES-CBC | Yes | Yes | Yes | PKCS5 padding |
-| AES-GCM | Yes | Yes | Yes | IV sizes, AAD |
-| AES-CCM | Yes | - | - | Skips if unsupported |
-| AES-CMAC | Yes | - | - | Tag truncation |
-| AES-GMAC | Yes | - | - | Authentication-only GCM |
-| AES-KW | Yes | - | - | RFC 3394 |
-| AES-KWP | Yes | - | - | RFC 5649 |
-| AES-XTS | Yes | - | - | Disk encryption mode |
-| RSA PKCS#1 v1.5 sign | Yes | Yes | Yes | 2048-8192, SHA + SHA-3 |
-| RSA PKCS#1 v1.5 decrypt | Yes | - | - | Padding oracle vectors |
-| RSA-PSS | Yes | Yes | Yes | Proper PSS params, mixed MGF, misc salt lengths |
-| RSA-OAEP | Yes | Yes | Yes | Mixed hash/MGF |
-| ECDSA P-224/256/384/521, secp*k1, brainpool | Yes | Yes | Yes | SHA-2 + SHA-3 + SHAKE, DER + P1363 |
-| ECDH secp*r1, secp256k1, brainpool, binary curves | Yes | - | Yes | Raw secret agreement across multiple encodings |
-| X25519 / X448 | Yes | - | - | Raw, ASN.1, PEM, JWK |
-| Ed25519 | Yes | Yes | Yes | Deterministic sigs |
-| Ed448 | Yes | - | - | Skips if unsupported |
-| DSA 2048/3072 | Yes | - | Yes | SHA-224/256 |
-| HMAC SHA family | Yes | Yes | Yes | SHA, SHA-3, SHA-512 truncated |
-| ChaCha20-Poly1305 | Yes | - | - | Native CK params |
-| HKDF | Yes | - | - | Skips if unsupported |
-| PBES2 | Yes | - | - | PBKDF2 + AES-CBC-PAD composition |
-| SHA-1/224/256/384/512 | - | Yes | Yes | KAT + hashlib cross-verify |
-| ML-KEM | Yes | - | Yes | v3.2 decapsulation Wycheproof + native KEM tests |
-| ML-DSA | Yes | - | Yes | v3.2 verify + sign Wycheproof + native sign/verify |
-| SLH-DSA | - | - | Yes | v3.2 sign/verify |
+| Mechanism | Wycheproof | ACVP | Cross-verify | Property | Notes |
+|-----------|:---:|:---:|:---:|:---:|-------|
+| AES-ECB | - | KAT | Yes | Yes | SP 800-38A KAT + cross-verify |
+| AES-CBC | Yes | - | Yes | Yes | PKCS5 padding |
+| AES-GCM | Yes | SigVer+Dec | Yes | Yes | IV sizes, AAD; ACVP tag-auth rejection |
+| AES-CCM | Yes | - | - | - | Skips if unsupported |
+| AES-CMAC | Yes | - | - | - | Tag truncation |
+| AES-GMAC | Yes | - | - | - | Authentication-only GCM |
+| AES-KW | Yes | - | - | - | RFC 3394 |
+| AES-KWP | Yes | - | - | - | RFC 5649 |
+| AES-XTS | Yes | - | - | - | Disk encryption mode |
+| RSA PKCS#1 v1.5 sign | Yes | - | Yes | Yes | 2048-8192, SHA + SHA-3 |
+| RSA PKCS#1 v1.5 decrypt | Yes | - | - | - | Padding oracle vectors |
+| RSA-PSS | Yes | - | Yes | Yes | Proper PSS params, mixed MGF, misc salt lengths |
+| RSA-OAEP | Yes | - | Yes | Yes | Mixed hash/MGF |
+| ECDSA P-224/256/384/521, secp*k1, brainpool | Yes | SigVer | Yes | Yes | FIPS 186-5; invalid sig rejection tested |
+| ECDH secp*r1, secp256k1, brainpool, binary curves | Yes | - | - | Yes | Raw secret agreement across multiple encodings |
+| X25519 / X448 | Yes | - | - | - | Raw, ASN.1, PEM, JWK |
+| Ed25519 | Yes | SigVer+Gen | Yes | Yes | RFC 8032; invalid sig rejection tested |
+| Ed448 | Yes | SigVer | - | - | Skips if unsupported |
+| DSA 2048/3072 | Yes | - | - | Yes | SHA-224/256 |
+| HMAC SHA family | Yes | MAC | Yes | Yes | FIPS 198-1; SHA, SHA-3, SHA-512 truncated |
+| ChaCha20-Poly1305 | Yes | - | - | - | Native CK params |
+| HKDF | Yes | - | - | - | Skips if unsupported |
+| PBES2 | Yes | - | - | - | PBKDF2 + AES-CBC-PAD composition |
+| SHA-1/224/256/384/512 | - | KAT | Yes | Yes | SP 800-38A + hashlib cross-verify |
+| SHA3-224/256/384/512 | - | KAT | - | - | hashlib cross-verify |
+| ML-KEM | Yes | - | - | Yes | v3.2 decapsulation Wycheproof + native KEM tests |
+| ML-DSA | Yes | SigGen | - | Yes | FIPS 204; CCTV round-trip; Wycheproof verify + sign |
+| SLH-DSA | - | SigVer+Gen | - | Yes | FIPS 205; invalid sig rejection tested (v3.2) |
 
 ## Testing Patterns
 
