@@ -61,8 +61,8 @@ class TestCopyableOneWay:
         try:
             if key[Attribute.COPYABLE] is not False:
                 pytest.skip("Module did not honour CKA_COPYABLE=False")
-        except (AttributeTypeInvalid, PKCS11Error):
-            pytest.skip("Module does not support reading CKA_COPYABLE")
+        except (AttributeTypeInvalid, PKCS11Error) as e:
+            pytest.skip(f"Module does not support reading CKA_COPYABLE: {e}")
 
         try:
             key[Attribute.COPYABLE] = True
@@ -87,8 +87,8 @@ class TestCopyableOneWay:
         try:
             try:
                 initial = key[Attribute.COPYABLE]
-            except (AttributeTypeInvalid, PKCS11Error):
-                pytest.skip("Module does not support reading CKA_COPYABLE")
+            except (AttributeTypeInvalid, PKCS11Error) as e:
+                pytest.skip(f"Module does not support reading CKA_COPYABLE: {e}")
             if initial is not True:
                 pytest.skip("Module did not set CKA_COPYABLE=True")
 
@@ -110,8 +110,8 @@ class TestDestroyable:
         try:
             val = key[Attribute.DESTROYABLE]
             assert val is True, f"Expected default CKA_DESTROYABLE=True, got {val}"
-        except (AttributeTypeInvalid, PKCS11Error):
-            pytest.skip("Module does not support CKA_DESTROYABLE")
+        except (AttributeTypeInvalid, PKCS11Error) as e:
+            pytest.skip(f"Module does not support CKA_DESTROYABLE: {e}")
         finally:
             key.destroy()
 
@@ -128,8 +128,8 @@ class TestDestroyable:
 
         try:
             val = key[Attribute.DESTROYABLE]
-        except (AttributeTypeInvalid, PKCS11Error):
-            pytest.skip("Module does not support reading CKA_DESTROYABLE")
+        except (AttributeTypeInvalid, PKCS11Error) as e:
+            pytest.skip(f"Module does not support reading CKA_DESTROYABLE: {e}")
 
         if val is not False:
             pytest.skip("Module did not honour CKA_DESTROYABLE=False")
@@ -159,8 +159,8 @@ class TestKeyGenMechanism:
             assert mech == Mechanism.AES_KEY_GEN, (
                 f"Expected CKM_AES_KEY_GEN, got {mech}"
             )
-        except (AttributeTypeInvalid, PKCS11Error):
-            pytest.skip("Module does not expose CKA_KEY_GEN_MECHANISM")
+        except (AttributeTypeInvalid, PKCS11Error) as e:
+            pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
         finally:
             key.destroy()
 
@@ -178,8 +178,8 @@ class TestKeyGenMechanism:
                 assert mech == Mechanism.RSA_PKCS_KEY_PAIR_GEN, (
                     f"Expected CKM_RSA_PKCS_KEY_PAIR_GEN, got {mech}"
                 )
-            except (AttributeTypeInvalid, PKCS11Error):
-                pytest.skip("Module does not expose CKA_KEY_GEN_MECHANISM")
+            except (AttributeTypeInvalid, PKCS11Error) as e:
+                pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
         finally:
             priv.destroy()
             pub.destroy()
@@ -199,8 +199,8 @@ class TestKeyGenMechanism:
             assert mech_val in (unavailable_32, unavailable_64), (
                 f"Expected CK_UNAVAILABLE_INFORMATION, got 0x{mech_val:X}"
             )
-        except (AttributeTypeInvalid, PKCS11Error):
-            pytest.skip("Module does not expose CKA_KEY_GEN_MECHANISM")
+        except (AttributeTypeInvalid, PKCS11Error) as e:
+            pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
         finally:
             key.destroy()
 
@@ -210,8 +210,8 @@ class TestKeyGenMechanism:
         try:
             try:
                 _ = key[Attribute.KEY_GEN_MECHANISM]
-            except (AttributeTypeInvalid, PKCS11Error):
-                pytest.skip("Module does not expose CKA_KEY_GEN_MECHANISM")
+            except (AttributeTypeInvalid, PKCS11Error) as e:
+                pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
 
             with pytest.raises(_SET_ATTR_ERRORS):
                 key[Attribute.KEY_GEN_MECHANISM] = Mechanism.AES_KEY_GEN
@@ -233,8 +233,8 @@ class TestCheckValue:
             kcv = key[Attribute.CHECK_VALUE]
             assert isinstance(kcv, bytes), f"Expected bytes, got {type(kcv)}"
             assert len(kcv) == 3, f"Expected 3-byte KCV, got {len(kcv)} bytes"
-        except (AttributeTypeInvalid, PKCS11Error):
-            pytest.skip("Module does not expose CKA_CHECK_VALUE")
+        except (AttributeTypeInvalid, PKCS11Error) as e:
+            pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
         finally:
             key.destroy()
 
@@ -251,8 +251,8 @@ class TestCheckValue:
         try:
             try:
                 kcv = key[Attribute.CHECK_VALUE]
-            except (AttributeTypeInvalid, PKCS11Error):
-                pytest.skip("Module does not expose CKA_CHECK_VALUE")
+            except (AttributeTypeInvalid, PKCS11Error) as e:
+                pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
 
             # Encrypt 16 zero bytes with AES-ECB — first 3 bytes = KCV
             plaintext = b"\x00" * 16
@@ -273,8 +273,8 @@ class TestCheckValue:
             try:
                 kcv1 = key1[Attribute.CHECK_VALUE]
                 kcv2 = key2[Attribute.CHECK_VALUE]
-            except (AttributeTypeInvalid, PKCS11Error):
-                pytest.skip("Module does not expose CKA_CHECK_VALUE")
+            except (AttributeTypeInvalid, PKCS11Error) as e:
+                pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
 
             assert kcv1 == kcv2, (
                 f"Same key material but different KCVs: {kcv1.hex()} vs {kcv2.hex()}"
@@ -310,8 +310,8 @@ class TestAllowedMechanisms:
                     Attribute.ALLOWED_MECHANISMS: [Mechanism.AES_CBC],
                 },
             )
-        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error):
-            pytest.skip("Module does not support CKA_ALLOWED_MECHANISMS in template")
+        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error) as e:
+            pytest.skip(f"Module does not support CKA_ALLOWED_MECHANISMS in template: {e}")
 
         try:
             # AES_CBC should work (it's in ALLOWED_MECHANISMS)
@@ -352,14 +352,14 @@ class TestWrapWithTrusted:
                     Attribute.TOKEN: False,
                 },
             )
-        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error):
-            pytest.skip("Module does not support CKA_WRAP_WITH_TRUSTED")
+        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error) as e:
+            pytest.skip(f"Module does not support CKA_WRAP_WITH_TRUSTED: {e}")
 
         try:
             val = target[Attribute.WRAP_WITH_TRUSTED]
-        except (AttributeTypeInvalid, PKCS11Error):
+        except (AttributeTypeInvalid, PKCS11Error) as e:
             target.destroy()
-            pytest.skip("Module does not expose CKA_WRAP_WITH_TRUSTED")
+            pytest.skip(f"Module does not expose CKA_WRAP_WITH_TRUSTED: {e}")
 
         if val is not True:
             target.destroy()
@@ -404,8 +404,8 @@ class TestAlwaysAuthenticate:
             assert val is False, (
                 f"Default CKA_ALWAYS_AUTHENTICATE should be False, got {val}"
             )
-        except (AttributeTypeInvalid, PKCS11Error):
-            pytest.skip("Module does not expose CKA_ALWAYS_AUTHENTICATE")
+        except (AttributeTypeInvalid, PKCS11Error) as e:
+            pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
         finally:
             priv.destroy()
             pub.destroy()
@@ -423,14 +423,14 @@ class TestAlwaysAuthenticate:
                 2048,
                 private_template={Attribute.ALWAYS_AUTHENTICATE: True},
             )
-        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error):
-            pytest.skip("Module does not support CKA_ALWAYS_AUTHENTICATE=True")
+        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error) as e:
+            pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {e}")
 
         try:
             try:
                 val = priv[Attribute.ALWAYS_AUTHENTICATE]
-            except (AttributeTypeInvalid, PKCS11Error):
-                pytest.skip("Module does not expose CKA_ALWAYS_AUTHENTICATE")
+            except (AttributeTypeInvalid, PKCS11Error) as e:
+                pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
 
             assert val is True, (
                 f"Expected CKA_ALWAYS_AUTHENTICATE=True, got {val}"
@@ -440,7 +440,7 @@ class TestAlwaysAuthenticate:
             pub.destroy()
 
     def test_always_authenticate_requires_context_login(
-        self, p11_session: Any, p11_module: Any, p11_config: Any
+        self, p11_session: Any, p11_module: Any
     ) -> None:
         """Sign with ALWAYS_AUTHENTICATE key should need CKU_CONTEXT_SPECIFIC login."""
         if not has_mechanism(p11_module, "RSA_PKCS_KEY_PAIR_GEN"):
@@ -457,14 +457,14 @@ class TestAlwaysAuthenticate:
                     Attribute.ALWAYS_AUTHENTICATE: True,
                 },
             )
-        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error):
-            pytest.skip("Module does not support CKA_ALWAYS_AUTHENTICATE=True")
+        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error) as e:
+            pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {e}")
 
         try:
             # First sign after normal login — may work (first use after login)
             data = b"test data for signing"
             try:
-                _sig = priv.sign(data, mechanism=Mechanism.RSA_PKCS)
+                _ = priv.sign(data, mechanism=Mechanism.RSA_PKCS)
             except UserNotLoggedIn:
                 # Some modules require context-specific login even for the first op
                 pass
@@ -498,15 +498,15 @@ class TestDateAttributes:
                     Attribute.END_DATE: end_date,
                 },
             )
-        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error):
-            pytest.skip("Module does not support CKA_START_DATE / CKA_END_DATE in template")
+        except (*_TEMPLATE_ERRORS, FunctionFailed, PKCS11Error) as e:
+            pytest.skip(f"Module does not support CKA_START_DATE / CKA_END_DATE in template: {e}")
 
         try:
             try:
                 sd = key[Attribute.START_DATE]
                 ed = key[Attribute.END_DATE]
-            except (AttributeTypeInvalid, PKCS11Error):
-                pytest.skip("Module does not expose date attributes")
+            except (AttributeTypeInvalid, PKCS11Error) as e:
+                pytest.skip(f"Module does not expose date attributes: {e}")
 
             # Dates may be returned as bytes or datetime-like objects
             if isinstance(sd, bytes):
@@ -524,8 +524,8 @@ class TestDateAttributes:
         try:
             try:
                 sd = key[Attribute.START_DATE]
-            except (AttributeTypeInvalid, PKCS11Error):
-                pytest.skip("Module does not expose CKA_START_DATE")
+            except (AttributeTypeInvalid, PKCS11Error) as e:
+                pytest.skip(f"Module does not expose CKA_START_DATE: {e}")
 
             # Empty date is typically empty bytes or all-zeros
             if isinstance(sd, bytes):

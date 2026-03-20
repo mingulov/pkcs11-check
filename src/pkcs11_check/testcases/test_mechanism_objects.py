@@ -30,8 +30,8 @@ class TestMechanismObjects:
             mechs = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.MECHANISM})
             )
-        except PKCS11Error:
-            pytest.xfail("Module does not support CKO_MECHANISM enumeration")
+        except PKCS11Error as e:
+            pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
         assert isinstance(mechs, list)
 
     def test_mechanism_objects_have_mechanism_type(
@@ -42,8 +42,8 @@ class TestMechanismObjects:
             mechs = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.MECHANISM})
             )
-        except PKCS11Error:
-            pytest.xfail("Module does not support CKO_MECHANISM enumeration")
+        except PKCS11Error as e:
+            pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
         for obj in mechs:
@@ -52,9 +52,9 @@ class TestMechanismObjects:
                 assert isinstance(mtype, int), (
                     f"Expected int MECHANISM_TYPE, got {type(mtype)}"
                 )
-            except PKCS11Error:
+            except PKCS11Error as e:
                 pytest.xfail(
-                    "Cannot read CKA_MECHANISM_TYPE from mechanism object"
+                    f"Cannot read CKA_MECHANISM_TYPE from mechanism object: {e}"
                 )
 
     def test_mechanism_type_is_known(self, p11_session: Any) -> None:
@@ -63,8 +63,8 @@ class TestMechanismObjects:
             mechs = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.MECHANISM})
             )
-        except PKCS11Error:
-            pytest.xfail("Module does not support CKO_MECHANISM enumeration")
+        except PKCS11Error as e:
+            pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
         known = {int(m) for m in Mechanism}
@@ -85,8 +85,8 @@ class TestMechanismObjects:
             mechs = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.MECHANISM})
             )
-        except PKCS11Error:
-            pytest.xfail("Module does not support CKO_MECHANISM enumeration")
+        except PKCS11Error as e:
+            pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
         obj = mechs[0]

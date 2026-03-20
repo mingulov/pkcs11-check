@@ -26,8 +26,8 @@ class TestTrustObjects:
             trusts = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.TRUST})
             )
-        except PKCS11Error:
-            pytest.xfail("Module does not support CKO_TRUST enumeration")
+        except PKCS11Error as e:
+            pytest.xfail(f"Module does not support CKO_TRUST enumeration: {e}")
         assert isinstance(trusts, list)
 
     def test_trust_objects_have_issuer(self, p11_session: Any) -> None:
@@ -36,8 +36,8 @@ class TestTrustObjects:
             trusts = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.TRUST})
             )
-        except PKCS11Error:
-            pytest.xfail("Module does not support CKO_TRUST enumeration")
+        except PKCS11Error as e:
+            pytest.xfail(f"Module does not support CKO_TRUST enumeration: {e}")
         if not trusts:
             pytest.skip("No CKO_TRUST objects present")
         for obj in trusts:
@@ -46,9 +46,9 @@ class TestTrustObjects:
                 assert isinstance(issuer, bytes), (
                     f"Expected bytes ISSUER, got {type(issuer)}"
                 )
-            except PKCS11Error:
+            except PKCS11Error as e:
                 pytest.xfail(
-                    "Cannot read CKA_ISSUER from trust object"
+                    f"Cannot read CKA_ISSUER from trust object: {e}"
                 )
 
     def test_trust_objects_have_serial_number(
@@ -59,8 +59,8 @@ class TestTrustObjects:
             trusts = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.TRUST})
             )
-        except PKCS11Error:
-            pytest.xfail("Module does not support CKO_TRUST enumeration")
+        except PKCS11Error as e:
+            pytest.xfail(f"Module does not support CKO_TRUST enumeration: {e}")
         if not trusts:
             pytest.skip("No CKO_TRUST objects present")
         for obj in trusts:
@@ -69,9 +69,9 @@ class TestTrustObjects:
                 assert isinstance(serial, bytes), (
                     f"Expected bytes SERIAL_NUMBER, got {type(serial)}"
                 )
-            except PKCS11Error:
+            except PKCS11Error as e:
                 pytest.xfail(
-                    "Cannot read CKA_SERIAL_NUMBER from trust object"
+                    f"Cannot read CKA_SERIAL_NUMBER from trust object: {e}"
                 )
 
     def test_trust_server_auth_is_known_value(
@@ -82,8 +82,8 @@ class TestTrustObjects:
             trusts = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.TRUST})
             )
-        except PKCS11Error:
-            pytest.xfail("Module does not support CKO_TRUST enumeration")
+        except PKCS11Error as e:
+            pytest.xfail(f"Module does not support CKO_TRUST enumeration: {e}")
         if not trusts:
             pytest.skip("No CKO_TRUST objects present")
         known = {int(t) for t in Trust}
@@ -111,8 +111,8 @@ class TestTrustObjects:
             trusts = list(
                 p11_session.get_objects({Attribute.CLASS: ObjectClass.TRUST})
             )
-        except PKCS11Error:
-            pytest.xfail("Module does not support CKO_TRUST enumeration")
+        except PKCS11Error as e:
+            pytest.xfail(f"Module does not support CKO_TRUST enumeration: {e}")
         if not trusts:
             pytest.skip("No CKO_TRUST objects present")
         obj = trusts[0]

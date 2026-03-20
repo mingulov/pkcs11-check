@@ -33,9 +33,9 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except PKCS11Error:
+        except PKCS11Error as e:
             pytest.xfail(
-                "Module does not support CKO_VALIDATION enumeration"
+                f"Module does not support CKO_VALIDATION enumeration: {e}"
             )
         assert isinstance(validations, list)
 
@@ -47,9 +47,9 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except PKCS11Error:
+        except PKCS11Error as e:
             pytest.xfail(
-                "Module does not support CKO_VALIDATION enumeration"
+                f"Module does not support CKO_VALIDATION enumeration: {e}"
             )
         if not validations:
             pytest.skip("No CKO_VALIDATION objects present")
@@ -58,9 +58,9 @@ class TestValidationObjects:
         for obj in validations:
             try:
                 vtype = int(obj[Attribute.VALIDATION_TYPE])
-            except PKCS11Error:
+            except PKCS11Error as e:
                 pytest.xfail(
-                    "Cannot read CKA_VALIDATION_TYPE from validation object"
+                    f"Cannot read CKA_VALIDATION_TYPE from validation object: {e}"
                 )
             if vtype < vendor_base:
                 assert vtype in known, (
@@ -75,9 +75,9 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except PKCS11Error:
+        except PKCS11Error as e:
             pytest.xfail(
-                "Module does not support CKO_VALIDATION enumeration"
+                f"Module does not support CKO_VALIDATION enumeration: {e}"
             )
         if not validations:
             pytest.skip("No CKO_VALIDATION objects present")
@@ -87,9 +87,9 @@ class TestValidationObjects:
                 assert isinstance(level, int), (
                     f"Expected int VALIDATION_LEVEL, got {type(level)}"
                 )
-            except PKCS11Error:
+            except PKCS11Error as e:
                 pytest.xfail(
-                    "Cannot read CKA_VALIDATION_LEVEL from validation object"
+                    f"Cannot read CKA_VALIDATION_LEVEL from validation object: {e}"
                 )
 
     def test_validation_authority_type_is_known(
@@ -102,9 +102,9 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except PKCS11Error:
+        except PKCS11Error as e:
             pytest.xfail(
-                "Module does not support CKO_VALIDATION enumeration"
+                f"Module does not support CKO_VALIDATION enumeration: {e}"
             )
         if not validations:
             pytest.skip("No CKO_VALIDATION objects present")
@@ -129,9 +129,9 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except PKCS11Error:
+        except PKCS11Error as e:
             pytest.xfail(
-                "Module does not support CKO_VALIDATION enumeration"
+                f"Module does not support CKO_VALIDATION enumeration: {e}"
             )
         if not validations:
             pytest.skip("No CKO_VALIDATION objects present")
@@ -155,9 +155,9 @@ class TestValidationObjects:
                     {Attribute.CLASS: ObjectClass.VALIDATION}
                 )
             )
-        except PKCS11Error:
+        except PKCS11Error as e:
             pytest.xfail(
-                "Module does not support CKO_VALIDATION enumeration"
+                f"Module does not support CKO_VALIDATION enumeration: {e}"
             )
         if not validations:
             pytest.skip("No CKO_VALIDATION objects present")

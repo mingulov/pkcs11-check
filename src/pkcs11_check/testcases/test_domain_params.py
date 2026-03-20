@@ -137,8 +137,8 @@ class TestEcDomainParameters:
                 assert local is True, (
                     f"Expected CKA_LOCAL=True for local domain params, got {local}"
                 )
-            except PKCS11Error:
-                pytest.xfail("Module does not expose CKA_LOCAL on domain params")
+            except PKCS11Error as e:
+                pytest.xfail(f"Module does not expose CKA_LOCAL on domain params: {e}")
         finally:
             params.destroy()
 
@@ -166,8 +166,8 @@ class TestEcDomainParameters:
                 assert local is False, (
                     f"Expected CKA_LOCAL=False for non-local domain params, got {local}"
                 )
-            except PKCS11Error:
-                pytest.xfail("Module does not expose CKA_LOCAL on domain params")
+            except PKCS11Error as e:
+                pytest.xfail(f"Module does not expose CKA_LOCAL on domain params: {e}")
         finally:
             params.destroy()
 
@@ -183,9 +183,9 @@ class TestDomainParameterEnumeration:
                     {Attribute.CLASS: ObjectClass.DOMAIN_PARAMETERS}
                 )
             )
-        except PKCS11Error:
+        except PKCS11Error as e:
             pytest.xfail(
-                "Module does not support CKO_DOMAIN_PARAMETERS enumeration"
+                f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}"
             )
         assert isinstance(params, list)
 
@@ -197,9 +197,9 @@ class TestDomainParameterEnumeration:
                     {Attribute.CLASS: ObjectClass.DOMAIN_PARAMETERS}
                 )
             )
-        except PKCS11Error:
+        except PKCS11Error as e:
             pytest.xfail(
-                "Module does not support CKO_DOMAIN_PARAMETERS enumeration"
+                f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}"
             )
         if not params:
             pytest.skip("No CKO_DOMAIN_PARAMETERS objects present")
@@ -209,9 +209,9 @@ class TestDomainParameterEnumeration:
                 assert isinstance(key_type, (int, KeyType)), (
                     f"Expected int/KeyType for KEY_TYPE, got {type(key_type)}"
                 )
-            except PKCS11Error:
+            except PKCS11Error as e:
                 pytest.xfail(
-                    "Cannot read CKA_KEY_TYPE from domain parameter object"
+                    f"Cannot read CKA_KEY_TYPE from domain parameter object: {e}"
                 )
 
 
