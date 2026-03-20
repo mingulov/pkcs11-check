@@ -169,12 +169,73 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 - Config values: snake_case in TOML/Python, kebab-case for CLI flags
 - CVE regression tests reference the CVE/issue number in docstring
 
+## Writing New Tests
+
+### Test pattern template (mechanism tests)
+```python
+"""CKM_EXAMPLE tests — short description."""
+from __future__ import annotations
+from typing import Any
+import pytest
+from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11.exceptions import MechanismInvalid, FunctionFailed
+from pkcs11_check.testcases.conftest import has_mechanism
+
+pytestmark = [pytest.mark.encrypt]  # assign relevant marker
+
+class TestExample:
+    def test_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+        if not has_mechanism(p11_module, "AES_CTR"):
+            pytest.skip("CKM_AES_CTR not supported")
+        key = p11_session.generate_key(
+            KeyType.AES, 256,
+            mechanism=Mechanism.AES_KEY_GEN,
+            template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+        )
+        try:
+            ct = key.encrypt(b"test data here!", mechanism=Mechanism.AES_CTR, mechanism_param=params)
+            pt = key.decrypt(ct, mechanism=Mechanism.AES_CTR, mechanism_param=params)
+            assert pt == b"test data here!"
+        finally:
+            key.destroy()
+```
+
+### Key fixtures (all session-scoped unless noted)
+- `p11_session` — open RW session with login; does login/logout per test (`@pytest.fixture` scope=function)
+- `p11_module` — loaded PKCS#11 module (session-scoped)
+- `p11_config` — merged config from CLI/env/TOML (session-scoped)
+- `p11_interface_version` — negotiated version string: "2.40", "3.0", "3.1", "3.2"
+
+### Mechanism availability pattern
+```python
+# ALWAYS check mechanism availability — never assume
+if not has_mechanism(p11_module, "MECHANISM_NAME"):
+    pytest.skip("CKM_MECHANISM_NAME not supported")
+```
+
+### Compliance notes (for above-spec behavior)
+```python
+from pkcs11_check.compliance import ComplianceLevel, note
+note("Module does X which is above spec requirement Y", ComplianceLevel.VENDOR)
+```
+
+### Object cleanup pattern
+Always destroy created objects in `finally` blocks or use `try/finally`:
+```python
+obj = p11_session.generate_key(...)
+try:
+    # test logic
+finally:
+    obj.destroy()
+```
+
 ## PKCS#11 Specification
 
 The OASIS PKCS#11 spec is available in Markdown format:
 - Repo: https://github.com/oasis-tcs/pkcs11.git
-- Spec docs: `working/doc/spec/` (all in .md format)
+- **Local copy:** `/home/user/src/m/pkcs11-proxy/doc/oasis-tcs-pkcs11/working/doc/spec/` (95 .md files)
 - Use for exact CKR return code tables, attribute definitions, mechanism parameters, and operation semantics
+- Key files: `rsa.md`, `aes.md`, `elliptic_curves.md`, `ml_dsa.md`, `slh-dsa.md`, `session_mgmt_functions.md`, `function_return_values.md`
 
 ## Documentation
 
@@ -184,8 +245,10 @@ The OASIS PKCS#11 spec is available in Markdown format:
 - `docs/cve-regression.md` — CVE coverage tracker (Covered/Documented/N-A/Pending)
 - `docs/mechanism-audit.md` — Mechanism coverage gap report per module
 - `docs/gap-analysis.md` — Deep gap analysis: execution backbone, packaging, CI weaknesses
+- `docs/gap-analysis-oasis-spec.md` — OASIS spec compliance gap analysis (mechanisms, functions, objects, attributes)
 - `docs/test-coverage.md` — Test coverage summary
 - `docs/test-coverage-generated.md` — Auto-generated from `scripts/generate-coverage-report.py`
 - `docs/python-pkcs11-fork.md` — Fork changes and upstream PR plan
 - `docs/docker-artifacts.md` — Standard Docker test runner, artifacts, and wrapper usage
-- `docs/superpowers/specs/` — Phase 1 architecture, comprehensive testing, standards addendum
+- `docs/superpowers/specs/` — Design specs (vendor extensions, CKR coverage, comprehensive testing)
+- `docs/superpowers/plans/2026-03-20-oasis-compliance-roadmap.md` — 8-phase OASIS spec compliance roadmap (Phase A-H)
