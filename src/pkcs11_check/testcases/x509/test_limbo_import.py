@@ -43,34 +43,76 @@ from pkcs11_check.testcases.x509.conftest import (
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
-# _SAMPLE: first 50 testcases — balanced mix of SUCCESS and FAILURE certs
-# (typically ~21 SUCCESS + 29 FAILURE from the CRL/invalid/pathlen groups)
 _all_cases = load_limbo_testcases()
-_testcases = _all_cases[:50]
 
-# _FAILURE_SAMPLE: 40 FAILURE-expected certs drawn from distinct feature groups
-# so we get coverage of different invalidity reasons (pathlen, CRL, key, etc.).
-def _build_failure_sample(cases: list[dict[str, Any]], limit: int = 40) -> list[dict[str, Any]]:
-    seen_features: set[str] = set()
-    result: list[dict[str, Any]] = []
+# "online" cases require live network (CRL/OCSP fetches) — skip them entirely.
+# "bettertls" is a corpus of 9,572 TLS hostname-validation variants; sample 50.
+# All other categories (rfc5280, webpki, pathlen, crl, pathological, cve, invalid)
+# are run in full (183 cases, 47 SUCCESS + 136 FAILURE).
+def _build_testcase_sample(
+    cases: list[dict[str, Any]], bettertls_limit: int = 50
+) -> list[dict[str, Any]]:
+    """Return all offline non-bettertls cases + a bettertls sample.
+
+    - Excludes "online" prefix (needs live CRL/OCSP servers).
+    - Includes all 183 structured offline cases (rfc5280/webpki/pathlen/crl/etc.).
+    - Samples up to bettertls_limit bettertls cases spanning both SUCCESS and FAILURE.
+    """
+    structured: list[dict[str, Any]] = []
+    bettertls_success: list[dict[str, Any]] = []
+    bettertls_failure: list[dict[str, Any]] = []
+
+    for tc in cases:
+        tc_id = tc["id"]
+        if tc_id.startswith("online"):
+            continue
+        if tc_id.startswith("bettertls"):
+            if tc.get("expected_result") == "SUCCESS":
+                bettertls_success.append(tc)
+            else:
+                bettertls_failure.append(tc)
+        else:
+            structured.append(tc)
+
+    # Sample bettertls evenly: half SUCCESS, half FAILURE
+    half = bettertls_limit // 2
+    step_s = max(1, len(bettertls_success) // half)
+    step_f = max(1, len(bettertls_failure) // half)
+    bt_sample = bettertls_success[::step_s][:half] + bettertls_failure[::step_f][:half]
+
+    return structured + bt_sample
+
+
+_testcases = _build_testcase_sample(_all_cases)
+
+# FAILURE-only sample for the dedicated raw-import test.
+# All non-bettertls FAILURE certs (136) + 30 evenly-spaced bettertls FAILURE certs.
+def _build_failure_sample(
+    cases: list[dict[str, Any]], bettertls_limit: int = 30
+) -> list[dict[str, Any]]:
+    structured_failures: list[dict[str, Any]] = []
+    bettertls_failures: list[dict[str, Any]] = []
+
     for tc in cases:
         if tc.get("expected_result") != "FAILURE":
             continue
-        features = frozenset(tc.get("features") or ["none"])
-        prefix = tc["id"].split("::")[0]  # e.g. "crl", "pathlen", "invalid"
-        key = f"{prefix}:{sorted(features)}"
-        if key not in seen_features or len(result) < limit // 2:
-            seen_features.add(key)
-            result.append(tc)
-        if len(result) >= limit:
-            break
-    return result
+        tc_id = tc["id"]
+        if tc_id.startswith("online"):
+            continue
+        if tc_id.startswith("bettertls"):
+            bettertls_failures.append(tc)
+        else:
+            structured_failures.append(tc)
+
+    step = max(1, len(bettertls_failures) // bettertls_limit)
+    return structured_failures + bettertls_failures[::step][:bettertls_limit]
+
 
 _failure_sample = _build_failure_sample(_all_cases)
 
 
 # ---------------------------------------------------------------------------
-# Core import test: all first-50 testcases (SUCCESS + FAILURE)
+# Core import test: all offline structured cases + bettertls sample
 # ---------------------------------------------------------------------------
 
 class TestLimboCertImport:
