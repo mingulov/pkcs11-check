@@ -55,9 +55,7 @@ class TestCLoginUser:
     modules — the requires_v30 marker skips those automatically.
     """
 
-    def test_c_login_user_empty_username_user_type(
-        self, p11_module: Any, p11_config: Any, p11_interface_version: str
-    ) -> None:
+    def test_c_login_user_empty_username_user_type(self, p11_module: Any, p11_config: Any) -> None:
         """C_LoginUser with empty username string exercises the v3.0 code path.
 
         The PKCS#11 spec allows pUsername / ulUsernameLen = NULL / 0 to mean
@@ -155,6 +153,7 @@ class TestCLoginUser:
 
         token = p11_module.get_token()
         session = token.open(rw=True)
+        logged_in = False
         try:
             # Attempt C_LoginUser with a plausible username.  We do NOT
             # require success here — rejection is expected on most tokens.
@@ -165,19 +164,17 @@ class TestCLoginUser:
             except UserAlreadyLoggedIn:
                 logged_in = True  # Already logged in — acceptable.
             except FunctionNotSupported:
-                logged_in = False
                 # Module does not implement C_LoginUser despite v3.0 interface.
                 pytest.xfail(
                     "Module exposes v3.0 interface but C_LoginUser returns "
                     "CKR_FUNCTION_NOT_SUPPORTED"
                 )
-            except pkcs11.exceptions.UserTypeInvalid:
-                logged_in = False
-                # Module does not support named users — acceptable.
-            except pkcs11.exceptions.PKCS11Error:
-                # Any other PKCS11Error is acceptable (e.g. CKR_ARGUMENTS_BAD,
-                # CKR_PIN_INCORRECT for unrecognised username).
-                logged_in = False
+            except (
+                pkcs11.exceptions.UserTypeInvalid,
+                pkcs11.exceptions.ArgumentsBad,
+                pkcs11.exceptions.PinIncorrect,
+            ):
+                pass  # Module does not support named users — acceptable.
         finally:
             if logged_in:
                 try:
@@ -385,6 +382,7 @@ class TestLoginLogoutCycle:
 
         token = p11_module.get_token()
         session = token.open(rw=True)
+        logged_in = False
         try:
             # Use C_LoginUser (username="" → zero-length username buffer).
             try:
@@ -394,7 +392,6 @@ class TestLoginLogoutCycle:
                 logged_in = True  # Already logged in — skip the logout check.
             except FunctionNotSupported:
                 pytest.xfail("Module does not implement C_LoginUser (CKR_FUNCTION_NOT_SUPPORTED)")
-                logged_in = False
 
             if logged_in:
                 # Logout must succeed or raise UserNotLoggedIn (if token-level
