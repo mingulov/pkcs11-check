@@ -329,6 +329,15 @@ class TestGetOperationStateAPI:
 # ---------------------------------------------------------------------------
 
 
+def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
+    """Extract (module_path, slot_index, pin_bytes) from config fixture."""
+    module_path = str(p11_config.module)
+    slot_index = p11_config.slot if p11_config.slot is not None else 0
+    pin_bytes = p11_config.pin.get_secret_value().encode() if p11_config.pin else b""
+    return module_path, slot_index, pin_bytes
+
+
+@pytest.mark.usefixtures("p11_module")
 class TestDigestStateRoundTrip:
     """State save/restore round-trip for a SHA-256 multi-part digest.
 
@@ -338,14 +347,7 @@ class TestDigestStateRoundTrip:
     directly.  This also mirrors how real applications use state save/restore.
     """
 
-    def _get_params(self, p11_config: Any) -> tuple[str, int, bytes]:
-        """Extract (module_path, slot_index, pin_bytes) from fixtures."""
-        module_path = str(p11_config.module)
-        slot_index = p11_config.slot if p11_config.slot is not None else 0
-        pin_bytes = p11_config.pin.get_secret_value().encode() if p11_config.pin else b""
-        return module_path, slot_index, pin_bytes
-
-    def test_digest_state_same_session(self, p11_module: Any, p11_config: Any) -> None:
+    def test_digest_state_same_session(self, p11_config: Any) -> None:
         """SHA-256 state save/restore on the same session produces the correct digest.
 
         Steps:
@@ -357,7 +359,7 @@ class TestDigestStateRoundTrip:
         Skips when the module returns CKR_STATE_UNSAVEABLE (most software tokens
         including SoftHSM2 and many hardware tokens do not support state save).
         """
-        module_path, slot_index, pin_bytes = self._get_params(p11_config)
+        module_path, slot_index, pin_bytes = _get_params(p11_config)
 
         script = """\
             import hashlib
@@ -475,7 +477,7 @@ class TestDigestStateRoundTrip:
             f"State round-trip digest mismatch: expected {ref!r}, got {restored!r}"
         )
 
-    def test_digest_state_cross_session(self, p11_module: Any, p11_config: Any) -> None:
+    def test_digest_state_cross_session(self, p11_config: Any) -> None:
         """Restoring digest state on a second session is rejected or handled per spec.
 
         Spec §5.6.6 notes that tokens may reject cross-session restore with
@@ -484,7 +486,7 @@ class TestDigestStateRoundTrip:
 
         Skips when the module returns CKR_STATE_UNSAVEABLE at the save step.
         """
-        module_path, slot_index, pin_bytes = self._get_params(p11_config)
+        module_path, slot_index, pin_bytes = _get_params(p11_config)
 
         script = """\
             mech = CK_MECHANISM()
@@ -585,6 +587,7 @@ class TestDigestStateRoundTrip:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("p11_module")
 class TestEncryptStateRoundTrip:
     """State save/restore round-trip for an AES-CBC multi-part encrypt operation.
 
@@ -597,14 +600,7 @@ class TestEncryptStateRoundTrip:
     tests skip gracefully when the module does not support saving encrypt state.
     """
 
-    def _get_params(self, p11_config: Any) -> tuple[str, int, bytes]:
-        """Extract (module_path, slot_index, pin_bytes) from fixtures."""
-        module_path = str(p11_config.module)
-        slot_index = p11_config.slot if p11_config.slot is not None else 0
-        pin_bytes = p11_config.pin.get_secret_value().encode() if p11_config.pin else b""
-        return module_path, slot_index, pin_bytes
-
-    def test_encrypt_state_same_session(self, p11_module: Any, p11_config: Any) -> None:
+    def test_encrypt_state_same_session(self, p11_config: Any) -> None:
         """AES-CBC state save/restore on the same session produces correct ciphertext.
 
         Steps:
@@ -619,7 +615,7 @@ class TestEncryptStateRoundTrip:
 
         Source: PKCS#11 v3.1 §5.6.5–§5.6.6.
         """
-        module_path, slot_index, pin_bytes = self._get_params(p11_config)
+        module_path, slot_index, pin_bytes = _get_params(p11_config)
 
         script = """\
             # 16-byte IV and two 16-byte plaintext blocks (AES-CBC block-aligned)
