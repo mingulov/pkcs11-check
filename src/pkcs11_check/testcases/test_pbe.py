@@ -140,16 +140,6 @@ _DES2_TEMPLATE: dict[Attribute, Any] = {
     Attribute.DECRYPT: True,
 }
 
-_GENERIC_TEMPLATE: dict[Attribute, Any] = {
-    Attribute.CLASS: ObjectClass.SECRET_KEY,
-    Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-    Attribute.TOKEN: False,
-    Attribute.SENSITIVE: False,
-    Attribute.EXTRACTABLE: True,
-    Attribute.SIGN: True,
-    Attribute.VERIFY: True,
-}
-
 # Test password and salt
 _PASSWORD = b"TestPassword123!"
 _SALT = b"\xde\xad\xbe\xef\xca\xfe\xba\xbe"
@@ -174,7 +164,12 @@ class TestPBESHA1DES3:
         if not has_mechanism(p11_module, "PBE_SHA1_DES3_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not supported")
 
-        params, iv_buf, pw_arr, salt_arr = _make_pbe_params(_PASSWORD, _SALT, _ITERATIONS, iv_len=8)
+        params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            iv_len=8,
+        )
         param_bytes = _pbe_params_to_bytes(params)
         try:
             key = p11_session.generate_key(
@@ -198,7 +193,7 @@ class TestPBESHA1DES3:
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not supported")
 
         def _gen() -> Any:
-            params, iv_buf, pw_arr, salt_arr = _make_pbe_params(
+            params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(
                 _PASSWORD, _SALT, _ITERATIONS, iv_len=8
             )
             return p11_session.generate_key(
@@ -231,7 +226,7 @@ class TestPBESHA1DES3:
         salt_b = b"\xff" * 8
 
         def _gen(salt: bytes) -> Any:
-            params, iv_buf, pw_arr, salt_arr = _make_pbe_params(
+            params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(
                 _PASSWORD, salt, _ITERATIONS, iv_len=8
             )
             return p11_session.generate_key(
@@ -264,7 +259,7 @@ class TestPBESHA1DES3:
         pw_b = b"PasswordBravo"
 
         def _gen(pw: bytes) -> Any:
-            params, iv_buf, pw_arr, salt_arr = _make_pbe_params(pw, _SALT, _ITERATIONS, iv_len=8)
+            params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(pw, _SALT, _ITERATIONS, iv_len=8)
             return p11_session.generate_key(
                 KeyType.DES3,
                 192,
@@ -304,7 +299,12 @@ class TestPBESHA1DES2:
         if not has_mechanism(p11_module, "PBE_SHA1_DES2_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not supported")
 
-        params, iv_buf, pw_arr, salt_arr = _make_pbe_params(_PASSWORD, _SALT, _ITERATIONS, iv_len=8)
+        params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            iv_len=8,
+        )
         param_bytes = _pbe_params_to_bytes(params)
         try:
             key = p11_session.generate_key(
@@ -328,7 +328,7 @@ class TestPBESHA1DES2:
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not supported")
 
         def _gen() -> Any:
-            params, iv_buf, pw_arr, salt_arr = _make_pbe_params(
+            params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(
                 _PASSWORD, _SALT, _ITERATIONS, iv_len=8
             )
             return p11_session.generate_key(
@@ -358,7 +358,7 @@ class TestPBESHA1DES2:
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not supported")
 
         def _gen(pw: bytes) -> Any:
-            params, iv_buf, pw_arr, salt_arr = _make_pbe_params(pw, _SALT, _ITERATIONS, iv_len=8)
+            params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(pw, _SALT, _ITERATIONS, iv_len=8)
             return p11_session.generate_key(
                 KeyType.DES2,
                 128,
@@ -408,7 +408,7 @@ class TestPBASHA1:
             Attribute.SIGN: True,
             Attribute.VERIFY: True,
         }
-        params, iv_buf, pw_arr, salt_arr = _make_pbe_params(
+        params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(
             _PASSWORD, _SALT, _ITERATIONS, iv_len=20
         )
         param_bytes = _pbe_params_to_bytes(params)
@@ -444,7 +444,7 @@ class TestPBASHA1:
         }
 
         def _gen() -> Any:
-            params, iv_buf, pw_arr, salt_arr = _make_pbe_params(
+            params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(
                 _PASSWORD, _SALT, _ITERATIONS, iv_len=20
             )
             return p11_session.generate_key(
@@ -484,7 +484,7 @@ class TestPBASHA1:
         }
 
         def _gen(salt: bytes) -> Any:
-            params, iv_buf, pw_arr, salt_arr = _make_pbe_params(
+            params, _iv_buf, _pw_arr, _salt_arr = _make_pbe_params(
                 _PASSWORD, salt, _ITERATIONS, iv_len=20
             )
             return p11_session.generate_key(

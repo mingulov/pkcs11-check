@@ -69,7 +69,7 @@ def _create_base_key(session: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> Any:
     )
 
 
-def _build_ike2_prf_plus_params(*, prf: Mechanism, nonce_i: bytes, nonce_r: bytes) -> bytes:
+def _build_ike2_prf_plus_params(*, nonce_i: bytes, nonce_r: bytes) -> bytes:
     """Build a minimal CK_IKE2_PRF_PLUS_DERIVE_PARAMS structure as raw bytes.
 
     The PKCS#11 v3.2 structure layout (all fields CK_ULONG / pointer pairs):
@@ -88,7 +88,7 @@ def _build_ike2_prf_plus_params(*, prf: Mechanism, nonce_i: bytes, nonce_r: byte
     return nonce_i + nonce_r
 
 
-def _build_ike_prf_params(*, prf: Mechanism, nonce_i: bytes, nonce_r: bytes) -> bytes:
+def _build_ike_prf_params(*, nonce_i: bytes, nonce_r: bytes) -> bytes:
     """Build minimal CK_IKE_PRF_DERIVE_PARAMS extra data (nonce_i || nonce_r)."""
     return nonce_i + nonce_r
 
@@ -121,7 +121,6 @@ class TestIKE2PRFPlusDerive:
         base_key = _create_base_key(p11_session)
         try:
             params = _build_ike2_prf_plus_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
@@ -150,7 +149,6 @@ class TestIKE2PRFPlusDerive:
         base_key = _create_base_key(p11_session)
         try:
             params = _build_ike2_prf_plus_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
@@ -181,12 +179,10 @@ class TestIKE2PRFPlusDerive:
         base_key = _create_base_key(p11_session)
         try:
             params_a = _build_ike2_prf_plus_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
             params_b = _build_ike2_prf_plus_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=b"\x03" * 16,
                 nonce_r=b"\x04" * 16,
             )
@@ -224,12 +220,10 @@ class TestIKE2PRFPlusDerive:
         base_key = _create_base_key(p11_session)
         try:
             params1 = _build_ike2_prf_plus_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
             params2 = _build_ike2_prf_plus_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
@@ -276,7 +270,6 @@ class TestIKEPRFDerive:
         base_key = _create_base_key(p11_session)
         try:
             params = _build_ike_prf_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
@@ -305,7 +298,6 @@ class TestIKEPRFDerive:
         base_key = _create_base_key(p11_session)
         try:
             params = _build_ike_prf_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
@@ -336,12 +328,10 @@ class TestIKEPRFDerive:
         base_key = _create_base_key(p11_session)
         try:
             params_a = _build_ike_prf_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
             params_b = _build_ike_prf_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=b"\x05" * 16,
                 nonce_r=b"\x06" * 16,
             )
@@ -379,12 +369,10 @@ class TestIKEPRFDerive:
         base_key = _create_base_key(p11_session)
         try:
             params1 = _build_ike_prf_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
             params2 = _build_ike_prf_params(
-                prf=Mechanism.SHA256_HMAC,
                 nonce_i=_NONCE_I,
                 nonce_r=_NONCE_R,
             )
