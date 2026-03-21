@@ -1773,14 +1773,9 @@ def run_isolated_pytest_units(
                                     crash_count += 1
 
                                 # -- check exit conditions --
-                                if crash_count >= max_crashes_per_file:
-                                    console.print(
-                                        f"[red]Too many crashes "
-                                        f"({crash_count}/{max_crashes_per_file})"
-                                        f"[/red] in {unit} — escalating"
-                                    )
-                                    escalate = True
-                                    break
+                                # No max_crashes_per_file limit here —
+                                # iterative deselect keeps going until
+                                # the file passes or safety caps are hit.
                                 if (
                                     len(deselect_set)
                                     >= max_deselect_iters * 2
