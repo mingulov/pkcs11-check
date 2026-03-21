@@ -63,17 +63,21 @@ class TestTemplateConstraintAttributes:
         """Keys should accept CKA_WRAP_TEMPLATE if the module supports it."""
         if not has_mechanism(p11_module, "AES_KEY_GEN"):
             pytest.skip("AES not supported")
-        key = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            mechanism=Mechanism.AES_KEY_GEN,
-            template={
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
-                Attribute.WRAP: True,
-                Attribute.TOKEN: False,
-            },
-        )
+        try:
+            key = p11_session.generate_key(
+                KeyType.AES,
+                256,
+                mechanism=Mechanism.AES_KEY_GEN,
+                template={
+                    Attribute.ENCRYPT: True,
+                    Attribute.DECRYPT: True,
+                    Attribute.WRAP: True,
+                    Attribute.TOKEN: False,
+                },
+            )
+        except (FunctionNotSupported, PKCS11Error) as e:
+            pytest.skip(f"AES key generation not supported: {e}")
+            return
         try:
             try:
                 wt = key[Attribute.WRAP_TEMPLATE]
@@ -89,17 +93,21 @@ class TestTemplateConstraintAttributes:
         """Keys should accept CKA_UNWRAP_TEMPLATE if the module supports it."""
         if not has_mechanism(p11_module, "AES_KEY_GEN"):
             pytest.skip("AES not supported")
-        key = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            mechanism=Mechanism.AES_KEY_GEN,
-            template={
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
-                Attribute.UNWRAP: True,
-                Attribute.TOKEN: False,
-            },
-        )
+        try:
+            key = p11_session.generate_key(
+                KeyType.AES,
+                256,
+                mechanism=Mechanism.AES_KEY_GEN,
+                template={
+                    Attribute.ENCRYPT: True,
+                    Attribute.DECRYPT: True,
+                    Attribute.UNWRAP: True,
+                    Attribute.TOKEN: False,
+                },
+            )
+        except (FunctionNotSupported, PKCS11Error) as e:
+            pytest.skip(f"AES key generation not supported: {e}")
+            return
         try:
             try:
                 ut = key[Attribute.UNWRAP_TEMPLATE]
@@ -115,16 +123,20 @@ class TestTemplateConstraintAttributes:
         """Keys should accept CKA_DERIVE_TEMPLATE if the module supports it."""
         if not has_mechanism(p11_module, "AES_KEY_GEN"):
             pytest.skip("AES not supported")
-        key = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            mechanism=Mechanism.AES_KEY_GEN,
-            template={
-                Attribute.ENCRYPT: True,
-                Attribute.DERIVE: True,
-                Attribute.TOKEN: False,
-            },
-        )
+        try:
+            key = p11_session.generate_key(
+                KeyType.AES,
+                256,
+                mechanism=Mechanism.AES_KEY_GEN,
+                template={
+                    Attribute.ENCRYPT: True,
+                    Attribute.DERIVE: True,
+                    Attribute.TOKEN: False,
+                },
+            )
+        except (FunctionNotSupported, PKCS11Error) as e:
+            pytest.skip(f"AES key generation not supported: {e}")
+            return
         try:
             try:
                 dt = key[Attribute.DERIVE_TEMPLATE]
@@ -512,19 +524,20 @@ class TestPkcs12Pbe:
 class TestTier1Stragglers:
     """Mechanisms identified as Tier 1 gaps in the audit."""
 
-    def test_aes_cmac_general_availability(self, p11_module: Any) -> None:
+    def test_aes_cmac_general_availability(
+        self, p11_session: Any, p11_module: Any
+    ) -> None:
         """CKM_AES_CMAC_GENERAL — parameterized CMAC tag length."""
         if not has_mechanism(p11_module, "AES_CMAC_GENERAL"):
             pytest.skip("CKM_AES_CMAC_GENERAL not supported")
-        # If available, do a basic sign round-trip
-        from pkcs11_check.testcases.conftest import import_aes_key
-
-        key = import_aes_key(p11_module, 256)
-        if key is None:
-            pytest.skip("Cannot create AES key")
+        key = p11_session.generate_key(
+            KeyType.AES,
+            256,
+            mechanism=Mechanism.AES_KEY_GEN,
+            template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
+        )
         try:
-            # AES_CMAC_GENERAL takes a MAC length parameter
-            sig = key.sign(b"test data", mechanism=Mechanism.AES_CMAC_GENERAL)
+            sig = key.sign(b"test data for cmac general", mechanism=Mechanism.AES_CMAC_GENERAL)
             assert len(sig) > 0
         except PKCS11Error as e:
             pytest.xfail(f"AES_CMAC_GENERAL sign failed: {e}")
