@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN git clone --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
 WORKDIR /build/kryoptic
-RUN cargo build --release 2>&1 | tail -3
+RUN cargo build --release --features pqc 2>&1 | tail -3
 
 FROM python:3.12-slim
 

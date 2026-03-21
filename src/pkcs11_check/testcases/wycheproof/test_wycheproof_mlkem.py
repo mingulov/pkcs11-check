@@ -23,12 +23,11 @@ _PARAM_SETS = {
     1024: MLKemParameterSet.ML_KEM_1024,
 }
 
+# Only semi_expanded_decaps vectors have dk (decapsulation key) directly.
+# The _test.json files require seed→dk derivation which PKCS#11 doesn't support.
 _MLKEM_FILES = [
-    ("mlkem_512_test.json", 512),
     ("mlkem_512_semi_expanded_decaps_test.json", 512),
-    ("mlkem_768_test.json", 768),
     ("mlkem_768_semi_expanded_decaps_test.json", 768),
-    ("mlkem_1024_test.json", 1024),
     ("mlkem_1024_semi_expanded_decaps_test.json", 1024),
 ]
 
