@@ -1,7 +1,7 @@
 # tpm2-pkcs11 with swtpm + tpm2-abrmd resource manager
 # The resource manager solves the "out of memory for object contexts" issue
 
-FROM fedora:43
+FROM fedora:44
 
 RUN dnf install -y \
     tpm2-pkcs11 tpm2-pkcs11-tools tpm2-tools \
