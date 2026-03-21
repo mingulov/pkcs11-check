@@ -519,10 +519,15 @@ def postprocess_json_report_to_unified(json_path: Path) -> None:
             }
             if outcome == "xfailed" and test.get("wasxfail"):
                 entry["wasxfail"] = test["wasxfail"]
+            call_stage = test.get("call", {})
             if outcome in {"failed", "error"}:
-                longrepr = test.get("call", {}).get("longrepr", "")
+                longrepr = call_stage.get("longrepr", "")
                 if longrepr:
                     entry["longrepr"] = longrepr
+            if call_stage.get("stdout"):
+                entry["stdout"] = call_stage["stdout"]
+            if call_stage.get("stderr"):
+                entry["stderr"] = call_stage["stderr"]
             non_passing.append(entry)
 
         has_failure = counts["failed"] > 0 or counts["error"] > 0
@@ -948,10 +953,15 @@ def _extract_per_unit_test_detail(json_path: Path) -> dict[str, Any] | None:
         }
         if outcome == "xfailed" and test.get("wasxfail"):
             entry["wasxfail"] = test["wasxfail"]
+        call_stage = test.get("call", {})
         if outcome in {"failed", "error"}:
-            longrepr = test.get("call", {}).get("longrepr", "")
+            longrepr = call_stage.get("longrepr", "")
             if longrepr:
                 entry["longrepr"] = longrepr
+        if call_stage.get("stdout"):
+            entry["stdout"] = call_stage["stdout"]
+        if call_stage.get("stderr"):
+            entry["stderr"] = call_stage["stderr"]
         non_passing.append(entry)
 
     return {"counts": counts, "tests": non_passing}

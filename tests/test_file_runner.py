@@ -1006,13 +1006,18 @@ def test_extract_per_unit_test_detail_parses_json_report(tmp_path: Path) -> None
                 "nodeid": "test_a.py::test_fail",
                 "outcome": "failed",
                 "duration": 0.2,
-                "call": {"outcome": "failed", "longrepr": "assert 1 == 2"},
+                "call": {
+                    "outcome": "failed",
+                    "longrepr": "assert 1 == 2",
+                    "stdout": "debug output\n",
+                },
             },
             {
                 "nodeid": "test_a.py::test_xf",
                 "outcome": "xfailed",
                 "duration": 0.05,
                 "wasxfail": "known bug",
+                "call": {"outcome": "failed", "stderr": "xfail trace\n"},
             },
         ],
     }))
@@ -1028,8 +1033,10 @@ def test_extract_per_unit_test_detail_parses_json_report(tmp_path: Path) -> None
     assert detail["tests"][0]["nodeid"] == "test_a.py::test_fail"
     assert detail["tests"][0]["outcome"] == "failed"
     assert detail["tests"][0]["longrepr"] == "assert 1 == 2"
+    assert detail["tests"][0]["stdout"] == "debug output\n"
     assert detail["tests"][1]["nodeid"] == "test_a.py::test_xf"
     assert detail["tests"][1]["wasxfail"] == "known bug"
+    assert detail["tests"][1]["stderr"] == "xfail trace\n"
 
 
 def test_extract_per_unit_test_detail_returns_none_for_missing_file(tmp_path: Path) -> None:
@@ -1347,13 +1354,18 @@ def test_postprocess_json_report_to_unified(tmp_path: Path) -> None:
                 "nodeid": "test_b.py::test_fail",
                 "outcome": "failed",
                 "duration": 0.5,
-                "call": {"outcome": "failed", "longrepr": "assert False"},
+                "call": {
+                    "outcome": "failed",
+                    "longrepr": "assert False",
+                    "stdout": "fail debug\n",
+                },
             },
             {
                 "nodeid": "test_b.py::test_xf",
                 "outcome": "xfailed",
                 "duration": 0.1,
                 "wasxfail": "known bug",
+                "call": {"outcome": "failed", "stderr": "xfail log\n"},
             },
         ],
     }))
@@ -1380,4 +1392,6 @@ def test_postprocess_json_report_to_unified(tmp_path: Path) -> None:
     assert unit_b["status"] == "failed"
     assert len(unit_b["tests"]) == 2
     assert unit_b["tests"][0]["longrepr"] == "assert False"
+    assert unit_b["tests"][0]["stdout"] == "fail debug\n"
     assert unit_b["tests"][1]["wasxfail"] == "known bug"
+    assert unit_b["tests"][1]["stderr"] == "xfail log\n"
