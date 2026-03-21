@@ -8,7 +8,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "OpenCryptoki:"
-rpm -q opencryptoki opencryptoki-swtok
+rpm -q opencryptoki opencryptoki-swtok 2>/dev/null || echo "(built from source)"
 
 pkcsslotd
 sleep 2
