@@ -46,7 +46,7 @@ Verify PKCS#11 output against Python `cryptography` library.
 - **test_aead.py** — AES-GCM cross-verify, tamper detection, AAD integrity
 - **test_ec_curves.py** — P-224/256/384/521 keygen + ECDSA cross-verify
 
-### NIST ACVP KAT Vectors (8 files)
+### NIST ACVP KAT Vectors (7 files)
 
 Official NIST Automated Cryptographic Validation Protocol vectors. Require `scripts/fetch-optional-data.sh acvp`. Skip gracefully when not cloned.
 
@@ -59,7 +59,6 @@ Official NIST Automated Cryptographic Validation Protocol vectors. Require `scri
 | test_acvp_eddsa.py | Ed25519/Ed448 SigVer + Ed25519 SigGen | RFC 8032 — invalid sigs must be rejected |
 | test_acvp_hmac.py | HMAC-SHA-{1,224,256,384,512}, HMAC-SHA3-{256,512} | FIPS 198-1 correctness |
 | test_acvp_slhdsa.py | SLH-DSA-SHA2-128f/192f SigVer + SigGen | FIPS 205 — invalid sigs must be rejected |
-| test_acvp_mldsa.py | ML-DSA-{44,65,87} SigGen | FIPS 204 — correct signing |
 
 ### CCTV Edge-Case Vectors (2 files)
 

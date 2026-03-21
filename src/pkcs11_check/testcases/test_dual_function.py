@@ -1,11 +1,10 @@
-"""Tests for dual-function operations: C_DigestEncryptUpdate and C_DecryptDigestUpdate.
+"""Tests for dual-function operations.
 
-These operations combine a digest with encrypt or decrypt in a single pass, allowing
-applications to simultaneously encrypt data and compute its digest without two passes.
-
-Source: PKCS#11 v3.1 §5.14 (Dual-function cryptographic functions):
-  §5.14.1 C_DigestEncryptUpdate
-  §5.14.2 C_DecryptDigestUpdate
+Covers all four PKCS#11 dual-function operations:
+  §5.14.1 C_DigestEncryptUpdate  (index 54)
+  §5.14.2 C_DecryptDigestUpdate  (index 55)
+  §5.14.3 C_SignEncryptUpdate    (index 56)
+  §5.14.4 C_DecryptVerifyUpdate  (index 57)
 
 Most PKCS#11 modules do NOT implement these operations and return
 CKR_FUNCTION_NOT_SUPPORTED (0x54).  Some modules reject the second active
