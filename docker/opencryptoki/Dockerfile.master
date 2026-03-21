@@ -30,13 +30,24 @@ COPY --from=builder /usr/lib64/opencryptoki/ /usr/lib64/opencryptoki/
 COPY --from=builder /usr/sbin/pkcsslotd /usr/sbin/pkcsslotd
 COPY --from=builder /usr/bin/pkcsconf /usr/bin/pkcsconf
 COPY --from=builder /etc/opencryptoki/ /etc/opencryptoki/
-RUN ldconfig
 
-# OpenCryptoki runtime directories
+# Make opencryptoki libs discoverable by ldconfig
+RUN echo "/usr/lib64/pkcs11" > /etc/ld.so.conf.d/opencryptoki.conf && \
+    echo "/usr/lib64/opencryptoki" >> /etc/ld.so.conf.d/opencryptoki.conf && \
+    ldconfig
+
+# Create pkcs11 group and pkcsslotd user (required by the daemon)
+RUN groupadd -f pkcs11 && \
+    useradd -r -g pkcs11 -s /sbin/nologin pkcsslotd 2>/dev/null || true && \
+    usermod -a -G pkcs11 root
+
+# OpenCryptoki runtime directories — owned by pkcsslotd:pkcs11
 RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ /run/opencryptoki && \
     (mkdir -p /var/lock/opencryptoki 2>/dev/null || mkdir -p /run/lock/opencryptoki) && \
+    chown -R pkcsslotd:pkcs11 /var/lib/opencryptoki /run/opencryptoki && \
     chmod -R 770 /var/lib/opencryptoki /run/opencryptoki && \
-    chmod -R 770 /var/lock/opencryptoki 2>/dev/null || chmod -R 770 /run/lock/opencryptoki 2>/dev/null || true
+    (chown -R pkcsslotd:pkcs11 /var/lock/opencryptoki && chmod -R 770 /var/lock/opencryptoki) 2>/dev/null || \
+    (chown -R pkcsslotd:pkcs11 /run/lock/opencryptoki && chmod -R 770 /run/lock/opencryptoki) 2>/dev/null || true
 
 # Override config to put SW token at slot 0
 RUN printf 'version opencryptoki-3\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
@@ -56,10 +67,5 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen --python python3.12
 
 COPY . .
-
-# Create pkcs11 group and pkcsslotd user (required by the daemon)
-RUN groupadd -f pkcs11 && \
-    useradd -r -g pkcs11 -s /sbin/nologin pkcsslotd 2>/dev/null || true && \
-    usermod -a -G pkcs11 root
 
 CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/opencryptoki/run-opencryptoki.sh"]
