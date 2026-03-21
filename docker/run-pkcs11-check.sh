@@ -41,7 +41,9 @@ if [[ -z "$python_bin" ]]; then
     python_bin="$(command -v python3 || true)"
 fi
 
-args=(uv run)
+# Skip re-syncing at runtime — deps were installed during Docker build.
+# Without --no-sync, uv rebuilds the venv on every container start (~5-10s).
+args=(uv run --no-sync)
 if [[ -n "$python_bin" ]]; then
     args+=(--python "$python_bin")
 fi

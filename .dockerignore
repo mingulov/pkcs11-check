@@ -2,10 +2,14 @@
 src/pkcs11_check/testcases/data/acvp/
 src/pkcs11_check/testcases/data/x509-limbo/
 
-# Build artifacts from local-builds
-local-builds/*/src/
-local-builds/*/build/
-local-builds/openssl/
+# Local builds (large, not needed in Docker)
+local-builds/
+
+# Virtual environments (host venv must not leak into container)
+.venv/
+
+# Worktrees
+.worktrees/
 
 # Git internals
 .git/
@@ -17,3 +21,6 @@ python-pkcs11/.git/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+
+# Artifacts from previous Docker runs
+artifacts/
