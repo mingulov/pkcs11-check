@@ -100,3 +100,5 @@ def test_mldsa_verify(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"Valid ML-DSA sig {vec_id} rejected")
+        # acceptable: reject is fine
+        return

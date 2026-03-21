@@ -116,4 +116,5 @@ def test_mlkem_decaps(
     except Exception:
         if result == "valid":
             pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}")
-        # Invalid vectors failing is expected
+        # acceptable/invalid: reject is fine
+        return

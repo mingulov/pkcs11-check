@@ -169,3 +169,5 @@ def test_rsa_pss(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"Valid RSA-PSS sig {vec_id} rejected (sLen={s_len})")
+        # acceptable: reject is fine
+        return

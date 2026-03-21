@@ -228,3 +228,5 @@ def test_ecdsa_wycheproof(
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"Valid ECDSA sig {vec_id} rejected")
+        # acceptable: reject is fine
+        return

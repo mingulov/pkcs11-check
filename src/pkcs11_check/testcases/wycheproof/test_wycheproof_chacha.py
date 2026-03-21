@@ -97,3 +97,5 @@ def test_chacha20_poly1305(
     except (p11.exceptions.PKCS11Error, AttributeError, TypeError):
         if result == "valid":
             pytest.xfail(f"ChaCha20-Poly1305 encrypt failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return

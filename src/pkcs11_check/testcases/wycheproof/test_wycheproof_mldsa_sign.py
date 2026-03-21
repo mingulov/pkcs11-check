@@ -105,3 +105,5 @@ def test_mldsa_sign(
     except Exception:
         if result == "valid":
             pytest.fail(f"Valid ML-DSA sign failed: {vec_id}")
+        # acceptable: reject is fine
+        return

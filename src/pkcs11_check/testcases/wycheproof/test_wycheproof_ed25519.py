@@ -88,6 +88,8 @@ def test_ed25519_wycheproof(
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.fail(f"Valid Ed25519 sig {vec_id} rejected")
+        # acceptable: reject is fine
+        return
 
 
 # --- Ed448 ---
@@ -157,3 +159,5 @@ def test_ed448_wycheproof(
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"Valid Ed448 sig {vec_id} rejected")
+        # acceptable: reject is fine
+        return

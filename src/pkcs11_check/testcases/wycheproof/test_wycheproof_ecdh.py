@@ -150,5 +150,7 @@ def test_ecdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"Valid ECDH derive failed for {vec_id}")
+        # acceptable: reject is fine
+        return
     except (TypeError, NotImplementedError):
         pytest.skip("ECDH derive not supported by binding")

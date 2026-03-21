@@ -118,3 +118,5 @@ def test_xdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
     except (p11.exceptions.PKCS11Error, TypeError):
         if result == "valid":
             pytest.xfail(f"X25519/X448 derive failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return

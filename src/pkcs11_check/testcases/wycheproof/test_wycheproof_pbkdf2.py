@@ -113,3 +113,5 @@ def test_pbkdf2(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, A
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"PBKDF2 generate_key failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return

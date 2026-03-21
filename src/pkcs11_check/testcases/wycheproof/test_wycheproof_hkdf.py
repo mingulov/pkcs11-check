@@ -119,3 +119,5 @@ def test_hkdf(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any
     except (p11.exceptions.PKCS11Error, TypeError, NotImplementedError):
         if result == "valid":
             pytest.xfail(f"HKDF derive failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return

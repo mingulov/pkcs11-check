@@ -153,3 +153,5 @@ def test_rsa_wycheproof(
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"Valid RSA sig {vec_id} rejected")
+        # acceptable: reject is fine
+        return

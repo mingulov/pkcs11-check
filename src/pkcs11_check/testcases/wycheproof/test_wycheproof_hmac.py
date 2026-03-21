@@ -146,3 +146,5 @@ def test_hmac_wycheproof(
     except p11.exceptions.PKCS11Error as exc:
         if result == "valid":
             pytest.xfail(f"HMAC failed: {type(exc).__name__}")
+        # acceptable: reject is fine
+        return

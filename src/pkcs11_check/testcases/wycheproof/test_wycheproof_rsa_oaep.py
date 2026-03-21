@@ -166,3 +166,5 @@ def test_rsa_oaep(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt")
+        # acceptable: reject is fine
+        return

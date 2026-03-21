@@ -98,4 +98,5 @@ def test_rsa_pkcs1_decrypt(p11_session: Any, vec_id: str, vec: dict[str, Any]) -
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt")
-        # Expected for invalid vectors — padding oracle resistance
+        # acceptable/invalid: reject is fine (padding oracle resistance)
+        return

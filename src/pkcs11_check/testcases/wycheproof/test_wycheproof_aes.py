@@ -80,6 +80,8 @@ def test_aes_cmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"AES-CMAC failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return
 
     p11_session.generate_random(64)
 
@@ -151,6 +153,8 @@ def test_aes_key_wrap(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"AES-KW wrap failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return
 
 
 # --- AES Key Wrap with Padding (RFC 5649) ---
@@ -226,6 +230,8 @@ def test_aes_kwp(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
     except p11.exceptions.PKCS11Error:
         if result == "valid":
             pytest.xfail(f"AES-KWP wrap failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return
 
 
 # --- AES-CCM ---
@@ -291,6 +297,8 @@ def test_aes_ccm(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
     except (p11.exceptions.PKCS11Error, TypeError, NotImplementedError):
         if result == "valid":
             pytest.xfail(f"AES-CCM encrypt failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return
 
 
 # --- AES-GMAC ---
@@ -347,6 +355,8 @@ def test_aes_gmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
     except (p11.exceptions.PKCS11Error, TypeError):
         if result == "valid":
             pytest.xfail(f"AES-GMAC sign failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return
 
 
 # --- AES-XTS ---
@@ -401,3 +411,5 @@ def test_aes_xts(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
     except (p11.exceptions.PKCS11Error, TypeError):
         if result == "valid":
             pytest.xfail(f"AES-XTS encrypt failed for valid vector {vec_id}")
+        # acceptable: reject is fine
+        return
