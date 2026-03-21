@@ -81,6 +81,15 @@ services:
   # Development branches — bleeding edge, may break
   # ==========================================================
 
+  # NSS main branch (built from source, full PQC)
+  test-nss-main:
+    <<: *artifacts
+    build:
+      context: ..
+      dockerfile: docker/nss-softoken/Dockerfile.main
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-main
+
   # SoftHSM2 main branch (latest development)
   test-softhsm2-main:
     <<: *artifacts
