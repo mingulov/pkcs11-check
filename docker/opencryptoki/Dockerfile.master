@@ -33,9 +33,10 @@ COPY --from=builder /etc/opencryptoki/ /etc/opencryptoki/
 RUN ldconfig
 
 # OpenCryptoki runtime directories
-RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ \
-    /var/lock/opencryptoki /run/opencryptoki && \
-    chmod -R 770 /var/lib/opencryptoki /var/lock/opencryptoki /run/opencryptoki
+RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ /run/opencryptoki && \
+    (mkdir -p /var/lock/opencryptoki 2>/dev/null || mkdir -p /run/lock/opencryptoki) && \
+    chmod -R 770 /var/lib/opencryptoki /run/opencryptoki && \
+    chmod -R 770 /var/lock/opencryptoki 2>/dev/null || chmod -R 770 /run/lock/opencryptoki 2>/dev/null || true
 
 # Override config to put SW token at slot 0
 RUN printf 'version opencryptoki-3\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
