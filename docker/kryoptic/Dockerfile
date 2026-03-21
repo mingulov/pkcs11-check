@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN git clone --branch v1.5.0 --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
 WORKDIR /build/kryoptic
-RUN cargo build --release
+RUN cargo build --release --features pqc
 
 # Stage 2: Runtime with tests
 FROM python:3.12-slim
