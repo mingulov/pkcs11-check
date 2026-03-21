@@ -1796,6 +1796,10 @@ def run_isolated_pytest_units(
                                     # No info from JSONL — cannot deselect
                                     escalate = True
                                     break
+                                if not deselect_set:
+                                    # Nothing to deselect — escalate
+                                    escalate = True
+                                    break
 
                                 # -- retry with deselect --
                                 deselect_args = [
