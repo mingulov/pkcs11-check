@@ -89,6 +89,8 @@ def test_mldsa_verify(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[
         p11.exceptions.FunctionFailed,
         p11.exceptions.DeviceError,
     ) as exc:
+        if result == "invalid":
+            return  # Module correctly rejected invalid key — pass
         pytest.skip(f"Cannot import ML-DSA public key: {type(exc).__name__}")
 
     try:
