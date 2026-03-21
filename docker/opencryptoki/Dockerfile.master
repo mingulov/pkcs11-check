@@ -41,16 +41,13 @@ RUN groupadd -f pkcs11 && \
     useradd -r -g pkcs11 -s /sbin/nologin pkcsslotd 2>/dev/null || true && \
     usermod -a -G pkcs11 root
 
-# OpenCryptoki runtime directories — owned by pkcsslotd:pkcs11
-RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ /run/opencryptoki && \
-    (mkdir -p /var/lock/opencryptoki 2>/dev/null || mkdir -p /run/lock/opencryptoki) && \
-    chown -R pkcsslotd:pkcs11 /var/lib/opencryptoki /run/opencryptoki && \
-    chmod -R 770 /var/lib/opencryptoki /run/opencryptoki && \
-    (chown -R pkcsslotd:pkcs11 /var/lock/opencryptoki && chmod -R 770 /var/lock/opencryptoki) 2>/dev/null || \
-    (chown -R pkcsslotd:pkcs11 /run/lock/opencryptoki && chmod -R 770 /run/lock/opencryptoki) 2>/dev/null || true
+# OpenCryptoki runtime directories — match packaged version permissions
+RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ && \
+    chown -R root:pkcs11 /var/lib/opencryptoki && \
+    chmod -R 770 /var/lib/opencryptoki
 
 # Override config to put SW token at slot 0
-RUN printf 'version opencryptoki-3\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
+RUN printf 'version opencryptoki-3.26\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
     > /etc/opencryptoki/opencryptoki.conf
 
 ENV PKCS11_CHECK_MODULE=/usr/lib64/pkcs11/libopencryptoki.so
