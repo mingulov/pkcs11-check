@@ -68,9 +68,14 @@ RUN LD_LIBRARY_PATH=/usr/lib pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
-COPY . .
+# Install deps first (cached unless pyproject.toml/uv.lock/python-pkcs11 change)
+COPY pyproject.toml uv.lock ./
+COPY python-pkcs11/ python-pkcs11/
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
+
+# Copy test code (changes frequently, does not invalidate deps cache)
+COPY . .
 
 # Create OpenSSL config that activates the FIPS provider
 RUN printf '[openssl_init]\nproviders = provider_sect\n\n[provider_sect]\nfips = fips_sect\nbase = base_sect\n\n[base_sect]\nactivate = 1\n\n[fips_sect]\nactivate = 1\nmodule-mac-mismatch = 1\n' \

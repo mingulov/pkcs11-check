@@ -33,8 +33,13 @@ ENV PKCS11_CHECK_PIN=1234
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
-COPY . .
+# Install deps first (cached unless pyproject.toml/uv.lock/python-pkcs11 change)
+COPY pyproject.toml uv.lock ./
+COPY python-pkcs11/ python-pkcs11/
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
+
+# Copy test code (changes frequently, does not invalidate deps cache)
+COPY . .
 
 CMD ["bash", "/app/docker/run-with-artifacts.sh", "sh", "-c", "echo 'Kryoptic main (latest dev):' && bash /app/docker/run-pkcs11-check.sh"]

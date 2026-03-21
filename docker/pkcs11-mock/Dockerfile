@@ -32,9 +32,14 @@ ENV PKCS11_CHECK_MODULE=/usr/lib64/libpkcs11-mock.so
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
-COPY . .
+# Install deps first (cached unless pyproject.toml/uv.lock/python-pkcs11 change)
+COPY pyproject.toml uv.lock ./
+COPY python-pkcs11/ python-pkcs11/
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv python pin 3.12 && uv sync --frozen
+
+# Copy test code (changes frequently, does not invalidate deps cache)
+COPY . .
 
 # No PIN needed — mock ignores it.
 # Tests are expected to skip or fail gracefully where the mock returns

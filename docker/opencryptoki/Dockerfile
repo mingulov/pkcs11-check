@@ -27,9 +27,14 @@ ENV PKCS11_CHECK_PIN=1234
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
-COPY . .
+# Install deps first (cached unless pyproject.toml/uv.lock/python-pkcs11 change)
+COPY pyproject.toml uv.lock ./
+COPY python-pkcs11/ python-pkcs11/
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen --python /usr/bin/python3
+
+# Copy test code (changes frequently, does not invalidate deps cache)
+COPY . .
 
 # Add root to pkcs11 group so we can talk to pkcsslotd
 RUN usermod -a -G pkcs11 root
