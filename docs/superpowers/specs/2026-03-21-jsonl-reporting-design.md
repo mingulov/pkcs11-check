@@ -230,6 +230,20 @@ artifacts/<provider>/
 
 The `report.jsonl` concatenation streams per-unit JSONL files sequentially into a temp file, then does an atomic rename. No in-memory accumulation of the full content.
 
+## Future: Batch Isolation Mode
+
+Once JSONL infrastructure is in place, a new `--isolation batch` (or new `auto` default) becomes possible:
+
+1. Run ALL files in one subprocess (like `--isolation none` but crash-safe)
+2. JSONL streams results — completed files are tracked by nodeid prefix
+3. On crash: read JSONL, identify completed files + crash culprit in current file
+4. Retry from crashed file onward, deselecting all completed files + crash culprit
+5. Failed/xfailed tests get a confirmation re-run in isolated subprocess (fresh PKCS#11 session) to verify the result isn't from stale token state
+
+Benefits: 1 subprocess for 195 files instead of 195 (~175s startup saved). Only crashes/failures need extra subprocesses. Current `--isolation file` stays as conservative option.
+
+This layers directly on top of the JSONL + iterative deselect infrastructure from this spec.
+
 ## Files to Modify
 
 | File | Change |
