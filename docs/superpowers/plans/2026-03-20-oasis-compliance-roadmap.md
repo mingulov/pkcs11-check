@@ -94,6 +94,34 @@ Phases A+B should go first. C-G can run in any order after A+B. Phase H goes las
 
 ---
 
+## Status Audit (2026-03-21)
+
+This roadmap predates most of the implementation work now present in the repo.
+
+Current snapshot:
+- `194` product test files under `src/pkcs11_check/testcases/`
+- `74,866` collected product tests (`uv run pytest src/pkcs11_check/testcases --co -q`)
+- The raw file-count target is nearly met and the raw test-count target is already exceeded
+- Coverage targets are still not complete; use `docs/gap-analysis-oasis-spec.md` as the audited status source
+
+| Phase | Current status | Notes |
+|-------|----------------|-------|
+| A | Partial | Dedicated files landed, but success-path gaps remain for `C_WaitForSlotEvent`, `C_SignEncryptUpdate`, `C_DecryptVerifyUpdate`, message finalizers, and async lifecycle |
+| B | Partial | Major attribute-enforcement work landed, but template-constraint attrs and explicit `CKO_OTP_KEY` object coverage are still open |
+| C | Mostly complete | Most planned Tier 1 files exist; remaining gaps are narrower mechanism-level stragglers |
+| D | Partial | HASH_ML_DSA / HASH_SLH_DSA and stateful signatures landed, but `ML_DSA_EXTERNAL_MU*`, `KMAC`, and standalone SHAKE coverage are still missing |
+| E | Mostly complete | Legacy and regional cipher files are present and broad |
+| F | Mostly complete | TLS/SSL/WTLS/IKE/CMS/PBE files landed, but `CKM_PKCS12_PBE_EXPORT` / `IMPORT` are still missing |
+| G | Partial | OTP, X3DH, ratchet, misc KDF, Salsa20, and BLAKE2 landed; `CKM_RSA_PKCS_NULL` is still open |
+| H | Partial | Session-semantic files landed, but compliance-report mapping and final completeness accounting still need work |
+
+Known corrections to the original roadmap:
+- `src/pkcs11_check/testcases/test_acvp_mldsa.py` does not exist in the repo; current ML-DSA vector coverage comes from `test_cctv_mldsa.py` and Wycheproof files.
+- Current ratchet coverage uses `CKM_X2RATCHET_*` / `CKK_X2RATCHET`, not `CKM_DOUBLE_RATCHET_*`.
+- Hitting the file/test-count targets does not imply that the OASIS mechanism/function/object acceptance criteria are complete.
+
+---
+
 ## Phase A: Core API Function Completeness
 
 **Goal:** Test every C_* function defined in the OASIS spec. Close the ~23 function gap.
@@ -367,7 +395,7 @@ bash local-builds/test.sh kryoptic
 - `src/pkcs11_check/testcases/test_pqc_sign.py` — ML-DSA/SLH-DSA keygen + sign/verify
 - `src/pkcs11_check/testcases/test_kem.py` — ML-KEM encapsulate/decapsulate
 - `src/pkcs11_check/testcases/wycheproof/test_wycheproof_mldsa.py` — ML-DSA Wycheproof verify
-- `src/pkcs11_check/testcases/test_acvp_mldsa.py` — ACVP SigGen vectors
+- `src/pkcs11_check/testcases/test_cctv_mldsa.py` — ML-DSA sign/verify vectors
 
 ### Files to Create
 
@@ -533,8 +561,8 @@ bash local-builds/test.sh kryoptic
 - OASIS spec: ct-kip.md
 
 **Double Ratchet (~4):**
-- CKM_DOUBLE_RATCHET_INITIALIZE, CKM_DOUBLE_RATCHET_RESPOND
-- CKM_DOUBLE_RATCHET_ENCRYPT, CKM_DOUBLE_RATCHET_DECRYPT
+- CKM_X2RATCHET_INITIALIZE, CKM_X2RATCHET_RESPOND
+- CKM_X2RATCHET_ENCRYPT, CKM_X2RATCHET_DECRYPT
 - OASIS spec: double_ratchet.md
 
 **X3DH (~2):**
@@ -664,5 +692,18 @@ uv run mypy src/
 - ~290 of 370 mechanisms covered (78%)
 - 68/68 API functions covered (100%)
 - 12/12 object types covered (100%)
+
+## Follow-Up Improvements (Post-Roadmap)
+
+### Isolated runner: capture stdout/stderr per unit (tee-style)
+Currently `file_runner.py` inherits stdout/stderr from the parent process — output goes to the console (and `console.log` in Docker) but is NOT stored in `results.json`. Failed/crashed units lose their tracebacks in the JSON artifact.
+
+**Fix:** Use `subprocess.Popen` with real-time tee: stream output to the console AND capture it in a buffer. Store captured output in `FileRunResult` as `stdout` and `stderr` fields, written to `results.json`. This gives both live feedback AND post-mortem debugging from artifacts.
+
+### Vendor extension system
+Configurable vendor mechanism support (IBM/OpenCryptoki first). Spec at `docs/superpowers/specs/2026-03-20-vendor-extension-system-design.md`. Data-driven TOML profiles + Python helpers per vendor, mechanism/keytype/attribute aliasing, auto-detection.
 - 130+ of 190 attributes verified (68%+)
 - Machine-readable compliance report
+
+Current note: the suite already exceeds the original raw test-count target. The remaining work is
+coverage accuracy and final verification, not suite size.
