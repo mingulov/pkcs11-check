@@ -949,12 +949,16 @@ def _status_from_returncode(returncode: int) -> str:
 def _flatten_longrepr(longrepr: Any) -> str:
     """Flatten a JSONL longrepr value to a plain string.
 
-    longrepr can be a dict (with reprcrash/reprtraceback), a string, or None.
+    longrepr can be a dict (with reprcrash/reprtraceback), a string,
+    a list/tuple ``[path, lineno, reason]`` (for skips), or None.
     """
     if longrepr is None:
         return ""
     if isinstance(longrepr, str):
         return longrepr
+    # Skip-style: [path, lineno, "Skipped: reason"] or (path, lineno, reason)
+    if isinstance(longrepr, (list, tuple)) and len(longrepr) >= 3:
+        return str(longrepr[2])
     if isinstance(longrepr, dict):
         parts: list[str] = []
         # Extract crash summary
