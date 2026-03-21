@@ -13,7 +13,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from xml.etree import ElementTree as ET
 
 from rich.console import Console
@@ -742,6 +742,49 @@ def _status_from_returncode(returncode: int) -> str:
     if returncode < 0:
         return "crashed"
     return "failed"
+
+
+def _extract_per_unit_test_detail(json_path: Path) -> dict[str, Any] | None:
+    """Read a pytest-json-report file and return per-test outcomes.
+
+    Returns ``{"counts": {...}, "tests": [...]}`` where ``tests`` contains
+    only non-passing entries (failed, xfailed, xpassed, error).
+    Returns ``None`` if the file is missing or corrupt.
+    """
+    try:
+        data = json.loads(json_path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+    tests_raw = data.get("tests", [])
+    if not tests_raw:
+        return None
+
+    counts: dict[str, int] = {
+        "passed": 0, "failed": 0, "skipped": 0,
+        "xfailed": 0, "xpassed": 0, "error": 0,
+    }
+    non_passing: list[dict[str, Any]] = []
+
+    for test in tests_raw:
+        outcome = test.get("outcome", "passed")
+        counts[outcome] = counts.get(outcome, 0) + 1
+        if outcome not in {"failed", "xfailed", "xpassed", "error"}:
+            continue
+        entry: dict[str, Any] = {
+            "nodeid": test["nodeid"],
+            "outcome": outcome,
+            "duration": test.get("duration", 0.0),
+        }
+        if outcome == "xfailed" and test.get("wasxfail"):
+            entry["wasxfail"] = test["wasxfail"]
+        if outcome in {"failed", "error"}:
+            longrepr = test.get("call", {}).get("longrepr", "")
+            if longrepr:
+                entry["longrepr"] = longrepr
+        non_passing.append(entry)
+
+    return {"counts": counts, "tests": non_passing}
 
 
 def _unit_timeout_seconds(test_timeout: int, granularity: IsolationGranularity) -> int:

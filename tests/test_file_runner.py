@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from io import StringIO
 from pathlib import Path
@@ -16,6 +17,7 @@ from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
     IsolatedReportConfig,
+    _extract_per_unit_test_detail,
     build_policy_fingerprint,
     build_state_fingerprint,
     collect_pytest_nodeids,
@@ -989,3 +991,59 @@ def test_run_isolated_pytest_units_writes_junit_skipped_for_crash_limited(
     assert exit_code == 1
     payload = report_path.read_text()
     assert 'message="skipped after per-file crash limit was reached"' in payload
+
+
+def test_extract_per_unit_test_detail_parses_json_report(tmp_path: Path) -> None:
+    json_file = tmp_path / "report.json"
+    json_file.write_text(json.dumps({
+        "summary": {"passed": 1, "failed": 1, "skipped": 1},
+        "tests": [
+            {"nodeid": "test_a.py::test_ok", "outcome": "passed", "duration": 0.1},
+            {"nodeid": "test_a.py::test_skip", "outcome": "skipped", "duration": 0.0},
+            {
+                "nodeid": "test_a.py::test_fail",
+                "outcome": "failed",
+                "duration": 0.2,
+                "call": {"outcome": "failed", "longrepr": "assert 1 == 2"},
+            },
+            {
+                "nodeid": "test_a.py::test_xf",
+                "outcome": "xfailed",
+                "duration": 0.05,
+                "wasxfail": "known bug",
+            },
+        ],
+    }))
+
+    detail = _extract_per_unit_test_detail(json_file)
+
+    assert detail is not None
+    assert detail["counts"] == {
+        "passed": 1, "failed": 1, "skipped": 1, "xfailed": 1, "xpassed": 0, "error": 0,
+    }
+    # Only non-passing tests (failed, xfailed, xpassed, error) in the tests array
+    assert len(detail["tests"]) == 2
+    assert detail["tests"][0]["nodeid"] == "test_a.py::test_fail"
+    assert detail["tests"][0]["outcome"] == "failed"
+    assert detail["tests"][0]["longrepr"] == "assert 1 == 2"
+    assert detail["tests"][1]["nodeid"] == "test_a.py::test_xf"
+    assert detail["tests"][1]["wasxfail"] == "known bug"
+
+
+def test_extract_per_unit_test_detail_returns_none_for_missing_file(tmp_path: Path) -> None:
+    result = _extract_per_unit_test_detail(tmp_path / "nonexistent.json")
+    assert result is None
+
+
+def test_extract_per_unit_test_detail_returns_none_for_corrupt_json(tmp_path: Path) -> None:
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_text("{truncated")
+    result = _extract_per_unit_test_detail(bad_file)
+    assert result is None
+
+
+def test_extract_per_unit_test_detail_returns_none_for_empty_tests(tmp_path: Path) -> None:
+    json_file = tmp_path / "report.json"
+    json_file.write_text(json.dumps({"summary": {}, "tests": []}))
+    result = _extract_per_unit_test_detail(json_file)
+    assert result is None
