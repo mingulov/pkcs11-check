@@ -1779,13 +1779,7 @@ def run_isolated_pytest_units(
                                 # No max_crashes_per_file limit here —
                                 # iterative deselect keeps going until
                                 # the file passes or safety caps are hit.
-                                deselect_args_size = sum(
-                                    len(f"--deselect={nid}")
-                                    for nid in deselect_set
-                                )
-                                if deselect_args_size > 1_500_000:  # ~1.5MB, well under Linux ARG_MAX (~2MB)
-                                    escalate = True
-                                    break
+                                # No ARG_MAX limit — deselect via file, not args
                                 if not culprit and not completed:
                                     # No info from JSONL — cannot deselect
                                     escalate = True
@@ -1795,11 +1789,22 @@ def run_isolated_pytest_units(
                                     escalate = True
                                     break
 
-                                # -- retry with deselect --
-                                deselect_args = [
-                                    f"--deselect={nid}"
-                                    for nid in deselect_set
-                                ]
+                                # -- retry with deselect via file --
+                                # Write deselected nodeids to a temp file
+                                # instead of --deselect args (avoids ARG_MAX).
+                                deselect_fd, deselect_raw = (
+                                    tempfile.mkstemp(
+                                        prefix="pkcs11-check-deselect-",
+                                        suffix=".txt",
+                                    )
+                                )
+                                os.close(deselect_fd)
+                                deselect_path = Path(deselect_raw)
+                                deselect_path.write_text(
+                                    "\n".join(sorted(deselect_set)) + "\n"
+                                )
+                                retry_temp_files.append(deselect_path)
+
                                 retry_jsonl_fd, retry_jsonl_raw = (
                                     tempfile.mkstemp(
                                         prefix="pkcs11-check-retry-",
@@ -1810,9 +1815,13 @@ def run_isolated_pytest_units(
                                 retry_jsonl_path = Path(retry_jsonl_raw)
                                 retry_temp_files.append(retry_jsonl_path)
 
+                                retry_env = dict(env)
+                                retry_env["PKCS11_CHECK_DESELECT_FILE"] = str(
+                                    deselect_path
+                                )
                                 retry_cmd = [
                                     sys.executable, "-m", "pytest",
-                                    unit, *pytest_args, *deselect_args,
+                                    unit, *pytest_args,
                                     "--report-log", str(retry_jsonl_path),
                                 ]
                                 console.print(
@@ -1825,7 +1834,7 @@ def run_isolated_pytest_units(
                                     retry_rc, retry_out, retry_err = (
                                         _run_subprocess_tee(
                                             retry_cmd,
-                                            env=env,
+                                            env=retry_env,
                                             timeout=_unit_timeout_seconds(
                                                 timeout, unit_granularity
                                             ),

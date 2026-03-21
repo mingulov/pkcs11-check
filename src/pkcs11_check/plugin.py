@@ -189,7 +189,32 @@ def _runtime_skip_reason(
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Apply collection-safe static skips only."""
+    """Apply collection-safe static skips and file-based deselection."""
+    # File-based deselect: read nodeids from env-specified file and remove
+    # matching items.  Used by the iterative deselect loop in file_runner.py
+    # to avoid ARG_MAX limits on --deselect arguments.
+    deselect_file = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
+    if deselect_file:
+        try:
+            deselect_nodeids = set(
+                line.strip()
+                for line in Path(deselect_file).read_text().splitlines()
+                if line.strip()
+            )
+        except (FileNotFoundError, OSError):
+            deselect_nodeids = set()
+        if deselect_nodeids:
+            remaining: list[pytest.Item] = []
+            deselected: list[pytest.Item] = []
+            for item in items:
+                if item.nodeid in deselect_nodeids:
+                    deselected.append(item)
+                else:
+                    remaining.append(item)
+            if deselected:
+                config.hook.pytest_deselected(items=deselected)
+                items[:] = remaining
+
     module_path = config.getoption("p11_module", default=None)
 
     # If no module specified, skip all tests in testcases/
