@@ -1677,7 +1677,6 @@ def run_isolated_pytest_units(
                         # each time deselecting completed tests + confirmed
                         # crash culprits, until the file passes or exit
                         # conditions are met.
-                        max_deselect_iters = 10
                         deselect_set: set[str] = set()
                         crash_count = 0
                         accumulated_detail: dict[str, Any] | None = None
@@ -1780,12 +1779,6 @@ def run_isolated_pytest_units(
                                 # No max_crashes_per_file limit here —
                                 # iterative deselect keeps going until
                                 # the file passes or safety caps are hit.
-                                if (
-                                    len(deselect_set)
-                                    >= max_deselect_iters * 2
-                                ):
-                                    escalate = True
-                                    break
                                 deselect_args_size = sum(
                                     len(f"--deselect={nid}")
                                     for nid in deselect_set
