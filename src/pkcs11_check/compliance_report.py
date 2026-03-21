@@ -406,13 +406,30 @@ def _collect_mechanisms(module: Any, slot_index: int = 0) -> dict[str, str]:
 def _parse_test_results(
     results_path: Path,
 ) -> dict[str, dict[str, int]]:
-    """Parse a pytest-json-report or pkcs11-check results JSON.
+    """Parse a pytest-json-report, pkcs11-check isolated, or unified results JSON.
 
-    Returns a mapping of test node-id prefix -> {passed, failed, skipped}.
+    Returns a mapping of test file base name -> {passed, failed, skipped}.
     """
     data = json.loads(results_path.read_text())
 
     counts: dict[str, dict[str, int]] = {}
+
+    # Unified format: {"kind": "test-run", "units": [{"target": ..., "counts": ...}]}
+    if data.get("kind") == "test-run":
+        for unit in data.get("units", []):
+            target = unit.get("target", "")
+            base = target.split("::")[0].split("/")[-1].replace(".py", "")
+            if not base:
+                continue
+            unit_counts = unit.get("counts")
+            if unit_counts is None:
+                continue
+            if base not in counts:
+                counts[base] = {"passed": 0, "failed": 0, "skipped": 0}
+            counts[base]["passed"] += unit_counts.get("passed", 0)
+            counts[base]["failed"] += unit_counts.get("failed", 0)
+            counts[base]["skipped"] += unit_counts.get("skipped", 0)
+        return counts
 
     # pytest-json-report format: {"tests": [{"nodeid": "...", "outcome": "..."}]}
     tests = data.get("tests", [])
