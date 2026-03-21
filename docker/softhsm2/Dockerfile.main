@@ -33,7 +33,7 @@ RUN mkdir -p /var/lib/softhsm/tokens && \
     echo "objectstore.backend = file" >> $SOFTHSM2_CONF && \
     softhsm2-util --init-token --slot 0 --label "pkcs11-check" --pin 1234 --so-pin 12345678
 
-ENV PKCS11_CHECK_MODULE=/usr/lib/softhsm/libsofthsm2.so
+ENV PKCS11_CHECK_MODULE=/usr/lib64/softhsm/libsofthsm2.so
 ENV PKCS11_CHECK_PIN=1234
 ENV PKCS11_CHECK_PYTHON=python3.12
 
