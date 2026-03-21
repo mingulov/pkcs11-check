@@ -11,7 +11,7 @@ RUN git clone --depth 1 --branch main https://github.com/softhsm/SoftHSMv2.git /
 WORKDIR /build/softhsm2
 RUN sh autogen.sh && \
     ./configure --prefix=/usr --sysconfdir=/etc \
-    --with-crypto-backend=openssl --disable-gost \
+    --with-crypto-backend=openssl --enable-gost --enable-mldsa \
     --disable-dependency-tracking && \
     make -j$(nproc) && \
     make DESTDIR=/install install
