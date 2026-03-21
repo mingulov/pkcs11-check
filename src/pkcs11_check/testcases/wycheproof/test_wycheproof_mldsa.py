@@ -12,6 +12,7 @@ from typing import Any
 import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11.constants import MLDsaParameterSet
 
 from pkcs11_check.testcases.conftest import has_mechanism
 
@@ -65,18 +66,30 @@ def test_mldsa_verify(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[
 
     pk_bytes = bytes.fromhex(pk_hex)
 
+    _PARAM_MAP = {44: MLDsaParameterSet.ML_DSA_44,
+                  65: MLDsaParameterSet.ML_DSA_65,
+                  87: MLDsaParameterSet.ML_DSA_87}
+    param_set = _PARAM_MAP.get(vec["_param_set"])
+
     try:
-        pub_key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.ML_DSA,
-                Attribute.VALUE: pk_bytes,
-                Attribute.TOKEN: False,
-                Attribute.VERIFY: True,
-            }
-        )
-    except (p11.exceptions.PKCS11Error, AttributeError):
-        pytest.skip("Cannot import ML-DSA public key")
+        template: dict[Attribute, Any] = {
+            Attribute.CLASS: ObjectClass.PUBLIC_KEY,
+            Attribute.KEY_TYPE: KeyType.ML_DSA,
+            Attribute.VALUE: pk_bytes,
+            Attribute.TOKEN: False,
+            Attribute.VERIFY: True,
+        }
+        if param_set is not None:
+            template[Attribute.PARAMETER_SET] = int(param_set)
+        pub_key = p11_session.create_object(template)
+    except (
+        p11.exceptions.TemplateIncomplete,
+        p11.exceptions.TemplateInconsistent,
+        p11.exceptions.AttributeValueInvalid,
+        p11.exceptions.FunctionFailed,
+        p11.exceptions.DeviceError,
+    ) as exc:
+        pytest.skip(f"Cannot import ML-DSA public key: {type(exc).__name__}")
 
     try:
         pub_key.verify(msg, sig, mechanism=Mechanism.ML_DSA)
