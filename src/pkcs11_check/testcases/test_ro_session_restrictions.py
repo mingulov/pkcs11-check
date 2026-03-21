@@ -177,7 +177,7 @@ class TestROTokenObjectMutation:
     """RO sessions must reject mutation of token objects."""
 
     def test_destroy_token_object_in_ro_fails(
-        self, p11_session: Any, p11_module: Any, p11_config: Any
+        self, p11_session: Any, p11_module: Any
     ) -> None:
         """C_DestroyObject of token object in RO session must fail."""
         label = "ro-destroy-test"
@@ -201,7 +201,7 @@ class TestROTokenObjectMutation:
             key.destroy()
 
     def test_set_attribute_token_object_in_ro_fails(
-        self, p11_session: Any, p11_module: Any, p11_config: Any
+        self, p11_session: Any, p11_module: Any
     ) -> None:
         """C_SetAttributeValue on token object in RO session must fail."""
         label = "ro-setattr-test"
@@ -229,7 +229,7 @@ class TestROTokenObjectMutation:
             key.destroy()
 
     def test_copy_token_object_in_ro_as_token_fails(
-        self, p11_session: Any, p11_module: Any, p11_config: Any
+        self, p11_session: Any, p11_module: Any
     ) -> None:
         """C_CopyObject of token object to another token object in RO fails."""
         label = "ro-copy-test"
@@ -335,7 +335,7 @@ class TestROCryptoOperations:
             session.close()
 
     def test_verify_token_key_in_ro(
-        self, p11_session: Any, p11_module: Any, p11_config: Any
+        self, p11_session: Any, p11_module: Any
     ) -> None:
         """Verification with a token key works in RO session."""
         label = "ro-verify-rsa-test"
@@ -407,7 +407,7 @@ class TestROExactCKR:
             session.close()
 
     def test_destroy_token_object_returns_session_read_only(
-        self, p11_session: Any, p11_module: Any, p11_config: Any
+        self, p11_session: Any, p11_module: Any
     ) -> None:
         """Destroy of token object in RO returns CKR_SESSION_READ_ONLY."""
         label = "ro-ckr-destroy-test"
@@ -466,7 +466,7 @@ class TestROWrapUnwrapRestrictions:
     """Unwrap creating TOKEN=True key in RO session must fail."""
 
     def test_unwrap_to_token_object_in_ro_fails(
-        self, p11_session: Any, p11_module: Any, p11_config: Any
+        self, p11_session: Any, p11_module: Any
     ) -> None:
         """Unwrap with TOKEN=True template in RO session must fail."""
         # Create wrapping key and target in RW session
@@ -527,7 +527,7 @@ class TestROWrapUnwrapRestrictions:
             wrapping_key.destroy()
 
     def test_unwrap_to_session_object_in_ro_succeeds(
-        self, p11_session: Any, p11_module: Any, p11_config: Any
+        self, p11_session: Any, p11_module: Any
     ) -> None:
         """Unwrap with TOKEN=False template in RO session succeeds."""
         wrapping_key = p11_session.generate_key(
