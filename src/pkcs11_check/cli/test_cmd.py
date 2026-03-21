@@ -83,7 +83,9 @@ def _isolated_report_config(output: str, output_file: str | None) -> IsolatedRep
     if output not in {"json", "junit"}:
         return None
     if output == "json":
-        return IsolatedReportConfig("json", Path(output_file or "pkcs11-check-results.json"))
+        results_path = Path(output_file or "pkcs11-check-results.json")
+        jsonl_path = results_path.parent / "report.jsonl"
+        return IsolatedReportConfig("json", results_path, jsonl_path=jsonl_path)
     return IsolatedReportConfig("junit", Path(output_file or "pkcs11-check-results.xml"))
 
 

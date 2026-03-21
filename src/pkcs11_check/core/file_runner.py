@@ -7,6 +7,7 @@ import io
 import json
 import os
 import selectors
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -83,6 +84,7 @@ class IsolatedReportConfig:
 
     output_format: Literal["json", "junit"]
     output_path: Path
+    jsonl_path: Path | None = None
 
 
 def _validate_pytest_target_exists(target: str) -> None:
@@ -592,6 +594,30 @@ def write_isolated_report(
         )
         return
     write_isolated_junit_report(config.output_path, state)
+
+
+def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
+    """Stream-concatenate per-unit JSONL temp files into a single artifact.
+
+    Writes to a sibling .tmp file first, then atomically renames to
+    output_path.  Deletes all source JSONL temp files in a finally block
+    regardless of success or failure.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_suffix(".jsonl.tmp")
+    try:
+        with tmp_path.open("wb") as out_fh:
+            for src in jsonl_paths:
+                try:
+                    with src.open("rb") as in_fh:
+                        shutil.copyfileobj(in_fh, out_fh)
+                except (FileNotFoundError, OSError):
+                    pass  # missing temp file — skip silently
+        tmp_path.rename(output_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+        for src in jsonl_paths:
+            src.unlink(missing_ok=True)
 
 
 def load_run_state(path: Path) -> FileRunState | None:
@@ -1380,6 +1406,7 @@ def run_isolated_pytest_units(
 
     exit_code = 0
     per_unit_details: dict[str, dict[str, Any]] = {}
+    jsonl_paths: list[Path] = []
     index = 0
     try:
         while index < len(units):
@@ -1503,7 +1530,11 @@ def run_isolated_pytest_units(
                 detail: dict[str, Any] | None = None
                 if unit_jsonl_path is not None:
                     detail = _read_jsonl_results(unit_jsonl_path)
-                    unit_jsonl_path.unlink(missing_ok=True)
+                    # Accumulate for report.jsonl; do NOT delete yet.
+                    if report_config is not None and report_config.jsonl_path is not None:
+                        jsonl_paths.append(unit_jsonl_path)
+                    else:
+                        unit_jsonl_path.unlink(missing_ok=True)
                     unit_jsonl_path = None
 
                 # Keep output for non-passing units AND for units that
@@ -1879,6 +1910,8 @@ def run_isolated_pytest_units(
                 report_config, state,
                 per_unit_details=per_unit_details,
             )
+            if report_config.jsonl_path is not None:
+                write_report_jsonl(jsonl_paths, report_config.jsonl_path)
 
     return exit_code
 
