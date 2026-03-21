@@ -8,6 +8,11 @@ States:
   - Public session (R/O or R/W): no login, only public objects visible.
   - User Functions session (R/O or R/W): after C_Login(USER).
   - SO Functions session (R/W only): after C_Login(SO).
+
+Note: python-pkcs11 does not expose C_GetSessionInfo state enum directly.
+Session state is verified indirectly through operation success/failure and
+object visibility, which is a stronger behavioural verification than checking
+an enum value.
 """
 
 from __future__ import annotations
@@ -173,6 +178,72 @@ class TestLoginStateTransitions:
             key.destroy()
         except UserAlreadyLoggedIn:
             pass  # Another session holds the login -- acceptable
+        finally:
+            _logout_safe(session)
+            session.close()
+
+
+# ---------------------------------------------------------------------------
+# SO login state
+# ---------------------------------------------------------------------------
+
+
+class TestSOLoginState:
+    """Verify SO login state transitions.
+
+    SO login requires RW session and no USER logged in.
+    SO state allows token management but not normal crypto on private keys.
+    Marked destructive because SO login may affect token state.
+    """
+
+    @pytest.mark.destructive
+    def test_so_login_succeeds(self, p11_module: Any, p11_config: Any) -> None:
+        """C_Login(SO) on RW session succeeds when no user is logged in.
+
+        After SO login, token management operations (like C_InitPIN) are available
+        but normal user crypto may be restricted.
+        """
+        pin = _get_pin(p11_config)
+        if pin is None:
+            pytest.skip("No PIN configured")
+        # SO PIN is often the same as user PIN for test tokens
+        so_pin = pin
+        token = p11_module.get_token(p11_config.slot)
+        session = token.open(rw=True)
+        try:
+            session.login(p11.UserType.SO, so_pin)
+            # SO is logged in -- verify by checking we can't login as USER
+            with pytest.raises(
+                (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn, UserTypeInvalid)
+            ):
+                session.login(p11.UserType.USER, pin)
+        except (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn):
+            pytest.skip("Another user is already logged in on this token")
+        except p11.exceptions.PinIncorrect:
+            pytest.skip("SO PIN differs from user PIN on this module")
+        finally:
+            _logout_safe(session)
+            session.close()
+
+    @pytest.mark.destructive
+    def test_so_logout_returns_to_public(self, p11_module: Any, p11_config: Any) -> None:
+        """After SO logout, session returns to public state."""
+        pin = _get_pin(p11_config)
+        if pin is None:
+            pytest.skip("No PIN configured")
+        so_pin = pin
+        token = p11_module.get_token(p11_config.slot)
+        session = token.open(rw=True)
+        try:
+            session.login(p11.UserType.SO, so_pin)
+            session.logout()
+            # After logout, should be able to login as USER
+            session.login(p11.UserType.USER, pin)
+            session.logout()
+        except (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn):
+            pytest.skip("Another user is already logged in on this token")
+        except p11.exceptions.PinIncorrect:
+            pytest.skip("SO PIN differs from user PIN on this module")
         finally:
             _logout_safe(session)
             session.close()
@@ -566,7 +637,7 @@ class TestSessionCloseEffects:
             # If s1 wasn't closed yet, close it
             try:
                 s1.close()
-            except (SessionClosed, Exception):
+            except (SessionClosed, p11.exceptions.SessionHandleInvalid):
                 pass
             raise
 
@@ -640,7 +711,7 @@ class TestROvsRWSessionState:
         session = token.open(rw=False)
         try:
             _login_user(session, pin)
-            with pytest.raises((SessionReadOnly, p11.exceptions.PKCS11Error)):
+            with pytest.raises((SessionReadOnly, p11.exceptions.ActionProhibited)):
                 session.generate_key(
                     KeyType.AES,
                     128,
@@ -769,7 +840,7 @@ class TestSessionContextManager:
         with token.open(rw=True) as session:
             assert session.rw is True
         # Session should be closed -- operations should fail
-        with pytest.raises((p11.exceptions.PKCS11Error, AttributeError, RuntimeError)):
+        with pytest.raises((SessionClosed, p11.exceptions.SessionHandleInvalid, AttributeError)):
             session.generate_random(32)
 
     def test_context_manager_with_login(self, p11_module: Any, p11_config: Any) -> None:
