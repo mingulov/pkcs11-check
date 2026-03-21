@@ -9,6 +9,7 @@ isolation="${PKCS11_CHECK_ISOLATION:-auto}"
 timeout="${PKCS11_CHECK_TIMEOUT:-}"
 category="${PKCS11_CHECK_CATEGORY:-}"
 match="${PKCS11_CHECK_MATCH:-}"
+marker="${PKCS11_CHECK_MARKER:-}"
 max_crashes_per_file="${PKCS11_CHECK_MAX_CRASHES_PER_FILE:-}"
 artifact_dir="${PKCS11_CHECK_ARTIFACT_DIR:-}"
 targets_env="${PKCS11_CHECK_TARGETS:-}"
@@ -72,6 +73,10 @@ fi
 
 if [[ -n "$match" ]]; then
     args+=(--match "$match")
+fi
+
+if [[ -n "$marker" ]]; then
+    args+=(--marker "$marker")
 fi
 
 if [[ -n "$max_crashes_per_file" ]]; then

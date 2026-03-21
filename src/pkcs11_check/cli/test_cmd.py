@@ -36,6 +36,7 @@ def _build_pytest_args(
     timeout: int,
     category: str | None,
     match: str | None,
+    marker: str | None,
     include_pin_arg: bool,
     pin: str | None,
     slot: int,
@@ -56,6 +57,9 @@ def _build_pytest_args(
 
     if destructive:
         args.append("--p11-destructive")
+
+    if marker:
+        args.extend(["-m", marker])
 
     if match:
         args.extend(["-k", match])
@@ -99,6 +103,7 @@ def test_command(
     timeout: int = typer.Option(120, "--timeout", "-t", help="Per-test timeout (seconds)"),
     category: str | None = typer.Option(None, "--category", "-c", help="Test categories"),
     match: str | None = typer.Option(None, "--match", help="Test name pattern"),
+    marker: str | None = typer.Option(None, "--marker", help="Pytest marker expression (-m)"),
     pin: str | None = typer.Option(None, "--pin", help="PIN (prefer P11TEST_PIN env)"),
     slot: int = typer.Option(0, "--slot", help="Slot index"),
     destructive: bool = typer.Option(False, "--destructive", help="Enable destructive tests"),
@@ -176,6 +181,7 @@ def test_command(
         timeout=timeout,
         category=category,
         match=match,
+        marker=marker,
         include_pin_arg=isolation == "none",
         pin=pin,
         slot=slot,
