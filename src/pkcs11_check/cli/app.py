@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from pkcs11_check.cli.compliance_cmd import compliance_report_command
 from pkcs11_check.cli.info_cmd import info_command
 from pkcs11_check.cli.list_cmd import list_command
 from pkcs11_check.cli.state_cmd import state_command
@@ -32,6 +33,7 @@ app.command("test")(test_command)
 app.command("info")(info_command)
 app.command("list")(list_command)
 app.command("state")(state_command)
+app.command("compliance-report")(compliance_report_command)
 
 
 @app.command()
