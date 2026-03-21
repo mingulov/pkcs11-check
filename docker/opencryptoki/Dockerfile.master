@@ -4,7 +4,7 @@
 FROM fedora:44 AS builder
 
 RUN dnf -y install git gcc gcc-c++ make automake autoconf autoconf-archive libtool \
-    openssl-devel sqlite-devel trousers-devel \
+    openssl-devel sqlite-devel trousers-devel libcap-devel \
     bison flex \
     && dnf clean all
 
