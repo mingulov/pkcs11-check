@@ -17,7 +17,7 @@ from pkcs11.exceptions import KeySizeRange, PKCS11Error
 from pkcs11_check.testcases.conftest import has_mechanism
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
-pytestmark = [pytest.mark.kat]
+pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
 if not ACVP_AVAILABLE:
     pytest.skip(

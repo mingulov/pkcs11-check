@@ -24,7 +24,7 @@ from pkcs11.exceptions import PKCS11Error
 from pkcs11_check.testcases.conftest import has_mechanism
 from pkcs11_check.testcases.data import CCTV_DIR
 
-pytestmark = [pytest.mark.interop, pytest.mark.security]
+pytestmark = [pytest.mark.interop, pytest.mark.security, pytest.mark.cctv]
 
 _VECTORS_FILE = CCTV_DIR / "ed25519" / "ed25519vectors.json"
 

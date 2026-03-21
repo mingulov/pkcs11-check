@@ -25,7 +25,7 @@ from pkcs11.util.ec import encode_named_curve_parameters
 
 from pkcs11_check.testcases.conftest import has_mechanism
 
-pytestmark = pytest.mark.kat
+pytestmark = [pytest.mark.kat, pytest.mark.cctv]
 
 # --- RFC 6979 / CCTV P-256 rejection-sampling vector ---
 # Private key integer d (big-endian, 32 bytes)

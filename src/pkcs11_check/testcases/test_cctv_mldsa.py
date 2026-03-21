@@ -25,7 +25,7 @@ from pkcs11.exceptions import FunctionFailed, MechanismInvalid
 from pkcs11_check.testcases.conftest import has_mechanism
 from pkcs11_check.testcases.data import CCTV_DIR
 
-pytestmark = [pytest.mark.pqc, pytest.mark.requires_v32, pytest.mark.kat]
+pytestmark = [pytest.mark.pqc, pytest.mark.requires_v32, pytest.mark.kat, pytest.mark.cctv]
 
 _BENCHMARK_DIR = CCTV_DIR / "ML-DSA" / "benchmark"
 

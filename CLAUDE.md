@@ -19,10 +19,16 @@ CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pyte
 ```bash
 # Local builds (preferred for fast iteration)
 bash local-builds/build.sh kryoptic           # build token
-bash local-builds/test.sh kryoptic            # run full suite (~1 min)
+bash local-builds/test.sh kryoptic            # run full suite (~5 min)
 bash local-builds/test.sh kryoptic -k test_encrypt -v  # specific tests
 bash local-builds/test.sh softhsm2            # system SoftHSM2
 bash local-builds/reset.sh kryoptic           # reset token data
+
+# Test profiles (use -m to select)
+bash local-builds/test.sh softhsm2 -m smoke                              # 27 tests, ~5s
+bash local-builds/test.sh softhsm2 -m "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
+bash local-builds/test.sh softhsm2 -m "wycheproof or acvp or cctv"       # ~72K vectors only
+bash local-builds/test.sh softhsm2                                        # full: ~75K tests, ~5min
 
 # Standard commands
 uv run pkcs11-check version              # check CLI works

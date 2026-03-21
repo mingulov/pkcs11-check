@@ -19,7 +19,7 @@ from pkcs11.exceptions import DataInvalid, PKCS11Error, SignatureLenRange
 from pkcs11_check.testcases.conftest import has_mechanism
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
-pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.acvp, pytest.mark.requires_v32]
 
 if not ACVP_AVAILABLE:
     pytest.skip(
