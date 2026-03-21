@@ -1,0 +1,61 @@
+# OpenCryptoki master — latest development branch (built from source)
+# IBM's PKCS#11 implementation with SWToken backend
+
+FROM fedora:44 AS builder
+
+RUN dnf -y install git gcc gcc-c++ make automake autoconf autoconf-archive libtool \
+    openssl-devel sqlite-devel trousers-devel \
+    bison flex \
+    && dnf clean all
+
+RUN git clone --depth 1 https://github.com/opencryptoki/opencryptoki.git /build/opencryptoki
+WORKDIR /build/opencryptoki
+RUN sh bootstrap.sh && \
+    ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+    --enable-swtok --disable-icatok --disable-ccatok --disable-ep11tok \
+    --disable-tpmtok --disable-icsftok --disable-p11sak && \
+    make -j$(nproc) && \
+    make DESTDIR=/install install
+
+# ---------- runtime ----------
+FROM fedora:44
+
+RUN dnf -y install python3.12 python3.12-devel gcc git openssl procps-ng \
+    && dnf clean all
+
+# Copy built opencryptoki
+COPY --from=builder /install/usr /usr
+COPY --from=builder /install/etc /etc
+COPY --from=builder /install/var /var
+
+# OpenCryptoki runtime directories
+RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ \
+    /var/lock/opencryptoki /var/run/opencryptoki && \
+    chmod -R 770 /var/lib/opencryptoki /var/lock/opencryptoki /var/run/opencryptoki && \
+    ldconfig
+
+# Override config to put SW token at slot 0
+RUN printf 'version opencryptoki-3\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
+    > /etc/opencryptoki/opencryptoki.conf
+
+ENV PKCS11_CHECK_MODULE=/usr/lib64/pkcs11/libopencryptoki.so
+ENV PKCS11_CHECK_PIN=1234
+ENV PKCS11_CHECK_PYTHON=python3.12
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+# Install deps first (cached unless pyproject.toml/uv.lock/python-pkcs11 change)
+COPY pyproject.toml uv.lock README.md ./
+COPY python-pkcs11/ python-pkcs11/
+COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
+RUN uv sync --frozen --python python3.12
+
+# Copy test code (changes frequently, does not invalidate deps cache)
+COPY . .
+
+# Add root to pkcs11 group
+RUN groupadd -f pkcs11 && usermod -a -G pkcs11 root
+
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/opencryptoki/run-opencryptoki.sh"]

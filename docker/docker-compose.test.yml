@@ -81,6 +81,16 @@ services:
   # Development branches — bleeding edge, may break
   # ==========================================================
 
+  # OpenCryptoki master branch (built from source)
+  test-opencryptoki-master:
+    <<: *artifacts
+    build:
+      context: ..
+      dockerfile: docker/opencryptoki/Dockerfile.master
+    environment:
+      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki-master
+      PKCS11_CHECK_PIN: "1234"
+
   # NSS main branch (built from source, full PQC)
   test-nss-main:
     <<: *artifacts
@@ -95,7 +105,7 @@ services:
     <<: *artifacts
     build:
       context: ..
-      dockerfile: docker/softhsm2-main/Dockerfile
+      dockerfile: docker/softhsm2/Dockerfile.main
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-main
       PKCS11_CHECK_PIN: "1234"
