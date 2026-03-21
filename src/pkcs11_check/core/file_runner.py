@@ -412,7 +412,6 @@ def write_isolated_json_report(
     path: Path,
     state: FileRunState,
     *,
-    state_file: Path,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Write an aggregated JSON report for an isolated run in unified format."""
@@ -662,13 +661,12 @@ def write_isolated_report(
     config: IsolatedReportConfig,
     state: FileRunState,
     *,
-    state_file: Path,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Write the requested aggregated report format for an isolated run."""
     if config.output_format == "json":
         write_isolated_json_report(
-            config.output_path, state, state_file=state_file,
+            config.output_path, state,
             per_unit_details=per_unit_details,
         )
         return
@@ -1271,7 +1269,7 @@ def run_isolated_pytest_units(
         console.print("[green]Nothing to do[/green] — all isolated units already completed.")
         if report_config is not None:
             write_isolated_report(
-                report_config, state, state_file=state_file,
+                report_config, state,
                 per_unit_details={},
             )
         return 0
@@ -1519,7 +1517,7 @@ def run_isolated_pytest_units(
     finally:
         if report_config is not None:
             write_isolated_report(
-                report_config, state, state_file=state_file,
+                report_config, state,
                 per_unit_details=per_unit_details,
             )
 

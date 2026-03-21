@@ -1192,7 +1192,7 @@ def test_write_isolated_json_report_unified_format(tmp_path: Path) -> None:
     }
     report_path = tmp_path / "results.json"
     write_isolated_json_report(
-        report_path, state, state_file=tmp_path / "state.json",
+        report_path, state,
         per_unit_details=per_unit_details,
     )
 
@@ -1262,7 +1262,7 @@ def test_write_isolated_json_report_groups_test_units_by_file(tmp_path: Path) ->
     }
     report_path = tmp_path / "results.json"
     write_isolated_json_report(
-        report_path, state, state_file=tmp_path / "state.json",
+        report_path, state,
         per_unit_details=per_unit_details,
     )
 
