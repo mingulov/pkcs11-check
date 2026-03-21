@@ -18,6 +18,7 @@ pytestmark = pytest.mark.security
 class TestStaleSessionHandles:
     """Reuse closed session handle — must get error, not crash (task 7.7)."""
 
+    @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
     def test_find_after_close(self, p11_module: Any, p11_config: Any) -> None:
         """C_FindObjects on closed session must fail cleanly."""
         token = p11_module.get_token()
