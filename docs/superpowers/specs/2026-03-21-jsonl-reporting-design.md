@@ -55,18 +55,45 @@ Each line is a JSON object with `$report_type`. Relevant types:
 Key fields per TestReport (when=call):
 - `nodeid`, `outcome`, `duration`, `start`, `stop`
 - `wasxfail` — direct xfail reason string (only on xfailed/xpassed tests)
-- `longrepr` — structured: `{reprcrash, reprtraceback, sections, chain}`
+- `longrepr` — structured dict `{reprcrash, reprtraceback, sections, chain}` for failures; string for skips; `None` for passes
 - `sections` — `[["Captured stdout call", "..."], ["Captured stderr call", "..."]]`
 - `location` — `[filename, lineno, testname]`
 - `keywords` — `{"marker_name": 1, ...}`
 - `user_properties` — custom properties from `record_property`
+
+### Outcome mapping (CRITICAL)
+
+pytest-reportlog serializes pytest's internal outcome values, which differ from our unified format. `_read_jsonl_results()` MUST perform this mapping:
+
+| Raw JSONL `outcome` | `wasxfail` present? | Unified `outcome` | Notes |
+|---------------------|--------------------|--------------------|-------|
+| `"passed"` | No | `"passed"` | Normal pass |
+| `"passed"` | Yes | `"xpassed"` | Expected failure unexpectedly passed |
+| `"failed"` | No | `"failed"` | Normal failure |
+| `"failed"` | Yes (strict xfail) | `"failed"` | Strict xfail that passed = failure |
+| `"skipped"` | No | `"skipped"` | Normal skip |
+| `"skipped"` | Yes | `"xfailed"` | Expected failure that failed as expected |
+
+Source: `_pytest/skipping.py` lines 286-311. Without this mapping, all xfailed tests would be counted as `skipped` and all xpassed as `passed`.
+
+### longrepr handling
+
+`longrepr` in the JSONL can be:
+- **A dict** `{reprcrash: {message, path, lineno}, reprtraceback: {reprentries: [...]}, sections: [...], chain: [...]}` — for failures and errors
+- **A string** — for skips and xfails (often a tuple repr like `('path', lineno, 'reason')`)
+- **`null`/absent** — for passes
+
+`_read_jsonl_results()` must flatten dict longrepr to a string for `results.json`:
+- Extract `reprcrash.message` as the summary
+- Concatenate `reprtraceback` entries for full traceback text
+- Store as a string in the unified format
 
 ### Handling different `when` phases
 
 - **`when=call`** — primary source of test outcome, duration, wasxfail, longrepr
 - **`when=setup` with `outcome=error`** — fixture failure; count as `error`, not `failed`. If a session-scoped fixture fails, many tests get `setup/error` — deduplicate by reporting the fixture error once, then count remaining as `error` in counts only
 - **`when=setup` with `outcome=skipped`** — test skipped during setup (e.g., `pytest.skip()` in fixture). No `when=call` record follows. Count as `skipped`
-- **`when=teardown`** — ignore for outcome determination; only used to confirm test completion
+- **`when=teardown`** — ignore for outcome determination; only used to confirm test completion for crash culprit identification
 
 ### CollectReport handling
 
@@ -89,6 +116,8 @@ Key fields per TestReport (when=call):
   "stderr": "captured stderr..."
 }
 ```
+
+Note: `outcome` is the MAPPED value (`"xfailed"`), not the raw JSONL value (`"skipped"`).
 
 ### Inclusion policy for results.json `tests` array
 
@@ -132,14 +161,25 @@ Uses **JSONL event order** (not collection order — tests may be reordered by p
 1. Scan JSONL for all `TestReport` entries
 2. Build per-nodeid state: has `setup`? has `call`? has `teardown`?
 3. Crash culprit = the nodeid that has `setup` started but no `teardown` completed
-4. If no such nodeid exists (crash during collection or between tests), fall back to: first nodeid from `collect_pytest_nodeids` that has no `TestReport` at all
+4. If no such nodeid exists (crash during collection or between tests), fall back to: first nodeid from `collect_pytest_nodeids` that has no `TestReport` at all. This collection fallback runs at most ONCE and is cached for subsequent iterations.
 
 ### Exit conditions
 
 - File passes → done
 - No tests remaining → done (all crashed)
-- Max iterations reached (`max_deselect_iterations`, default 10) → record remaining as "unknown" and stop. This prevents infinite loops if culprit identification is wrong (e.g., crash is environmental, not test-specific)
+- Max iterations reached (`max_deselect_iterations`, hardcoded 10) → escalate remaining tests to per-test isolation via `_escalate_current_file()` (existing behavior as final fallback). The `"escalated"` status is preserved for this case.
 - Collection error (`CollectReport` with `outcome=error`, no `TestReport` entries) → do NOT retry, record as error
+
+### State persistence during iterative deselect
+
+Each completed iteration's results are saved to `state.json` immediately. The deselect set (completed nodeids + crash culprits) is accumulated in memory during the loop. If the runner is interrupted mid-iteration:
+- All prior iterations' results are in `state.json`
+- The current iteration's partial results are in the JSONL temp file
+- On `--resume`, the unit is re-attempted from scratch (iteration 1) but already-recorded results from state.json prevent duplicates via `_RESUME_COMPLETE_STATUSES`
+
+This means interrupted iterations may re-run some tests, but it is safe because:
+- Tests use `try/finally` for cleanup (project convention)
+- The deselect set from prior iterations is NOT persisted — it is rebuilt from state.json results on resume
 
 ### Merging results across iterations
 
@@ -150,13 +190,28 @@ Each iteration's JSONL contains results for the tests that ran. The runner merge
 
 All merged into one unit in `results.json` with combined counts and the full `tests` array.
 
-### max_crashes_per_test (renamed from max_crashes_per_file)
+### max_crashes_per_file (KEPT, not renamed)
 
-Limits how many times a single crashing test is retried in its confirmation run (default: 1 — just confirm the crash once). Does NOT limit how many tests in a file can crash. The CLI flag `--max-crashes-per-file` is renamed to `--max-crashes-per-test`; the old name is kept as a deprecated alias for backward compatibility. `PKCS11_CHECK_MAX_CRASHES_PER_FILE` env var also kept as alias.
+Keep the existing `max_crashes_per_file` flag with its current semantics: limits how many different tests in one file can crash before the iterative deselect loop gives up and escalates remaining tests to per-test isolation. Default stays 3.
+
+This is distinct from `max_deselect_iterations` (hardcoded 10) which is a safety cap on the loop itself.
 
 ### OS command-line length limits
 
-With many deselected tests, `--deselect=<nodeid>` args accumulate. For parametrized tests with long nodeids, this could approach OS limits (~2MB on Linux). Guard: if total deselect arg length exceeds 100KB, write nodeids to a temp file and use `--deselect-file=<path>` instead (or fall back to per-test isolation if pytest doesn't support `--deselect-file`).
+With many deselected tests, `--deselect=<nodeid>` args accumulate. For parametrized tests with long nodeids (e.g., Wycheproof), this could approach OS limits.
+
+Guard: if total deselect arg length exceeds 100KB, stop the iterative deselect loop and escalate remaining tests to per-test isolation. pytest does not support `--deselect-file`, so this is the only safe fallback.
+
+### Token state across iterations
+
+PKCS#11 token objects created by tests in iteration 1 remain on the token when iteration 2 runs (subprocesses share the token database). This can cause:
+- Leaked objects from crashed tests (no `finally` cleanup ran)
+- Unexpected objects visible to iteration 2 tests
+
+This is acceptable because:
+- Project convention: tests use `try/finally obj.destroy()`
+- Crashed tests will have leaked objects regardless of recovery strategy
+- The alternative (per-test isolation) has the same token state across subprocess boundaries
 
 ## SIGSEGV and JSONL flush behavior
 
@@ -173,26 +228,26 @@ artifacts/<provider>/
   policy.json      # isolation policy (unchanged)
 ```
 
-The `report.jsonl` concatenation uses a temp file + atomic rename to prevent partial artifacts on interruption.
+The `report.jsonl` concatenation streams per-unit JSONL files sequentially into a temp file, then does an atomic rename. No in-memory accumulation of the full content.
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `core/file_runner.py` | Replace `--json-report` with `--report-log` in subprocess cmd. Strip `--report-log` in `_collection_args()`. New `_read_jsonl_results()` replaces `_extract_per_unit_test_detail()`. New `_identify_crash_culprit()` from JSONL. Rewrite crash handler to iterative-deselect loop. Update `write_isolated_json_report()` to build from JSONL data. Remove `_extract_xfail_reason()`, `_deselect_args_for_crash()`, `postprocess_json_report_to_unified()`. Skip JSONL for test-level units (same perf guard as current json-report). |
+| `core/file_runner.py` | Replace `--json-report` with `--report-log` in subprocess cmd. Strip `--report-log` in `_collection_args()`. New `_read_jsonl_results()` with outcome mapping (skipped+wasxfail→xfailed, passed+wasxfail→xpassed) and longrepr flattening (dict→string). New `_identify_crash_culprit()` from JSONL. Rewrite crash handler to iterative-deselect loop with `max_crashes_per_file` exit + `max_deselect_iterations` safety cap + 100KB deselect arg guard. Keep `_escalate_current_file()` as final fallback. Update `write_isolated_json_report()` to build from JSONL data. Remove `_extract_xfail_reason()`, `_deselect_args_for_crash()`, `postprocess_json_report_to_unified()`. Skip JSONL for test-level units (same perf guard as current json-report). |
 | `plugin.py` | Conditionally register `--report-log` ONLY when `--p11-module` is set AND output is json. Must not affect meta-tests or external plugin consumers. |
-| `cli/test_cmd.py` | Remove `--json-report` injection from `_build_pytest_args`. Pass JSONL artifact path through to runner. Concatenate per-unit JONLs into final `report.jsonl`. |
+| `cli/test_cmd.py` | Remove `--json-report` injection from `_build_pytest_args`. Pass JSONL artifact path through to runner. Concatenate per-unit JONLs into final `report.jsonl` (streaming, atomic rename). |
 | `compliance_report.py` | Document that only unified format (`kind=test-run`) is supported. Raw json-report format (format 2 in `_parse_test_results`) will break when pytest-json-report is removed — this is acceptable (no known external consumers). |
 | `pyproject.toml` | Promote `pytest-reportlog` from dev to main dependencies. Remove `pytest-json-report`. |
-| `docker/run-pkcs11-check.sh` | Keep `PKCS11_CHECK_MAX_CRASHES_PER_FILE` as alias for renamed flag. |
-| `tests/test_file_runner.py` | Update mocks: write JSONL files instead of json-report. Add tests for iterative deselect crash recovery. Update fingerprint tests (args change). |
+| `docker/run-pkcs11-check.sh` | No changes needed (uses `PKCS11_CHECK_MAX_CRASHES_PER_FILE` which stays). |
+| `tests/test_file_runner.py` | Update mocks: write JSONL files instead of json-report. Add tests for: outcome mapping (xfailed/xpassed/strict-xfail), structured longrepr flattening, iterative deselect with multiple crashes, CollectReport errors (no retry), setup-skip (no call record), fixture error deduplication, resume after interrupted iteration, 100KB deselect guard, `--report-log` already in user args. |
 
 ## Guards
 
 - **JSONL missing** (crash during collection before any test runs, or crash during setup before first test): fall back to returncode-based status, no per-test data. If `CollectReport` with `outcome=error` exists, record collection error.
 - **JSONL truncated** (crash mid-write): skip lines that fail `json.loads`. At most one line lost due to line-buffered I/O.
 - **Temp file cleanup**: always delete per-unit JSONL temps after reading, even on crash (use try/finally).
-- **75K vectors**: `report.jsonl` for 75K tests is ~50MB (passing tests have ~200 bytes/line × 3 phases). `results.json` stays compact. Acceptable for artifact storage.
+- **75K vectors**: `report.jsonl` for 75K tests is ~100MB (passing tests have ~500 bytes/line × 3 phases). `results.json` stays compact. Acceptable for artifact storage.
 - **`--isolation none` + `--report-log`**: if user already passed `--report-log` via extra args, don't inject a second one.
 - **`--isolation test`**: do NOT create JSONL temp files (75K files unacceptable). Synthesize per-test results from `FileRunResult` status/returncode.
 - **Fixture errors**: session-scoped fixture failure produces N duplicate `TestReport(when=setup, outcome=error)` entries. Deduplicate: report fixture error once, count remaining as `error` in counts only.
@@ -201,26 +256,39 @@ The `report.jsonl` concatenation uses a temp file + atomic rename to prevent par
 
 ## Migration Phases
 
-**Critical ordering: Phase 4 must complete before or simultaneously with Phase 3.** Removing pytest-json-report before JSONL is active for `--isolation none` would break that mode.
+1. **Phase 1**: Add `--report-log` injection alongside existing `--json-report` (both active). New `_read_jsonl_results()` with outcome mapping and longrepr flattening. Promote `pytest-reportlog` to main deps. Strip `--report-log` from `_collection_args()`.
+2. **Phase 2**: Iterative deselect crash recovery using JSONL (replaces `_deselect_args_for_crash` and single-retry approach). Keep `_escalate_current_file()` as final fallback when `max_crashes_per_file` or `max_deselect_iterations` or 100KB deselect limit is reached.
+3. **Phase 3**: Activate JSONL for `--isolation none` via conditional `plugin.py` registration. Replace `postprocess_json_report_to_unified` with JSONL aggregation.
+4. **Phase 4**: Remove `pytest-json-report` dependency and all old extraction code. Remove json-report injection from `_build_pytest_args`.
+5. **Phase 5**: Write `report.jsonl` artifact (streaming concatenation, atomic rename).
 
-1. **Phase 1**: Add `--report-log` injection alongside existing `--json-report` (both active). New `_read_jsonl_results()`. Promote `pytest-reportlog` to main deps. Strip `--report-log` from `_collection_args()`.
-2. **Phase 2**: Iterative deselect crash recovery using JSONL (replaces `_deselect_args_for_crash` and per-test escalation). Add `max_deselect_iterations`.
-3. **Phase 4** (before 3!): Activate JSONL for `--isolation none` via conditional `plugin.py` registration. Replace `postprocess_json_report_to_unified` with JSONL aggregation.
-4. **Phase 3**: Remove `pytest-json-report` dependency and all old extraction code. Remove json-report injection from `_build_pytest_args`.
-5. **Phase 5**: Write `report.jsonl` artifact. Atomic concatenation. Rename `max_crashes_per_file` → `max_crashes_per_test` with backward-compatible alias.
+## Required test cases
+
+1. **Outcome mapping**: xfailed (`skipped`+`wasxfail`→`xfailed`), xpassed (`passed`+`wasxfail`→`xpassed`), strict xfail (`failed`+`wasxfail`→`failed`), regular skip, regular pass, regular fail
+2. **longrepr flattening**: dict longrepr (with reprcrash/reprtraceback) → string, string longrepr → passthrough, null longrepr → omit
+3. **Iterative deselect**: 2 crashes in same file, verify 3 subprocesses (file+crash1+retry) not 200
+4. **CollectReport error**: import error → no retry, record error
+5. **Setup skip**: test skipped in fixture → counted as skipped, not crash culprit
+6. **Fixture error dedup**: session fixture failure → 1 error detail + N-1 count-only
+7. **100KB deselect guard**: large parametrized file → fallback to per-test isolation
+8. **`--report-log` dedup**: user passes `--report-log` in extra args → don't inject second
+9. **Resume after crash iteration**: interrupt mid-iteration → resume works correctly
+10. **Confirmation run passes**: crash culprit passes in isolation → record as "passed", still deselect
 
 ## Implementation instruction
 
 ```
 Read docs/superpowers/specs/2026-03-21-jsonl-reporting-design.md
 and implement in phases:
-- Phase 1: Add --report-log to subprocess cmd, new _read_jsonl_results(),
-  promote pytest-reportlog to main deps, strip from _collection_args.
-  Keep --json-report as fallback.
+- Phase 1: Add --report-log to subprocess cmd, new _read_jsonl_results()
+  with outcome mapping and longrepr flattening, promote pytest-reportlog
+  to main deps, strip from _collection_args. Keep --json-report as fallback.
 - Phase 2: Iterative deselect crash recovery using JSONL.
   Crash culprit from JSONL event order (not collection order).
   Confirmation run per crasher. Deselect ALL completed + crashers on retry.
-- Phase 4: Activate for --isolation none via conditional plugin.py.
-- Phase 3: Remove pytest-json-report, remove old extraction code.
-- Phase 5: Write report.jsonl artifact. Rename max_crashes flag with alias.
+  max_crashes_per_file + max_deselect_iterations + 100KB deselect guard.
+  Keep _escalate_current_file as final fallback.
+- Phase 3: Activate for --isolation none via conditional plugin.py.
+- Phase 4: Remove pytest-json-report, remove old extraction code.
+- Phase 5: Write report.jsonl artifact (streaming concat, atomic rename).
 ```
