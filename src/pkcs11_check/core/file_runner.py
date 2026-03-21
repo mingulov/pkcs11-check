@@ -946,6 +946,181 @@ def _extract_xfail_reason(longrepr: str) -> str:
     return ""
 
 
+def _flatten_longrepr(longrepr: Any) -> str:
+    """Flatten a JSONL longrepr value to a plain string.
+
+    longrepr can be a dict (with reprcrash/reprtraceback), a string, or None.
+    """
+    if longrepr is None:
+        return ""
+    if isinstance(longrepr, str):
+        return longrepr
+    if isinstance(longrepr, dict):
+        parts: list[str] = []
+        # Extract crash summary
+        reprcrash = longrepr.get("reprcrash")
+        if isinstance(reprcrash, dict):
+            msg = reprcrash.get("message", "")
+            if msg:
+                parts.append(msg)
+        # Concatenate traceback entries
+        reprtraceback = longrepr.get("reprtraceback")
+        if isinstance(reprtraceback, dict):
+            for entry in reprtraceback.get("reprentries", []):
+                if isinstance(entry, dict):
+                    lines = entry.get("lines", [])
+                    if lines:
+                        parts.append("\n".join(lines))
+        return "\n".join(parts) if parts else ""
+    return str(longrepr)
+
+
+def _map_outcome(raw_outcome: str, wasxfail: str | None) -> str:
+    """Map a raw pytest-reportlog outcome to the unified outcome value."""
+    if raw_outcome == "passed" and wasxfail is not None:
+        return "xpassed"
+    if raw_outcome == "skipped" and wasxfail is not None:
+        return "xfailed"
+    # "failed" stays "failed" regardless of wasxfail (strict xfail)
+    return raw_outcome
+
+
+def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
+    """Read a pytest-reportlog JSONL file and return per-test outcomes.
+
+    Returns ``{"counts": {...}, "tests": [...]}`` where ``tests`` contains
+    only non-passing entries (failed, xfailed, xpassed, error).
+    Returns ``None`` if the file is missing or empty.
+    """
+    try:
+        text = jsonl_path.read_text()
+    except (FileNotFoundError, OSError):
+        return None
+    if not text.strip():
+        return None
+
+    counts: dict[str, int] = {
+        "passed": 0, "failed": 0, "skipped": 0,
+        "xfailed": 0, "xpassed": 0, "error": 0,
+    }
+    non_passing: list[dict[str, Any]] = []
+    # Track nodeids that had a when=call record, so we know if a setup
+    # skip/error is standalone.
+    seen_call: set[str] = set()
+    # First pass: collect when=call records; second pass not needed if we
+    # process in order and handle setup records that lack a following call.
+    # Instead, buffer setup skip/error and resolve after full scan.
+    setup_events: list[dict[str, Any]] = []
+    call_events: list[dict[str, Any]] = []
+    collect_errors: list[dict[str, Any]] = []
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # skip truncated lines
+
+        report_type = rec.get("$report_type", "TestReport")
+        when = rec.get("when", "")
+        outcome = rec.get("outcome", "")
+        nodeid = rec.get("nodeid", "")
+
+        # CollectReport handling
+        if report_type == "CollectReport":
+            if outcome == "passed":
+                continue  # skip successful collection
+            # Collection error (import/syntax error)
+            collect_errors.append(rec)
+            continue
+
+        # TestReport handling
+        if when == "call":
+            seen_call.add(nodeid)
+            call_events.append(rec)
+        elif when == "setup" and outcome in ("skipped", "failed", "error"):
+            setup_events.append(rec)
+        # when=teardown is ignored
+
+    # Process call events (primary source of truth)
+    for rec in call_events:
+        nodeid = rec.get("nodeid", "")
+        raw_outcome = rec.get("outcome", "passed")
+        wasxfail = rec.get("wasxfail")
+        mapped = _map_outcome(raw_outcome, wasxfail)
+        counts[mapped] = counts.get(mapped, 0) + 1
+
+        if mapped in ("passed", "skipped"):
+            continue
+
+        entry: dict[str, Any] = {
+            "nodeid": nodeid,
+            "outcome": mapped,
+            "duration": rec.get("duration", 0.0),
+        }
+        if rec.get("start") is not None:
+            entry["start"] = rec["start"]
+        if wasxfail is not None:
+            entry["wasxfail"] = wasxfail
+        longrepr = rec.get("longrepr")
+        flat = _flatten_longrepr(longrepr)
+        if flat:
+            entry["longrepr"] = flat
+        if rec.get("location"):
+            entry["location"] = rec["location"]
+        # Extract stdout/stderr from sections
+        for section in rec.get("sections", []):
+            if isinstance(section, list) and len(section) >= 2:
+                name, content = section[0], section[1]
+                if "stdout" in name.lower():
+                    entry["stdout"] = content
+                elif "stderr" in name.lower():
+                    entry["stderr"] = content
+        non_passing.append(entry)
+
+    # Process setup events for tests that never got a call record
+    for rec in setup_events:
+        nodeid = rec.get("nodeid", "")
+        if nodeid in seen_call:
+            continue  # call record already handled this test
+        raw_outcome = rec.get("outcome", "")
+        if raw_outcome == "skipped":
+            mapped = "skipped"
+        else:
+            mapped = "error"
+        counts[mapped] = counts.get(mapped, 0) + 1
+
+        if mapped == "skipped":
+            continue  # skipped tests excluded from non-passing list per spec
+
+        entry = {
+            "nodeid": nodeid,
+            "outcome": mapped,
+            "duration": rec.get("duration", 0.0),
+        }
+        flat = _flatten_longrepr(rec.get("longrepr"))
+        if flat:
+            entry["longrepr"] = flat
+        non_passing.append(entry)
+
+    # Process collect errors
+    for rec in collect_errors:
+        counts["error"] = counts.get("error", 0) + 1
+        entry = {
+            "nodeid": rec.get("nodeid", ""),
+            "outcome": "error",
+            "duration": rec.get("duration", 0.0),
+        }
+        flat = _flatten_longrepr(rec.get("longrepr"))
+        if flat:
+            entry["longrepr"] = flat
+        non_passing.append(entry)
+
+    return {"counts": counts, "tests": non_passing}
+
+
 def _extract_per_unit_test_detail(json_path: Path) -> dict[str, Any] | None:
     """Read a pytest-json-report file and return per-test outcomes.
 

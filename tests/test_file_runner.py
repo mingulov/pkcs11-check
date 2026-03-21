@@ -7,18 +7,20 @@ import subprocess
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from rich.console import Console
 
-from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core import file_runner as file_runner_mod
+from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.file_runner import (
     BackendIsolationPolicy,
     FileRunResult,
     FileRunState,
     IsolatedReportConfig,
     _extract_per_unit_test_detail,
+    _read_jsonl_results,
     build_policy_fingerprint,
     build_state_fingerprint,
     collect_pytest_nodeids,
@@ -1394,3 +1396,204 @@ def test_postprocess_json_report_to_unified(tmp_path: Path) -> None:
     assert unit_b["tests"][0]["stdout"] == "fail debug\n"
     assert unit_b["tests"][1]["wasxfail"] == "known bug"
     assert unit_b["tests"][1]["stderr"] == "xfail log\n"
+
+
+# ---------------------------------------------------------------------------
+# _read_jsonl_results / _map_outcome / _flatten_longrepr
+# ---------------------------------------------------------------------------
+
+
+def _jsonl_line(
+    *,
+    nodeid: str = "test_mod.py::test_x",
+    when: str = "call",
+    outcome: str = "passed",
+    duration: float = 0.1,
+    longrepr: Any = None,
+    wasxfail: str | None = None,
+    sections: list[list[str]] | None = None,
+    location: list[Any] | None = None,
+    start: float | None = None,
+    report_type: str = "TestReport",
+) -> str:
+    """Build one JSONL line mimicking pytest-reportlog output."""
+    rec: dict[str, Any] = {
+        "$report_type": report_type,
+        "nodeid": nodeid,
+        "when": when,
+        "outcome": outcome,
+        "duration": duration,
+    }
+    if longrepr is not None:
+        rec["longrepr"] = longrepr
+    if wasxfail is not None:
+        rec["wasxfail"] = wasxfail
+    if sections is not None:
+        rec["sections"] = sections
+    if location is not None:
+        rec["location"] = location
+    if start is not None:
+        rec["start"] = start
+    return json.dumps(rec)
+
+
+def test_read_jsonl_results_maps_outcomes(tmp_path: Path) -> None:
+    """All 6 outcome mappings are correctly applied."""
+
+
+    lines = [
+        # 1. passed (no wasxfail) -> passed
+        _jsonl_line(nodeid="t::a", outcome="passed"),
+        # 2. passed + wasxfail -> xpassed
+        _jsonl_line(nodeid="t::b", outcome="passed", wasxfail="expected fail"),
+        # 3. failed (no wasxfail) -> failed
+        _jsonl_line(nodeid="t::c", outcome="failed", longrepr="assert False"),
+        # 4. failed + wasxfail (strict xfail) -> failed
+        _jsonl_line(nodeid="t::d", outcome="failed", wasxfail="strict xfail",
+                    longrepr="strict xfail"),
+        # 5. skipped (no wasxfail) -> skipped
+        _jsonl_line(nodeid="t::e", outcome="skipped", longrepr="reason"),
+        # 6. skipped + wasxfail -> xfailed
+        _jsonl_line(nodeid="t::f", outcome="skipped", wasxfail="known bug",
+                    longrepr="known bug"),
+    ]
+    p = tmp_path / "report.jsonl"
+    p.write_text("\n".join(lines) + "\n")
+
+    result = _read_jsonl_results(p)
+    assert result is not None
+    counts = result["counts"]
+    assert counts["passed"] == 1
+    assert counts["xpassed"] == 1
+    assert counts["failed"] == 2  # failed + strict xfail both map to failed
+    assert counts["skipped"] == 1
+    assert counts["xfailed"] == 1
+
+    # Check non-passing entries are present
+    nodeids_in_tests = {t["nodeid"] for t in result["tests"]}
+    assert "t::a" not in nodeids_in_tests  # passed is excluded
+    assert "t::b" in nodeids_in_tests      # xpassed included
+    assert "t::c" in nodeids_in_tests      # failed included
+    assert "t::d" in nodeids_in_tests      # failed (strict xfail) included
+    assert "t::e" not in nodeids_in_tests  # skipped excluded
+    assert "t::f" in nodeids_in_tests      # xfailed included
+
+    # Verify mapped outcome values
+    by_nodeid = {t["nodeid"]: t for t in result["tests"]}
+    assert by_nodeid["t::b"]["outcome"] == "xpassed"
+    assert by_nodeid["t::c"]["outcome"] == "failed"
+    assert by_nodeid["t::d"]["outcome"] == "failed"
+    assert by_nodeid["t::f"]["outcome"] == "xfailed"
+
+
+def test_read_jsonl_results_flattens_longrepr(tmp_path: Path) -> None:
+    """Dict longrepr is flattened; string kept; None/absent handled."""
+
+
+    dict_longrepr: dict[str, Any] = {
+        "reprcrash": {"message": "AssertionError: bad", "path": "test.py", "lineno": 42},
+        "reprtraceback": {
+            "reprentries": [
+                {
+                    "lines": ["def test_x():", "    assert False"],
+                    "reprfileloc": {"path": "t.py", "lineno": 10},
+                },
+                {"lines": ["E   AssertionError"], "reprfileloc": {"path": "t.py", "lineno": 11}},
+            ],
+        },
+    }
+    lines = [
+        # dict longrepr
+        _jsonl_line(nodeid="t::a", outcome="failed", longrepr=dict_longrepr),
+        # string longrepr
+        _jsonl_line(nodeid="t::b", outcome="failed", longrepr="simple failure msg"),
+        # no longrepr (passed)
+        _jsonl_line(nodeid="t::c", outcome="passed"),
+    ]
+    p = tmp_path / "report.jsonl"
+    p.write_text("\n".join(lines) + "\n")
+
+    result = _read_jsonl_results(p)
+    assert result is not None
+    by_nodeid = {t["nodeid"]: t for t in result["tests"]}
+
+    # Dict longrepr should be flattened to string containing the crash message
+    a_repr = by_nodeid["t::a"]["longrepr"]
+    assert isinstance(a_repr, str)
+    assert "AssertionError: bad" in a_repr
+
+    # String longrepr preserved
+    assert by_nodeid["t::b"]["longrepr"] == "simple failure msg"
+
+    # Passed test not in non-passing list
+    assert "t::c" not in by_nodeid
+
+
+def test_read_jsonl_results_handles_setup_skip(tmp_path: Path) -> None:
+    """A test skipped during setup (no call phase) is counted as skipped."""
+
+
+    lines = [
+        _jsonl_line(nodeid="t::skip_in_fixture", when="setup",
+                    outcome="skipped", longrepr="fixture skip reason"),
+        # No when=call line follows for this test
+    ]
+    p = tmp_path / "report.jsonl"
+    p.write_text("\n".join(lines) + "\n")
+
+    result = _read_jsonl_results(p)
+    assert result is not None
+    assert result["counts"]["skipped"] == 1
+    assert result["counts"]["passed"] == 0
+
+
+def test_read_jsonl_results_handles_collect_error(tmp_path: Path) -> None:
+    """CollectReport with outcome=error is recorded as an error."""
+
+
+    lines = [
+        _jsonl_line(
+            nodeid="test_broken.py",
+            when="collect",
+            outcome="failed",
+            report_type="CollectReport",
+            longrepr="SyntaxError: invalid syntax",
+        ),
+    ]
+    p = tmp_path / "report.jsonl"
+    p.write_text("\n".join(lines) + "\n")
+
+    result = _read_jsonl_results(p)
+    assert result is not None
+    assert result["counts"]["error"] == 1
+    assert len(result["tests"]) == 1
+    assert result["tests"][0]["outcome"] == "error"
+
+
+def test_read_jsonl_results_returns_none_for_missing(tmp_path: Path) -> None:
+    """Missing file returns None."""
+
+
+    result = _read_jsonl_results(tmp_path / "does_not_exist.jsonl")
+    assert result is None
+
+
+def test_read_jsonl_results_skips_truncated_lines(tmp_path: Path) -> None:
+    """Truncated/invalid JSON lines are skipped without error."""
+
+
+    lines = [
+        _jsonl_line(nodeid="t::good", outcome="passed"),
+        '{"nodeid": "t::truncated", "when": "call", "outcome":',  # truncated
+        _jsonl_line(nodeid="t::also_good", outcome="failed", longrepr="fail"),
+    ]
+    p = tmp_path / "report.jsonl"
+    p.write_text("\n".join(lines) + "\n")
+
+    result = _read_jsonl_results(p)
+    assert result is not None
+    assert result["counts"]["passed"] == 1
+    assert result["counts"]["failed"] == 1
+    # Truncated line should be silently skipped
+    total = sum(result["counts"].values())
+    assert total == 2
