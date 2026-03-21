@@ -110,7 +110,7 @@ services:
       dockerfile: docker/kryoptic-fips/Dockerfile
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic-fips
-      PKCS11_CHECK_PIN: "1234"
+      PKCS11_CHECK_PIN: "12345678"
 
   # ==========================================================
   # Additional implementations

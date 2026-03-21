@@ -2,18 +2,19 @@
 # Uses simo5/openssl kryoptic_ossl40 branch (OpenSSL 4.0 fork)
 # Ref: github.com/parallaxsecond/rust-cryptoki/pull/362
 #
-# STATUS: BROKEN — Kryoptic FIPS self-test (provider.rs:713) panics during
-# C_Initialize in Docker. The statically-linked OpenSSL 4.0 FIPS provider
-# fails module integrity verification. The reference CI (rust-cryptoki #362)
-# runs on Fedora, not Debian-based containers. Needs investigation into
-# OpenSSL 4.0-alpha FIPS self-test requirements in Docker environments.
-# Tracked in: docs/module-issues.md
+# Fedora-based — matches the reference CI environment. Kryoptic FIPS
+# statically links OpenSSL; its self-test requires Fedora runtime.
 
-FROM rust:latest AS builder
+FROM quay.io/fedora/fedora:44 AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git pkg-config libssl-dev clang make perl openssl \
-    && rm -rf /var/lib/apt/lists/*
+# Match the reference CI's package list exactly
+RUN dnf -y install git cargo clang-devel openssl-devel sqlite-devel \
+    'perl(FindBin)' 'perl(lib)' 'perl(File::Compare)' 'perl(File::Copy)' \
+    'perl(bigint)' 'perl(Time::HiRes)' 'perl(IPC::Cmd)' 'perl(Pod::Html)' \
+    'perl(Digest::SHA)' 'perl(Module::Load::Conditional)' 'perl(File::Temp)' \
+    'perl(Test::Harness)' 'perl(Test::More)' 'perl(Math::BigInt)' \
+    'perl(Time::Piece)' zlib-devel sed openssl && \
+    dnf clean all
 
 # Build OpenSSL 4.0 (simo5 fork for Kryoptic FIPS)
 RUN git clone --single-branch --branch kryoptic_ossl40 --depth 1 \
@@ -21,53 +22,51 @@ RUN git clone --single-branch --branch kryoptic_ossl40 --depth 1 \
 WORKDIR /build/openssl
 RUN ./Configure no-docs no-tests && make -j$(nproc)
 
-# Build Kryoptic from main with FIPS+PQC
+# Build Kryoptic from main with FIPS+PQC (per reference CI)
 ENV KRYOPTIC_OPENSSL_SOURCES=/build/openssl
 RUN git clone --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
 WORKDIR /build/kryoptic
 RUN cargo build -vv --no-default-features --features "fips,pqc" 2>&1 | tail -20
 RUN ./misc/hmacify.sh target/debug/libkryoptic_pkcs11.so
 
-FROM python:3.12-slim
+# ---------- runtime ----------
+FROM quay.io/fedora/fedora:44
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git gcc python3-dev libssl-dev opensc \
-    && rm -rf /var/lib/apt/lists/*
+RUN dnf -y install python3.12 python3.12-devel gcc git opensc sqlite-devel && \
+    dnf clean all
 
-# Keep module + OpenSSL at build paths for FIPS integrity verification
-COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so /build/kryoptic/target/debug/
-COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so.hmac /build/kryoptic/target/debug/
-COPY --from=builder /build/openssl/libcrypto.so.4 /build/openssl/libcrypto.so.4
-COPY --from=builder /build/openssl/libssl.so.4 /build/openssl/libssl.so.4
-RUN ln -s /build/kryoptic/target/debug/libkryoptic_pkcs11.so /usr/lib/libkryoptic_pkcs11.so && \
-    ln -s /build/openssl/libcrypto.so.4 /usr/lib/ && \
-    ln -s /build/openssl/libssl.so.4 /usr/lib/ && \
-    ldconfig
+# Copy Kryoptic FIPS module + HMAC file
+COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so /usr/lib64/
+COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so.hmac /usr/lib64/
+RUN ldconfig
 
 RUN mkdir -p /var/lib/kryoptic /etc/kryoptic && \
     printf '[[slots]]\nslot = 1\ndbtype = "sqlite"\ndbargs = "/var/lib/kryoptic/token.sql"\n' \
     > /etc/kryoptic/token.conf
 ENV KRYOPTIC_CONF=/etc/kryoptic/token.conf
 
-# Token init — will fail until FIPS self-test issue is resolved
-RUN LD_LIBRARY_PATH=/usr/lib pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
-    --init-token --label "pkcs11-check" --so-pin 12345678 2>&1 && \
-    LD_LIBRARY_PATH=/usr/lib pkcs11-tool --module /usr/lib/libkryoptic_pkcs11.so \
-    --init-pin --pin 1234 --so-pin 12345678 2>&1 || \
-    echo "WARNING: Token init failed (FIPS self-test issue)"
+# Init token — FIPS mode requires minimum 8-character PIN
+RUN pkcs11-tool --module /usr/lib64/libkryoptic_pkcs11.so \
+    --init-token --label "pkcs11-check" --so-pin 12345678 && \
+    pkcs11-tool --module /usr/lib64/libkryoptic_pkcs11.so \
+    --login --login-type so --so-pin 12345678 \
+    --init-pin --pin 12345678
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
+
+# Install deps first (cached unless pyproject.toml/uv.lock/python-pkcs11 change)
 COPY pyproject.toml uv.lock README.md ./
 COPY python-pkcs11/ python-pkcs11/
 COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
-RUN uv sync --frozen
+RUN uv sync --frozen --python python3.12
 
+# Copy test code (changes frequently, does not invalidate deps cache)
 COPY . .
 
-ENV LD_LIBRARY_PATH=/usr/lib
-ENV PKCS11_CHECK_MODULE=/usr/lib/libkryoptic_pkcs11.so
-ENV PKCS11_CHECK_PIN=1234
+ENV PKCS11_CHECK_MODULE=/usr/lib64/libkryoptic_pkcs11.so
+ENV PKCS11_CHECK_PIN=12345678
+ENV PKCS11_CHECK_PYTHON=python3.12
 
 CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/run-pkcs11-check.sh"]
