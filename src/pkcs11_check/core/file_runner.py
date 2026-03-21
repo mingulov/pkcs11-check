@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import io
+import selectors
 import subprocess
 import sys
 import time
@@ -52,6 +54,8 @@ class FileRunResult:
     status: str
     returncode: int
     duration_s: float
+    stdout: str = ""
+    stderr: str = ""
 
 
 @dataclass
@@ -938,6 +942,62 @@ def _escalate_current_file(
     return additions
 
 
+def _run_subprocess_tee(
+    cmd: list[str],
+    *,
+    env: dict[str, str],
+    timeout: int,
+) -> tuple[int, str, str]:
+    """Run a subprocess with tee-style output: live display AND capture.
+
+    Returns (returncode, captured_stdout, captured_stderr).
+    If the process is killed by a signal, returncode is negative.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    stdout_buf = io.BytesIO()
+    stderr_buf = io.BytesIO()
+
+    sel = selectors.DefaultSelector()
+    if proc.stdout:
+        sel.register(proc.stdout, selectors.EVENT_READ, ("stdout", stdout_buf))
+    if proc.stderr:
+        sel.register(proc.stderr, selectors.EVENT_READ, ("stderr", stderr_buf))
+
+    try:
+        deadline = time.monotonic() + timeout
+        while sel.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            for key, _ in sel.select(timeout=min(remaining, 0.5)):
+                stream = key.fileobj
+                tag, buf = key.data
+                chunk = stream.read1(8192) if hasattr(stream, "read1") else stream.read(8192)  # type: ignore[union-attr]
+                if not chunk:
+                    sel.unregister(stream)
+                    continue
+                buf.write(chunk)
+                # Tee to console
+                target = sys.stdout.buffer if tag == "stdout" else sys.stderr.buffer
+                target.write(chunk)
+                target.flush()
+    finally:
+        sel.close()
+
+    proc.wait()
+    return (
+        proc.returncode,
+        stdout_buf.getvalue().decode("utf-8", errors="replace"),
+        stderr_buf.getvalue().decode("utf-8", errors="replace"),
+    )
+
+
 def run_isolated_pytest_units(
     units: list[str],
     pytest_args: list[str],
@@ -1018,8 +1078,19 @@ def run_isolated_pytest_units(
                     check=False,
                     env=env,
                     timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
                 returncode = completed.returncode
+                captured_stdout = (completed.stdout or b"").decode("utf-8", errors="replace")
+                captured_stderr = (completed.stderr or b"").decode("utf-8", errors="replace")
+                # Tee: display captured output to console
+                if captured_stdout:
+                    sys.stdout.write(captured_stdout)
+                    sys.stdout.flush()
+                if captured_stderr:
+                    sys.stderr.write(captured_stderr)
+                    sys.stderr.flush()
                 status = _status_from_returncode(returncode)
             except subprocess.TimeoutExpired:
                 duration_s = time.monotonic() - start
@@ -1094,11 +1165,15 @@ def run_isolated_pytest_units(
                 continue
 
             duration_s = time.monotonic() - start
+            # Store stdout/stderr only for non-passing results to keep JSON manageable
+            keep_output = status not in ("passed",)
             result = FileRunResult(
                 target=unit,
                 status=status,
                 returncode=returncode,
                 duration_s=duration_s,
+                stdout=captured_stdout if keep_output else "",
+                stderr=captured_stderr if keep_output else "",
             )
             _record_result(state, result)
             save_run_state(state_file, state)

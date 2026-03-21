@@ -379,13 +379,15 @@ def test_run_isolated_pytest_units_records_results_and_stops(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del check, env, timeout
+        del check, env, timeout, stdout, stderr
         calls.append(cmd)
-        return SimpleNamespace(returncode=next(results))
+        return SimpleNamespace(returncode=next(results), stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     state_file = tmp_path / "state.json"
@@ -429,12 +431,14 @@ def test_run_isolated_pytest_units_promotes_crashed_file_in_policy(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del cmd, check, env, timeout
-        return SimpleNamespace(returncode=-11)
+        del cmd, check, env, timeout, stdout, stderr
+        return SimpleNamespace(returncode=-11, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
 
@@ -472,14 +476,16 @@ def test_run_isolated_pytest_units_escalates_crashed_file_in_same_run(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del check, env, timeout
+        del check, env, timeout, stdout, stderr
         unit = cmd[3]
         calls.append(unit)
-        return SimpleNamespace(returncode=-11 if unit == str(target) else 0)
+        return SimpleNamespace(returncode=-11 if unit == str(target) else 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     monkeypatch.setattr(
@@ -541,18 +547,20 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del check, env, timeout
+        del check, env, timeout, stdout, stderr
         unit = cmd[3]
         calls.append(unit)
         if unit == str(target):
-            return SimpleNamespace(returncode=-11)
+            return SimpleNamespace(returncode=-11, stdout=b"", stderr=b"")
         if unit in {f"{target}::test_one", f"{target}::test_two"}:
-            return SimpleNamespace(returncode=-11)
-        return SimpleNamespace(returncode=0)
+            return SimpleNamespace(returncode=-11, stdout=b"", stderr=b"")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     monkeypatch.setattr(
@@ -700,12 +708,14 @@ def test_run_isolated_pytest_units_resume_skips_passed(monkeypatch: object, tmp_
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del check, env, timeout
-        return SimpleNamespace(returncode=0)
+        del check, env, timeout, stdout, stderr
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     state_file = tmp_path / "state.json"
@@ -747,12 +757,14 @@ def test_run_isolated_pytest_units_resume_replaces_failed_result(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del cmd, check, env, timeout
-        return SimpleNamespace(returncode=0)
+        del cmd, check, env, timeout, stdout, stderr
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     units = ["test_a.py", "test_b.py"]
@@ -830,13 +842,15 @@ def test_run_isolated_pytest_units_test_granularity_uses_shorter_outer_timeout(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del cmd, check, env
+        del cmd, check, env, stdout, stderr
         seen["timeout"] = timeout
-        return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     console = Console(file=StringIO(), force_terminal=False)
@@ -864,12 +878,14 @@ def test_run_isolated_pytest_units_writes_json_report(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del cmd, check, env, timeout
-        return SimpleNamespace(returncode=0)
+        del cmd, check, env, timeout, stdout, stderr
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     report_path = tmp_path / "results.json"
@@ -900,12 +916,14 @@ def test_run_isolated_pytest_units_writes_junit_report(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del cmd, check, env, timeout
-        return SimpleNamespace(returncode=next(results))
+        del cmd, check, env, timeout, stdout, stderr
+        return SimpleNamespace(returncode=next(results), stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     report_path = tmp_path / "results.xml"
@@ -939,12 +957,14 @@ def test_run_isolated_pytest_units_writes_junit_skipped_for_crash_limited(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool,
-        env: dict[str, str],
-        timeout: int,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
     ) -> SimpleNamespace:
-        del cmd, check, env, timeout
-        return SimpleNamespace(returncode=next(results))
+        del cmd, check, env, timeout, stdout, stderr
+        return SimpleNamespace(returncode=next(results), stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
     report_path = tmp_path / "results.xml"
