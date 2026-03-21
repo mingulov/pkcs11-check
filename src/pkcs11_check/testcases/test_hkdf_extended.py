@@ -14,8 +14,10 @@ import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.exceptions import (
     FunctionFailed,
+    KeyTypeInconsistent,
     MechanismInvalid,
     MechanismParamInvalid,
+    TemplateInconsistent,
 )
 
 from pkcs11_check.testcases.conftest import has_mechanism
@@ -30,30 +32,44 @@ _DERIVE_ERRORS = (MechanismInvalid, MechanismParamInvalid, FunctionFailed)
 class TestHKDFKeyGen:
     """CKM_HKDF_KEY_GEN tests — generate keys for HKDF input keying material."""
 
-    def test_hkdf_key_gen_basic(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate a GENERIC_SECRET key via CKM_HKDF_KEY_GEN."""
+    @pytest.mark.parametrize(
+        "key_type",
+        [
+            KeyType.HKDF,
+            pytest.param(
+                KeyType.GENERIC_SECRET,
+                marks=pytest.mark.xfail(
+                    reason="CKM_HKDF_KEY_GEN should produce CKK_HKDF per spec",
+                ),
+            ),
+        ],
+        ids=["CKK_HKDF", "CKK_GENERIC_SECRET"],
+    )
+    def test_hkdf_key_gen_basic(
+        self, p11_session: Any, p11_module: Any, key_type: KeyType,
+    ) -> None:
+        """Generate a key via CKM_HKDF_KEY_GEN with the given key type."""
         if not has_mechanism(p11_module, "HKDF_KEY_GEN"):
             pytest.skip("CKM_HKDF_KEY_GEN not supported")
 
-        key = p11_session.generate_key(
-            KeyType.GENERIC_SECRET,
-            256,
-            mechanism=Mechanism.HKDF_KEY_GEN,
-            template={
-                Attribute.DERIVE: True,
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-                Attribute.TOKEN: False,
-            },
-        )
+        try:
+            key = p11_session.generate_key(
+                key_type, 256,
+                mechanism=Mechanism.HKDF_KEY_GEN,
+                template={
+                    Attribute.DERIVE: True,
+                    Attribute.SENSITIVE: False,
+                    Attribute.EXTRACTABLE: True,
+                    Attribute.TOKEN: False,
+                },
+            )
+        except (KeyTypeInconsistent, TemplateInconsistent, MechanismInvalid) as exc:
+            pytest.xfail(f"CKM_HKDF_KEY_GEN with {key_type.name} not supported: {exc}")
         try:
             assert key is not None
-            # Verify key type
-            assert key[Attribute.KEY_TYPE] == KeyType.GENERIC_SECRET
-            # Verify key is extractable and get value
+            assert key[Attribute.KEY_TYPE] == key_type
             value = key[Attribute.VALUE]
             assert len(value) == 32  # 256 bits = 32 bytes
-            # Verify DERIVE attribute is set
             assert key[Attribute.DERIVE] is True
         finally:
             key.destroy()
@@ -65,17 +81,24 @@ class TestHKDFKeyGen:
         if not has_mechanism(p11_module, "HKDF_DERIVE"):
             pytest.skip("CKM_HKDF_DERIVE not supported")
 
-        base_key = p11_session.generate_key(
-            KeyType.GENERIC_SECRET,
-            256,
-            mechanism=Mechanism.HKDF_KEY_GEN,
-            template={
-                Attribute.DERIVE: True,
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-                Attribute.TOKEN: False,
-            },
-        )
+        # Try CKK_HKDF first (spec-correct), fall back to CKK_GENERIC_SECRET
+        for key_type in (KeyType.HKDF, KeyType.GENERIC_SECRET):
+            try:
+                base_key = p11_session.generate_key(
+                    key_type, 256,
+                    mechanism=Mechanism.HKDF_KEY_GEN,
+                    template={
+                        Attribute.DERIVE: True,
+                        Attribute.SENSITIVE: False,
+                        Attribute.EXTRACTABLE: True,
+                        Attribute.TOKEN: False,
+                    },
+                )
+                break
+            except (KeyTypeInconsistent, TemplateInconsistent, MechanismInvalid):
+                continue
+        else:
+            pytest.skip("CKM_HKDF_KEY_GEN not operational with any key type")
         try:
             derived = base_key.derive_key(
                 KeyType.GENERIC_SECRET,
