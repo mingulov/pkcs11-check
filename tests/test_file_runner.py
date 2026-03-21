@@ -1047,3 +1047,104 @@ def test_extract_per_unit_test_detail_returns_none_for_empty_tests(tmp_path: Pat
     json_file.write_text(json.dumps({"summary": {}, "tests": []}))
     result = _extract_per_unit_test_detail(json_file)
     assert result is None
+
+
+def test_run_isolated_pytest_units_extracts_per_unit_details(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify file-level subprocess gets --json-report and detail is extracted."""
+    seen_cmds: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
+    ) -> SimpleNamespace:
+        del check, env, timeout, stdout, stderr
+        seen_cmds.append(list(cmd))
+        # Write a fake pytest-json-report to the temp file
+        for arg in cmd:
+            if arg.startswith("--json-report-file="):
+                json_path = Path(arg.split("=", 1)[1])
+                json_path.write_text(json.dumps({
+                    "summary": {"passed": 1},
+                    "tests": [
+                        {"nodeid": "test_a.py::test_ok", "outcome": "passed", "duration": 0.1},
+                    ],
+                }))
+                break
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    report_path = tmp_path / "results.json"
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    # Verify --json-report was injected into the subprocess command
+    cmd = seen_cmds[0]
+    assert "--json-report" in cmd
+    json_report_file_args = [a for a in cmd if a.startswith("--json-report-file=")]
+    assert len(json_report_file_args) == 1
+    # Verify the temp file was cleaned up
+    temp_path = Path(json_report_file_args[0].split("=", 1)[1])
+    assert not temp_path.exists()
+    # Verify the report has per-unit counts
+    report = json.loads(report_path.read_text())
+    assert report["units"][0].get("counts") is not None
+    assert report["units"][0]["counts"]["passed"] == 1
+
+
+def test_run_isolated_pytest_units_skips_json_report_for_test_level(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Performance guard: test-level units must not create temp JSON files."""
+    seen_cmds: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
+    ) -> SimpleNamespace:
+        del check, env, timeout, stdout, stderr
+        seen_cmds.append(list(cmd))
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py::test_case"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="test",
+    )
+
+    assert exit_code == 0
+    cmd = seen_cmds[0]
+    assert "--json-report" not in cmd
+    assert not any(a.startswith("--json-report-file=") for a in cmd)
