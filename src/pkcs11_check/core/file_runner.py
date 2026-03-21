@@ -996,7 +996,7 @@ def _extract_per_unit_test_detail(json_path: Path) -> dict[str, Any] | None:
 def _unit_timeout_seconds(test_timeout: int, granularity: IsolationGranularity) -> int:
     if granularity == "test":
         return max(test_timeout + 60, 120)
-    return max(test_timeout * 10, 300)
+    return max(test_timeout * 30, 900)
 
 
 def _effective_granularity(unit: str, granularity: RunnerGranularity) -> IsolationGranularity:

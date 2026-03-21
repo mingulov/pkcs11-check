@@ -43,4 +43,4 @@ RUN uv sync --frozen
 # Copy test code (changes frequently, does not invalidate deps cache)
 COPY . .
 
-CMD ["bash", "/app/docker/run-with-artifacts.sh", "sh", "-c", "echo 'Kryoptic main (latest dev):' && bash /app/docker/run-pkcs11-check.sh"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/run-pkcs11-check.sh"]

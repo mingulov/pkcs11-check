@@ -96,7 +96,7 @@ services:
     <<: *artifacts
     build:
       context: ..
-      dockerfile: docker/kryoptic-main/Dockerfile
+      dockerfile: docker/kryoptic/Dockerfile.main
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic-main
       PKCS11_CHECK_PIN: "1234"
@@ -107,7 +107,7 @@ services:
     <<: *artifacts
     build:
       context: ..
-      dockerfile: docker/kryoptic-fips/Dockerfile
+      dockerfile: docker/kryoptic/Dockerfile.fips
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic-fips
       PKCS11_CHECK_PIN: "12345678"
