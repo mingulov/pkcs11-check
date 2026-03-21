@@ -425,11 +425,9 @@ class TestSOSessionCapabilities:
         except PinIncorrect:
             session.close()
             pytest.skip("SO PIN differs from user PIN on this module")
-            return
         except (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn):
             session.close()
             pytest.skip("Another user already logged in on this token")
-            return
 
         new_pin = pin + "X"
         try:
@@ -501,7 +499,6 @@ class TestSOSessionCapabilities:
                 _logout_safe(cleanup)
                 cleanup.close()
             pytest.skip("SO PIN differs from user PIN")
-            return
         except (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn):
             so_sess.close()
             # Cleanup
@@ -514,7 +511,6 @@ class TestSOSessionCapabilities:
                 _logout_safe(cleanup)
                 cleanup.close()
             pytest.skip("Another user already logged in")
-            return
 
         try:
             found = list(so_sess.get_objects({Attribute.LABEL: label}))
@@ -568,11 +564,9 @@ class TestSOSessionCapabilities:
         except PinIncorrect:
             session.close()
             pytest.skip("SO PIN differs from user PIN")
-            return
         except (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn):
             session.close()
             pytest.skip("Another user already logged in")
-            return
 
         try:
             # Try USER login on a second session -- should fail
@@ -628,11 +622,9 @@ class TestTrustedAttribute:
         except PinIncorrect:
             session.close()
             pytest.skip("SO PIN differs from user PIN")
-            return
         except (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn):
             session.close()
             pytest.skip("Another user already logged in")
-            return
 
         try:
             try:
