@@ -1612,14 +1612,19 @@ def run_isolated_pytest_units(
 
                 # Extract per-test detail before building the result so we
                 # can decide whether to keep stdout/stderr.
+                # Keep the JSONL path for the crash handler (iterative deselect
+                # needs to re-read it for culprit identification).
+                crash_jsonl_path: Path | None = unit_jsonl_path
                 detail: dict[str, Any] | None = None
                 if unit_jsonl_path is not None:
                     detail = _read_jsonl_results(unit_jsonl_path)
-                    # Accumulate for report.jsonl; do NOT delete yet.
-                    if report_config is not None and report_config.jsonl_path is not None:
-                        jsonl_paths.append(unit_jsonl_path)
-                    else:
-                        unit_jsonl_path.unlink(missing_ok=True)
+                    if status not in ("crashed", "timeout"):
+                        # Safe to clean up — no crash recovery needed
+                        if report_config is not None and report_config.jsonl_path is not None:
+                            jsonl_paths.append(unit_jsonl_path)
+                        else:
+                            unit_jsonl_path.unlink(missing_ok=True)
+                        crash_jsonl_path = None
                     unit_jsonl_path = None
 
                 # Keep output for non-passing units AND for units that
@@ -1677,10 +1682,7 @@ def run_isolated_pytest_units(
                         crash_count = 0
                         accumulated_detail: dict[str, Any] | None = None
                         total_retry_dur = 0.0
-                        iter_jsonl_path: Path | None = unit_jsonl_path
-                        # Prevent the outer finally from double-deleting
-                        # the first iteration's JSONL (we manage it here).
-                        unit_jsonl_path = None
+                        iter_jsonl_path: Path | None = crash_jsonl_path
                         retry_temp_files: list[Path] = []
                         escalate = False
 
