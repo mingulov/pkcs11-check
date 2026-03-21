@@ -259,6 +259,7 @@ The OASIS PKCS#11 spec is available in Markdown format:
 ## Documentation
 
 - `docs/master-plan.md` — Current task plan (Tiers 1-9)
+- `docs/status.md` — Current project status (75K+ tests, what works/partial/planned)
 - `docs/module-issues.md` — Per-module bugs, quirks, compliance deviations
 - `docs/module-matrix.md` — Test results per module (pass/fail/skip/xfail)
 - `docs/cve-regression.md` — CVE coverage tracker (Covered/Documented/N-A/Pending)
@@ -270,4 +271,6 @@ The OASIS PKCS#11 spec is available in Markdown format:
 - `docs/python-pkcs11-fork.md` — Fork changes and upstream PR plan
 - `docs/docker-artifacts.md` — Standard Docker test runner, artifacts, and wrapper usage
 - `docs/superpowers/specs/` — Design specs (vendor extensions, CKR coverage, comprehensive testing)
+- `docs/superpowers/specs/2026-03-20-vendor-extension-system-design.md` — Vendor mechanism support (IBM first)
+- `docs/superpowers/specs/2026-03-21-unified-test-results-design-brief.md` — Per-test outcomes in results.json
 - `docs/superpowers/plans/2026-03-20-oasis-compliance-roadmap.md` — 8-phase OASIS spec compliance roadmap (Phase A-H)
