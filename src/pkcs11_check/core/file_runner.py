@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import selectors
 import subprocess
 import sys
@@ -509,21 +510,20 @@ def postprocess_json_report_to_unified(json_path: Path) -> None:
             outcome = test.get("outcome", "passed")
             counts[outcome] = counts.get(outcome, 0) + 1
             summary[outcome] = summary.get(outcome, 0) + 1
-            duration += test.get("duration", 0.0)
+            call_stage = test.get("call", {})
+            duration += call_stage.get("duration", 0.0)
             if outcome not in {"failed", "xfailed", "xpassed", "error"}:
                 continue
             entry: dict[str, Any] = {
                 "nodeid": test["nodeid"],
                 "outcome": outcome,
-                "duration": test.get("duration", 0.0),
+                "duration": call_stage.get("duration", 0.0),
             }
-            if outcome == "xfailed" and test.get("wasxfail"):
-                entry["wasxfail"] = test["wasxfail"]
-            call_stage = test.get("call", {})
-            if outcome in {"failed", "error"}:
-                longrepr = call_stage.get("longrepr", "")
-                if longrepr:
-                    entry["longrepr"] = longrepr
+            longrepr = call_stage.get("longrepr", "")
+            if longrepr:
+                entry["longrepr"] = longrepr
+            if outcome == "xfailed" and longrepr:
+                entry["wasxfail"] = _extract_xfail_reason(longrepr)
             if call_stage.get("stdout"):
                 entry["stdout"] = call_stage["stdout"]
             if call_stage.get("stderr"):
@@ -919,6 +919,33 @@ def _status_from_returncode(returncode: int) -> str:
     return "failed"
 
 
+def _extract_xfail_reason(longrepr: str) -> str:
+    """Extract a concise xfail reason from pytest longrepr text.
+
+    For imperative ``pytest.xfail("reason")``, the longrepr contains
+    ``XFailed: reason``.  For marker-based ``@pytest.mark.xfail(reason=...)``,
+    the reason appears on the decorator line.  Falls back to the last
+    assertion/error line.
+    """
+    # Imperative xfail: "XFailed: some reason"
+    m = re.search(r"XFailed:\s*(.+)", longrepr)
+    if m:
+        return m.group(1).strip()
+
+    # Marker-based: @pytest.mark.xfail(reason="...")
+    m = re.search(r'reason=["\']([^"\']+)["\']', longrepr)
+    if m:
+        return m.group(1).strip()
+
+    # Fallback: last E line (assertion message)
+    for line in reversed(longrepr.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("E "):
+            return stripped[2:].strip()
+
+    return ""
+
+
 def _extract_per_unit_test_detail(json_path: Path) -> dict[str, Any] | None:
     """Read a pytest-json-report file and return per-test outcomes.
 
@@ -946,18 +973,17 @@ def _extract_per_unit_test_detail(json_path: Path) -> dict[str, Any] | None:
         counts[outcome] = counts.get(outcome, 0) + 1
         if outcome not in {"failed", "xfailed", "xpassed", "error"}:
             continue
+        call_stage = test.get("call", {})
         entry: dict[str, Any] = {
             "nodeid": test["nodeid"],
             "outcome": outcome,
-            "duration": test.get("duration", 0.0),
+            "duration": call_stage.get("duration", 0.0),
         }
-        if outcome == "xfailed" and test.get("wasxfail"):
-            entry["wasxfail"] = test["wasxfail"]
-        call_stage = test.get("call", {})
-        if outcome in {"failed", "error"}:
-            longrepr = call_stage.get("longrepr", "")
-            if longrepr:
-                entry["longrepr"] = longrepr
+        longrepr = call_stage.get("longrepr", "")
+        if longrepr:
+            entry["longrepr"] = longrepr
+        if outcome == "xfailed" and longrepr:
+            entry["wasxfail"] = _extract_xfail_reason(longrepr)
         if call_stage.get("stdout"):
             entry["stdout"] = call_stage["stdout"]
         if call_stage.get("stderr"):
@@ -1318,28 +1344,13 @@ def run_isolated_pytest_units(
 
             try:
                 try:
-                    completed = subprocess.run(
-                        cmd,
-                        check=False,
-                        env=env,
-                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                    returncode, captured_stdout, captured_stderr = (
+                        _run_subprocess_tee(
+                            cmd,
+                            env=env,
+                            timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                        )
                     )
-                    returncode = completed.returncode
-                    captured_stdout = (
-                        (completed.stdout or b"").decode("utf-8", errors="replace")
-                    )
-                    captured_stderr = (
-                        (completed.stderr or b"").decode("utf-8", errors="replace")
-                    )
-                    # Tee: display captured output to console
-                    if captured_stdout:
-                        sys.stdout.write(captured_stdout)
-                        sys.stdout.flush()
-                    if captured_stderr:
-                        sys.stderr.write(captured_stderr)
-                        sys.stderr.flush()
                     status = _status_from_returncode(returncode)
                 except subprocess.TimeoutExpired:
                     duration_s = time.monotonic() - start

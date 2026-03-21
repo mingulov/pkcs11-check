@@ -12,6 +12,7 @@ import pytest
 from rich.console import Console
 
 from pkcs11_check.core.collection import CollectedPytestItem
+from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.file_runner import (
     BackendIsolationPolicy,
     FileRunResult,
@@ -383,17 +384,14 @@ def test_run_isolated_pytest_units_records_results_and_stops(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool = False,
         env: dict[str, str] | None = None,
         timeout: int = 0,
-        stdout: object = None,
-        stderr: object = None,
-    ) -> SimpleNamespace:
-        del check, env, timeout, stdout, stderr
+    ) -> tuple[int, str, str]:
+        del env, timeout
         calls.append(cmd)
-        return SimpleNamespace(returncode=next(results), stdout=b"", stderr=b"")
+        return (next(results), "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     state_file = tmp_path / "state.json"
     console = Console(file=StringIO(), force_terminal=False)
 
@@ -440,11 +438,11 @@ def test_run_isolated_pytest_units_promotes_crashed_file_in_policy(
         timeout: int = 0,
         stdout: object = None,
         stderr: object = None,
-    ) -> SimpleNamespace:
+    ) -> tuple[int, str, str]:
         del cmd, check, env, timeout, stdout, stderr
-        return SimpleNamespace(returncode=-11, stdout=b"", stderr=b"")
+        return (-11, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
 
     exit_code = run_isolated_pytest_units(
         [str(target)],
@@ -480,18 +478,15 @@ def test_run_isolated_pytest_units_escalates_crashed_file_in_same_run(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool = False,
         env: dict[str, str] | None = None,
         timeout: int = 0,
-        stdout: object = None,
-        stderr: object = None,
-    ) -> SimpleNamespace:
-        del check, env, timeout, stdout, stderr
+    ) -> tuple[int, str, str]:
+        del env, timeout
         unit = cmd[3]
         calls.append(unit)
-        return SimpleNamespace(returncode=-11 if unit == str(target) else 0, stdout=b"", stderr=b"")
+        return (-11 if unit == str(target) else 0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     monkeypatch.setattr(
         "pkcs11_check.core.file_runner.discover_pytest_units",
         lambda targets, default_root, *, granularity, pytest_args, env=None: (
@@ -551,22 +546,19 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool = False,
         env: dict[str, str] | None = None,
         timeout: int = 0,
-        stdout: object = None,
-        stderr: object = None,
-    ) -> SimpleNamespace:
-        del check, env, timeout, stdout, stderr
+    ) -> tuple[int, str, str]:
+        del env, timeout
         unit = cmd[3]
         calls.append(unit)
         if unit == str(target):
-            return SimpleNamespace(returncode=-11, stdout=b"", stderr=b"")
+            return (-11, "", "")
         if unit in {f"{target}::test_one", f"{target}::test_two"}:
-            return SimpleNamespace(returncode=-11, stdout=b"", stderr=b"")
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            return (-11, "", "")
+        return (0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     monkeypatch.setattr(
         "pkcs11_check.core.file_runner.discover_pytest_units",
         lambda targets, default_root, *, granularity, pytest_args, env=None: (
@@ -712,16 +704,13 @@ def test_run_isolated_pytest_units_resume_skips_passed(monkeypatch: object, tmp_
     def fake_run(
         cmd: list[str],
         *,
-        check: bool = False,
         env: dict[str, str] | None = None,
         timeout: int = 0,
-        stdout: object = None,
-        stderr: object = None,
-    ) -> SimpleNamespace:
-        del check, env, timeout, stdout, stderr
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        return (0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     state_file = tmp_path / "state.json"
     save_run_state(
         state_file,
@@ -766,11 +755,11 @@ def test_run_isolated_pytest_units_resume_replaces_failed_result(
         timeout: int = 0,
         stdout: object = None,
         stderr: object = None,
-    ) -> SimpleNamespace:
+    ) -> tuple[int, str, str]:
         del cmd, check, env, timeout, stdout, stderr
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        return (0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     units = ["test_a.py", "test_b.py"]
     pytest_args = ["--p11-module", "/tmp/module.so"]
     state_file = tmp_path / "state.json"
@@ -851,12 +840,12 @@ def test_run_isolated_pytest_units_test_granularity_uses_shorter_outer_timeout(
         timeout: int = 0,
         stdout: object = None,
         stderr: object = None,
-    ) -> SimpleNamespace:
+    ) -> tuple[int, str, str]:
         del cmd, check, env, stdout, stderr
         seen["timeout"] = timeout
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        return (0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     console = Console(file=StringIO(), force_terminal=False)
 
     exit_code = run_isolated_pytest_units(
@@ -887,11 +876,11 @@ def test_run_isolated_pytest_units_writes_json_report(
         timeout: int = 0,
         stdout: object = None,
         stderr: object = None,
-    ) -> SimpleNamespace:
+    ) -> tuple[int, str, str]:
         del cmd, check, env, timeout, stdout, stderr
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        return (0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     report_path = tmp_path / "results.json"
     exit_code = run_isolated_pytest_units(
         ["test_a.py"],
@@ -925,11 +914,11 @@ def test_run_isolated_pytest_units_writes_junit_report(
         timeout: int = 0,
         stdout: object = None,
         stderr: object = None,
-    ) -> SimpleNamespace:
+    ) -> tuple[int, str, str]:
         del cmd, check, env, timeout, stdout, stderr
-        return SimpleNamespace(returncode=next(results), stdout=b"", stderr=b"")
+        return (next(results), "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     report_path = tmp_path / "results.xml"
     exit_code = run_isolated_pytest_units(
         ["test_a.py", "test_b.py"],
@@ -966,11 +955,11 @@ def test_run_isolated_pytest_units_writes_junit_skipped_for_crash_limited(
         timeout: int = 0,
         stdout: object = None,
         stderr: object = None,
-    ) -> SimpleNamespace:
+    ) -> tuple[int, str, str]:
         del cmd, check, env, timeout, stdout, stderr
-        return SimpleNamespace(returncode=next(results), stdout=b"", stderr=b"")
+        return (next(results), "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     report_path = tmp_path / "results.xml"
     exit_code = run_isolated_pytest_units(
         [
@@ -1000,13 +989,15 @@ def test_extract_per_unit_test_detail_parses_json_report(tmp_path: Path) -> None
     json_file.write_text(json.dumps({
         "summary": {"passed": 1, "failed": 1, "skipped": 1},
         "tests": [
-            {"nodeid": "test_a.py::test_ok", "outcome": "passed", "duration": 0.1},
-            {"nodeid": "test_a.py::test_skip", "outcome": "skipped", "duration": 0.0},
+            {"nodeid": "test_a.py::test_ok", "outcome": "passed",
+             "call": {"duration": 0.1, "outcome": "passed"}},
+            {"nodeid": "test_a.py::test_skip", "outcome": "skipped",
+             "setup": {"duration": 0.0, "outcome": "skipped"}},
             {
                 "nodeid": "test_a.py::test_fail",
                 "outcome": "failed",
-                "duration": 0.2,
                 "call": {
+                    "duration": 0.2,
                     "outcome": "failed",
                     "longrepr": "assert 1 == 2",
                     "stdout": "debug output\n",
@@ -1015,9 +1006,14 @@ def test_extract_per_unit_test_detail_parses_json_report(tmp_path: Path) -> None
             {
                 "nodeid": "test_a.py::test_xf",
                 "outcome": "xfailed",
-                "duration": 0.05,
-                "wasxfail": "known bug",
-                "call": {"outcome": "failed", "stderr": "xfail trace\n"},
+                "call": {
+                    "duration": 0.05,
+                    "outcome": "failed",
+                    "longrepr": "@pytest.mark.xfail(reason=\"known bug\")\n"
+                                "    def test_xf():\n>       assert False\n"
+                                "E       assert False",
+                    "stderr": "xfail trace\n",
+                },
             },
         ],
     }))
@@ -1036,6 +1032,7 @@ def test_extract_per_unit_test_detail_parses_json_report(tmp_path: Path) -> None
     assert detail["tests"][0]["stdout"] == "debug output\n"
     assert detail["tests"][1]["nodeid"] == "test_a.py::test_xf"
     assert detail["tests"][1]["wasxfail"] == "known bug"
+    assert detail["tests"][1]["longrepr"] is not None
     assert detail["tests"][1]["stderr"] == "xfail trace\n"
 
 
@@ -1067,13 +1064,10 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool = False,
         env: dict[str, str] | None = None,
         timeout: int = 0,
-        stdout: object = None,
-        stderr: object = None,
-    ) -> SimpleNamespace:
-        del check, env, timeout, stdout, stderr
+    ) -> tuple[int, str, str]:
+        del env, timeout
         seen_cmds.append(list(cmd))
         # Write a fake pytest-json-report to the temp file
         for arg in cmd:
@@ -1086,9 +1080,9 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
                     ],
                 }))
                 break
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        return (0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     report_path = tmp_path / "results.json"
 
     exit_code = run_isolated_pytest_units(
@@ -1127,31 +1121,33 @@ def test_run_isolated_pytest_units_keeps_output_for_xfailed_unit(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool = False,
         env: dict[str, str] | None = None,
         timeout: int = 0,
-        stdout: object = None,
-        stderr: object = None,
-    ) -> SimpleNamespace:
-        del check, env, timeout, stdout, stderr
+    ) -> tuple[int, str, str]:
+        del env, timeout
         for arg in cmd:
             if arg.startswith("--json-report-file="):
                 json_path = Path(arg.split("=", 1)[1])
                 json_path.write_text(json.dumps({
                     "tests": [
-                        {"nodeid": "test_a.py::test_ok", "outcome": "passed", "duration": 0.1},
+                        {"nodeid": "test_a.py::test_ok", "outcome": "passed",
+                         "call": {"duration": 0.1, "outcome": "passed"}},
                         {
                             "nodeid": "test_a.py::test_xf",
                             "outcome": "xfailed",
-                            "duration": 0.05,
-                            "wasxfail": "known bug",
+                            "call": {
+                                "duration": 0.05,
+                                "outcome": "failed",
+                                "longrepr": "pytest.xfail(\"known bug\")\n"
+                                            "E  XFailed: known bug",
+                            },
                         },
                     ],
                 }))
                 break
-        return SimpleNamespace(returncode=0, stdout=b"xfail output here\n", stderr=b"")
+        return (0, "xfail output here\n", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     state_file = tmp_path / "state.json"
 
     exit_code = run_isolated_pytest_units(
@@ -1184,17 +1180,14 @@ def test_run_isolated_pytest_units_skips_json_report_for_test_level(
     def fake_run(
         cmd: list[str],
         *,
-        check: bool = False,
         env: dict[str, str] | None = None,
         timeout: int = 0,
-        stdout: object = None,
-        stderr: object = None,
-    ) -> SimpleNamespace:
-        del check, env, timeout, stdout, stderr
+    ) -> tuple[int, str, str]:
+        del env, timeout
         seen_cmds.append(list(cmd))
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        return (0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
 
     exit_code = run_isolated_pytest_units(
         ["test_a.py::test_case"],
@@ -1348,13 +1341,15 @@ def test_postprocess_json_report_to_unified(tmp_path: Path) -> None:
     json_file.write_text(json.dumps({
         "summary": {"passed": 1, "failed": 1, "xfailed": 1},
         "tests": [
-            {"nodeid": "test_a.py::test_ok", "outcome": "passed", "duration": 0.1},
-            {"nodeid": "test_a.py::test_skip", "outcome": "skipped", "duration": 0.0},
+            {"nodeid": "test_a.py::test_ok", "outcome": "passed",
+             "call": {"duration": 0.1, "outcome": "passed"}},
+            {"nodeid": "test_a.py::test_skip", "outcome": "skipped",
+             "setup": {"duration": 0.0, "outcome": "skipped"}},
             {
                 "nodeid": "test_b.py::test_fail",
                 "outcome": "failed",
-                "duration": 0.5,
                 "call": {
+                    "duration": 0.5,
                     "outcome": "failed",
                     "longrepr": "assert False",
                     "stdout": "fail debug\n",
@@ -1363,9 +1358,13 @@ def test_postprocess_json_report_to_unified(tmp_path: Path) -> None:
             {
                 "nodeid": "test_b.py::test_xf",
                 "outcome": "xfailed",
-                "duration": 0.1,
-                "wasxfail": "known bug",
-                "call": {"outcome": "failed", "stderr": "xfail log\n"},
+                "call": {
+                    "duration": 0.1,
+                    "outcome": "failed",
+                    "longrepr": "pytest.xfail(\"known bug\")\n"
+                                "E  XFailed: known bug",
+                    "stderr": "xfail log\n",
+                },
             },
         ],
     }))
