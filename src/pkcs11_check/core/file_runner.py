@@ -1783,7 +1783,7 @@ def run_isolated_pytest_units(
                                     len(f"--deselect={nid}")
                                     for nid in deselect_set
                                 )
-                                if deselect_args_size > 100_000:
+                                if deselect_args_size > 1_500_000:  # ~1.5MB, well under Linux ARG_MAX (~2MB)
                                     escalate = True
                                     break
                                 if not culprit and not completed:
