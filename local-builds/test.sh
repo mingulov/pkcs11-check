@@ -220,6 +220,14 @@ if [ "$use_isolation_runner" -eq 1 ]; then
                 destructive=1
                 shift
                 ;;
+            --marker)
+                marker_expr="${2:-}"
+                shift 2
+                ;;
+            --marker=*)
+                marker_expr="${1#*=}"
+                shift
+                ;;
             --)
                 shift
                 while [ "$#" -gt 0 ]; do
@@ -275,6 +283,7 @@ if [ "$use_isolation_runner" -eq 1 ]; then
     [ "$verbose" != "0" ] && CLI_ARGS+=("--verbose")
     [ "$destructive" != "0" ] && CLI_ARGS+=("--destructive")
     [ -n "$match" ] && CLI_ARGS+=("--match" "$match")
+    [ -n "${marker_expr:-}" ] && CLI_ARGS+=("--marker" "$marker_expr")
     [ "${#targets[@]}" -gt 0 ] && CLI_ARGS+=("${targets[@]}")
 
     exec uv run pkcs11-check "${CLI_ARGS[@]}"
@@ -299,6 +308,11 @@ for arg in "$@"; do
     fi
 
     case "$arg" in
+        --marker)
+            passthrough_args+=("-m")
+            value_option="--marker"
+            continue
+            ;;
         -k|-m|-o|-c|--maxfail|--tb|--durations|--rootdir|--p11-slot|--timeout|--log-level|--override-ini|--benchmark-group-by|--benchmark-sort)
             passthrough_args+=("$arg")
             value_option="$arg"

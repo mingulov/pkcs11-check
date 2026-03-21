@@ -258,9 +258,24 @@ def discover_auto_isolation_units(
     )
     markers_by_file = _markers_by_file(collected_items)
 
+    # Build set of files that have collected items (respects -m, -k filters).
+    # If collection returned items, use them to filter files; otherwise include all
+    # (fallback for environments where collection metadata is unavailable).
+    collected_files: set[str] | None = None
+    if collected_items:
+        collected_files = set()
+        for item in collected_items:
+            collected_files.add(normalize_policy_file_key(item.file_path))
+
     for file_unit in file_units:
         file_path = Path(file_unit.split("::", 1)[0])
-        marker_names = markers_by_file.get(normalize_policy_file_key(str(file_path)), set())
+        file_key = normalize_policy_file_key(str(file_path))
+
+        # Skip files with no collected items (filtered out by -m or -k)
+        if collected_files is not None and file_key not in collected_files:
+            continue
+
+        marker_names = markers_by_file.get(file_key, set())
         mode = file_isolation_mode(marker_names)
         if normalize_policy_file_key(str(file_path)) in promoted_files:
             mode = "test"
