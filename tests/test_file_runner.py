@@ -20,6 +20,7 @@ from pkcs11_check.core.file_runner import (
     FileRunState,
     IsolatedReportConfig,
     _extract_per_unit_test_detail,
+    _identify_crash_culprit,
     _read_jsonl_results,
     build_policy_fingerprint,
     build_state_fingerprint,
@@ -1597,3 +1598,71 @@ def test_read_jsonl_results_skips_truncated_lines(tmp_path: Path) -> None:
     # Truncated line should be silently skipped
     total = sum(result["counts"].values())
     assert total == 2
+
+
+# ---------------------------------------------------------------------------
+# _identify_crash_culprit
+# ---------------------------------------------------------------------------
+
+
+def test_identify_crash_culprit_from_jsonl(tmp_path: Path) -> None:
+    """Crash culprit is the test with setup but no teardown."""
+    jsonl = tmp_path / "report.jsonl"
+    lines = [
+        _jsonl_line(nodeid="t.py::test_a", when="setup"),
+        _jsonl_line(nodeid="t.py::test_a", when="call"),
+        _jsonl_line(nodeid="t.py::test_a", when="teardown"),
+        _jsonl_line(nodeid="t.py::test_b", when="setup"),
+        # crash — no call or teardown for test_b
+    ]
+    jsonl.write_text("\n".join(lines) + "\n")
+    culprit, completed = _identify_crash_culprit(jsonl)
+    assert culprit == "t.py::test_b"
+    assert completed == ["t.py::test_a"]
+
+
+def test_identify_crash_culprit_mid_call(tmp_path: Path) -> None:
+    """Crash during call phase — has setup+call but no teardown."""
+    jsonl = tmp_path / "report.jsonl"
+    lines = [
+        _jsonl_line(nodeid="t.py::test_a", when="setup"),
+        _jsonl_line(nodeid="t.py::test_a", when="call"),
+        _jsonl_line(nodeid="t.py::test_a", when="teardown"),
+        _jsonl_line(nodeid="t.py::test_b", when="setup"),
+        _jsonl_line(nodeid="t.py::test_b", when="call"),
+        # crash during call — no teardown
+    ]
+    jsonl.write_text("\n".join(lines) + "\n")
+    culprit, completed = _identify_crash_culprit(jsonl)
+    assert culprit == "t.py::test_b"
+    assert completed == ["t.py::test_a"]
+
+
+def test_identify_crash_culprit_empty_jsonl(tmp_path: Path) -> None:
+    """Empty JSONL — no culprit, no completed."""
+    jsonl = tmp_path / "report.jsonl"
+    jsonl.write_text("")
+    culprit, completed = _identify_crash_culprit(jsonl)
+    assert culprit is None
+    assert completed == []
+
+
+def test_identify_crash_culprit_all_completed(tmp_path: Path) -> None:
+    """All tests completed — no culprit."""
+    jsonl = tmp_path / "report.jsonl"
+    lines = [
+        _jsonl_line(nodeid="t.py::test_a", when="setup"),
+        _jsonl_line(nodeid="t.py::test_a", when="call"),
+        _jsonl_line(nodeid="t.py::test_a", when="teardown"),
+    ]
+    jsonl.write_text("\n".join(lines) + "\n")
+    culprit, completed = _identify_crash_culprit(jsonl)
+    assert culprit is None
+    assert completed == ["t.py::test_a"]
+
+
+def test_identify_crash_culprit_missing_file(tmp_path: Path) -> None:
+    """Missing JSONL file — no culprit, no completed."""
+    culprit, completed = _identify_crash_culprit(tmp_path / "nope.jsonl")
+    assert culprit is None
+    assert completed == []

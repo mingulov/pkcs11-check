@@ -985,6 +985,55 @@ def _map_outcome(raw_outcome: str, wasxfail: str | None) -> str:
     return raw_outcome
 
 
+def _identify_crash_culprit(jsonl_path: Path) -> tuple[str | None, list[str]]:
+    """Identify crash culprit and completed tests from partial JSONL.
+
+    Returns ``(culprit_nodeid, list_of_completed_nodeids)``.
+    *culprit* is the nodeid that has ``setup`` started but no ``teardown``
+    completed — i.e. the test that was running when the process crashed.
+    Returns ``(None, completed_list)`` if every test finished cleanly.
+    """
+    try:
+        text = jsonl_path.read_text()
+    except (FileNotFoundError, OSError):
+        return None, []
+    if not text.strip():
+        return None, []
+
+    # Per-nodeid phase tracking, preserving insertion order.
+    phases: dict[str, set[str]] = {}
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        report_type = rec.get("$report_type", "TestReport")
+        if report_type != "TestReport":
+            continue
+        nodeid: str = rec.get("nodeid", "")
+        when: str = rec.get("when", "")
+        if not nodeid or not when:
+            continue
+        if nodeid not in phases:
+            phases[nodeid] = set()
+        phases[nodeid].add(when)
+
+    completed: list[str] = []
+    culprit: str | None = None
+
+    for nid, ph in phases.items():
+        if "teardown" in ph:
+            completed.append(nid)
+        elif "setup" in ph and culprit is None:
+            culprit = nid
+
+    return culprit, completed
+
+
 def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
     """Read a pytest-reportlog JSONL file and return per-test outcomes.
 
