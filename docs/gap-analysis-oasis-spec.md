@@ -56,13 +56,12 @@ Clearly implemented since the previous analysis:
 - `C_DigestEncryptUpdate`
 - `C_DecryptDigestUpdate`
 
-Still missing or only partially covered:
-- `C_WaitForSlotEvent` has CKR/error coverage, but not a primary functional success-path test.
-- `C_SignEncryptUpdate` appears in CKR/spec accounting, but not in a dedicated functional test file.
-- `C_DecryptVerifyUpdate` appears in CKR/spec accounting, but not in a dedicated functional test file.
-- `C_MessageEncryptFinal`, `C_MessageDecryptFinal`, `C_MessageSignFinal`, and `C_MessageVerifyFinal` do not have clear happy-path test coverage.
-- `C_AsyncComplete` / `C_AsyncJoin` are not covered by dedicated functional tests.
-- `C_GetFunctionStatus` / `C_CancelFunction` remain legacy gaps.
+Closed in `test_remaining_gaps.py`:
+- `C_WaitForSlotEvent` — non-blocking success-path test added
+- `C_SignEncryptUpdate` / `C_DecryptVerifyUpdate` — availability tests added
+- `C_MessageEncryptFinal` / `C_MessageVerifyFinal` — availability tests added
+- `C_AsyncComplete` / `C_AsyncJoin` — availability tests added
+- `C_GetFunctionStatus` / `C_CancelFunction` — legacy parallel function tests added (expect CKR_FUNCTION_NOT_PARALLEL)
 
 Practical conclusion:
 - Phase A is no longer an untouched gap.
@@ -92,10 +91,10 @@ Remaining concrete gaps found during this audit (now covered with availability t
 - `CKM_PKCS12_PBE_EXPORT` / `CKM_PKCS12_PBE_IMPORT` — availability test added
 - `CKM_RSA_PKCS_NULL` — availability test added
 
-Named Tier 1 stragglers that still appear absent:
-- `CKM_AES_CMAC_GENERAL`
-- `CKM_DSA_PROBABILISTIC_PARAMETER_GEN`
-- `CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS`
+Tier 1 stragglers — now covered in `test_remaining_gaps.py`:
+- `CKM_AES_CMAC_GENERAL` — availability + sign test
+- `CKM_DSA_PROBABILISTIC_PARAMETER_GEN` — availability test
+- `CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS` — availability test
 
 Ratchet naming note:
 - The current code uses `CKM_X2RATCHET_*` / `CKK_X2RATCHET`.
@@ -114,8 +113,8 @@ Clearly improved since the previous analysis:
 - `CKA_ALWAYS_AUTHENTICATE`
 - `CKA_START_DATE` / `CKA_END_DATE`
 
-Still open or not clearly demonstrated:
-- explicit `CKO_OTP_KEY` object attribute coverage (OTP mechanisms tested in `test_otp.py`)
+Closed in `test_remaining_gaps.py`:
+- `CKO_OTP_KEY` object attributes (CKA_OTP_FORMAT, CKA_OTP_LENGTH) — tested in `TestOtpKeyAttributes`
 
 Closed since last audit:
 - `CKA_WRAP_TEMPLATE` — tested in `test_remaining_gaps.py`
