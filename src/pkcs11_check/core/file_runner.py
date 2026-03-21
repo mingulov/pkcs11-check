@@ -1742,15 +1742,19 @@ def run_isolated_pytest_units(
                                         if confirm_status == "crashed"
                                         else "passed-in-isolation"
                                     )
-                                    culprit_entry = {
+                                    culprit_entry: dict[str, Any] = {
                                         "nodeid": culprit,
                                         "outcome": culprit_outcome,
-                                        "longrepr": (
-                                            confirm_out[:500]
-                                            if confirm_status == "crashed"
-                                            else ""
-                                        ),
                                     }
+                                    if confirm_status == "crashed":
+                                        culprit_entry["longrepr"] = (
+                                            confirm_err.strip()
+                                            or confirm_out.strip()
+                                        )
+                                    if confirm_out.strip():
+                                        culprit_entry["stdout"] = confirm_out
+                                    if confirm_err.strip():
+                                        culprit_entry["stderr"] = confirm_err
                                     if accumulated_detail is None:
                                         accumulated_detail = {
                                             "counts": {
@@ -1916,9 +1920,18 @@ def run_isolated_pytest_units(
                                 # Continue the while loop
 
                         finally:
-                            # Clean up all temp JSONL/JSON files
-                            for tmp in retry_temp_files:
-                                tmp.unlink(missing_ok=True)
+                            # Accumulate JSONL files for report.jsonl artifact
+                            all_iter_jsonls = (
+                                ([crash_jsonl_path] if crash_jsonl_path else [])
+                                + retry_temp_files
+                            )
+                            if report_config is not None and report_config.jsonl_path is not None:
+                                jsonl_paths.extend(
+                                    p for p in all_iter_jsonls if p.exists()
+                                )
+                            else:
+                                for tmp in all_iter_jsonls:
+                                    tmp.unlink(missing_ok=True)
 
                         if not escalate:
                             # Deselect loop broke via successful retry
