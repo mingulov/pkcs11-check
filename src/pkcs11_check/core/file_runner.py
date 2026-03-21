@@ -363,6 +363,51 @@ def _state_summary(state: FileRunState) -> dict[str, int]:
     return summary
 
 
+def _group_results_by_file(
+    results: list[FileRunResult],
+    details: dict[str, dict[str, Any]],
+) -> list[tuple[str, list[FileRunResult], dict[str, Any]]]:
+    """Group results into file-level aggregates for the unified report.
+
+    If all results are already file-level (no ``::`` in targets), returns
+    them ungrouped.  Otherwise, groups test-level results by their file
+    prefix and merges counts/tests from *details*.
+    """
+    has_test_level = any("::" in r.target for r in results)
+    if not has_test_level:
+        return [
+            (r.target, [r], details.get(r.target, {}))
+            for r in results
+        ]
+
+    groups: dict[str, list[FileRunResult]] = {}
+    order: list[str] = []
+    for result in results:
+        file_key = result.target.split("::", 1)[0]
+        if file_key not in groups:
+            groups[file_key] = []
+            order.append(file_key)
+        groups[file_key].append(result)
+
+    out: list[tuple[str, list[FileRunResult], dict[str, Any]]] = []
+    for file_target in order:
+        file_results = groups[file_target]
+        merged_counts: dict[str, int] = {
+            "passed": 0, "failed": 0, "skipped": 0,
+            "xfailed": 0, "xpassed": 0, "error": 0,
+        }
+        merged_tests: list[dict[str, Any]] = []
+        for r in file_results:
+            detail = details.get(r.target, {})
+            for key in merged_counts:
+                merged_counts[key] += detail.get("counts", {}).get(key, 0)
+            merged_tests.extend(detail.get("tests", []))
+        out.append(
+            (file_target, file_results, {"counts": merged_counts, "tests": merged_tests})
+        )
+    return out
+
+
 def write_isolated_json_report(
     path: Path,
     state: FileRunState,
@@ -370,24 +415,59 @@ def write_isolated_json_report(
     state_file: Path,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
 ) -> None:
-    """Write an aggregated JSON report for an isolated run."""
+    """Write an aggregated JSON report for an isolated run in unified format."""
     path.parent.mkdir(parents=True, exist_ok=True)
     details = per_unit_details or {}
-    units_payload: list[dict[str, Any] | str] = []
-    for unit_name in state.units:
-        if unit_name in details:
-            units_payload.append({"target": unit_name, **details[unit_name]})
-        else:
-            units_payload.append(unit_name)
+
+    summary: dict[str, int] = {
+        "passed": 0, "failed": 0, "skipped": 0,
+        "xfailed": 0, "xpassed": 0, "error": 0,
+    }
+
+    grouped = _group_results_by_file(state.results, details)
+    units_out: list[dict[str, Any]] = []
+
+    for file_target, file_results, merged_detail in grouped:
+        has_failure = any(
+            r.status in {"failed", "crashed", "timeout"} for r in file_results
+        )
+        duration = sum(r.duration_s for r in file_results)
+        stdout_parts = [r.stdout for r in file_results if r.stdout]
+        stderr_parts = [r.stderr for r in file_results if r.stderr]
+
+        unit: dict[str, Any] = {
+            "target": file_target,
+            "status": "failed" if has_failure else file_results[0].status,
+            "returncode": max(abs(r.returncode) for r in file_results)
+            if has_failure
+            else 0,
+            "duration_s": round(duration, 3),
+        }
+        if stdout_parts:
+            unit["stdout"] = "\n".join(stdout_parts)
+        if stderr_parts:
+            unit["stderr"] = "\n".join(stderr_parts)
+
+        counts = merged_detail.get("counts")
+        if counts and any(v > 0 for v in counts.values()):
+            unit["counts"] = counts
+            for key in summary:
+                summary[key] += counts.get(key, 0)
+        tests = merged_detail.get("tests")
+        if tests:
+            unit["tests"] = tests
+
+        units_out.append(unit)
+
+    summary["total"] = sum(summary.values())
+
     payload: dict[str, Any] = {
         "tool": "pkcs11-check",
-        "kind": "isolated-run",
-        "state_file": str(state_file),
-        "summary": _state_summary(state),
-        "units": units_payload,
-        "results": [asdict(result) for result in state.results],
+        "kind": "test-run",
+        "summary": summary,
+        "units": units_out,
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
 def _junit_case_identity(target: str) -> tuple[str, str]:

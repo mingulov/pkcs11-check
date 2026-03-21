@@ -32,6 +32,7 @@ from pkcs11_check.core.file_runner import (
     save_isolation_policy,
     save_run_state,
     units_remaining_for_resume,
+    write_isolated_json_report,
 )
 
 
@@ -906,7 +907,7 @@ def test_run_isolated_pytest_units_writes_json_report(
 
     assert exit_code == 0
     payload = report_path.read_text()
-    assert '"kind": "isolated-run"' in payload
+    assert '"kind": "test-run"' in payload
     assert '"status": "passed"' in payload
 
 
@@ -1148,3 +1149,131 @@ def test_run_isolated_pytest_units_skips_json_report_for_test_level(
     cmd = seen_cmds[0]
     assert "--json-report" not in cmd
     assert not any(a.startswith("--json-report-file=") for a in cmd)
+
+
+def test_write_isolated_json_report_unified_format(tmp_path: Path) -> None:
+    state = FileRunState(
+        units=["test_a.py", "test_b.py"],
+        fingerprint="abc123",
+        results=[
+            FileRunResult("test_a.py", "passed", 0, 1.0),
+            FileRunResult("test_b.py", "failed", 1, 2.0, stdout="FAILED test", stderr=""),
+        ],
+    )
+    per_unit_details = {
+        "test_a.py": {
+            "counts": {
+                "passed": 3, "failed": 0, "skipped": 1,
+                "xfailed": 0, "xpassed": 0, "error": 0,
+            },
+            "tests": [],
+        },
+        "test_b.py": {
+            "counts": {
+                "passed": 1, "failed": 1, "skipped": 0,
+                "xfailed": 1, "xpassed": 0, "error": 0,
+            },
+            "tests": [
+                {
+                    "nodeid": "test_b.py::test_bad",
+                    "outcome": "failed",
+                    "duration": 0.5,
+                    "longrepr": "assert False",
+                },
+                {
+                    "nodeid": "test_b.py::test_xf",
+                    "outcome": "xfailed",
+                    "duration": 0.1,
+                    "wasxfail": "known",
+                },
+            ],
+        },
+    }
+    report_path = tmp_path / "results.json"
+    write_isolated_json_report(
+        report_path, state, state_file=tmp_path / "state.json",
+        per_unit_details=per_unit_details,
+    )
+
+    report = json.loads(report_path.read_text())
+    assert report["tool"] == "pkcs11-check"
+    assert report["kind"] == "test-run"
+    # Summary: (3+1)=4 passed, 1 failed, 1 skipped, 1 xfailed = total 7
+    assert report["summary"]["passed"] == 4
+    assert report["summary"]["failed"] == 1
+    assert report["summary"]["skipped"] == 1
+    assert report["summary"]["xfailed"] == 1
+    assert report["summary"]["total"] == 7
+    assert len(report["units"]) == 2
+    unit_a = report["units"][0]
+    assert unit_a["target"] == "test_a.py"
+    assert unit_a["counts"]["passed"] == 3
+    assert "tests" not in unit_a  # no non-passing tests
+    unit_b = report["units"][1]
+    assert unit_b["target"] == "test_b.py"
+    assert len(unit_b["tests"]) == 2
+    assert unit_b["stdout"] == "FAILED test"
+
+
+def test_write_isolated_json_report_groups_test_units_by_file(tmp_path: Path) -> None:
+    state = FileRunState(
+        units=[
+            "test_a.py::test_one",
+            "test_a.py::test_two",
+            "test_b.py::test_only",
+        ],
+        fingerprint="abc123",
+        results=[
+            FileRunResult("test_a.py::test_one", "passed", 0, 0.5),
+            FileRunResult("test_a.py::test_two", "failed", 1, 0.3, stdout="fail output"),
+            FileRunResult("test_b.py::test_only", "passed", 0, 0.2),
+        ],
+    )
+    per_unit_details = {
+        "test_a.py::test_one": {
+            "counts": {
+                "passed": 1, "failed": 0, "skipped": 0,
+                "xfailed": 0, "xpassed": 0, "error": 0,
+            },
+            "tests": [],
+        },
+        "test_a.py::test_two": {
+            "counts": {
+                "passed": 0, "failed": 1, "skipped": 0,
+                "xfailed": 0, "xpassed": 0, "error": 0,
+            },
+            "tests": [
+                {
+                    "nodeid": "test_a.py::test_two",
+                    "outcome": "failed",
+                    "duration": 0.3,
+                    "longrepr": "bad",
+                },
+            ],
+        },
+        "test_b.py::test_only": {
+            "counts": {
+                "passed": 1, "failed": 0, "skipped": 0,
+                "xfailed": 0, "xpassed": 0, "error": 0,
+            },
+            "tests": [],
+        },
+    }
+    report_path = tmp_path / "results.json"
+    write_isolated_json_report(
+        report_path, state, state_file=tmp_path / "state.json",
+        per_unit_details=per_unit_details,
+    )
+
+    report = json.loads(report_path.read_text())
+    # Should be grouped into 2 file-level units, not 3 test-level units
+    assert len(report["units"]) == 2
+    unit_a = next(u for u in report["units"] if u["target"] == "test_a.py")
+    assert unit_a["counts"]["passed"] == 1
+    assert unit_a["counts"]["failed"] == 1
+    assert unit_a["status"] == "failed"
+    assert len(unit_a["tests"]) == 1
+    assert unit_a["stdout"] == "fail output"
+    unit_b = next(u for u in report["units"] if u["target"] == "test_b.py")
+    assert unit_b["counts"]["passed"] == 1
+    assert unit_b["status"] == "passed"
