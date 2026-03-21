@@ -197,8 +197,16 @@ def test_ecdsa_wycheproof(
                 Attribute.VERIFY: True,
             }
         )
-    except p11.exceptions.PKCS11Error:
-        pytest.skip("Cannot import EC public key")
+    except (
+        p11.exceptions.CurveNotSupported,
+        p11.exceptions.AttributeValueInvalid,
+        p11.exceptions.TemplateInconsistent,
+        p11.exceptions.DomainParamsInvalid,
+        p11.exceptions.MechanismInvalid,
+        p11.exceptions.FunctionFailed,
+        p11.exceptions.DeviceError,
+    ) as exc:
+        pytest.skip(f"Cannot import EC key for {curve}: {type(exc).__name__}")
 
     if is_p1363:
         raw_sig = sig_der
