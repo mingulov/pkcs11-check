@@ -37,8 +37,9 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Install deps first (cached unless pyproject.toml/uv.lock/python-pkcs11 change)
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 COPY python-pkcs11/ python-pkcs11/
+COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
 RUN uv sync --frozen
 
