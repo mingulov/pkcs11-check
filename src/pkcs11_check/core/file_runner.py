@@ -457,6 +457,9 @@ def write_isolated_json_report(
         tests = merged_detail.get("tests")
         if tests:
             unit["tests"] = tests
+        sr = merged_detail.get("skip_reasons")
+        if sr:
+            unit["skip_reasons"] = sr
 
         units_out.append(unit)
 
@@ -1050,6 +1053,7 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
         "xfailed": 0, "xpassed": 0, "error": 0,
     }
     non_passing: list[dict[str, Any]] = []
+    skip_reasons: dict[str, int] = {}
     # Track nodeids that had a when=call record, so we know if a setup
     # skip/error is standalone.
     seen_call: set[str] = set()
@@ -1098,7 +1102,19 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
         mapped = _map_outcome(raw_outcome, wasxfail)
         counts[mapped] = counts.get(mapped, 0) + 1
 
-        if mapped in ("passed", "skipped"):
+        if mapped == "skipped":
+            reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
+            # Normalize: extract just the reason text from tuple-style longrepr
+            # e.g. "('path.py', 10, 'Skipped: reason')" → "reason"
+            if reason.startswith("(") and "Skipped:" in reason:
+                parts = reason.split("Skipped:", 1)
+                if len(parts) > 1:
+                    reason = parts[1].strip().rstrip("')")
+            elif reason.startswith("Skipped:"):
+                reason = reason[8:].strip()
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+            continue
+        if mapped == "passed":
             continue
 
         entry: dict[str, Any] = {
@@ -1137,6 +1153,11 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
         raw_outcome = rec.get("outcome", "")
         if raw_outcome == "skipped":
             counts["skipped"] = counts.get("skipped", 0) + 1
+            reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
+            if "Skipped:" in reason:
+                parts = reason.split("Skipped:", 1)
+                reason = parts[1].strip().rstrip("')")
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
             continue  # skipped tests excluded from non-passing list per spec
 
         counts["error"] = counts.get("error", 0) + 1
@@ -1167,7 +1188,10 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
             entry["longrepr"] = flat
         non_passing.append(entry)
 
-    return {"counts": counts, "tests": non_passing}
+    result: dict[str, Any] = {"counts": counts, "tests": non_passing}
+    if skip_reasons:
+        result["skip_reasons"] = skip_reasons
+    return result
 
 
 def _unit_timeout_seconds(test_timeout: int, granularity: IsolationGranularity) -> int:
@@ -1713,6 +1737,18 @@ def run_isolated_pytest_units(
                                         accumulated_detail["tests"].extend(
                                             iter_detail["tests"]
                                         )
+                                        # Merge skip_reasons
+                                        for reason, cnt in iter_detail.get(
+                                            "skip_reasons", {}
+                                        ).items():
+                                            accumulated_detail.setdefault(
+                                                "skip_reasons", {}
+                                            )[reason] = (
+                                                accumulated_detail.get(
+                                                    "skip_reasons", {}
+                                                ).get(reason, 0)
+                                                + cnt
+                                            )
 
                                 if culprit:
                                     # Confirm crash by running culprit alone
