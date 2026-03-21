@@ -4,7 +4,7 @@
 FROM quay.io/fedora/fedora:44 AS builder
 
 RUN dnf -y install git make gcc gcc-c++ openssl-devel sqlite-devel \
-    automake autoconf autoconf-archive libtool pkg-config \
+    automake autoconf autoconf-archive libtool pkg-config openssl \
     && dnf clean all
 
 # Verify OpenSSL version (need 3.5+ for ML-DSA)
