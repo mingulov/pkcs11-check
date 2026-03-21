@@ -1158,6 +1158,57 @@ def _insert_escalated_units(
     return additions
 
 
+def _deselect_args_for_crash(
+    unit: str,
+    captured_stdout: str,
+    pytest_args: list[str],
+    env: Mapping[str, str],
+) -> list[str] | None:
+    """Build --deselect args to skip passed/crashed tests on retry.
+
+    Parses captured pytest output for PASSED/SKIPPED/XFAILED nodeids,
+    identifies the likely crash culprit (next test after last completed),
+    and returns --deselect arguments for all of them.  Returns ``None``
+    if we cannot determine what to deselect (e.g. crash during setup).
+    """
+    completed: list[str] = []
+    for line in captured_stdout.splitlines():
+        stripped = line.strip()
+        for marker in (" PASSED", " SKIPPED", " XFAIL", " xfail"):
+            if marker in stripped:
+                # Extract nodeid: "test_foo.py::TestBar::test_baz PASSED"
+                nodeid_part = stripped.split(marker)[0].strip()
+                if "::" in nodeid_part:
+                    completed.append(nodeid_part)
+                break
+
+    if not completed:
+        return None
+
+    # Collect all nodeids in this file to find the crash culprit
+    try:
+        all_nodeids = collect_pytest_nodeids([unit], pytest_args, env=env)
+    except ValueError:
+        return None
+
+    completed_set = set(completed)
+    crash_candidate: str | None = None
+    for nid in all_nodeids:
+        if nid not in completed_set:
+            crash_candidate = nid
+            break
+
+    deselect = [f"--deselect={nid}" for nid in completed]
+    if crash_candidate:
+        deselect.append(f"--deselect={crash_candidate}")
+
+    remaining = len(all_nodeids) - len(completed) - (1 if crash_candidate else 0)
+    if remaining <= 0:
+        return None
+
+    return deselect
+
+
 def _escalate_current_file(
     *,
     unit: str,
@@ -1484,6 +1535,88 @@ def run_isolated_pytest_units(
                         and unit_granularity == "file"
                         and not stop_on_failure
                     ):
+                        # Try retry-with-deselect first: re-run the file
+                        # skipping passed tests + the crash culprit.
+                        # Only fall through to per-test if retry also crashes.
+                        deselect = _deselect_args_for_crash(
+                            unit, captured_stdout, pytest_args, env,
+                        )
+                        if deselect:
+                            console.print(
+                                f"[yellow]Adaptive isolation:[/yellow] retrying "
+                                f"{unit} with {len(deselect)} tests deselected"
+                            )
+                            retry_json_fd, retry_json_raw = tempfile.mkstemp(
+                                prefix="pkcs11-check-retry-", suffix=".json"
+                            )
+                            os.close(retry_json_fd)
+                            retry_json_path = Path(retry_json_raw)
+                            retry_cmd = [
+                                sys.executable, "-m", "pytest",
+                                unit, *pytest_args, *deselect,
+                                "--json-report",
+                                f"--json-report-file={retry_json_path}",
+                                "--json-report-omit=collectors",
+                            ]
+                            retry_start = time.monotonic()
+                            try:
+                                retry_rc, retry_out, retry_err = (
+                                    _run_subprocess_tee(
+                                        retry_cmd,
+                                        env=env,
+                                        timeout=_unit_timeout_seconds(
+                                            timeout, unit_granularity
+                                        ),
+                                    )
+                                )
+                                retry_status = _status_from_returncode(retry_rc)
+                            except subprocess.TimeoutExpired:
+                                retry_status = "timeout"
+                                retry_rc = 124
+                                retry_out = retry_err = ""
+                            retry_dur = time.monotonic() - retry_start
+
+                            if retry_status not in ("crashed", "timeout"):
+                                # Retry succeeded — record the retry result
+                                retry_detail = _extract_per_unit_test_detail(
+                                    retry_json_path
+                                )
+                                retry_json_path.unlink(missing_ok=True)
+                                keep = retry_status != "passed" or (
+                                    retry_detail is not None
+                                    and any(
+                                        retry_detail["counts"].get(k, 0) > 0
+                                        for k in (
+                                            "failed", "xfailed", "xpassed", "error",
+                                        )
+                                    )
+                                )
+                                result = FileRunResult(
+                                    target=unit,
+                                    status=retry_status,
+                                    returncode=retry_rc,
+                                    duration_s=duration_s + retry_dur,
+                                    stdout=retry_out if keep else "",
+                                    stderr=retry_err if keep else "",
+                                )
+                                _record_result(state, result)
+                                save_run_state(state_file, state)
+                                if retry_detail is not None:
+                                    per_unit_details[unit] = retry_detail
+                                console.print(
+                                    f"[green]RETRY OK[/green] {unit} "
+                                    f"({retry_dur:.1f}s, {len(deselect)} deselected)"
+                                )
+                                if retry_status == "failed":
+                                    exit_code = 1
+                                index += 1
+                                continue
+                            retry_json_path.unlink(missing_ok=True)
+                            console.print(
+                                f"[red]RETRY CRASHED[/red] {unit} — "
+                                f"falling back to per-test isolation"
+                            )
+
                         escalated_units = _escalate_current_file(
                             unit=unit,
                             units=units,

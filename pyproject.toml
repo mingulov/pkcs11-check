@@ -93,4 +93,5 @@ timeout = 300
 dev = [
     "hypothesis>=6.151.9",
     "pytest-benchmark>=5.2.3",
+    "pytest-reportlog>=1.0.0",
 ]
