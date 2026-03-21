@@ -19,7 +19,6 @@ from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
     IsolatedReportConfig,
-    _extract_per_unit_test_detail,
     _identify_crash_culprit,
     _read_jsonl_results,
     build_policy_fingerprint,
@@ -32,7 +31,6 @@ from pkcs11_check.core.file_runner import (
     load_isolation_policy,
     load_run_state,
     normalize_policy_file_key,
-    postprocess_json_report_to_unified,
     run_isolated_pytest_units,
     save_isolation_policy,
     save_run_state,
@@ -987,81 +985,10 @@ def test_run_isolated_pytest_units_writes_junit_skipped_for_crash_limited(
     assert 'message="skipped after per-file crash limit was reached"' in payload
 
 
-def test_extract_per_unit_test_detail_parses_json_report(tmp_path: Path) -> None:
-    json_file = tmp_path / "report.json"
-    json_file.write_text(json.dumps({
-        "summary": {"passed": 1, "failed": 1, "skipped": 1},
-        "tests": [
-            {"nodeid": "test_a.py::test_ok", "outcome": "passed",
-             "call": {"duration": 0.1, "outcome": "passed"}},
-            {"nodeid": "test_a.py::test_skip", "outcome": "skipped",
-             "setup": {"duration": 0.0, "outcome": "skipped"}},
-            {
-                "nodeid": "test_a.py::test_fail",
-                "outcome": "failed",
-                "call": {
-                    "duration": 0.2,
-                    "outcome": "failed",
-                    "longrepr": "assert 1 == 2",
-                    "stdout": "debug output\n",
-                },
-            },
-            {
-                "nodeid": "test_a.py::test_xf",
-                "outcome": "xfailed",
-                "call": {
-                    "duration": 0.05,
-                    "outcome": "failed",
-                    "longrepr": "@pytest.mark.xfail(reason=\"known bug\")\n"
-                                "    def test_xf():\n>       assert False\n"
-                                "E       assert False",
-                    "stderr": "xfail trace\n",
-                },
-            },
-        ],
-    }))
-
-    detail = _extract_per_unit_test_detail(json_file)
-
-    assert detail is not None
-    assert detail["counts"] == {
-        "passed": 1, "failed": 1, "skipped": 1, "xfailed": 1, "xpassed": 0, "error": 0,
-    }
-    # Only non-passing tests (failed, xfailed, xpassed, error) in the tests array
-    assert len(detail["tests"]) == 2
-    assert detail["tests"][0]["nodeid"] == "test_a.py::test_fail"
-    assert detail["tests"][0]["outcome"] == "failed"
-    assert detail["tests"][0]["longrepr"] == "assert 1 == 2"
-    assert detail["tests"][0]["stdout"] == "debug output\n"
-    assert detail["tests"][1]["nodeid"] == "test_a.py::test_xf"
-    assert detail["tests"][1]["wasxfail"] == "known bug"
-    assert detail["tests"][1]["longrepr"] is not None
-    assert detail["tests"][1]["stderr"] == "xfail trace\n"
-
-
-def test_extract_per_unit_test_detail_returns_none_for_missing_file(tmp_path: Path) -> None:
-    result = _extract_per_unit_test_detail(tmp_path / "nonexistent.json")
-    assert result is None
-
-
-def test_extract_per_unit_test_detail_returns_none_for_corrupt_json(tmp_path: Path) -> None:
-    bad_file = tmp_path / "bad.json"
-    bad_file.write_text("{truncated")
-    result = _extract_per_unit_test_detail(bad_file)
-    assert result is None
-
-
-def test_extract_per_unit_test_detail_returns_none_for_empty_tests(tmp_path: Path) -> None:
-    json_file = tmp_path / "report.json"
-    json_file.write_text(json.dumps({"summary": {}, "tests": []}))
-    result = _extract_per_unit_test_detail(json_file)
-    assert result is None
-
-
 def test_run_isolated_pytest_units_extracts_per_unit_details(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Verify file-level subprocess gets --json-report and detail is extracted."""
+    """Verify file-level subprocess gets --report-log and detail is extracted."""
     seen_cmds: list[list[str]] = []
 
     def fake_run(
@@ -1072,16 +999,16 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
     ) -> tuple[int, str, str]:
         del env, timeout
         seen_cmds.append(list(cmd))
-        # Write a fake pytest-json-report to the temp file
-        for arg in cmd:
-            if arg.startswith("--json-report-file="):
-                json_path = Path(arg.split("=", 1)[1])
-                json_path.write_text(json.dumps({
-                    "summary": {"passed": 1},
-                    "tests": [
-                        {"nodeid": "test_a.py::test_ok", "outcome": "passed", "duration": 0.1},
-                    ],
-                }))
+        # Write a fake JSONL report-log to the temp file
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                jsonl_path = Path(cmd[i + 1])
+                jsonl_path.write_text(
+                    json.dumps({
+                        "nodeid": "test_a.py::test_ok", "when": "call",
+                        "outcome": "passed", "duration": 0.1,
+                    }) + "\n"
+                )
                 break
         return (0, "", "")
 
@@ -1102,14 +1029,13 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
     )
 
     assert exit_code == 0
-    # Verify --json-report was injected into the subprocess command
+    # Verify --report-log was injected into the subprocess command
     cmd = seen_cmds[0]
-    assert "--json-report" in cmd
-    json_report_file_args = [a for a in cmd if a.startswith("--json-report-file=")]
-    assert len(json_report_file_args) == 1
+    assert "--report-log" in cmd
+    report_log_idx = cmd.index("--report-log")
+    jsonl_temp_path = Path(cmd[report_log_idx + 1])
     # Verify the temp file was cleaned up
-    temp_path = Path(json_report_file_args[0].split("=", 1)[1])
-    assert not temp_path.exists()
+    assert not jsonl_temp_path.exists()
     # Verify the report has per-unit counts
     report = json.loads(report_path.read_text())
     assert report["units"][0].get("counts") is not None
@@ -1128,25 +1054,22 @@ def test_run_isolated_pytest_units_keeps_output_for_xfailed_unit(
         timeout: int = 0,
     ) -> tuple[int, str, str]:
         del env, timeout
-        for arg in cmd:
-            if arg.startswith("--json-report-file="):
-                json_path = Path(arg.split("=", 1)[1])
-                json_path.write_text(json.dumps({
-                    "tests": [
-                        {"nodeid": "test_a.py::test_ok", "outcome": "passed",
-                         "call": {"duration": 0.1, "outcome": "passed"}},
-                        {
-                            "nodeid": "test_a.py::test_xf",
-                            "outcome": "xfailed",
-                            "call": {
-                                "duration": 0.05,
-                                "outcome": "failed",
-                                "longrepr": "pytest.xfail(\"known bug\")\n"
-                                            "E  XFailed: known bug",
-                            },
-                        },
-                    ],
-                }))
+        # Write JSONL with a passed test and an xfailed test
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                jsonl_path = Path(cmd[i + 1])
+                lines = [
+                    json.dumps({
+                        "nodeid": "test_a.py::test_ok", "when": "call",
+                        "outcome": "passed", "duration": 0.1,
+                    }),
+                    json.dumps({
+                        "nodeid": "test_a.py::test_xf", "when": "call",
+                        "outcome": "skipped", "duration": 0.05,
+                        "wasxfail": "known bug",
+                    }),
+                ]
+                jsonl_path.write_text("\n".join(lines) + "\n")
                 break
         return (0, "xfail output here\n", "")
 
@@ -1174,10 +1097,10 @@ def test_run_isolated_pytest_units_keeps_output_for_xfailed_unit(
     assert result.stdout == "xfail output here\n"
 
 
-def test_run_isolated_pytest_units_skips_json_report_for_test_level(
+def test_run_isolated_pytest_units_skips_report_log_for_test_level(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Performance guard: test-level units must not create temp JSON files."""
+    """Performance guard: test-level units must not create temp JSONL files."""
     seen_cmds: list[list[str]] = []
 
     def fake_run(
@@ -1207,8 +1130,7 @@ def test_run_isolated_pytest_units_skips_json_report_for_test_level(
 
     assert exit_code == 0
     cmd = seen_cmds[0]
-    assert "--json-report" not in cmd
-    assert not any(a.startswith("--json-report-file=") for a in cmd)
+    assert "--report-log" not in cmd
 
 
 def test_write_isolated_json_report_unified_format(tmp_path: Path) -> None:
@@ -1337,66 +1259,6 @@ def test_write_isolated_json_report_groups_test_units_by_file(tmp_path: Path) ->
     unit_b = next(u for u in report["units"] if u["target"] == "test_b.py")
     assert unit_b["counts"]["passed"] == 1
     assert unit_b["status"] == "passed"
-
-
-def test_postprocess_json_report_to_unified(tmp_path: Path) -> None:
-    json_file = tmp_path / "results.json"
-    json_file.write_text(json.dumps({
-        "summary": {"passed": 1, "failed": 1, "xfailed": 1},
-        "tests": [
-            {"nodeid": "test_a.py::test_ok", "outcome": "passed",
-             "call": {"duration": 0.1, "outcome": "passed"}},
-            {"nodeid": "test_a.py::test_skip", "outcome": "skipped",
-             "setup": {"duration": 0.0, "outcome": "skipped"}},
-            {
-                "nodeid": "test_b.py::test_fail",
-                "outcome": "failed",
-                "call": {
-                    "duration": 0.5,
-                    "outcome": "failed",
-                    "longrepr": "assert False",
-                    "stdout": "fail debug\n",
-                },
-            },
-            {
-                "nodeid": "test_b.py::test_xf",
-                "outcome": "xfailed",
-                "call": {
-                    "duration": 0.1,
-                    "outcome": "failed",
-                    "longrepr": "pytest.xfail(\"known bug\")\n"
-                                "E  XFailed: known bug",
-                    "stderr": "xfail log\n",
-                },
-            },
-        ],
-    }))
-
-    postprocess_json_report_to_unified(json_file)
-
-    report = json.loads(json_file.read_text())
-    assert report["tool"] == "pkcs11-check"
-    assert report["kind"] == "test-run"
-    assert report["summary"]["passed"] == 1
-    assert report["summary"]["failed"] == 1
-    assert report["summary"]["skipped"] == 1
-    assert report["summary"]["xfailed"] == 1
-    assert report["summary"]["total"] == 4
-    assert len(report["units"]) == 2
-
-    unit_a = next(u for u in report["units"] if u["target"] == "test_a.py")
-    assert unit_a["counts"]["passed"] == 1
-    assert unit_a["counts"]["skipped"] == 1
-    assert unit_a["status"] == "passed"
-    assert "tests" not in unit_a  # no non-passing tests in test_a.py
-
-    unit_b = next(u for u in report["units"] if u["target"] == "test_b.py")
-    assert unit_b["status"] == "failed"
-    assert len(unit_b["tests"]) == 2
-    assert unit_b["tests"][0]["longrepr"] == "assert False"
-    assert unit_b["tests"][0]["stdout"] == "fail debug\n"
-    assert unit_b["tests"][1]["wasxfail"] == "known bug"
-    assert unit_b["tests"][1]["stderr"] == "xfail log\n"
 
 
 # ---------------------------------------------------------------------------

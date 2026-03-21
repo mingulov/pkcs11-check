@@ -16,7 +16,6 @@ from pkcs11_check.core.file_runner import (
     discover_auto_isolation_units,
     discover_pytest_units,
     load_run_state,
-    postprocess_json_report_to_unified,
     run_isolated_pytest_units,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
@@ -74,15 +73,6 @@ def _build_pytest_args(
 
     if include_machine_report_args and output == "junit":
         args.extend(["--junit-xml", output_file or "pkcs11-check-results.xml"])
-    elif include_machine_report_args and output == "json":
-        json_file = output_file or "pkcs11-check-results.json"
-        args.extend(
-            [
-                "--json-report",
-                f"--json-report-file={json_file}",
-                "--json-report-omit=collectors",
-            ]
-        )
 
     args.append("--tb=short")
     args.append("--no-header")
@@ -259,14 +249,8 @@ def test_command(
         finally:
             if jsonl_raw is not None:
                 os.environ.pop("PKCS11_CHECK_REPORT_LOG", None)
-        # Post-process JSON report to unified format (fallback; JSONL path is
-        # Phase 1 — both active until pytest-json-report is removed).
-        if output == "json":
-            unified_path = Path(output_file or "pkcs11-check-results.json")
-            if unified_path.exists():
-                postprocess_json_report_to_unified(unified_path)
-            if jsonl_raw is not None:
-                Path(jsonl_raw).unlink(missing_ok=True)
+        if output == "json" and jsonl_raw is not None:
+            Path(jsonl_raw).unlink(missing_ok=True)
         raise typer.Exit(code=int(exit_code))
     finally:
         manifest_path.unlink(missing_ok=True)
