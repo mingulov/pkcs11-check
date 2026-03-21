@@ -44,11 +44,23 @@ def import_aes_key(session: Any, key_bytes: bytes, **extra: Any) -> Any:
     return session.create_object(template)
 
 
+_mechanism_cache: dict[int, frozenset[str]] = {}
+
+
 def has_mechanism(p11_module: Any, name: str) -> bool:
-    """Check if a PKCS#11 module supports a named mechanism."""
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return name in names
+    """Check if a PKCS#11 module supports a named mechanism.
+
+    The mechanism list is cached per module instance — it never changes
+    during a session and querying it involves two PKCS#11 RPCs
+    (C_GetSlotList + C_GetMechanismList) that can be slow over IPC.
+    """
+    key = id(p11_module)
+    cached = _mechanism_cache.get(key)
+    if cached is None:
+        slot = p11_module.get_slots(token_present=True)[0]
+        cached = frozenset(mech_name(m) for m in slot.get_mechanisms())
+        _mechanism_cache[key] = cached
+    return name in cached
 
 
 def open_session(token: Any, rw: bool = True, pin: str | None = None) -> Any:
