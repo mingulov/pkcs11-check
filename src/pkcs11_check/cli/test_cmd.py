@@ -16,6 +16,7 @@ from pkcs11_check.core.file_runner import (
     discover_auto_isolation_units,
     discover_pytest_units,
     load_run_state,
+    postprocess_jsonl_to_unified,
     run_isolated_pytest_units,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
@@ -252,7 +253,10 @@ def test_command(
             if jsonl_raw is not None:
                 os.environ.pop("PKCS11_CHECK_REPORT_LOG", None)
         if output == "json" and jsonl_raw is not None:
-            Path(jsonl_raw).unlink(missing_ok=True)
+            jsonl_p = Path(jsonl_raw)
+            unified_path = Path(output_file or "pkcs11-check-results.json")
+            postprocess_jsonl_to_unified(jsonl_p, unified_path)
+            jsonl_p.unlink(missing_ok=True)
         raise typer.Exit(code=int(exit_code))
     finally:
         manifest_path.unlink(missing_ok=True)

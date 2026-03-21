@@ -620,6 +620,88 @@ def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
             src.unlink(missing_ok=True)
 
 
+def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
+    """Convert a pytest-reportlog JSONL file to pkcs11-check unified format.
+
+    Groups tests by file and writes the unified JSON report.
+    Used for ``--isolation none`` to produce consistent output.
+    """
+    detail = _read_jsonl_results(jsonl_path)
+    if detail is None:
+        return
+
+    # Group tests by file
+    by_file: dict[str, list[dict[str, Any]]] = {}
+    for test in detail["tests"]:
+        file_part = test.get("nodeid", "").split("::")[0]
+        by_file.setdefault(file_part, []).append(test)
+
+    # Also need per-file counts — rebuild from the full JSONL
+    # Since _read_jsonl_results only gives us aggregated counts,
+    # we re-read the JSONL for per-file counting.
+    try:
+        text = jsonl_path.read_text()
+    except (FileNotFoundError, OSError):
+        return
+
+    file_counts: dict[str, dict[str, int]] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("$report_type") != "TestReport" or rec.get("when") != "call":
+            continue
+        nodeid = rec.get("nodeid", "")
+        file_part = nodeid.split("::")[0]
+        if file_part not in file_counts:
+            file_counts[file_part] = {
+                "passed": 0, "failed": 0, "skipped": 0,
+                "xfailed": 0, "xpassed": 0, "error": 0,
+            }
+        outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
+        file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
+
+    summary: dict[str, int] = {
+        "passed": 0, "failed": 0, "skipped": 0,
+        "xfailed": 0, "xpassed": 0, "error": 0,
+    }
+    units: list[dict[str, Any]] = []
+
+    for target in sorted(set(list(by_file.keys()) + list(file_counts.keys()))):
+        counts = file_counts.get(target, {
+            "passed": 0, "failed": 0, "skipped": 0,
+            "xfailed": 0, "xpassed": 0, "error": 0,
+        })
+        for key in summary:
+            summary[key] += counts.get(key, 0)
+        has_failure = counts.get("failed", 0) > 0 or counts.get("error", 0) > 0
+        unit: dict[str, Any] = {
+            "target": target,
+            "status": "failed" if has_failure else "passed",
+            "returncode": 1 if has_failure else 0,
+            "duration_s": 0.0,
+            "counts": counts,
+        }
+        tests = by_file.get(target, [])
+        if tests:
+            unit["tests"] = tests
+        units.append(unit)
+
+    summary["total"] = sum(summary.values())
+    payload = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": summary,
+        "units": units,
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def load_run_state(path: Path) -> FileRunState | None:
     """Load a resumable runner state from disk."""
     if not path.exists():
@@ -1044,27 +1126,30 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
                     entry["stderr"] = content
         non_passing.append(entry)
 
-    # Process setup events for tests that never got a call record
+    # Process setup events for tests that never got a call record.
+    # Deduplicate fixture errors: if a session-scoped fixture fails,
+    # many tests get identical setup/error — report detail once, count all.
+    seen_error_reprs: set[str] = set()
     for rec in setup_events:
         nodeid = rec.get("nodeid", "")
         if nodeid in seen_call:
             continue  # call record already handled this test
         raw_outcome = rec.get("outcome", "")
         if raw_outcome == "skipped":
-            mapped = "skipped"
-        else:
-            mapped = "error"
-        counts[mapped] = counts.get(mapped, 0) + 1
-
-        if mapped == "skipped":
+            counts["skipped"] = counts.get("skipped", 0) + 1
             continue  # skipped tests excluded from non-passing list per spec
 
+        counts["error"] = counts.get("error", 0) + 1
+        flat = _flatten_longrepr(rec.get("longrepr"))
+        dedup_key = flat or nodeid
+        if dedup_key in seen_error_reprs:
+            continue  # duplicate fixture error — counted but not listed again
+        seen_error_reprs.add(dedup_key)
         entry = {
             "nodeid": nodeid,
-            "outcome": mapped,
+            "outcome": "error",
             "duration": rec.get("duration", 0.0),
         }
-        flat = _flatten_longrepr(rec.get("longrepr"))
         if flat:
             entry["longrepr"] = flat
         non_passing.append(entry)
