@@ -19,6 +19,7 @@ from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
     IsolatedReportConfig,
+    _collection_args,
     _identify_crash_culprit,
     _read_jsonl_results,
     build_policy_fingerprint,
@@ -31,11 +32,13 @@ from pkcs11_check.core.file_runner import (
     load_isolation_policy,
     load_run_state,
     normalize_policy_file_key,
+    postprocess_jsonl_to_unified,
     run_isolated_pytest_units,
     save_isolation_policy,
     save_run_state,
     units_remaining_for_resume,
     write_isolated_json_report,
+    write_report_jsonl,
 )
 
 
@@ -1528,3 +1531,209 @@ def test_identify_crash_culprit_missing_file(tmp_path: Path) -> None:
     culprit, completed = _identify_crash_culprit(tmp_path / "nope.jsonl")
     assert culprit is None
     assert completed == []
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — fixture dedup, postprocess, write_report_jsonl, etc.
+# ---------------------------------------------------------------------------
+
+
+def test_read_jsonl_results_deduplicates_fixture_errors(tmp_path: Path) -> None:
+    """Session fixture failure: N identical setup/error entries -> 1 detail + N count."""
+    shared_longrepr = "fixture 'db_session' raised RuntimeError: connection failed"
+    lines = [
+        _jsonl_line(
+            nodeid="tests/test_a.py::test_one",
+            when="setup",
+            outcome="error",
+            longrepr=shared_longrepr,
+        ),
+        _jsonl_line(
+            nodeid="tests/test_a.py::test_two",
+            when="setup",
+            outcome="error",
+            longrepr=shared_longrepr,
+        ),
+        _jsonl_line(
+            nodeid="tests/test_a.py::test_three",
+            when="setup",
+            outcome="error",
+            longrepr=shared_longrepr,
+        ),
+    ]
+    p = tmp_path / "report.jsonl"
+    p.write_text("\n".join(lines) + "\n")
+
+    result = _read_jsonl_results(p)
+    assert result is not None
+    assert result["counts"]["error"] == 3
+    error_entries = [t for t in result["tests"] if t["outcome"] == "error"]
+    assert len(error_entries) == 1  # deduplicated to single detail entry
+
+
+def test_identify_crash_culprit_with_completed_and_partial(tmp_path: Path) -> None:
+    """Multiple completed tests + one partial = correct culprit + completed list."""
+    lines = [
+        # test_a: fully completed (setup + call + teardown)
+        _jsonl_line(nodeid="t.py::test_a", when="setup"),
+        _jsonl_line(nodeid="t.py::test_a", when="call"),
+        _jsonl_line(nodeid="t.py::test_a", when="teardown"),
+        # test_b: fully completed
+        _jsonl_line(nodeid="t.py::test_b", when="setup"),
+        _jsonl_line(nodeid="t.py::test_b", when="call"),
+        _jsonl_line(nodeid="t.py::test_b", when="teardown"),
+        # test_c: fully completed
+        _jsonl_line(nodeid="t.py::test_c", when="setup"),
+        _jsonl_line(nodeid="t.py::test_c", when="call"),
+        _jsonl_line(nodeid="t.py::test_c", when="teardown"),
+        # test_d: setup + call but no teardown (crash during teardown)
+        _jsonl_line(nodeid="t.py::test_d", when="setup"),
+        _jsonl_line(nodeid="t.py::test_d", when="call"),
+        # test_e: only setup (never reached call)
+        _jsonl_line(nodeid="t.py::test_e", when="setup"),
+    ]
+    jsonl = tmp_path / "report.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    culprit, completed = _identify_crash_culprit(jsonl)
+    assert culprit == "t.py::test_d"
+    assert sorted(completed) == ["t.py::test_a", "t.py::test_b", "t.py::test_c"]
+
+
+def test_postprocess_jsonl_to_unified_groups_by_file(tmp_path: Path) -> None:
+    """JSONL from --isolation none is grouped by file into unified format."""
+    lines = [
+        # a.py::test_1 — passed
+        _jsonl_line(nodeid="a.py::test_1", when="setup"),
+        _jsonl_line(nodeid="a.py::test_1", when="call", outcome="passed"),
+        _jsonl_line(nodeid="a.py::test_1", when="teardown"),
+        # a.py::test_2 — xfailed
+        _jsonl_line(nodeid="a.py::test_2", when="setup"),
+        _jsonl_line(
+            nodeid="a.py::test_2",
+            when="call",
+            outcome="skipped",
+            wasxfail="known issue",
+            longrepr="known issue",
+        ),
+        _jsonl_line(nodeid="a.py::test_2", when="teardown"),
+        # b.py::test_3 — failed
+        _jsonl_line(nodeid="b.py::test_3", when="setup"),
+        _jsonl_line(
+            nodeid="b.py::test_3",
+            when="call",
+            outcome="failed",
+            longrepr="AssertionError: expected 1 got 2",
+        ),
+        _jsonl_line(nodeid="b.py::test_3", when="teardown"),
+    ]
+    jsonl = tmp_path / "input.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+    output = tmp_path / "results.json"
+
+    postprocess_jsonl_to_unified(jsonl, output)
+
+    report = json.loads(output.read_text())
+    assert report["tool"] == "pkcs11-check"
+    assert report["kind"] == "test-run"
+    assert len(report["units"]) == 2
+
+    units_by_target = {u["target"]: u for u in report["units"]}
+    assert "a.py" in units_by_target
+    assert "b.py" in units_by_target
+
+    # a.py: 1 passed + 1 xfailed
+    a_counts = units_by_target["a.py"]["counts"]
+    assert a_counts["passed"] == 1
+    assert a_counts["xfailed"] == 1
+
+    # b.py: 1 failed
+    b_counts = units_by_target["b.py"]["counts"]
+    assert b_counts["failed"] == 1
+
+    # xfailed test should have wasxfail field
+    a_tests = units_by_target["a.py"].get("tests", [])
+    xfailed_entries = [t for t in a_tests if t.get("outcome") == "xfailed"]
+    assert len(xfailed_entries) == 1
+    assert "wasxfail" in xfailed_entries[0]
+
+
+def test_read_jsonl_results_strict_xfail_stays_failed(tmp_path: Path) -> None:
+    """Strict xfail: outcome=failed + wasxfail -> still failed (not xpassed)."""
+    lines = [
+        _jsonl_line(
+            nodeid="t.py::test_strict",
+            when="call",
+            outcome="failed",
+            wasxfail="strict: should not pass yet",
+            longrepr="strict xfail unexpectedly passed",
+        ),
+    ]
+    p = tmp_path / "report.jsonl"
+    p.write_text("\n".join(lines) + "\n")
+
+    result = _read_jsonl_results(p)
+    assert result is not None
+    assert result["counts"]["failed"] == 1
+    assert result["counts"].get("xpassed", 0) == 0
+
+    failed_entries = [t for t in result["tests"] if t["outcome"] == "failed"]
+    assert len(failed_entries) == 1
+    assert failed_entries[0]["nodeid"] == "t.py::test_strict"
+
+
+def test_write_report_jsonl_streaming_concat(tmp_path: Path) -> None:
+    """write_report_jsonl concatenates multiple JSONL files atomically."""
+    src_a = tmp_path / "a.jsonl"
+    src_b = tmp_path / "b.jsonl"
+    src_c = tmp_path / "c.jsonl"
+    src_a.write_text('{"line": "a1"}\n{"line": "a2"}\n')
+    src_b.write_text('{"line": "b1"}\n')
+    src_c.write_text('{"line": "c1"}\n{"line": "c2"}\n{"line": "c3"}\n')
+
+    output = tmp_path / "out" / "combined.jsonl"
+    write_report_jsonl([src_a, src_b, src_c], output)
+
+    assert output.exists()
+    lines = output.read_text().strip().split("\n")
+    assert len(lines) == 6
+    # Verify order: a lines, then b, then c
+    assert json.loads(lines[0])["line"] == "a1"
+    assert json.loads(lines[1])["line"] == "a2"
+    assert json.loads(lines[2])["line"] == "b1"
+    assert json.loads(lines[3])["line"] == "c1"
+    assert json.loads(lines[4])["line"] == "c2"
+    assert json.loads(lines[5])["line"] == "c3"
+
+    # Source files should be deleted
+    assert not src_a.exists()
+    assert not src_b.exists()
+    assert not src_c.exists()
+
+
+def test_collection_args_strips_report_log(tmp_path: Path) -> None:
+    """_collection_args strips --report-log and --report-log=path from args."""
+    args = [
+        "--p11-module", "/usr/lib/softhsm2.so",
+        "--report-log=/tmp/bar.jsonl",
+        "-v",
+        "--tb=short",
+        "--p11-pin", "1234",
+    ]
+    result = _collection_args(args)
+
+    # --report-log=path (equals form) stripped
+    assert "--report-log=/tmp/bar.jsonl" not in result
+
+    # -v and --tb=short also stripped by _collection_args
+    assert "-v" not in result
+    assert "--tb=short" not in result
+
+    # Real args are preserved
+    assert "--p11-module" in result
+    assert "/usr/lib/softhsm2.so" in result
+    assert "--p11-pin" in result
+    assert "1234" in result
+
+    # Always ends with --collect-only -qq
+    assert result[-2:] == ["--collect-only", "-qq"]
