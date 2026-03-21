@@ -1112,6 +1112,62 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
     assert report["units"][0]["counts"]["passed"] == 1
 
 
+def test_run_isolated_pytest_units_keeps_output_for_xfailed_unit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """stdout/stderr must be kept when a passing unit has xfailed tests."""
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+        stdout: object = None,
+        stderr: object = None,
+    ) -> SimpleNamespace:
+        del check, env, timeout, stdout, stderr
+        for arg in cmd:
+            if arg.startswith("--json-report-file="):
+                json_path = Path(arg.split("=", 1)[1])
+                json_path.write_text(json.dumps({
+                    "tests": [
+                        {"nodeid": "test_a.py::test_ok", "outcome": "passed", "duration": 0.1},
+                        {
+                            "nodeid": "test_a.py::test_xf",
+                            "outcome": "xfailed",
+                            "duration": 0.05,
+                            "wasxfail": "known bug",
+                        },
+                    ],
+                }))
+                break
+        return SimpleNamespace(returncode=0, stdout=b"xfail output here\n", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
+    state_file = tmp_path / "state.json"
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    saved = load_run_state(state_file)
+    assert saved is not None
+    result = saved.results[0]
+    assert result.status == "passed"
+    assert result.stdout == "xfail output here\n"
+
+
 def test_run_isolated_pytest_units_skips_json_report_for_test_level(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
