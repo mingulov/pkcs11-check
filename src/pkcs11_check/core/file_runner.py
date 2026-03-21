@@ -1410,9 +1410,24 @@ def run_isolated_pytest_units(
                     continue
 
                 duration_s = time.monotonic() - start
-                # Store stdout/stderr only for non-passing results to keep JSON
-                # manageable
-                keep_output = status not in ("passed",)
+
+                # Extract per-test detail before building the result so we
+                # can decide whether to keep stdout/stderr.
+                detail: dict[str, Any] | None = None
+                if unit_json_path is not None:
+                    detail = _extract_per_unit_test_detail(unit_json_path)
+
+                # Keep output for non-passing units AND for units that
+                # contain xfailed/xpassed/error tests (useful for debugging
+                # even when the overall unit status is "passed").
+                has_notable_tests = (
+                    detail is not None
+                    and any(
+                        detail["counts"].get(k, 0) > 0
+                        for k in ("failed", "xfailed", "xpassed", "error")
+                    )
+                )
+                keep_output = status not in ("passed",) or has_notable_tests
                 result = FileRunResult(
                     target=unit,
                     status=status,
@@ -1423,12 +1438,8 @@ def run_isolated_pytest_units(
                 )
                 _record_result(state, result)
                 save_run_state(state_file, state)
-
-                # Extract per-test detail from file-level subprocess json-report
-                if unit_json_path is not None:
-                    detail = _extract_per_unit_test_detail(unit_json_path)
-                    if detail is not None:
-                        per_unit_details[unit] = detail
+                if detail is not None:
+                    per_unit_details[unit] = detail
 
                 if status in {"passed", "empty"}:
                     console.print(
