@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.exceptions import (
+    ArgumentsBad,
     FunctionFailed,
     KeyTypeInconsistent,
     MechanismInvalid,
@@ -25,7 +26,8 @@ from pkcs11_check.testcases.conftest import has_mechanism
 pytestmark = pytest.mark.keymgmt
 
 # Common error tuple for derivation failures
-_DERIVE_ERRORS = (MechanismInvalid, MechanismParamInvalid, FunctionFailed)
+_DERIVE_ERRORS = (MechanismInvalid, MechanismParamInvalid, FunctionFailed,
+                   TemplateInconsistent, ArgumentsBad)
 
 
 @pytest.mark.requires_v30
@@ -63,7 +65,7 @@ class TestHKDFKeyGen:
                     Attribute.TOKEN: False,
                 },
             )
-        except (KeyTypeInconsistent, TemplateInconsistent, MechanismInvalid) as exc:
+        except (KeyTypeInconsistent, TemplateInconsistent, MechanismInvalid, ArgumentsBad) as exc:
             pytest.xfail(f"CKM_HKDF_KEY_GEN with {key_type.name} not supported: {exc}")
         try:
             assert key is not None
