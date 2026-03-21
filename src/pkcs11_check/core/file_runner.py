@@ -109,15 +109,15 @@ def _collection_args(pytest_args: list[str]) -> list[str]:
             skip_next = False
             continue
 
-        if arg in {"-q", "-v", "--no-header", "--json-report"}:
+        if arg in {"-q", "-v", "--no-header", "--json-report", "--report-log"}:
             continue
         if arg.startswith("--tb="):
             continue
-        if arg.startswith("--json-report-file=") or arg.startswith("--json-report-omit="):
+        if arg.startswith("--json-report-file=") or arg.startswith("--json-report-omit=") or arg.startswith("--report-log="):
             continue
         if arg.startswith("--junit-xml="):
             continue
-        if arg in {"--tb", "--json-report-file", "--json-report-omit", "--junit-xml"}:
+        if arg in {"--tb", "--json-report-file", "--json-report-omit", "--junit-xml", "--report-log"}:
             skip_next = True
             continue
 
@@ -1550,20 +1550,27 @@ def run_isolated_pytest_units(
             start = time.monotonic()
             unit_granularity = _effective_granularity(unit, granularity)
 
-            # Inject --json-report for file-level units only (spec guard:
-            # 75K temp files for test-level units is unacceptable).
+            # Inject --json-report and --report-log for file-level units only
+            # (spec guard: 75K temp files for test-level units is unacceptable).
             unit_json_path: Path | None = None
+            unit_jsonl_path: Path | None = None
             if unit_granularity == "file":
                 unit_json_fd, unit_json_raw = tempfile.mkstemp(
                     prefix="pkcs11-check-unit-", suffix=".json"
                 )
                 os.close(unit_json_fd)
                 unit_json_path = Path(unit_json_raw)
+                unit_jsonl_fd, unit_jsonl_raw = tempfile.mkstemp(
+                    prefix="pkcs11-check-jsonl-", suffix=".jsonl"
+                )
+                os.close(unit_jsonl_fd)
+                unit_jsonl_path = Path(unit_jsonl_raw)
                 cmd = [
                     sys.executable, "-m", "pytest", unit, *pytest_args,
                     "--json-report",
                     f"--json-report-file={unit_json_path}",
                     "--json-report-omit=collectors",
+                    "--report-log", str(unit_jsonl_path),
                 ]
             else:
                 cmd = [sys.executable, "-m", "pytest", unit, *pytest_args]
@@ -1660,8 +1667,13 @@ def run_isolated_pytest_units(
 
                 # Extract per-test detail before building the result so we
                 # can decide whether to keep stdout/stderr.
+                # Prefer JSONL (report-log) over json-report when available.
                 detail: dict[str, Any] | None = None
-                if unit_json_path is not None:
+                if unit_jsonl_path is not None:
+                    detail = _read_jsonl_results(unit_jsonl_path)
+                    unit_jsonl_path.unlink(missing_ok=True)
+                    unit_jsonl_path = None
+                if detail is None and unit_json_path is not None:
                     detail = _extract_per_unit_test_detail(unit_json_path)
 
                 # Keep output for non-passing units AND for units that
@@ -1854,6 +1866,8 @@ def run_isolated_pytest_units(
             finally:
                 if unit_json_path is not None:
                     unit_json_path.unlink(missing_ok=True)
+                if unit_jsonl_path is not None:
+                    unit_jsonl_path.unlink(missing_ok=True)
     finally:
         if report_config is not None:
             write_isolated_report(
