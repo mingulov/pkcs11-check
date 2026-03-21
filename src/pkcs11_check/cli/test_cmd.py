@@ -16,6 +16,7 @@ from pkcs11_check.core.file_runner import (
     discover_auto_isolation_units,
     discover_pytest_units,
     load_run_state,
+    postprocess_json_report_to_unified,
     run_isolated_pytest_units,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
@@ -245,6 +246,11 @@ def test_command(
 
         args = [*target_args, *pytest_args]
         exit_code = pytest.main(args)
+        # Post-process JSON report to unified format
+        if output == "json":
+            unified_path = Path(output_file or "pkcs11-check-results.json")
+            if unified_path.exists():
+                postprocess_json_report_to_unified(unified_path)
         raise typer.Exit(code=int(exit_code))
     finally:
         manifest_path.unlink(missing_ok=True)

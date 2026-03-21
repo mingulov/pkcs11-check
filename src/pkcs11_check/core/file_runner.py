@@ -470,6 +470,85 @@ def write_isolated_json_report(
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def postprocess_json_report_to_unified(json_path: Path) -> None:
+    """Convert a pytest-json-report file to pkcs11-check unified format.
+
+    Reads the native pytest-json-report JSON, groups tests by file,
+    and overwrites the file with the unified format.  Used for
+    ``--isolation none`` to produce consistent output.
+    """
+    try:
+        data = json.loads(json_path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return
+
+    tests_raw = data.get("tests", [])
+    if not tests_raw:
+        return
+
+    by_file: dict[str, list[dict[str, Any]]] = {}
+    for test in tests_raw:
+        file_part = test.get("nodeid", "").split("::")[0]
+        by_file.setdefault(file_part, []).append(test)
+
+    summary: dict[str, int] = {
+        "passed": 0, "failed": 0, "skipped": 0,
+        "xfailed": 0, "xpassed": 0, "error": 0,
+    }
+    units: list[dict[str, Any]] = []
+
+    for target in sorted(by_file):
+        file_tests = by_file[target]
+        counts: dict[str, int] = {
+            "passed": 0, "failed": 0, "skipped": 0,
+            "xfailed": 0, "xpassed": 0, "error": 0,
+        }
+        non_passing: list[dict[str, Any]] = []
+        duration = 0.0
+
+        for test in file_tests:
+            outcome = test.get("outcome", "passed")
+            counts[outcome] = counts.get(outcome, 0) + 1
+            summary[outcome] = summary.get(outcome, 0) + 1
+            duration += test.get("duration", 0.0)
+            if outcome not in {"failed", "xfailed", "xpassed", "error"}:
+                continue
+            entry: dict[str, Any] = {
+                "nodeid": test["nodeid"],
+                "outcome": outcome,
+                "duration": test.get("duration", 0.0),
+            }
+            if outcome == "xfailed" and test.get("wasxfail"):
+                entry["wasxfail"] = test["wasxfail"]
+            if outcome in {"failed", "error"}:
+                longrepr = test.get("call", {}).get("longrepr", "")
+                if longrepr:
+                    entry["longrepr"] = longrepr
+            non_passing.append(entry)
+
+        has_failure = counts["failed"] > 0 or counts["error"] > 0
+        unit: dict[str, Any] = {
+            "target": target,
+            "status": "failed" if has_failure else "passed",
+            "returncode": 1 if has_failure else 0,
+            "duration_s": round(duration, 3),
+            "counts": counts,
+        }
+        if non_passing:
+            unit["tests"] = non_passing
+        units.append(unit)
+
+    summary["total"] = sum(summary.values())
+
+    payload = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": summary,
+        "units": units,
+    }
+    json_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def _junit_case_identity(target: str) -> tuple[str, str]:
     if "::" not in target:
         path = Path(target)

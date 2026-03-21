@@ -28,6 +28,7 @@ from pkcs11_check.core.file_runner import (
     load_isolation_policy,
     load_run_state,
     normalize_policy_file_key,
+    postprocess_json_report_to_unified,
     run_isolated_pytest_units,
     save_isolation_policy,
     save_run_state,
@@ -1277,3 +1278,50 @@ def test_write_isolated_json_report_groups_test_units_by_file(tmp_path: Path) ->
     unit_b = next(u for u in report["units"] if u["target"] == "test_b.py")
     assert unit_b["counts"]["passed"] == 1
     assert unit_b["status"] == "passed"
+
+
+def test_postprocess_json_report_to_unified(tmp_path: Path) -> None:
+    json_file = tmp_path / "results.json"
+    json_file.write_text(json.dumps({
+        "summary": {"passed": 1, "failed": 1, "xfailed": 1},
+        "tests": [
+            {"nodeid": "test_a.py::test_ok", "outcome": "passed", "duration": 0.1},
+            {"nodeid": "test_a.py::test_skip", "outcome": "skipped", "duration": 0.0},
+            {
+                "nodeid": "test_b.py::test_fail",
+                "outcome": "failed",
+                "duration": 0.5,
+                "call": {"outcome": "failed", "longrepr": "assert False"},
+            },
+            {
+                "nodeid": "test_b.py::test_xf",
+                "outcome": "xfailed",
+                "duration": 0.1,
+                "wasxfail": "known bug",
+            },
+        ],
+    }))
+
+    postprocess_json_report_to_unified(json_file)
+
+    report = json.loads(json_file.read_text())
+    assert report["tool"] == "pkcs11-check"
+    assert report["kind"] == "test-run"
+    assert report["summary"]["passed"] == 1
+    assert report["summary"]["failed"] == 1
+    assert report["summary"]["skipped"] == 1
+    assert report["summary"]["xfailed"] == 1
+    assert report["summary"]["total"] == 4
+    assert len(report["units"]) == 2
+
+    unit_a = next(u for u in report["units"] if u["target"] == "test_a.py")
+    assert unit_a["counts"]["passed"] == 1
+    assert unit_a["counts"]["skipped"] == 1
+    assert unit_a["status"] == "passed"
+    assert "tests" not in unit_a  # no non-passing tests in test_a.py
+
+    unit_b = next(u for u in report["units"] if u["target"] == "test_b.py")
+    assert unit_b["status"] == "failed"
+    assert len(unit_b["tests"]) == 2
+    assert unit_b["tests"][0]["longrepr"] == "assert False"
+    assert unit_b["tests"][1]["wasxfail"] == "known bug"
