@@ -245,12 +245,28 @@ def test_command(
             raise typer.Exit(code=exit_code)
 
         args = [*target_args, *pytest_args]
-        exit_code = pytest.main(args)
-        # Post-process JSON report to unified format
+        # For JSON output, set PKCS11_CHECK_REPORT_LOG so plugin.py injects
+        # --report-log into the pytest session for per-test JSONL capture.
+        jsonl_raw: str | None = None
+        if output == "json":
+            jsonl_fd, jsonl_raw = tempfile.mkstemp(
+                prefix="pkcs11-check-jsonl-", suffix=".jsonl"
+            )
+            os.close(jsonl_fd)
+            os.environ["PKCS11_CHECK_REPORT_LOG"] = jsonl_raw
+        try:
+            exit_code = pytest.main(args)
+        finally:
+            if jsonl_raw is not None:
+                os.environ.pop("PKCS11_CHECK_REPORT_LOG", None)
+        # Post-process JSON report to unified format (fallback; JSONL path is
+        # Phase 1 — both active until pytest-json-report is removed).
         if output == "json":
             unified_path = Path(output_file or "pkcs11-check-results.json")
             if unified_path.exists():
                 postprocess_json_report_to_unified(unified_path)
+            if jsonl_raw is not None:
+                Path(jsonl_raw).unlink(missing_ok=True)
         raise typer.Exit(code=int(exit_code))
     finally:
         manifest_path.unlink(missing_ok=True)

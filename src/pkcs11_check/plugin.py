@@ -81,10 +81,21 @@ def pytest_addoption(parser: Any) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Register pkcs11-check custom markers."""
+    """Register pkcs11-check custom markers and inject --report-log for non-isolated runs."""
     for marker in MARKER_DEFINITIONS:
         config.addinivalue_line("markers", f"{marker.name}: {marker.description}")
     config.stash[_MANIFEST_KEY] = None
+
+    # Inject --report-log when PKCS11_CHECK_REPORT_LOG is set (by test_cmd.py for
+    # --isolation none JSON runs).  Guard against meta-tests (no --p11-module) and
+    # cases where the user already supplied --report-log on the command line.
+    if config.getoption("p11_module", default=None) is None:
+        return  # Not a pkcs11-check run (e.g. meta-tests)
+    if config.getoption("report_log", default=None) is not None:
+        return  # User already passed --report-log
+    report_log_path = os.environ.get("PKCS11_CHECK_REPORT_LOG")
+    if report_log_path:
+        config.option.report_log = report_log_path
 
 
 def _is_testcase_item(item: pytest.Item) -> bool:
