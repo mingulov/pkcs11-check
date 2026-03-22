@@ -677,3 +677,64 @@ pkcs11.exceptions.AttributeValueInvalid
 6. **File BouncyHSM bug** for large buffer segfaults
 7. **Adjust CKR subprocess tests** to handle expected crashes (xfail or catch rc=-11)
 8. **Install p11-kit** in Docker images or skip test_p11kit_proxy_exists when unavailable
+
+## Gap Analysis
+
+### 1. Test Count Anomaly
+- **pkcs11-mock**: only 174 tests (vs 72,633 standard) - this is expected, pkcs11-mock is a minimal stub
+
+### 2. SoftHSM2-main Regression (CRITICAL)
+- 4,715 errors (crashes) - EC regression in dev branch
+- Passes dropped from 56,855 (stable) to 52,157 (main)
+- Affects ALL Wycheproof ECDSA (3,418 vectors) and ECDH (1,297 vectors)
+- **Action**: Document as known SoftHSM2 dev branch issue, not a pkcs11-check bug
+
+### 3. SoftHSM2-main report.jsonl Bloat
+- `report.jsonl` is 4.7GB (36M lines) vs ~170MB for other providers
+- The 4,715 crashed EC tests generate massive JSONL from iterative deselect retries
+- **Action**: Consider limiting report.jsonl size or compressing
+
+### 4. High Skip Counts
+- **Kryoptic**: 48% skipped - mostly unsupported curves (secp256k1, brainpool, secp224r1)
+- **NSS**: 49% skipped - same curve limitations
+- **OpenCryptoki**: 30% skipped - no Montgomery curves, no PBKDF2
+- **TPM2**: 89% skipped - very limited mechanism support
+- These are genuine module limitations, not test bugs
+
+### 5. Top Skip Reasons Across All Providers
+| Reason | Count | Providers |
+|--------|-------|-----------|
+| Cannot import EC private key for ECDH | ~8,000 per provider | kryoptic, nss, opencryptoki |
+| Cannot import EC key for secp256k1 | ~4,600 per provider | kryoptic, nss, tpm2 |
+| Cannot import EC key for secp224r1 | ~4,500 per provider | kryoptic, nss, tpm2 |
+| Cannot decode ASN ECDH vector | ~2,100 per provider | bouncyhsm, opencryptoki, softhsm2 |
+| PKCS5_PBKD2 not supported | ~1,500 per provider | bouncyhsm, opencryptoki, softhsm2 |
+| DSA_SHA256 not supported | ~1,500 per provider | bouncyhsm, qryptotoken, tpm2 |
+| Cannot import Montgomery private key | ~4,000 per provider | opencryptoki, softhsm2 |
+
+### 6. BouncyHSM XFail Anomaly
+- 13,087 xfails - unusually high (18% of tests)
+- Likely caused by BouncyHSM accepting invalid vectors that other modules reject
+- **Action**: Investigate if xfail logic is too aggressive for this module
+
+### 7. Kryoptic-FIPS Extra XFails
+- 2,274 xfails vs 654 for standard Kryoptic
+- Difference (~1,620) is from FIPS restrictions disabling non-FIPS algorithms
+- Expected behavior - FIPS mode correctly rejects non-approved operations
+
+### 8. Qryptotoken Viability
+- Only 1.6% pass rate (1,164/72,633)
+- 218 crashes, 592 failures, 221 errors
+- 97% of tests skipped - module supports very few mechanisms
+- **Action**: Consider marking as experimental or reducing test scope
+
+### 9. NSS-main vs NSS Stable
+- nss-main: 523 fewer passes, 514 more skips than nss stable
+- Some mechanisms may have been removed or renamed in NSS tip
+- nss-pqc identical to nss stable (same Fedora Rawhide package)
+
+### 10. Potential Test Bugs (tests failing everywhere)
+- **x509/test_core_ops.py**: ALL tests fail on ALL 12 providers - cert import broken in test
+- **CKR raw subprocess tests**: 22 tests fail on 10-11 providers - subprocess crash (rc=-11)
+- **test_interop_openssl.py::test_p11kit_proxy_exists**: fails on all 12 - p11-kit not in Docker
+- **Action**: These are test bugs, not module bugs. Fix or mark as known issues.
