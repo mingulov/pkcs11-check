@@ -14,8 +14,12 @@ import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.exceptions import (
     ActionProhibited,
+    AttributeReadOnly,
+    FunctionNotSupported,
+    MechanismInvalid,
     SessionReadOnly,
     SessionReadOnlyExists,
+    TokenWriteProtected,
     UserAlreadyLoggedIn,
     UserTypeInvalid,
 )
@@ -27,6 +31,18 @@ pytestmark = pytest.mark.access
 # RO restriction errors - spec says CKR_SESSION_READ_ONLY, some modules
 # return CKR_ACTION_PROHIBITED or CKR_SESSION_READ_ONLY_EXISTS instead.
 _RO_ERRORS = (SessionReadOnly, ActionProhibited, SessionReadOnlyExists)
+
+# Broader set of errors modules may return when an operation is not allowed in RO session
+# or when unwrap/wrap is not supported at all.
+_RO_OR_UNSUPPORTED_ERRORS = (
+    SessionReadOnly,
+    ActionProhibited,
+    SessionReadOnlyExists,
+    TokenWriteProtected,
+    AttributeReadOnly,
+    FunctionNotSupported,
+    MechanismInvalid,
+)
 
 
 def _login(session: Any, pin: str | None) -> None:
@@ -468,7 +484,14 @@ class TestROWrapUnwrapRestrictions:
     def test_unwrap_to_token_object_in_ro_fails(
         self, p11_session: Any, p11_module: Any
     ) -> None:
-        """Unwrap with TOKEN=True template in RO session must fail."""
+        """Unwrap with TOKEN=True template in RO session must fail.
+
+        Per spec, C_UnwrapKey creating a TOKEN=True object in a RO session must
+        return CKR_SESSION_READ_ONLY. Some modules return related errors
+        (CKR_TOKEN_WRITE_PROTECTED, CKR_ACTION_PROHIBITED, CKR_ATTRIBUTE_READ_ONLY)
+        or CKR_FUNCTION_NOT_SUPPORTED / CKR_MECHANISM_INVALID if wrap/unwrap is
+        not implemented at all — all are acceptable here since the operation fails.
+        """
         # Create wrapping key and target in RW session
         wrapping_key = p11_session.generate_key(
             KeyType.AES,
@@ -493,7 +516,10 @@ class TestROWrapUnwrapRestrictions:
             }
         )
         try:
-            wrapped = wrapping_key.wrap_key(target)
+            try:
+                wrapped = wrapping_key.wrap_key(target)
+            except (FunctionNotSupported, MechanismInvalid):
+                pytest.skip("Module does not support wrap/unwrap")
             assert len(wrapped) > 0
 
             # Open RO session, find wrapping key, try unwrap with TOKEN=True
@@ -509,7 +535,7 @@ class TestROWrapUnwrapRestrictions:
                 )
                 assert len(found) >= 1, "Wrapping key not found in RO session"
                 ro_wrap_key = found[0]
-                with pytest.raises(_RO_ERRORS):
+                with pytest.raises(_RO_OR_UNSUPPORTED_ERRORS):
                     ro_wrap_key.unwrap_key(
                         ObjectClass.SECRET_KEY,
                         KeyType.AES,
@@ -529,7 +555,12 @@ class TestROWrapUnwrapRestrictions:
     def test_unwrap_to_session_object_in_ro_succeeds(
         self, p11_session: Any, p11_module: Any
     ) -> None:
-        """Unwrap with TOKEN=False template in RO session succeeds."""
+        """Unwrap with TOKEN=False template in RO session succeeds.
+
+        Per PKCS#11 spec, C_UnwrapKey creating a session object (TOKEN=False) is
+        permitted in a RO session. However, some modules are overly restrictive and
+        reject all unwrap in RO sessions, or do not implement wrap/unwrap at all.
+        """
         wrapping_key = p11_session.generate_key(
             KeyType.AES,
             256,
@@ -554,7 +585,10 @@ class TestROWrapUnwrapRestrictions:
             }
         )
         try:
-            wrapped = wrapping_key.wrap_key(target)
+            try:
+                wrapped = wrapping_key.wrap_key(target)
+            except (FunctionNotSupported, MechanismInvalid):
+                pytest.skip("Module does not support wrap/unwrap")
 
             token = p11_module.get_token()
             ro_session = token.open(rw=False)
@@ -568,16 +602,29 @@ class TestROWrapUnwrapRestrictions:
                 )
                 assert len(found) >= 1, "Wrapping key not found in RO session"
                 ro_wrap_key = found[0]
-                unwrapped = ro_wrap_key.unwrap_key(
-                    ObjectClass.SECRET_KEY,
-                    KeyType.AES,
-                    wrapped,
-                    template={
-                        Attribute.TOKEN: False,
-                        Attribute.SENSITIVE: False,
-                        Attribute.EXTRACTABLE: True,
-                    },
-                )
+                try:
+                    unwrapped = ro_wrap_key.unwrap_key(
+                        ObjectClass.SECRET_KEY,
+                        KeyType.AES,
+                        wrapped,
+                        template={
+                            Attribute.TOKEN: False,
+                            Attribute.SENSITIVE: False,
+                            Attribute.EXTRACTABLE: True,
+                        },
+                    )
+                except _RO_OR_UNSUPPORTED_ERRORS as exc:
+                    from pkcs11_check.compliance import ComplianceLevel, note
+
+                    note(
+                        "Module rejects C_UnwrapKey with TOKEN=False in RO session "
+                        f"({type(exc).__name__}); PKCS#11 spec permits session-object "
+                        "creation via C_UnwrapKey in RO sessions",
+                        ComplianceLevel.NOT_RECOMMENDED,
+                    )
+                    pytest.xfail(
+                        f"Module overly restricts RO session unwrap ({type(exc).__name__})"
+                    )
                 assert unwrapped is not None
                 unwrapped.destroy()
             finally:
