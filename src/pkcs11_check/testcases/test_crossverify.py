@@ -134,7 +134,7 @@ class TestECDSACrossVerify:
     def _export_ec_pubkey(self, pub_p11: Any, curve: ec.EllipticCurve) -> ec.EllipticCurvePublicKey:
         """Export EC public key from PKCS#11 point encoding."""
         ec_point = pub_p11[Attribute.EC_POINT]
-        # python-pkcs11 wraps the point in DER OCTET STRING — strip it
+        # python-pkcs11 wraps the point in DER OCTET STRING -- strip it
         # The raw point is typically 04 || x || y (uncompressed)
         if ec_point[0] == 0x04 and len(ec_point) > 65:
             # DER OCTET STRING wrapper: tag(04) + length + point

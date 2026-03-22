@@ -104,4 +104,4 @@ class TestCKRObjectErrors:
             key[Attribute.LABEL]  # noqa: B018
             # Some modules may not detect the invalid handle
         except PKCS11Error:
-            pass  # Expected — object no longer exists
+            pass  # Expected -- object no longer exists

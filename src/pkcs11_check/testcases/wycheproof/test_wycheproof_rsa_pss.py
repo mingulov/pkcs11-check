@@ -70,7 +70,7 @@ _MECH_DISPLAY: dict[Mechanism, str] = {
     Mechanism.SHA3_512_RSA_PKCS_PSS: "SHA3_512_RSA_PKCS_PSS",
 }
 
-# RSA-PSS vector files — standard and parameterized variants that map to
+# RSA-PSS vector files -- standard and parameterized variants that map to
 # the existing PKCS#11 PSS mechanism family.
 _PSS_FILES = sorted(
     f.name

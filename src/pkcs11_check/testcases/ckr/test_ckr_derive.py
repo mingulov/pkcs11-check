@@ -1,6 +1,6 @@
 """CKR compliance tests for C_DeriveKey.
 
-Source: PKCS#11 v3.1 §5.14.5.
+Source: PKCS#11 v3.1 Sec.5.14.5.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ pytestmark = pytest.mark.access
 
 
 class TestDeriveKeyErrors:
-    """Error conditions for C_DeriveKey (§5.14.5)."""
+    """Error conditions for C_DeriveKey (Sec.5.14.5)."""
 
     def test_mechanism_invalid(self, p11_session: Any, ckr_strict: bool) -> None:
         """Using hash mechanism for derive -> CKR_MECHANISM_INVALID."""
@@ -32,7 +32,7 @@ class TestDeriveKeyErrors:
             )
             pytest.fail("Should have rejected SHA256 as derive mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional — assert_ckr validates the specific type
+            # Broad catch intentional -- assert_ckr validates the specific type
             assert_ckr(CKR_DERIVE["mechanism_invalid"], e, ckr_strict)
 
     def test_key_type_inconsistent(

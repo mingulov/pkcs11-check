@@ -76,7 +76,7 @@ class TestKeyFunctionNotPermitted:
     """Keys with CKA_*=False tested via raw C_*Init calls."""
 
     def test_encrypt_not_permitted(self, p11_config: Any) -> None:
-        """Key with CKA_ENCRYPT=False → C_EncryptInit → CKR_KEY_FUNCTION_NOT_PERMITTED."""
+        """Key with CKA_ENCRYPT=False -> C_EncryptInit -> CKR_KEY_FUNCTION_NOT_PERMITTED."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -104,7 +104,7 @@ print("OK")
         assert "OK" in out
 
     def test_sign_not_permitted(self, p11_config: Any) -> None:
-        """Key with CKA_SIGN=False → C_SignInit → CKR_KEY_FUNCTION_NOT_PERMITTED."""
+        """Key with CKA_SIGN=False -> C_SignInit -> CKR_KEY_FUNCTION_NOT_PERMITTED."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -133,7 +133,7 @@ print("OK")
         assert "OK" in out
 
     def test_decrypt_not_permitted(self, p11_config: Any) -> None:
-        """Key with CKA_DECRYPT=False → C_DecryptInit → CKR_KEY_FUNCTION_NOT_PERMITTED."""
+        """Key with CKA_DECRYPT=False -> C_DecryptInit -> CKR_KEY_FUNCTION_NOT_PERMITTED."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,

@@ -31,7 +31,7 @@ def _has_sha3(p11_module: Any) -> bool:
 
 
 class TestSHA3Digest:
-    """SHA-3 digest tests — cross-verified against hashlib."""
+    """SHA-3 digest tests -- cross-verified against hashlib."""
 
     @pytest.mark.parametrize(
         "name,mechanism,hash_fn,digest_len",
@@ -47,7 +47,7 @@ class TestSHA3Digest:
         hash_fn: Any,
         digest_len: int,
     ) -> None:
-        """SHA-3 of 'abc' — PKCS#11 vs hashlib."""
+        """SHA-3 of 'abc' -- PKCS#11 vs hashlib."""
         if not _has_sha3(p11_module):
             pytest.skip("SHA-3 not supported by this module")
 

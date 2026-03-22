@@ -1,4 +1,4 @@
-"""Subprocess safety tests — post-Finalize, fork, library reload.
+"""Subprocess safety tests -- post-Finalize, fork, library reload.
 
 These tests run Python scripts in subprocesses to avoid corrupting
 the main test session. They test crash scenarios safely.
@@ -33,7 +33,7 @@ def _run_script(script: str, env: dict[str, str] | None = None, timeout: int = 3
 
 
 class TestPostFinalize:
-    """Test behavior after C_Finalize — must not crash (task 7.3)."""
+    """Test behavior after C_Finalize -- must not crash (task 7.3)."""
 
     def test_post_finalize_get_slot_list(self, p11_config: Any) -> None:
         """C_GetSlotList after C_Finalize must not crash."""
@@ -73,10 +73,10 @@ class TestPostFinalize:
 
 
 class TestForkSafety:
-    """Test fork behavior — child must not crash or deadlock (task 7.4)."""
+    """Test fork behavior -- child must not crash or deadlock (task 7.4)."""
 
     def test_fork_after_initialize(self, p11_config: Any) -> None:
-        """Fork after C_Initialize — child reinitializes."""
+        """Fork after C_Initialize -- child reinitializes."""
         module = str(p11_config.module)
         script = f"""
         import os, pkcs11
@@ -108,7 +108,7 @@ class TestLibraryReload:
     """Test library reload cycle (task 7.15)."""
 
     def test_reload_cycle_5x(self, p11_config: Any) -> None:
-        """Load → init → ops → finalize, 5 times. No crash or leak."""
+        """Load -> init -> ops -> finalize, 5 times. No crash or leak."""
         module = str(p11_config.module)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else "None"
         pin_arg = f'"{pin}"' if pin != "None" else "None"

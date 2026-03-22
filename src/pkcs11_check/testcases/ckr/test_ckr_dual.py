@@ -8,7 +8,7 @@ python-pkcs11 manages multipart state internally for most operations.
 Tests here cover conditions observable through the wrapper. Lower-level
 state machine testing deferred to Tier 6 ctypes.
 
-Source: PKCS#11 v3.1 §5.1.6 (OPERATION_ACTIVE, OPERATION_NOT_INITIALIZED).
+Source: PKCS#11 v3.1 Sec.5.1.6 (OPERATION_ACTIVE, OPERATION_NOT_INITIALIZED).
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ class TestOperationStateWrapper:
         ct2 = key.encrypt(b"\x11" * 16, mechanism=Mechanism.AES_ECB)
         assert len(ct1) == 16
         assert len(ct2) == 16
-        assert ct1 != ct2  # Different plaintext → different ciphertext
+        assert ct1 != ct2  # Different plaintext -> different ciphertext
 
     def test_digest_twice_succeeds(self, p11_session: Any) -> None:
         """Two consecutive digests should both work."""
@@ -49,7 +49,7 @@ class TestOperationStateWrapper:
         assert d1 != d2
 
     def test_sign_then_encrypt(self, p11_session: Any) -> None:
-        """Sign then encrypt with same session — no conflict."""
+        """Sign then encrypt with same session -- no conflict."""
         _pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
         key = p11_session.generate_key(KeyType.AES, 256)
         sig = priv.sign(b"data", mechanism=Mechanism.SHA256_RSA_PKCS)
@@ -62,7 +62,7 @@ class TestOperationStateSubprocess:
     """State machine tests requiring raw C API access (subprocess)."""
 
     def test_encrypt_without_init(self, p11_config: Any) -> None:
-        """C_Encrypt without C_EncryptInit → CKR_OPERATION_NOT_INITIALIZED.
+        """C_Encrypt without C_EncryptInit -> CKR_OPERATION_NOT_INITIALIZED.
 
         Uses subprocess with ctypes to call C_Encrypt directly without Init.
         """
@@ -93,7 +93,7 @@ class TestOperationStateSubprocess:
         assert "OK:" in result.stdout
 
     def test_double_digest_init_via_subprocess(self, p11_config: Any) -> None:
-        """Two DigestInit calls without Digest → second should get OPERATION_ACTIVE.
+        """Two DigestInit calls without Digest -> second should get OPERATION_ACTIVE.
 
         python-pkcs11 wraps digest as single-shot, so test via raw calls.
         """

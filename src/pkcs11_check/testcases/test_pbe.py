@@ -37,7 +37,7 @@ pytestmark = pytest.mark.keymgmt
 # Common error tuple for PBE operations.
 #
 # Most modules do not implement the legacy PBE mechanisms.  Any of these
-# exceptions is treated as "not operational" — the test xfails rather than
+# exceptions is treated as "not operational" -- the test xfails rather than
 # errors, since the mechanism enum is valid but support is absent.
 # ---------------------------------------------------------------------------
 _PBE_ERRORS = (
@@ -47,7 +47,7 @@ _PBE_ERRORS = (
     GeneralError,
 )
 
-# CKP_PKCS5_PBKD2_HMAC_SHA256 constant — used directly to avoid import confusion
+# CKP_PKCS5_PBKD2_HMAC_SHA256 constant -- used directly to avoid import confusion
 _CKP_HMAC_SHA256 = int(PBKDF2PRF.HMAC_SHA256)  # 0x00000004
 _CKP_HMAC_SHA1 = int(PBKDF2PRF.HMAC_SHA1)  # 0x00000001
 
@@ -92,7 +92,7 @@ def _make_pbe_params(
 ) -> tuple[_CkPbeParams, Any, Any, Any]:
     """Build a CK_PBE_PARAMS ctypes struct.
 
-    Returns (params, iv_buf, pw_arr, salt_arr) — caller must keep all alive
+    Returns (params, iv_buf, pw_arr, salt_arr) -- caller must keep all alive
     until C_GenerateKey returns.  The IV buffer is allocated by the caller
     and passed to the token; the token writes the derived IV into it.
     """
@@ -147,7 +147,7 @@ _ITERATIONS = 1024
 
 
 class TestPBESHA1DES3:
-    """CKM_PBE_SHA1_DES3_EDE_CBC — SHA-1 + 3-key Triple-DES PBE key generation.
+    """CKM_PBE_SHA1_DES3_EDE_CBC -- SHA-1 + 3-key Triple-DES PBE key generation.
 
     Defined in PKCS#12 (RFC 7292).  Derives a 3DES key and an 8-byte IV
     from a password and salt using SHA-1.  Very few modern tokens implement
@@ -283,7 +283,7 @@ class TestPBESHA1DES3:
 
 
 class TestPBESHA1DES2:
-    """CKM_PBE_SHA1_DES2_EDE_CBC — SHA-1 + 2-key Triple-DES PBE key generation.
+    """CKM_PBE_SHA1_DES2_EDE_CBC -- SHA-1 + 2-key Triple-DES PBE key generation.
 
     Two-key (112-bit) variant of the PKCS#12 PBE mechanisms.  Even rarer
     in modern tokens than the 3-key variant.
@@ -382,7 +382,7 @@ class TestPBESHA1DES2:
 
 
 class TestPBASHA1:
-    """CKM_PBA_SHA1_WITH_SHA1_HMAC — password-based SHA-1 HMAC key generation.
+    """CKM_PBA_SHA1_WITH_SHA1_HMAC -- password-based SHA-1 HMAC key generation.
 
     Derives an HMAC key for use with CKM_SHA_1_HMAC.  Defined in PKCS#12.
     The generated key length is SHA-1 output size (20 bytes / 160 bits).
@@ -510,7 +510,7 @@ class TestPBASHA1:
 
 
 class TestPKCS5PBKD2:
-    """CKM_PKCS5_PBKD2 — PKCS#5 v2 password-based key derivation (PBKDF2).
+    """CKM_PKCS5_PBKD2 -- PKCS#5 v2 password-based key derivation (PBKDF2).
 
     Derives a symmetric key from a password and salt using a configurable
     PRF (HMAC-SHA1/256/384/512) and iteration count.  Natively supported
@@ -520,7 +520,7 @@ class TestPKCS5PBKD2:
     """
 
     # Common error tuple for PBKD2: stricter than _PBE_ERRORS since the
-    # mechanism_param is well-formed here — unexpected errors should fail.
+    # mechanism_param is well-formed here -- unexpected errors should fail.
     _DERIVE_ERRORS = (MechanismInvalid, MechanismParamInvalid, FunctionFailed)
 
     def test_mechanism_availability(self, p11_module: Any) -> None:

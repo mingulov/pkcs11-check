@@ -348,6 +348,6 @@ class TestV30CertAttributes:
             obj.destroy()
         except (AttributeValueInvalid, AttributeTypeInvalid):
             pytest.xfail(
-                f"Module claims v3.0+ but rejects CKA_{attr_name} — "
+                f"Module claims v3.0+ but rejects CKA_{attr_name} -- "
                 "known bug in some implementations (e.g. Kryoptic)"
             )

@@ -27,7 +27,7 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
 
-# Hash algorithm names → PKCS#11 mechanisms
+# Hash algorithm names -> PKCS#11 mechanisms
 _SHA_TO_MECH: dict[str, Mechanism] = {
     "SHA-1": Mechanism.SHA1_RSA_PKCS,
     "SHA-224": Mechanism.SHA224_RSA_PKCS,
@@ -45,7 +45,7 @@ _MECH_DISPLAY: dict[Mechanism, str] = {
     Mechanism.SHA512_RSA_PKCS: "SHA512_RSA_PKCS",
 }
 
-# Only test key sizes ≥2048; 1024 and 1536 are rejected by many modules
+# Only test key sizes >=2048; 1024 and 1536 are rejected by many modules
 _SIGGEN_FILES = [
     "rsa_pkcs1_2048_sig_gen_test.json",
     "rsa_pkcs1_3072_sig_gen_test.json",
@@ -149,7 +149,7 @@ def test_rsa_pkcs1_siggen(
         sig = key_obj.sign(msg, mechanism=mechanism)
         assert sig == expected_sig, (
             f"Signature mismatch for {vec_id} ({key_size}-bit {sha}): "
-            f"got {sig.hex()[:32]}… expected {expected_sig.hex()[:32]}…"
+            f"got {sig.hex()[:32]}... expected {expected_sig.hex()[:32]}..."
         )
     finally:
         if key_obj is not None:

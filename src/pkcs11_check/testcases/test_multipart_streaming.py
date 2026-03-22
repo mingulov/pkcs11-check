@@ -52,7 +52,7 @@ class TestMultipartEncrypt:
         assert ct_p11 == ct_crypto
 
     def test_cbc_multiblock_roundtrip(self, p11_session: Any) -> None:
-        """AES-CBC with 4KB data — exercises Update path."""
+        """AES-CBC with 4KB data -- exercises Update path."""
         key = p11_session.generate_key(KeyType.AES, 256)
         iv = p11_session.generate_random(128)  # 16 bytes
         data = b"\x42" * 4096
@@ -85,7 +85,7 @@ class TestMultipartSign:
     """Verify sign correctness for large data (triggers C_SignUpdate)."""
 
     def test_rsa_sign_large_data(self, p11_session: Any) -> None:
-        """RSA sign 10KB data — hash computed internally via Update."""
+        """RSA sign 10KB data -- hash computed internally via Update."""
         pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
         data = b"\x99" * 10240
 

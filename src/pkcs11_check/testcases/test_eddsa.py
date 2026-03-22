@@ -102,7 +102,7 @@ class TestEdDSASignVerify:
         assert sig1 != sig2
 
     def test_deterministic_signatures(self, ed25519_keypair: tuple[Any, Any]) -> None:
-        """Ed25519 signatures are deterministic (same key+data → same sig)."""
+        """Ed25519 signatures are deterministic (same key+data -> same sig)."""
         _, priv = ed25519_keypair
         data = b"determinism test"
         sig1 = priv.sign(data, mechanism=Mechanism.EDDSA)

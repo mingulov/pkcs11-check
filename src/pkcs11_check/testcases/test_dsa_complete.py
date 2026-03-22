@@ -132,9 +132,9 @@ class TestDSARaw:
 
             try:
                 private.sign(bad_digest, mechanism=Mechanism.DSA)
-                # Module accepted wrong-length digest — non-standard but not a crash
+                # Module accepted wrong-length digest -- non-standard but not a crash
                 pytest.xfail(
-                    "Module accepted wrong-length digest for CKM_DSA — "
+                    "Module accepted wrong-length digest for CKM_DSA -- "
                     "spec requires CKR_DATA_LEN_RANGE"
                 )
             except (DataLenRange, MechanismInvalid, FunctionFailed, ArgumentsBad):

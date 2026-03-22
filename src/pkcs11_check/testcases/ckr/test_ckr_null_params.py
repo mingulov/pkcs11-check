@@ -3,11 +3,11 @@
 Tests that C_* functions properly validate NULL pointers and return
 CKR_ARGUMENTS_BAD (0x00000007) instead of segfaulting.
 
-All tests run in subprocess — modules may crash on NULL parameters.
+All tests run in subprocess -- modules may crash on NULL parameters.
 A segfault (returncode < 0) is recorded as "module doesn't validate
-NULL params" — that's a valid test finding, not a test failure.
+NULL params" -- that's a valid test finding, not a test failure.
 
-Source: PKCS#11 v3.1 §5.1.6 (CKR_ARGUMENTS_BAD).
+Source: PKCS#11 v3.1 Sec.5.1.6 (CKR_ARGUMENTS_BAD).
 """
 
 from __future__ import annotations
@@ -35,14 +35,14 @@ def _check_null_result(
     - Segfault (rc < 0): module doesn't validate NULL (finding, not failure)
     """
     if rc < 0:
-        # Segfault — record as compliance finding
+        # Segfault -- record as compliance finding
         from pkcs11_check.compliance import ComplianceLevel, note
         note(
             f"{func_name}(NULL): segfault (signal {-rc})",
             ComplianceLevel.NOT_RECOMMENDED,
-            reference="PKCS#11 v3.1 §5.1.6: CKR_ARGUMENTS_BAD",
+            reference="PKCS#11 v3.1 Sec.5.1.6: CKR_ARGUMENTS_BAD",
         )
-        return  # Not a test failure — it's a finding
+        return  # Not a test failure -- it's a finding
 
     # Parse CKR from stdout
     assert "CKR:" in out, f"{func_name}: unexpected output: {out} | stderr: {err}"
@@ -52,20 +52,20 @@ def _check_null_result(
     if ckr == CKR_ARGUMENTS_BAD:
         pass  # Correct per spec
     elif ckr == 0:  # CKR_OK
-        # Module accepted NULL — compliance deviation
+        # Module accepted NULL -- compliance deviation
         from pkcs11_check.compliance import ComplianceLevel, note
         note(
             f"{func_name}(NULL): accepted without error",
             ComplianceLevel.NOT_RECOMMENDED,
-            reference="PKCS#11 v3.1 §5.1.6: CKR_ARGUMENTS_BAD",
+            reference="PKCS#11 v3.1 Sec.5.1.6: CKR_ARGUMENTS_BAD",
         )
     else:
-        # Other CKR — module validates but returns different error
+        # Other CKR -- module validates but returns different error
         from pkcs11_check.compliance import ComplianceLevel, note
         note(
             f"{func_name}(NULL): returned CKR 0x{ckr:08x} (expected ARGUMENTS_BAD)",
             ComplianceLevel.NOT_RECOMMENDED,
-            reference="PKCS#11 v3.1 §5.1.6: CKR_ARGUMENTS_BAD",
+            reference="PKCS#11 v3.1 Sec.5.1.6: CKR_ARGUMENTS_BAD",
         )
 
 
@@ -73,7 +73,7 @@ class TestNullParameters:
     """NULL pointer parameter tests for C_* functions."""
 
     def test_get_info_null(self, p11_config: Any) -> None:
-        """C_GetInfo(NULL) → CKR_ARGUMENTS_BAD or segfault."""
+        """C_GetInfo(NULL) -> CKR_ARGUMENTS_BAD or segfault."""
         rc, out, err = run_null_test(
             str(p11_config.module),
             'rv = call_func("C_GetInfo", c_void_p(None))\n'
@@ -82,7 +82,7 @@ class TestNullParameters:
         _check_null_result("C_GetInfo", rc, out, err)
 
     def test_get_slot_list_null_count(self, p11_config: Any) -> None:
-        """C_GetSlotList(1, NULL, NULL) → CKR_ARGUMENTS_BAD or segfault."""
+        """C_GetSlotList(1, NULL, NULL) -> CKR_ARGUMENTS_BAD or segfault."""
         rc, out, err = run_null_test(
             str(p11_config.module),
             'rv = call_func("C_GetSlotList", c_ubyte(1), c_void_p(None), c_void_p(None))\n'
@@ -91,9 +91,9 @@ class TestNullParameters:
         _check_null_result("C_GetSlotList", rc, out, err)
 
     def test_open_session_null_handle(self, p11_config: Any) -> None:
-        """C_OpenSession with NULL phSession → CKR_ARGUMENTS_BAD or segfault.
+        """C_OpenSession with NULL phSession -> CKR_ARGUMENTS_BAD or segfault.
 
-        Most modules don't export C_OpenSession as a direct symbol — only
+        Most modules don't export C_OpenSession as a direct symbol -- only
         via CK_FUNCTION_LIST. Uses pkcs11 wrapper to get slot, then tries
         raw ctypes. Skips if function not directly exported.
         """
@@ -135,7 +135,7 @@ class TestNullParameters:
         _check_null_result("C_OpenSession", result.returncode, result.stdout.strip(), result.stderr)
 
     def test_generate_random_null_buffer(self, p11_config: Any) -> None:
-        """C_GenerateRandom with NULL buffer → CKR_ARGUMENTS_BAD or segfault."""
+        """C_GenerateRandom with NULL buffer -> CKR_ARGUMENTS_BAD or segfault."""
         module = str(p11_config.module)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
         pin_arg = f'"{pin}"' if pin else "None"

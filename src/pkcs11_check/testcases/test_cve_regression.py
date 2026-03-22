@@ -27,7 +27,7 @@ class TestCKATrusted:
     """
 
     def test_create_trusted_data_object(self, p11_session: Any) -> None:
-        """CKA_TRUSTED on data object — accept or reject, not crash."""
+        """CKA_TRUSTED on data object -- accept or reject, not crash."""
         try:
             obj = p11_session.create_object(
                 {
@@ -41,7 +41,7 @@ class TestCKATrusted:
             # If accepted, verify the flag
             assert obj is not None
         except TEMPLATE_ERRORS:
-            pass  # Some modules reject CKA_TRUSTED — that's fine
+            pass  # Some modules reject CKA_TRUSTED -- that's fine
 
 
 class TestCKADeriveOnEC:
@@ -78,7 +78,7 @@ class TestTookanUnwrapAttrs:
     """Tookan wrap/unwrap attribute preservation (task 7.23).
 
     Unwrapped keys must preserve security attributes.
-    Reference: Tookan paper — CKA_SENSITIVE ignored on unwrap.
+    Reference: Tookan paper -- CKA_SENSITIVE ignored on unwrap.
     """
 
     def test_unwrapped_key_preserves_extractable(
@@ -99,7 +99,7 @@ class TestTookanUnwrapAttrs:
 
         wrapped = wrap_key.wrap_key(target, mechanism=Mechanism.AES_KEY_WRAP)
 
-        # Unwrap with EXTRACTABLE=False — must stay non-extractable
+        # Unwrap with EXTRACTABLE=False -- must stay non-extractable
         unwrapped = wrap_key.unwrap_key(
             ObjectClass.SECRET_KEY, KeyType.AES, wrapped,
             mechanism=Mechanism.AES_KEY_WRAP,
@@ -126,7 +126,7 @@ class TestSessionObjectsAfterLogout:
         token = p11_module.get_token()
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
         if pin is None:
-            pytest.skip("No PIN configured — can't test logout")
+            pytest.skip("No PIN configured -- can't test logout")
 
         session = token.open(rw=True)
         try:
@@ -154,7 +154,7 @@ class TestSessionObjectsAfterLogout:
             pass
 
         found_after = list(session.get_objects({Attribute.LABEL: label}))
-        # Session objects may or may not survive logout — module-specific
+        # Session objects may or may not survive logout -- module-specific
         # But the operation must not crash
         if len(found_after) > 0:
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -168,7 +168,7 @@ class TestSessionObjectsAfterLogout:
 
 
 class TestROCAFingerprint:
-    """ROCA CVE-2017-15361 — weak RSA key generation (task 7b.13).
+    """ROCA CVE-2017-15361 -- weak RSA key generation (task 7b.13).
 
     Infineon RSALib generated keys with a detectable fingerprint in the
     modulus. Test: generate RSA keys and verify no ROCA pattern.
@@ -181,7 +181,7 @@ class TestROCAFingerprint:
         n = int.from_bytes(modulus, "big")
 
         # ROCA detection: check if n mod small primes follows the pattern
-        # Simplified check — full ROCA uses 39 primes
+        # Simplified check -- full ROCA uses 39 primes
         roca_primes = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43]
         roca_markers = [
             0x6, 0x18, 0x60, 0x420, 0x1800, 0x30000, 0xC0000,
@@ -248,12 +248,12 @@ class TestECDSATimingBasic:
         # Real Minerva leaks show CV > 2.0 with bimodal distribution.
         assert cv < 1.0, (
             f"ECDSA timing CV={cv:.3f} (mean={mean_t*1000:.2f}ms, "
-            f"stdev={stdev_t*1000:.2f}ms) — possible timing leak"
+            f"stdev={stdev_t*1000:.2f}ms) -- possible timing leak"
         )
 
 
 class TestBoundaryLengthCrypto:
-    """CVE-2019-17006 — missing input length checks (task 7b.3).
+    """CVE-2019-17006 -- missing input length checks (task 7b.3).
 
     Test encrypt/decrypt with boundary-length data.
     """
@@ -264,12 +264,12 @@ class TestBoundaryLengthCrypto:
         for size in [0, 1, 15, 16, 17, 31, 32]:
             data = b"\xAA" * size
             if size % 16 == 0 and size > 0:
-                # Block-aligned — should work
+                # Block-aligned -- should work
                 ct = key.encrypt(data, mechanism=Mechanism.AES_ECB)
                 pt = key.decrypt(ct, mechanism=Mechanism.AES_ECB)
                 assert pt == data
             else:
-                # Non-aligned — should fail with proper CKR
+                # Non-aligned -- should fail with proper CKR
                 try:
                     key.encrypt(data, mechanism=Mechanism.AES_ECB)
                 except DATA_ERRORS:
@@ -281,7 +281,7 @@ class TestBoundaryLengthCrypto:
 
         pub, _priv = p11_session.generate_keypair(KeyType.RSA, 2048)
 
-        # Empty data — some modules reject
+        # Empty data -- some modules reject
         try:
             pub.encrypt(b"", mechanism=Mechanism.RSA_PKCS)
         except DATA_ERRORS:
@@ -302,7 +302,7 @@ class TestBoundaryLengthCrypto:
         except DeviceError:
             pass  # Kryoptic bug: returns CKR_DEVICE_ERROR for data issues
 
-        # Over max — must reject
+        # Over max -- must reject
         try:
             pub.encrypt(b"\x42" * 246, mechanism=Mechanism.RSA_PKCS)
         except DATA_ERRORS:
@@ -314,7 +314,7 @@ class TestBoundaryLengthCrypto:
 
 
 class TestInvalidECCurve:
-    """CVE-2021-3798 — missing EC curve validation (task 7b.15).
+    """CVE-2021-3798 -- missing EC curve validation (task 7b.15).
 
     Import EC public key with invalid/unknown curve OID.
     """
@@ -335,7 +335,7 @@ class TestInvalidECCurve:
                     Attribute.TOKEN: False,
                 }
             )
-            # If accepted — this is the CVE-2021-3798 vulnerability
+            # If accepted -- this is the CVE-2021-3798 vulnerability
             from pkcs11_check.compliance import ComplianceLevel, note
             note(
                 "Module accepted EC key with invalid curve OID (CVE-2021-3798 pattern)",
@@ -347,14 +347,14 @@ class TestInvalidECCurve:
 
 
 class TestSoftHSM2Issue596:
-    """SoftHSM2 #596 — CKR_MECHANISM_INVALID on 3DES wrap (task 7b.6).
+    """SoftHSM2 #596 -- CKR_MECHANISM_INVALID on 3DES wrap (task 7b.6).
 
     Wrapping a 3DES key with AES-KW should work (or return a specific
     mechanism error), not CKR_GENERAL_ERROR.
     """
 
     def test_wrap_3des_key(self, p11_session: Any, p11_module: Any) -> None:
-        """Wrap a 3DES key — verify proper CKR code."""
+        """Wrap a 3DES key -- verify proper CKR code."""
         if not has_mechanism(p11_module, "DES3_KEY_GEN"):
             pytest.skip("3DES not supported")
         if not has_mechanism(p11_module, "AES_KEY_WRAP"):
@@ -378,14 +378,14 @@ class TestSoftHSM2Issue596:
 
 
 class TestSoftHSM2Issue722:
-    """SoftHSM2 #722 — SIGSEGV on C_Decrypt with OpenSSL 3 (task 7b.9).
+    """SoftHSM2 #722 -- SIGSEGV on C_Decrypt with OpenSSL 3 (task 7b.9).
 
     RSA keygen + encrypt + decrypt cycle via subprocess.
     Must not segfault.
     """
 
     def test_rsa_encrypt_decrypt_no_crash(self, p11_config: Any) -> None:
-        """RSA encrypt/decrypt cycle in subprocess — must not crash."""
+        """RSA encrypt/decrypt cycle in subprocess -- must not crash."""
         import subprocess
         import sys
         import textwrap
@@ -423,13 +423,13 @@ finally:
 
 
 class TestTPM2Issue44:
-    """tpm2-pkcs11 #44 — mutex deadlock on rapid login/SignInit (task 7b.12).
+    """tpm2-pkcs11 #44 -- mutex deadlock on rapid login/SignInit (task 7b.12).
 
-    Rapid sequential sign operations — must not deadlock.
+    Rapid sequential sign operations -- must not deadlock.
     """
 
     def test_rapid_sign_no_deadlock(self, p11_session: Any) -> None:
-        """100 rapid RSA sign operations — must not deadlock."""
+        """100 rapid RSA sign operations -- must not deadlock."""
         pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
 
         for i in range(100):

@@ -67,7 +67,7 @@ def test_ed25519_cctv(vec: dict[str, Any], p11_session: Any, p11_module: Any) ->
             Attribute.TOKEN: False,
         })
     except PKCS11Error:
-        # Module may reject low-order or malformed public keys — that's fine
+        # Module may reject low-order or malformed public keys -- that's fine
         if "low_order_A" in flags or "non_canonical_A" in flags:
             return  # Correctly rejected
         raise

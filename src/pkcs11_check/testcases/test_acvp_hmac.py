@@ -1,4 +1,4 @@
-"""NIST ACVP HMAC test vectors — SHA-2, SHA-3 MACs.
+"""NIST ACVP HMAC test vectors -- SHA-2, SHA-3 MACs.
 
 Tests HMAC signature generation using official NIST ACVP vectors.
 Requires: scripts/fetch-optional-data.sh acvp

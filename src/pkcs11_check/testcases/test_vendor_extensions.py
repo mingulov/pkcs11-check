@@ -41,7 +41,7 @@ class TestVendorMechanisms:
 
         # At minimum, a useful module should have some standard mechanisms
         assert len(standard_mechs) > 5, (
-            f"Only {len(standard_mechs)} standard mechanisms — suspiciously low"
+            f"Only {len(standard_mechs)} standard mechanisms -- suspiciously low"
         )
 
     def test_aes_mechanism_present(self, p11_module: Any) -> None:
@@ -79,7 +79,7 @@ class TestFIPSMode:
     """Detect FIPS mode flags on the token."""
 
     def test_token_flags_readable(self, p11_module: Any) -> None:
-        """Token flags are accessible — check for FIPS if available."""
+        """Token flags are accessible -- check for FIPS if available."""
         token = p11_module.get_token()
         # Token info should be accessible
         assert token is not None

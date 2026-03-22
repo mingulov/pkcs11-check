@@ -3,7 +3,7 @@
 Verifies that the 14 universal CKR codes (returned by any function)
 are properly handled by full_compat() and can be triggered on real modules.
 
-These are NOT duplicated per-function — they verify the infrastructure
+These are NOT duplicated per-function -- they verify the infrastructure
 that handles them across all functions.
 """
 
@@ -83,7 +83,7 @@ class TestUniversalRealTriggers:
     """Trigger universal CKR codes on real modules."""
 
     def test_session_handle_invalid(self, p11_module: Any) -> None:
-        """CKR_SESSION_HANDLE_INVALID — use invalid session handle via raw."""
+        """CKR_SESSION_HANDLE_INVALID -- use invalid session handle via raw."""
         import ctypes
 
         from pkcs11.raw import CKR_ARGUMENTS_BAD, CKR_SESSION_HANDLE_INVALID, RawPKCS11
@@ -91,11 +91,11 @@ class TestUniversalRealTriggers:
         # Provide a real buffer to avoid ARGUMENTS_BAD on NULL
         buf = (ctypes.c_ubyte * 64)()
         rv = raw.C_GetSessionInfo(0xDEADBEEF, ctypes.cast(buf, ctypes.c_void_p))
-        # SESSION_HANDLE_INVALID or ARGUMENTS_BAD — both prove invalid handle is detected
+        # SESSION_HANDLE_INVALID or ARGUMENTS_BAD -- both prove invalid handle is detected
         assert rv in (CKR_SESSION_HANDLE_INVALID, CKR_ARGUMENTS_BAD), f"Got 0x{rv:08x}"
 
     def test_cryptoki_not_initialized_via_subprocess(self, p11_config: Any) -> None:
-        """CKR_CRYPTOKI_NOT_INITIALIZED — call after C_Finalize."""
+        """CKR_CRYPTOKI_NOT_INITIALIZED -- call after C_Finalize."""
         import os
         script = textwrap.dedent(f"""\
             from pkcs11.raw import RawPKCS11, CKR_CRYPTOKI_NOT_INITIALIZED
@@ -103,7 +103,7 @@ class TestUniversalRealTriggers:
             raw = RawPKCS11.from_lib("{p11_config.module}")
             raw.C_Initialize(None)
             raw.C_Finalize(None)
-            # Now call something — should get NOT_INITIALIZED
+            # Now call something -- should get NOT_INITIALIZED
             sc = ctypes.c_ulong(0)
             rv = raw.C_GetSlotList(1, None, ctypes.byref(sc))
             print(f"CKR:0x{{rv:08x}}")
@@ -119,7 +119,7 @@ class TestUniversalRealTriggers:
         assert "OK" in result.stdout
 
     def test_device_removed_via_fault_proxy(self, p11_config: Any) -> None:
-        """CKR_DEVICE_REMOVED — triggered via fault-proxy."""
+        """CKR_DEVICE_REMOVED -- triggered via fault-proxy."""
         import os
         from pathlib import Path
         proxy = Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so"

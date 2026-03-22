@@ -130,7 +130,7 @@ def _double_pipeline_kdf_params() -> SP800108KDFParams:
 
 
 class TestSP800108CounterKDF:
-    """CKM_SP800_108_COUNTER_KDF — NIST SP 800-108 Counter mode KDF."""
+    """CKM_SP800_108_COUNTER_KDF -- NIST SP 800-108 Counter mode KDF."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_SP800_108_COUNTER_KDF is advertised."""
@@ -287,7 +287,7 @@ class TestSP800108CounterKDF:
 
 
 class TestSP800108FeedbackKDF:
-    """CKM_SP800_108_FEEDBACK_KDF — NIST SP 800-108 Feedback mode KDF."""
+    """CKM_SP800_108_FEEDBACK_KDF -- NIST SP 800-108 Feedback mode KDF."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_SP800_108_FEEDBACK_KDF is advertised."""
@@ -418,7 +418,7 @@ class TestSP800108FeedbackKDF:
 
 
 class TestSP800108DoublePipelineKDF:
-    """CKM_SP800_108_DOUBLE_PIPELINE_KDF — NIST SP 800-108 Double Pipeline KDF."""
+    """CKM_SP800_108_DOUBLE_PIPELINE_KDF -- NIST SP 800-108 Double Pipeline KDF."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_SP800_108_DOUBLE_PIPELINE_KDF is advertised."""

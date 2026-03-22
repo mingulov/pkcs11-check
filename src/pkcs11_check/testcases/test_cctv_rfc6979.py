@@ -2,7 +2,7 @@
 
 The CCTV RFC6979 directory contains a single P-256/SHA-256 test vector that
 exercises the rejection-sampling path of RFC 6979 deterministic nonce
-derivation.  With P-256 the first k candidate has a 2⁻³² chance of landing
+derivation.  With P-256 the first k candidate has a 2^-32 chance of landing
 in the rejection zone; this vector was constructed to trigger exactly that.
 
 Most PKCS#11 modules use hardware or OS RNG nonces rather than RFC 6979, so
@@ -44,7 +44,7 @@ _PUB_QY = bytes.fromhex(
 # Message bytes (ASCII)
 _MSG = b"wv[vnX"
 
-# Expected signature (raw r||s, each 32 bytes) — only produced by RFC 6979 implementations
+# Expected signature (raw r||s, each 32 bytes) -- only produced by RFC 6979 implementations
 _EXPECTED_R = bytes.fromhex(
     "EFD9073B652E76DA1B5A019C0E4A2E3FA529B035A6ABB91EF67F0ED7A1F21234"
 )
@@ -90,7 +90,7 @@ def test_rfc6979_ecdsa_verify(p11_session: Any, p11_module: Any) -> None:
             pub_key.verify(_MSG, _EXPECTED_SIG, mechanism=Mechanism.ECDSA_SHA256)
         except SignatureInvalid:
             pytest.fail(
-                "Module rejected a VALID ECDSA-SHA256 signature — "
+                "Module rejected a VALID ECDSA-SHA256 signature -- "
                 "the RFC 6979 CCTV vector should verify correctly"
             )
     finally:
@@ -101,7 +101,7 @@ def test_rfc6979_ecdsa_verify(p11_session: Any, p11_module: Any) -> None:
 @pytest.mark.xfail(
     reason=(
         "Most PKCS#11 modules use random nonces rather than RFC 6979 "
-        "deterministic k — signature will differ from the expected value. "
+        "deterministic k -- signature will differ from the expected value. "
         "xfail is correct. A pass here means the module implements RFC 6979."
     ),
     strict=False,
@@ -112,7 +112,7 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_session: Any, p11_module: Any) -> 
     The CCTV vector exercises the P-256 rejection-sampling path (first k
     candidate is in the rejection zone).  Only RFC 6979 implementations will
     produce the expected r||s bytes.  All others will produce a different but
-    mathematically valid signature — those runs are marked xfail.
+    mathematically valid signature -- those runs are marked xfail.
     """
     if not has_mechanism(p11_module, "ECDSA_SHA256"):
         pytest.skip("ECDSA_SHA256 not supported by module")
@@ -137,9 +137,9 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_session: Any, p11_module: Any) -> 
 
         sig = priv_key.sign(_MSG, mechanism=Mechanism.ECDSA_SHA256)
         assert sig == _EXPECTED_SIG, (
-            f"Signature mismatch: got {sig.hex()[:32]}… "
-            f"expected {_EXPECTED_SIG.hex()[:32]}… "
-            "(module does not use RFC 6979 deterministic k — xfail is expected)"
+            f"Signature mismatch: got {sig.hex()[:32]}... "
+            f"expected {_EXPECTED_SIG.hex()[:32]}... "
+            "(module does not use RFC 6979 deterministic k -- xfail is expected)"
         )
     finally:
         if priv_key is not None:

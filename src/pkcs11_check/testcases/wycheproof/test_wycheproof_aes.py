@@ -199,7 +199,7 @@ def test_aes_kwp(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
     except p11.exceptions.PKCS11Error:
         pytest.skip("Cannot import AES wrapping key")
 
-    # KWP can wrap arbitrary-length data — import as generic secret
+    # KWP can wrap arbitrary-length data -- import as generic secret
     # For non-aligned sizes, we use GENERIC_SECRET instead of AES
     key_type = KeyType.AES if len(msg) in (16, 24, 32) else KeyType.GENERIC_SECRET
     try:
@@ -316,7 +316,7 @@ def _has_aes_gmac(p11_module: Any) -> bool:
 def test_aes_gmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GMAC (authentication-only GCM) from Wycheproof vectors.
 
-    GMAC is GCM with empty plaintext — produces only a tag over AAD.
+    GMAC is GCM with empty plaintext -- produces only a tag over AAD.
     """
     if not _has_aes_gmac(p11_module):
         pytest.skip("AES_GMAC not supported")

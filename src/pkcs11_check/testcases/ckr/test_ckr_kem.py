@@ -1,9 +1,9 @@
 """CKR compliance tests for C_EncapsulateKey and C_DecapsulateKey.
 
-v3.2 only — requires ML-KEM mechanism support.
+v3.2 only -- requires ML-KEM mechanism support.
 Only Kryoptic currently implements KEM operations.
 
-Source: PKCS#11 v3.2 §5.14.7 (C_EncapsulateKey), §5.14.8 (C_DecapsulateKey).
+Source: PKCS#11 v3.2 Sec.5.14.7 (C_EncapsulateKey), Sec.5.14.8 (C_DecapsulateKey).
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def _generate_ml_kem_keypair(session: Any) -> tuple[Any, Any]:
 
 
 class TestEncapsulateKeyErrors:
-    """Error conditions for C_EncapsulateKey (§5.14.7)."""
+    """Error conditions for C_EncapsulateKey (Sec.5.14.7)."""
 
     def test_mechanism_invalid(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool
@@ -61,7 +61,7 @@ class TestEncapsulateKeyErrors:
             )
             pytest.fail("Should have rejected AES_ECB as encapsulate mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional — assert_ckr validates the specific type
+            # Broad catch intentional -- assert_ckr validates the specific type
             assert_ckr(CKR_KEM["encap_mechanism_invalid"], e, ckr_strict)
 
     def test_key_type_inconsistent(
@@ -88,7 +88,7 @@ class TestEncapsulateKeyErrors:
 
 
 class TestDecapsulateKeyErrors:
-    """Error conditions for C_DecapsulateKey (§5.14.8)."""
+    """Error conditions for C_DecapsulateKey (Sec.5.14.8)."""
 
     def test_mechanism_invalid(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool
@@ -110,7 +110,7 @@ class TestDecapsulateKeyErrors:
     def test_garbage_ciphertext(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool
     ) -> None:
-        """Decapsulate garbage ciphertext — reject or implicit rejection."""
+        """Decapsulate garbage ciphertext -- reject or implicit rejection."""
         if not has_mechanism(p11_module, "ML_KEM"):
             pytest.skip("ML_KEM not supported")
         _pub, priv = _generate_ml_kem_keypair(p11_session)

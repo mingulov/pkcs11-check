@@ -742,7 +742,7 @@ class TestTrustedAttribute:
 
 
 class TestAlwaysAuthenticate:
-    """CKA_ALWAYS_AUTHENTICATE — context-specific re-authentication.
+    """CKA_ALWAYS_AUTHENTICATE -- context-specific re-authentication.
 
     Private keys with CKA_ALWAYS_AUTHENTICATE=True require
     C_Login(CKU_CONTEXT_SPECIFIC) before each crypto operation.

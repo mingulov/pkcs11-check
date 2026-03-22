@@ -1,7 +1,7 @@
-"""Interoperability tests — generate keys in PKCS#11, use in cryptography, and vice versa.
+"""Interoperability tests -- generate keys in PKCS#11, use in cryptography, and vice versa.
 
-Tests the full round-trip: PKCS#11 → export → cryptography → verify back in PKCS#11.
-Also tests: import from cryptography → use in PKCS#11.
+Tests the full round-trip: PKCS#11 -> export -> cryptography -> verify back in PKCS#11.
+Also tests: import from cryptography -> use in PKCS#11.
 """
 
 from __future__ import annotations
@@ -168,7 +168,7 @@ class TestECDSAInterop:
 
 
 class TestAESInterop:
-    """AES key interop — import key from raw bytes, use in both."""
+    """AES key interop -- import key from raw bytes, use in both."""
 
     def test_aes_ecb_encrypt_p11_decrypt_crypto(self, p11_session: Any) -> None:
         """Import AES key, encrypt in P11, decrypt in crypto."""

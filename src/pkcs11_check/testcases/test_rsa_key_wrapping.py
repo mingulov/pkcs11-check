@@ -58,7 +58,7 @@ class TestRSAPKCSWrap:
         assert unwrapped[Attribute.VALUE] == original_value
 
     def test_wrap_unwrap_aes256(self, p11_session: Any, p11_module: Any) -> None:
-        """Wrap AES-256 key — larger key material still fits in RSA-2048."""
+        """Wrap AES-256 key -- larger key material still fits in RSA-2048."""
         if not has_mechanism(p11_module, "RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
@@ -77,7 +77,7 @@ class TestRSAPKCSWrap:
         assert unwrapped[Attribute.VALUE] == original_value
 
     def test_wrapped_key_is_different_each_time(self, p11_session: Any, p11_module: Any) -> None:
-        """RSA-PKCS wrapping is randomized — same key wraps differently each time."""
+        """RSA-PKCS wrapping is randomized -- same key wraps differently each time."""
         if not has_mechanism(p11_module, "RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 

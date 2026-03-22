@@ -52,7 +52,7 @@ class TestECDHKnownAnswer:
 
         p11_point = extract_ec_point(p11_pub[Attribute.EC_POINT])
 
-        # PKCS#11: p11_priv × crypto_pub (NULL KDF = raw shared secret)
+        # PKCS#11: p11_priv x crypto_pub (NULL KDF = raw shared secret)
         try:
             p11_derived = p11_priv.derive_key(
                 KeyType.GENERIC_SECRET,
@@ -71,7 +71,7 @@ class TestECDHKnownAnswer:
 
         p11_secret = p11_derived[Attribute.VALUE]
 
-        # cryptography: crypto_priv × p11_pub
+        # cryptography: crypto_priv x p11_pub
         p11_x = int.from_bytes(p11_point[1:33], "big")
         p11_y = int.from_bytes(p11_point[33:65], "big")
         p11_pub_crypto = ec.EllipticCurvePublicNumbers(p11_x, p11_y, ec.SECP256R1()).public_key()

@@ -1,4 +1,4 @@
-"""NIST Known-Answer Test vectors — import key/data, compute, compare."""
+"""NIST Known-Answer Test vectors -- import key/data, compute, compare."""
 
 from __future__ import annotations
 

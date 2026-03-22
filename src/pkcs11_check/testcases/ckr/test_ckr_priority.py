@@ -4,7 +4,7 @@ When multiple error conditions apply simultaneously, the PKCS#11 spec
 defines priority rules. These tests verify the higher-priority CKR is
 returned.
 
-Source: PKCS#11 v3.1 §5.1.7 (relative priorities).
+Source: PKCS#11 v3.1 Sec.5.1.7 (relative priorities).
 """
 
 from __future__ import annotations
@@ -30,9 +30,9 @@ class TestErrorPriority:
     def test_destroyed_handle_with_wrong_mechanism(
         self, p11_session: Any
     ) -> None:
-        """Destroyed handle + wrong mechanism → handle error takes priority.
+        """Destroyed handle + wrong mechanism -> handle error takes priority.
 
-        Spec §5.1: handle errors have higher priority than mechanism errors.
+        Spec Sec.5.1: handle errors have higher priority than mechanism errors.
         CKR_KEY_HANDLE_INVALID or CKR_OBJECT_HANDLE_INVALID expected.
         """
         key = p11_session.generate_key(KeyType.AES, 256)
@@ -44,12 +44,12 @@ class TestErrorPriority:
         except (ObjectHandleInvalid, KeyHandleInvalid):
             pass  # Correct: handle error has priority
         except MechanismInvalid:
-            # Module checked mechanism first — lower priority but acceptable
+            # Module checked mechanism first -- lower priority but acceptable
             from pkcs11_check.compliance import ComplianceLevel, note
             note(
                 "Module returned MECHANISM_INVALID before checking handle validity",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 §5.1.7",
+                reference="PKCS#11 v3.1 Sec.5.1.7",
             )
         except PKCS11Error:
             pass  # Other errors acceptable (wrapper may intercept)
@@ -57,7 +57,7 @@ class TestErrorPriority:
     def test_wrong_key_type_with_nonaligned_data(
         self, p11_session: Any
     ) -> None:
-        """RSA key + AES-ECB + non-aligned data → KEY_TYPE_INCONSISTENT has priority.
+        """RSA key + AES-ECB + non-aligned data -> KEY_TYPE_INCONSISTENT has priority.
 
         Key type check happens at Init time, data length at Encrypt time.
         KEY_TYPE_INCONSISTENT should be returned at Init before data is checked.
@@ -75,7 +75,7 @@ class TestErrorPriority:
     def test_bad_mechanism_with_bad_key_size(
         self, p11_session: Any
     ) -> None:
-        """AES key + RSA mechanism → MECHANISM_INVALID (checked at Init).
+        """AES key + RSA mechanism -> MECHANISM_INVALID (checked at Init).
 
         Both mechanism mismatch and key size mismatch apply, but mechanism
         is checked first per spec.

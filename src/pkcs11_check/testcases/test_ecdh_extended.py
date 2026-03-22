@@ -43,7 +43,7 @@ def _generate_ec_keypair(session: Any, curve: str = "secp256r1") -> tuple[Any, A
 
 
 class TestECDH1CofactorDerive:
-    """CKM_ECDH1_COFACTOR_DERIVE — ECDH with cofactor multiplication.
+    """CKM_ECDH1_COFACTOR_DERIVE -- ECDH with cofactor multiplication.
 
     For secp256r1 (cofactor=1), the result should match CKM_ECDH1_DERIVE.
     Uses the same CK_ECDH1_DERIVE_PARAMS structure as ECDH1_DERIVE.
@@ -229,7 +229,7 @@ class TestECDH1CofactorDerive:
 
 
 class TestECMQVDerive:
-    """CKM_ECMQV_DERIVE — EC Menter-Qu-Vanstone key agreement.
+    """CKM_ECMQV_DERIVE -- EC Menter-Qu-Vanstone key agreement.
 
     Requires two keypairs per party (static + ephemeral).
     Very rarely supported by PKCS#11 modules.
@@ -239,7 +239,7 @@ class TestECMQVDerive:
         """Check if CKM_ECMQV_DERIVE is in the mechanism list."""
         if not has_mechanism(p11_module, "ECMQV_DERIVE"):
             pytest.skip("CKM_ECMQV_DERIVE not supported")
-        # If we get here, mechanism is listed — that alone is noteworthy
+        # If we get here, mechanism is listed -- that alone is noteworthy
 
     def test_ecmqv_derive(self, p11_session: Any, p11_module: Any) -> None:
         """Attempt ECMQV key agreement with two keypairs per party.
@@ -270,7 +270,7 @@ class TestECMQVDerive:
                 Attribute.TOKEN: False,
             }
 
-            # Attempt derive — expect failure due to missing ECMQV param support
+            # Attempt derive -- expect failure due to missing ECMQV param support
             try:
                 shared = priv_a_static.derive_key(
                     KeyType.GENERIC_SECRET,
@@ -300,7 +300,7 @@ class TestECMQVDerive:
 
 
 class TestXEdDSA:
-    """CKM_XEDDSA — XEdDSA sign/verify on Montgomery curve keys.
+    """CKM_XEDDSA -- XEdDSA sign/verify on Montgomery curve keys.
 
     Uses X25519 (Montgomery) keys for EdDSA-compatible signing.
     Very rarely supported.
@@ -399,7 +399,7 @@ class TestXEdDSA:
 
                 try:
                     pub.verify(data, bad_sig, mechanism=Mechanism.XEDDSA, mechanism_param=0)
-                    # Some modules don't raise on bad sig — that's a bug
+                    # Some modules don't raise on bad sig -- that's a bug
                     pytest.fail("XEdDSA verify accepted a corrupted signature")
                 except SignatureInvalid:
                     pass  # Expected: bad signature rejected
@@ -415,7 +415,7 @@ class TestXEdDSA:
 
 
 class TestECMontgomeryKeyPairGen:
-    """CKM_EC_MONTGOMERY_KEY_PAIR_GEN — Generate Montgomery curve keypairs.
+    """CKM_EC_MONTGOMERY_KEY_PAIR_GEN -- Generate Montgomery curve keypairs.
 
     Tests X25519 and X448 key generation and ECDH derivation.
     """

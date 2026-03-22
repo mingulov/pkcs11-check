@@ -68,7 +68,7 @@ def _create_tls_pms(session: Any) -> Any:
 
 
 class TestTLS10PreMasterKeyGen:
-    """Legacy TLS 1.0 mechanisms — CKM_TLS_PRE_MASTER_KEY_GEN and related."""
+    """Legacy TLS 1.0 mechanisms -- CKM_TLS_PRE_MASTER_KEY_GEN and related."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_TLS_PRE_MASTER_KEY_GEN is advertised."""
@@ -111,7 +111,7 @@ class TestTLS10PreMasterKeyGen:
             pytest.skip("CKM_TLS_MASTER_KEY_DERIVE not supported")
 
     def test_tls_master_key_derive(self, p11_session: Any, p11_module: Any) -> None:
-        """Attempt CKM_TLS_MASTER_KEY_DERIVE — requires complex C params, xfail expected."""
+        """Attempt CKM_TLS_MASTER_KEY_DERIVE -- requires complex C params, xfail expected."""
         if not has_mechanism(p11_module, "TLS_MASTER_KEY_DERIVE"):
             pytest.skip("CKM_TLS_MASTER_KEY_DERIVE not supported")
 
@@ -165,7 +165,7 @@ class TestTLS10PreMasterKeyGen:
         pms = _create_tls_pms(p11_session)
         try:
             # CKM_TLS_PRF requires CK_TLS_PRF_PARAMS with seed, label, output buffer.
-            # Attempt with a bytes param — will fail with MechanismParamInvalid on most tokens.
+            # Attempt with a bytes param -- will fail with MechanismParamInvalid on most tokens.
             derived = pms.derive_key(
                 KeyType.GENERIC_SECRET,
                 48,
@@ -197,7 +197,7 @@ class TestTLS12MasterKeyDerive:
             pytest.skip("CKM_TLS12_MASTER_KEY_DERIVE not supported")
 
     def test_master_key_derive(self, p11_session: Any, p11_module: Any) -> None:
-        """Attempt CKM_TLS12_MASTER_KEY_DERIVE — requires CK_TLS12_MASTER_KEY_DERIVE_PARAMS."""
+        """Attempt CKM_TLS12_MASTER_KEY_DERIVE -- requires CK_TLS12_MASTER_KEY_DERIVE_PARAMS."""
         if not has_mechanism(p11_module, "TLS12_MASTER_KEY_DERIVE"):
             pytest.skip("CKM_TLS12_MASTER_KEY_DERIVE not supported")
 
@@ -205,7 +205,7 @@ class TestTLS12MasterKeyDerive:
         try:
             # CKM_TLS12_MASTER_KEY_DERIVE_PARAMS adds a prf_hash_mechanism field
             # (e.g. CKM_SHA256) to the legacy SSL3 parameter structure.
-            # python-pkcs11 has no wrapper for this — any call will fail.
+            # python-pkcs11 has no wrapper for this -- any call will fail.
             derived = pms.derive_key(
                 KeyType.GENERIC_SECRET,
                 48,
@@ -273,7 +273,7 @@ class TestTLS12KeyAndMacDerive:
             pytest.skip("CKM_TLS12_KEY_AND_MAC_DERIVE not supported")
 
     def test_key_and_mac_derive(self, p11_session: Any, p11_module: Any) -> None:
-        """Attempt CKM_TLS12_KEY_AND_MAC_DERIVE — derives client/server key material."""
+        """Attempt CKM_TLS12_KEY_AND_MAC_DERIVE -- derives client/server key material."""
         if not has_mechanism(p11_module, "TLS12_KEY_AND_MAC_DERIVE"):
             pytest.skip("CKM_TLS12_KEY_AND_MAC_DERIVE not supported")
 
@@ -311,7 +311,7 @@ class TestTLS12KeyAndMacDerive:
             pytest.skip("CKM_TLS12_KEY_SAFE_DERIVE not supported")
 
     def test_key_safe_derive(self, p11_session: Any, p11_module: Any) -> None:
-        """Attempt CKM_TLS12_KEY_SAFE_DERIVE — safe variant of key-and-MAC derive."""
+        """Attempt CKM_TLS12_KEY_SAFE_DERIVE -- safe variant of key-and-MAC derive."""
         if not has_mechanism(p11_module, "TLS12_KEY_SAFE_DERIVE"):
             pytest.skip("CKM_TLS12_KEY_SAFE_DERIVE not supported")
 
@@ -340,7 +340,7 @@ class TestTLS12KeyAndMacDerive:
 
 
 class TestTLS12Mac:
-    """CKM_TLS12_MAC and CKM_TLS_MAC — TLS MAC computation mechanisms."""
+    """CKM_TLS12_MAC and CKM_TLS_MAC -- TLS MAC computation mechanisms."""
 
     def test_tls12_mac_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_TLS12_MAC is advertised."""
@@ -353,7 +353,7 @@ class TestTLS12Mac:
             pytest.skip("CKM_TLS12_MAC not supported")
 
         # CKM_TLS12_MAC uses CK_TLS_MAC_PARAMS: {prfHashMechanism, ulMacLength, ulServerOrClient}
-        # No python-pkcs11 wrapper — attempt with raw bytes param will fail.
+        # No python-pkcs11 wrapper -- attempt with raw bytes param will fail.
         mac_key = _create_generic_secret(p11_session, bytes(range(32)))
         try:
             # Attempt sign (MAC) with a plausible param structure
@@ -393,7 +393,7 @@ class TestTLS12Mac:
 
 
 class TestTLS12KDF:
-    """CKM_TLS12_KDF and CKM_TLS_KDF — TLS key derivation function mechanisms."""
+    """CKM_TLS12_KDF and CKM_TLS_KDF -- TLS key derivation function mechanisms."""
 
     def test_tls12_kdf_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_TLS12_KDF is advertised."""
@@ -406,7 +406,7 @@ class TestTLS12KDF:
             pytest.skip("CKM_TLS12_KDF not supported")
 
         # CKM_TLS12_KDF requires CK_TLS_KDF_PARAMS with prfMechanism, label, random info.
-        # No python-pkcs11 wrapper — attempt will fail with MechanismParamInvalid.
+        # No python-pkcs11 wrapper -- attempt will fail with MechanismParamInvalid.
         base_key = _create_tls_pms(p11_session)
         try:
             derived = base_key.derive_key(
@@ -496,7 +496,7 @@ class TestTLS12Extended:
             # - pSessionHash: handshake transcript hash (32 bytes for SHA-256)
             # - ulSessionHashLen
             # - pVersion: output TLS version buffer
-            # No python-pkcs11 wrapper — attempt will fail.
+            # No python-pkcs11 wrapper -- attempt will fail.
             session_hash = bytes(range(32))  # simulated SHA-256 handshake hash
             derived = pms.derive_key(
                 KeyType.GENERIC_SECRET,

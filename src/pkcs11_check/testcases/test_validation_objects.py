@@ -142,7 +142,7 @@ class TestValidationObjects:
                     f"Expected str/bytes MODULE_ID, got {type(mod_id)}"
                 )
             except PKCS11Error:
-                # Optional attribute — some modules may not expose it
+                # Optional attribute -- some modules may not expose it
                 continue
 
     def test_validation_objects_are_read_only(

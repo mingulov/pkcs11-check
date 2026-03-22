@@ -1,4 +1,4 @@
-"""Metamorphic tests — verify invariants that must hold across operations.
+"""Metamorphic tests -- verify invariants that must hold across operations.
 
 These tests check mathematical/logical invariants rather than specific values:
 - Encrypt then decrypt = original plaintext (round-trip)
@@ -57,7 +57,7 @@ class TestRoundTripInvariants:
             result = pub.verify(b"tampered data", sig, mechanism=Mechanism.SHA256_RSA_PKCS)
             assert result is False
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected — signature invalid
+            pass  # Expected -- signature invalid
 
     def test_wrap_unwrap_preserves_material(self, p11_session: Any) -> None:
         """wrap(key) then unwrap must produce identical key material."""

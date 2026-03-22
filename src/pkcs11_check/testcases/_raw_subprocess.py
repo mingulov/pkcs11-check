@@ -28,7 +28,7 @@ def run_raw_script(
         timeout: Subprocess timeout in seconds.
 
     Returns:
-        (returncode, stdout, stderr) — returncode < 0 means signal (segfault).
+        (returncode, stdout, stderr) -- returncode < 0 means signal (segfault).
     """
     full_script = boilerplate + textwrap.dedent(script_body)
     if cleanup:

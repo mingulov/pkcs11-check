@@ -1,6 +1,6 @@
 """CKR compliance tests for C_DigestInit and C_Digest.
 
-Source: PKCS#11 v3.1 §5.12.1 (C_DigestInit), §5.12.2 (C_Digest).
+Source: PKCS#11 v3.1 Sec.5.12.1 (C_DigestInit), Sec.5.12.2 (C_Digest).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ pytestmark = pytest.mark.access
 
 
 class TestDigestInitErrors:
-    """Per-parameter error conditions for C_DigestInit (§5.12.1)."""
+    """Per-parameter error conditions for C_DigestInit (Sec.5.12.1)."""
 
     def test_mechanism_invalid(self, p11_session: Any, ckr_strict: bool) -> None:
         """Using encrypt mechanism for digest -> CKR_MECHANISM_INVALID."""
@@ -25,7 +25,7 @@ class TestDigestInitErrors:
             p11_session.digest(b"test data", mechanism=Mechanism.AES_ECB)
             pytest.fail("Should have rejected AES_ECB as digest mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional — assert_ckr validates the specific type
+            # Broad catch intentional -- assert_ckr validates the specific type
             assert_ckr(CKR_DIGEST["init_mechanism_invalid"], e, ckr_strict)
 
     def test_encrypt_mechanism_for_digest(
@@ -55,6 +55,6 @@ class TestDigestInitErrors:
             )
             # Some modules/wrappers ignore unknown params for hash mechanisms
             if not exp.allow_success:
-                pass  # SHA-256 with param: module may ignore it — not a hard failure
+                pass  # SHA-256 with param: module may ignore it -- not a hard failure
         except PKCS11Error as e:
             assert_ckr(exp, e, ckr_strict)

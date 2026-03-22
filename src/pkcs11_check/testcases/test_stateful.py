@@ -91,13 +91,13 @@ class PKCS11SessionMachine(RuleBasedStateMachine):
 
     @rule()
     def generate_random(self) -> None:
-        """Generate random data — should always succeed."""
+        """Generate random data -- should always succeed."""
         data = self.session.generate_random(256)
         assert len(data) == 32
 
     @rule()
     def digest_data(self) -> None:
-        """Digest data — should always succeed."""
+        """Digest data -- should always succeed."""
         digest = self.session.digest(b"stateful test", mechanism=Mechanism.SHA256)
         assert len(digest) == 32
 

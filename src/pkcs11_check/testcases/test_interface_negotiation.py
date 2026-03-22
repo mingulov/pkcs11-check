@@ -58,7 +58,7 @@ class TestInterfaceVersion:
 
     @pytest.mark.destructive  # calls lib.finalize()
     def test_module_functional_after_negotiation(self, p11_config: Any) -> None:
-        """Module works after interface negotiation — can generate keys."""
+        """Module works after interface negotiation -- can generate keys."""
         module_path = p11_config.module
         if hasattr(module_path, "get_secret_value"):
             module_path = module_path.get_secret_value()
@@ -82,7 +82,7 @@ class TestGetInterfaceList:
     def test_interface_list_on_v3_module(self, p11_module: Any) -> None:
         """v3.0+ modules should support get_interface_list."""
         if p11_module.interface_version == "2.40":
-            pytest.skip("v2.40 module — no C_GetInterfaceList")
+            pytest.skip("v2.40 module -- no C_GetInterfaceList")
 
         if not hasattr(p11_module, "get_interface_list"):
             pytest.skip("get_interface_list not exposed on wrapper")

@@ -14,7 +14,7 @@ Usage in tests:
 
     def test_aes_gcm_16byte_iv(p11_session):
         note("GCM with 16-byte IV", ComplianceLevel.NOT_RECOMMENDED,
-             reference="NIST SP 800-38D §8.2 recommends 96-bit IVs")
+             reference="NIST SP 800-38D Sec.8.2 recommends 96-bit IVs")
         # ... test body ...
 """
 
@@ -41,7 +41,7 @@ class ComplianceNote:
 
     description: str
     level: ComplianceLevel
-    reference: str = ""  # e.g., "NIST SP 800-38D §8.2"
+    reference: str = ""  # e.g., "NIST SP 800-38D Sec.8.2"
     test_id: str = ""  # filled in by the collector
 
 

@@ -71,7 +71,7 @@ class TestMultiSessionConcurrency:
             session1.close()
 
         assert len(digests) == 2
-        assert digests[0] != digests[1]  # Different data → different digest
+        assert digests[0] != digests[1]  # Different data -> different digest
 
 
 class TestRapidOperations:

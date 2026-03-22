@@ -49,7 +49,7 @@ class TestCKRTemplateCompliance:
     """Verify correct CKR codes for template errors."""
 
     def test_missing_class_returns_template_incomplete(self, p11_session: Any) -> None:
-        """Missing CKA_CLASS → CKR_TEMPLATE_INCOMPLETE (spec)."""
+        """Missing CKA_CLASS -> CKR_TEMPLATE_INCOMPLETE (spec)."""
         try:
             p11_session.create_object({Attribute.LABEL: "no-class", Attribute.TOKEN: False})
             pytest.fail("Should have raised for missing CKA_CLASS")
@@ -59,7 +59,7 @@ class TestCKRTemplateCompliance:
             _check_ckr("C_CreateObject(missing CLASS)", TemplateIncomplete, e)
 
     def test_invalid_class_returns_attribute_value_invalid(self, p11_session: Any) -> None:
-        """CKA_CLASS=0xDEADBEEF → CKR_ATTRIBUTE_VALUE_INVALID (spec)."""
+        """CKA_CLASS=0xDEADBEEF -> CKR_ATTRIBUTE_VALUE_INVALID (spec)."""
         try:
             p11_session.create_object({Attribute.CLASS: 0xDEADBEEF, Attribute.TOKEN: False})
             pytest.fail("Should have raised for invalid CLASS")
@@ -69,7 +69,7 @@ class TestCKRTemplateCompliance:
             _check_ckr("C_CreateObject(bad CLASS)", AttributeValueInvalid, e)
 
     def test_rsa_zero_size_returns_attribute_value_invalid(self, p11_session: Any) -> None:
-        """RSA key size 0 → CKR_ATTRIBUTE_VALUE_INVALID (spec)."""
+        """RSA key size 0 -> CKR_ATTRIBUTE_VALUE_INVALID (spec)."""
         try:
             p11_session.generate_keypair(KeyType.RSA, 0)
             pytest.fail("Should have raised for RSA size 0")
@@ -83,7 +83,7 @@ class TestCKRMechanismCompliance:
     """Verify correct CKR codes for mechanism errors."""
 
     def test_sha256_as_encrypt_returns_mechanism_invalid(self, p11_session: Any) -> None:
-        """SHA-256 for encrypt → CKR_MECHANISM_INVALID (spec)."""
+        """SHA-256 for encrypt -> CKR_MECHANISM_INVALID (spec)."""
         key = p11_session.generate_key(KeyType.AES, 256)
         try:
             key.encrypt(b"\x00" * 16, mechanism=Mechanism.SHA256)
@@ -94,7 +94,7 @@ class TestCKRMechanismCompliance:
             _check_ckr("C_EncryptInit(SHA256)", MechanismInvalid, e)
 
     def test_non_aligned_ecb_returns_data_len_range(self, p11_session: Any) -> None:
-        """AES-ECB with 15 bytes → CKR_DATA_LEN_RANGE (spec)."""
+        """AES-ECB with 15 bytes -> CKR_DATA_LEN_RANGE (spec)."""
         key = p11_session.generate_key(KeyType.AES, 256)
         try:
             key.encrypt(b"\x00" * 15, mechanism=Mechanism.AES_ECB)
@@ -109,7 +109,7 @@ class TestCKRAttributeCompliance:
     """Verify correct CKR codes for attribute access errors."""
 
     def test_sensitive_value_returns_attribute_sensitive(self, p11_session: Any) -> None:
-        """Reading VALUE on SENSITIVE key → CKR_ATTRIBUTE_SENSITIVE (spec)."""
+        """Reading VALUE on SENSITIVE key -> CKR_ATTRIBUTE_SENSITIVE (spec)."""
         key = p11_session.generate_key(KeyType.AES, 256)
         try:
             key[Attribute.VALUE]  # noqa: B018
@@ -124,12 +124,12 @@ class TestCKRObjectCompliance:
     """Verify correct CKR codes for object handle errors."""
 
     def test_destroyed_handle_returns_object_handle_invalid(self, p11_session: Any) -> None:
-        """Using destroyed handle → CKR_OBJECT_HANDLE_INVALID (spec)."""
+        """Using destroyed handle -> CKR_OBJECT_HANDLE_INVALID (spec)."""
         key = p11_session.generate_key(KeyType.AES, 256, label="spec-test")
         key.destroy()
         try:
             key[Attribute.LABEL]  # noqa: B018
-            # Some modules don't detect — that's a deviation but not crash
+            # Some modules don't detect -- that's a deviation but not crash
         except ObjectHandleInvalid:
             pass  # Correct per spec
         except PKCS11Error as e:
@@ -142,7 +142,7 @@ class TestCKRVerifyCompliance:
     def test_bad_signature_returns_signature_invalid(
         self, p11_session: Any, p11_module: Any
     ) -> None:
-        """Tampered signature → CKR_SIGNATURE_INVALID (spec)."""
+        """Tampered signature -> CKR_SIGNATURE_INVALID (spec)."""
         if not has_mechanism(p11_module, "RSA_PKCS"):
             pytest.skip("RSA not supported")
 
@@ -158,7 +158,7 @@ class TestCKRVerifyCompliance:
         try:
             result = pub.verify(data, tampered_sig, mechanism=Mechanism.SHA256_RSA_PKCS)
             if not result:
-                pass  # Returned False — acceptable
+                pass  # Returned False -- acceptable
             else:
                 pytest.fail("Tampered signature verified as valid!")
         except SignatureInvalid:

@@ -1,9 +1,9 @@
-"""BLAKE2B digest tests — BLAKE2B-160/256/384/512.
+"""BLAKE2B digest tests -- BLAKE2B-160/256/384/512.
 
 Tests PKCS#11 v3.0 BLAKE2B digest mechanisms (unkeyed variant).
 Cross-verifies against Python hashlib.blake2b with matching digest_size.
 
-PKCS#11 reference: v3.0 §2.42 (BLAKE2b Message Digesting).
+PKCS#11 reference: v3.0 Sec.2.42 (BLAKE2b Message Digesting).
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class TestBlake2bDigestLength:
 class TestBlake2bCrossVerify:
     """Cross-verify PKCS#11 BLAKE2B digests against Python hashlib.
 
-    PKCS#11 BLAKE2B mechanisms use the unkeyed variant — no key material.
+    PKCS#11 BLAKE2B mechanisms use the unkeyed variant -- no key material.
     hashlib.blake2b(data, digest_size=N) with no key matches this exactly.
     """
 

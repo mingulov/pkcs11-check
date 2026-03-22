@@ -33,7 +33,7 @@ pytestmark = pytest.mark.keymgmt
 # with 256-bit Prime Order Subgroup (Section 2.1).
 # ---------------------------------------------------------------------------
 
-# RFC 5114 Section 2.1 — 2048-bit MODP Group with 256-bit Prime Order Subgroup
+# RFC 5114 Section 2.1 -- 2048-bit MODP Group with 256-bit Prime Order Subgroup
 X942_PRIME_2048 = bytes.fromhex(
     "87A8E61DB4B6663CFFBBD19C651959998CEEF608660DD0F2"
     "5D2CEED4435E3B00E00DF8F1D61957D4FAF7DF4561B2AA30"
@@ -99,7 +99,7 @@ def _make_x942_derive_param(
 ) -> tuple[X942DH1DeriveParams, ctypes.Array[ctypes.c_ubyte]]:
     """Build a CK_X9_42_DH1_DERIVE_PARAMS ctypes struct.
 
-    Returns (params_struct, pub_data_array) — caller must keep both alive
+    Returns (params_struct, pub_data_array) -- caller must keep both alive
     until C_DeriveKey returns.
     """
     pub_arr = (ctypes.c_ubyte * len(public_data))(*public_data)
@@ -154,7 +154,7 @@ def _generate_x942_keypair(
 
 
 class TestX942DHKeyPairGen:
-    """Test CKM_X9_42_DH_KEY_PAIR_GEN — X9.42 DH key pair generation."""
+    """Test CKM_X9_42_DH_KEY_PAIR_GEN -- X9.42 DH key pair generation."""
 
     def test_keypair_generation(self, p11_session: Any, p11_module: Any) -> None:
         """Generate an X9.42 DH keypair from known RFC 5114 parameters."""
@@ -254,7 +254,7 @@ class TestX942DHKeyPairGen:
 
 
 class TestX942DHDerive:
-    """Test CKM_X9_42_DH_DERIVE — X9.42 DH key derivation (shared secret agreement)."""
+    """Test CKM_X9_42_DH_DERIVE -- X9.42 DH key derivation (shared secret agreement)."""
 
     def test_derive_shared_secret(self, p11_session: Any, p11_module: Any) -> None:
         """Alice and Bob derive the same shared AES key via X9.42 DH."""
@@ -402,7 +402,7 @@ class TestX942DHDerive:
 
 
 class TestX942DHParameterGen:
-    """Test CKM_X9_42_DH_PARAMETER_GEN — on-token X9.42 DH parameter generation."""
+    """Test CKM_X9_42_DH_PARAMETER_GEN -- on-token X9.42 DH parameter generation."""
 
     def test_generate_parameters(self, p11_session: Any, p11_module: Any) -> None:
         """Generate X9.42 DH domain parameters on the token."""
@@ -486,7 +486,7 @@ class TestX942DHParameterGen:
 
 
 class TestX942DHHybridDerive:
-    """Test CKM_X9_42_DH_HYBRID_DERIVE — hybrid X9.42 DH derivation.
+    """Test CKM_X9_42_DH_HYBRID_DERIVE -- hybrid X9.42 DH derivation.
 
     This mechanism is very rarely supported by software tokens.
     """
@@ -516,7 +516,7 @@ class TestX942DHHybridDerive:
 
 
 class TestX942MQVDerive:
-    """Test CKM_X9_42_MQV_DERIVE — X9.42 MQV key agreement.
+    """Test CKM_X9_42_MQV_DERIVE -- X9.42 MQV key agreement.
 
     MQV (Menezes-Qu-Vanstone) is very rarely supported by software tokens.
     """

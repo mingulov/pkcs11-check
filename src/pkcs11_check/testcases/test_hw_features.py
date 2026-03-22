@@ -3,10 +3,10 @@
 OASIS PKCS#11 defines hardware feature objects (CKO_HW_FEATURE) with
 CKA_HW_FEATURE_TYPE describing the feature kind:
 
-  CKH_MONOTONIC_COUNTER (0x01) — monotonic counter with CKA_VALUE,
+  CKH_MONOTONIC_COUNTER (0x01) -- monotonic counter with CKA_VALUE,
       CKA_RESET_ON_INIT, CKA_HAS_RESET
-  CKH_CLOCK (0x02) — hardware clock with CKA_VALUE (16-char UTC time)
-  CKH_USER_INTERFACE (0x03) — UI with CKA_PIXEL_X, CKA_PIXEL_Y, etc.
+  CKH_CLOCK (0x02) -- hardware clock with CKA_VALUE (16-char UTC time)
+  CKH_USER_INTERFACE (0x03) -- UI with CKA_PIXEL_X, CKA_PIXEL_Y, etc.
 
 Most software HSMs expose no hardware feature objects.  Tests skip
 gracefully when none are found.
@@ -120,7 +120,7 @@ class TestHwFeatureClock:
             assert len(value_str) == 16, (
                 f"Clock CKA_VALUE should be 16 chars, got {len(value_str)}"
             )
-            # Format: YYYYMMDDhhmmssxx — first 14 chars are digits
+            # Format: YYYYMMDDhhmmssxx -- first 14 chars are digits
             assert re.match(r"^\d{14}", value_str), (
                 f"Clock CKA_VALUE doesn't match YYYYMMDDhhmmss format: {value_str!r}"
             )

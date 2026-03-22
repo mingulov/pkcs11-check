@@ -27,7 +27,7 @@ class TestProfileObjects:
             )
         except Exception:
             pytest.xfail("Module does not support CKO_PROFILE enumeration")
-        # Not all v3.0 modules expose profile objects — treat empty list as acceptable
+        # Not all v3.0 modules expose profile objects -- treat empty list as acceptable
         assert isinstance(profiles, list)
 
     def test_profile_objects_have_profile_id(self, p11_session: Any) -> None:
@@ -87,6 +87,6 @@ class TestProfileObjects:
         standard = {ProfileID.BASELINE_PROVIDER, ProfileID.EXTENDED_PROVIDER}
         if not pids & {int(p) for p in standard}:
             pytest.xfail(
-                "Module does not advertise Baseline or Extended Provider profile — "
+                "Module does not advertise Baseline or Extended Provider profile -- "
                 f"profiles present: {[hex(p) for p in sorted(pids)]}"
             )

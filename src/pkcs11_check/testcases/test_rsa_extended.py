@@ -78,7 +78,7 @@ def _make_extractable_aes(session: Any, bits: int = 128) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# CKM_RSA_X9_31 — X9.31 signature padding
+# CKM_RSA_X9_31 -- X9.31 signature padding
 # ---------------------------------------------------------------------------
 
 
@@ -92,7 +92,7 @@ class TestRSAX931:
 
         pub, priv = _rsa_keypair(p11_session, sign=True)
         try:
-            # X9.31 operates on pre-hashed data — must be exactly hash length
+            # X9.31 operates on pre-hashed data -- must be exactly hash length
             digest = hashlib.sha256(b"test data for X9.31 signing").digest()
             assert len(digest) == 32
 
@@ -182,12 +182,12 @@ class TestRSAX931:
 
 
 # ---------------------------------------------------------------------------
-# CKM_RSA_X9_31_KEY_PAIR_GEN — alternative RSA key generation
+# CKM_RSA_X9_31_KEY_PAIR_GEN -- alternative RSA key generation
 # ---------------------------------------------------------------------------
 
 
 class TestRSAX931KeyPairGen:
-    """CKM_RSA_X9_31_KEY_PAIR_GEN — generate RSA keys using X9.31 method."""
+    """CKM_RSA_X9_31_KEY_PAIR_GEN -- generate RSA keys using X9.31 method."""
 
     def test_generate_keypair(self, p11_session: Any, p11_module: Any) -> None:
         """Generate an RSA keypair using X9.31 key generation."""
@@ -278,12 +278,12 @@ class TestRSAX931KeyPairGen:
 
 
 # ---------------------------------------------------------------------------
-# CKM_RSA_AES_KEY_WRAP — hybrid RSA+AES key wrapping
+# CKM_RSA_AES_KEY_WRAP -- hybrid RSA+AES key wrapping
 # ---------------------------------------------------------------------------
 
 
 class TestRSAAESKeyWrap:
-    """CKM_RSA_AES_KEY_WRAP — wraps a key with AES, then wraps the AES key with RSA-OAEP."""
+    """CKM_RSA_AES_KEY_WRAP -- wraps a key with AES, then wraps the AES key with RSA-OAEP."""
 
     def test_wrap_unwrap_aes128(self, p11_session: Any, p11_module: Any) -> None:
         """Wrap an AES-128 key using RSA_AES_KEY_WRAP and unwrap it."""
@@ -410,12 +410,12 @@ class TestRSAAESKeyWrap:
 
 
 # ---------------------------------------------------------------------------
-# CKM_RSA_PKCS_OAEP_TPM_1_1 — TPM 1.1 variant of RSA-OAEP
+# CKM_RSA_PKCS_OAEP_TPM_1_1 -- TPM 1.1 variant of RSA-OAEP
 # ---------------------------------------------------------------------------
 
 
 class TestRSAOAEPTPM:
-    """CKM_RSA_PKCS_OAEP_TPM_1_1 — TPM 1.1 specific RSA-OAEP variant."""
+    """CKM_RSA_PKCS_OAEP_TPM_1_1 -- TPM 1.1 specific RSA-OAEP variant."""
 
     def test_encrypt_decrypt_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
         """Encrypt and decrypt with RSA-OAEP TPM 1.1."""
@@ -441,7 +441,7 @@ class TestRSAOAEPTPM:
             priv.destroy()
 
     def test_ciphertext_is_randomized(self, p11_session: Any, p11_module: Any) -> None:
-        """OAEP encryption is randomized — same plaintext gives different ciphertexts."""
+        """OAEP encryption is randomized -- same plaintext gives different ciphertexts."""
         if not has_mechanism(p11_module, "RSA_PKCS_OAEP_TPM_1_1"):
             pytest.skip("CKM_RSA_PKCS_OAEP_TPM_1_1 not supported")
 
@@ -455,7 +455,7 @@ class TestRSAOAEPTPM:
             except (MechanismInvalid, FunctionNotSupported, FunctionFailed) as exc:
                 pytest.xfail(f"CKM_RSA_PKCS_OAEP_TPM_1_1 encrypt not functional: {exc}")
 
-            # OAEP uses random padding — two encryptions should differ
+            # OAEP uses random padding -- two encryptions should differ
             assert ct1 != ct2
         finally:
             pub.destroy()

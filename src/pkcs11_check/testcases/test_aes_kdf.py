@@ -1,6 +1,6 @@
 """Tests for AES key derivation by data encryption.
 
-Covers CKM_AES_ECB_ENCRYPT_DATA and CKM_AES_CBC_ENCRYPT_DATA — mechanisms
+Covers CKM_AES_ECB_ENCRYPT_DATA and CKM_AES_CBC_ENCRYPT_DATA -- mechanisms
 that derive new keys by encrypting supplied data with a base key.
 
 OASIS spec: key_derivation_by_data_encryption_aes-des.md
@@ -50,7 +50,7 @@ def _create_base_key(session: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> Any:
 
 
 class TestAESECBEncryptData:
-    """CKM_AES_ECB_ENCRYPT_DATA — derive keys by AES-ECB encrypting data."""
+    """CKM_AES_ECB_ENCRYPT_DATA -- derive keys by AES-ECB encrypting data."""
 
     def test_derive_basic(self, p11_session: Any, p11_module: Any) -> None:
         """Derive an AES key via ECB encryption and verify it is non-empty."""
@@ -157,7 +157,7 @@ class TestAESECBEncryptData:
 
 
 class TestAESCBCEncryptData:
-    """CKM_AES_CBC_ENCRYPT_DATA — derive keys by AES-CBC encrypting data."""
+    """CKM_AES_CBC_ENCRYPT_DATA -- derive keys by AES-CBC encrypting data."""
 
     def test_derive_basic(self, p11_session: Any, p11_module: Any) -> None:
         """Derive an AES key via CBC encryption and verify it is non-empty."""

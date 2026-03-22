@@ -1,4 +1,4 @@
-"""pkcs11-check state command — inspect isolated runner state and policy files."""
+"""pkcs11-check state command -- inspect isolated runner state and policy files."""
 
 from __future__ import annotations
 

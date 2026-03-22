@@ -1,4 +1,4 @@
-"""Key Encapsulation Mechanism (KEM) tests — ML-KEM (CRYSTALS-Kyber / FIPS 203).
+"""Key Encapsulation Mechanism (KEM) tests -- ML-KEM (CRYSTALS-Kyber / FIPS 203).
 
 All tests require PKCS#11 v3.2 interface (C_EncapsulateKey / C_DecapsulateKey).
 Auto-skips on v3.1 and earlier.
@@ -250,7 +250,7 @@ class TestMLKEMCiphertextSize:
 
         # We can only check size if the module uses the expected parameter set
         if len(ct) not in _ML_KEM_CIPHERTEXT_SIZES.values():
-            pytest.xfail(f"Unexpected ciphertext size {len(ct)} — may be non-standard")
+            pytest.xfail(f"Unexpected ciphertext size {len(ct)} -- may be non-standard")
         # If size matches this parameter set, check it
         if len(ct) == expected_ct_len:
             assert len(ct) == expected_ct_len
@@ -329,7 +329,7 @@ class TestMLKEMKeyDerivation:
             pub, _ = _generate_ml_kem_keypair(p11_session, param_set=param_set)
         except Exception:
             pytest.xfail(
-                f"Module does not support CKA_PARAMETER_SET={param_set.name} — "
+                f"Module does not support CKA_PARAMETER_SET={param_set.name} -- "
                 "may use a fixed parameter set"
             )
         key_tmpl = {

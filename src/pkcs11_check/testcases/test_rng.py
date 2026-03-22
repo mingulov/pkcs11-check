@@ -37,7 +37,7 @@ class TestRNGBasic:
         assert len(samples) == 1000, "RNG produced duplicate 32-byte values"
 
     def test_different_lengths(self, p11_session: Any) -> None:
-        """Generate random at various sizes — all must succeed."""
+        """Generate random at various sizes -- all must succeed."""
         for bits in [8, 64, 128, 256, 512, 1024, 8192]:
             data = p11_session.generate_random(bits)
             assert len(data) == bits // 8
@@ -50,7 +50,7 @@ class TestRNGStatistical:
         """Monobit test: count of 0s vs 1s should be roughly equal.
 
         For 10KB of data, the count of set bits should be within
-        [39000, 41000] out of 81920 (50% ± ~1.2%).
+        [39000, 41000] out of 81920 (50% +/- ~1.2%).
         """
         data = p11_session.generate_random(81920)  # 10240 bytes
         bit_count = sum(bin(byte).count("1") for byte in data)
@@ -128,7 +128,7 @@ class TestRNGStatistical:
                     runs += 1
                 prev_bit = current_bit
 
-        # For random data, expected runs ≈ total_bits/2
+        # For random data, expected runs ~ total_bits/2
         expected_runs = total_bits / 2
         ratio = runs / expected_runs
         assert 0.9 < ratio < 1.1, (

@@ -1,6 +1,6 @@
 """CKR compliance tests for C_GenerateKey and C_GenerateKeyPair.
 
-Source: PKCS#11 v3.1 §5.14.1 (C_GenerateKey), §5.14.2 (C_GenerateKeyPair).
+Source: PKCS#11 v3.1 Sec.5.14.1 (C_GenerateKey), Sec.5.14.2 (C_GenerateKeyPair).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ pytestmark = pytest.mark.access
 
 
 class TestGenerateKeyErrors:
-    """Error conditions for C_GenerateKey (§5.14.1)."""
+    """Error conditions for C_GenerateKey (Sec.5.14.1)."""
 
     def test_mechanism_invalid(self, p11_session: Any, ckr_strict: bool) -> None:
         """Using hash mechanism for keygen -> CKR_MECHANISM_INVALID."""
@@ -26,7 +26,7 @@ class TestGenerateKeyErrors:
             p11_session.generate_key(KeyType.AES, 256, mechanism=Mechanism.SHA256)
             pytest.fail("Should have rejected SHA256 as key generation mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional — assert_ckr validates the specific type
+            # Broad catch intentional -- assert_ckr validates the specific type
             assert_ckr(CKR_KEYGEN["genkey_mechanism_invalid"], e, ckr_strict)
 
     def test_bad_key_size_zero(self, p11_session: Any, ckr_strict: bool) -> None:
@@ -34,7 +34,7 @@ class TestGenerateKeyErrors:
         exp = CKR_KEYGEN["genkey_bad_size"]
         try:
             p11_session.generate_key(KeyType.AES, 0)
-            # Module accepted invalid key size — compliance deviation
+            # Module accepted invalid key size -- compliance deviation
             if not exp.allow_success:
                 pytest.fail("Should have rejected AES key size 0")
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -83,13 +83,13 @@ class TestGenerateKeyErrors:
                     Attribute.PRIVATE: True,
                 },
             )
-            # Some modules accept this — it's a spec grey area
+            # Some modules accept this -- it's a spec grey area
         except PKCS11Error as e:
             assert_ckr(exp, e, ckr_strict)
 
 
 class TestGenerateKeyPairErrors:
-    """Error conditions for C_GenerateKeyPair (§5.14.2)."""
+    """Error conditions for C_GenerateKeyPair (Sec.5.14.2)."""
 
     def test_bad_rsa_size_zero(self, p11_session: Any, ckr_strict: bool) -> None:
         """RSA key size 0 -> CKR_ATTRIBUTE_VALUE_INVALID."""
@@ -151,7 +151,7 @@ class TestGenerateKeyPairErrors:
             if not exp.allow_success:
                 pytest.fail("Should have rejected bogus attribute type")
         except NotImplementedError:
-            pass  # python-pkcs11 rejects before reaching module — acceptable
+            pass  # python-pkcs11 rejects before reaching module -- acceptable
         except PKCS11Error as e:
             assert_ckr(exp, e, ckr_strict)
 

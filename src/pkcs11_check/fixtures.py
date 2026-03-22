@@ -59,7 +59,7 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
             session.login(_p11.UserType.USER, pin)
             logged_in = True
         except _p11.exceptions.UserAlreadyLoggedIn:
-            logged_in = True  # Already logged in at token level — reuse
+            logged_in = True  # Already logged in at token level -- reuse
     try:
         yield session
     finally:

@@ -1,11 +1,11 @@
-"""Stateful hash-based signature tests — HSS, XMSS, XMSS^MT (PKCS#11 v3.2).
+"""Stateful hash-based signature tests -- HSS, XMSS, XMSS^MT (PKCS#11 v3.2).
 
 Tests three stateful hash-based signature families per OASIS PKCS#11 v3.2:
-- CKM_HSS_KEY_PAIR_GEN + CKM_HSS — Hierarchical Signature Scheme (RFC 8554)
-- CKM_XMSS_KEY_PAIR_GEN + CKM_XMSS — eXtended Merkle Signature Scheme (RFC 8391)
-- CKM_XMSSMT_KEY_PAIR_GEN + CKM_XMSSMT — XMSS Multi-Tree (RFC 8391)
+- CKM_HSS_KEY_PAIR_GEN + CKM_HSS -- Hierarchical Signature Scheme (RFC 8554)
+- CKM_XMSS_KEY_PAIR_GEN + CKM_XMSS -- eXtended Merkle Signature Scheme (RFC 8391)
+- CKM_XMSSMT_KEY_PAIR_GEN + CKM_XMSSMT -- XMSS Multi-Tree (RFC 8391)
 
-IMPORTANT: These are stateful signatures — each signing operation consumes a
+IMPORTANT: These are stateful signatures -- each signing operation consumes a
 one-time key from a finite pool.  Tests sign minimally to avoid exhaustion.
 Key generation can be very slow (minutes for large trees); smallest parameter
 sets are used throughout.
@@ -45,7 +45,7 @@ _XMSS_SHA2_10_256 = 0x00000001  # XMSS-SHA2_10_256: height 10
 # XMSSMT parameter set OIDs (NIST SP 800-208, Table 12).
 _XMSSMT_SHA2_20_2_256 = 0x00000001  # XMSSMT-SHA2_20/2_256
 
-# Common keygen errors for stateful sigs — modules may reject templates.
+# Common keygen errors for stateful sigs -- modules may reject templates.
 _KEYGEN_ERRORS = (
     MechanismInvalid,
     FunctionFailed,
@@ -148,7 +148,7 @@ def _generate_xmssmt_keypair(session: Any) -> tuple[Any, Any]:
 
 
 class TestHSSKeyGeneration:
-    """CKM_HSS_KEY_PAIR_GEN — HSS key generation (RFC 8554)."""
+    """CKM_HSS_KEY_PAIR_GEN -- HSS key generation (RFC 8554)."""
 
     def test_mechanism_available(self, p11_module: Any) -> None:
         """Check that CKM_HSS_KEY_PAIR_GEN is advertised by the module."""
@@ -208,7 +208,7 @@ class TestHSSKeyGeneration:
 
 
 class TestHSSSignVerify:
-    """CKM_HSS — HSS sign/verify (RFC 8554)."""
+    """CKM_HSS -- HSS sign/verify (RFC 8554)."""
 
     def test_mechanism_available(self, p11_module: Any) -> None:
         """Check that CKM_HSS is advertised by the module."""
@@ -263,7 +263,7 @@ class TestHSSSignVerify:
 
 
 class TestXMSSKeyGeneration:
-    """CKM_XMSS_KEY_PAIR_GEN — XMSS key generation (RFC 8391)."""
+    """CKM_XMSS_KEY_PAIR_GEN -- XMSS key generation (RFC 8391)."""
 
     def test_mechanism_available(self, p11_module: Any) -> None:
         """Check that CKM_XMSS_KEY_PAIR_GEN is advertised by the module."""
@@ -323,7 +323,7 @@ class TestXMSSKeyGeneration:
 
 
 class TestXMSSSignVerify:
-    """CKM_XMSS — XMSS sign/verify (RFC 8391)."""
+    """CKM_XMSS -- XMSS sign/verify (RFC 8391)."""
 
     def test_mechanism_available(self, p11_module: Any) -> None:
         """Check that CKM_XMSS is advertised by the module."""
@@ -378,7 +378,7 @@ class TestXMSSSignVerify:
 
 
 class TestXMSSMTKeyGeneration:
-    """CKM_XMSSMT_KEY_PAIR_GEN — XMSS^MT key generation (RFC 8391)."""
+    """CKM_XMSSMT_KEY_PAIR_GEN -- XMSS^MT key generation (RFC 8391)."""
 
     def test_mechanism_available(self, p11_module: Any) -> None:
         """Check that CKM_XMSSMT_KEY_PAIR_GEN is advertised by the module."""
@@ -438,7 +438,7 @@ class TestXMSSMTKeyGeneration:
 
 
 class TestXMSSMTSignVerify:
-    """CKM_XMSSMT — XMSS^MT sign/verify (RFC 8391)."""
+    """CKM_XMSSMT -- XMSS^MT sign/verify (RFC 8391)."""
 
     def test_mechanism_available(self, p11_module: Any) -> None:
         """Check that CKM_XMSSMT is advertised by the module."""

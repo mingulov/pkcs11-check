@@ -1,6 +1,6 @@
 """CKR compliance tests for C_SignInit and C_Sign.
 
-Source: PKCS#11 v3.1 §5.10.1 (C_SignInit), §5.10.2 (C_Sign).
+Source: PKCS#11 v3.1 Sec.5.10.1 (C_SignInit), Sec.5.10.2 (C_Sign).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ pytestmark = pytest.mark.access
 
 
 class TestSignInitErrors:
-    """Per-parameter error conditions for C_SignInit (§5.10.1)."""
+    """Per-parameter error conditions for C_SignInit (Sec.5.10.1)."""
 
     def test_mechanism_invalid(self, p11_session: Any, ckr_strict: bool) -> None:
         """Using encrypt mechanism for sign -> CKR_MECHANISM_INVALID."""
@@ -27,7 +27,7 @@ class TestSignInitErrors:
             priv.sign(b"test data", mechanism=Mechanism.AES_ECB)
             pytest.fail("Should have rejected AES_ECB as signing mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional — assert_ckr validates the specific type
+            # Broad catch intentional -- assert_ckr validates the specific type
             assert_ckr(CKR_SIGN["init_mechanism_invalid"], e, ckr_strict)
 
     def test_key_type_inconsistent(
@@ -48,7 +48,7 @@ class TestSignInitErrors:
         if not has_mechanism(p11_module, "SHA256_RSA_PKCS_PSS"):
             pytest.skip("RSA-PSS not supported")
         _pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
-        # RSA-PSS needs specific param struct — provide garbage bytes
+        # RSA-PSS needs specific param struct -- provide garbage bytes
         try:
             priv.sign(
                 b"test data",
@@ -73,7 +73,7 @@ class TestSignInitErrors:
 
 
 class TestSignDataErrors:
-    """Data-level error conditions for C_Sign (§5.10.2)."""
+    """Data-level error conditions for C_Sign (Sec.5.10.2)."""
 
     def test_rsa_pkcs_data_too_long(
         self, p11_session: Any, ckr_strict: bool

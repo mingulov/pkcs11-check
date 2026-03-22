@@ -1,11 +1,11 @@
 """SO (Security Officer) login and PIN management tests.
 
 Tests C_Login with CKU_SO, C_InitPIN, C_SetPIN.
-Marked @destructive — these modify token PIN state.
+Marked @destructive -- these modify token PIN state.
 
 Note: These tests require --p11-destructive flag AND knowledge of the
 SO PIN. SoftHSM2 default SO PIN = same as user PIN during init.
-Many modules have different SO PINs — tests skip if SO login fails.
+Many modules have different SO PINs -- tests skip if SO login fails.
 """
 
 from __future__ import annotations
@@ -46,11 +46,11 @@ class TestSOLogin:
             p11_session.login(pkcs11.UserType.SO, "1234")
             pytest.fail("SO login while user is logged in should fail")
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected — CKR_USER_ALREADY_LOGGED_IN or similar
+            pass  # Expected -- CKR_USER_ALREADY_LOGGED_IN or similar
 
 
 class TestSetPIN:
-    """Test C_SetPIN — user changes their own PIN."""
+    """Test C_SetPIN -- user changes their own PIN."""
 
     def test_set_pin_changes_pin(self, p11_module: Any, p11_config: Any) -> None:
         """User can change their PIN, then login with new PIN."""

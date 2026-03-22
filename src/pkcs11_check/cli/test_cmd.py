@@ -1,4 +1,4 @@
-"""pkcs11-check test command — run PKCS#11 test suite."""
+"""pkcs11-check test command -- run PKCS#11 test suite."""
 
 from __future__ import annotations
 

@@ -30,7 +30,7 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.keymgmt
 
-# Common error tuple for WTLS operations — no parameter wrapper available,
+# Common error tuple for WTLS operations -- no parameter wrapper available,
 # so any of these may be returned when the mechanism is invoked.
 _WTLS_ERRORS = (
     MechanismInvalid,
@@ -63,7 +63,7 @@ def _create_generic_secret(session: Any, size: int = 48) -> Any:
 
 
 class TestWTLSPreMasterKeyGen:
-    """CKM_WTLS_PRE_MASTER_KEY_GEN — generate a WTLS pre-master secret."""
+    """CKM_WTLS_PRE_MASTER_KEY_GEN -- generate a WTLS pre-master secret."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_WTLS_PRE_MASTER_KEY_GEN is advertised."""
@@ -160,7 +160,7 @@ class TestWTLSPreMasterKeyGen:
 
 
 class TestWTLSMasterKeyDerive:
-    """CKM_WTLS_MASTER_KEY_DERIVE — derive WTLS master secret from pre-master secret."""
+    """CKM_WTLS_MASTER_KEY_DERIVE -- derive WTLS master secret from pre-master secret."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_WTLS_MASTER_KEY_DERIVE is advertised."""
@@ -181,7 +181,7 @@ class TestWTLSMasterKeyDerive:
 
         pms = _create_generic_secret(p11_session, 20)
         try:
-            # Invoke without mechanism_param — must raise a parameter error.
+            # Invoke without mechanism_param -- must raise a parameter error.
             try:
                 derived = pms.derive_key(
                     KeyType.GENERIC_SECRET,
@@ -203,7 +203,7 @@ class TestWTLSMasterKeyDerive:
 
 
 class TestWTLSMasterKeyDeriveDHECC:
-    """CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC — derive WTLS master secret via DH/ECC."""
+    """CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC -- derive WTLS master secret via DH/ECC."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC is advertised."""
@@ -365,7 +365,7 @@ class TestWTLSKeyAndMacDerive:
 
 
 class TestWTLSPRF:
-    """CKM_WTLS_PRF — WTLS pseudo-random function for key material expansion."""
+    """CKM_WTLS_PRF -- WTLS pseudo-random function for key material expansion."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_WTLS_PRF is advertised."""

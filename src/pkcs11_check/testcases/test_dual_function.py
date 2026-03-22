@@ -1,17 +1,17 @@
 """Tests for dual-function operations.
 
 Covers all four PKCS#11 dual-function operations:
-  §5.14.1 C_DigestEncryptUpdate  (index 54)
-  §5.14.2 C_DecryptDigestUpdate  (index 55)
-  §5.14.3 C_SignEncryptUpdate    (index 56)
-  §5.14.4 C_DecryptVerifyUpdate  (index 57)
+  Sec.5.14.1 C_DigestEncryptUpdate  (index 54)
+  Sec.5.14.2 C_DecryptDigestUpdate  (index 55)
+  Sec.5.14.3 C_SignEncryptUpdate    (index 56)
+  Sec.5.14.4 C_DecryptVerifyUpdate  (index 57)
 
 Most PKCS#11 modules do NOT implement these operations and return
 CKR_FUNCTION_NOT_SUPPORTED (0x54).  Some modules reject the second active
 operation with CKR_OPERATION_ACTIVE (0x90) because they only allow one
 active operation type per session.  Tests skip gracefully in both cases.
 
-These operations are only available via the raw C API — python-pkcs11 has no
+These operations are only available via the raw C API -- python-pkcs11 has no
 high-level wrappers.  Tests use the ctypes subprocess pattern established in
 test_operation_state.py and test_sign_recover.py.
 
@@ -359,7 +359,7 @@ def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
 class TestDigestEncryptUpdate:
     """C_DigestEncryptUpdate functional tests (AES-CBC + SHA-256).
 
-    C_DigestEncryptUpdate (§5.14.1): Continues a multiple-part combined digest
+    C_DigestEncryptUpdate (Sec.5.14.1): Continues a multiple-part combined digest
     and encryption operation, processing another data part.  Requires both a
     digest operation and an encrypt operation to be active on the session.
 
@@ -372,20 +372,20 @@ class TestDigestEncryptUpdate:
 
         Steps:
         1. Generate an AES-256 session key.
-        2. Reference path — separate operations:
+        2. Reference path -- separate operations:
            a. Reference digest via hashlib SHA-256.
-           b. EncryptInit(AES-CBC, key, IV) → EncryptUpdate(data) → EncryptFinal → ct_ref.
+           b. EncryptInit(AES-CBC, key, IV) -> EncryptUpdate(data) -> EncryptFinal -> ct_ref.
         3. Dual-function path:
            a. DigestInit(SHA-256)
-           b. EncryptInit(AES-CBC, key, IV) — skips if CKR_OPERATION_ACTIVE (module
+           b. EncryptInit(AES-CBC, key, IV) -- skips if CKR_OPERATION_ACTIVE (module
               does not allow simultaneous digest + encrypt on the same session)
-           c. DigestEncryptUpdate(data) → ciphertext_chunk — skips if
+           c. DigestEncryptUpdate(data) -> ciphertext_chunk -- skips if
               CKR_FUNCTION_NOT_SUPPORTED
-           d. EncryptFinal → remaining ciphertext
-           e. DigestFinal → digest
+           d. EncryptFinal -> remaining ciphertext
+           e. DigestFinal -> digest
         4. Assert: ciphertext == ct_ref AND digest == SHA-256(data).
 
-        Source: PKCS#11 v3.1 §5.14.1.
+        Source: PKCS#11 v3.1 Sec.5.14.1.
         """
         module_path, slot_index, pin_bytes = _get_params(p11_config)
 
@@ -541,7 +541,7 @@ class TestDigestEncryptUpdate:
 class TestDecryptDigestUpdate:
     """C_DecryptDigestUpdate functional tests (AES-CBC + SHA-256).
 
-    C_DecryptDigestUpdate (§5.14.2): Continues a multiple-part combined decryption
+    C_DecryptDigestUpdate (Sec.5.14.2): Continues a multiple-part combined decryption
     and digest operation, processing another encrypted data part.  The ciphertext
     is decrypted and the resulting plaintext is simultaneously digested.
 
@@ -557,15 +557,15 @@ class TestDecryptDigestUpdate:
         2. Encrypt plaintext via separate C_EncryptInit/Update/Final to get ciphertext.
         3. Dual-function decryption path:
            a. DigestInit(SHA-256)
-           b. DecryptInit(AES-CBC, key, IV) — skips if CKR_OPERATION_ACTIVE (module
+           b. DecryptInit(AES-CBC, key, IV) -- skips if CKR_OPERATION_ACTIVE (module
               does not allow simultaneous digest + decrypt on the same session)
-           c. DecryptDigestUpdate(ciphertext) → plaintext_chunk — skips if
+           c. DecryptDigestUpdate(ciphertext) -> plaintext_chunk -- skips if
               CKR_FUNCTION_NOT_SUPPORTED
-           d. DecryptFinal → remaining plaintext
-           e. DigestFinal → digest of decrypted plaintext
+           d. DecryptFinal -> remaining plaintext
+           e. DigestFinal -> digest of decrypted plaintext
         4. Assert: recovered plaintext == original data AND digest == SHA-256(data).
 
-        Source: PKCS#11 v3.1 §5.14.2.
+        Source: PKCS#11 v3.1 Sec.5.14.2.
         """
         module_path, slot_index, pin_bytes = _get_params(p11_config)
 

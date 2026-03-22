@@ -105,7 +105,7 @@ class TestOperationActive:
     """Double-Init and cross-operation state violations."""
 
     def test_double_encrypt_init(self, p11_config: Any) -> None:
-        """Double C_EncryptInit → CKR_OPERATION_ACTIVE."""
+        """Double C_EncryptInit -> CKR_OPERATION_ACTIVE."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -125,7 +125,7 @@ print("OK")
         assert "OK" in out
 
     def test_encrypt_then_sign_init(self, p11_config: Any) -> None:
-        """C_EncryptInit then C_SignInit → CKR_OPERATION_ACTIVE (if no dual-crypto)."""
+        """C_EncryptInit then C_SignInit -> CKR_OPERATION_ACTIVE (if no dual-crypto)."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -135,13 +135,13 @@ mech.mechanism = 0x1081  # CKM_AES_ECB
 rv1 = raw.C_EncryptInit(sh, ctypes.byref(mech), key_handle)
 assert rv1 == CKR_OK
 
-# Now try SignInit — should be OPERATION_ACTIVE
+# Now try SignInit -- should be OPERATION_ACTIVE
 sign_mech = CK_MECHANISM()
 sign_mech.mechanism = 0x0251  # CKM_AES_CMAC
 rv2 = raw.C_SignInit(sh, ctypes.byref(sign_mech), key_handle)
 print(f"CKR:0x{rv2:08x}")
 # OPERATION_ACTIVE, OK (dual-crypto), MECHANISM_INVALID (no CMAC support),
-# KEY_FUNCTION_NOT_PERMITTED, or other init errors — all acceptable
+# KEY_FUNCTION_NOT_PERMITTED, or other init errors -- all acceptable
 # The key test: did NOT segfault.
 print("OK")
 print("OK")
@@ -151,7 +151,7 @@ print("OK")
         assert "OK" in out
 
     def test_double_digest_init(self, p11_config: Any) -> None:
-        """Double C_DigestInit → CKR_OPERATION_ACTIVE."""
+        """Double C_DigestInit -> CKR_OPERATION_ACTIVE."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -171,7 +171,7 @@ print("OK")
         assert "OK" in out
 
     def test_double_sign_init(self, p11_config: Any) -> None:
-        """Double C_SignInit → CKR_OPERATION_ACTIVE."""
+        """Double C_SignInit -> CKR_OPERATION_ACTIVE."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -180,7 +180,7 @@ mech = CK_MECHANISM()
 mech.mechanism = 0x1081  # CKM_AES_ECB (for CMAC or just to test state)
 # Use key_handle from preamble (AES key with SIGN=True)
 rv1 = raw.C_SignInit(sh, ctypes.byref(mech), key_handle)
-# First init may fail if AES-ECB not valid for sign — that's OK
+# First init may fail if AES-ECB not valid for sign -- that's OK
 if rv1 == CKR_OK:
     rv2 = raw.C_SignInit(sh, ctypes.byref(mech), key_handle)
     print(f"CKR:0x{rv2:08x}")
@@ -194,7 +194,7 @@ print("OK")
         assert "OK" in out
 
     def test_double_decrypt_init(self, p11_config: Any) -> None:
-        """Double C_DecryptInit → CKR_OPERATION_ACTIVE."""
+        """Double C_DecryptInit -> CKR_OPERATION_ACTIVE."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,

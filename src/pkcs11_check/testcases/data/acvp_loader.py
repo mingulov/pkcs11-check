@@ -1,4 +1,4 @@
-"""ACVP test vector loader — adapter for NIST ACVP-Server JSON format.
+"""ACVP test vector loader -- adapter for NIST ACVP-Server JSON format.
 
 ACVP format: each algorithm has prompt.json (inputs) + expectedResults.json (outputs).
 This loader merges them into a unified list of test dicts.

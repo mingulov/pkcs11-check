@@ -17,7 +17,7 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.keymgmt
 
-# RFC 3526 Group 14 (2048-bit MODP) — widely supported safe prime.
+# RFC 3526 Group 14 (2048-bit MODP) -- widely supported safe prime.
 DH_PRIME_2048 = bytes.fromhex(
     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
     "29024E088A67CC74020BBEA63B139B22514A08798E3404DD"

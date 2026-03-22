@@ -66,14 +66,14 @@ class TestPrivateAttribute:
         finally:
             session.close()
 
-        # Open R/O session WITHOUT login — non-private object should be visible
+        # Open R/O session WITHOUT login -- non-private object should be visible
         session_ro = token.open(rw=False)
         try:
             found = list(
                 session_ro.get_objects({Attribute.CLASS: ObjectClass.DATA, Attribute.LABEL: label})
             )
             # On most modules, PRIVATE=False objects are visible without login
-            # Some modules require login for all access — that's acceptable
+            # Some modules require login for all access -- that's acceptable
             if len(found) == 0:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -141,10 +141,10 @@ class TestCopyableAttribute:
 
 
 class TestCopyObject:
-    """Tests for C_CopyObject — copying PKCS#11 objects with attribute modification."""
+    """Tests for C_CopyObject -- copying PKCS#11 objects with attribute modification."""
 
     def test_copy_with_modified_label(self, p11_session: Any) -> None:
-        """Copy a key with a new label — label changes, other attrs preserved."""
+        """Copy a key with a new label -- label changes, other attrs preserved."""
         key = p11_session.generate_key(KeyType.AES, 256, label="orig-label")
         if not key[Attribute.COPYABLE]:
             pytest.skip("Key not copyable by default")
@@ -192,7 +192,7 @@ class TestCopyObject:
         copied.destroy()
 
     def test_non_copyable_key_rejected(self, p11_session: Any) -> None:
-        """Key with CKA_COPYABLE=False cannot be copied — CKR_ACTION_PROHIBITED."""
+        """Key with CKA_COPYABLE=False cannot be copied -- CKR_ACTION_PROHIBITED."""
         try:
             key = p11_session.generate_key(
                 KeyType.AES,
@@ -231,7 +231,7 @@ class TestCopyObject:
     def test_copy_token_object_stays_token(self, p11_session: Any) -> None:
         """Copy of a token object is also a token object (CKA_TOKEN=True).
 
-        Requires a read/write session — p11_session opens rw=True.
+        Requires a read/write session -- p11_session opens rw=True.
         Token object and its copy are destroyed after the test.
         """
         key = p11_session.generate_key(

@@ -29,7 +29,7 @@ Tier 1 stragglers:
 - CKM_DSA_PROBABILISTIC_PARAMETER_GEN
 - CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS
 
-Most modules do not support these — tests skip cleanly.
+Most modules do not support these -- tests skip cleanly.
 """
 
 from __future__ import annotations
@@ -194,19 +194,19 @@ class TestOtpKeyAttributes:
 
 
 class TestWaitForSlotEvent:
-    """C_WaitForSlotEvent — non-blocking poll."""
+    """C_WaitForSlotEvent -- non-blocking poll."""
 
     def test_wait_for_slot_event_non_blocking(self, p11_module: Any) -> None:
         """Non-blocking C_WaitForSlotEvent should return CKR_NO_EVENT or succeed."""
         try:
-            # Non-blocking call — should return immediately
+            # Non-blocking call -- should return immediately
             p11_module.lib.wait_for_slot_event(blocking=False)
         except FunctionNotSupported:
             pytest.skip("C_WaitForSlotEvent not supported")
         except PKCS11Error as e:
             # CKR_NO_EVENT (0x08) is the expected "nothing happened" response
             if "NO_EVENT" in str(type(e).__name__).upper() or "0x00000008" in str(e):
-                pass  # Expected — no slot events pending
+                pass  # Expected -- no slot events pending
             else:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -222,7 +222,7 @@ class TestWaitForSlotEvent:
 
 
 class TestLegacyParallelFunctions:
-    """C_GetFunctionStatus and C_CancelFunction (legacy, §5.15).
+    """C_GetFunctionStatus and C_CancelFunction (legacy, Sec.5.15).
 
     These functions are required to exist but always return
     CKR_FUNCTION_NOT_PARALLEL (0x51) per PKCS#11 v2.40+.
@@ -280,7 +280,7 @@ CF(c_ulong, c_void_p)(gf(1))(None)
         assert gfs_line is not None, f"No GFS output: {result.stdout!r}"
         rv_hex = gfs_line.split(":")[1]
         # Spec says CKR_FUNCTION_NOT_PARALLEL (0x51).
-        # SoftHSM2 returns CKR_OPERATION_NOT_INITIALIZED (0x91) — module quirk.
+        # SoftHSM2 returns CKR_OPERATION_NOT_INITIALIZED (0x91) -- module quirk.
         acceptable = {"0x00000051", "0x00000091"}
         if rv_hex not in acceptable:
             pytest.fail(
@@ -403,7 +403,7 @@ class TestMessageFinalizers:
 
 
 class TestAsyncLifecycle:
-    """C_AsyncComplete, C_AsyncJoin — v3.0+ async operation management."""
+    """C_AsyncComplete, C_AsyncJoin -- v3.0+ async operation management."""
 
     @pytest.mark.requires_v30
     def test_async_complete_availability(self, p11_module: Any) -> None:
@@ -438,7 +438,7 @@ class TestAsyncLifecycle:
 
 
 class TestRsaPkcsNull:
-    """CKM_RSA_PKCS_NULL — raw RSA with no formatting."""
+    """CKM_RSA_PKCS_NULL -- raw RSA with no formatting."""
 
     def test_null_mechanism_availability(self, p11_module: Any) -> None:
         """Check if CKM_RSA_PKCS_NULL is reported by the module."""
@@ -452,7 +452,7 @@ class TestRsaPkcsNull:
 
 
 class TestKmac:
-    """CKM_KMAC_128 and CKM_KMAC_256 — NIST SP 800-185 KECCAK MAC."""
+    """CKM_KMAC_128 and CKM_KMAC_256 -- NIST SP 800-185 KECCAK MAC."""
 
     def test_kmac_128_availability(self, p11_module: Any) -> None:
         if not has_mechanism(p11_module, "KMAC_128"):
@@ -527,7 +527,7 @@ class TestTier1Stragglers:
     def test_aes_cmac_general_availability(
         self, p11_session: Any, p11_module: Any
     ) -> None:
-        """CKM_AES_CMAC_GENERAL — parameterized CMAC tag length."""
+        """CKM_AES_CMAC_GENERAL -- parameterized CMAC tag length."""
         if not has_mechanism(p11_module, "AES_CMAC_GENERAL"):
             pytest.skip("CKM_AES_CMAC_GENERAL not supported")
         key = p11_session.generate_key(
@@ -565,10 +565,10 @@ class TestTier1Stragglers:
 
 
 class TestDualFunctionRemaining:
-    """C_SignEncryptUpdate (§5.14.3) and C_DecryptVerifyUpdate (§5.14.4).
+    """C_SignEncryptUpdate (Sec.5.14.3) and C_DecryptVerifyUpdate (Sec.5.14.4).
 
     These combine sign+encrypt or decrypt+verify in a single call.
-    Tested via ctypes subprocess — these functions are at CK_FUNCTION_LIST
+    Tested via ctypes subprocess -- these functions are at CK_FUNCTION_LIST
     indices 56 and 57. Most modules return CKR_FUNCTION_NOT_SUPPORTED.
     """
 
@@ -606,7 +606,7 @@ CF(c_ulong, c_ulong, c_ulong, c_void_p, c_void_p, POINTER(c_ulong))(gf(12))(
 if {len(pin)} > 0:
     CF(c_ulong, c_ulong, c_ulong, c_char_p, c_ulong)(gf(18))(hs, 1, {pin.encode()!r}, {len(pin)})
 # C_SignEncryptUpdate = index 56
-# Call with NULL pointers — should return CKR error, not crash
+# Call with NULL pointers -- should return CKR error, not crash
 try:
     rv = CF(c_ulong, c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong))(gf(56))(
         hs, b"test", 4, None, byref(c_ulong()))
@@ -623,7 +623,7 @@ CF(c_ulong, c_void_p)(gf(1))(None)
             pytest.xfail(f"C_SignEncryptUpdate crashed (signal {-result.returncode})")
         seu_line = next((l for l in result.stdout.strip().split("\n") if l.startswith("SEU:")), None)
         assert seu_line is not None, f"No output: {result.stdout!r} {result.stderr[:200]}"
-        # Any CKR response is valid — we're testing the function exists and doesn't crash
+        # Any CKR response is valid -- we're testing the function exists and doesn't crash
 
     def test_decrypt_verify_update_callable(
         self, p11_config: Any

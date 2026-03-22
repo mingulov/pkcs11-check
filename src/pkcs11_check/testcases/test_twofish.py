@@ -1,10 +1,10 @@
 """Tests for Twofish PKCS#11 mechanisms.
 
 Twofish: 128/192/256-bit keys, 16-byte block.
-Only CBC and CBC_PAD are defined in the OASIS PKCS#11 spec — there is no
+Only CBC and CBC_PAD are defined in the OASIS PKCS#11 spec -- there is no
 CKM_TWOFISH_ECB mechanism. IV for CBC modes is 16 bytes.
 
-Most modules do NOT support Twofish — all tests will skip cleanly on those
+Most modules do NOT support Twofish -- all tests will skip cleanly on those
 platforms.
 """
 
@@ -20,7 +20,7 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.full
 
-# Twofish block is 16 bytes — CBC data must be 16-byte aligned
+# Twofish block is 16 bytes -- CBC data must be 16-byte aligned
 _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 
 
@@ -45,7 +45,7 @@ def _tf_key(session: Any, bits: int, template: dict[str, Any]) -> Any:
 
 
 class TestTwofishKeyGen:
-    """CKM_TWOFISH_KEY_GEN — key generation for 128/192/256-bit Twofish keys."""
+    """CKM_TWOFISH_KEY_GEN -- key generation for 128/192/256-bit Twofish keys."""
 
     @pytest.mark.parametrize("key_bits", [128, 192, 256])
     def test_twofish_key_gen(self, p11_session: Any, p11_module: Any, key_bits: int) -> None:
@@ -130,7 +130,7 @@ class TestTwofishEncryption:
             {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
         iv = _tf_iv(p11_session)
-        # Non-block-aligned data — PKCS#7 padding handles it
+        # Non-block-aligned data -- PKCS#7 padding handles it
         plaintext = b"Twofish CBC PAD test!"  # 21 bytes, not a multiple of 16
         try:
             try:

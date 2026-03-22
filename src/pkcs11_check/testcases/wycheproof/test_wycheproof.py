@@ -35,7 +35,7 @@ def _load_aes_gcm_vectors() -> list[dict[str, Any]]:
 
 
 class TestAESGCMWycheproof:
-    """Wycheproof AES-GCM vectors — tests AEAD correctness and tag validation."""
+    """Wycheproof AES-GCM vectors -- tests AEAD correctness and tag validation."""
 
     @pytest.mark.parametrize("vec", _load_aes_gcm_vectors(), ids=_vec_id)
     def test_aes_gcm(self, p11_session: Any, vec: dict[str, Any]) -> None:
@@ -62,11 +62,11 @@ class TestAESGCMWycheproof:
             )
         except p11.exceptions.PKCS11Error:
             if result == "invalid":
-                return  # invalid key rejected — correct
+                return  # invalid key rejected -- correct
             raise
 
         # Wycheproof GCM vectors are best tested via decrypt (authenticated)
-        # This verifies: given (key, iv, aad, ct, tag) → module accepts valid, rejects invalid
+        # This verifies: given (key, iv, aad, ct, tag) -> module accepts valid, rejects invalid
         from pkcs11.mechanisms import GCMParams
 
         from pkcs11_check.compliance import ComplianceLevel, note
@@ -79,7 +79,7 @@ class TestAESGCMWycheproof:
             note(
                 f"GCM with {len(iv)}-byte IV (not 96-bit)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="NIST SP 800-38D §8.2 recommends 96-bit IVs",
+                reference="NIST SP 800-38D Sec.8.2 recommends 96-bit IVs",
             )
 
         try:
@@ -100,7 +100,7 @@ class TestAESGCMWycheproof:
             if result == "valid" or result == "acceptable":
                 assert pt == msg
             elif result == "invalid":
-                # Invalid vector decrypted — module didn't check tag properly
+                # Invalid vector decrypted -- module didn't check tag properly
                 # This is a finding but not necessarily a hard failure
                 pass
         except p11.exceptions.PKCS11Error as exc:
@@ -117,7 +117,7 @@ class TestAESGCMWycheproof:
                         f"Module limitation: GCM iv={iv_len}B tag={tag_len}B "
                         f"not supported ({exc_name})"
                     )
-            # invalid/acceptable failing is expected — good!
+            # invalid/acceptable failing is expected -- good!
 
         # Verify session is still usable after any failure
         p11_session.generate_random(64)
@@ -150,7 +150,7 @@ class TestHMACSHA256Wycheproof:
             note(
                 f"HMAC-SHA256 with {len(key_bytes)}-byte key (< hash output)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="FIPS 198-1 §3 recommends key ≥ hash output length",
+                reference="FIPS 198-1 Sec.3 recommends key >= hash output length",
             )
 
         # Try SHA256_HMAC key type first; fall back to GENERIC_SECRET
@@ -205,7 +205,7 @@ def _load_ecdsa_p256_vectors() -> list[dict[str, Any]]:
 
 
 class TestECDSAP256Wycheproof:
-    """Wycheproof ECDSA P-256/SHA-256 vectors — tests signature verification."""
+    """Wycheproof ECDSA P-256/SHA-256 vectors -- tests signature verification."""
 
     @pytest.mark.parametrize("vec", _load_ecdsa_p256_vectors(), ids=_vec_id)
     def test_ecdsa_p256_sha256_verify(self, p11_session: Any, vec: dict[str, Any]) -> None:
@@ -261,7 +261,7 @@ class TestECDSAP256Wycheproof:
             pub_key.verify(digest, raw_sig, mechanism=Mechanism.ECDSA)
             # Verification succeeded
             if result == "invalid":
-                pass  # Some modules accept non-canonical — security finding
+                pass  # Some modules accept non-canonical -- security finding
         except p11.exceptions.PKCS11Error:
             if result == "valid":
                 pytest.fail(f"Valid ECDSA sig tc{vec['tcId']} rejected by module")
@@ -280,7 +280,7 @@ def _load_aes_cbc_pkcs5_vectors() -> list[dict[str, Any]]:
 
 
 class TestAESCBCPKCS5Wycheproof:
-    """Wycheproof AES-CBC-PKCS5 vectors — tests padding correctness."""
+    """Wycheproof AES-CBC-PKCS5 vectors -- tests padding correctness."""
 
     @pytest.mark.parametrize("vec", _load_aes_cbc_pkcs5_vectors(), ids=_vec_id)
     def test_aes_cbc_pkcs5(self, p11_session: Any, vec: dict[str, Any]) -> None:

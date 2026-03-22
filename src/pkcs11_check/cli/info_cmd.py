@@ -1,4 +1,4 @@
-"""pkcs11-check info command — show module information."""
+"""pkcs11-check info command -- show module information."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pkcs11_check.core.loader import load_module
 
 
 def _mech_sort_key(m: object) -> str:
-    """Sort key for mechanisms — handles both Mechanism enum and raw int."""
+    """Sort key for mechanisms -- handles both Mechanism enum and raw int."""
     name = getattr(m, "name", None)
     if isinstance(name, str):
         return name

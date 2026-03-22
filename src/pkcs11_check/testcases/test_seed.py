@@ -5,7 +5,7 @@ SEED: 128-bit key only, 16-byte block. Korean standard block cipher (RFC 4269).
 Covers key generation, encryption/decryption (ECB, CBC, CBC_PAD),
 MAC signing/verification, and key derivation availability checks.
 
-Most modules do NOT support SEED — all tests will skip cleanly on those
+Most modules do NOT support SEED -- all tests will skip cleanly on those
 platforms. Some Korean-standard-focused HSMs may include SEED support.
 """
 
@@ -21,7 +21,7 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.full
 
-# 16-byte SEED block — ECB/CBC data must be block-aligned
+# 16-byte SEED block -- ECB/CBC data must be block-aligned
 _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 
 
@@ -46,7 +46,7 @@ def _seed_key(session: Any, template: dict[str, Any]) -> Any:
 
 
 class TestSEEDKeyGen:
-    """CKM_SEED_KEY_GEN — key generation for 128-bit keys (fixed size)."""
+    """CKM_SEED_KEY_GEN -- key generation for 128-bit keys (fixed size)."""
 
     def test_seed_key_gen(self, p11_session: Any, p11_module: Any) -> None:
         """Generate a SEED-128 session key."""
@@ -165,7 +165,7 @@ class TestSEEDEncryption:
             {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
         iv = _seed_iv(p11_session)
-        # Non-block-aligned data — PKCS#7 padding handles it
+        # Non-block-aligned data -- PKCS#7 padding handles it
         plaintext = b"SEED CBC PAD test data!!"  # 24 bytes, not a multiple of 16
         try:
             try:
@@ -209,7 +209,7 @@ class TestSEEDEncryption:
 
 
 class TestSEEDMAC:
-    """CKM_SEED_MAC and CKM_SEED_MAC_GENERAL — MAC sign/verify tests."""
+    """CKM_SEED_MAC and CKM_SEED_MAC_GENERAL -- MAC sign/verify tests."""
 
     def test_seed_mac_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
         """SEED-MAC sign and verify roundtrip."""
@@ -279,7 +279,7 @@ class TestSEEDMAC:
 
 
 # ---------------------------------------------------------------------------
-# Key derivation by data encryption — availability checks only
+# Key derivation by data encryption -- availability checks only
 # ---------------------------------------------------------------------------
 
 
@@ -295,16 +295,16 @@ class TestSEEDKeyDerivation:
     def test_seed_ecb_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_SEED_ECB_ENCRYPT_DATA is advertised when SEED is supported."""
         if not has_mechanism(p11_module, "SEED_KEY_GEN"):
-            pytest.skip("CKM_SEED_KEY_GEN not supported — skipping derivation check")
+            pytest.skip("CKM_SEED_KEY_GEN not supported -- skipping derivation check")
         if not has_mechanism(p11_module, "SEED_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_SEED_ECB_ENCRYPT_DATA not supported")
-        # Mechanism is present — no further operation needed for availability check
+        # Mechanism is present -- no further operation needed for availability check
         assert True
 
     def test_seed_cbc_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_SEED_CBC_ENCRYPT_DATA is advertised when SEED is supported."""
         if not has_mechanism(p11_module, "SEED_KEY_GEN"):
-            pytest.skip("CKM_SEED_KEY_GEN not supported — skipping derivation check")
+            pytest.skip("CKM_SEED_KEY_GEN not supported -- skipping derivation check")
         if not has_mechanism(p11_module, "SEED_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_SEED_CBC_ENCRYPT_DATA not supported")
         assert True

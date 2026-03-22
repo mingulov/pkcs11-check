@@ -1,7 +1,7 @@
 """CKR buffer sizing tests via raw ctypes calls.
 
 Tests CKR_BUFFER_TOO_SMALL: output functions with undersized buffers.
-Uses pkcs11.raw.RawPKCS11 — wrapper handles buffer sizing internally.
+Uses pkcs11.raw.RawPKCS11 -- wrapper handles buffer sizing internally.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ class TestBufferTooSmall:
     """Output operations with undersized buffers."""
 
     def test_digest_buffer_too_small(self, p11_config: Any) -> None:
-        """C_Digest with 1-byte output → CKR_BUFFER_TOO_SMALL."""
+        """C_Digest with 1-byte output -> CKR_BUFFER_TOO_SMALL."""
         rc, out, err = _run_raw(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -77,7 +77,7 @@ print("OK")
         assert "OK" in out
 
     def test_encrypt_buffer_too_small(self, p11_config: Any) -> None:
-        """C_Encrypt AES-ECB with 1-byte output → CKR_BUFFER_TOO_SMALL."""
+        """C_Encrypt AES-ECB with 1-byte output -> CKR_BUFFER_TOO_SMALL."""
         rc, out, err = _run_raw(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -121,7 +121,7 @@ print("OK")
         assert "OK" in out
 
     def test_sign_buffer_too_small(self, p11_config: Any) -> None:
-        """C_Sign with 1-byte output → CKR_BUFFER_TOO_SMALL."""
+        """C_Sign with 1-byte output -> CKR_BUFFER_TOO_SMALL."""
         rc, out, err = _run_raw(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,

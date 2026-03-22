@@ -137,7 +137,7 @@ def verify_attribute_parity(
     except (PKCS11Error, KeyError, AttributeError):
         results["END_DATE"] = (None, None, None, False)
 
-    # v3.0+ attributes (optional — many modules don't populate these even on v3.0+)
+    # v3.0+ attributes (optional -- many modules don't populate these even on v3.0+)
     # CKA_PUBLIC_KEY_INFO
     try:
         p11_pk_info = p11_obj[Attribute.PUBLIC_KEY_INFO]
@@ -203,14 +203,14 @@ def import_cert_raw(
 
     Sends the raw DER bytes directly to C_CreateObject without pre-parsing or
     pre-extracting any attributes. This forces the module to deal with the cert
-    as-is — exposing any parsing bugs, over-strict validation, or silent mangling.
+    as-is -- exposing any parsing bugs, over-strict validation, or silent mangling.
 
     Returns (obj, needed_explicit_attrs):
       - needed_explicit_attrs=False: module accepted raw CKA_VALUE without help
       - needed_explicit_attrs=True: module returned TemplateIncomplete so
         SUBJECT/ISSUER/SERIAL_NUMBER were added (required by some modules)
 
-    Raises any PKCS11Error other than TemplateIncomplete without retrying —
+    Raises any PKCS11Error other than TemplateIncomplete without retrying --
     callers must handle module rejections explicitly.
     """
     from asn1crypto.x509 import Certificate as Asn1Cert
@@ -228,10 +228,10 @@ def import_cert_raw(
     try:
         return p11_session.create_object(minimal), False
     except TemplateIncomplete:
-        pass  # Module requires explicit SUBJECT/ISSUER/SERIAL_NUMBER — add them
+        pass  # Module requires explicit SUBJECT/ISSUER/SERIAL_NUMBER -- add them
 
     # asn1crypto parses leniently: if the cert is syntactically malformed enough
-    # to fail here, that is itself a finding — let the exception propagate.
+    # to fail here, that is itself a finding -- let the exception propagate.
     cert_asn1 = Asn1Cert.load(der_data)
     full: dict[Attribute, Any] = dict(minimal)
     full[Attribute.SUBJECT] = cert_asn1.subject.dump()
@@ -272,7 +272,7 @@ def import_cert_object(
         obj = p11_session.create_object(template_v240)
         note(
             "Module claims v3.0+ but rejects v3.0+ cert attributes "
-            "(CKA_PUBLIC_KEY_INFO/CKA_SKID/CKA_AKID) — falling back to v2.40 template",
+            "(CKA_PUBLIC_KEY_INFO/CKA_SKID/CKA_AKID) -- falling back to v2.40 template",
             ComplianceLevel.VENDOR,
         )
         return obj

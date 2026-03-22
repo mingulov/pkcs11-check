@@ -3,7 +3,7 @@
 Covers C_GetSlotInfo, C_GetTokenInfo, C_GetMechanismList, C_GetMechanismInfo,
 C_WaitForSlotEvent.
 
-Source: PKCS#11 v3.1 §5.5.1-5.5.7.
+Source: PKCS#11 v3.1 Sec.5.5.1-5.5.7.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.access
 
 
 class TestGetMechanismInfoErrors:
-    """Error conditions for C_GetMechanismInfo (§5.5.6)."""
+    """Error conditions for C_GetMechanismInfo (Sec.5.5.6)."""
 
     def test_mechanism_invalid(self, p11_module: Any) -> None:
         """Query info for non-existent mechanism -> CKR_MECHANISM_INVALID."""
@@ -36,13 +36,13 @@ class TestGetMechanismInfoErrors:
 
 
 class TestWaitForSlotEventErrors:
-    """Error conditions for C_WaitForSlotEvent (§5.5.4)."""
+    """Error conditions for C_WaitForSlotEvent (Sec.5.5.4)."""
 
     def test_non_blocking_no_event(self, p11_module: Any) -> None:
         """Non-blocking WaitForSlotEvent -> CKR_NO_EVENT or CKR_FUNCTION_NOT_SUPPORTED."""
         try:
             p11_module.lib.wait_for_slot_event(blocking=False)
-            # Event returned — possible on some setups
+            # Event returned -- possible on some setups
         except NoEvent:
             pass  # Expected for software tokens
         except FunctionNotSupported:

@@ -24,7 +24,7 @@ _PARAM_SETS = {
 }
 
 # Only semi_expanded_decaps vectors have dk (decapsulation key) directly.
-# The _test.json files require seed→dk derivation which PKCS#11 doesn't support.
+# The _test.json files require seed->dk derivation which PKCS#11 doesn't support.
 _MLKEM_FILES = [
     ("mlkem_512_semi_expanded_decaps_test.json", 512),
     ("mlkem_768_semi_expanded_decaps_test.json", 768),
@@ -112,7 +112,7 @@ def test_mlkem_decaps(
         # but the shared secret won't match
         if result == "valid" and expected_ss:
             # We can't directly compare since the key value is wrapped
-            pass  # Key was produced — that's the expected behavior
+            pass  # Key was produced -- that's the expected behavior
     except Exception:
         if result == "valid":
             pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}")

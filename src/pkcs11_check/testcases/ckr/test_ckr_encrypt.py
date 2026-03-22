@@ -5,7 +5,7 @@ against the OASIS PKCS#11 spec. In compat mode (default), acceptable
 alternatives are logged as compliance notes. In strict mode (--ckr-strict),
 only the spec-mandated CKR is accepted.
 
-Source: PKCS#11 v3.1 §5.8.1 (C_EncryptInit), §5.8.2 (C_Encrypt).
+Source: PKCS#11 v3.1 Sec.5.8.1 (C_EncryptInit), Sec.5.8.2 (C_Encrypt).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ pytestmark = pytest.mark.access
 
 
 class TestEncryptInitErrors:
-    """Per-parameter error conditions for C_EncryptInit (§5.8.1)."""
+    """Per-parameter error conditions for C_EncryptInit (Sec.5.8.1)."""
 
     def test_mechanism_invalid(self, p11_session: Any, ckr_strict: bool) -> None:
         """Using digest mechanism for encrypt -> CKR_MECHANISM_INVALID."""
@@ -32,7 +32,7 @@ class TestEncryptInitErrors:
             key.encrypt(b"\x00" * 16, mechanism=Mechanism.SHA256)
             pytest.fail("Should have rejected SHA256 as encryption mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional — assert_ckr validates the specific type
+            # Broad catch intentional -- assert_ckr validates the specific type
             assert_ckr(CKR_ENCRYPT["init_mechanism_invalid"], e, ckr_strict)
 
     def test_key_function_not_permitted(
@@ -40,7 +40,7 @@ class TestEncryptInitErrors:
     ) -> None:
         """Key with CKA_ENCRYPT=False -> CKR_KEY_FUNCTION_NOT_PERMITTED.
 
-        python-pkcs11 enforces CKA_ENCRYPT at wrapper level — key object
+        python-pkcs11 enforces CKA_ENCRYPT at wrapper level -- key object
         won't have .encrypt() method. Test via sign-only key + encrypt attempt.
         Full NULL/ctypes testing in test_ckr_null_params.py (Tier 6).
         """
@@ -51,7 +51,7 @@ class TestEncryptInitErrors:
             template={Attribute.ENCRYPT: False, Attribute.SIGN: True},
         )
         exp = CKR_ENCRYPT["init_key_function_not_permitted"]
-        # Wrapper blocks .encrypt() — verify the key lacks the method
+        # Wrapper blocks .encrypt() -- verify the key lacks the method
         if not hasattr(key, "encrypt"):
             pytest.skip(
                 "python-pkcs11 wrapper blocks encrypt on CKA_ENCRYPT=False keys "
@@ -95,7 +95,7 @@ class TestEncryptInitErrors:
 
 
 class TestEncryptDataErrors:
-    """Data-level error conditions for C_Encrypt (§5.8.2)."""
+    """Data-level error conditions for C_Encrypt (Sec.5.8.2)."""
 
     @pytest.mark.parametrize("size", [1, 7, 15, 17, 31, 33])
     def test_ecb_non_aligned(
@@ -110,7 +110,7 @@ class TestEncryptDataErrors:
             assert_ckr(CKR_ENCRYPT["data_len_range"], e, ckr_strict)
 
     def test_empty_data(self, p11_session: Any, ckr_strict: bool) -> None:
-        """AES-ECB with empty data — reject or return empty ciphertext."""
+        """AES-ECB with empty data -- reject or return empty ciphertext."""
         key = p11_session.generate_key(KeyType.AES, 256)
         exp = CKR_ENCRYPT["data_empty"]
         try:
@@ -133,7 +133,7 @@ class TestEncryptDataErrors:
     def test_cbc_pad_non_aligned(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool
     ) -> None:
-        """AES-CBC-PAD with 15 bytes — should succeed (padding handles it)."""
+        """AES-CBC-PAD with 15 bytes -- should succeed (padding handles it)."""
         from pkcs11_check.testcases.conftest import has_mechanism
         if not has_mechanism(p11_module, "AES_CBC_PAD"):
             pytest.skip("AES_CBC_PAD not supported")
@@ -156,12 +156,12 @@ class TestEncryptDataErrors:
         """
         from pkcs11_check.testcases.conftest import has_mechanism
         if not has_mechanism(p11_module, "DES_ECB"):
-            pytest.skip("DES not supported — can't create small key")
+            pytest.skip("DES not supported -- can't create small key")
         try:
-            # DES key is 64-bit — too small for AES
+            # DES key is 64-bit -- too small for AES
             des_key = p11_session.generate_key(KeyType.DES)
             des_key.encrypt(b"\x00" * 8, mechanism=Mechanism.AES_ECB)
             pytest.fail("Should have rejected DES key with AES mechanism")
         except PKCS11Error as e:
-            # KEY_TYPE_INCONSISTENT or KEY_SIZE_RANGE — both acceptable
+            # KEY_TYPE_INCONSISTENT or KEY_SIZE_RANGE -- both acceptable
             assert_ckr(CKR_ENCRYPT["init_key_size_range"], e, ckr_strict)

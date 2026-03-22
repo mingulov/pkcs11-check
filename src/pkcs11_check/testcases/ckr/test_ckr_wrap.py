@@ -1,6 +1,6 @@
 """CKR compliance tests for C_WrapKey and C_UnwrapKey.
 
-Source: PKCS#11 v3.1 §5.14.3 (C_WrapKey), §5.14.4 (C_UnwrapKey).
+Source: PKCS#11 v3.1 Sec.5.14.3 (C_WrapKey), Sec.5.14.4 (C_UnwrapKey).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ pytestmark = pytest.mark.access
 
 
 class TestWrapKeyErrors:
-    """Error conditions for C_WrapKey (§5.14.3)."""
+    """Error conditions for C_WrapKey (Sec.5.14.3)."""
 
     def test_key_not_extractable(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool
@@ -37,7 +37,7 @@ class TestWrapKeyErrors:
             wrap_key.wrap_key(target, mechanism=Mechanism.AES_KEY_WRAP)
             pytest.fail("Should have rejected wrapping non-extractable key")
         except PKCS11Error:
-            pass  # CKR_KEY_UNEXTRACTABLE or CKR_KEY_NOT_WRAPPABLE — both acceptable
+            pass  # CKR_KEY_UNEXTRACTABLE or CKR_KEY_NOT_WRAPPABLE -- both acceptable
 
     def test_mechanism_invalid(
         self, p11_session: Any, ckr_strict: bool
@@ -58,7 +58,7 @@ class TestWrapKeyErrors:
 
 
 class TestUnwrapKeyErrors:
-    """Error conditions for C_UnwrapKey (§5.14.4)."""
+    """Error conditions for C_UnwrapKey (Sec.5.14.4)."""
 
     def test_wrapped_key_invalid(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool

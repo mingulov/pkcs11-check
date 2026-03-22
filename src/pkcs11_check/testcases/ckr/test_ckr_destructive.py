@@ -4,7 +4,7 @@ Tests that require modifying token state (InitToken, SetPIN, InitPIN).
 Each test runs in subprocess with a TEMPORARY SoftHSM2 token to avoid
 damaging the main test token.
 
-Marked @destructive — skipped unless --p11-destructive is passed.
+Marked @destructive -- skipped unless --p11-destructive is passed.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ class TestInitTokenErrors:
     """C_InitToken error conditions."""
 
     def test_init_token_session_exists(self) -> None:
-        """C_InitToken with open session → CKR_SESSION_EXISTS."""
+        """C_InitToken with open session -> CKR_SESSION_EXISTS."""
         rc, out, err = _run_destructive("""\
 # Open a session first
 sess = ctypes.c_ulong(0)
@@ -99,7 +99,7 @@ raw.C_CloseSession(sess.value)
         assert "OK" in out
 
     def test_init_token_wrong_so_pin(self) -> None:
-        """C_InitToken with wrong SO PIN → CKR_PIN_INCORRECT."""
+        """C_InitToken with wrong SO PIN -> CKR_PIN_INCORRECT."""
         rc, out, err = _run_destructive("""\
 wrong_pin = b"WRONGPIN"
 pin_buf = (ctypes.c_ubyte * len(wrong_pin))(*wrong_pin)
@@ -118,7 +118,7 @@ class TestSetPINErrors:
     """C_SetPIN error conditions."""
 
     def test_set_pin_wrong_old(self) -> None:
-        """C_SetPIN with wrong old PIN → CKR_PIN_INCORRECT."""
+        """C_SetPIN with wrong old PIN -> CKR_PIN_INCORRECT."""
         rc, out, err = _run_destructive("""\
 sess = ctypes.c_ulong(0)
 rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
@@ -145,13 +145,13 @@ class TestInitPINErrors:
     """C_InitPIN error conditions."""
 
     def test_init_pin_not_logged_in(self) -> None:
-        """C_InitPIN without SO login → CKR_USER_NOT_LOGGED_IN."""
+        """C_InitPIN without SO login -> CKR_USER_NOT_LOGGED_IN."""
         rc, out, err = _run_destructive("""\
 sess = ctypes.c_ulong(0)
 rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
 assert rv == CKR_OK
 sh = sess.value
-# Don't login — try InitPIN
+# Don't login -- try InitPIN
 new_pin = b"9999"
 rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 4)(*new_pin), 4)
 print(f"CKR:0x{rv:08x}")

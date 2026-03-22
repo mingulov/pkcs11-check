@@ -25,7 +25,7 @@ class TestMemoryLeaks:
     """Check for memory leaks during repeated operations."""
 
     def test_key_generation_no_leak(self, p11_session: Any) -> None:
-        """Generate and destroy 1000 keys — RSS should not grow significantly."""
+        """Generate and destroy 1000 keys -- RSS should not grow significantly."""
         rss_before = _get_rss_mb()
         for _ in range(1000):
             key = p11_session.generate_key(KeyType.AES, 256)
@@ -35,7 +35,7 @@ class TestMemoryLeaks:
         assert growth < 50, f"RSS grew by {growth:.1f}MB during 1000 key gen/destroy cycles"
 
     def test_encrypt_cycle_no_leak(self, p11_session: Any) -> None:
-        """1000 encrypt/decrypt cycles — RSS should not grow significantly."""
+        """1000 encrypt/decrypt cycles -- RSS should not grow significantly."""
         key = p11_session.generate_key(KeyType.AES, 256)
         plaintext = b"leak test data!!"  # 16 bytes
 
@@ -49,7 +49,7 @@ class TestMemoryLeaks:
         key.destroy()
 
     def test_digest_cycle_no_leak(self, p11_session: Any) -> None:
-        """1000 digest operations — no leak."""
+        """1000 digest operations -- no leak."""
         data = b"X" * 1024
         rss_before = _get_rss_mb()
         for _ in range(1000):
@@ -81,7 +81,7 @@ class TestUseAfterDestroy:
         key = p11_session.generate_key(KeyType.AES, 128)
         key.destroy()
         try:
-            key.destroy()  # Should fail or be no-op — must not crash
+            key.destroy()  # Should fail or be no-op -- must not crash
         except pkcs11.exceptions.PKCS11Error:
             pass  # Expected
 
@@ -97,7 +97,7 @@ class TestSessionChurn:
     """Test rapid session open/close cycles."""
 
     def test_rapid_session_cycles(self, p11_module: Any, p11_config: Any) -> None:
-        """Open and close 100 sessions rapidly — no leak or crash."""
+        """Open and close 100 sessions rapidly -- no leak or crash."""
         token = p11_module.get_token(p11_config.slot)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
 

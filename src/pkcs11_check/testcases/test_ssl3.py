@@ -83,7 +83,7 @@ def _create_generic_secret(session: Any, value: bytes) -> Any:
 
 
 class TestSSL3PreMasterKeyGen:
-    """CKM_SSL3_PRE_MASTER_KEY_GEN — generate an SSL3 pre-master secret."""
+    """CKM_SSL3_PRE_MASTER_KEY_GEN -- generate an SSL3 pre-master secret."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_SSL3_PRE_MASTER_KEY_GEN is advertised."""
@@ -159,7 +159,7 @@ class TestSSL3PreMasterKeyGen:
 
 
 class TestSSL3MasterKeyDerive:
-    """CKM_SSL3_MASTER_KEY_DERIVE — derive master secret from pre-master secret.
+    """CKM_SSL3_MASTER_KEY_DERIVE -- derive master secret from pre-master secret.
 
     This mechanism requires CK_SSL3_MASTER_KEY_DERIVE_PARAMS which embeds
     CK_SSL3_RANDOM_DATA (client_random + server_random) and a CK_VERSION output
@@ -185,7 +185,7 @@ class TestSSL3MasterKeyDerive:
 
         pre_master = _create_generic_secret(p11_session, _PRE_MASTER_SECRET)
         try:
-            # Use concatenated randoms as a placeholder — real usage requires
+            # Use concatenated randoms as a placeholder -- real usage requires
             # CK_SSL3_MASTER_KEY_DERIVE_PARAMS struct.
             derived = pre_master.derive_key(
                 KeyType.GENERIC_SECRET,
@@ -213,7 +213,7 @@ class TestSSL3MasterKeyDerive:
 
 
 class TestSSL3MasterKeyDeriveDH:
-    """CKM_SSL3_MASTER_KEY_DERIVE_DH — DH variant of SSL3 master key derivation.
+    """CKM_SSL3_MASTER_KEY_DERIVE_DH -- DH variant of SSL3 master key derivation.
 
     Identical parameter requirements to CKM_SSL3_MASTER_KEY_DERIVE but used
     when the pre-master secret was established via Diffie-Hellman. The version
@@ -262,7 +262,7 @@ class TestSSL3MasterKeyDeriveDH:
 
 
 class TestSSL3KeyAndMacDerive:
-    """CKM_SSL3_KEY_AND_MAC_DERIVE — derive key material from the SSL3 master secret.
+    """CKM_SSL3_KEY_AND_MAC_DERIVE -- derive key material from the SSL3 master secret.
 
     This mechanism requires CK_SSL3_KEY_MAT_PARAMS which embeds:
     - MacSizeInBits, KeySizeInBits, IVSizeInBits
@@ -317,7 +317,7 @@ class TestSSL3KeyAndMacDerive:
 
 
 class TestSSL3Mac:
-    """CKM_SSL3_MD5_MAC and CKM_SSL3_SHA1_MAC — SSL3 MAC mechanisms.
+    """CKM_SSL3_MD5_MAC and CKM_SSL3_SHA1_MAC -- SSL3 MAC mechanisms.
 
     These are sign/verify mechanisms. The mechanism parameter is the MAC output
     length in bits (as an integer). SSL3 MD5 MAC produces up to 16 bytes;

@@ -1,14 +1,14 @@
 """CCTV ML-DSA benchmark message sign/verify round-trip tests.
 
 The CCTV ML-DSA benchmark directory contains lists of ASCII message strings
-designed as benchmark signing inputs (not KAT vectors — no expected signatures).
+designed as benchmark signing inputs (not KAT vectors -- no expected signatures).
 
 Each test generates an ML-DSA key pair (per parameter set), signs a message
 from the benchmark list, and verifies the resulting signature.  This confirms
 the sign+verify path is internally consistent across all three ML-DSA sizes.
 
 Requires: PKCS#11 v3.2 module with ML_DSA support (e.g., Kryoptic).
-SoftHSM2 (v2.40) skips all tests — it has no ML-DSA support.
+SoftHSM2 (v2.40) skips all tests -- it has no ML-DSA support.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ pytestmark = [pytest.mark.pqc, pytest.mark.requires_v32, pytest.mark.kat, pytest
 
 _BENCHMARK_DIR = CCTV_DIR / "ML-DSA" / "benchmark"
 
-# ML-DSA parameter set name → (MLDsaParameterSet enum, benchmark file)
+# ML-DSA parameter set name -> (MLDsaParameterSet enum, benchmark file)
 _PARAM_CONFIGS: list[tuple[str, MLDsaParameterSet, Path]] = [
     ("ML-DSA-44", MLDsaParameterSet.ML_DSA_44, _BENCHMARK_DIR / "ML-DSA-44.json"),
     ("ML-DSA-65", MLDsaParameterSet.ML_DSA_65, _BENCHMARK_DIR / "ML-DSA-65.json"),
@@ -74,7 +74,7 @@ def test_cctv_mldsa_sign_verify(
     """ML-DSA sign + verify round-trip using CCTV benchmark messages.
 
     Generates a fresh ML-DSA key pair, signs the message, then verifies the
-    signature using the same key pair.  No expected signature is compared —
+    signature using the same key pair.  No expected signature is compared --
     the benchmark files provide messages only.
 
     Security property: if sign succeeds and verify rejects the fresh
@@ -109,7 +109,7 @@ def test_cctv_mldsa_sign_verify(
                 },
             )
         except (MechanismInvalid, FunctionFailed) as e:
-            pytest.skip(f"{param_name}: key generation failed — {e}")
+            pytest.skip(f"{param_name}: key generation failed -- {e}")
 
         sig = priv_key.sign(msg, mechanism=Mechanism.ML_DSA)
         assert len(sig) > 0, f"{vec_id}: sign() returned empty signature"

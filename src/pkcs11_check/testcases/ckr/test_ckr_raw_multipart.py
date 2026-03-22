@@ -75,7 +75,7 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
 
 
 class TestMultipartNotInitialized:
-    """C_*Update/Final without Init → CKR_OPERATION_NOT_INITIALIZED."""
+    """C_*Update/Final without Init -> CKR_OPERATION_NOT_INITIALIZED."""
 
     def test_encrypt_update_no_init(self, p11_config: Any) -> None:
         """C_EncryptUpdate without C_EncryptInit."""

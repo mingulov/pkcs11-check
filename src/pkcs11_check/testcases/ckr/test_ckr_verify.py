@@ -1,6 +1,6 @@
 """CKR compliance tests for C_VerifyInit and C_Verify.
 
-Source: PKCS#11 v3.1 §5.11.1 (C_VerifyInit), §5.11.2 (C_Verify).
+Source: PKCS#11 v3.1 Sec.5.11.1 (C_VerifyInit), Sec.5.11.2 (C_Verify).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ pytestmark = pytest.mark.access
 
 
 class TestVerifyInitErrors:
-    """Per-parameter error conditions for C_VerifyInit (§5.11.1)."""
+    """Per-parameter error conditions for C_VerifyInit (Sec.5.11.1)."""
 
     def test_mechanism_invalid(self, p11_session: Any, ckr_strict: bool) -> None:
         """Using encrypt mechanism for verify -> CKR_MECHANISM_INVALID."""
@@ -26,7 +26,7 @@ class TestVerifyInitErrors:
             pub.verify(b"test", b"\x00" * 256, mechanism=Mechanism.AES_ECB)
             pytest.fail("Should have rejected AES_ECB as verify mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional — assert_ckr validates the specific type
+            # Broad catch intentional -- assert_ckr validates the specific type
             assert_ckr(CKR_VERIFY["init_mechanism_invalid"], e, ckr_strict)
 
     def test_key_type_inconsistent(
@@ -37,7 +37,7 @@ class TestVerifyInitErrors:
         exp = CKR_VERIFY["init_key_type_inconsistent"]
         try:
             key.verify(b"test", b"\x00" * 256, mechanism=Mechanism.SHA256_RSA_PKCS)
-            # Module accepted mismatched key type — compliance deviation
+            # Module accepted mismatched key type -- compliance deviation
             if not exp.allow_success:
                 pytest.fail("Should have rejected AES key with RSA verify mechanism")
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -63,7 +63,7 @@ class TestVerifyInitErrors:
 
 
 class TestVerifyErrors:
-    """Error conditions for C_Verify (§5.11.2)."""
+    """Error conditions for C_Verify (Sec.5.11.2)."""
 
     def test_signature_invalid(self, p11_session: Any, ckr_strict: bool) -> None:
         """Tampered RSA signature -> CKR_SIGNATURE_INVALID."""
@@ -79,7 +79,7 @@ class TestVerifyErrors:
             result = pub.verify(data, bytes(tampered), mechanism=Mechanism.SHA256_RSA_PKCS)
             if result is True:
                 pytest.fail("Tampered signature verified as valid!")
-            # result is False — acceptable (some wrappers return bool)
+            # result is False -- acceptable (some wrappers return bool)
         except DeviceError:
             pytest.xfail("Kryoptic bug: returns CKR_DEVICE_ERROR for verify failure")
         except PKCS11Error as e:
@@ -97,7 +97,7 @@ class TestVerifyErrors:
             result = pub.verify(data, b"\x00" * 128, mechanism=Mechanism.SHA256_RSA_PKCS)
             # Module didn't reject wrong-length signature at length check
             if result is False:
-                pass  # Verification failed (returned False) — acceptable
+                pass  # Verification failed (returned False) -- acceptable
             elif not exp.allow_success:
                 pytest.fail("Should have rejected 128-byte signature for RSA-2048")
             else:

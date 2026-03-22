@@ -2,19 +2,19 @@
 
 Happy-path functional tests exercising sign-recover and verify-recover operations.
 
-Source: PKCS#11 v3.1 §5.10.5 (C_SignRecoverInit), §5.10.6 (C_SignRecover),
-        §5.11.5 (C_VerifyRecoverInit), §5.11.6 (C_VerifyRecover).
+Source: PKCS#11 v3.1 Sec.5.10.5 (C_SignRecoverInit), Sec.5.10.6 (C_SignRecover),
+        Sec.5.11.5 (C_VerifyRecoverInit), Sec.5.11.6 (C_VerifyRecover).
 
 C_SignRecover produces a signature from which the original data can be recovered.
 C_VerifyRecover takes a signature and recovers the original data (and verifies it).
 The primary mechanism is CKM_RSA_X_509 (raw RSA, no padding).
 
 For RSA X.509, the input data must be padded to exactly the modulus size (2048
-bits → 256 bytes).  The token performs raw modular exponentiation; the caller is
+bits -> 256 bytes).  The token performs raw modular exponentiation; the caller is
 responsible for any padding.  CKM_RSA_X_509 is widely supported in hardware and
 software tokens as the recovery-capable RSA mechanism.
 
-These operations are only accessible via the raw C API — python-pkcs11 does not
+These operations are only accessible via the raw C API -- python-pkcs11 does not
 expose high-level sign_recover() / verify_recover() methods on Key or Session
 objects.  Tests use a ctypes subprocess in the same pattern as test_operation_state.py.
 
@@ -353,14 +353,14 @@ def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
 class TestSignRecover:
     """C_SignRecover / C_VerifyRecover functional tests using CKM_RSA_X_509.
 
-    C_SignRecover (§5.10.6): Signs data with a private key using a mechanism
+    C_SignRecover (Sec.5.10.6): Signs data with a private key using a mechanism
     that allows the original data to be recovered from the signature.
 
-    C_VerifyRecover (§5.11.6): Verifies a signature and recovers the original
+    C_VerifyRecover (Sec.5.11.6): Verifies a signature and recovers the original
     data from the signature using the corresponding public key.
 
     CKM_RSA_X_509 (raw RSA) is the standard mechanism for these operations.
-    The input must be padded to the modulus size (2048 bits → 256 bytes).
+    The input must be padded to the modulus size (2048 bits -> 256 bytes).
     """
 
     def test_sign_recover_produces_output(self, p11_config: Any, p11_module: Any) -> None:
@@ -369,10 +369,10 @@ class TestSignRecover:
         Steps:
         1. Generate RSA-2048 key pair with CKA_SIGN_RECOVER / CKA_VERIFY_RECOVER.
         2. C_SignRecoverInit(CKM_RSA_X_509, privateKey).
-        3. C_SignRecover(padded_data) → signature.
+        3. C_SignRecover(padded_data) -> signature.
         4. Verify signature length equals modulus size (256 bytes).
 
-        Source: PKCS#11 v3.1 §5.10.5–§5.10.6.
+        Source: PKCS#11 v3.1 Sec.5.10.5-Sec.5.10.6.
         """
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
@@ -444,11 +444,11 @@ class TestSignRecover:
 
         Steps:
         1. Generate RSA-2048 key pair.
-        2. C_SignRecoverInit → C_SignRecover(padded_data) → signature.
-        3. C_VerifyRecoverInit → C_VerifyRecover(signature) → recovered_data.
+        2. C_SignRecoverInit -> C_SignRecover(padded_data) -> signature.
+        3. C_VerifyRecoverInit -> C_VerifyRecover(signature) -> recovered_data.
         4. Assert recovered_data == padded_data.
 
-        Source: PKCS#11 v3.1 §5.10.5–§5.10.6, §5.11.5–§5.11.6.
+        Source: PKCS#11 v3.1 Sec.5.10.5-Sec.5.10.6, Sec.5.11.5-Sec.5.11.6.
         """
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
@@ -557,7 +557,7 @@ class TestSignRecover:
         Passing shorter data must return CKR_DATA_LEN_RANGE or CKR_ARGUMENTS_BAD
         (or similar), not crash or silently succeed.
 
-        Source: PKCS#11 v3.1 §5.10.6 error table.
+        Source: PKCS#11 v3.1 Sec.5.10.6 error table.
         """
         if not _has_rsa_x509(p11_module):
             pytest.skip("CKM_RSA_X_509 not supported by this module")
@@ -582,7 +582,7 @@ class TestSignRecover:
         print(f"FATAL:SignRecoverInit:0x{rv:08x}")
         sys.exit(1)
 
-    # Data shorter than modulus — must be rejected
+    # Data shorter than modulus -- must be rejected
     short_data = b"too short"
     sig_len = c_ulong(256)
     sig_buf = (c_ubyte * 256)()
@@ -593,11 +593,11 @@ class TestSignRecover:
         print("RESULT:ACCEPTED_SHORT_DATA")
     else:
         print(f"RESULT:REJECTED:0x{rv:08x}")
-        # Any non-OK return is acceptable — the module correctly rejected it
+        # Any non-OK return is acceptable -- the module correctly rejected it
         acceptable = {CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD, CKR_BUFFER_TOO_SMALL,
                       CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID}
         if rv not in acceptable:
-            # Non-standard CKR — still a valid rejection; note it
+            # Non-standard CKR -- still a valid rejection; note it
             print(f"NOTE:NonStandardRejection:0x{rv:08x}")
 """
         )
@@ -616,12 +616,12 @@ class TestSignRecover:
         assert "RESULT" in lines_map, f"Missing RESULT in output: {stdout!r}"
 
         # The module should not silently accept wrong-length data.
-        # Some modules pad internally and accept any length — this is non-standard
+        # Some modules pad internally and accept any length -- this is non-standard
         # for CKM_RSA_X_509 but we don't fail on it; we just note it.
         result = lines_map["RESULT"]
         if result == "ACCEPTED_SHORT_DATA":
             pytest.xfail(
-                "Module accepted short data for CKM_RSA_X_509 C_SignRecover — "
+                "Module accepted short data for CKM_RSA_X_509 C_SignRecover -- "
                 "non-standard behaviour (spec requires CKR_DATA_LEN_RANGE)"
             )
 

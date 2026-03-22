@@ -80,13 +80,13 @@ class TestVerifySignatureErrors:
     """v3.2 C_VerifySignatureInit error conditions."""
 
     def test_mechanism_invalid(self, p11_config: Any) -> None:
-        """C_VerifySignatureInit with encrypt mechanism → error."""
+        """C_VerifySignatureInit with encrypt mechanism -> error."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 mech = CK_MECHANISM()
-mech.mechanism = 0x1081  # AES_ECB — not a verify mechanism
+mech.mechanism = 0x1081  # AES_ECB -- not a verify mechanism
 sig = (ctypes.c_ubyte * 32)(*([0]*32))
 rv = raw.C_VerifySignatureInit(sh, ctypes.byref(mech), 0, sig, 32)
 print(f"CKR:0x{rv:08x}")
@@ -97,7 +97,7 @@ print("OK")
         _check(rc, out, err, "C_VerifySignatureInit")
 
     def test_operation_not_initialized(self, p11_config: Any) -> None:
-        """C_VerifySignature without Init → CKR_OPERATION_NOT_INITIALIZED."""
+        """C_VerifySignature without Init -> CKR_OPERATION_NOT_INITIALIZED."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -116,13 +116,13 @@ class TestEncapsulateKeyErrors:
     """v3.2 C_EncapsulateKey via raw calls."""
 
     def test_encapsulate_wrong_mechanism(self, p11_config: Any) -> None:
-        """C_EncapsulateKey with AES mechanism → error."""
+        """C_EncapsulateKey with AES mechanism -> error."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 mech = CK_MECHANISM()
-mech.mechanism = 0x1081  # AES_ECB — not a KEM mechanism
+mech.mechanism = 0x1081  # AES_ECB -- not a KEM mechanism
 key = ctypes.c_ulong(0)
 ct = (ctypes.c_ubyte * 2048)()
 ct_len = ctypes.c_ulong(2048)
@@ -139,7 +139,7 @@ class TestDecapsulateKeyErrors:
     """v3.2 C_DecapsulateKey via raw calls."""
 
     def test_decapsulate_wrong_mechanism(self, p11_config: Any) -> None:
-        """C_DecapsulateKey with AES mechanism → error."""
+        """C_DecapsulateKey with AES mechanism -> error."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -170,7 +170,7 @@ id_buf = (ctypes.c_ubyte * 256)()
 id_len = ctypes.c_ulong(256)
 rv = raw.C_AsyncGetID(sh, id_buf, ctypes.byref(id_len))
 print(f"CKR:0x{rv:08x}")
-# OPERATION_NOT_INITIALIZED or FUNCTION_NOT_SUPPORTED — both acceptable
+# OPERATION_NOT_INITIALIZED or FUNCTION_NOT_SUPPORTED -- both acceptable
 assert rv != CKR_OK, f"Should have failed with no async operation"
 print("OK")
 """,
@@ -182,13 +182,13 @@ class TestWrapKeyAuthenticatedErrors:
     """v3.2 C_WrapKeyAuthenticated error conditions."""
 
     def test_wrap_auth_wrong_mechanism(self, p11_config: Any) -> None:
-        """C_WrapKeyAuthenticated with SHA mechanism → error."""
+        """C_WrapKeyAuthenticated with SHA mechanism -> error."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 mech = CK_MECHANISM()
-mech.mechanism = 0x0250  # SHA256 — not a wrap mechanism
+mech.mechanism = 0x0250  # SHA256 -- not a wrap mechanism
 out = (ctypes.c_ubyte * 256)()
 out_len = ctypes.c_ulong(256)
 rv = raw.C_WrapKeyAuthenticated(sh, ctypes.byref(mech), 0, 0, 0, out, ctypes.byref(out_len))

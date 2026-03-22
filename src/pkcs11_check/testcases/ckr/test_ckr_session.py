@@ -2,7 +2,7 @@
 
 Covers C_OpenSession, C_CloseSession, C_Login, C_Logout.
 
-Source: PKCS#11 v3.1 §5.6.1-5.6.8.
+Source: PKCS#11 v3.1 Sec.5.6.1-5.6.8.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.access
 
 
 class TestOpenSessionErrors:
-    """Error conditions for C_OpenSession (§5.6.1)."""
+    """Error conditions for C_OpenSession (Sec.5.6.1)."""
 
     def test_invalid_slot_id(self, p11_module: Any) -> None:
         """C_OpenSession with invalid slot -> CKR_SLOT_ID_INVALID."""
@@ -36,7 +36,7 @@ class TestOpenSessionErrors:
 
 
 class TestLoginErrors:
-    """Error conditions for C_Login (§5.6.7)."""
+    """Error conditions for C_Login (Sec.5.6.7)."""
 
     def test_wrong_pin(self, p11_module: Any) -> None:
         """Wrong PIN -> CKR_PIN_INCORRECT."""
@@ -63,7 +63,7 @@ class TestLoginErrors:
 
 
 class TestLogoutErrors:
-    """Error conditions for C_Logout (§5.6.8)."""
+    """Error conditions for C_Logout (Sec.5.6.8)."""
 
     def test_logout_when_not_logged_in(self, p11_module: Any) -> None:
         """Logout without login -> CKR_USER_NOT_LOGGED_IN."""
@@ -73,6 +73,6 @@ class TestLogoutErrors:
             session.logout()
             # Some modules don't error on logout without login
         except PKCS11Error:
-            pass  # CKR_USER_NOT_LOGGED_IN or similar — acceptable
+            pass  # CKR_USER_NOT_LOGGED_IN or similar -- acceptable
         finally:
             session.close()

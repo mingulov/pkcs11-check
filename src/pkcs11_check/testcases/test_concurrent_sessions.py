@@ -33,7 +33,7 @@ def _open_second_session(token: Any, pin_str: str) -> Any:
     try:
         session.login(p11.UserType.USER, pin_str)
     except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
-        pass  # Expected — token-level login already active
+        pass  # Expected -- token-level login already active
     return session
 
 
@@ -140,7 +140,7 @@ class TestConcurrentObjectCreation:
     """Test rapid object creation/destruction across sessions."""
 
     def test_rapid_create_destroy_cycle(self, p11_module: Any, p11_config: Any) -> None:
-        """Create and immediately destroy objects in rapid succession — no leak."""
+        """Create and immediately destroy objects in rapid succession -- no leak."""
         token = p11_module.get_token()
         pin = p11_config.pin
         pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin

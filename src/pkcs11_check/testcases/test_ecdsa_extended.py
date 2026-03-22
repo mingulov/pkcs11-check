@@ -44,7 +44,7 @@ def _generate_ec_keypair(session: Any, curve: str = "secp256r1") -> tuple[Any, A
 
 
 class TestECDSAPrehash:
-    """ECDSA prehash sign/verify — mechanism handles hashing internally."""
+    """ECDSA prehash sign/verify -- mechanism handles hashing internally."""
 
     @pytest.mark.parametrize(("mech_name", "mech"), _ECDSA_HASH_MECHS)
     def test_sign_verify_roundtrip(

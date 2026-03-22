@@ -3,7 +3,7 @@
 Covers C_CreateObject, C_CopyObject, C_DestroyObject, C_GetObjectSize,
 C_GetAttributeValue, C_SetAttributeValue, C_FindObjects*.
 
-Source: PKCS#11 v3.1 §5.7.1-5.7.9.
+Source: PKCS#11 v3.1 Sec.5.7.1-5.7.9.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ pytestmark = pytest.mark.access
 
 
 class TestCreateObjectErrors:
-    """Error conditions for C_CreateObject (§5.7.1)."""
+    """Error conditions for C_CreateObject (Sec.5.7.1)."""
 
     def test_missing_class(self, p11_session: Any) -> None:
         """Missing CKA_CLASS -> CKR_TEMPLATE_INCOMPLETE."""
@@ -53,14 +53,14 @@ class TestCreateObjectErrors:
                     Attribute.TOKEN: False,
                 }
             )
-            # Some modules ignore KEY_TYPE on DATA — acceptable
+            # Some modules ignore KEY_TYPE on DATA -- acceptable
             assert obj is not None
         except TEMPLATE_ERRORS:
             pass  # Correct to reject inconsistent template
 
 
 class TestGetAttributeErrors:
-    """Error conditions for C_GetAttributeValue (§5.7.5)."""
+    """Error conditions for C_GetAttributeValue (Sec.5.7.5)."""
 
     def test_sensitive_value(self, p11_session: Any) -> None:
         """Reading VALUE on SENSITIVE key -> CKR_ATTRIBUTE_SENSITIVE."""
@@ -82,7 +82,7 @@ class TestGetAttributeErrors:
 
 
 class TestSetAttributeErrors:
-    """Error conditions for C_SetAttributeValue (§5.7.6)."""
+    """Error conditions for C_SetAttributeValue (Sec.5.7.6)."""
 
     def test_set_readonly_class(self, p11_session: Any) -> None:
         """Setting CKA_CLASS -> CKR_ATTRIBUTE_READ_ONLY."""
@@ -96,22 +96,22 @@ class TestSetAttributeErrors:
         )
         try:
             obj[Attribute.CLASS] = ObjectClass.SECRET_KEY
-            # Kryoptic silently accepts — compliance deviation
+            # Kryoptic silently accepts -- compliance deviation
             from pkcs11_check.compliance import ComplianceLevel, note
             note(
                 "C_SetAttributeValue accepted change to read-only CKA_CLASS",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.1 §5.7.6",
+                reference="PKCS#11 v3.1 Sec.5.7.6",
             )
         except (AttributeReadOnly, AttributeTypeInvalid, PKCS11Error):
             pass  # Any rejection is acceptable for read-only attribute
 
 
 class TestCopyObjectErrors:
-    """Error conditions for C_CopyObject (§5.7.2)."""
+    """Error conditions for C_CopyObject (Sec.5.7.2)."""
 
     def test_copy_destroyed_handle(self, p11_session: Any) -> None:
-        """Copy destroyed object → CKR_OBJECT_HANDLE_INVALID."""
+        """Copy destroyed object -> CKR_OBJECT_HANDLE_INVALID."""
         key = p11_session.generate_key(KeyType.AES, 128, label="ckr-copy-destroy")
         key.destroy()
         try:
@@ -122,12 +122,12 @@ class TestCopyObjectErrors:
 
 
 class TestFindObjectsErrors:
-    """Error conditions for C_FindObjects* (§5.7.7-5.7.9)."""
+    """Error conditions for C_FindObjects* (Sec.5.7.7-5.7.9)."""
 
     def test_find_with_empty_result(self, p11_session: Any) -> None:
-        """FindObjects with template matching nothing → returns empty list."""
+        """FindObjects with template matching nothing -> returns empty list."""
         results = list(p11_session.get_objects({Attribute.LABEL: "nonexistent_ckr_label_xyz"}))
-        assert results == []  # Empty is valid — not an error
+        assert results == []  # Empty is valid -- not an error
 
     def test_find_by_class(self, p11_session: Any) -> None:
         """FindObjects with CKA_CLASS filter works correctly."""
@@ -144,7 +144,7 @@ class TestFindObjectsErrors:
 
 
 class TestDestroyObjectErrors:
-    """Error conditions for C_DestroyObject (§5.7.3)."""
+    """Error conditions for C_DestroyObject (Sec.5.7.3)."""
 
     def test_destroy_already_destroyed(self, p11_session: Any) -> None:
         """Double destroy -> CKR_OBJECT_HANDLE_INVALID."""

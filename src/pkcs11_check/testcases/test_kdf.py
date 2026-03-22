@@ -1,7 +1,7 @@
-"""Key derivation function tests — ECDH derive, HMAC-KDF, key agreement.
+"""Key derivation function tests -- ECDH derive, HMAC-KDF, key agreement.
 
 Tests key derivation operations available in PKCS#11 v2.40+.
-HKDF (CKM_HKDF_DERIVE) requires v3.0+ — auto-skips on v2.40 modules.
+HKDF (CKM_HKDF_DERIVE) requires v3.0+ -- auto-skips on v2.40 modules.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ class TestKeyDeriveSoftware:
         assert key is not None
 
     def test_hmac_as_kdf(self, p11_session: Any) -> None:
-        """Use HMAC as a KDF — cross-verify against Python hmac."""
+        """Use HMAC as a KDF -- cross-verify against Python hmac."""
         key_bytes = bytes(range(32))
         data = b"KDF input data for derivation"
 
@@ -59,7 +59,7 @@ class TestKeyDeriveSoftware:
         assert p11_mac == py_mac
 
     def test_hmac_sha512_as_kdf(self, p11_session: Any) -> None:
-        """HMAC-SHA512 as KDF — cross-verify."""
+        """HMAC-SHA512 as KDF -- cross-verify."""
         key_bytes = bytes(range(64))
         data = b"HMAC-SHA512 KDF test"
 
@@ -80,12 +80,12 @@ class TestKeyDeriveSoftware:
 
 @pytest.mark.requires_v30
 class TestHKDF:
-    """HKDF tests — requires CKM_HKDF_DERIVE (PKCS#11 v3.0+)."""
+    """HKDF tests -- requires CKM_HKDF_DERIVE (PKCS#11 v3.0+)."""
 
     def test_hkdf_available(self, p11_module: Any) -> None:
         """Check if HKDF mechanism is available."""
         if not has_mechanism(p11_module, "HKDF_DERIVE"):
-            pytest.skip("HKDF not supported — requires PKCS#11 v3.0+")
+            pytest.skip("HKDF not supported -- requires PKCS#11 v3.0+")
 
     def test_hkdf_derive_basic(self, p11_session: Any, p11_module: Any) -> None:
         """Basic HKDF derivation with SHA-256."""
@@ -122,7 +122,7 @@ class TestHKDF:
 
 
 class TestECDHDerive:
-    """ECDH key agreement — derive shared secret from two keypairs."""
+    """ECDH key agreement -- derive shared secret from two keypairs."""
 
     def _generate_ec_keypair(self, session: Any) -> tuple[Any, Any]:
         ecparams = session.create_domain_parameters(

@@ -1,7 +1,7 @@
 """Token info and flags validation tests.
 
 Verifies CK_TOKEN_INFO fields are consistent and sensible.
-From OASIS PKCS#11 specification — token info requirements.
+From OASIS PKCS#11 specification -- token info requirements.
 """
 
 from __future__ import annotations
@@ -74,11 +74,11 @@ class TestTokenFlags:
 
     def test_rng_flag_matches_capability(self, p11_session: Any, p11_module: Any) -> None:
         """If C_GenerateRandom works, CKF_RNG should be set."""
-        # Try generating random — if it works, RNG is available
+        # Try generating random -- if it works, RNG is available
         try:
             data = p11_session.generate_random(256)
             assert len(data) == 32
-            # RNG works — module should have CKF_RNG flag
+            # RNG works -- module should have CKF_RNG flag
         except Exception:
             pass  # RNG not available
 

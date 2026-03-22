@@ -40,7 +40,7 @@ def run_null_test(
         timeout: Subprocess timeout in seconds.
 
     Returns:
-        (returncode, stdout, stderr) — returncode < 0 means signal (segfault).
+        (returncode, stdout, stderr) -- returncode < 0 means signal (segfault).
     """
     # Build the full script with boilerplate
     script = textwrap.dedent(f"""\

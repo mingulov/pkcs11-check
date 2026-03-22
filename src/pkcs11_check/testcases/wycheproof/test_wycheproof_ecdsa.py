@@ -1,4 +1,4 @@
-"""Wycheproof ECDSA vectors — broad curve and hash coverage.
+"""Wycheproof ECDSA vectors -- broad curve and hash coverage.
 
 The base Wycheproof module covers a small core subset.
 This file adds the remaining DER and P1363-encoded verification vectors

@@ -1,7 +1,7 @@
 """Mechanism parameter fuzzing tests.
 
 Passes random/invalid bytes as mechanism_param to various operations.
-The module must not crash (segfault) — it should return an error code.
+The module must not crash (segfault) -- it should return an error code.
 These tests verify robustness against malformed parameters.
 """
 
@@ -42,7 +42,7 @@ class TestAESParameterFuzz:
             key.encrypt(data, mechanism=Mechanism.AES_CBC, mechanism_param=bad_param)
 
     def test_aes_ecb_with_param_should_fail_or_ignore(self, p11_session: Any) -> None:
-        """AES-ECB doesn't take a parameter — passing one should fail or be ignored."""
+        """AES-ECB doesn't take a parameter -- passing one should fail or be ignored."""
         key = p11_session.generate_key(KeyType.AES, 256)
         data = b"\x00" * 16
         try:
@@ -62,7 +62,7 @@ class TestDigestParameterFuzz:
         ids=["empty", "32-zeros", "256-ff", "random-64"],
     )
     def test_sha256_with_param(self, p11_session: Any, bad_param: bytes) -> None:
-        """SHA-256 doesn't take parameters — extra params should fail or be ignored."""
+        """SHA-256 doesn't take parameters -- extra params should fail or be ignored."""
         data = b"test data"
         try:
             digest = p11_session.digest(data, mechanism=Mechanism.SHA256, mechanism_param=bad_param)
@@ -117,7 +117,7 @@ class TestEncryptDataFuzz:
     """Fuzz data inputs to encryption."""
 
     def test_encrypt_empty_data(self, p11_session: Any) -> None:
-        """Encrypting empty data — module must handle gracefully."""
+        """Encrypting empty data -- module must handle gracefully."""
         key = p11_session.generate_key(KeyType.AES, 256)
         try:
             ct = key.encrypt(b"", mechanism=Mechanism.AES_ECB)

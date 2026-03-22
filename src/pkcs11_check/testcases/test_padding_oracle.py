@@ -1,4 +1,4 @@
-"""Padding oracle detection — Bleichenbacher/Vaudenay style.
+"""Padding oracle detection -- Bleichenbacher/Vaudenay style.
 
 Tests whether the module leaks information about padding validity through
 different error codes or timing differences. A secure module should return
@@ -38,11 +38,11 @@ class TestRSAPaddingOracle:
             bad_ct = p11_session.generate_random(2048)  # 256 bytes = 2048 bits
             try:
                 priv.decrypt(bad_ct, mechanism=Mechanism.RSA_PKCS)
-                # Decryption succeeded with random data — very unlikely but possible
+                # Decryption succeeded with random data -- very unlikely but possible
             except pkcs11.exceptions.PKCS11Error as exc:
                 error_types.add(type(exc).__name__)
 
-        # All errors should be the same type — if not, there's a potential oracle
+        # All errors should be the same type -- if not, there's a potential oracle
         if len(error_types) > 1:
             pytest.xfail(
                 f"SECURITY: RSA PKCS#1 v1.5 returns different error codes "
@@ -105,7 +105,7 @@ class TestAESPaddingOracle:
 
         if error_last_byte and error_middle_byte and error_last_byte != error_middle_byte:
             pytest.xfail(
-                f"SECURITY: AES-CBC padding oracle — last byte error "
+                f"SECURITY: AES-CBC padding oracle -- last byte error "
                 f"({error_last_byte}) differs from middle byte ({error_middle_byte})"
             )
 

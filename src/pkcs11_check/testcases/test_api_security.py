@@ -1,9 +1,9 @@
-"""PKCS#11 API security tests — attribute attacks, policy bypass, access control.
+"""PKCS#11 API security tests -- attribute attacks, policy bypass, access control.
 
 Based on Bortolozzo et al. "Attacking and Fixing PKCS#11 Security Tokens" (CCS 2010)
 and PKCS#11 attribute enforcement rules from the OASIS specification.
 
-Tests are marked @security — results are security findings, not correctness failures.
+Tests are marked @security -- results are security findings, not correctness failures.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ class TestWrapDecryptOracle:
 
     If a key has both CKA_WRAP and CKA_DECRYPT, an attacker can:
     1. Wrap a target key under the dual-purpose key
-    2. Decrypt the wrapped blob → get raw key material
+    2. Decrypt the wrapped blob -> get raw key material
 
     A secure module should prevent keys from having both CKA_WRAP and CKA_DECRYPT.
     """
@@ -53,13 +53,13 @@ class TestWrapDecryptOracle:
                 raw_key = dual_key.decrypt(wrapped, mechanism=Mechanism.AES_ECB)
                 if raw_key and len(raw_key) > 0:
                     pytest.xfail(
-                        "SECURITY: Wrap-decrypt oracle possible — "
+                        "SECURITY: Wrap-decrypt oracle possible -- "
                         "key has both CKA_WRAP and CKA_DECRYPT"
                     )
             except pkcs11.exceptions.PKCS11Error:
-                pass  # Module prevented the attack at decrypt time — good
+                pass  # Module prevented the attack at decrypt time -- good
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Module prevented dual-purpose key creation — best
+            pass  # Module prevented dual-purpose key creation -- best
 
 
 class TestSensitiveExtraction:
@@ -96,7 +96,7 @@ class TestAttributeEscalation:
             key[Attribute.EXTRACTABLE] = True
             pytest.xfail("SECURITY: CKA_EXTRACTABLE escalated from False to True")
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Module prevented escalation — correct
+            pass  # Module prevented escalation -- correct
 
     def test_sensitive_cannot_be_set_false(self, p11_session: Any) -> None:
         """CKA_SENSITIVE=True cannot be changed to False."""
@@ -135,7 +135,7 @@ class TestAttributeLaunderingViaCopy:
             except pkcs11.exceptions.PKCS11Error:
                 pass  # Value still protected despite attribute change
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Module prevented the copy — correct
+            pass  # Module prevented the copy -- correct
 
     def test_copy_cannot_downgrade_sensitive(self, p11_session: Any) -> None:
         """Copying with CKA_SENSITIVE=False when original is True must fail."""
@@ -159,7 +159,7 @@ class TestKeyUsageRestrictions:
     """Verify key usage attributes are enforced.
 
     python-pkcs11 removes methods (encrypt/sign/wrap) from keys
-    when the corresponding attribute is False. This IS the enforcement —
+    when the corresponding attribute is False. This IS the enforcement --
     we verify the attribute was correctly applied.
     """
 
@@ -207,7 +207,7 @@ class TestAccessControl:
         # Open a public (non-logged-in) session
         token = p11_module.get_token()
         with token.open(rw=False) as public_session:
-            # Search for private keys — should find none
+            # Search for private keys -- should find none
             found = list(public_session.get_objects({Attribute.CLASS: ObjectClass.PRIVATE_KEY}))
             # This isn't a hard assertion since there may be no private keys at all
             # The point is that the search doesn't crash and doesn't leak

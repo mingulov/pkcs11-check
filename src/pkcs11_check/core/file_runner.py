@@ -615,7 +615,7 @@ def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
                     with src.open("rb") as in_fh:
                         shutil.copyfileobj(in_fh, out_fh)
                 except (FileNotFoundError, OSError):
-                    pass  # missing temp file — skip silently
+                    pass  # missing temp file -- skip silently
         tmp_path.rename(output_path)
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -639,7 +639,7 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
         file_part = test.get("nodeid", "").split("::")[0]
         by_file.setdefault(file_part, []).append(test)
 
-    # Also need per-file counts — rebuild from the full JSONL
+    # Also need per-file counts -- rebuild from the full JSONL
     # Since _read_jsonl_results only gives us aggregated counts,
     # we re-read the JSONL for per-file counting.
     try:
@@ -994,7 +994,7 @@ def _identify_crash_culprit(jsonl_path: Path) -> tuple[str | None, list[str]]:
 
     Returns ``(culprit_nodeid, list_of_completed_nodeids)``.
     *culprit* is the nodeid that has ``setup`` started but no ``teardown``
-    completed — i.e. the test that was running when the process crashed.
+    completed -- i.e. the test that was running when the process crashed.
     Returns ``(None, completed_list)`` if every test finished cleanly.
     """
     try:
@@ -1109,7 +1109,7 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
         if mapped == "skipped":
             reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
             # Normalize: extract just the reason text from tuple-style longrepr
-            # e.g. "('path.py', 10, 'Skipped: reason')" → "reason"
+            # e.g. "('path.py', 10, 'Skipped: reason')" -> "reason"
             if reason.startswith("(") and "Skipped:" in reason:
                 parts = reason.split("Skipped:", 1)
                 if len(parts) > 1:
@@ -1148,7 +1148,7 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
 
     # Process setup events for tests that never got a call record.
     # Deduplicate fixture errors: if a session-scoped fixture fails,
-    # many tests get identical setup/error — report detail once, count all.
+    # many tests get identical setup/error -- report detail once, count all.
     seen_error_reprs: set[str] = set()
     for rec in setup_events:
         nodeid = rec.get("nodeid", "")
@@ -1168,7 +1168,7 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
         flat = _flatten_longrepr(rec.get("longrepr"))
         dedup_key = flat or nodeid
         if dedup_key in seen_error_reprs:
-            continue  # duplicate fixture error — counted but not listed again
+            continue  # duplicate fixture error -- counted but not listed again
         seen_error_reprs.add(dedup_key)
         entry = {
             "nodeid": nodeid,
@@ -1509,7 +1509,7 @@ def run_isolated_pytest_units(
         )
 
     if not pending_units:
-        console.print("[green]Nothing to do[/green] — all isolated units already completed.")
+        console.print("[green]Nothing to do[/green] -- all isolated units already completed.")
         if report_config is not None:
             write_isolated_report(
                 report_config, state,
@@ -1647,7 +1647,7 @@ def run_isolated_pytest_units(
                 if unit_jsonl_path is not None:
                     detail = _read_jsonl_results(unit_jsonl_path)
                     if status not in ("crashed", "timeout"):
-                        # Safe to clean up — no crash recovery needed
+                        # Safe to clean up -- no crash recovery needed
                         if report_config is not None and report_config.jsonl_path is not None:
                             jsonl_paths.append(unit_jsonl_path)
                         else:
@@ -1816,16 +1816,16 @@ def run_isolated_pytest_units(
                                     crash_count += 1
 
                                 # -- check exit conditions --
-                                # No max_crashes_per_file limit here —
+                                # No max_crashes_per_file limit here --
                                 # iterative deselect keeps going until
                                 # the file passes or safety caps are hit.
-                                # No ARG_MAX limit — deselect via file, not args
+                                # No ARG_MAX limit -- deselect via file, not args
                                 if not culprit and not completed:
-                                    # No info from JSONL — cannot deselect
+                                    # No info from JSONL -- cannot deselect
                                     escalate = True
                                     break
                                 if not deselect_set:
-                                    # Nothing to deselect — escalate
+                                    # Nothing to deselect -- escalate
                                     escalate = True
                                     break
 
@@ -1891,7 +1891,7 @@ def run_isolated_pytest_units(
                                 total_retry_dur += retry_dur
 
                                 if retry_status not in ("crashed", "timeout"):
-                                    # Retry succeeded — merge final results
+                                    # Retry succeeded -- merge final results
                                     final_detail = _read_jsonl_results(
                                         retry_jsonl_path
                                     )
@@ -1953,7 +1953,7 @@ def run_isolated_pytest_units(
                                     index += 1
                                     break  # exit deselect loop, continue
 
-                                # Retry also crashed — loop with new JSONL
+                                # Retry also crashed -- loop with new JSONL
                                 console.print(
                                     f"[red]RETRY CRASHED[/red] {unit} "
                                     f"(iteration {crash_count + 1})"

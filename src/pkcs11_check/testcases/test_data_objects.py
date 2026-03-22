@@ -3,7 +3,7 @@
 Verifies create, search by label/application, read value, and destroy
 of generic data objects (CKO_DATA / ObjectClass.DATA).
 
-CKO_DATA is the simplest PKCS#11 object type — no cryptographic
+CKO_DATA is the simplest PKCS#11 object type -- no cryptographic
 operations, just opaque byte storage with metadata.
 """
 
@@ -55,7 +55,7 @@ class TestDataObjectCreate:
         assert obj is not None
 
     def test_create_data_object_large_value(self, p11_session: Any) -> None:
-        """CKO_DATA with 64KB value — tests large blob storage."""
+        """CKO_DATA with 64KB value -- tests large blob storage."""
         label = _unique_label()
         big_data = bytes(range(256)) * 256  # 64KB
         obj = p11_session.create_object(

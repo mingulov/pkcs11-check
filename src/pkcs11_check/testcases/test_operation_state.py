@@ -3,10 +3,10 @@
 Happy-path functional tests exercising state save/restore for active operations.
 Error-path CKR tests are in ckr/test_ckr_state.py.
 
-Source: PKCS#11 v3.1 §5.6.5 (C_GetOperationState), §5.6.6 (C_SetOperationState).
+Source: PKCS#11 v3.1 Sec.5.6.5 (C_GetOperationState), Sec.5.6.6 (C_SetOperationState).
 
-Most PKCS#11 modules return CKR_STATE_UNSAVEABLE for active operations — this is
-spec-conformant behaviour (§5.6.5: the token may return CKR_STATE_UNSAVEABLE if the
+Most PKCS#11 modules return CKR_STATE_UNSAVEABLE for active operations -- this is
+spec-conformant behaviour (Sec.5.6.5: the token may return CKR_STATE_UNSAVEABLE if the
 state cannot be saved). Tests that require a saveable state skip gracefully when the
 module does not support it.
 
@@ -287,7 +287,7 @@ class TestGetOperationStateAPI:
     def test_no_active_operation(self, p11_session: Any) -> None:
         """get_operation_state() with no active operation returns bytes or raises a known CKR.
 
-        Spec §5.6.5: if no digest, encrypt, or sign operation is active the
+        Spec Sec.5.6.5: if no digest, encrypt, or sign operation is active the
         token must return CKR_OPERATION_NOT_INITIALIZED.  Some modules also
         return CKR_STATE_UNSAVEABLE or CKR_FUNCTION_NOT_SUPPORTED.
         """
@@ -300,9 +300,9 @@ class TestGetOperationStateAPI:
             pass  # All valid per spec
 
     def test_garbage_state_raises_saved_state_invalid(self, p11_session: Any) -> None:
-        """set_operation_state() with garbage data → CKR_SAVED_STATE_INVALID.
+        """set_operation_state() with garbage data -> CKR_SAVED_STATE_INVALID.
 
-        Spec §5.6.6: the token must return CKR_SAVED_STATE_INVALID if the
+        Spec Sec.5.6.6: the token must return CKR_SAVED_STATE_INVALID if the
         supplied state blob is unrecognisable.
         """
         garbage = b"\xde\xad\xbe\xef" * 16
@@ -310,11 +310,11 @@ class TestGetOperationStateAPI:
             p11_session.set_operation_state(garbage)
             pytest.fail("set_operation_state() with garbage data must raise SavedStateInvalid")
         except SavedStateInvalid:
-            pass  # Correct per spec §5.6.6
+            pass  # Correct per spec Sec.5.6.6
         except (FunctionNotSupported, StateUnsaveable):
             pytest.skip("Module does not support C_SetOperationState")
         except OperationNotInitialized:
-            pass  # Module requires an active session operation — acceptable
+            pass  # Module requires an active session operation -- acceptable
 
 
 # ---------------------------------------------------------------------------
@@ -345,8 +345,8 @@ class TestDigestStateRoundTrip:
 
         Steps:
         1. Compute reference = SHA-256(part1 + part2) via hashlib.
-        2. PKCS#11: DigestInit(SHA-256) → DigestUpdate(part1) → GetOperationState.
-        3. SetOperationState (restore) → DigestUpdate(part2) → DigestFinal.
+        2. PKCS#11: DigestInit(SHA-256) -> DigestUpdate(part1) -> GetOperationState.
+        3. SetOperationState (restore) -> DigestUpdate(part2) -> DigestFinal.
         4. Assert final digest equals reference.
 
         Skips when the module returns CKR_STATE_UNSAVEABLE (most software tokens
@@ -473,7 +473,7 @@ class TestDigestStateRoundTrip:
     def test_digest_state_cross_session(self, p11_config: Any) -> None:
         """Restoring digest state on a second session is rejected or handled per spec.
 
-        Spec §5.6.6 notes that tokens may reject cross-session restore with
+        Spec Sec.5.6.6 notes that tokens may reject cross-session restore with
         CKR_SAVED_STATE_INVALID.  Acceptance is also implementation-defined.
         This test verifies the module does not crash and returns a CKR code.
 
@@ -560,7 +560,7 @@ class TestDigestStateRoundTrip:
 
         if "CROSS_SESSION_REJECTED" in lines_map:
             # Verify the rejection code is an expected CKR value.
-            # CKR_SAVED_STATE_INVALID (0x160) is mandated by spec §5.6.6 for
+            # CKR_SAVED_STATE_INVALID (0x160) is mandated by spec Sec.5.6.6 for
             # cross-session restore.  Some modules may also return
             # CKR_STATE_UNSAVEABLE (0x180) or CKR_FUNCTION_NOT_SUPPORTED (0x54).
             acceptable_reject_codes = {0x160, 0x180, 0x54}
@@ -589,7 +589,7 @@ class TestEncryptStateRoundTrip:
     these tests use a ctypes subprocess to exercise the C-level functions
     directly.
 
-    Most modules return CKR_STATE_UNSAVEABLE for active encrypt operations — the
+    Most modules return CKR_STATE_UNSAVEABLE for active encrypt operations -- the
     tests skip gracefully when the module does not support saving encrypt state.
     """
 
@@ -598,15 +598,15 @@ class TestEncryptStateRoundTrip:
 
         Steps:
         1. Generate an AES-256 key via C_GenerateKey.
-        2. C_EncryptInit(AES-CBC, IV) → C_EncryptUpdate(part1) → C_GetOperationState.
-        3. C_SetOperationState (restore, passing the key handle) → C_EncryptUpdate(part2)
-           → C_EncryptFinal.
+        2. C_EncryptInit(AES-CBC, IV) -> C_EncryptUpdate(part1) -> C_GetOperationState.
+        3. C_SetOperationState (restore, passing the key handle) -> C_EncryptUpdate(part2)
+           -> C_EncryptFinal.
         4. Compare with a reference encryption that does not use state save/restore.
 
         Skips when the module returns CKR_STATE_UNSAVEABLE or
         CKR_FUNCTION_NOT_SUPPORTED (most software tokens do not save encrypt state).
 
-        Source: PKCS#11 v3.1 §5.6.5–§5.6.6.
+        Source: PKCS#11 v3.1 Sec.5.6.5-Sec.5.6.6.
         """
         module_path, slot_index, pin_bytes = _get_params(p11_config)
 

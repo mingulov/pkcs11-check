@@ -81,17 +81,17 @@ class TestMessageEncryptErrors:
     """v3.0 C_MessageEncryptInit error conditions."""
 
     def test_mechanism_invalid(self, p11_config: Any) -> None:
-        """C_MessageEncryptInit with digest mechanism → CKR_MECHANISM_INVALID."""
+        """C_MessageEncryptInit with digest mechanism -> CKR_MECHANISM_INVALID."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 mech = CK_MECHANISM()
-mech.mechanism = 0x0250  # CKM_SHA256 — not an encrypt mechanism
+mech.mechanism = 0x0250  # CKM_SHA256 -- not an encrypt mechanism
 key = ctypes.c_ulong(0)  # dummy key handle
 rv = raw.C_MessageEncryptInit(sh, ctypes.byref(mech), 0)
 print(f"CKR:0x{rv:08x}")
-# MECHANISM_INVALID, KEY_HANDLE_INVALID, FUNCTION_NOT_SUPPORTED — all acceptable
+# MECHANISM_INVALID, KEY_HANDLE_INVALID, FUNCTION_NOT_SUPPORTED -- all acceptable
 assert rv != CKR_OK, f"Should have rejected SHA256 for message encrypt"
 print("OK")
 """,
@@ -99,7 +99,7 @@ print("OK")
         _check(rc, out, err, "C_MessageEncryptInit")
 
     def test_operation_not_initialized(self, p11_config: Any) -> None:
-        """C_EncryptMessage without Init → CKR_OPERATION_NOT_INITIALIZED."""
+        """C_EncryptMessage without Init -> CKR_OPERATION_NOT_INITIALIZED."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -150,7 +150,7 @@ class TestMessageSignErrors:
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 mech = CK_MECHANISM()
-mech.mechanism = 0x1081  # AES_ECB — not a sign mechanism
+mech.mechanism = 0x1081  # AES_ECB -- not a sign mechanism
 rv = raw.C_MessageSignInit(sh, ctypes.byref(mech), 0)
 print(f"CKR:0x{rv:08x}")
 assert rv != CKR_OK
@@ -192,7 +192,7 @@ class TestSessionCancelErrors:
 if "C_SessionCancel" in raw._funcs:
     rv = raw.C_SessionCancel(sh, 0)
     print(f"CKR:0x{rv:08x}")
-    # OK or OPERATION_ACTIVE — both acceptable
+    # OK or OPERATION_ACTIVE -- both acceptable
     print("OK")
 else:
     print("SKIP:no_SessionCancel")

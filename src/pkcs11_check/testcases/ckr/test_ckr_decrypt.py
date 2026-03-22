@@ -3,7 +3,7 @@
 Each test triggers a specific error condition and validates the CKR code
 against the OASIS PKCS#11 spec.
 
-Source: PKCS#11 v3.1 §5.9.1 (C_DecryptInit), §5.9.2 (C_Decrypt).
+Source: PKCS#11 v3.1 Sec.5.9.1 (C_DecryptInit), Sec.5.9.2 (C_Decrypt).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.access
 
 
 class TestDecryptInitErrors:
-    """Per-parameter error conditions for C_DecryptInit (§5.9.1)."""
+    """Per-parameter error conditions for C_DecryptInit (Sec.5.9.1)."""
 
     def test_mechanism_invalid(self, p11_session: Any, ckr_strict: bool) -> None:
         """Using digest mechanism for decrypt -> CKR_MECHANISM_INVALID."""
@@ -30,7 +30,7 @@ class TestDecryptInitErrors:
             key.decrypt(b"\x00" * 16, mechanism=Mechanism.SHA256)
             pytest.fail("Should have rejected SHA256 as decryption mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional — assert_ckr validates the specific type
+            # Broad catch intentional -- assert_ckr validates the specific type
             assert_ckr(CKR_DECRYPT["init_mechanism_invalid"], e, ckr_strict)
 
     def test_key_type_inconsistent(
@@ -63,7 +63,7 @@ class TestDecryptInitErrors:
 
 
 class TestDecryptDataErrors:
-    """Data-level error conditions for C_Decrypt (§5.9.2)."""
+    """Data-level error conditions for C_Decrypt (Sec.5.9.2)."""
 
     @pytest.mark.parametrize("size", [1, 7, 15, 17, 31])
     def test_ecb_ciphertext_not_aligned(
@@ -80,13 +80,13 @@ class TestDecryptDataErrors:
     def test_ecb_garbage_ciphertext(
         self, p11_session: Any, ckr_strict: bool
     ) -> None:
-        """AES-ECB decrypt of garbage (block-aligned) — may return data or error."""
+        """AES-ECB decrypt of garbage (block-aligned) -- may return data or error."""
         key = p11_session.generate_key(KeyType.AES, 256)
         exp = CKR_DECRYPT["encrypted_data_invalid"]
         try:
             # Block-aligned garbage: AES-ECB will "decrypt" it (ECB has no integrity)
             pt = key.decrypt(b"\xCC" * 16, mechanism=Mechanism.AES_ECB)
-            # ECB decrypts anything block-aligned — not an error
+            # ECB decrypts anything block-aligned -- not an error
             assert len(pt) == 16
         except PKCS11Error as e:
             # Some modules may reject garbage ciphertext
@@ -101,7 +101,7 @@ class TestDecryptDataErrors:
         # RSA-2048 expects 256-byte ciphertext, provide 128
         try:
             priv.decrypt(b"\x00" * 128, mechanism=Mechanism.RSA_PKCS)
-            # Module accepted wrong-length ciphertext — compliance deviation
+            # Module accepted wrong-length ciphertext -- compliance deviation
             if not exp.allow_success:
                 pytest.fail("Should have rejected 128-byte ciphertext for RSA-2048")
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -116,13 +116,13 @@ class TestDecryptDataErrors:
     def test_cbc_pad_bad_padding(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool
     ) -> None:
-        """AES-CBC-PAD decrypt garbage → CKR_ENCRYPTED_DATA_INVALID (bad padding)."""
+        """AES-CBC-PAD decrypt garbage -> CKR_ENCRYPTED_DATA_INVALID (bad padding)."""
         from pkcs11_check.testcases.conftest import has_mechanism
         if not has_mechanism(p11_module, "AES_CBC_PAD"):
             pytest.skip("AES_CBC_PAD not supported")
         key = p11_session.generate_key(KeyType.AES, 256)
         iv = p11_session.generate_random(128)
-        # Garbage 16 bytes — will have invalid PKCS#7 padding
+        # Garbage 16 bytes -- will have invalid PKCS#7 padding
         try:
             key.decrypt(b"\xDD" * 16, mechanism=Mechanism.AES_CBC_PAD, mechanism_param=iv)
             # Some modules may "decrypt" garbage without checking padding
@@ -132,7 +132,7 @@ class TestDecryptDataErrors:
     def test_rsa_oaep_garbage(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool
     ) -> None:
-        """RSA-OAEP decrypt garbage → CKR_ENCRYPTED_DATA_INVALID."""
+        """RSA-OAEP decrypt garbage -> CKR_ENCRYPTED_DATA_INVALID."""
         from pkcs11_check.testcases.conftest import has_mechanism
         if not has_mechanism(p11_module, "RSA_PKCS_OAEP"):
             pytest.skip("RSA_PKCS_OAEP not supported")
