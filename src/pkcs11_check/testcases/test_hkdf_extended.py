@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11 import Attribute, KeyType, Mechanism, MechanismFlag, ObjectClass
 from pkcs11.exceptions import (
     ArgumentsBad,
     FunctionFailed,
@@ -83,12 +83,15 @@ class TestHKDFKeyGen:
         if not has_mechanism(p11_module, "HKDF_DERIVE"):
             pytest.skip("CKM_HKDF_DERIVE not supported")
 
-        # Try CKK_HKDF first (spec-correct), fall back to CKK_GENERIC_SECRET
+        # Try CKK_HKDF first (spec-correct), fall back to CKK_GENERIC_SECRET.
+        # Pass capabilities=DERIVE explicitly: python-pkcs11 has no default
+        # capabilities for KeyType.HKDF (it is a newer type).
         for key_type in (KeyType.HKDF, KeyType.GENERIC_SECRET):
             try:
                 base_key = p11_session.generate_key(
                     key_type, 256,
                     mechanism=Mechanism.HKDF_KEY_GEN,
+                    capabilities=MechanismFlag.DERIVE,
                     template={
                         Attribute.DERIVE: True,
                         Attribute.SENSITIVE: False,
@@ -97,7 +100,7 @@ class TestHKDFKeyGen:
                     },
                 )
                 break
-            except (KeyTypeInconsistent, TemplateInconsistent, MechanismInvalid):
+            except (KeyTypeInconsistent, TemplateInconsistent, MechanismInvalid, ArgumentsBad):
                 continue
         else:
             pytest.skip("CKM_HKDF_KEY_GEN not operational with any key type")
@@ -107,6 +110,7 @@ class TestHKDFKeyGen:
                 256,
                 mechanism=Mechanism.HKDF_DERIVE,
                 mechanism_param=(Mechanism.SHA256, b"salt-value", b"info-value"),
+                capabilities=MechanismFlag(0),
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
