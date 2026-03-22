@@ -91,13 +91,20 @@ class TestSensitivePreservation:
             pass  # Copy not supported - ok
 
     def test_extractable_cannot_escalate_on_copy(self, p11_session: Any) -> None:
-        """Copying non-EXTRACTABLE key cannot set EXTRACTABLE=True."""
+        """Copying non-EXTRACTABLE key cannot set EXTRACTABLE=True.
+
+        OASIS PKCS#11 spec C_CopyObject section: CKA_EXTRACTABLE may be changed
+        from CK_TRUE to CK_FALSE on copy, but NOT the other way around.
+        This is a MUST NOT — escalation is a security violation.
+        """
         from pkcs11.exceptions import (
             AttributeReadOnly,
             AttributeValueInvalid,
             FunctionNotSupported,
             TemplateInconsistent,
         )
+
+        from pkcs11_check.compliance import ComplianceLevel, note
 
         key = p11_session.generate_key(
             KeyType.AES, 256, template={Attribute.EXTRACTABLE: False}
@@ -106,10 +113,19 @@ class TestSensitivePreservation:
 
         try:
             copied = key.copy({Attribute.EXTRACTABLE: True})
+            if copied[Attribute.EXTRACTABLE] is True:
+                note(
+                    "Module allows CKA_EXTRACTABLE escalation FALSE->TRUE via C_CopyObject "
+                    "(OASIS PKCS#11 spec MUST NOT: may only change TRUE->FALSE on copy)",
+                    ComplianceLevel.CRITICAL,
+                    reference="OASIS PKCS#11 spec C_CopyObject section",
+                )
             assert copied[Attribute.EXTRACTABLE] is False, (
                 "EXTRACTABLE escalated on copy - Tookan vulnerability"
             )
-        except (AttributeReadOnly, AttributeValueInvalid, TemplateInconsistent, FunctionNotSupported):
+        except (
+            AttributeReadOnly, AttributeValueInvalid, TemplateInconsistent, FunctionNotSupported
+        ):
             pass  # Correct: reject the escalation attempt
 
 
