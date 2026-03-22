@@ -118,3 +118,68 @@ Updated as Docker targets are analyzed.
 - Requires `pkcsslotd` daemon running
 - Software token (`swtok`) only
 - `C_SeedRandom` not supported (`RandomSeedNotSupported`)
+
+---
+
+## BouncyHSM 2.0.1 (v3.0)
+
+### Crashes on large data (>1MB)
+- `test_blake2b.py::test_large_data` - segfault on 1MB+ digest
+- `test_buffers.py::TestEncryptBufferSizes::test_1mb` - segfault
+- `test_buffers.py::TestDigestBufferSizes::test_large_input` - segfault
+- `test_digest.py::TestDigestProperties::test_digest_large_data` - segfault
+- `test_large_objects.py::TestLargeEncryption::test_encrypt_1mb_aes_cbc` - segfault
+- 2 additional large-data tests crash
+
+**Root cause:** BouncyHSM's internal buffer management segfaults on data > ~1MB.
+This is a BouncyHSM bug, not a pkcs11-check issue.
+
+---
+
+## SoftHSM2 main (dev branch)
+
+### EC regression - 4,715 crashes
+All Wycheproof ECDSA (3,418 vectors) and ECDH (1,297 vectors) crash with segfault.
+This is a regression in the SoftHSM2 dev branch compared to the stable 2.7.0 release.
+
+**Root cause:** Development branch EC code regression. Not a pkcs11-check issue.
+
+---
+
+## Qryptotoken 0.4.1 (Rust PQC)
+
+### abort() instead of CKR error codes - 218 crashes
+Module calls `abort()` (SIGABRT) instead of returning PKCS#11 error codes for
+unsupported operations. This kills the test process instead of allowing graceful
+error handling.
+
+**Root cause:** Missing error handling in the Rust implementation. Not a pkcs11-check issue.
+
+---
+
+## OpenCryptoki 3.26 (v3.0)
+
+### SSL3 master key derive crash
+- `test_ssl3.py::TestSSL3MasterKeyDerive::test_derive_master_secret` - segfault on
+  C_DeriveKey with CKM_SSL3_MASTER_KEY_DERIVE. The SW token crashes instead of
+  returning an error.
+
+**Root cause:** OpenCryptoki SW token bug. Not a pkcs11-check issue.
+
+---
+
+## Kryoptic v1.5.0 / main (v3.2)
+
+### C_SessionCancel crash (kryoptic-main)
+`test_v30_session.py::test_cancel_after_digest_init_subprocess` - the module
+aborts when C_SessionCancel is called with an active digest operation.
+Documented in Kryoptic issue tracker.
+
+### AES-CTS not operational
+CKM_AES_CTS is advertised in the mechanism list but returns CKR_DEVICE_ERROR
+when used. The mechanism is recognized but not implemented.
+
+### FIPS mode crashes (kryoptic-fips)
+15 crashes on CKM_EXTRACT_KEY_FROM_KEY and certain AES-CCM vectors.
+FIPS mode correctly rejects non-approved operations but aborts instead of
+returning CKR_MECHANISM_INVALID.
