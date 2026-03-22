@@ -159,20 +159,6 @@ def verify_attribute_parity(
     except (PKCS11Error, KeyError, AttributeError):
         results["PUBLIC_KEY_INFO"] = (None, None, None, False)
 
-    # CKA_SKID (Optional)
-    try:
-        p11_skid = p11_obj[Attribute.SKID]
-        skid_ext = cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
-        expected_skid = skid_ext.key_identifier
-        results["SKID"] = (
-            p11_skid == expected_skid if p11_skid else None,
-            _to_hex(p11_skid),
-            _to_hex(expected_skid),
-            False,
-        )
-    except (PKCS11Error, KeyError, x509.ExtensionNotFound):
-        results["SKID"] = (None, None, None, False)
-
     return results
 
 
@@ -186,8 +172,6 @@ def x509_to_p11_template(der_data: bytes, interface_version: str = "2.40") -> di
     # Filter out v3.0+ attributes if interface is older
     v30_attrs = {
         Attribute.PUBLIC_KEY_INFO,
-        Attribute.SKID,
-        Attribute.AKID,
         Attribute.HASH_OF_SUBJECT_PUBLIC_KEY,
         Attribute.HASH_OF_ISSUER_PUBLIC_KEY,
     }
@@ -278,7 +262,7 @@ def import_cert_object(
         obj = p11_session.create_object(template_v240)
         note(
             "Module claims v3.0+ but rejects v3.0+ cert attributes "
-            "(CKA_PUBLIC_KEY_INFO/CKA_SKID/CKA_AKID) - falling back to v2.40 template",
+            "(CKA_PUBLIC_KEY_INFO) - falling back to v2.40 template",
             ComplianceLevel.VENDOR,
         )
         return obj

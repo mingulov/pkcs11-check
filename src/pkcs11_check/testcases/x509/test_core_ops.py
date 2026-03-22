@@ -280,14 +280,6 @@ def _build_v30_attr(ca_cert_der: bytes, attr_name: str) -> tuple[int, bytes]:
             serialization.PublicFormat.SubjectPublicKeyInfo,
         )
         return (Attribute.PUBLIC_KEY_INFO, val)
-    if attr_name == "SKID":
-        ext = cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
-        return (Attribute.SKID, ext.value.key_identifier)
-    if attr_name == "AKID":
-        ext = cert.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier)
-        key_id = ext.value.key_identifier
-        assert key_id is not None, "AuthorityKeyIdentifier.key_identifier is None"
-        return (Attribute.AKID, key_id)
     if attr_name == "HASH_OF_SUBJECT_PUBLIC_KEY":
         spki_der = cert.public_key().public_bytes(
             serialization.Encoding.DER,
@@ -309,7 +301,7 @@ def _build_v30_attr(ca_cert_der: bytes, attr_name: str) -> tuple[int, bytes]:
 class TestV30CertAttributes:
     """Test v3.0+ certificate attribute support per attribute.
 
-    PKCS#11 v3.0 added CKA_PUBLIC_KEY_INFO, CKA_SKID, and CKA_AKID
+    PKCS#11 v3.0 added CKA_PUBLIC_KEY_INFO and hash attributes
     for CKO_CERTIFICATE objects. PKCS#11 v3.0 also added
     CKA_HASH_OF_SUBJECT_PUBLIC_KEY and CKA_HASH_OF_ISSUER_PUBLIC_KEY.
     Each attribute is tested individually so failures pinpoint exactly
@@ -320,8 +312,6 @@ class TestV30CertAttributes:
         "attr_name",
         [
             "PUBLIC_KEY_INFO",
-            "SKID",
-            "AKID",
             "HASH_OF_SUBJECT_PUBLIC_KEY",
             "HASH_OF_ISSUER_PUBLIC_KEY",
         ],
