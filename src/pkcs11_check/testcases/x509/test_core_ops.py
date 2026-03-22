@@ -316,7 +316,6 @@ class TestV30CertAttributes:
     which attribute a module rejects.
     """
 
-    @pytest.mark.requires_v30
     @pytest.mark.parametrize(
         "attr_name",
         [
@@ -331,9 +330,15 @@ class TestV30CertAttributes:
         self,
         attr_name: str,
         p11_session: Any,
+        p11_interface_version: str,
         ca_cert_der: bytes,
     ) -> None:
-        """Module advertising v3.0+ MUST accept CKA_{attr_name} on cert import."""
+        """Test CKA_{attr_name} on cert import.
+
+        v3.0+ modules MUST accept these. v2.40 modules MAY accept them
+        (above-spec behavior). Rejection on v2.40 is xfailed (not in spec);
+        rejection on v3.0+ is also xfailed (known module bug).
+        """
 
         attr_id, attr_val = _build_v30_attr(ca_cert_der, attr_name)
 
@@ -346,8 +351,14 @@ class TestV30CertAttributes:
         try:
             obj = p11_session.create_object(template)
             obj.destroy()
-        except (AttributeValueInvalid, AttributeTypeInvalid):
-            pytest.xfail(
-                f"Module claims v3.0+ but rejects CKA_{attr_name} - "
-                "known bug in some implementations (e.g. Kryoptic)"
-            )
+        except (AttributeValueInvalid, AttributeTypeInvalid) as exc:
+            if p11_interface_version < "3.0":
+                pytest.xfail(
+                    f"v2.40 module rejects CKA_{attr_name} - "
+                    "not required by spec (v3.0+ attribute)"
+                )
+            else:
+                pytest.fail(
+                    f"v3.0+ module MUST accept CKA_{attr_name} "
+                    f"but got {type(exc).__name__}"
+                )
