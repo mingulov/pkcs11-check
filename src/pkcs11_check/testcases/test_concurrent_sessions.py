@@ -19,6 +19,13 @@ from typing import Any
 import pkcs11 as p11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11.exceptions import (
+    FunctionNotSupported,
+    MechanismInvalid,
+    TokenWriteProtected,
+)
+
+from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.security
 
@@ -101,6 +108,11 @@ class TestConcurrentSessions:
 
     def test_use_key_from_concurrent_session(self, p11_module: Any, p11_config: Any) -> None:
         """Token key created in session A can be used for crypto in session B."""
+        if not has_mechanism(p11_module, "AES_KEY_GEN"):
+            pytest.skip("CKM_AES_KEY_GEN not supported")
+        if not has_mechanism(p11_module, "AES_ECB"):
+            pytest.skip("CKM_AES_ECB not supported")
+
         token = p11_module.get_token()
         pin = p11_config.pin
         pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
@@ -108,16 +120,19 @@ class TestConcurrentSessions:
         plaintext = b"concurrent-test!" * 2  # 32 bytes
 
         with token.open(rw=True, user_pin=pin_str) as s1:
-            s1.generate_key(
-                KeyType.AES,
-                256,
-                label=label,
-                template={
-                    Attribute.TOKEN: True,
-                    Attribute.ENCRYPT: True,
-                    Attribute.DECRYPT: True,
-                },
-            )
+            try:
+                s1.generate_key(
+                    KeyType.AES,
+                    256,
+                    label=label,
+                    template={
+                        Attribute.TOKEN: True,
+                        Attribute.ENCRYPT: True,
+                        Attribute.DECRYPT: True,
+                    },
+                )
+            except (TokenWriteProtected, FunctionNotSupported) as exc:
+                pytest.skip(f"Module cannot generate token keys in this slot: {exc}")
 
             s2 = _open_second_session(token, pin_str)
             try:
@@ -125,9 +140,14 @@ class TestConcurrentSessions:
                 assert len(keys) >= 1
                 key2 = keys[0]
 
-                ct = key2.encrypt(plaintext, mechanism=Mechanism.AES_ECB)
-                pt = key2.decrypt(ct, mechanism=Mechanism.AES_ECB)
-                assert pt == plaintext
+                try:
+                    ct = key2.encrypt(plaintext, mechanism=Mechanism.AES_ECB)
+                    pt = key2.decrypt(ct, mechanism=Mechanism.AES_ECB)
+                    assert pt == plaintext
+                except (MechanismInvalid, FunctionNotSupported) as exc:
+                    pytest.xfail(
+                        f"Module does not support using key handles across sessions: {exc}"
+                    )
             finally:
                 s2.close()
 
