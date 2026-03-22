@@ -317,11 +317,10 @@ class TestXEdDSA:
             KeyType.EC_MONTGOMERY,
             mechanism=Mechanism.EC_MONTGOMERY_KEY_PAIR_GEN,
             mechanism_param=None,
-            template={
+                public_template={
                 Attribute.EC_PARAMS: _X25519_OID,
                 Attribute.TOKEN: False,
             },
-            public_template={},
             private_template={
                 Attribute.SIGN: True,
                 Attribute.SENSITIVE: True,
@@ -367,11 +366,10 @@ class TestXEdDSA:
             KeyType.EC_MONTGOMERY,
             mechanism=Mechanism.EC_MONTGOMERY_KEY_PAIR_GEN,
             mechanism_param=None,
-            template={
+                public_template={
                 Attribute.EC_PARAMS: _X25519_OID,
                 Attribute.TOKEN: False,
             },
-            public_template={},
             private_template={
                 Attribute.SIGN: True,
                 Attribute.SENSITIVE: True,
@@ -430,11 +428,10 @@ class TestECMontgomeryKeyPairGen:
                 KeyType.EC_MONTGOMERY,
                 mechanism=Mechanism.EC_MONTGOMERY_KEY_PAIR_GEN,
                 mechanism_param=None,
-                template={
+                public_template={
                     Attribute.EC_PARAMS: _X25519_OID,
                     Attribute.TOKEN: False,
                 },
-                public_template={},
                 private_template={
                     Attribute.DERIVE: True,
                     Attribute.SENSITIVE: True,
@@ -463,11 +460,10 @@ class TestECMontgomeryKeyPairGen:
                 KeyType.EC_MONTGOMERY,
                 mechanism=Mechanism.EC_MONTGOMERY_KEY_PAIR_GEN,
                 mechanism_param=None,
-                template={
+                public_template={
                     Attribute.EC_PARAMS: _X448_OID,
                     Attribute.TOKEN: False,
                 },
-                public_template={},
                 private_template={
                     Attribute.DERIVE: True,
                     Attribute.SENSITIVE: True,
@@ -496,8 +492,7 @@ class TestECMontgomeryKeyPairGen:
                 KeyType.EC_MONTGOMERY,
                 mechanism=Mechanism.EC_MONTGOMERY_KEY_PAIR_GEN,
                 mechanism_param=None,
-                template={Attribute.EC_PARAMS: _X25519_OID, Attribute.TOKEN: False},
-                public_template={},
+                public_template={Attribute.EC_PARAMS: _X25519_OID, Attribute.TOKEN: False},
                 private_template={
                     Attribute.DERIVE: True,
                     Attribute.SENSITIVE: True,
@@ -508,8 +503,7 @@ class TestECMontgomeryKeyPairGen:
                 KeyType.EC_MONTGOMERY,
                 mechanism=Mechanism.EC_MONTGOMERY_KEY_PAIR_GEN,
                 mechanism_param=None,
-                template={Attribute.EC_PARAMS: _X25519_OID, Attribute.TOKEN: False},
-                public_template={},
+                public_template={Attribute.EC_PARAMS: _X25519_OID, Attribute.TOKEN: False},
                 private_template={
                     Attribute.DERIVE: True,
                     Attribute.SENSITIVE: True,
@@ -539,8 +533,7 @@ class TestECMontgomeryKeyPairGen:
                 KeyType.EC_MONTGOMERY,
                 mechanism=Mechanism.EC_MONTGOMERY_KEY_PAIR_GEN,
                 mechanism_param=None,
-                template={Attribute.EC_PARAMS: _X25519_OID, Attribute.TOKEN: False},
-                public_template={},
+                public_template={Attribute.EC_PARAMS: _X25519_OID, Attribute.TOKEN: False},
                 private_template={
                     Attribute.DERIVE: True,
                     Attribute.SENSITIVE: True,
@@ -551,8 +544,7 @@ class TestECMontgomeryKeyPairGen:
                 KeyType.EC_MONTGOMERY,
                 mechanism=Mechanism.EC_MONTGOMERY_KEY_PAIR_GEN,
                 mechanism_param=None,
-                template={Attribute.EC_PARAMS: _X25519_OID, Attribute.TOKEN: False},
-                public_template={},
+                public_template={Attribute.EC_PARAMS: _X25519_OID, Attribute.TOKEN: False},
                 private_template={
                     Attribute.DERIVE: True,
                     Attribute.SENSITIVE: True,

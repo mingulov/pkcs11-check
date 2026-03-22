@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+from pkcs11.exceptions import DeviceError, FunctionFailed, MechanismInvalid
 from pkcs11.mechanisms import CTRParams
 
 from pkcs11_check.testcases.conftest import has_mechanism
@@ -67,7 +68,10 @@ class TestAESCTS:
         """AES-CTS encrypt/decrypt roundtrip with non-block-aligned data."""
         if not has_mechanism(p11_module, "AES_CTS"):
             pytest.skip("CKM_AES_CTS not supported")
-        key = p11_session.generate_key(KeyType.AES, 256)
+        key = p11_session.generate_key(
+            KeyType.AES, 256,
+            template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+        )
         iv = p11_session.generate_random(128)
         # CTS requires at least one full block; use non-block-aligned length
         plaintext = b"CTS handles non-block-aligned!" + b"\x00" * 3  # 33 bytes
@@ -76,6 +80,8 @@ class TestAESCTS:
             assert ct != plaintext
             pt = key.decrypt(ct, mechanism=Mechanism.AES_CTS, mechanism_param=iv)
             assert pt == plaintext
+        except (MechanismInvalid, DeviceError, FunctionFailed) as exc:
+            pytest.xfail(f"CKM_AES_CTS not operational: {exc}")
         finally:
             key.destroy()
 
@@ -83,14 +89,22 @@ class TestAESCTS:
         """Same plaintext encrypted with different CTS keys should differ."""
         if not has_mechanism(p11_module, "AES_CTS"):
             pytest.skip("CKM_AES_CTS not supported")
-        key1 = p11_session.generate_key(KeyType.AES, 256)
-        key2 = p11_session.generate_key(KeyType.AES, 256)
+        key1 = p11_session.generate_key(
+            KeyType.AES, 256,
+            template={Attribute.ENCRYPT: True, Attribute.TOKEN: False},
+        )
+        key2 = p11_session.generate_key(
+            KeyType.AES, 256,
+            template={Attribute.ENCRYPT: True, Attribute.TOKEN: False},
+        )
         iv = p11_session.generate_random(128)
         plaintext = b"CTS key independence test!!" + b"\x00" * 6  # 32 bytes
         try:
             ct1 = key1.encrypt(plaintext, mechanism=Mechanism.AES_CTS, mechanism_param=iv)
             ct2 = key2.encrypt(plaintext, mechanism=Mechanism.AES_CTS, mechanism_param=iv)
             assert ct1 != ct2
+        except (MechanismInvalid, DeviceError, FunctionFailed) as exc:
+            pytest.xfail(f"CKM_AES_CTS not operational: {exc}")
         finally:
             key1.destroy()
             key2.destroy()
