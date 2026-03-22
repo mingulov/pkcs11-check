@@ -18,10 +18,15 @@ CK_UNAVAILABLE = 0xFFFFFFFFFFFFFFFF
 
 
 def _get_object_size(obj: Any) -> int | None:
-    """Get object size, returning None if not supported."""
+    """Get object size, returning None if not supported or not meaningful.
+
+    Per PKCS#11 spec, C_GetObjectSize MAY return CK_UNAVAILABLE_INFORMATION
+    (~0) or 0 to indicate the size is not available or not meaningful for
+    the object type. Both are treated as "not supported" here.
+    """
     try:
         size: int = obj.wrapper.get_size()
-        if size == CK_UNAVAILABLE:
+        if size == CK_UNAVAILABLE or size == 0:
             return None
         return size
     except Exception:
@@ -48,13 +53,17 @@ class TestObjectSize:
         aes_size = _get_object_size(aes_key)
 
         if aes_size is None:
-            pytest.skip("C_GetObjectSize not supported")
+            pytest.skip(
+                "C_GetObjectSize not supported (returns 0 or CK_UNAVAILABLE_INFORMATION)"
+            )
 
         _pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
         rsa_size = _get_object_size(priv)
 
         if rsa_size is None:
-            pytest.skip("C_GetObjectSize not supported for RSA")
+            pytest.skip(
+                "C_GetObjectSize not supported for RSA (returns 0 or CK_UNAVAILABLE_INFORMATION)"
+            )
 
         assert rsa_size > aes_size, (
             f"RSA-2048 size ({rsa_size}) should be > AES-256 size ({aes_size})"
