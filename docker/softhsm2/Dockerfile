@@ -44,7 +44,7 @@ COPY pyproject.toml uv.lock README.md ./
 COPY python-pkcs11/ python-pkcs11/
 COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
-RUN uv sync --frozen
+RUN uv sync --frozen --reinstall-package python-pkcs11
 
 # Copy test code (changes frequently, does not invalidate deps cache)
 COPY . .
