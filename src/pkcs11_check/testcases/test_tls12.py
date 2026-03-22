@@ -629,3 +629,82 @@ class TestTLS12Extended:
             )
         finally:
             pms.destroy()
+
+
+class TestTLSNegativeAttributes:
+    """Verify modules reject TLS derive/sign when key attributes are False."""
+
+    def test_derive_without_derive_attr(self, p11_session: Any, p11_module: Any) -> None:
+        """Key with CKA_DERIVE=False must be rejected for TLS master key derive."""
+        if not has_mechanism(p11_module, "TLS12_MASTER_KEY_DERIVE"):
+            if not has_mechanism(p11_module, "TLS_MASTER_KEY_DERIVE"):
+                pytest.skip("No TLS master key derive mechanism")
+
+        no_derive_key = p11_session.create_object({
+            Attribute.CLASS: ObjectClass.SECRET_KEY,
+            Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
+            Attribute.VALUE: _PRE_MASTER_SECRET,
+            Attribute.DERIVE: False,
+            Attribute.TOKEN: False,
+            Attribute.SENSITIVE: False,
+            Attribute.EXTRACTABLE: True,
+        })
+        try:
+            mech = (Mechanism.TLS12_MASTER_KEY_DERIVE
+                    if has_mechanism(p11_module, "TLS12_MASTER_KEY_DERIVE")
+                    else Mechanism.TLS_MASTER_KEY_DERIVE)
+            params = ((_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)
+                      if mech == Mechanism.TLS12_MASTER_KEY_DERIVE
+                      else (_CLIENT_RANDOM, _SERVER_RANDOM))
+            try:
+                derived = no_derive_key.derive_key(
+                    KeyType.GENERIC_SECRET, 48,
+                    mechanism=mech, mechanism_param=params,
+                    template={
+                        Attribute.SENSITIVE: False,
+                        Attribute.EXTRACTABLE: True,
+                        Attribute.DERIVE: True,
+                        Attribute.TOKEN: False,
+                    },
+                )
+                derived.destroy()
+                pytest.fail("Module allowed TLS derive with CKA_DERIVE=False")
+            except KeyFunctionNotPermitted:
+                pass  # Correct - module rejected derive on non-derivable key
+            except _TLS_ERRORS as exc:
+                pytest.xfail(f"TLS derive rejected (not KeyFunctionNotPermitted): {exc}")
+        finally:
+            no_derive_key.destroy()
+
+    def test_mac_without_sign_attr(self, p11_session: Any, p11_module: Any) -> None:
+        """Key with CKA_SIGN=False must be rejected for TLS MAC."""
+        if not has_mechanism(p11_module, "TLS12_MAC"):
+            if not has_mechanism(p11_module, "TLS_MAC"):
+                pytest.skip("No TLS MAC mechanism")
+
+        no_sign_key = p11_session.create_object({
+            Attribute.CLASS: ObjectClass.SECRET_KEY,
+            Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
+            Attribute.VALUE: bytes(range(32)),
+            Attribute.SIGN: False,
+            Attribute.TOKEN: False,
+            Attribute.SENSITIVE: False,
+            Attribute.EXTRACTABLE: True,
+        })
+        try:
+            mech = (Mechanism.TLS12_MAC
+                    if has_mechanism(p11_module, "TLS12_MAC")
+                    else Mechanism.TLS_MAC)
+            try:
+                result = no_sign_key.sign(
+                    b"TLS record data",
+                    mechanism=mech,
+                    mechanism_param=(Mechanism.SHA256, 32, 1),
+                )
+                pytest.fail("Module allowed TLS MAC with CKA_SIGN=False")
+            except KeyFunctionNotPermitted:
+                pass  # Correct
+            except _TLS_ERRORS as exc:
+                pytest.xfail(f"TLS MAC rejected (not KeyFunctionNotPermitted): {exc}")
+        finally:
+            no_sign_key.destroy()
