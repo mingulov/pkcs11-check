@@ -110,30 +110,36 @@ def verify_attribute_parity(
     except (PKCS11Error, KeyError):
         results["SERIAL_NUMBER"] = (None, None, _to_hex(to_der_int(cert.serial_number)), True)
 
-    # CKA_START_DATE (Optional, default empty)
+    # CKA_START_DATE (Optional, default empty per OASIS spec)
     try:
         p11_start = p11_obj[Attribute.START_DATE]
-        # Use UTC for modern cryptography
-        expected_start = cert.not_valid_before_utc.strftime("%Y%m%d").encode("ascii")
-        results["START_DATE"] = (
-            p11_start == expected_start if p11_start else None,
-            _to_hex(p11_start),
-            _to_hex(expected_start),
-            False,
-        )
+        expected_start = cert.not_valid_before_utc.date()
+        if p11_start is None:
+            # Module returned empty CK_DATE - valid per spec
+            results["START_DATE"] = (None, "empty", str(expected_start), False)
+        else:
+            results["START_DATE"] = (
+                p11_start == expected_start,
+                str(p11_start),
+                str(expected_start),
+                False,
+            )
     except (PKCS11Error, KeyError, AttributeError):
         results["START_DATE"] = (None, None, None, False)
 
-    # CKA_END_DATE (Optional, default empty)
+    # CKA_END_DATE (Optional, default empty per OASIS spec)
     try:
         p11_end = p11_obj[Attribute.END_DATE]
-        expected_end = cert.not_valid_after_utc.strftime("%Y%m%d").encode("ascii")
-        results["END_DATE"] = (
-            p11_end == expected_end if p11_end else None,
-            _to_hex(p11_end),
-            _to_hex(expected_end),
-            False,
-        )
+        expected_end = cert.not_valid_after_utc.date()
+        if p11_end is None:
+            results["END_DATE"] = (None, "empty", str(expected_end), False)
+        else:
+            results["END_DATE"] = (
+                p11_end == expected_end,
+                str(p11_end),
+                str(expected_end),
+                False,
+            )
     except (PKCS11Error, KeyError, AttributeError):
         results["END_DATE"] = (None, None, None, False)
 
