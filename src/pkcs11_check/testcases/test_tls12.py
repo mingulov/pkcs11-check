@@ -631,14 +631,40 @@ class TestTLS12Extended:
             pms.destroy()
 
 
-class TestTLSNegativeAttributes:
-    """Verify modules reject TLS derive/sign when key attributes are False."""
+# All TLS derive mechanisms with their param builders
+_TLS_DERIVE_MECHS = [
+    ("SSL3_MASTER_KEY_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
+    ("SSL3_MASTER_KEY_DERIVE_DH", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
+    ("TLS_MASTER_KEY_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
+    ("TLS_MASTER_KEY_DERIVE_DH", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
+    ("TLS12_MASTER_KEY_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
+    ("TLS12_MASTER_KEY_DERIVE_DH", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
+    ("TLS12_EXTENDED_MASTER_KEY_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
+    ("TLS12_EXTENDED_MASTER_KEY_DERIVE_DH", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
+    ("SSL3_KEY_AND_MAC_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
+    ("TLS_KEY_AND_MAC_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
+    ("TLS12_KEY_AND_MAC_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
+    ("TLS12_KEY_SAFE_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
+]
 
-    def test_derive_without_derive_attr(self, p11_session: Any, p11_module: Any) -> None:
-        """Key with CKA_DERIVE=False must be rejected for TLS master key derive."""
-        if not has_mechanism(p11_module, "TLS12_MASTER_KEY_DERIVE"):
-            if not has_mechanism(p11_module, "TLS_MASTER_KEY_DERIVE"):
-                pytest.skip("No TLS master key derive mechanism")
+# All TLS MAC mechanisms
+_TLS_MAC_MECHS = [
+    ("TLS12_MAC", lambda: (Mechanism.SHA256, 32, 1)),
+    ("TLS_MAC", lambda: (Mechanism.SHA256, 32, 1)),
+]
+
+
+class TestTLSNegativeAttributes:
+    """Verify modules reject TLS operations when key attributes are False."""
+
+    @pytest.mark.parametrize("mech_name,param_fn", _TLS_DERIVE_MECHS,
+                             ids=[m[0] for m in _TLS_DERIVE_MECHS])
+    def test_derive_without_derive_attr(
+        self, mech_name: str, param_fn: Any, p11_session: Any, p11_module: Any,
+    ) -> None:
+        """Key with CKA_DERIVE=False must be rejected for {mech_name}."""
+        if not has_mechanism(p11_module, mech_name):
+            pytest.skip(f"CKM_{mech_name} not supported")
 
         no_derive_key = p11_session.create_object({
             Attribute.CLASS: ObjectClass.SECRET_KEY,
@@ -650,16 +676,11 @@ class TestTLSNegativeAttributes:
             Attribute.EXTRACTABLE: True,
         })
         try:
-            mech = (Mechanism.TLS12_MASTER_KEY_DERIVE
-                    if has_mechanism(p11_module, "TLS12_MASTER_KEY_DERIVE")
-                    else Mechanism.TLS_MASTER_KEY_DERIVE)
-            params = ((_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)
-                      if mech == Mechanism.TLS12_MASTER_KEY_DERIVE
-                      else (_CLIENT_RANDOM, _SERVER_RANDOM))
+            mech = getattr(Mechanism, mech_name)
             try:
                 derived = no_derive_key.derive_key(
                     KeyType.GENERIC_SECRET, 48,
-                    mechanism=mech, mechanism_param=params,
+                    mechanism=mech, mechanism_param=param_fn(),
                     template={
                         Attribute.SENSITIVE: False,
                         Attribute.EXTRACTABLE: True,
@@ -668,19 +689,22 @@ class TestTLSNegativeAttributes:
                     },
                 )
                 derived.destroy()
-                pytest.fail("Module allowed TLS derive with CKA_DERIVE=False")
+                pytest.fail(f"Module allowed CKM_{mech_name} with CKA_DERIVE=False")
             except KeyFunctionNotPermitted:
-                pass  # Correct - module rejected derive on non-derivable key
+                pass  # Correct per OASIS spec
             except _TLS_ERRORS as exc:
-                pytest.xfail(f"TLS derive rejected (not KeyFunctionNotPermitted): {exc}")
+                pytest.xfail(f"CKM_{mech_name} rejected (not KeyFunctionNotPermitted): {exc}")
         finally:
             no_derive_key.destroy()
 
-    def test_mac_without_sign_attr(self, p11_session: Any, p11_module: Any) -> None:
-        """Key with CKA_SIGN=False must be rejected for TLS MAC."""
-        if not has_mechanism(p11_module, "TLS12_MAC"):
-            if not has_mechanism(p11_module, "TLS_MAC"):
-                pytest.skip("No TLS MAC mechanism")
+    @pytest.mark.parametrize("mech_name,param_fn", _TLS_MAC_MECHS,
+                             ids=[m[0] for m in _TLS_MAC_MECHS])
+    def test_mac_without_sign_attr(
+        self, mech_name: str, param_fn: Any, p11_session: Any, p11_module: Any,
+    ) -> None:
+        """Key with CKA_SIGN=False must be rejected for {mech_name}."""
+        if not has_mechanism(p11_module, mech_name):
+            pytest.skip(f"CKM_{mech_name} not supported")
 
         no_sign_key = p11_session.create_object({
             Attribute.CLASS: ObjectClass.SECRET_KEY,
@@ -692,19 +716,17 @@ class TestTLSNegativeAttributes:
             Attribute.EXTRACTABLE: True,
         })
         try:
-            mech = (Mechanism.TLS12_MAC
-                    if has_mechanism(p11_module, "TLS12_MAC")
-                    else Mechanism.TLS_MAC)
+            mech = getattr(Mechanism, mech_name)
             try:
                 result = no_sign_key.sign(
                     b"TLS record data",
                     mechanism=mech,
-                    mechanism_param=(Mechanism.SHA256, 32, 1),
+                    mechanism_param=param_fn(),
                 )
-                pytest.fail("Module allowed TLS MAC with CKA_SIGN=False")
+                pytest.fail(f"Module allowed CKM_{mech_name} with CKA_SIGN=False")
             except KeyFunctionNotPermitted:
-                pass  # Correct
+                pass  # Correct per OASIS spec
             except _TLS_ERRORS as exc:
-                pytest.xfail(f"TLS MAC rejected (not KeyFunctionNotPermitted): {exc}")
+                pytest.xfail(f"CKM_{mech_name} rejected (not KeyFunctionNotPermitted): {exc}")
         finally:
             no_sign_key.destroy()
