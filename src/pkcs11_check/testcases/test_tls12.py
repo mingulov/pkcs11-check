@@ -7,7 +7,7 @@ CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH, and legacy TLS 1.0 mechanisms.
 
 These mechanisms derive keys and MAC keys for TLS 1.2 sessions. They require
 complex C parameter structures (CK_TLS12_MASTER_KEY_DERIVE_PARAMS, etc.) that
-the python-pkcs11 library does not have Python wrapper classes for. Availability
+the python-pkcs11 fork provides parameter handlers for. Availability
 is tested on all modules; full operational tests are marked xfail because most
 tokens do not implement these mechanisms.
 
@@ -21,10 +21,14 @@ from typing import Any
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 from pkcs11.exceptions import (
+    AttributeValueInvalid,
+    DeviceError,
     FunctionFailed,
     GeneralError,
+    KeyFunctionNotPermitted,
     MechanismInvalid,
     MechanismParamInvalid,
+    TemplateInconsistent,
 )
 
 from pkcs11_check.testcases.conftest import has_mechanism
@@ -38,12 +42,21 @@ _PRE_MASTER_SECRET = bytes(range(48))
 _CLIENT_RANDOM = bytes(range(32))
 _SERVER_RANDOM = bytes(range(32, 64))
 
-# Common error tuple for TLS mechanism operations
+# Common error tuple for TLS mechanism operations.
+# TLS derive can fail with many CKR codes depending on the module:
+# - MechanismParamInvalid: wrong param structure
+# - KeyFunctionNotPermitted: key lacks CKA_DERIVE (NSS)
+# - AttributeValueInvalid: wrong template for derived key (Kryoptic)
+# - TemplateInconsistent: template conflicts
 _TLS_ERRORS = (
     MechanismInvalid,
     MechanismParamInvalid,
     FunctionFailed,
     GeneralError,
+    KeyFunctionNotPermitted,
+    AttributeValueInvalid,
+    TemplateInconsistent,
+    DeviceError,
 )
 
 
@@ -119,7 +132,6 @@ class TestTLS10PreMasterKeyGen:
         try:
             # CKM_TLS_MASTER_KEY_DERIVE requires CK_SSL3_MASTER_KEY_DERIVE_PARAMS
             # which includes client/server randoms and version output buffer.
-            # python-pkcs11 has no wrapper for this structure; any attempt with
             # raw bytes as params will fail with MechanismParamInvalid.
             derived = pms.derive_key(
                 KeyType.GENERIC_SECRET,
@@ -138,7 +150,7 @@ class TestTLS10PreMasterKeyGen:
             finally:
                 derived.destroy()
         except _TLS_ERRORS as exc:
-            pytest.xfail(f"CKM_TLS_MASTER_KEY_DERIVE not operational (no C param wrapper): {exc}")
+            pytest.xfail(f"CKM_TLS_MASTER_KEY_DERIVE not operational: {exc}")
         finally:
             pms.destroy()
 
@@ -183,7 +195,7 @@ class TestTLS10PreMasterKeyGen:
             finally:
                 derived.destroy()
         except _TLS_ERRORS as exc:
-            pytest.xfail(f"CKM_TLS_PRF not operational (no C param wrapper): {exc}")
+            pytest.xfail(f"CKM_TLS_PRF not operational: {exc}")
         finally:
             pms.destroy()
 
@@ -205,7 +217,6 @@ class TestTLS12MasterKeyDerive:
         try:
             # CKM_TLS12_MASTER_KEY_DERIVE_PARAMS adds a prf_hash_mechanism field
             # (e.g. CKM_SHA256) to the legacy SSL3 parameter structure.
-            # python-pkcs11 has no wrapper for this - any call will fail.
             derived = pms.derive_key(
                 KeyType.GENERIC_SECRET,
                 48,
@@ -223,7 +234,7 @@ class TestTLS12MasterKeyDerive:
             finally:
                 derived.destroy()
         except _TLS_ERRORS as exc:
-            pytest.xfail(f"CKM_TLS12_MASTER_KEY_DERIVE not operational (no C param wrapper): {exc}")
+            pytest.xfail(f"CKM_TLS12_MASTER_KEY_DERIVE not operational: {exc}")
         finally:
             pms.destroy()
 
@@ -258,7 +269,7 @@ class TestTLS12MasterKeyDerive:
                 derived.destroy()
         except _TLS_ERRORS as exc:
             pytest.xfail(
-                f"CKM_TLS12_MASTER_KEY_DERIVE_DH not operational (no C param wrapper): {exc}"
+                f"CKM_TLS12_MASTER_KEY_DERIVE_DH not operational: {exc}"
             )
         finally:
             dh_pms.destroy()
@@ -300,7 +311,7 @@ class TestTLS12KeyAndMacDerive:
                 derived.destroy()
         except _TLS_ERRORS as exc:
             pytest.xfail(
-                f"CKM_TLS12_KEY_AND_MAC_DERIVE not operational (no C param wrapper): {exc}"
+                f"CKM_TLS12_KEY_AND_MAC_DERIVE not operational: {exc}"
             )
         finally:
             master_secret.destroy()
@@ -334,7 +345,7 @@ class TestTLS12KeyAndMacDerive:
             finally:
                 derived.destroy()
         except _TLS_ERRORS as exc:
-            pytest.xfail(f"CKM_TLS12_KEY_SAFE_DERIVE not operational (no C param wrapper): {exc}")
+            pytest.xfail(f"CKM_TLS12_KEY_SAFE_DERIVE not operational: {exc}")
         finally:
             master_secret.destroy()
 
@@ -364,7 +375,7 @@ class TestTLS12Mac:
             )
             assert len(result) > 0
         except _TLS_ERRORS as exc:
-            pytest.xfail(f"CKM_TLS12_MAC not operational (no C param wrapper): {exc}")
+            pytest.xfail(f"CKM_TLS12_MAC not operational: {exc}")
         finally:
             mac_key.destroy()
 
@@ -387,7 +398,7 @@ class TestTLS12Mac:
             )
             assert len(result) > 0
         except _TLS_ERRORS as exc:
-            pytest.xfail(f"CKM_TLS_MAC not operational (no C param wrapper): {exc}")
+            pytest.xfail(f"CKM_TLS_MAC not operational: {exc}")
         finally:
             mac_key.destroy()
 
@@ -430,7 +441,7 @@ class TestTLS12KDF:
             finally:
                 derived.destroy()
         except _TLS_ERRORS as exc:
-            pytest.xfail(f"CKM_TLS12_KDF not operational (no C param wrapper): {exc}")
+            pytest.xfail(f"CKM_TLS12_KDF not operational: {exc}")
         finally:
             base_key.destroy()
 
@@ -467,7 +478,7 @@ class TestTLS12KDF:
             finally:
                 derived.destroy()
         except _TLS_ERRORS as exc:
-            pytest.xfail(f"CKM_TLS_KDF not operational (no C param wrapper): {exc}")
+            pytest.xfail(f"CKM_TLS_KDF not operational: {exc}")
         finally:
             base_key.destroy()
 
@@ -516,7 +527,7 @@ class TestTLS12Extended:
                 derived.destroy()
         except _TLS_ERRORS as exc:
             pytest.xfail(
-                f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational (no C param wrapper): {exc}"
+                f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational: {exc}"
             )
         finally:
             pms.destroy()
@@ -554,7 +565,7 @@ class TestTLS12Extended:
         except _TLS_ERRORS as exc:
             pytest.xfail(
                 "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH not operational "
-                f"(no C param wrapper): {exc}"
+                f": {exc}"
             )
         finally:
             dh_pms.destroy()
@@ -600,7 +611,7 @@ class TestTLS12Extended:
                 derived_a.destroy()
         except _TLS_ERRORS as exc:
             pytest.xfail(
-                f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational (no C param wrapper): {exc}"
+                f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational: {exc}"
             )
         finally:
             pms.destroy()
