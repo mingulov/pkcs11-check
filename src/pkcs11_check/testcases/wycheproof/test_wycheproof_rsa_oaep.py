@@ -38,7 +38,7 @@ _SHA_MGFS: dict[str, MGF] = {
     "SHA-512": MGF.SHA512,
 }
 
-# RSA-OAEP files -- same hash and mixed hash/MGF combinations
+# RSA-OAEP files - same hash and mixed hash/MGF combinations
 _OAEP_FILES = [
     # Same hash/MGF
     "rsa_oaep_2048_sha1_mgf1sha1_test.json",
@@ -62,13 +62,13 @@ _OAEP_FILES = [
     "rsa_three_primes_oaep_2048_sha1_mgf1sha1_test.json",
     "rsa_three_primes_oaep_3072_sha224_mgf1sha224_test.json",
     "rsa_three_primes_oaep_4096_sha256_mgf1sha256_test.json",
-    # Misc -- various parameter combinations in one file
+    # Misc - various parameter combinations in one file
     "rsa_oaep_misc_test.json",
 ]
 
 
 def _load_oaep_vectors() -> list[tuple[str, dict[str, Any]]]:
-    """Load RSA-OAEP vectors -- decryption tests with private key."""
+    """Load RSA-OAEP vectors - decryption tests with private key."""
     vectors = []
     for filename in _OAEP_FILES:
         path = WYCHEPROOF_DIR / filename

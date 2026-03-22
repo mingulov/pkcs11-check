@@ -1,4 +1,4 @@
-"""CKR_ARGUMENTS_BAD tests via raw ctypes -- NULL pointers to C_* functions.
+"""CKR_ARGUMENTS_BAD tests via raw ctypes - NULL pointers to C_* functions.
 
 Tests that passing NULL where a valid pointer is required returns
 CKR_ARGUMENTS_BAD (0x07). Modules that segfault instead are documented.
@@ -55,7 +55,7 @@ def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
 
 def _assert_ok(rc: int, out: str, err: str, name: str) -> None:
     if rc < 0:
-        pytest.skip(f"{name}: segfault (signal {-rc}) -- module doesn't validate NULL")
+        pytest.skip(f"{name}: segfault (signal {-rc}) - module doesn't validate NULL")
     assert rc == 0, f"{name} subprocess error: {err[-200:]}"
     assert "OK" in out, f"{name}: {out}"
 
@@ -160,7 +160,7 @@ print("OK")
 out_len = ctypes.c_ulong(256)
 rv = raw.C_WrapKey(sh, None, 0, 0, None, ctypes.byref(out_len))
 print(f"CKR:0x{rv:08x}")
-# ARGUMENTS_BAD or KEY_HANDLE_INVALID -- both acceptable for NULL mechanism
+# ARGUMENTS_BAD or KEY_HANDLE_INVALID - both acceptable for NULL mechanism
 assert rv in (CKR_ARGUMENTS_BAD, 0x60, 0x70), f"Got 0x{rv:08x}"
 print("OK")
 """)

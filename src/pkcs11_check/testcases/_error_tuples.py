@@ -1,6 +1,6 @@
 """Shared error tuples for specific CKR code validation.
 
-NEVER catch generic PKCS11Error in tests -- use these tuples instead.
+NEVER catch generic PKCS11Error in tests - use these tuples instead.
 Each tuple lists ONLY the CKR codes that are valid responses for
 that category of operation. Unexpected errors will fail the test.
 """
@@ -102,5 +102,5 @@ DATA_ERRORS = (
 
 # NOTE: SoftHSM2 returns CKR_GENERAL_ERROR for some data-length violations
 # where the spec says CKR_DATA_LEN_RANGE. If you see GeneralError for
-# data operations, it's a SoftHSM2 quirk -- document it, don't add
+# data operations, it's a SoftHSM2 quirk - document it, don't add
 # GeneralError to DATA_ERRORS (that would hide real bugs).

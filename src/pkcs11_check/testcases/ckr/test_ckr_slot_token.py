@@ -42,7 +42,7 @@ class TestWaitForSlotEventErrors:
         """Non-blocking WaitForSlotEvent -> CKR_NO_EVENT or CKR_FUNCTION_NOT_SUPPORTED."""
         try:
             p11_module.lib.wait_for_slot_event(blocking=False)
-            # Event returned -- possible on some setups
+            # Event returned - possible on some setups
         except NoEvent:
             pass  # Expected for software tokens
         except FunctionNotSupported:

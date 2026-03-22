@@ -14,7 +14,7 @@ bits -> 256 bytes).  The token performs raw modular exponentiation; the caller i
 responsible for any padding.  CKM_RSA_X_509 is widely supported in hardware and
 software tokens as the recovery-capable RSA mechanism.
 
-These operations are only accessible via the raw C API -- python-pkcs11 does not
+These operations are only accessible via the raw C API - python-pkcs11 does not
 expose high-level sign_recover() / verify_recover() methods on Key or Session
 objects.  Tests use a ctypes subprocess in the same pattern as test_operation_state.py.
 
@@ -582,7 +582,7 @@ class TestSignRecover:
         print(f"FATAL:SignRecoverInit:0x{rv:08x}")
         sys.exit(1)
 
-    # Data shorter than modulus -- must be rejected
+    # Data shorter than modulus - must be rejected
     short_data = b"too short"
     sig_len = c_ulong(256)
     sig_buf = (c_ubyte * 256)()
@@ -593,11 +593,11 @@ class TestSignRecover:
         print("RESULT:ACCEPTED_SHORT_DATA")
     else:
         print(f"RESULT:REJECTED:0x{rv:08x}")
-        # Any non-OK return is acceptable -- the module correctly rejected it
+        # Any non-OK return is acceptable - the module correctly rejected it
         acceptable = {CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD, CKR_BUFFER_TOO_SMALL,
                       CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID}
         if rv not in acceptable:
-            # Non-standard CKR -- still a valid rejection; note it
+            # Non-standard CKR - still a valid rejection; note it
             print(f"NOTE:NonStandardRejection:0x{rv:08x}")
 """
         )
@@ -616,12 +616,12 @@ class TestSignRecover:
         assert "RESULT" in lines_map, f"Missing RESULT in output: {stdout!r}"
 
         # The module should not silently accept wrong-length data.
-        # Some modules pad internally and accept any length -- this is non-standard
+        # Some modules pad internally and accept any length - this is non-standard
         # for CKM_RSA_X_509 but we don't fail on it; we just note it.
         result = lines_map["RESULT"]
         if result == "ACCEPTED_SHORT_DATA":
             pytest.xfail(
-                "Module accepted short data for CKM_RSA_X_509 C_SignRecover -- "
+                "Module accepted short data for CKM_RSA_X_509 C_SignRecover - "
                 "non-standard behaviour (spec requires CKR_DATA_LEN_RANGE)"
             )
 

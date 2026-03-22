@@ -1,4 +1,4 @@
-"""Tests for AEAD (Authenticated Encryption) -- AES-GCM cross-verification.
+"""Tests for AEAD (Authenticated Encryption) - AES-GCM cross-verification.
 
 Verifies AES-GCM encrypt/decrypt via PKCS#11 against Python cryptography.
 """

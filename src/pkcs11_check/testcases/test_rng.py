@@ -37,7 +37,7 @@ class TestRNGBasic:
         assert len(samples) == 1000, "RNG produced duplicate 32-byte values"
 
     def test_different_lengths(self, p11_session: Any) -> None:
-        """Generate random at various sizes -- all must succeed."""
+        """Generate random at various sizes - all must succeed."""
         for bits in [8, 64, 128, 256, 512, 1024, 8192]:
             data = p11_session.generate_random(bits)
             assert len(data) == bits // 8

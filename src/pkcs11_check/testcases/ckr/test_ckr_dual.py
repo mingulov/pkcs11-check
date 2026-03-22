@@ -49,7 +49,7 @@ class TestOperationStateWrapper:
         assert d1 != d2
 
     def test_sign_then_encrypt(self, p11_session: Any) -> None:
-        """Sign then encrypt with same session -- no conflict."""
+        """Sign then encrypt with same session - no conflict."""
         _pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
         key = p11_session.generate_key(KeyType.AES, 256)
         sig = priv.sign(b"data", mechanism=Mechanism.SHA256_RSA_PKCS)

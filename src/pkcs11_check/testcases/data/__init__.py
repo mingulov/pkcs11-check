@@ -1,4 +1,4 @@
-"""Centralized test data paths -- single source of truth.
+"""Centralized test data paths - single source of truth.
 
 All test files import data paths from here.
 """

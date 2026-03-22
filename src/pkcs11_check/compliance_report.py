@@ -547,7 +547,7 @@ def _ckr_coverage_summary() -> dict[str, int]:
                 tested += 1
 
     # All specs are either tested or untestable for the purpose of this count
-    # The "tested" count here means "has a spec entry" -- actual test execution
+    # The "tested" count here means "has a spec entry" - actual test execution
     # is tracked via test results
     return {
         "total_specs": total,

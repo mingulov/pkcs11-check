@@ -32,7 +32,7 @@ _DERIVE_ERRORS = (MechanismInvalid, MechanismParamInvalid, FunctionFailed,
 
 @pytest.mark.requires_v30
 class TestHKDFKeyGen:
-    """CKM_HKDF_KEY_GEN tests -- generate keys for HKDF input keying material."""
+    """CKM_HKDF_KEY_GEN tests - generate keys for HKDF input keying material."""
 
     @pytest.mark.parametrize(
         "key_type",
@@ -126,7 +126,7 @@ class TestHKDFKeyGen:
 
 @pytest.mark.requires_v30
 class TestHKDFData:
-    """CKM_HKDF_DATA tests -- derive data objects via HKDF."""
+    """CKM_HKDF_DATA tests - derive data objects via HKDF."""
 
     def _create_base_key(self, session: Any) -> Any:
         """Create a GENERIC_SECRET key suitable for HKDF derivation."""

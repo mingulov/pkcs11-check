@@ -7,15 +7,15 @@ CKM_EXTRACT_KEY_FROM_KEY.
 These mechanisms derive a new secret key by simple byte-level operations on
 the base key value.  The parameter types are:
 
-  - CONCATENATE_BASE_AND_KEY   -- CK_OBJECT_HANDLE (second key handle, CK_ULONG)
-  - CONCATENATE_BASE_AND_DATA  -- CK_KEY_DERIVATION_STRING_DATA (ptr + len)
-  - CONCATENATE_DATA_AND_BASE  -- CK_KEY_DERIVATION_STRING_DATA (ptr + len)
-  - XOR_BASE_AND_DATA          -- CK_KEY_DERIVATION_STRING_DATA (ptr + len)
-  - EXTRACT_KEY_FROM_KEY       -- CK_EXTRACT_PARAMS (bit offset, CK_ULONG)
+  - CONCATENATE_BASE_AND_KEY   - CK_OBJECT_HANDLE (second key handle, CK_ULONG)
+  - CONCATENATE_BASE_AND_DATA  - CK_KEY_DERIVATION_STRING_DATA (ptr + len)
+  - CONCATENATE_DATA_AND_BASE  - CK_KEY_DERIVATION_STRING_DATA (ptr + len)
+  - XOR_BASE_AND_DATA          - CK_KEY_DERIVATION_STRING_DATA (ptr + len)
+  - EXTRACT_KEY_FROM_KEY       - CK_EXTRACT_PARAMS (bit offset, CK_ULONG)
 
 The python-pkcs11 wrapper does not have native struct support for these
 mechanisms, so we construct parameters manually using ctypes and pass them
-as raw bytes -- the same pattern used in test_x942_dh.py.
+as raw bytes - the same pattern used in test_x942_dh.py.
 
 OASIS spec: generic_secret_key.md, key_management_functions.md
 """
@@ -66,7 +66,7 @@ _CK_BYTE_PTR = ctypes.POINTER(ctypes.c_ubyte)
 
 
 class _KeyDerivationStringData(ctypes.Structure):
-    """CK_KEY_DERIVATION_STRING_DATA -- parameter for CONCATENATE and XOR mechs."""
+    """CK_KEY_DERIVATION_STRING_DATA - parameter for CONCATENATE and XOR mechs."""
 
     _fields_ = [
         ("pData", _CK_BYTE_PTR),
@@ -79,7 +79,7 @@ def _make_string_data_param(
 ) -> tuple[_KeyDerivationStringData, ctypes.Array[ctypes.c_ubyte]]:
     """Build a CK_KEY_DERIVATION_STRING_DATA struct for ``data``.
 
-    Returns (struct, data_array) -- caller must keep both alive until
+    Returns (struct, data_array) - caller must keep both alive until
     C_DeriveKey returns.
     """
     arr = (ctypes.c_ubyte * len(data))(*data)
@@ -131,7 +131,7 @@ def _import_generic_secret(session: Any, value: bytes) -> Any:
 
 
 class TestConcatenateBaseAndKey:
-    """CKM_CONCATENATE_BASE_AND_KEY -- derive by concatenating two key values."""
+    """CKM_CONCATENATE_BASE_AND_KEY - derive by concatenating two key values."""
 
     def test_concat_two_keys_value(self, p11_session: Any, p11_module: Any) -> None:
         """Derived value equals base_key_bytes || second_key_bytes."""
@@ -146,7 +146,7 @@ class TestConcatenateBaseAndKey:
         second = _import_generic_secret(p11_session, second_bytes)
         derived = None
         try:
-            # CK_OBJECT_HANDLE is a single CK_ULONG -- pass as raw bytes
+            # CK_OBJECT_HANDLE is a single CK_ULONG - pass as raw bytes
             handle = second.handle
             assert handle is not None
             param_bytes = _ulong_to_bytes(handle)
@@ -225,7 +225,7 @@ class TestConcatenateBaseAndKey:
 
 
 class TestConcatenateBaseAndData:
-    """CKM_CONCATENATE_BASE_AND_DATA -- derive by appending data to base key value."""
+    """CKM_CONCATENATE_BASE_AND_DATA - derive by appending data to base key value."""
 
     def test_concat_value_cross_verify(self, p11_session: Any, p11_module: Any) -> None:
         """Derived value equals base_key_bytes || data_bytes."""
@@ -314,7 +314,7 @@ class TestConcatenateBaseAndData:
 
 
 class TestConcatenateDataAndBase:
-    """CKM_CONCATENATE_DATA_AND_BASE -- derive by prepending data to base key value."""
+    """CKM_CONCATENATE_DATA_AND_BASE - derive by prepending data to base key value."""
 
     def test_concat_value_cross_verify(self, p11_session: Any, p11_module: Any) -> None:
         """Derived value equals data_bytes || base_key_bytes."""
@@ -403,7 +403,7 @@ class TestConcatenateDataAndBase:
 
 
 class TestXorBaseAndData:
-    """CKM_XOR_BASE_AND_DATA -- derive by XOR-ing base key value with data bytes."""
+    """CKM_XOR_BASE_AND_DATA - derive by XOR-ing base key value with data bytes."""
 
     def test_xor_cross_verify(self, p11_session: Any, p11_module: Any) -> None:
         """Derived value equals base_key_bytes XOR data_bytes."""
@@ -517,7 +517,7 @@ class TestXorBaseAndData:
 
 
 class TestExtractKeyFromKey:
-    """CKM_EXTRACT_KEY_FROM_KEY -- extract a sub-key from a base key at a bit offset."""
+    """CKM_EXTRACT_KEY_FROM_KEY - extract a sub-key from a base key at a bit offset."""
 
     def test_extract_from_offset_zero(self, p11_session: Any, p11_module: Any) -> None:
         """Extract at bit offset 0 yields the leading bytes of the base key."""
@@ -531,7 +531,7 @@ class TestExtractKeyFromKey:
         base = _import_generic_secret(p11_session, base_bytes)
         derived = None
         try:
-            # CK_EXTRACT_PARAMS is typedef CK_ULONG -- bit offset
+            # CK_EXTRACT_PARAMS is typedef CK_ULONG - bit offset
             bit_offset = 0
             param_bytes = _ulong_to_bytes(bit_offset)
             derived = base.derive_key(

@@ -1,4 +1,4 @@
-"""Wycheproof HMAC vectors -- all SHA variants."""
+"""Wycheproof HMAC vectors - all SHA variants."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def _load_hmac_vectors() -> list[tuple[str, dict[str, Any]]]:
     vectors = []
     for filename, (key_type, mechanism, fallback_type) in _HMAC_FILES.items():
         if key_type is None:
-            continue  # skip sha256 -- already covered
+            continue  # skip sha256 - already covered
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue

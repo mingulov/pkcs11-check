@@ -1,4 +1,4 @@
-"""Post-quantum signature tests -- ML-DSA (FIPS 204) and SLH-DSA (FIPS 205).
+"""Post-quantum signature tests - ML-DSA (FIPS 204) and SLH-DSA (FIPS 205).
 
 All tests require PKCS#11 v3.2 interface.  Auto-skips on v3.1 and earlier.
 """
@@ -155,7 +155,7 @@ class TestMLDSASignVerify:
             sig2 = priv.sign(_PLAINTEXT, mechanism=Mechanism.ML_DSA)
         except Exception:
             pytest.xfail("ML-DSA sign failed")
-        # ML-DSA is randomized -- two signatures should differ (with overwhelming probability)
+        # ML-DSA is randomized - two signatures should differ (with overwhelming probability)
         # Note: some implementations may use deterministic signing, so xfail not assert
         if sig1 == sig2:
             pytest.xfail("ML-DSA produced identical signatures (deterministic mode?)")

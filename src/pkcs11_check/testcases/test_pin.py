@@ -1,11 +1,11 @@
 """PIN authentication and lockout tests.
 
 Tests wrong-PIN rejection, PIN-locked behavior, and authentication
-error handling. These are critical security tests -- a module that
+error handling. These are critical security tests - a module that
 accepts wrong PINs or doesn't lock after repeated failures is broken.
 
 Note: PIN lockout thresholds are module-specific (typically 3-10 attempts).
-These tests do NOT exhaust the lockout counter -- they test a single bad
+These tests do NOT exhaust the lockout counter - they test a single bad
 attempt and verify the error code.
 """
 
@@ -77,14 +77,14 @@ class TestWrongPIN:
             found = list(session.get_objects({Attribute.CLASS: pkcs11.ObjectClass.PRIVATE_KEY}))
             assert len(found) == 0, "Wrong PIN exposed private objects!"
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected -- login failed
+            pass  # Expected - login failed
 
 
 class TestPINEdgeCases:
     """PIN handling edge cases."""
 
     def test_very_long_pin(self, p11_module: Any) -> None:
-        """Very long PIN (256 chars) -- should fail cleanly, not crash."""
+        """Very long PIN (256 chars) - should fail cleanly, not crash."""
         token = p11_module.get_token()
         if token is None:
             pytest.skip("No token available")
@@ -97,7 +97,7 @@ class TestPINEdgeCases:
             pass  # Expected
 
     def test_unicode_pin(self, p11_module: Any) -> None:
-        """Unicode characters in PIN -- should fail cleanly."""
+        """Unicode characters in PIN - should fail cleanly."""
         token = p11_module.get_token()
         if token is None:
             pytest.skip("No token available")
@@ -105,10 +105,10 @@ class TestPINEdgeCases:
         try:
             token.open(rw=True, user_pin="\u00e9\u00e8\u00ea\u00eb")
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected -- most modules reject non-ASCII PINs
+            pass  # Expected - most modules reject non-ASCII PINs
 
     def test_null_bytes_in_pin(self, p11_module: Any) -> None:
-        """Null bytes in PIN -- must not cause truncation or crash."""
+        """Null bytes in PIN - must not cause truncation or crash."""
         token = p11_module.get_token()
         if token is None:
             pytest.skip("No token available")

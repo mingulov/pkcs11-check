@@ -65,7 +65,7 @@ class TestMalformedAttributes:
             )
 
     def test_empty_value_on_aes_key(self, p11_session: Any) -> None:
-        """CKA_VALUE with empty bytes on AES key -- must reject or accept."""
+        """CKA_VALUE with empty bytes on AES key - must reject or accept."""
         try:
             obj = p11_session.create_object(
                 {
@@ -75,13 +75,13 @@ class TestMalformedAttributes:
                     Attribute.TOKEN: False,
                 }
             )
-            # SoftHSM2 accepts -- key won't be usable but no crash
+            # SoftHSM2 accepts - key won't be usable but no crash
             assert obj is not None
         except (*_TEMPLATE_ERRORS, KeySizeRange):
             pass  # Correct to reject empty key value (Kryoptic: CKR_KEY_SIZE_RANGE)
 
     def test_wrong_size_aes_value(self, p11_session: Any) -> None:
-        """AES key with 7-byte VALUE (not 16/24/32) -- must reject or accept."""
+        """AES key with 7-byte VALUE (not 16/24/32) - must reject or accept."""
         try:
             obj = p11_session.create_object(
                 {
@@ -101,10 +101,10 @@ class TestMalformedAttributes:
             p11_session.generate_keypair(KeyType.RSA, 0)
 
     def test_negative_key_length(self, p11_session: Any) -> None:
-        """Extremely large key length -- must reject or handle gracefully."""
+        """Extremely large key length - must reject or handle gracefully."""
         try:
             key = p11_session.generate_key(KeyType.AES, 0xFFFFFFFF)
-            # Kryoptic silently truncates -- key exists but may not be usable
+            # Kryoptic silently truncates - key exists but may not be usable
             assert key is not None
         except (*_KEY_SIZE_ERRORS, OverflowError, ValueError):
             pass  # Correct to reject
@@ -131,13 +131,13 @@ class TestMalformedAttributes:
                     Attribute.TOKEN: False,
                 }
             )
-            # If it succeeds, module ignores KEY_TYPE on DATA -- acceptable
+            # If it succeeds, module ignores KEY_TYPE on DATA - acceptable
             assert obj is not None
         except _TEMPLATE_ERRORS:
             pass  # Correct to reject inconsistent template
 
     def test_boolean_as_wrong_type(self, p11_session: Any) -> None:
-        """CKA_TOKEN with non-boolean value -- must reject or handle gracefully."""
+        """CKA_TOKEN with non-boolean value - must reject or handle gracefully."""
         try:
             p11_session.create_object(
                 {
@@ -155,7 +155,7 @@ class TestLargeAttributes:
     """Test with oversized attribute values."""
 
     def test_large_label(self, p11_session: Any) -> None:
-        """Very long CKA_LABEL (10KB) -- must not crash."""
+        """Very long CKA_LABEL (10KB) - must not crash."""
         try:
             obj = p11_session.create_object(
                 {
@@ -170,7 +170,7 @@ class TestLargeAttributes:
             pass  # Acceptable: reject large label or out of memory
 
     def test_large_value(self, p11_session: Any) -> None:
-        """Large CKA_VALUE (1MB) on data object -- must not crash."""
+        """Large CKA_VALUE (1MB) on data object - must not crash."""
         try:
             obj = p11_session.create_object(
                 {

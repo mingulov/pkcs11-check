@@ -8,7 +8,7 @@ Each CkrExpectation maps a (function, error condition) pair to:
 Source of truth: https://github.com/oasis-tcs/pkcs11.git working/doc/spec/
 
 NEVER catch generic PKCS11Error in CKR tests. Use assert_ckr() which
-validates against the spec table -- broad PKCS11Error catch in tests is
+validates against the spec table - broad PKCS11Error catch in tests is
 intentional because assert_ckr is the enforcement mechanism.
 """
 
@@ -57,7 +57,7 @@ def full_compat(base_tuple: tuple[type, ...], uses_session: bool = True) -> tupl
     """Build full acceptable error set from base + universals.
 
     Duplicates with base_tuple (e.g. FunctionFailed already in most tuples)
-    are harmless for isinstance() and kept for clarity -- each layer adds
+    are harmless for isinstance() and kept for clarity - each layer adds
     what the spec says it may return.
     """
     result = base_tuple + _UNIVERSAL
@@ -116,7 +116,7 @@ class CkrExpectation:
 
 
 # ---------------------------------------------------------------------------
-# assert_ckr -- the single validation point
+# assert_ckr - the single validation point
 # ---------------------------------------------------------------------------
 
 
@@ -166,7 +166,7 @@ def assert_ckr(
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Encrypt family
+# Spec tables - Encrypt family
 # ---------------------------------------------------------------------------
 
 # Imports for CKR types used in spec tables
@@ -460,7 +460,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.8.1",
-        testable=False,  # Requires registered callback to cancel -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback to cancel - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
@@ -469,7 +469,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # OperationCancelFailed not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.8.1",
-        testable=False,  # Requires active operation + cancel attempt -- not exposed by python-pkcs11
+        testable=False,  # Requires active operation + cancel attempt - not exposed by python-pkcs11
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -479,7 +479,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=PinExpired,
         compat_tuple=(PinExpired, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.8.1",
-        testable=False,  # Requires token with PIN expiration policy -- not available in test tokens
+        testable=False,  # Requires token with PIN expiration policy - not available in test tokens
         # Untestable: cannot force PIN expiry on software tokens
     ),
     # --- Additional C_Encrypt errors ---
@@ -503,7 +503,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.8.2",
-        testable=False,  # Requires registered callback to cancel -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback to cancel - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "operation_active": CkrExpectation(
@@ -536,7 +536,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.8.3",
-        testable=False,  # Requires registered callback to cancel -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback to cancel - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
@@ -569,7 +569,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.8.4",
-        testable=False,  # Requires registered callback to cancel -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback to cancel - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_operation_active": CkrExpectation(
@@ -584,7 +584,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Decrypt family (Sec.5.9)
+# Spec tables - Decrypt family (Sec.5.9)
 # ---------------------------------------------------------------------------
 
 # Decrypt compat tuple: encrypted data errors + universal data errors
@@ -783,7 +783,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.9.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
@@ -792,7 +792,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.9.1",
-        testable=False,  # Requires active operation + cancel attempt -- not exposed
+        testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -835,7 +835,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.9.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "operation_active": CkrExpectation(
@@ -884,7 +884,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.9.3",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
@@ -933,7 +933,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.9.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_operation_active": CkrExpectation(
@@ -990,7 +990,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.15.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_digest_update_operation_active": CkrExpectation(
@@ -1055,7 +1055,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.15.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_verify_update_operation_active": CkrExpectation(
@@ -1078,7 +1078,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Sign family (Sec.5.10)
+# Spec tables - Sign family (Sec.5.10)
 # ---------------------------------------------------------------------------
 
 CKR_SIGN: dict[str, CkrExpectation] = {
@@ -1282,7 +1282,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.10.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
@@ -1291,7 +1291,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.10.1",
-        testable=False,  # Requires active operation + cancel attempt -- not exposed
+        testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -1334,7 +1334,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.10.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "function_rejected": CkrExpectation(
@@ -1384,7 +1384,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.10.3",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
@@ -1426,7 +1426,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.10.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_function_rejected": CkrExpectation(
@@ -1476,7 +1476,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.10.5",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "recover_init_key_function_not_permitted": CkrExpectation(
@@ -1533,7 +1533,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.10.5",
-        testable=False,  # Requires active operation + cancel attempt -- not exposed
+        testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -1584,7 +1584,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.10.6",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "recover_operation_active": CkrExpectation(
@@ -1642,7 +1642,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.15.3",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "sign_encrypt_update_operation_active": CkrExpectation(
@@ -1673,7 +1673,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Verify family (Sec.5.11)
+# Spec tables - Verify family (Sec.5.11)
 # ---------------------------------------------------------------------------
 
 CKR_VERIFY: dict[str, CkrExpectation] = {
@@ -1887,7 +1887,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
@@ -1896,7 +1896,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.11.1",
-        testable=False,  # Requires active operation + cancel attempt -- not exposed
+        testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -1931,7 +1931,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "operation_active": CkrExpectation(
@@ -1965,7 +1965,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.3",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
@@ -2007,7 +2007,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_operation_active": CkrExpectation(
@@ -2049,7 +2049,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.5",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "recover_init_key_function_not_permitted": CkrExpectation(
@@ -2106,7 +2106,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.11.5",
-        testable=False,  # Requires active operation + cancel attempt -- not exposed
+        testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -2165,7 +2165,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.6",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "recover_operation_active": CkrExpectation(
@@ -2197,7 +2197,7 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Digest family (Sec.5.12)
+# Spec tables - Digest family (Sec.5.12)
 # ---------------------------------------------------------------------------
 
 CKR_DIGEST: dict[str, CkrExpectation] = {
@@ -2350,7 +2350,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_operation_cancel_failed": CkrExpectation(
@@ -2359,7 +2359,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.12.1",
-        testable=False,  # Requires active operation + cancel attempt -- not exposed
+        testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -2394,7 +2394,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "operation_active": CkrExpectation(
@@ -2419,7 +2419,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.3",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "update_operation_active": CkrExpectation(
@@ -2436,7 +2436,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "key_key_size_range": CkrExpectation(
@@ -2469,7 +2469,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.5",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "final_operation_active": CkrExpectation(
@@ -2510,7 +2510,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.15.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "digest_encrypt_update_operation_active": CkrExpectation(
@@ -2544,7 +2544,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.7",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_init_mechanism_param_invalid": CkrExpectation(
@@ -2569,7 +2569,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.12.7",
-        testable=False,  # v3.0+ -- not widely implemented
+        testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -2605,7 +2605,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.8",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_operation_active": CkrExpectation(
@@ -2647,7 +2647,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.9",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_update_operation_active": CkrExpectation(
@@ -2681,7 +2681,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.10",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_extract_operation_active": CkrExpectation(
@@ -2715,7 +2715,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.11",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_final_operation_active": CkrExpectation(
@@ -2741,7 +2741,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.12.12",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "xof_key_value_key_handle_invalid": CkrExpectation(
@@ -2788,7 +2788,7 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Key Generation family (Sec.5.14)
+# Spec tables - Key Generation family (Sec.5.14)
 # ---------------------------------------------------------------------------
 
 CKR_KEYGEN: dict[str, CkrExpectation] = {
@@ -2957,7 +2957,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "genkey_mechanism_param_invalid": CkrExpectation(
@@ -2999,7 +2999,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "genkeypair_mechanism_param_invalid": CkrExpectation(
@@ -3055,7 +3055,7 @@ CKR_KEYGEN: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Derive family (Sec.5.14.5)
+# Spec tables - Derive family (Sec.5.14.5)
 # ---------------------------------------------------------------------------
 
 CKR_DERIVE: dict[str, CkrExpectation] = {
@@ -3214,7 +3214,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.5",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "pin_expired": CkrExpectation(
@@ -3238,7 +3238,7 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- KEM family (Sec.5.14.7-5.14.8, v3.2 only)
+# Spec tables - KEM family (Sec.5.14.7-5.14.8, v3.2 only)
 # ---------------------------------------------------------------------------
 
 CKR_KEM: dict[str, CkrExpectation] = {
@@ -3404,7 +3404,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 Sec.5.14.7",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "encap_parameter_set_not_supported": CkrExpectation(
@@ -3518,7 +3518,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 Sec.5.14.8",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decap_parameter_set_not_supported": CkrExpectation(
@@ -3614,7 +3614,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Wrap/Unwrap family (Sec.5.14.3-5.14.4)
+# Spec tables - Wrap/Unwrap family (Sec.5.14.3-5.14.4)
 # ---------------------------------------------------------------------------
 
 CKR_WRAP: dict[str, CkrExpectation] = {
@@ -3811,7 +3811,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "unwrap_mechanism_param_invalid": CkrExpectation(
@@ -3883,7 +3883,7 @@ CKR_WRAP: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Object management (Sec.5.7)
+# Spec tables - Object management (Sec.5.7)
 # ---------------------------------------------------------------------------
 
 CKR_OBJECT: dict[str, CkrExpectation] = {
@@ -4416,7 +4416,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Session management (Sec.5.6)
+# Spec tables - Session management (Sec.5.6)
 # ---------------------------------------------------------------------------
 
 CKR_SESSION: dict[str, CkrExpectation] = {
@@ -4553,7 +4553,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=SessionAsyncNotSupported,
         compat_tuple=(SessionAsyncNotSupported, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.6.1",
-        testable=False,  # v3.0+ async sessions -- not widely supported
+        testable=False,  # v3.0+ async sessions - not widely supported
         # Untestable: v3.2 async sessions not widely supported
     ),
     "open_session_parallel_not_supported": CkrExpectation(
@@ -4562,7 +4562,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=ParallelNotSupported,
         compat_tuple=(ParallelNotSupported, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.6.1",
-        testable=False,  # Legacy parallel sessions -- not testable
+        testable=False,  # Legacy parallel sessions - not testable
         # Untestable: legacy deprecated function
     ),
     "open_session_rw_so_exists": CkrExpectation(
@@ -4620,7 +4620,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.6.7",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "login_operation_active": CkrExpectation(
@@ -4686,7 +4686,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.6.9",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "login_user_operation_active": CkrExpectation(
@@ -4784,7 +4784,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.6.5",
-        testable=False,  # v3.0+ -- not widely implemented
+        testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -4801,7 +4801,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Random (Sec.5.18)
+# Spec tables - Random (Sec.5.18)
 # ---------------------------------------------------------------------------
 
 CKR_RANDOM: dict[str, CkrExpectation] = {
@@ -4855,7 +4855,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.18.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "seed_operation_active": CkrExpectation(
@@ -4888,7 +4888,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.18.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "generate_operation_active": CkrExpectation(
@@ -4928,7 +4928,7 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Operation State (Sec.5.6.5-5.6.6)
+# Spec tables - Operation State (Sec.5.6.5-5.6.6)
 # ---------------------------------------------------------------------------
 
 CKR_STATE: dict[str, CkrExpectation] = {
@@ -5027,7 +5027,7 @@ CKR_STATE: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Slot/Token Management (Sec.5.5)
+# Spec tables - Slot/Token Management (Sec.5.5)
 # ---------------------------------------------------------------------------
 
 CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
@@ -5231,7 +5231,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.5.7",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_token_pin_locked": CkrExpectation(
@@ -5281,7 +5281,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.5.8",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "init_pin_operation_active": CkrExpectation(
@@ -5338,7 +5338,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.5.9",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "set_pin_operation_active": CkrExpectation(
@@ -5385,7 +5385,7 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- General Purpose (Sec.5.4)
+# Spec tables - General Purpose (Sec.5.4)
 # ---------------------------------------------------------------------------
 
 CKR_GENERAL: dict[str, CkrExpectation] = {
@@ -5480,7 +5480,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_FUNCTION_NOT_PARALLEL not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.4.5",
-        testable=False,  # Legacy v2.01 parallel function -- not testable
+        testable=False,  # Legacy v2.01 parallel function - not testable
         # Untestable: legacy deprecated function
         spec_ckr_code="CKR_FUNCTION_NOT_PARALLEL",
     ),
@@ -5498,7 +5498,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_FUNCTION_NOT_PARALLEL not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.4.6",
-        testable=False,  # Legacy v2.01 parallel function -- not testable
+        testable=False,  # Legacy v2.01 parallel function - not testable
         # Untestable: legacy deprecated function
         spec_ckr_code="CKR_FUNCTION_NOT_PARALLEL",
     ),
@@ -5546,7 +5546,7 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Verify Signature family (v3.2, Sec.5.11)
+# Spec tables - Verify Signature family (v3.2, Sec.5.11)
 # ---------------------------------------------------------------------------
 
 CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
@@ -5565,7 +5565,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 Sec.5.11.7",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_signature_init_key_function_not_permitted": CkrExpectation(
@@ -5630,7 +5630,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.2 Sec.5.11.7",
-        testable=False,  # v3.2 -- not widely implemented
+        testable=False,  # v3.2 - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -5690,7 +5690,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 Sec.5.11.8",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_signature_operation_not_initialized": CkrExpectation(
@@ -5749,7 +5749,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 Sec.5.11.9",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_signature_update_operation_not_initialized": CkrExpectation(
@@ -5792,7 +5792,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.2 Sec.5.11.10",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_signature_final_operation_not_initialized": CkrExpectation(
@@ -5832,7 +5832,7 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Message-based Encrypt family (v3.0, Sec.5.9)
+# Spec tables - Message-based Encrypt family (v3.0, Sec.5.9)
 # ---------------------------------------------------------------------------
 
 CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
@@ -5843,7 +5843,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.9.1",
-        testable=False,  # v3.0+ -- not widely implemented
+        testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_encrypt_init_key_function_not_permitted": CkrExpectation(
@@ -5908,7 +5908,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.9.1",
-        testable=False,  # v3.0+ -- not widely implemented
+        testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -5968,7 +5968,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.9.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "encrypt_message_mechanism_param_invalid": CkrExpectation(
@@ -6002,7 +6002,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.9.3",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "encrypt_message_begin_mechanism_param_invalid": CkrExpectation(
@@ -6077,7 +6077,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.9.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "encrypt_message_next_mechanism_param_invalid": CkrExpectation(
@@ -6119,7 +6119,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.9.5",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_encrypt_final_operation_active": CkrExpectation(
@@ -6142,7 +6142,7 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Message-based Decrypt family (v3.0, Sec.5.11)
+# Spec tables - Message-based Decrypt family (v3.0, Sec.5.11)
 # ---------------------------------------------------------------------------
 
 CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
@@ -6161,7 +6161,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_decrypt_init_key_function_not_permitted": CkrExpectation(
@@ -6226,7 +6226,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.11.1",
-        testable=False,  # v3.0+ -- not widely implemented
+        testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -6295,7 +6295,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_message_mechanism_param_invalid": CkrExpectation(
@@ -6320,7 +6320,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionFailed,  # CKR_OPERATION_CANCEL_FAILED not in fork
         compat_tuple=(FunctionFailed,),
         spec_ref="PKCS#11 v3.1 Sec.5.11.2",
-        testable=False,  # v3.0+ -- not widely implemented
+        testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
         spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
@@ -6355,7 +6355,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.3",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_message_begin_mechanism_param_invalid": CkrExpectation(
@@ -6447,7 +6447,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "decrypt_message_next_mechanism_param_invalid": CkrExpectation(
@@ -6497,7 +6497,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.11.5",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_decrypt_final_operation_active": CkrExpectation(
@@ -6528,7 +6528,7 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Message-based Sign family (v3.0, Sec.5.14)
+# Spec tables - Message-based Sign family (v3.0, Sec.5.14)
 # ---------------------------------------------------------------------------
 
 CKR_MSG_SIGN: dict[str, CkrExpectation] = {
@@ -6547,7 +6547,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_sign_init_key_function_not_permitted": CkrExpectation(
@@ -6662,7 +6662,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "sign_message_function_rejected": CkrExpectation(
@@ -6729,7 +6729,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.3",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "sign_message_begin_mechanism_param_invalid": CkrExpectation(
@@ -6813,7 +6813,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "sign_message_next_function_rejected": CkrExpectation(
@@ -6880,7 +6880,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.5",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_sign_final_function_rejected": CkrExpectation(
@@ -6928,7 +6928,7 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Message-based Verify family (v3.0, Sec.5.16)
+# Spec tables - Message-based Verify family (v3.0, Sec.5.16)
 # ---------------------------------------------------------------------------
 
 CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
@@ -6947,7 +6947,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.16.1",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_verify_init_key_function_not_permitted": CkrExpectation(
@@ -7054,7 +7054,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.16.2",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_message_mechanism_param_invalid": CkrExpectation(
@@ -7121,7 +7121,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.16.3",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_message_begin_mechanism_param_invalid": CkrExpectation(
@@ -7188,7 +7188,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.16.4",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "verify_message_next_mechanism_param_invalid": CkrExpectation(
@@ -7263,7 +7263,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.16.5",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "msg_verify_final_operation_active": CkrExpectation(
@@ -7295,7 +7295,7 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Wrap Authenticated family (v3.0, Sec.5.14)
+# Spec tables - Wrap Authenticated family (v3.0, Sec.5.14)
 # ---------------------------------------------------------------------------
 
 CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
@@ -7362,7 +7362,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
         spec_ckr=FunctionCancelled,
         compat_tuple=(FunctionCancelled, FunctionFailed),
         spec_ref="PKCS#11 v3.1 Sec.5.14.7",
-        testable=False,  # Requires registered callback -- not exposed by python-pkcs11
+        testable=False,  # Requires registered callback - not exposed by python-pkcs11
         # Untestable: requires CKN_SURRENDER callback returning CKR_CANCEL
     ),
     "unwrap_auth_mechanism_invalid": CkrExpectation(
@@ -7490,7 +7490,7 @@ CKR_WRAP_AUTH: dict[str, CkrExpectation] = {
 
 
 # ---------------------------------------------------------------------------
-# Spec tables -- Async family (v3.0, Sec.5.21)
+# Spec tables - Async family (v3.0, Sec.5.21)
 # ---------------------------------------------------------------------------
 
 CKR_ASYNC: dict[str, CkrExpectation] = {

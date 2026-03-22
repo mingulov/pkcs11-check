@@ -32,7 +32,7 @@ class TestDeriveKeyErrors:
             )
             pytest.fail("Should have rejected SHA256 as derive mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional -- assert_ckr validates the specific type
+            # Broad catch intentional - assert_ckr validates the specific type
             assert_ckr(CKR_DERIVE["mechanism_invalid"], e, ckr_strict)
 
     def test_key_type_inconsistent(

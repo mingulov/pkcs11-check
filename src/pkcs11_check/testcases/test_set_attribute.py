@@ -1,4 +1,4 @@
-"""C_SetAttributeValue tests -- attribute mutation on existing objects.
+"""C_SetAttributeValue tests - attribute mutation on existing objects.
 
 Tests modifying CKA_LABEL, CKA_ID on keys, and verifying that
 read-only attributes (CKA_CLASS, CKA_KEY_TYPE, CKA_MODULUS) are rejected.
@@ -50,23 +50,23 @@ class TestSetAttributeNegative:
     """Verify that read-only / immutable attributes are rejected."""
 
     def test_cannot_change_class(self, p11_session: Any) -> None:
-        """CKA_CLASS is read-only -- should reject or silently ignore."""
+        """CKA_CLASS is read-only - should reject or silently ignore."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
         key = p11_session.generate_key(KeyType.AES, 256)
         try:
             key[Attribute.CLASS] = ObjectClass.PUBLIC_KEY
-            # If no error, the module silently ignored it -- flag it
+            # If no error, the module silently ignored it - flag it
             note(
                 "Module accepted C_SetAttributeValue on CKA_CLASS without error",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 Base v3.0, Table 15 -- CKA_CLASS is read-only",
+                reference="PKCS#11 Base v3.0, Table 15 - CKA_CLASS is read-only",
             )
         except pkcs11.exceptions.PKCS11Error:
             pass  # Correct behavior
 
     def test_cannot_change_key_type(self, p11_session: Any) -> None:
-        """CKA_KEY_TYPE is read-only -- should reject or silently ignore."""
+        """CKA_KEY_TYPE is read-only - should reject or silently ignore."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
         key = p11_session.generate_key(KeyType.AES, 256)
@@ -75,13 +75,13 @@ class TestSetAttributeNegative:
             note(
                 "Module accepted C_SetAttributeValue on CKA_KEY_TYPE without error",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 Base v3.0, Table 15 -- CKA_KEY_TYPE is read-only",
+                reference="PKCS#11 Base v3.0, Table 15 - CKA_KEY_TYPE is read-only",
             )
         except pkcs11.exceptions.PKCS11Error:
             pass  # Correct behavior
 
     def test_cannot_change_modulus(self, p11_session: Any) -> None:
-        """CKA_MODULUS on RSA key is read-only -- must reject."""
+        """CKA_MODULUS on RSA key is read-only - must reject."""
         pub, _ = p11_session.generate_keypair(KeyType.RSA, 2048)
         try:
             pub[Attribute.MODULUS] = b"\x00" * 256
@@ -89,7 +89,7 @@ class TestSetAttributeNegative:
             pass  # Correct behavior
 
     def test_cannot_set_value_on_sensitive_key(self, p11_session: Any) -> None:
-        """CKA_VALUE on a sensitive key -- should reject."""
+        """CKA_VALUE on a sensitive key - should reject."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
         key = p11_session.generate_key(KeyType.AES, 256)
@@ -98,7 +98,7 @@ class TestSetAttributeNegative:
             note(
                 "Module accepted C_SetAttributeValue on CKA_VALUE of sensitive key",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 Base v3.0 -- CKA_VALUE should not be settable on sensitive keys",
+                reference="PKCS#11 Base v3.0 - CKA_VALUE should not be settable on sensitive keys",
             )
         except pkcs11.exceptions.PKCS11Error:
             pass  # Correct behavior

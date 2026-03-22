@@ -1,10 +1,10 @@
 """Tests for Blowfish PKCS#11 mechanisms.
 
 Blowfish: variable key size (32-448 bits), 8-byte block.
-Only CBC and CBC_PAD are defined in the OASIS PKCS#11 spec -- there is no
+Only CBC and CBC_PAD are defined in the OASIS PKCS#11 spec - there is no
 CKM_BLOWFISH_ECB mechanism. IV for CBC modes is 8 bytes.
 
-Most modules do NOT support Blowfish -- all tests will skip cleanly on those
+Most modules do NOT support Blowfish - all tests will skip cleanly on those
 platforms.
 """
 
@@ -20,7 +20,7 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.full
 
-# Blowfish block is 8 bytes -- CBC data must be 8-byte aligned
+# Blowfish block is 8 bytes - CBC data must be 8-byte aligned
 _TWO_BLOCKS = b"12345678abcdefgh"  # exactly 16 bytes (2 x 8-byte blocks)
 
 
@@ -45,7 +45,7 @@ def _bf_key(session: Any, bits: int, template: dict[str, Any]) -> Any:
 
 
 class TestBlowfishKeyGen:
-    """CKM_BLOWFISH_KEY_GEN -- key generation for variable-length Blowfish keys."""
+    """CKM_BLOWFISH_KEY_GEN - key generation for variable-length Blowfish keys."""
 
     @pytest.mark.parametrize("key_bits", [128, 256])
     def test_blowfish_key_gen(self, p11_session: Any, p11_module: Any, key_bits: int) -> None:
@@ -132,7 +132,7 @@ class TestBlowfishEncryption:
             {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
         iv = _bf_iv(p11_session)
-        # Non-block-aligned data -- PKCS#7 padding handles it
+        # Non-block-aligned data - PKCS#7 padding handles it
         plaintext = b"Blowfish CBC PAD test!"  # 22 bytes, not a multiple of 8
         try:
             try:

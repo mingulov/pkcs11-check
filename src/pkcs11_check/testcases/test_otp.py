@@ -1,4 +1,4 @@
-"""OTP and CT-KIP mechanism tests -- HOTP, SecurID, ACTI, CT-KIP.
+"""OTP and CT-KIP mechanism tests - HOTP, SecurID, ACTI, CT-KIP.
 
 Covers OTP key generation and OTP value generation via sign operations:
 - CKM_HOTP_KEY_GEN / CKM_HOTP

@@ -24,7 +24,7 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.access
 
-# RO restriction errors -- spec says CKR_SESSION_READ_ONLY, some modules
+# RO restriction errors - spec says CKR_SESSION_READ_ONLY, some modules
 # return CKR_ACTION_PROHIBITED or CKR_SESSION_READ_ONLY_EXISTS instead.
 _RO_ERRORS = (SessionReadOnly, ActionProhibited, SessionReadOnlyExists)
 

@@ -167,7 +167,7 @@ class TestPublicSessionVisibility:
             _logout_safe(session)
             session.close()
 
-        # Open public session -- private objects must not be visible
+        # Open public session - private objects must not be visible
         pub_session = token.open(rw=False)
         try:
             found = list(
@@ -515,7 +515,7 @@ class TestSOSessionCapabilities:
         try:
             found = list(so_sess.get_objects({Attribute.LABEL: label}))
             if len(found) == 0:
-                # SO cannot see private keys -- expected per spec
+                # SO cannot see private keys - expected per spec
                 pass
             else:
                 # SO can see the key; some modules allow this
@@ -569,7 +569,7 @@ class TestSOSessionCapabilities:
             pytest.skip("Another user already logged in")
 
         try:
-            # Try USER login on a second session -- should fail
+            # Try USER login on a second session - should fail
             s2 = token.open(rw=True)
             try:
                 with pytest.raises(
@@ -742,7 +742,7 @@ class TestTrustedAttribute:
 
 
 class TestAlwaysAuthenticate:
-    """CKA_ALWAYS_AUTHENTICATE -- context-specific re-authentication.
+    """CKA_ALWAYS_AUTHENTICATE - context-specific re-authentication.
 
     Private keys with CKA_ALWAYS_AUTHENTICATE=True require
     C_Login(CKU_CONTEXT_SPECIFIC) before each crypto operation.
@@ -781,7 +781,7 @@ class TestAlwaysAuthenticate:
                 pytest.skip("Module did not honour CKA_ALWAYS_AUTHENTICATE=True")
                 return
 
-            # Attempt to sign -- should require context-specific login
+            # Attempt to sign - should require context-specific login
             data = b"test data for always-auth"
             try:
                 _ = priv.sign(data, mechanism=Mechanism.SHA256_RSA_PKCS)
@@ -900,7 +900,7 @@ class TestAccessLevelMatrix:
                         }
                     )
                 )
-                # Session objects belong to their session -- may or may not
+                # Session objects belong to their session - may or may not
                 # be visible in s2 depending on module and login state
                 # This is implementation-defined behavior
                 if len(found) == 0:

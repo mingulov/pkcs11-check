@@ -1,7 +1,7 @@
 """X.509 limbo certificate import tests.
 
 Tests certificate storage behavior of PKCS#11 modules against the x509-limbo
-corpus -- a collection of both valid (SUCCESS) and semantically invalid (FAILURE)
+corpus - a collection of both valid (SUCCESS) and semantically invalid (FAILURE)
 certificates.
 
 Key design principle: certificates are imported in their REAL, unmodified state.
@@ -10,14 +10,14 @@ the module parse the cert itself. SUBJECT/ISSUER/SERIAL_NUMBER are only added as
 fallback when the module explicitly requests them (CKR_TEMPLATE_INCOMPLETE).
 
 Why this matters: if we pre-extract attributes on the Python side, modules never
-see the raw cert bytes -- any module-side parsing bugs or over-strict validation
+see the raw cert bytes - any module-side parsing bugs or over-strict validation
 are hidden. By sending raw DER, we expose real module behavior.
 
 x509-limbo FAILURE certs are semantically invalid for X.509 path validation
 (wrong path length, revoked, bad CRL, etc.) but are well-formed DER. A PKCS#11
 module acting as a storage token has no obligation to validate cert content and
 should accept them. If a module rejects them, it is performing above-spec cert
-validation on import -- this is recorded as a compliance note, not a test failure.
+validation on import - this is recorded as a compliance note, not a test failure.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ pytestmark = [pytest.mark.cert, pytest.mark.object]
 _all_cases = load_limbo_testcases()
 
 
-# "online" cases require live network (CRL/OCSP fetches) -- skip them entirely.
+# "online" cases require live network (CRL/OCSP fetches) - skip them entirely.
 # "bettertls" is a corpus of 9,572 TLS hostname-validation variants; sample 50.
 # All other categories (rfc5280, webpki, pathlen, crl, pathological, cve, invalid)
 # are run in full (183 cases, 47 SUCCESS + 136 FAILURE).
@@ -125,7 +125,7 @@ class TestLimboCertImport:
     def test_import_peer_cert(
         self, tc: dict[str, Any], p11_session: Any, limbo_available: Any
     ) -> None:
-        """Import peer certificate using raw CKA_VALUE -- no pre-extraction.
+        """Import peer certificate using raw CKA_VALUE - no pre-extraction.
 
         The raw DER bytes reach C_CreateObject without SUBJECT/ISSUER/SERIAL_NUMBER
         being provided unless the module explicitly requests them (TemplateIncomplete).
@@ -162,7 +162,7 @@ class TestLimboCertImport:
         except (TemplateInconsistent, AttributeValueInvalid, FunctionFailed) as e:
             if tc["expected_result"] == "FAILURE":
                 note(
-                    f"Module rejected {tc['id']} on import ({type(e).__name__}: {e}) -- "
+                    f"Module rejected {tc['id']} on import ({type(e).__name__}: {e}) - "
                     f"module performs cert validation on C_CreateObject "
                     f"(above spec for storage token)",
                     ComplianceLevel.VENDOR,
@@ -187,7 +187,7 @@ class TestLimboCertImport:
         """Import trusted CA certificates from a limbo testcase.
 
         Tries with CKA_TRUSTED=True first (SO-level attribute). If the module
-        rejects the TRUSTED flag (AttributeTypeInvalid -- module doesn't support it),
+        rejects the TRUSTED flag (AttributeTypeInvalid - module doesn't support it),
         retries without. Any other rejection is recorded as a compliance note.
         """
         for i, pem in enumerate(tc["trusted_certs"]):
@@ -237,7 +237,7 @@ class TestLimboCertImport:
 def test_import_limbo_failure_cert_raw(
     tc: dict[str, Any], p11_session: Any, limbo_available: Any
 ) -> None:
-    """Raw import of x509-limbo FAILURE certs -- module receives unmodified DER.
+    """Raw import of x509-limbo FAILURE certs - module receives unmodified DER.
 
     x509-limbo FAILURE certs are semantically invalid for X.509 path validation
     (revoked, bad path length, wrong key usage, CRL issues, etc.) but are
@@ -250,7 +250,7 @@ def test_import_limbo_failure_cert_raw(
     - Module stores the FAILURE cert (CKO_CERTIFICATE accepted) -> PASS
       (correct storage-token behavior; module doesn't validate semantics)
     - Module rejects the FAILURE cert -> compliance note (above-spec validation
-      on import); test still passes -- it's a behavioral observation, not a bug.
+      on import); test still passes - it's a behavioral observation, not a bug.
     - Module crashes or returns an unexpected error -> pytest.fail (real bug).
     """
     der = pem_to_der(tc["peer_certificate"])
@@ -270,25 +270,25 @@ def test_import_limbo_failure_cert_raw(
                 f"for {tc['id']} (CKR_TEMPLATE_INCOMPLETE on raw import)",
                 ComplianceLevel.VENDOR,
             )
-        # Cert stored -- verify VALUE round-trips
+        # Cert stored - verify VALUE round-trips
         stored_value = obj[Attribute.VALUE]
         if stored_value != der:
             pytest.fail(
-                f"{tc['id']}: module stored modified cert bytes -- "
+                f"{tc['id']}: module stored modified cert bytes - "
                 f"CKA_VALUE mismatch ({len(stored_value)}B stored vs {len(der)}B sent)"
             )
 
     except (TemplateInconsistent, AttributeValueInvalid) as e:
-        # Module rejected the cert -- it validates on import (above spec for storage)
+        # Module rejected the cert - it validates on import (above spec for storage)
         note(
-            f"[FAILURE cert] Module rejected {tc['id']} ({type(e).__name__}: {e}) -- "
+            f"[FAILURE cert] Module rejected {tc['id']} ({type(e).__name__}: {e}) - "
             f"module validates cert content on C_CreateObject",
             ComplianceLevel.VENDOR,
         )
     except FunctionFailed as e:
-        # FunctionFailed on cert import is unexpected -- could be a real module bug
+        # FunctionFailed on cert import is unexpected - could be a real module bug
         note(
-            f"[FAILURE cert] Module returned CKR_FUNCTION_FAILED for {tc['id']}: {e} -- "
+            f"[FAILURE cert] Module returned CKR_FUNCTION_FAILED for {tc['id']}: {e} - "
             f"investigate whether this is a parsing bug in the module",
             ComplianceLevel.VENDOR,
         )

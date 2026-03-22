@@ -1,7 +1,7 @@
 """Duplicate label handling tests.
 
 Verifies that PKCS#11 modules handle multiple objects with the same
-CKA_LABEL correctly -- search should return all matching objects.
+CKA_LABEL correctly - search should return all matching objects.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ class TestDuplicateLabels:
     """Test that duplicate labels are handled correctly."""
 
     def test_two_keys_same_label(self, p11_session: Any) -> None:
-        """Two AES keys with the same label -- search returns both."""
+        """Two AES keys with the same label - search returns both."""
         label = _unique_label()
         p11_session.generate_key(KeyType.AES, 128, label=label)
         p11_session.generate_key(KeyType.AES, 256, label=label)
@@ -32,7 +32,7 @@ class TestDuplicateLabels:
         assert len(found) >= 2, f"Expected >=2 objects with label '{label}', got {len(found)}"
 
     def test_data_objects_same_label(self, p11_session: Any) -> None:
-        """Two CKO_DATA objects with the same label -- both findable."""
+        """Two CKO_DATA objects with the same label - both findable."""
         label = _unique_label()
         p11_session.create_object(
             {
@@ -61,7 +61,7 @@ class TestDuplicateLabels:
         assert b"second" in values
 
     def test_different_types_same_label(self, p11_session: Any) -> None:
-        """AES key and CKO_DATA with the same label -- both findable."""
+        """AES key and CKO_DATA with the same label - both findable."""
         label = _unique_label()
         p11_session.generate_key(KeyType.AES, 128, label=label)
         p11_session.create_object(

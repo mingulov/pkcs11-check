@@ -1,4 +1,4 @@
-"""Surface audit -- probe for hidden/undocumented PKCS#11 capabilities.
+"""Surface audit - probe for hidden/undocumented PKCS#11 capabilities.
 
 Systematically tests the module's API surface for inconsistencies between
 what it advertises (C_GetMechanismList) and what it actually accepts.
@@ -88,15 +88,15 @@ class TestFunctionRobustness:
     """Verify that all common operations fail gracefully, never crash."""
 
     def test_random_with_zero_bits(self, p11_session: Any) -> None:
-        """C_GenerateRandom with 0 bits -- should return empty or error, never crash."""
+        """C_GenerateRandom with 0 bits - should return empty or error, never crash."""
         try:
             data = p11_session.generate_random(0)
             assert len(data) == 0
         except (pkcs11.exceptions.PKCS11Error, ValueError):
-            pass  # Acceptable -- binding or module rejects zero-length
+            pass  # Acceptable - binding or module rejects zero-length
 
     def test_digest_all_hash_mechanisms(self, p11_session: Any) -> None:
-        """Try digest with all available hash mechanisms -- none should crash."""
+        """Try digest with all available hash mechanisms - none should crash."""
         test_data = b"surface audit test data"
         hash_mechs = [
             Mechanism.SHA_1,
@@ -110,20 +110,20 @@ class TestFunctionRobustness:
                 result = p11_session.digest(test_data, mechanism=mech)
                 assert len(result) > 0
             except pkcs11.exceptions.PKCS11Error:
-                pass  # Mechanism not supported -- OK
+                pass  # Mechanism not supported - OK
 
     def test_generate_key_all_aes_sizes(self, p11_session: Any) -> None:
-        """Generate AES keys at all standard sizes -- none should crash."""
+        """Generate AES keys at all standard sizes - none should crash."""
         for size in [128, 192, 256]:
             try:
                 key = p11_session.generate_key(KeyType.AES, size)
                 assert key is not None
                 key.destroy()
             except pkcs11.exceptions.PKCS11Error:
-                pass  # Size not supported -- OK
+                pass  # Size not supported - OK
 
     def test_generate_rsa_various_sizes(self, p11_session: Any) -> None:
-        """Generate RSA keys at various sizes -- none should crash."""
+        """Generate RSA keys at various sizes - none should crash."""
         for size in [1024, 2048, 3072, 4096]:
             try:
                 pub, priv = p11_session.generate_keypair(KeyType.RSA, size)
@@ -131,10 +131,10 @@ class TestFunctionRobustness:
                 pub.destroy()
                 priv.destroy()
             except pkcs11.exceptions.PKCS11Error:
-                pass  # Size not supported -- OK
+                pass  # Size not supported - OK
 
     def test_find_with_invalid_class(self, p11_session: Any) -> None:
-        """Search with invalid object class -- should return empty, not crash."""
+        """Search with invalid object class - should return empty, not crash."""
         # Use a valid but unlikely class
         try:
             found = list(p11_session.get_objects({Attribute.CLASS: ObjectClass.DOMAIN_PARAMETERS}))
@@ -195,7 +195,7 @@ class TestMechanismLimitProbing:
     """
 
     def test_aes_oversize_key(self, p11_session: Any, p11_module: Any) -> None:
-        """Try AES key sizes beyond standard 256-bit -- should be rejected."""
+        """Try AES key sizes beyond standard 256-bit - should be rejected."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
         slot = p11_module.get_slots(token_present=True)[0]
@@ -217,10 +217,10 @@ class TestMechanismLimitProbing:
             )
             key.destroy()
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected -- properly enforced
+            pass  # Expected - properly enforced
 
     def test_rsa_undersize_key(self, p11_session: Any, p11_module: Any) -> None:
-        """Try RSA key smaller than min -- should be rejected."""
+        """Try RSA key smaller than min - should be rejected."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
         slot = p11_module.get_slots(token_present=True)[0]
@@ -259,14 +259,14 @@ class TestMechanismLimitProbing:
                 note(
                     f"Module accepted non-standard AES-{size}",
                     ComplianceLevel.NOT_RECOMMENDED,
-                    reference="FIPS 197 -- AES key sizes are 128, 192, 256 only",
+                    reference="FIPS 197 - AES key sizes are 128, 192, 256 only",
                 )
                 key.destroy()
             except pkcs11.exceptions.PKCS11Error:
                 pass  # Expected
 
     def test_hmac_short_key(self, p11_session: Any) -> None:
-        """Try HMAC with a very short key (1 byte) -- should fail or warn."""
+        """Try HMAC with a very short key (1 byte) - should fail or warn."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
         try:
@@ -284,13 +284,13 @@ class TestMechanismLimitProbing:
             note(
                 f"Module accepted 1-byte HMAC key (MAC length: {len(mac)})",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="RFC 2104 -- HMAC key should be at least hash output length",
+                reference="RFC 2104 - HMAC key should be at least hash output length",
             )
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected -- key too short
+            pass  # Expected - key too short
 
     def test_rsa_oversize_key(self, p11_session: Any, p11_module: Any) -> None:
-        """Try RSA key larger than max -- should be rejected or very slow."""
+        """Try RSA key larger than max - should be rejected or very slow."""
         slot = p11_module.get_slots(token_present=True)[0]
         mechs = slot.get_mechanisms()
         rsa_keygen = [m for m in mechs if mech_name(m) == "RSA_PKCS_KEY_PAIR_GEN"]

@@ -3,7 +3,7 @@
 Verifies that using a destroyed object handle returns proper CKR errors,
 not crashes or undefined behavior.
 
-Reference: rep11.md -- stale handles after C_DestroyObject + reuse.
+Reference: rep11.md - stale handles after C_DestroyObject + reuse.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ pytestmark = pytest.mark.security
 
 
 class TestHandleReuseAfterDestroy:
-    """Use destroyed object handles -- must get CKR error, not crash."""
+    """Use destroyed object handles - must get CKR error, not crash."""
 
     def test_get_attribute_after_destroy(self, p11_session: Any) -> None:
         """Reading attribute from destroyed key must fail cleanly."""

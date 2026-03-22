@@ -1,7 +1,7 @@
 """CKR buffer sizing tests via raw ctypes calls.
 
 Tests CKR_BUFFER_TOO_SMALL: output functions with undersized buffers.
-Uses pkcs11.raw.RawPKCS11 -- wrapper handles buffer sizing internally.
+Uses pkcs11.raw.RawPKCS11 - wrapper handles buffer sizing internally.
 """
 
 from __future__ import annotations

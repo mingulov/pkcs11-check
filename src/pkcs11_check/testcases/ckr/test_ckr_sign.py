@@ -27,7 +27,7 @@ class TestSignInitErrors:
             priv.sign(b"test data", mechanism=Mechanism.AES_ECB)
             pytest.fail("Should have rejected AES_ECB as signing mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional -- assert_ckr validates the specific type
+            # Broad catch intentional - assert_ckr validates the specific type
             assert_ckr(CKR_SIGN["init_mechanism_invalid"], e, ckr_strict)
 
     def test_key_type_inconsistent(
@@ -48,7 +48,7 @@ class TestSignInitErrors:
         if not has_mechanism(p11_module, "SHA256_RSA_PKCS_PSS"):
             pytest.skip("RSA-PSS not supported")
         _pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
-        # RSA-PSS needs specific param struct -- provide garbage bytes
+        # RSA-PSS needs specific param struct - provide garbage bytes
         try:
             priv.sign(
                 b"test data",

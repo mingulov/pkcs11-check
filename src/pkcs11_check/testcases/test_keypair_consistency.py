@@ -1,7 +1,7 @@
 """Keypair attribute consistency tests.
 
 Verifies that public and private keys in a generated keypair have
-consistent attributes -- modulus matches for RSA, EC params match for EC.
+consistent attributes - modulus matches for RSA, EC params match for EC.
 Catches bugs where modules produce mathematically inconsistent keypairs.
 """
 

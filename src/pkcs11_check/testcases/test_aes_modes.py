@@ -308,7 +308,7 @@ class TestAESKeyWrapPKCS7:
         )
 
         # Create a target key with known material (non-block-aligned size to test PKCS7 padding)
-        key_bytes = os.urandom(24)  # 192-bit key -- not a multiple of 8 bytes for wrap block
+        key_bytes = os.urandom(24)  # 192-bit key - not a multiple of 8 bytes for wrap block
         target = p11_session.create_object(
             {
                 Attribute.CLASS: ObjectClass.SECRET_KEY,

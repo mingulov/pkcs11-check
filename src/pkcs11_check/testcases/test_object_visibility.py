@@ -716,7 +716,7 @@ class TestTokenObjectImmediateVisibility:
                 }
             )
             try:
-                # Open B immediately after creation -- no delay
+                # Open B immediately after creation - no delay
                 with _login_session(token, rw=True, pin=pin) as sess_b:
                     found = list(
                         sess_b.get_objects(

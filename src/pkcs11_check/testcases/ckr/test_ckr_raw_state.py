@@ -135,13 +135,13 @@ mech.mechanism = 0x1081  # CKM_AES_ECB
 rv1 = raw.C_EncryptInit(sh, ctypes.byref(mech), key_handle)
 assert rv1 == CKR_OK
 
-# Now try SignInit -- should be OPERATION_ACTIVE
+# Now try SignInit - should be OPERATION_ACTIVE
 sign_mech = CK_MECHANISM()
 sign_mech.mechanism = 0x0251  # CKM_AES_CMAC
 rv2 = raw.C_SignInit(sh, ctypes.byref(sign_mech), key_handle)
 print(f"CKR:0x{rv2:08x}")
 # OPERATION_ACTIVE, OK (dual-crypto), MECHANISM_INVALID (no CMAC support),
-# KEY_FUNCTION_NOT_PERMITTED, or other init errors -- all acceptable
+# KEY_FUNCTION_NOT_PERMITTED, or other init errors - all acceptable
 # The key test: did NOT segfault.
 print("OK")
 print("OK")
@@ -180,7 +180,7 @@ mech = CK_MECHANISM()
 mech.mechanism = 0x1081  # CKM_AES_ECB (for CMAC or just to test state)
 # Use key_handle from preamble (AES key with SIGN=True)
 rv1 = raw.C_SignInit(sh, ctypes.byref(mech), key_handle)
-# First init may fail if AES-ECB not valid for sign -- that's OK
+# First init may fail if AES-ECB not valid for sign - that's OK
 if rv1 == CKR_OK:
     rv2 = raw.C_SignInit(sh, ctypes.byref(mech), key_handle)
     print(f"CKR:0x{rv2:08x}")

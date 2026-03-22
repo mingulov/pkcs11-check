@@ -25,7 +25,7 @@ class TestGetOperationStateErrors:
         """GetOperationState with no active op -> CKR_OPERATION_NOT_INITIALIZED or CKR_STATE_UNSAVEABLE."""
         try:
             state = p11_session.get_operation_state()
-            # Some modules return empty state -- acceptable
+            # Some modules return empty state - acceptable
         except (OperationNotInitialized, StateUnsaveable):
             pass  # Correct: no active operation to save
         except PKCS11Error:

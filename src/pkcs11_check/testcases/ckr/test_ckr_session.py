@@ -73,6 +73,6 @@ class TestLogoutErrors:
             session.logout()
             # Some modules don't error on logout without login
         except PKCS11Error:
-            pass  # CKR_USER_NOT_LOGGED_IN or similar -- acceptable
+            pass  # CKR_USER_NOT_LOGGED_IN or similar - acceptable
         finally:
             session.close()

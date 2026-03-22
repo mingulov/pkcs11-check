@@ -71,7 +71,7 @@ class TestOpenSSLPkcs11Provider:
 
         module = str(p11_config.module)
 
-        # Simple digest -- doesn't need token login
+        # Simple digest - doesn't need token login
         rc, out, err = _run(
             'echo -n "test" | openssl dgst -sha256 -provider default',
         )
@@ -79,7 +79,7 @@ class TestOpenSSLPkcs11Provider:
         assert "SHA2-256" in out or "sha256" in out.lower() or len(out) > 10
 
     def test_openssl_genrsa_no_crash(self, p11_config: Any) -> None:
-        """OpenSSL RSA keygen via subprocess -- must not segfault.
+        """OpenSSL RSA keygen via subprocess - must not segfault.
 
         SoftHSM2 #722: SIGSEGV on RSA operations via pkcs11-provider.
         """
@@ -89,7 +89,7 @@ class TestOpenSSLPkcs11Provider:
         module = str(p11_config.module)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else ""
 
-        # Generate RSA key via OpenSSL with PKCS#11 -- just verify no crash
+        # Generate RSA key via OpenSSL with PKCS#11 - just verify no crash
         script = f"""
         import subprocess, os
         env = os.environ.copy()
@@ -120,7 +120,7 @@ class TestP11KitProxy:
         assert rc != -11, f"p11-kit segfaulted: {err}"
 
     def test_load_module_via_p11kit(self, p11_config: Any) -> None:
-        """Load our module through p11-kit-proxy -- must not crash."""
+        """Load our module through p11-kit-proxy - must not crash."""
         if not _have_p11kit():
             pytest.skip("p11-kit not installed")
 

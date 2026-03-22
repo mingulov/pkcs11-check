@@ -1,7 +1,7 @@
 """Default attribute value tests.
 
 Verifies that newly generated keys and objects have correct default
-attribute values -- especially security-critical defaults like
+attribute values - especially security-critical defaults like
 CKA_SENSITIVE, CKA_EXTRACTABLE, CKA_LOCAL, CKA_ALWAYS_SENSITIVE,
 and CKA_NEVER_EXTRACTABLE.
 """

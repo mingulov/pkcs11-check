@@ -14,7 +14,7 @@ from pkcs11 import Attribute, KeyType, ObjectClass
 
 
 def mech_name(m: Any) -> str:
-    """Get mechanism name safely -- handles both Mechanism enum and raw int."""
+    """Get mechanism name safely - handles both Mechanism enum and raw int."""
     name = getattr(m, "name", None)
     if isinstance(name, str):
         return name
@@ -50,7 +50,7 @@ _mechanism_cache: dict[int, frozenset[str]] = {}
 def has_mechanism(p11_module: Any, name: str) -> bool:
     """Check if a PKCS#11 module supports a named mechanism.
 
-    The mechanism list is cached per module instance -- it never changes
+    The mechanism list is cached per module instance - it never changes
     during a session and querying it involves two PKCS#11 RPCs
     (C_GetSlotList + C_GetMechanismList) that can be slow over IPC.
     """
@@ -73,7 +73,7 @@ def open_session(token: Any, rw: bool = True, pin: str | None = None) -> Any:
     try:
         return token.open(rw=rw, user_pin=pin)
     except _p11.exceptions.UserAlreadyLoggedIn:
-        # Token-level login already active -- reuse it
+        # Token-level login already active - reuse it
         return token.open(rw=rw)
 
 

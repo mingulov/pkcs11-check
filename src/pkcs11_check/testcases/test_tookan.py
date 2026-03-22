@@ -1,4 +1,4 @@
-"""Tookan paper security vectors -- conflicting key usage attributes.
+"""Tookan paper security vectors - conflicting key usage attributes.
 
 Tests based on "Attacking and Fixing PKCS#11 Security Tokens" (2010).
 Keys with conflicting usage flags (WRAP+DECRYPT, ENCRYPT+UNWRAP)
@@ -24,7 +24,7 @@ class TestConflictingUsageAttrs:
     """Tookan vector: conflicting CKA_WRAP + CKA_DECRYPT on same key."""
 
     def test_wrap_and_decrypt_on_same_key(self, p11_session: Any) -> None:
-        """Create AES key with both WRAP and DECRYPT -- security risk."""
+        """Create AES key with both WRAP and DECRYPT - security risk."""
         try:
             p11_session.generate_key(
                 KeyType.AES,
@@ -39,7 +39,7 @@ class TestConflictingUsageAttrs:
                 },
             )
         except SECURITY_POLICY_ERRORS:
-            return  # Strict module rejects conflicting attrs -- GOOD
+            return  # Strict module rejects conflicting attrs - GOOD
 
         from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -50,7 +50,7 @@ class TestConflictingUsageAttrs:
         )
 
     def test_encrypt_and_unwrap_on_same_key(self, p11_session: Any) -> None:
-        """Create key with ENCRYPT + UNWRAP -- inverse Tookan vector."""
+        """Create key with ENCRYPT + UNWRAP - inverse Tookan vector."""
         try:
             p11_session.generate_key(
                 KeyType.AES,
@@ -61,7 +61,7 @@ class TestConflictingUsageAttrs:
                 },
             )
         except SECURITY_POLICY_ERRORS:
-            return  # Strict module -- good
+            return  # Strict module - good
 
         from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -85,10 +85,10 @@ class TestSensitivePreservation:
         try:
             copied = key.copy({Attribute.LABEL: "copy-sensitive"})
             assert copied[Attribute.SENSITIVE] is True, (
-                "SENSITIVE flag lost on copy -- Tookan vulnerability"
+                "SENSITIVE flag lost on copy - Tookan vulnerability"
             )
         except FunctionNotSupported:
-            pass  # Copy not supported -- ok
+            pass  # Copy not supported - ok
 
     def test_extractable_cannot_escalate_on_copy(self, p11_session: Any) -> None:
         """Copying non-EXTRACTABLE key cannot set EXTRACTABLE=True."""
@@ -107,7 +107,7 @@ class TestSensitivePreservation:
         try:
             copied = key.copy({Attribute.EXTRACTABLE: True})
             assert copied[Attribute.EXTRACTABLE] is False, (
-                "EXTRACTABLE escalated on copy -- Tookan vulnerability"
+                "EXTRACTABLE escalated on copy - Tookan vulnerability"
             )
         except (AttributeReadOnly, AttributeValueInvalid, TemplateInconsistent, FunctionNotSupported):
             pass  # Correct: reject the escalation attempt

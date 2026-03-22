@@ -84,7 +84,7 @@ def _build_ike2_prf_plus_params(*, nonce_i: bytes, nonce_r: bytes) -> bytes:
     The module will likely reject this with MechanismParamInvalid; that is
     expected and handled by the xfail path.
     """
-    # Pack nonce_i || nonce_r as extra data -- a rough approximation only.
+    # Pack nonce_i || nonce_r as extra data - a rough approximation only.
     return nonce_i + nonce_r
 
 
@@ -106,7 +106,7 @@ def _build_ike1_extended_params(
 
 
 class TestIKE2PRFPlusDerive:
-    """CKM_IKE2_PRF_PLUS_DERIVE -- IKEv2 PRF+ key derivation (RFC 7296)."""
+    """CKM_IKE2_PRF_PLUS_DERIVE - IKEv2 PRF+ key derivation (RFC 7296)."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_IKE2_PRF_PLUS_DERIVE is advertised."""
@@ -255,7 +255,7 @@ class TestIKE2PRFPlusDerive:
 
 
 class TestIKEPRFDerive:
-    """CKM_IKE_PRF_DERIVE -- IKEv2 PRF key derivation (SKEYSEED computation)."""
+    """CKM_IKE_PRF_DERIVE - IKEv2 PRF key derivation (SKEYSEED computation)."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_IKE_PRF_DERIVE is advertised."""
@@ -404,7 +404,7 @@ class TestIKEPRFDerive:
 
 
 class TestIKE1PRFDerive:
-    """CKM_IKE1_PRF_DERIVE -- IKEv1 PRF key derivation (RFC 2409)."""
+    """CKM_IKE1_PRF_DERIVE - IKEv1 PRF key derivation (RFC 2409)."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_IKE1_PRF_DERIVE is advertised."""
@@ -535,7 +535,7 @@ class TestIKE1PRFDerive:
 
 
 class TestIKE1ExtendedDerive:
-    """CKM_IKE1_EXTENDED_DERIVE -- IKEv1 extended key derivation (SKEYID_d/a/e)."""
+    """CKM_IKE1_EXTENDED_DERIVE - IKEv1 extended key derivation (SKEYID_d/a/e)."""
 
     def test_mechanism_availability(self, p11_module: Any) -> None:
         """Probe whether CKM_IKE1_EXTENDED_DERIVE is advertised."""

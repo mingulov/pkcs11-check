@@ -5,7 +5,7 @@ Error-path CKR tests are in ckr/test_ckr_state.py.
 
 Source: PKCS#11 v3.1 Sec.5.6.5 (C_GetOperationState), Sec.5.6.6 (C_SetOperationState).
 
-Most PKCS#11 modules return CKR_STATE_UNSAVEABLE for active operations -- this is
+Most PKCS#11 modules return CKR_STATE_UNSAVEABLE for active operations - this is
 spec-conformant behaviour (Sec.5.6.5: the token may return CKR_STATE_UNSAVEABLE if the
 state cannot be saved). Tests that require a saveable state skip gracefully when the
 module does not support it.
@@ -314,7 +314,7 @@ class TestGetOperationStateAPI:
         except (FunctionNotSupported, StateUnsaveable):
             pytest.skip("Module does not support C_SetOperationState")
         except OperationNotInitialized:
-            pass  # Module requires an active session operation -- acceptable
+            pass  # Module requires an active session operation - acceptable
 
 
 # ---------------------------------------------------------------------------
@@ -589,7 +589,7 @@ class TestEncryptStateRoundTrip:
     these tests use a ctypes subprocess to exercise the C-level functions
     directly.
 
-    Most modules return CKR_STATE_UNSAVEABLE for active encrypt operations -- the
+    Most modules return CKR_STATE_UNSAVEABLE for active encrypt operations - the
     tests skip gracefully when the module does not support saving encrypt state.
     """
 

@@ -11,7 +11,7 @@ CKR_FUNCTION_NOT_SUPPORTED (0x54).  Some modules reject the second active
 operation with CKR_OPERATION_ACTIVE (0x90) because they only allow one
 active operation type per session.  Tests skip gracefully in both cases.
 
-These operations are only available via the raw C API -- python-pkcs11 has no
+These operations are only available via the raw C API - python-pkcs11 has no
 high-level wrappers.  Tests use the ctypes subprocess pattern established in
 test_operation_state.py and test_sign_recover.py.
 
@@ -372,14 +372,14 @@ class TestDigestEncryptUpdate:
 
         Steps:
         1. Generate an AES-256 session key.
-        2. Reference path -- separate operations:
+        2. Reference path - separate operations:
            a. Reference digest via hashlib SHA-256.
            b. EncryptInit(AES-CBC, key, IV) -> EncryptUpdate(data) -> EncryptFinal -> ct_ref.
         3. Dual-function path:
            a. DigestInit(SHA-256)
-           b. EncryptInit(AES-CBC, key, IV) -- skips if CKR_OPERATION_ACTIVE (module
+           b. EncryptInit(AES-CBC, key, IV) - skips if CKR_OPERATION_ACTIVE (module
               does not allow simultaneous digest + encrypt on the same session)
-           c. DigestEncryptUpdate(data) -> ciphertext_chunk -- skips if
+           c. DigestEncryptUpdate(data) -> ciphertext_chunk - skips if
               CKR_FUNCTION_NOT_SUPPORTED
            d. EncryptFinal -> remaining ciphertext
            e. DigestFinal -> digest
@@ -557,9 +557,9 @@ class TestDecryptDigestUpdate:
         2. Encrypt plaintext via separate C_EncryptInit/Update/Final to get ciphertext.
         3. Dual-function decryption path:
            a. DigestInit(SHA-256)
-           b. DecryptInit(AES-CBC, key, IV) -- skips if CKR_OPERATION_ACTIVE (module
+           b. DecryptInit(AES-CBC, key, IV) - skips if CKR_OPERATION_ACTIVE (module
               does not allow simultaneous digest + decrypt on the same session)
-           c. DecryptDigestUpdate(ciphertext) -> plaintext_chunk -- skips if
+           c. DecryptDigestUpdate(ciphertext) -> plaintext_chunk - skips if
               CKR_FUNCTION_NOT_SUPPORTED
            d. DecryptFinal -> remaining plaintext
            e. DigestFinal -> digest of decrypted plaintext

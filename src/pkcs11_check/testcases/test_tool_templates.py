@@ -43,7 +43,7 @@ class TestDefaultToolTemplates:
                 Attribute.EXTRACTABLE: False,
             },
         )
-        # Key must work -- this is the standard tool pattern
+        # Key must work - this is the standard tool pattern
         data = b"tool-template-test"
         sig = priv.sign(data, mechanism=Mechanism.SHA256_RSA_PKCS)
         assert pub.verify(data, sig, mechanism=Mechanism.SHA256_RSA_PKCS)
@@ -69,7 +69,7 @@ class TestConcurrentFindObjects:
     """FindObjects while other sessions modify objects (task 7.11)."""
 
     def test_find_during_sequential_create_destroy(self, p11_session: Any) -> None:
-        """Sequential create/destroy interleaved with search -- must not crash.
+        """Sequential create/destroy interleaved with search - must not crash.
 
         Note: Truly concurrent multi-thread operations on a single PKCS#11
         session can segfault SoftHSM2 (SQLite concurrency, #845).
@@ -94,7 +94,7 @@ class TestDBStress:
     def test_rapid_keygen_destroy_500(self, p11_session: Any) -> None:
         """500 key gen+destroy cycles. Tests SQLite transaction handling.
 
-        Note: SoftHSM2 #845 -- SQLite transaction errors under load.
+        Note: SoftHSM2 #845 - SQLite transaction errors under load.
         Concurrent multi-thread on same session causes segfaults.
         Sequential rapid cycles are safer and still catch DB issues.
         """

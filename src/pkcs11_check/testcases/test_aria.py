@@ -5,7 +5,7 @@ MAC signing/verification, and key derivation availability checks.
 
 ARIA: 128/192/256-bit keys, 16-byte block.
 
-Most modules do NOT support ARIA -- all tests will skip cleanly on those
+Most modules do NOT support ARIA - all tests will skip cleanly on those
 platforms. Some Korean-standard-focused HSMs and certain NSS builds include
 ARIA support.
 """
@@ -22,7 +22,7 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.full
 
-# 16-byte ARIA block -- ECB/CBC data must be block-aligned
+# 16-byte ARIA block - ECB/CBC data must be block-aligned
 _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 
 
@@ -47,7 +47,7 @@ def _aria_key(session: Any, bits: int, template: dict[str, Any]) -> Any:
 
 
 class TestARIAKeyGen:
-    """CKM_ARIA_KEY_GEN -- key generation for 128/192/256-bit keys."""
+    """CKM_ARIA_KEY_GEN - key generation for 128/192/256-bit keys."""
 
     @pytest.mark.parametrize("key_bits", [128, 192, 256])
     def test_aria_key_gen(self, p11_session: Any, p11_module: Any, key_bits: int) -> None:
@@ -171,7 +171,7 @@ class TestARIAEncryption:
             {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
         iv = _aria_iv(p11_session)
-        # Non-block-aligned data -- PKCS#7 padding handles it
+        # Non-block-aligned data - PKCS#7 padding handles it
         plaintext = b"ARIA CBC PAD test data!!"  # 24 bytes, not a multiple of 16
         try:
             try:
@@ -215,7 +215,7 @@ class TestARIAEncryption:
 
 
 class TestARIAMAC:
-    """CKM_ARIA_MAC and CKM_ARIA_MAC_GENERAL -- MAC sign/verify tests."""
+    """CKM_ARIA_MAC and CKM_ARIA_MAC_GENERAL - MAC sign/verify tests."""
 
     def test_aria_mac_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
         """ARIA-MAC sign and verify roundtrip."""
@@ -287,7 +287,7 @@ class TestARIAMAC:
 
 
 # ---------------------------------------------------------------------------
-# Key derivation by data encryption -- availability checks only
+# Key derivation by data encryption - availability checks only
 # ---------------------------------------------------------------------------
 
 
@@ -303,16 +303,16 @@ class TestARIAKeyDerivation:
     def test_aria_ecb_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_ARIA_ECB_ENCRYPT_DATA is advertised when ARIA is supported."""
         if not has_mechanism(p11_module, "ARIA_KEY_GEN"):
-            pytest.skip("CKM_ARIA_KEY_GEN not supported -- skipping derivation check")
+            pytest.skip("CKM_ARIA_KEY_GEN not supported - skipping derivation check")
         if not has_mechanism(p11_module, "ARIA_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_ARIA_ECB_ENCRYPT_DATA not supported")
-        # Mechanism is present -- no further operation needed for availability check
+        # Mechanism is present - no further operation needed for availability check
         assert True
 
     def test_aria_cbc_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_ARIA_CBC_ENCRYPT_DATA is advertised when ARIA is supported."""
         if not has_mechanism(p11_module, "ARIA_KEY_GEN"):
-            pytest.skip("CKM_ARIA_KEY_GEN not supported -- skipping derivation check")
+            pytest.skip("CKM_ARIA_KEY_GEN not supported - skipping derivation check")
         if not has_mechanism(p11_module, "ARIA_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_ARIA_CBC_ENCRYPT_DATA not supported")
         assert True

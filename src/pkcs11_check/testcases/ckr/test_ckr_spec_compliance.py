@@ -129,7 +129,7 @@ class TestCKRObjectCompliance:
         key.destroy()
         try:
             key[Attribute.LABEL]  # noqa: B018
-            # Some modules don't detect -- that's a deviation but not crash
+            # Some modules don't detect - that's a deviation but not crash
         except ObjectHandleInvalid:
             pass  # Correct per spec
         except PKCS11Error as e:
@@ -158,7 +158,7 @@ class TestCKRVerifyCompliance:
         try:
             result = pub.verify(data, tampered_sig, mechanism=Mechanism.SHA256_RSA_PKCS)
             if not result:
-                pass  # Returned False -- acceptable
+                pass  # Returned False - acceptable
             else:
                 pytest.fail("Tampered signature verified as valid!")
         except SignatureInvalid:

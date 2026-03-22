@@ -30,7 +30,7 @@ class TestDecryptInitErrors:
             key.decrypt(b"\x00" * 16, mechanism=Mechanism.SHA256)
             pytest.fail("Should have rejected SHA256 as decryption mechanism")
         except PKCS11Error as e:
-            # Broad catch intentional -- assert_ckr validates the specific type
+            # Broad catch intentional - assert_ckr validates the specific type
             assert_ckr(CKR_DECRYPT["init_mechanism_invalid"], e, ckr_strict)
 
     def test_key_type_inconsistent(
@@ -80,13 +80,13 @@ class TestDecryptDataErrors:
     def test_ecb_garbage_ciphertext(
         self, p11_session: Any, ckr_strict: bool
     ) -> None:
-        """AES-ECB decrypt of garbage (block-aligned) -- may return data or error."""
+        """AES-ECB decrypt of garbage (block-aligned) - may return data or error."""
         key = p11_session.generate_key(KeyType.AES, 256)
         exp = CKR_DECRYPT["encrypted_data_invalid"]
         try:
             # Block-aligned garbage: AES-ECB will "decrypt" it (ECB has no integrity)
             pt = key.decrypt(b"\xCC" * 16, mechanism=Mechanism.AES_ECB)
-            # ECB decrypts anything block-aligned -- not an error
+            # ECB decrypts anything block-aligned - not an error
             assert len(pt) == 16
         except PKCS11Error as e:
             # Some modules may reject garbage ciphertext
@@ -101,7 +101,7 @@ class TestDecryptDataErrors:
         # RSA-2048 expects 256-byte ciphertext, provide 128
         try:
             priv.decrypt(b"\x00" * 128, mechanism=Mechanism.RSA_PKCS)
-            # Module accepted wrong-length ciphertext -- compliance deviation
+            # Module accepted wrong-length ciphertext - compliance deviation
             if not exp.allow_success:
                 pytest.fail("Should have rejected 128-byte ciphertext for RSA-2048")
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -122,7 +122,7 @@ class TestDecryptDataErrors:
             pytest.skip("AES_CBC_PAD not supported")
         key = p11_session.generate_key(KeyType.AES, 256)
         iv = p11_session.generate_random(128)
-        # Garbage 16 bytes -- will have invalid PKCS#7 padding
+        # Garbage 16 bytes - will have invalid PKCS#7 padding
         try:
             key.decrypt(b"\xDD" * 16, mechanism=Mechanism.AES_CBC_PAD, mechanism_param=iv)
             # Some modules may "decrypt" garbage without checking padding

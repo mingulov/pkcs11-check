@@ -198,20 +198,20 @@ def test_acvp_ecdsa_sigver(
         except DeviceError:
             # Kryoptic returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID
             # for all verify failures. This is a known Kryoptic bug (documented in
-            # docs/module-issues.md). Treat as rejection -- the signature was not
+            # docs/module-issues.md). Treat as rejection - the signature was not
             # accepted, which is correct for invalid vectors.
             verified = False
 
         if not expected_pass and verified:
             pytest.fail(
                 f"{vec_id}: module ACCEPTED an INVALID signature "
-                f"(ACVP testPassed=False) -- security concern"
+                f"(ACVP testPassed=False) - security concern"
             )
 
         if expected_pass and not verified:
             pytest.xfail(
                 f"{vec_id}: module rejected a VALID ACVP signature "
-                f"(ACVP testPassed=True) -- module issue"
+                f"(ACVP testPassed=True) - module issue"
             )
 
     finally:

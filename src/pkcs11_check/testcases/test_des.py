@@ -42,7 +42,7 @@ _DES_CAPABILITIES = (
     | MechanismFlag.UNWRAP
 )
 
-# 8-byte DES block -- ECB/CBC data must be block-aligned
+# 8-byte DES block - ECB/CBC data must be block-aligned
 _TWO_BLOCKS = b"12345678abcdefgh"  # exactly 16 bytes
 
 
@@ -57,7 +57,7 @@ def _des_iv(session: Any) -> Any:
 
 
 class TestDESKeyGen:
-    """CKM_DES_KEY_GEN -- single-DES key generation."""
+    """CKM_DES_KEY_GEN - single-DES key generation."""
 
     def test_des_key_gen(self, p11_session: Any, p11_module: Any) -> None:
         """Generate a DES session key."""
@@ -233,7 +233,7 @@ class TestDESEncryption:
             template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
         iv = _des_iv(p11_session)
-        # Non-block-aligned data -- PKCS#5 padding handles it
+        # Non-block-aligned data - PKCS#5 padding handles it
         plaintext = b"DES CBC PAD test data!"  # 22 bytes, not a multiple of 8
         try:
             try:
@@ -265,7 +265,7 @@ class TestDESEncryption:
             template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
         iv = _des_iv(p11_session)
-        plaintext = b"OFB test data!!"  # 15 bytes -- stream mode, no alignment needed
+        plaintext = b"OFB test data!!"  # 15 bytes - stream mode, no alignment needed
         try:
             try:
                 ct = key.encrypt(plaintext, mechanism=Mechanism.DES_OFB64, mechanism_param=iv)
@@ -340,7 +340,7 @@ class TestDESEncryption:
 
 
 class TestDESMAC:
-    """DES_MAC and DES_MAC_GENERAL -- MAC sign/verify tests.
+    """DES_MAC and DES_MAC_GENERAL - MAC sign/verify tests.
 
     Like single-DES encrypt, these may return MechanismInvalid on OpenSSL 3
     platforms where the legacy DES cipher is not available.  Tests skip
@@ -445,7 +445,7 @@ class TestDESMAC:
 
 
 class TestDES2KeyGen:
-    """CKM_DES2_KEY_GEN -- two-key Triple DES key generation."""
+    """CKM_DES2_KEY_GEN - two-key Triple DES key generation."""
 
     def test_des2_key_gen(self, p11_session: Any, p11_module: Any) -> None:
         """Generate a DES2 session key."""
@@ -465,7 +465,7 @@ class TestDES2KeyGen:
 
 
 class TestDES3KeyGen:
-    """CKM_DES3_KEY_GEN -- three-key Triple DES key generation."""
+    """CKM_DES3_KEY_GEN - three-key Triple DES key generation."""
 
     def test_des3_key_gen(self, p11_session: Any, p11_module: Any) -> None:
         """Generate a DES3 session key."""
@@ -608,7 +608,7 @@ class TestDES3Encryption:
 
 
 class TestDES3MAC:
-    """DES3_MAC, DES3_MAC_GENERAL, DES3_CMAC, DES3_CMAC_GENERAL -- sign/verify tests."""
+    """DES3_MAC, DES3_MAC_GENERAL, DES3_CMAC, DES3_CMAC_GENERAL - sign/verify tests."""
 
     def test_des3_mac_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
         """DES3-MAC sign and verify roundtrip."""
@@ -726,7 +726,7 @@ class TestDES3MAC:
 
 
 # ---------------------------------------------------------------------------
-# DES key derivation by data encryption -- mechanism availability checks only
+# DES key derivation by data encryption - mechanism availability checks only
 # ---------------------------------------------------------------------------
 
 
@@ -743,16 +743,16 @@ class TestDESKeyDerivation:
     def test_des_ecb_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_DES_ECB_ENCRYPT_DATA is advertised when DES is supported."""
         if not has_mechanism(p11_module, "DES_KEY_GEN"):
-            pytest.skip("CKM_DES_KEY_GEN not supported -- skipping derivation check")
+            pytest.skip("CKM_DES_KEY_GEN not supported - skipping derivation check")
         if not has_mechanism(p11_module, "DES_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_DES_ECB_ENCRYPT_DATA not supported")
-        # Mechanism is present -- no further operation needed for availability check
+        # Mechanism is present - no further operation needed for availability check
         assert True
 
     def test_des_cbc_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_DES_CBC_ENCRYPT_DATA is advertised when DES is supported."""
         if not has_mechanism(p11_module, "DES_KEY_GEN"):
-            pytest.skip("CKM_DES_KEY_GEN not supported -- skipping derivation check")
+            pytest.skip("CKM_DES_KEY_GEN not supported - skipping derivation check")
         if not has_mechanism(p11_module, "DES_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_DES_CBC_ENCRYPT_DATA not supported")
         assert True
@@ -760,7 +760,7 @@ class TestDESKeyDerivation:
     def test_des3_ecb_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_DES3_ECB_ENCRYPT_DATA is advertised when DES3 is supported."""
         if not has_mechanism(p11_module, "DES3_KEY_GEN"):
-            pytest.skip("CKM_DES3_KEY_GEN not supported -- skipping derivation check")
+            pytest.skip("CKM_DES3_KEY_GEN not supported - skipping derivation check")
         if not has_mechanism(p11_module, "DES3_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_DES3_ECB_ENCRYPT_DATA not supported")
         assert True
@@ -768,7 +768,7 @@ class TestDESKeyDerivation:
     def test_des3_cbc_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_DES3_CBC_ENCRYPT_DATA is advertised when DES3 is supported."""
         if not has_mechanism(p11_module, "DES3_KEY_GEN"):
-            pytest.skip("CKM_DES3_KEY_GEN not supported -- skipping derivation check")
+            pytest.skip("CKM_DES3_KEY_GEN not supported - skipping derivation check")
         if not has_mechanism(p11_module, "DES3_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_DES3_CBC_ENCRYPT_DATA not supported")
         assert True

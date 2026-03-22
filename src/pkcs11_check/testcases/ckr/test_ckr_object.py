@@ -53,7 +53,7 @@ class TestCreateObjectErrors:
                     Attribute.TOKEN: False,
                 }
             )
-            # Some modules ignore KEY_TYPE on DATA -- acceptable
+            # Some modules ignore KEY_TYPE on DATA - acceptable
             assert obj is not None
         except TEMPLATE_ERRORS:
             pass  # Correct to reject inconsistent template
@@ -96,7 +96,7 @@ class TestSetAttributeErrors:
         )
         try:
             obj[Attribute.CLASS] = ObjectClass.SECRET_KEY
-            # Kryoptic silently accepts -- compliance deviation
+            # Kryoptic silently accepts - compliance deviation
             from pkcs11_check.compliance import ComplianceLevel, note
             note(
                 "C_SetAttributeValue accepted change to read-only CKA_CLASS",
@@ -127,7 +127,7 @@ class TestFindObjectsErrors:
     def test_find_with_empty_result(self, p11_session: Any) -> None:
         """FindObjects with template matching nothing -> returns empty list."""
         results = list(p11_session.get_objects({Attribute.LABEL: "nonexistent_ckr_label_xyz"}))
-        assert results == []  # Empty is valid -- not an error
+        assert results == []  # Empty is valid - not an error
 
     def test_find_by_class(self, p11_session: Any) -> None:
         """FindObjects with CKA_CLASS filter works correctly."""

@@ -6,7 +6,7 @@ MAC signing/verification, and key derivation availability checks.
 Camellia: 128/192/256-bit keys, 16-byte block.
 IV for CBC/CTR modes: 16 bytes.
 
-Most modules do NOT support Camellia -- all tests will skip cleanly on those
+Most modules do NOT support Camellia - all tests will skip cleanly on those
 platforms. Kryoptic and some NSS builds include Camellia support.
 """
 
@@ -23,7 +23,7 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.full
 
-# 16-byte Camellia block -- ECB/CBC data must be block-aligned
+# 16-byte Camellia block - ECB/CBC data must be block-aligned
 _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 
 
@@ -48,7 +48,7 @@ def _camellia_key(session: Any, bits: int, template: dict[str, Any]) -> Any:
 
 
 class TestCamelliaKeyGen:
-    """CKM_CAMELLIA_KEY_GEN -- key generation for 128/192/256-bit keys."""
+    """CKM_CAMELLIA_KEY_GEN - key generation for 128/192/256-bit keys."""
 
     def test_camellia_key_gen_128(self, p11_session: Any, p11_module: Any) -> None:
         """Generate a Camellia-128 session key."""
@@ -205,7 +205,7 @@ class TestCamelliaEncryption:
             {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
         )
         iv = _camellia_iv(p11_session)
-        # Non-block-aligned data -- PKCS#7 padding handles it
+        # Non-block-aligned data - PKCS#7 padding handles it
         plaintext = b"Camellia CBC PAD test data!"  # 27 bytes, not a multiple of 16
         try:
             try:
@@ -253,7 +253,7 @@ class TestCamelliaEncryption:
 
 
 class TestCamelliaCTR:
-    """CKM_CAMELLIA_CTR -- counter mode encrypt/decrypt tests.
+    """CKM_CAMELLIA_CTR - counter mode encrypt/decrypt tests.
 
     Camellia CTR uses the same CK_AES_CTR_PARAMS structure (counter bits +
     16-byte counter block) as AES CTR. CTRParams from pkcs11.mechanisms wraps
@@ -274,7 +274,7 @@ class TestCamelliaCTR:
         )
         nonce = p11_session.generate_random(96)  # 12-byte nonce; 4 bytes left as counter
         params = CTRParams(nonce)
-        plaintext = b"Camellia CTR mode test data!!"  # arbitrary length -- CTR is a stream mode
+        plaintext = b"Camellia CTR mode test data!!"  # arbitrary length - CTR is a stream mode
         try:
             try:
                 ct = key.encrypt(
@@ -326,7 +326,7 @@ class TestCamelliaCTR:
 
 
 class TestCamelliaMAC:
-    """CKM_CAMELLIA_MAC and CKM_CAMELLIA_MAC_GENERAL -- MAC sign/verify tests."""
+    """CKM_CAMELLIA_MAC and CKM_CAMELLIA_MAC_GENERAL - MAC sign/verify tests."""
 
     def test_camellia_mac_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
         """Camellia-MAC sign and verify roundtrip."""
@@ -400,7 +400,7 @@ class TestCamelliaMAC:
 
 
 # ---------------------------------------------------------------------------
-# Key derivation by data encryption -- availability checks only
+# Key derivation by data encryption - availability checks only
 # ---------------------------------------------------------------------------
 
 
@@ -416,16 +416,16 @@ class TestCamelliaKeyDerivation:
     def test_camellia_ecb_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_CAMELLIA_ECB_ENCRYPT_DATA is advertised when Camellia is supported."""
         if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
-            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported -- skipping derivation check")
+            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported - skipping derivation check")
         if not has_mechanism(p11_module, "CAMELLIA_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_CAMELLIA_ECB_ENCRYPT_DATA not supported")
-        # Mechanism is present -- no further operation needed for availability check
+        # Mechanism is present - no further operation needed for availability check
         assert True
 
     def test_camellia_cbc_encrypt_data_available(self, p11_module: Any) -> None:
         """Check CKM_CAMELLIA_CBC_ENCRYPT_DATA is advertised when Camellia is supported."""
         if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
-            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported -- skipping derivation check")
+            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported - skipping derivation check")
         if not has_mechanism(p11_module, "CAMELLIA_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_CAMELLIA_CBC_ENCRYPT_DATA not supported")
         assert True

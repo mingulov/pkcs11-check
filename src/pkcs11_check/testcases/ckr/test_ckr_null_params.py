@@ -3,9 +3,9 @@
 Tests that C_* functions properly validate NULL pointers and return
 CKR_ARGUMENTS_BAD (0x00000007) instead of segfaulting.
 
-All tests run in subprocess -- modules may crash on NULL parameters.
+All tests run in subprocess - modules may crash on NULL parameters.
 A segfault (returncode < 0) is recorded as "module doesn't validate
-NULL params" -- that's a valid test finding, not a test failure.
+NULL params" - that's a valid test finding, not a test failure.
 
 Source: PKCS#11 v3.1 Sec.5.1.6 (CKR_ARGUMENTS_BAD).
 """
@@ -35,14 +35,14 @@ def _check_null_result(
     - Segfault (rc < 0): module doesn't validate NULL (finding, not failure)
     """
     if rc < 0:
-        # Segfault -- record as compliance finding
+        # Segfault - record as compliance finding
         from pkcs11_check.compliance import ComplianceLevel, note
         note(
             f"{func_name}(NULL): segfault (signal {-rc})",
             ComplianceLevel.NOT_RECOMMENDED,
             reference="PKCS#11 v3.1 Sec.5.1.6: CKR_ARGUMENTS_BAD",
         )
-        return  # Not a test failure -- it's a finding
+        return  # Not a test failure - it's a finding
 
     # Parse CKR from stdout
     assert "CKR:" in out, f"{func_name}: unexpected output: {out} | stderr: {err}"
@@ -52,7 +52,7 @@ def _check_null_result(
     if ckr == CKR_ARGUMENTS_BAD:
         pass  # Correct per spec
     elif ckr == 0:  # CKR_OK
-        # Module accepted NULL -- compliance deviation
+        # Module accepted NULL - compliance deviation
         from pkcs11_check.compliance import ComplianceLevel, note
         note(
             f"{func_name}(NULL): accepted without error",
@@ -60,7 +60,7 @@ def _check_null_result(
             reference="PKCS#11 v3.1 Sec.5.1.6: CKR_ARGUMENTS_BAD",
         )
     else:
-        # Other CKR -- module validates but returns different error
+        # Other CKR - module validates but returns different error
         from pkcs11_check.compliance import ComplianceLevel, note
         note(
             f"{func_name}(NULL): returned CKR 0x{ckr:08x} (expected ARGUMENTS_BAD)",
@@ -93,7 +93,7 @@ class TestNullParameters:
     def test_open_session_null_handle(self, p11_config: Any) -> None:
         """C_OpenSession with NULL phSession -> CKR_ARGUMENTS_BAD or segfault.
 
-        Most modules don't export C_OpenSession as a direct symbol -- only
+        Most modules don't export C_OpenSession as a direct symbol - only
         via CK_FUNCTION_LIST. Uses pkcs11 wrapper to get slot, then tries
         raw ctypes. Skips if function not directly exported.
         """

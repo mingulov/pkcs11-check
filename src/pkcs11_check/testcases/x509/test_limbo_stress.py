@@ -3,7 +3,7 @@
 Tests that EVERY unique X.509 certificate and CRL in the limbo dataset
 can be handled by the PKCS#11 module without crashing.
 
-Marked @stress -- not run by default. A "pass" is any non-crash CKR code.
+Marked @stress - not run by default. A "pass" is any non-crash CKR code.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ _all_crls = get_unique_limbo_crls(_all_cases)
 def test_exhaustive_cert_import_no_crash(
     tc_id: str, der_bytes: bytes, p11_session: Any, limbo_available: Any
 ) -> None:
-    """Import every unique cert from Limbo -- must not crash module."""
+    """Import every unique cert from Limbo - must not crash module."""
     try:
         obj = p11_session.create_object(
             {
@@ -54,7 +54,7 @@ def test_exhaustive_cert_import_no_crash(
 def test_exhaustive_crl_import_no_crash(
     tc_id: str, der_bytes: bytes, p11_session: Any, limbo_available: Any
 ) -> None:
-    """Import every unique CRL from Limbo -- must not crash module."""
+    """Import every unique CRL from Limbo - must not crash module."""
     # Attribute.CLASS for CRL is often ObjectClass.X_509_CRL or similar depending on PKCS11 version
     # python-pkcs11 constants might vary.
     try:

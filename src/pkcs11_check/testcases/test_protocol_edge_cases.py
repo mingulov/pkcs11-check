@@ -1,4 +1,4 @@
-"""Protocol edge-case tests -- stale handles, resource exhaustion, spec-ambiguous calls.
+"""Protocol edge-case tests - stale handles, resource exhaustion, spec-ambiguous calls.
 
 References: rep11.md Iteration 2-3, PKCS#11 spec ambiguities.
 """
@@ -17,7 +17,7 @@ pytestmark = pytest.mark.security
 
 
 class TestResourceExhaustion:
-    """Resource exhaustion -- graceful errors, no crash (task 7.13)."""
+    """Resource exhaustion - graceful errors, no crash (task 7.13)."""
 
     def test_many_session_objects(self, p11_session: Any) -> None:
         """Create 200 session objects. Verify module handles gracefully."""
@@ -26,7 +26,7 @@ class TestResourceExhaustion:
             for i in range(200):
                 keys.append(p11_session.generate_key(KeyType.AES, 128))
         except RESOURCE_ERRORS:
-            pass  # CKR_DEVICE_MEMORY or similar -- graceful
+            pass  # CKR_DEVICE_MEMORY or similar - graceful
         finally:
             for k in keys:
                 try:
@@ -68,7 +68,7 @@ class TestSpecAmbiguousCalls:
     """DoS via spec-ambiguous calls (task 7.16)."""
 
     def test_double_initialize(self, p11_config: Any) -> None:
-        """C_Initialize called twice -- must return CKR_CRYPTOKI_ALREADY_INITIALIZED or succeed."""
+        """C_Initialize called twice - must return CKR_CRYPTOKI_ALREADY_INITIALIZED or succeed."""
         import subprocess
         import sys
         import textwrap
@@ -96,12 +96,12 @@ class TestSpecAmbiguousCalls:
 
     def test_get_function_list_always_works(self, p11_module: Any) -> None:
         """C_GetFunctionList should always work (even multiple times)."""
-        # python-pkcs11 calls this internally -- verify module is still functional
+        # python-pkcs11 calls this internally - verify module is still functional
         slots = p11_module.get_slots()
         assert len(slots) >= 0  # Just verify no crash
 
     def test_multiple_get_slots(self, p11_module: Any) -> None:
-        """Calling get_slots 100 times -- must not leak or crash."""
+        """Calling get_slots 100 times - must not leak or crash."""
         for _ in range(100):
             slots = p11_module.get_slots()
         assert len(slots) >= 0
@@ -111,7 +111,7 @@ class TestV240V32AttributeMix:
     """v2.40 + v3.2 attribute mix (task 7.14)."""
 
     def test_v32_attrs_on_v240_module(self, p11_session: Any, p11_interface_version: str) -> None:
-        """v3.2-only attributes on v2.40 module -- must reject, not crash."""
+        """v3.2-only attributes on v2.40 module - must reject, not crash."""
         if p11_interface_version not in ("2.40",):
             pytest.skip("Only relevant for v2.40 modules")
 
@@ -126,7 +126,7 @@ class TestV240V32AttributeMix:
             pass  # Correct: reject unknown attribute
 
     def test_encapsulate_attr_on_non_pqc(self, p11_session: Any) -> None:
-        """CKA_ENCAPSULATE on non-PQC key -- must reject, not crash."""
+        """CKA_ENCAPSULATE on non-PQC key - must reject, not crash."""
         try:
             p11_session.generate_key(
                 KeyType.AES,

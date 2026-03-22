@@ -1,7 +1,7 @@
 """CKR compliance tests for general-purpose functions.
 
 Covers C_Initialize, C_Finalize, C_GetInterfaceList.
-All tests run in subprocess -- these functions affect global library state.
+All tests run in subprocess - these functions affect global library state.
 
 Source: PKCS#11 v3.1 Sec.5.4.1-5.4.4.
 """
@@ -60,7 +60,7 @@ class TestInitializeErrors:
             import pkcs11
             p = pkcs11.lib("{module}")
             p.finalize()
-            # Now try finalize again -- should get NOT_INITIALIZED
+            # Now try finalize again - should get NOT_INITIALIZED
             try:
                 p.finalize()
                 print("CKR:finalize_accepted")
@@ -78,7 +78,7 @@ class TestInitializeErrors:
         assert output.startswith("CKR:"), f"Unexpected output: {output}"
 
     def test_get_interface_list(self, p11_config: Any) -> None:
-        """C_GetInterfaceList -- should work or return FUNCTION_NOT_SUPPORTED."""
+        """C_GetInterfaceList - should work or return FUNCTION_NOT_SUPPORTED."""
         module = str(p11_config.module)
         script = textwrap.dedent(f"""\
             import pkcs11

@@ -1,4 +1,4 @@
-"""NIST ACVP SLH-DSA test vectors -- the ONLY source for SLH-DSA vectors.
+"""NIST ACVP SLH-DSA test vectors - the ONLY source for SLH-DSA vectors.
 
 Tests SLH-DSA signature verification and generation using official NIST ACVP
 vectors.  Requires: scripts/fetch-optional-data.sh acvp
@@ -78,7 +78,7 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load SLH-DSA sigGen ACVP vectors merged with expected results."""
     all_vecs = load_acvp_vectors("SLH-DSA-sigGen-FIPS205")
     result = []
-    for vec in all_vecs[:5]:  # SLH-DSA signing is slow -- keep minimal
+    for vec in all_vecs[:5]:  # SLH-DSA signing is slow - keep minimal
         inp = vec["input"]
         group = vec["group"]
         param_name = group.get("parameterSet", "")
@@ -140,17 +140,17 @@ def test_slhdsa_sigver(
             # instead of CKR_SIGNATURE_INVALID for corrupt signatures.
             verified = False
         except PKCS11Error as e:
-            # Unexpected error from the module -- record as xfail
+            # Unexpected error from the module - record as xfail
             pytest.xfail(f"SLH-DSA verify raised unexpected error for {vec_id}: {e}")
 
         expected = vec["expected_pass"]
         if not expected and verified:
-            # Module accepted an invalid signature -- security concern
+            # Module accepted an invalid signature - security concern
             pytest.fail(f"{vec_id}: accepted INVALID signature (expected rejection)")
         if expected and not verified:
-            # Module rejected a valid signature -- module issue, mark as xfail
+            # Module rejected a valid signature - module issue, mark as xfail
             pytest.xfail(
-                f"{vec_id}: rejected VALID SLH-DSA signature -- known Kryoptic issue"
+                f"{vec_id}: rejected VALID SLH-DSA signature - known Kryoptic issue"
             )
     finally:
         if pub_key is not None:

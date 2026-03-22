@@ -37,7 +37,7 @@ class TestWrapKeyErrors:
             wrap_key.wrap_key(target, mechanism=Mechanism.AES_KEY_WRAP)
             pytest.fail("Should have rejected wrapping non-extractable key")
         except PKCS11Error:
-            pass  # CKR_KEY_UNEXTRACTABLE or CKR_KEY_NOT_WRAPPABLE -- both acceptable
+            pass  # CKR_KEY_UNEXTRACTABLE or CKR_KEY_NOT_WRAPPABLE - both acceptable
 
     def test_mechanism_invalid(
         self, p11_session: Any, ckr_strict: bool

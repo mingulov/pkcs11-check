@@ -3,7 +3,7 @@
 Covers GOST 28147-89 (symmetric), GOST R 34.10-2001 (signature),
 and GOST R 34.11-94 (digest/HMAC).
 
-Almost no modules support GOST -- tests skip cleanly when unsupported.
+Almost no modules support GOST - tests skip cleanly when unsupported.
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.full
 
-# 16 bytes -- 2 x 8-byte GOST 28147-89 blocks
+# 16 bytes - 2 x 8-byte GOST 28147-89 blocks
 _TWO_BLOCKS = b"12345678abcdefgh"
 
-# 32 bytes -- typical GOST R 34.11-94 hash output size
+# 32 bytes - typical GOST R 34.11-94 hash output size
 _HASH_SIZE_DATA = bytes(range(32))
 
 # Common error tuple for GOST encrypt/decrypt operations
@@ -41,7 +41,7 @@ def _gost_iv(session: Any) -> bytes:
 
 
 class TestGOST28147KeyGen:
-    """CKM_GOST28147_KEY_GEN -- generate GOST 28147-89 symmetric keys."""
+    """CKM_GOST28147_KEY_GEN - generate GOST 28147-89 symmetric keys."""
 
     def test_gost28147_key_gen(self, p11_session: Any, p11_module: Any) -> None:
         """Generate a 256-bit GOST 28147-89 secret key."""
@@ -70,7 +70,7 @@ class TestGOST28147KeyGen:
 
 
 class TestGOST28147Encryption:
-    """CKM_GOST28147_ECB and CKM_GOST28147 -- GOST 28147-89 encrypt/decrypt."""
+    """CKM_GOST28147_ECB and CKM_GOST28147 - GOST 28147-89 encrypt/decrypt."""
 
     def test_ecb_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
         """Encrypt and decrypt two blocks with CKM_GOST28147_ECB."""
@@ -153,7 +153,7 @@ class TestGOST28147Encryption:
 
 
 class TestGOST28147MAC:
-    """CKM_GOST28147_MAC -- GOST 28147-89 message authentication code."""
+    """CKM_GOST28147_MAC - GOST 28147-89 message authentication code."""
 
     def test_mac_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
         """Sign and verify a MAC with CKM_GOST28147_MAC."""
@@ -184,7 +184,7 @@ class TestGOST28147MAC:
 
 
 class TestGOSTR3410Signature:
-    """CKM_GOSTR3410 and CKM_GOSTR3410_WITH_GOSTR3411 -- GOST R 34.10-2001 signatures."""
+    """CKM_GOSTR3410 and CKM_GOSTR3410_WITH_GOSTR3411 - GOST R 34.10-2001 signatures."""
 
     def test_keypair_gen(self, p11_session: Any, p11_module: Any) -> None:
         """Generate a GOST R 34.10-2001 key pair."""
@@ -254,7 +254,7 @@ class TestGOSTR3410Signature:
 
 
 class TestGOSTR3411Digest:
-    """CKM_GOSTR3411 and CKM_GOSTR3411_HMAC -- GOST R 34.11-94 digest and HMAC."""
+    """CKM_GOSTR3411 and CKM_GOSTR3411_HMAC - GOST R 34.11-94 digest and HMAC."""
 
     def test_digest(self, p11_session: Any, p11_module: Any) -> None:
         """Compute a GOST R 34.11-94 digest (no key needed)."""

@@ -1,4 +1,4 @@
-"""Buffer management tests -- output sizing, boundary conditions.
+"""Buffer management tests - output sizing, boundary conditions.
 
 Tests that operations handle various data sizes correctly, including
 empty data, single-byte, block boundaries, and large payloads.
@@ -51,7 +51,7 @@ class TestEncryptBufferSizes:
         assert key.decrypt(ct, mechanism=Mechanism.AES_ECB) == pt
 
     def test_1mb(self, p11_session: Any) -> None:
-        """Encrypt 1MB payload -- tests streaming/chunking."""
+        """Encrypt 1MB payload - tests streaming/chunking."""
         key = p11_session.generate_key(KeyType.AES, 256)
         pt = b"\xAB" * (1024 * 1024)  # 1MB
         ct = key.encrypt(pt, mechanism=Mechanism.AES_ECB)

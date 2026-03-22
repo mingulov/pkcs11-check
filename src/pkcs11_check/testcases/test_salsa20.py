@@ -1,4 +1,4 @@
-"""Standalone stream cipher tests -- Salsa20, ChaCha20, Poly1305.
+"""Standalone stream cipher tests - Salsa20, ChaCha20, Poly1305.
 
 Covers:
   - CKM_SALSA20_KEY_GEN + CKM_SALSA20: Salsa20 stream cipher encrypt/decrypt
@@ -197,7 +197,7 @@ class TestPoly1305:
                 result = key.verify(tampered, tag, mechanism=Mechanism.POLY1305)
                 assert result is False
             except (FunctionFailed, MechanismInvalid):
-                pass  # module rejected invalid MAC -- acceptable
+                pass  # module rejected invalid MAC - acceptable
         finally:
             key.destroy()
 

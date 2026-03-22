@@ -1,4 +1,4 @@
-"""Wycheproof RSA signature verification vectors -- all key sizes and hashes.
+"""Wycheproof RSA signature verification vectors - all key sizes and hashes.
 
 Auto-discovers RSA signature vector files from the Wycheproof submodule.
 Each file produces a parametrized test class.

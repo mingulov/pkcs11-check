@@ -44,7 +44,7 @@ class TestErrorPriority:
         except (ObjectHandleInvalid, KeyHandleInvalid):
             pass  # Correct: handle error has priority
         except MechanismInvalid:
-            # Module checked mechanism first -- lower priority but acceptable
+            # Module checked mechanism first - lower priority but acceptable
             from pkcs11_check.compliance import ComplianceLevel, note
             note(
                 "Module returned MECHANISM_INVALID before checking handle validity",

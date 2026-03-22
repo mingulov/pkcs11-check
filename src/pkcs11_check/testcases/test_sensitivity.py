@@ -1,7 +1,7 @@
 """Attribute sensitivity enforcement tests.
 
 Verifies that PKCS#11 modules enforce CKA_SENSITIVE and CKA_EXTRACTABLE
-correctly -- sensitive key values must not be readable, non-extractable
+correctly - sensitive key values must not be readable, non-extractable
 keys must not be wrappable.
 """
 

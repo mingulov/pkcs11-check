@@ -1,7 +1,7 @@
 """Session state machine verification tests.
 
 Verifies PKCS#11 session state transitions per OASIS spec
-session_mgmt_functions.md -- login states, session flags, concurrent
+session_mgmt_functions.md - login states, session flags, concurrent
 session behavior, and logout effects.
 
 States:
@@ -81,7 +81,7 @@ class TestLoginStateTransitions:
         try:
             # Without login, private objects should be invisible
             priv_keys = list(session.get_objects({Attribute.CLASS: ObjectClass.PRIVATE_KEY}))
-            assert len(priv_keys) == 0, "Private keys visible without login -- not public state"
+            assert len(priv_keys) == 0, "Private keys visible without login - not public state"
         finally:
             session.close()
 
@@ -89,7 +89,7 @@ class TestLoginStateTransitions:
         """After C_Login(USER), private objects become accessible."""
         pin = _get_pin(p11_config)
         if pin is None:
-            pytest.skip("No PIN configured -- cannot test USER login")
+            pytest.skip("No PIN configured - cannot test USER login")
         token = p11_module.get_token(p11_config.slot)
         session = token.open(rw=True)
         try:
@@ -103,7 +103,7 @@ class TestLoginStateTransitions:
             assert key is not None
             key.destroy()
         except UserAlreadyLoggedIn:
-            # Already logged in at token level -- still user state
+            # Already logged in at token level - still user state
             key = session.generate_key(
                 KeyType.AES,
                 256,
@@ -138,7 +138,7 @@ class TestLoginStateTransitions:
             )
             assert key is not None
 
-            # Logout -- should return to public state
+            # Logout - should return to public state
             session.logout()
 
             # Private objects should no longer be visible
@@ -147,7 +147,7 @@ class TestLoginStateTransitions:
                     {Attribute.CLASS: ObjectClass.SECRET_KEY, Attribute.LABEL: label}
                 )
             )
-            assert len(found) == 0, "Private object visible after logout -- still in user state"
+            assert len(found) == 0, "Private object visible after logout - still in user state"
 
             # Re-login to clean up
             session.login(p11.UserType.USER, pin)
@@ -177,7 +177,7 @@ class TestLoginStateTransitions:
             assert key is not None
             key.destroy()
         except UserAlreadyLoggedIn:
-            pass  # Another session holds the login -- acceptable
+            pass  # Another session holds the login - acceptable
         finally:
             _logout_safe(session)
             session.close()
@@ -212,7 +212,7 @@ class TestSOLoginState:
         session = token.open(rw=True)
         try:
             session.login(p11.UserType.SO, so_pin)
-            # SO is logged in -- verify by checking we can't login as USER
+            # SO is logged in - verify by checking we can't login as USER
             with pytest.raises(
                 (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn, UserTypeInvalid)
             ):
@@ -270,7 +270,7 @@ class TestLoginConflicts:
             with pytest.raises((UserAlreadyLoggedIn, UserTypeInvalid)):
                 session.login(p11.UserType.USER, pin)
         except UserAlreadyLoggedIn:
-            # First login already raised it -- token was already logged in
+            # First login already raised it - token was already logged in
             pass
         finally:
             _logout_safe(session)
@@ -314,7 +314,7 @@ class TestLoginConflicts:
             with pytest.raises((UserAlreadyLoggedIn, UserTypeInvalid)):
                 s2.login(p11.UserType.USER, pin)
         except UserAlreadyLoggedIn:
-            # s1 login itself raised it -- token already logged in
+            # s1 login itself raised it - token already logged in
             pass
         finally:
             _logout_safe(s1)
@@ -357,11 +357,11 @@ class TestConcurrentSessionLogin:
                 },
             )
 
-            # Open second session -- should inherit login state
+            # Open second session - should inherit login state
             s2 = token.open(rw=True)
             try:
                 found = list(s2.get_objects({Attribute.LABEL: "shared-login-test"}))
-                assert len(found) >= 1, "Session B cannot see private object -- login not shared"
+                assert len(found) >= 1, "Session B cannot see private object - login not shared"
             finally:
                 s2.close()
             key.destroy()
@@ -557,7 +557,7 @@ class TestLogoutEffects:
             session.close()
 
     def test_generate_random_works_after_logout(self, p11_module: Any, p11_config: Any) -> None:
-        """C_GenerateRandom does not require login -- works in public state."""
+        """C_GenerateRandom does not require login - works in public state."""
         pin = _get_pin(p11_config)
         if pin is None:
             pytest.skip("No PIN configured")
@@ -803,7 +803,7 @@ class TestLogoutWithoutLogin:
         try:
             cleanup.logout()
         except UserNotLoggedIn:
-            pass  # Good -- no login was active
+            pass  # Good - no login was active
         finally:
             cleanup.close()
 
@@ -839,7 +839,7 @@ class TestSessionContextManager:
         token = p11_module.get_token(p11_config.slot)
         with token.open(rw=True) as session:
             assert session.rw is True
-        # Session should be closed -- operations should fail
+        # Session should be closed - operations should fail
         with pytest.raises((SessionClosed, p11.exceptions.SessionHandleInvalid, AttributeError)):
             session.generate_random(32)
 
@@ -859,7 +859,7 @@ class TestSessionContextManager:
                 assert key is not None
                 key.destroy()
         except UserAlreadyLoggedIn:
-            # Another session is logged in -- acceptable
+            # Another session is logged in - acceptable
             pass
 
 

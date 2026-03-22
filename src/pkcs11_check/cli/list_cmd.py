@@ -1,4 +1,4 @@
-"""pkcs11-check list command -- list available tests."""
+"""pkcs11-check list command - list available tests."""
 
 from __future__ import annotations
 
@@ -30,4 +30,4 @@ def list_command(
     for key, desc in TEST_CATEGORIES.items():
         if category and key != category:
             continue
-        console.print(f"  [bold]{key}[/bold] -- {desc}")
+        console.print(f"  [bold]{key}[/bold] - {desc}")

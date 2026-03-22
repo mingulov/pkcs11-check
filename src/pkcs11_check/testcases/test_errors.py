@@ -23,7 +23,7 @@ class TestInvalidOperations:
             ct = key.encrypt(b"0123456789abcdef", mechanism_param=b"short")
             assert isinstance(ct, bytes)
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected -- module rejected invalid params
+            pass  # Expected - module rejected invalid params
 
     def test_generate_key_invalid_size(self, p11_session: Any) -> None:
         """Requesting unsupported key size should fail or produce unusable key."""
@@ -34,24 +34,24 @@ class TestInvalidOperations:
             pass  # Expected
 
     def test_verify_with_wrong_mechanism(self, p11_session: Any) -> None:
-        """Sign with one mechanism, verify with another -- should fail or differ."""
+        """Sign with one mechanism, verify with another - should fail or differ."""
         pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
         data = b"mechanism mismatch test"
         sig = priv.sign(data, mechanism=Mechanism.SHA256_RSA_PKCS)
 
         try:
             result = pub.verify(data, sig, mechanism=Mechanism.SHA384_RSA_PKCS)
-            # Some modules don't check DigestInfo OID -- just note it
+            # Some modules don't check DigestInfo OID - just note it
             assert result is True or result is False
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected -- module rejected mechanism mismatch
+            pass  # Expected - module rejected mechanism mismatch
 
     def test_encrypt_with_sign_key(self, p11_session: Any) -> None:
         """Using a sign-only key for encryption should fail."""
         _, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
         try:
             priv.encrypt(b"test", mechanism=Mechanism.RSA_PKCS)
-            # Some modules allow this -- not a hard failure
+            # Some modules allow this - not a hard failure
         except (pkcs11.exceptions.PKCS11Error, AttributeError):
             pass  # Expected
 
@@ -66,14 +66,14 @@ class TestInvalidOperations:
         garbage = p11_session.generate_random(2048)  # 256 bytes
         try:
             priv.decrypt(garbage, mechanism=Mechanism.RSA_PKCS)
-            # If decryption "succeeds", the result is garbage -- that's OK
+            # If decryption "succeeds", the result is garbage - that's OK
         except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected -- padding check failed
+            pass  # Expected - padding check failed
 
 
 class TestEmptyInputs:
     def test_encrypt_empty_data(self, p11_session: Any) -> None:
-        """Encrypting empty data -- behavior is implementation-defined."""
+        """Encrypting empty data - behavior is implementation-defined."""
         key = p11_session.generate_key(KeyType.AES, 256)
         iv = p11_session.generate_random(128)
         try:

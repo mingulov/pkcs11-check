@@ -112,7 +112,7 @@ def test_mlkem_decaps(
         # but the shared secret won't match
         if result == "valid" and expected_ss:
             # We can't directly compare since the key value is wrapped
-            pass  # Key was produced -- that's the expected behavior
+            pass  # Key was produced - that's the expected behavior
     except Exception:
         if result == "valid":
             pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}")

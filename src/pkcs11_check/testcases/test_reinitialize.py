@@ -74,8 +74,8 @@ class TestReinitialize:
             # Old session handle should be invalid now
             try:
                 session.generate_key(pkcs11.KeyType.AES, 128)
-                # Some modules may reuse the handle -- that's OK
+                # Some modules may reuse the handle - that's OK
             except pkcs11.exceptions.PKCS11Error:
-                pass  # Expected -- session invalidated by finalize
+                pass  # Expected - session invalidated by finalize
         finally:
             lib.finalize()

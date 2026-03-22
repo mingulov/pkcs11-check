@@ -5,7 +5,7 @@ SigVer vectors, and Ed25519 signature generation using ACVP SigGen vectors
 with known private keys (from internalProjection.json).
 
 Ed25519 is deterministic per RFC 8032, so exact signature comparison is valid.
-Ed448 SigGen is skipped -- context and pre-hashing variants complicate mapping
+Ed448 SigGen is skipped - context and pre-hashing variants complicate mapping
 to plain CKM_EDDSA, and ACVP prompt.json does not expose the private key.
 
 Requires: scripts/fetch-optional-data.sh acvp
@@ -267,15 +267,15 @@ def test_acvp_eddsa_sigver(
         except DeviceError:
             # Kryoptic returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID
             # for all verify failures (documented in docs/module-issues.md).
-            # Treat as rejection -- correct for invalid vectors.
+            # Treat as rejection - correct for invalid vectors.
             verified = False
         except MechanismParamInvalid:
             # Some modules (e.g., Kryoptic for Ed448) require explicit mechanism
             # parameters (CK_EDDSA_PARAMS) for CKM_EDDSA.  Plain parameterless
-            # EDDSA is not supported for this curve -- skip the vector.
+            # EDDSA is not supported for this curve - skip the vector.
             pytest.skip(
                 f"{vec_id}: module requires mechanism params for {vec['curve']} "
-                f"(CKR_MECHANISM_PARAM_INVALID) -- skipping"
+                f"(CKR_MECHANISM_PARAM_INVALID) - skipping"
             )
 
         expected_pass: bool = vec["expected_pass"]
@@ -283,13 +283,13 @@ def test_acvp_eddsa_sigver(
         if not expected_pass and verified:
             pytest.fail(
                 f"{vec_id}: module ACCEPTED an INVALID EdDSA signature "
-                f"(ACVP testPassed=False) -- security concern"
+                f"(ACVP testPassed=False) - security concern"
             )
 
         if expected_pass and not verified:
             pytest.xfail(
                 f"{vec_id}: module rejected a VALID EdDSA ACVP signature "
-                f"(ACVP testPassed=True) -- module issue"
+                f"(ACVP testPassed=True) - module issue"
             )
 
     finally:
@@ -314,7 +314,7 @@ def test_acvp_eddsa_siggen(
     Ed25519 is deterministic per RFC 8032: the same private key and message
     always produce the same signature, so exact byte comparison is correct.
 
-    Mismatch xfails -- the module may use a different serialization or the
+    Mismatch xfails - the module may use a different serialization or the
     private key import format may differ from what the module expects.
     """
     if not has_mechanism(p11_module, "EDDSA"):
@@ -347,8 +347,8 @@ def test_acvp_eddsa_siggen(
 
         if sig != expected_sig:
             pytest.xfail(
-                f"{vec_id}: Ed25519 signature mismatch -- "
-                f"got {sig.hex()}, expected {expected_sig.hex()} -- "
+                f"{vec_id}: Ed25519 signature mismatch - "
+                f"got {sig.hex()}, expected {expected_sig.hex()} - "
                 f"module may use different private key seed format"
             )
 

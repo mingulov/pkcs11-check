@@ -110,7 +110,7 @@ class TestDigestCrossVerify:
 
 
 class TestDigestKey:
-    """Tests for C_DigestKey -- digesting key material directly.
+    """Tests for C_DigestKey - digesting key material directly.
 
     Source: PKCS#11 v3.2 Sec.5.13.4 (C_DigestKey).
 

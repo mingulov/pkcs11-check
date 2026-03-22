@@ -4,7 +4,7 @@ Tests that require modifying token state (InitToken, SetPIN, InitPIN).
 Each test runs in subprocess with a TEMPORARY SoftHSM2 token to avoid
 damaging the main test token.
 
-Marked @destructive -- skipped unless --p11-destructive is passed.
+Marked @destructive - skipped unless --p11-destructive is passed.
 """
 
 from __future__ import annotations
@@ -151,7 +151,7 @@ sess = ctypes.c_ulong(0)
 rv = raw.C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
 assert rv == CKR_OK
 sh = sess.value
-# Don't login -- try InitPIN
+# Don't login - try InitPIN
 new_pin = b"9999"
 rv = raw.C_InitPIN(sh, (ctypes.c_ubyte * 4)(*new_pin), 4)
 print(f"CKR:0x{rv:08x}")

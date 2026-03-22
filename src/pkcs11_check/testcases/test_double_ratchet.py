@@ -1,12 +1,12 @@
-"""Signal Double Ratchet mechanism tests -- X2RATCHET derive/encrypt/decrypt.
+"""Signal Double Ratchet mechanism tests - X2RATCHET derive/encrypt/decrypt.
 
 Covers the four CKM_X2RATCHET_* mechanisms defined in PKCS#11 v3.2 / OASIS
 Signal Protocol extension:
 
-  CKM_X2RATCHET_INITIALIZE (0x00004025) -- derive X2RATCHET key as Alice
-  CKM_X2RATCHET_RESPOND   (0x00004026) -- derive X2RATCHET key as Bob
-  CKM_X2RATCHET_ENCRYPT   (0x00004027) -- encrypt + wrap with ratchet state
-  CKM_X2RATCHET_DECRYPT   (0x00004028) -- decrypt + unwrap with ratchet state
+  CKM_X2RATCHET_INITIALIZE (0x00004025) - derive X2RATCHET key as Alice
+  CKM_X2RATCHET_RESPOND   (0x00004026) - derive X2RATCHET key as Bob
+  CKM_X2RATCHET_ENCRYPT   (0x00004027) - encrypt + wrap with ratchet state
+  CKM_X2RATCHET_DECRYPT   (0x00004028) - decrypt + unwrap with ratchet state
 
 Almost no HSM implements these yet.  Every test checks mechanism availability
 first and skips cleanly.  If a module claims support the tests attempt a basic
@@ -59,7 +59,7 @@ def _create_ec_keypair(session: Any) -> tuple[Any, Any]:
     """Generate a Curve25519 / X25519 EC keypair for ratchet key material.
 
     X2RATCHET uses X25519 (curve25519) for all DH operations.  Falls back to
-    P-256 if the module does not advertise X25519 key generation -- in that case
+    P-256 if the module does not advertise X25519 key generation - in that case
     the ratchet mechanisms will almost certainly MechanismInvalid anyway and the
     test will xfail as expected.
     """
@@ -86,7 +86,7 @@ def _create_ec_keypair(session: Any) -> tuple[Any, Any]:
 
 
 class TestX2RatchetDerive:
-    """CKM_X2RATCHET_INITIALIZE and CKM_X2RATCHET_RESPOND -- ratchet key setup."""
+    """CKM_X2RATCHET_INITIALIZE and CKM_X2RATCHET_RESPOND - ratchet key setup."""
 
     # ------------------------------------------------------------------
     # CKM_X2RATCHET_INITIALIZE
@@ -244,7 +244,7 @@ class TestX2RatchetDerive:
 
 
 class TestX2RatchetEncrypt:
-    """CKM_X2RATCHET_ENCRYPT and CKM_X2RATCHET_DECRYPT -- message encryption."""
+    """CKM_X2RATCHET_ENCRYPT and CKM_X2RATCHET_DECRYPT - message encryption."""
 
     # ------------------------------------------------------------------
     # CKM_X2RATCHET_ENCRYPT
@@ -332,7 +332,7 @@ class TestX2RatchetEncrypt:
         if not has_mechanism(p11_module, "X2RATCHET_DECRYPT"):
             pytest.skip("CKM_X2RATCHET_DECRYPT not supported")
 
-        # Synthetic ciphertext -- will be rejected by any correct implementation.
+        # Synthetic ciphertext - will be rejected by any correct implementation.
         stub_ciphertext = bytes(range(64))
 
         key = p11_session.create_object(
@@ -348,7 +348,7 @@ class TestX2RatchetEncrypt:
         try:
             plaintext = key.decrypt(stub_ciphertext, mechanism=Mechanism.X2RATCHET_DECRYPT)
             # If the module actually decrypts the stub ciphertext without error,
-            # accept it -- some permissive stubs may succeed.
+            # accept it - some permissive stubs may succeed.
             assert plaintext is not None
         except _RATCHET_ERRORS as exc:
             pytest.xfail(f"CKM_X2RATCHET_DECRYPT not yet operational: {exc}")

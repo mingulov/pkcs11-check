@@ -1,4 +1,4 @@
-"""Session edge-case tests -- stale handles, CloseAllSessions, SoftHSM2 issue regressions.
+"""Session edge-case tests - stale handles, CloseAllSessions, SoftHSM2 issue regressions.
 
 References: rep11.md Iteration 2, SoftHSM2 #608, #596.
 """
@@ -16,7 +16,7 @@ pytestmark = pytest.mark.security
 
 
 class TestStaleSessionHandles:
-    """Reuse closed session handle -- must get error, not crash (task 7.7)."""
+    """Reuse closed session handle - must get error, not crash (task 7.7)."""
 
     @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
     def test_find_after_close(self, p11_module: Any, p11_config: Any) -> None:
@@ -136,7 +136,7 @@ class TestSoftHSM2IssueRegressions:
             )
 
     def test_rsa_keygen_minimum_size(self, p11_session: Any) -> None:
-        """Generate RSA with various sizes -- verify minimum is enforced."""
+        """Generate RSA with various sizes - verify minimum is enforced."""
         # Very small RSA should be rejected
         try:
             p11_session.generate_keypair(KeyType.RSA, 512)

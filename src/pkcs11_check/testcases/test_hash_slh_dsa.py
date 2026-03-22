@@ -1,4 +1,4 @@
-"""HashSLH-DSA (pre-hash SLH-DSA) sign/verify tests -- PKCS#11 v3.2.
+"""HashSLH-DSA (pre-hash SLH-DSA) sign/verify tests - PKCS#11 v3.2.
 
 Tests all 11 HASH_SLH_DSA mechanism variants:
 - CKM_HASH_SLH_DSA (generic, single-part only, requires CK_HASH_SIGN_ADDITIONAL_CONTEXT)
@@ -73,7 +73,7 @@ def _generate_slh_dsa_keypair(session: Any, param_set: SlhDsaParameterSet | None
 
 
 class TestHashSLHDSAGeneric:
-    """CKM_HASH_SLH_DSA -- generic pre-hash SLH-DSA (single-part only).
+    """CKM_HASH_SLH_DSA - generic pre-hash SLH-DSA (single-part only).
 
     This mechanism requires a CK_HASH_SIGN_ADDITIONAL_CONTEXT parameter
     that includes a hash algorithm field.  Since python-pkcs11 may not yet
@@ -99,7 +99,7 @@ class TestHashSLHDSAGeneric:
 
 
 class TestHashSLHDSAVariants:
-    """Hash-specific HASH_SLH_DSA variants -- sign/verify round-trips.
+    """Hash-specific HASH_SLH_DSA variants - sign/verify round-trips.
 
     Each variant does the hashing on-token.  The CK_SIGN_ADDITIONAL_CONTEXT
     parameter is optional (defaults: hedgeVariant=CKH_HEDGE_PREFERRED,

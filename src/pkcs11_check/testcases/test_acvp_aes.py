@@ -298,7 +298,7 @@ def test_acvp_aes_gcm_decrypt(
                 f"expected {vec['pt_expected'].hex()}"
             )
         else:
-            # Module accepted an invalid tag -- this is a security failure
+            # Module accepted an invalid tag - this is a security failure
             pytest.fail(
                 f"{vec_id}: module accepted GCM ciphertext with invalid tag "
                 f"(tag auth bypass)"

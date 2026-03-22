@@ -1,4 +1,4 @@
-"""HashML-DSA (pre-hash ML-DSA) sign/verify tests -- PKCS#11 v3.2.
+"""HashML-DSA (pre-hash ML-DSA) sign/verify tests - PKCS#11 v3.2.
 
 Tests all 11 HASH_ML_DSA mechanism variants:
 - CKM_HASH_ML_DSA (generic, single-part only, requires CK_HASH_SIGN_ADDITIONAL_CONTEXT)
@@ -73,7 +73,7 @@ def _generate_ml_dsa_keypair(session: Any, param_set: MLDsaParameterSet | None =
 
 
 class TestHashMLDSAGeneric:
-    """CKM_HASH_ML_DSA -- generic pre-hash ML-DSA (single-part only).
+    """CKM_HASH_ML_DSA - generic pre-hash ML-DSA (single-part only).
 
     This mechanism requires a CK_HASH_SIGN_ADDITIONAL_CONTEXT parameter
     that includes a hash algorithm field.  Since python-pkcs11 may not yet
@@ -99,7 +99,7 @@ class TestHashMLDSAGeneric:
 
 
 class TestHashMLDSAVariants:
-    """Hash-specific HASH_ML_DSA variants -- sign/verify round-trips.
+    """Hash-specific HASH_ML_DSA variants - sign/verify round-trips.
 
     Each variant does the hashing on-token.  The CK_SIGN_ADDITIONAL_CONTEXT
     parameter is optional (defaults: hedgeVariant=CKH_HEDGE_PREFERRED,

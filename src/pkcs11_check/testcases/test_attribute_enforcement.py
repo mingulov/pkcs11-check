@@ -1,4 +1,4 @@
-"""Attribute enforcement tests -- one-way flags, read-only attrs, template constraints.
+"""Attribute enforcement tests - one-way flags, read-only attrs, template constraints.
 
 Covers CKA_COPYABLE one-way rule, CKA_DESTROYABLE enforcement,
 CKA_KEY_GEN_MECHANISM read-only semantics, CKA_CHECK_VALUE (KCV),
@@ -69,7 +69,7 @@ class TestCopyableOneWay:
             # If it succeeded, check if the value actually changed
             if key[Attribute.COPYABLE] is True:
                 pytest.xfail(
-                    "SECURITY: CKA_COPYABLE escalated from False to True -- "
+                    "SECURITY: CKA_COPYABLE escalated from False to True - "
                     "one-way rule violated"
                 )
         except _SET_ATTR_ERRORS:
@@ -102,7 +102,7 @@ class TestCopyableOneWay:
 
 
 class TestDestroyable:
-    """CKA_DESTROYABLE enforcement -- when False, C_DestroyObject must be rejected."""
+    """CKA_DESTROYABLE enforcement - when False, C_DestroyObject must be rejected."""
 
     def test_destroyable_readable(self, p11_session: Any) -> None:
         """CKA_DESTROYABLE should be readable on a generated key (default True)."""
@@ -196,7 +196,7 @@ class TestKeyGenMechanism:
                 mech = key[Attribute.KEY_GEN_MECHANISM]
             except ValueError:
                 # python-pkcs11 raises ValueError when the raw value (e.g. 0xFFFFFFFF)
-                # is not a valid Mechanism enum entry -- this IS the unavailable sentinel
+                # is not a valid Mechanism enum entry - this IS the unavailable sentinel
                 return
             # CK_UNAVAILABLE_INFORMATION is ~0 (all bits set).
             mech_val = int(mech) if not isinstance(mech, int) else mech
@@ -211,7 +211,7 @@ class TestKeyGenMechanism:
             key.destroy()
 
     def test_key_gen_mechanism_read_only(self, p11_session: Any) -> None:
-        """CKA_KEY_GEN_MECHANISM must be read-only -- reject C_SetAttributeValue."""
+        """CKA_KEY_GEN_MECHANISM must be read-only - reject C_SetAttributeValue."""
         key = p11_session.generate_key(KeyType.AES, 256, template={Attribute.TOKEN: False})
         try:
             try:
@@ -226,7 +226,7 @@ class TestKeyGenMechanism:
 
 
 class TestCheckValue:
-    """CKA_CHECK_VALUE (KCV) -- key check value tests."""
+    """CKA_CHECK_VALUE (KCV) - key check value tests."""
 
     def test_generated_key_has_check_value(self, p11_session: Any) -> None:
         """Generated AES key should have a 3-byte CKA_CHECK_VALUE."""
@@ -260,7 +260,7 @@ class TestCheckValue:
             except (AttributeTypeInvalid, PKCS11Error) as e:
                 pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
 
-            # Encrypt 16 zero bytes with AES-ECB -- first 3 bytes = KCV
+            # Encrypt 16 zero bytes with AES-ECB - first 3 bytes = KCV
             plaintext = b"\x00" * 16
             ct = key.encrypt(plaintext, mechanism=Mechanism.AES_ECB)
             expected_kcv = ct[:3]
@@ -291,7 +291,7 @@ class TestCheckValue:
 
 
 class TestAllowedMechanisms:
-    """CKA_ALLOWED_MECHANISMS -- mechanism restriction on keys.
+    """CKA_ALLOWED_MECHANISMS - mechanism restriction on keys.
 
     Many modules do not support this attribute. Tests skip gracefully.
     """
@@ -390,7 +390,7 @@ class TestWrapWithTrusted:
 
 
 class TestAlwaysAuthenticate:
-    """CKA_ALWAYS_AUTHENTICATE -- re-authentication per-operation.
+    """CKA_ALWAYS_AUTHENTICATE - re-authentication per-operation.
 
     When set on a private key, each crypto operation requires a
     C_Login(CKU_CONTEXT_SPECIFIC) call first. Complex to test and many
@@ -467,7 +467,7 @@ class TestAlwaysAuthenticate:
             pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {e}")
 
         try:
-            # First sign after normal login -- may work (first use after login)
+            # First sign after normal login - may work (first use after login)
             data = b"test data for signing"
             try:
                 _ = priv.sign(data, mechanism=Mechanism.RSA_PKCS)
@@ -475,7 +475,7 @@ class TestAlwaysAuthenticate:
                 # Some modules require context-specific login even for the first op
                 pass
             except PKCS11Error:
-                # Module may enforce re-auth immediately -- this is valid
+                # Module may enforce re-auth immediately - this is valid
                 pass
         finally:
             priv.destroy()
@@ -483,7 +483,7 @@ class TestAlwaysAuthenticate:
 
 
 class TestDateAttributes:
-    """CKA_START_DATE / CKA_END_DATE -- informational date attributes on keys.
+    """CKA_START_DATE / CKA_END_DATE - informational date attributes on keys.
 
     Per spec, these are for reference only; Cryptoki does NOT enforce them.
     python-pkcs11 packs dates as datetime.date and unpacks as datetime.date.
