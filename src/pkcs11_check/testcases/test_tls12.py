@@ -42,12 +42,7 @@ _PRE_MASTER_SECRET = bytes(range(48))
 _CLIENT_RANDOM = bytes(range(32))
 _SERVER_RANDOM = bytes(range(32, 64))
 
-# Common error tuple for TLS mechanism operations.
-# TLS derive can fail with many CKR codes depending on the module:
-# - MechanismParamInvalid: wrong param structure
-# - KeyFunctionNotPermitted: key lacks CKA_DERIVE (NSS)
-# - AttributeValueInvalid: wrong template for derived key (Kryoptic)
-# - TemplateInconsistent: template conflicts
+# Error tuple for TLS mechanism operations that fail at the module level
 _TLS_ERRORS = (
     MechanismInvalid,
     MechanismParamInvalid,
@@ -60,18 +55,21 @@ _TLS_ERRORS = (
 )
 
 
-def _create_generic_secret(session: Any, data: bytes = _PRE_MASTER_SECRET) -> Any:
+def _create_generic_secret(
+    session: Any, data: bytes = _PRE_MASTER_SECRET, **extra: Any,
+) -> Any:
     """Create a GENERIC_SECRET key object for use as TLS keying material."""
-    return session.create_object(
-        {
-            Attribute.CLASS: ObjectClass.SECRET_KEY,
-            Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-            Attribute.VALUE: data,
-            Attribute.DERIVE: True,
-            Attribute.TOKEN: False,
-            Attribute.SENSITIVE: False,
-            Attribute.EXTRACTABLE: True,
-        }
+    template = {
+        Attribute.CLASS: ObjectClass.SECRET_KEY,
+        Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
+        Attribute.VALUE: data,
+        Attribute.DERIVE: True,
+        Attribute.TOKEN: False,
+        Attribute.SENSITIVE: False,
+        Attribute.EXTRACTABLE: True,
+    }
+    template.update(extra)
+    return session.create_object(template
     )
 
 
@@ -104,6 +102,7 @@ class TestTLS10PreMasterKeyGen:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -141,6 +140,7 @@ class TestTLS10PreMasterKeyGen:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -186,6 +186,7 @@ class TestTLS10PreMasterKeyGen:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -225,6 +226,7 @@ class TestTLS12MasterKeyDerive:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -259,6 +261,7 @@ class TestTLS12MasterKeyDerive:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -301,6 +304,7 @@ class TestTLS12KeyAndMacDerive:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -336,6 +340,7 @@ class TestTLS12KeyAndMacDerive:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -365,9 +370,11 @@ class TestTLS12Mac:
 
         # CKM_TLS12_MAC uses CK_TLS_MAC_PARAMS: {prfHashMechanism, ulMacLength, ulServerOrClient}
         # No python-pkcs11 wrapper - attempt with raw bytes param will fail.
-        mac_key = _create_generic_secret(p11_session, bytes(range(32)))
+        mac_key = _create_generic_secret(
+            p11_session, bytes(range(32)),
+            **{Attribute.SIGN: True},
+        )
         try:
-            # Attempt sign (MAC) with a plausible param structure
             result = mac_key.sign(
                 b"TLS record data",
                 mechanism=Mechanism.TLS12_MAC,
@@ -389,7 +396,10 @@ class TestTLS12Mac:
         if not has_mechanism(p11_module, "TLS_MAC"):
             pytest.skip("CKM_TLS_MAC not supported")
 
-        mac_key = _create_generic_secret(p11_session, bytes(range(32)))
+        mac_key = _create_generic_secret(
+            p11_session, bytes(range(32)),
+            **{Attribute.SIGN: True},
+        )
         try:
             result = mac_key.sign(
                 b"TLS record data",
@@ -432,6 +442,7 @@ class TestTLS12KDF:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -469,6 +480,7 @@ class TestTLS12KDF:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -517,6 +529,7 @@ class TestTLS12Extended:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
@@ -554,6 +567,7 @@ class TestTLS12Extended:
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
+                    Attribute.DERIVE: True,
                     Attribute.TOKEN: False,
                 },
             )
