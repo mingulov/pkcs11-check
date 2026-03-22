@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType
-from pkcs11.exceptions import AttributeSensitive
+from pkcs11.exceptions import AttributeSensitive, AttributeTypeInvalid
 
 pytestmark = pytest.mark.security
 
@@ -52,9 +52,37 @@ class TestExtractableEnforcement:
     """Test CKA_EXTRACTABLE enforcement."""
 
     def test_non_extractable_by_default(self, p11_session: Any) -> None:
-        """Default-generated AES key is NOT extractable."""
+        """Default-generated AES key extractability.
+
+        Per OASIS PKCS#11 spec, CKA_EXTRACTABLE has no mandated default value
+        — it is implementation-defined. Both True and False are spec-conformant.
+        This test documents which default the module uses via a compliance note.
+        """
         key = p11_session.generate_key(KeyType.AES, 256)
-        assert key[Attribute.EXTRACTABLE] is False
+        try:
+            try:
+                extractable = key[Attribute.EXTRACTABLE]
+            except AttributeTypeInvalid:
+                pytest.skip("Module does not support CKA_EXTRACTABLE attribute")
+        finally:
+            key.destroy()
+
+        from pkcs11_check.compliance import ComplianceLevel, note
+
+        if extractable is True:
+            note(
+                "Module defaults CKA_EXTRACTABLE to True for generated AES keys; "
+                "PKCS#11 spec does not mandate a specific default",
+                ComplianceLevel.VENDOR,
+            )
+        else:
+            note(
+                "Module defaults CKA_EXTRACTABLE to False for generated AES keys; "
+                "PKCS#11 spec does not mandate a specific default",
+                ComplianceLevel.VENDOR,
+            )
+        # Both True and False are spec-conformant
+        assert extractable in (True, False)
 
     def test_extractable_when_requested(self, p11_session: Any) -> None:
         """AES key with EXTRACTABLE=True allows VALUE read (when also not sensitive)."""
