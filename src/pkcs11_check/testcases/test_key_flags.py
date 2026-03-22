@@ -96,14 +96,19 @@ class TestLocalFlag:
         except AttributeTypeInvalid:
             pytest.xfail(
                 "Module does not implement CKA_LOCAL attribute "
-                "(PKCS#11 spec requires LOCAL=TRUE for generated keys)"
+                "(PKCS#11 spec requires it for generated keys)"
             )
+            return
 
-        if pub_local is not True or priv_local is not True:
-            pytest.xfail(
-                "Module sets CKA_LOCAL=False on generated RSA keypair — "
-                "violates PKCS#11 spec requirement that generated keys have LOCAL=TRUE"
-            )
+        # CKA_LOCAL MUST be TRUE for generated keys per OASIS spec C_GenerateKeyPair
+        assert pub_local is True, (
+            f"CKA_LOCAL={pub_local} on generated public key - "
+            "spec requires LOCAL=TRUE for generated keys"
+        )
+        assert priv_local is True, (
+            f"CKA_LOCAL={priv_local} on generated private key - "
+            "spec requires LOCAL=TRUE for generated keys"
+        )
 
 
 class TestAlwaysSensitive:

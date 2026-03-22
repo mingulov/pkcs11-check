@@ -11,7 +11,9 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import DataLenRange, DeviceError, FunctionFailed, MechanismInvalid
+from pkcs11.exceptions import (
+    DataLenRange, DeviceError, FunctionFailed, MechanismInvalid, MechanismParamInvalid,
+)
 from pkcs11.mechanisms import CTRParams
 
 from pkcs11_check.testcases.conftest import has_mechanism
@@ -55,19 +57,52 @@ class TestAESCTR:
         )
         nonce = os.urandom(12)
         params = CTRParams(nonce)
-        # Use block-aligned plaintext: some modules require multiples of 16 bytes for AES-CTR
-        plaintext = b"key independence!" + b"\x00" * 15  # 32 bytes
+        plaintext = b"key independence test data here!!"  # 32 bytes
         try:
             ct1 = key1.encrypt(plaintext, mechanism=Mechanism.AES_CTR, mechanism_param=params)
             ct2 = key2.encrypt(
                 plaintext, mechanism=Mechanism.AES_CTR, mechanism_param=CTRParams(nonce)
             )
             assert ct1 != ct2
-        except (MechanismInvalid, DeviceError, FunctionFailed, DataLenRange) as exc:
+        except (MechanismInvalid, MechanismParamInvalid) as exc:
             pytest.xfail(f"CKM_AES_CTR not operational: {exc}")
         finally:
             key1.destroy()
             key2.destroy()
+
+    def test_aes_ctr_non_block_aligned(self, p11_session: Any, p11_module: Any) -> None:
+        """AES-CTR MUST handle non-block-aligned plaintext (stream cipher).
+
+        Per OASIS spec (NIST SP 800-38A): CTR mode encrypts individual bytes
+        using the encrypted counter block. Non-block-aligned data is valid.
+        Modules that reject it have a bug.
+        """
+        if not has_mechanism(p11_module, "AES_CTR"):
+            pytest.skip("CKM_AES_CTR not supported")
+        key = p11_session.generate_key(
+            KeyType.AES, 256,
+            template={
+                Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False,
+            },
+        )
+        nonce = os.urandom(12)
+        # 17 bytes - deliberately NOT block-aligned
+        plaintext = b"seventeen chars!!"[:17]
+        try:
+            ct = key.encrypt(plaintext, mechanism=Mechanism.AES_CTR, mechanism_param=CTRParams(nonce))
+            assert len(ct) == 17, f"CTR output must match input length, got {len(ct)}"
+            pt = key.decrypt(ct, mechanism=Mechanism.AES_CTR, mechanism_param=CTRParams(nonce))
+            assert pt == plaintext
+        except DataLenRange:
+            from pkcs11_check.compliance import ComplianceLevel, note
+            note(
+                "Module rejects non-block-aligned AES-CTR data - violates NIST SP 800-38A",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="NIST SP 800-38A Sec.6.5",
+            )
+            pytest.xfail("Module incorrectly requires block-aligned data for AES-CTR")
+        finally:
+            key.destroy()
 
 
 class TestAESCTS:
