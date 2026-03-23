@@ -100,12 +100,14 @@ services:
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-main
 
-  # SoftHSM2 main branch (latest development)
+  # SoftHSM2 main branch (latest development + custom OpenSSL)
   test-softhsm2-main:
     <<: *artifacts
     build:
       context: ..
       dockerfile: docker/softhsm2/Dockerfile.main
+      args:
+        OPENSSL_VERSION: "3.6.1"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-main
       PKCS11_CHECK_PIN: "1234"
