@@ -89,11 +89,20 @@ def decode_ec_public_point(value: Any, encoding_name: str, curve_name: str) -> b
 
 def decode_ec_private_scalar(value: Any, encoding_name: str, curve_name: str) -> bytes:
     if encoding_name in {"asn", "ecpoint"}:
-        return bytes.fromhex(value)
+        raw = bytes.fromhex(value)
+        # Strip leading zero from DER integer encoding (sign byte)
+        coord_size = ec_coord_size(curve_name)
+        if len(raw) == coord_size + 1 and raw[0] == 0:
+            raw = raw[1:]
+        return raw
     if encoding_name == "pem":
         info = PrivateKeyInfo.load(_pem_to_der(value))
         key = ECPrivateKey.load(info["private_key"].parsed.dump())
-        return key["private_key"].contents
+        raw = key["private_key"].contents
+        coord_size = ec_coord_size(curve_name)
+        if len(raw) == coord_size + 1 and raw[0] == 0:
+            raw = raw[1:]
+        return raw
     if encoding_name == "webcrypto":
         coord_size = ec_coord_size(curve_name)
         return _b64url_decode(value["d"]).rjust(coord_size, b"\x00")
