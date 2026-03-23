@@ -5,6 +5,309 @@ import ctypes
 
 STANDARD_GENERATED = True
 
+class CK_AES_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+    pass
+
+class CK_AES_CCM_PARAMS(ctypes.Structure):
+    pass
+
+class CK_AES_CTR_PARAMS(ctypes.Structure):
+    pass
+
+class CK_AES_GCM_PARAMS(ctypes.Structure):
+    pass
+
+class CK_ARIA_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+    pass
+
+class CK_ASYNC_DATA(ctypes.Structure):
+    pass
+
+class CK_ATTRIBUTE(ctypes.Structure):
+    pass
+
+class CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+    pass
+
+class CK_CAMELLIA_CTR_PARAMS(ctypes.Structure):
+    pass
+
+class CK_CCM_MESSAGE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_CCM_PARAMS(ctypes.Structure):
+    pass
+
+class CK_CCM_WRAP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_CHACHA20_PARAMS(ctypes.Structure):
+    pass
+
+class CK_CMS_SIG_PARAMS(ctypes.Structure):
+    pass
+
+class CK_C_INITIALIZE_ARGS(ctypes.Structure):
+    pass
+
+class CK_DATE(ctypes.Structure):
+    pass
+
+class CK_DERIVED_KEY(ctypes.Structure):
+    pass
+
+class CK_DES_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+    pass
+
+class CK_DSA_PARAMETER_GEN_PARAM(ctypes.Structure):
+    pass
+
+class CK_ECDH1_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_ECDH2_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_ECDH_AES_KEY_WRAP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_ECMQV_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_EDDSA_PARAMS(ctypes.Structure):
+    pass
+
+class CK_FUNCTION_LIST(ctypes.Structure):
+    pass
+
+class CK_FUNCTION_LIST_3_0(ctypes.Structure):
+    pass
+
+class CK_FUNCTION_LIST_3_2(ctypes.Structure):
+    pass
+
+class CK_GCM_MESSAGE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_GCM_PARAMS(ctypes.Structure):
+    pass
+
+class CK_GCM_WRAP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_GOSTR3410_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_GOSTR3410_KEY_WRAP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_HASH_SIGN_ADDITIONAL_CONTEXT(ctypes.Structure):
+    pass
+
+class CK_HKDF_PARAMS(ctypes.Structure):
+    pass
+
+class CK_IKE1_EXTENDED_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_IKE1_PRF_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_IKE2_PRF_PLUS_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_IKE_PRF_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_INFO(ctypes.Structure):
+    pass
+
+class CK_INTERFACE(ctypes.Structure):
+    pass
+
+class CK_KEA_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_KEY_DERIVATION_STRING_DATA(ctypes.Structure):
+    pass
+
+class CK_KEY_WRAP_SET_OAEP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_KIP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_MECHANISM(ctypes.Structure):
+    pass
+
+class CK_MECHANISM_INFO(ctypes.Structure):
+    pass
+
+class CK_OTP_PARAM(ctypes.Structure):
+    pass
+
+class CK_OTP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_OTP_SIGNATURE_INFO(ctypes.Structure):
+    pass
+
+class CK_PBE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_PKCS5_PBKD2_PARAMS(ctypes.Structure):
+    pass
+
+class CK_PKCS5_PBKD2_PARAMS2(ctypes.Structure):
+    pass
+
+class CK_PRF_DATA_PARAM(ctypes.Structure):
+    pass
+
+class CK_RC2_CBC_PARAMS(ctypes.Structure):
+    pass
+
+class CK_RC2_MAC_GENERAL_PARAMS(ctypes.Structure):
+    pass
+
+class CK_RC5_CBC_PARAMS(ctypes.Structure):
+    pass
+
+class CK_RC5_MAC_GENERAL_PARAMS(ctypes.Structure):
+    pass
+
+class CK_RC5_PARAMS(ctypes.Structure):
+    pass
+
+class CK_RSA_AES_KEY_WRAP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_RSA_PKCS_OAEP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_RSA_PKCS_PSS_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SALSA20_CHACHA20_POLY1305_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SALSA20_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SEED_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SESSION_INFO(ctypes.Structure):
+    pass
+
+class CK_SIGN_ADDITIONAL_CONTEXT(ctypes.Structure):
+    pass
+
+class CK_SKIPJACK_PRIVATE_WRAP_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SKIPJACK_RELAYX_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SLOT_INFO(ctypes.Structure):
+    pass
+
+class CK_SP800_108_COUNTER_FORMAT(ctypes.Structure):
+    pass
+
+class CK_SP800_108_DKM_LENGTH_FORMAT(ctypes.Structure):
+    pass
+
+class CK_SP800_108_FEEDBACK_KDF_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SP800_108_KDF_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SSL3_KEY_MAT_OUT(ctypes.Structure):
+    pass
+
+class CK_SSL3_KEY_MAT_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SSL3_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_SSL3_RANDOM_DATA(ctypes.Structure):
+    pass
+
+class CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_TLS12_KEY_MAT_PARAMS(ctypes.Structure):
+    pass
+
+class CK_TLS12_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_TLS_KDF_PARAMS(ctypes.Structure):
+    pass
+
+class CK_TLS_MAC_PARAMS(ctypes.Structure):
+    pass
+
+class CK_TLS_PRF_PARAMS(ctypes.Structure):
+    pass
+
+class CK_TOKEN_INFO(ctypes.Structure):
+    pass
+
+class CK_VERSION(ctypes.Structure):
+    pass
+
+class CK_WTLS_KEY_MAT_OUT(ctypes.Structure):
+    pass
+
+class CK_WTLS_KEY_MAT_PARAMS(ctypes.Structure):
+    pass
+
+class CK_WTLS_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_WTLS_PRF_PARAMS(ctypes.Structure):
+    pass
+
+class CK_WTLS_RANDOM_DATA(ctypes.Structure):
+    pass
+
+class CK_X2RATCHET_INITIALIZE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_X2RATCHET_RESPOND_PARAMS(ctypes.Structure):
+    pass
+
+class CK_X3DH_INITIATE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_X3DH_RESPOND_PARAMS(ctypes.Structure):
+    pass
+
+class CK_X9_42_DH1_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_X9_42_DH2_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_X9_42_MQV_DERIVE_PARAMS(ctypes.Structure):
+    pass
+
+class CK_XEDDSA_PARAMS(ctypes.Structure):
+    pass
+
+CK_CREATEMUTEX = ctypes.c_void_p
+CK_DESTROYMUTEX = ctypes.c_void_p
+CK_LOCKMUTEX = ctypes.c_void_p
+CK_NOTIFY = ctypes.c_void_p
+CK_UNLOCKMUTEX = ctypes.c_void_p
+
 CK_BYTE = ctypes.c_ubyte
 CK_CHAR = CK_BYTE
 CK_UTF8CHAR = CK_BYTE
@@ -19,18 +322,18 @@ CK_ULONG_PTR = ctypes.POINTER(CK_ULONG)
 CK_VOID_PTR = ctypes.c_void_p
 CK_FLAGS_PTR = ctypes.POINTER(CK_ULONG)
 CK_VOID_PTR_PTR = ctypes.POINTER(CK_VOID_PTR)
-CK_VERSION_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_INFO_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_VERSION_PTR = ctypes.POINTER(CK_VERSION)
+CK_INFO_PTR = ctypes.POINTER(CK_INFO)
 CK_NOTIFICATION = CK_ULONG
 CK_SLOT_ID = CK_ULONG
 CK_SLOT_ID_PTR = ctypes.POINTER(CK_SLOT_ID)
-CK_SLOT_INFO_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_TOKEN_INFO_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_SLOT_INFO_PTR = ctypes.POINTER(CK_SLOT_INFO)
+CK_TOKEN_INFO_PTR = ctypes.POINTER(CK_TOKEN_INFO)
 CK_SESSION_HANDLE = CK_ULONG
 CK_SESSION_HANDLE_PTR = ctypes.POINTER(CK_SESSION_HANDLE)
 CK_USER_TYPE = CK_ULONG
 CK_STATE = CK_ULONG
-CK_SESSION_INFO_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_SESSION_INFO_PTR = ctypes.POINTER(CK_SESSION_INFO)
 CK_OBJECT_HANDLE = CK_ULONG
 CK_OBJECT_HANDLE_PTR = ctypes.POINTER(CK_OBJECT_HANDLE)
 CK_OBJECT_CLASS = CK_ULONG
@@ -39,66 +342,61 @@ CK_HW_FEATURE_TYPE = CK_ULONG
 CK_KEY_TYPE = CK_ULONG
 CK_CERTIFICATE_TYPE = CK_ULONG
 CK_ATTRIBUTE_TYPE = CK_ULONG
-CK_ATTRIBUTE_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_ATTRIBUTE_PTR = ctypes.POINTER(CK_ATTRIBUTE)
 CK_MECHANISM_TYPE = CK_ULONG
 CK_MECHANISM_TYPE_PTR = ctypes.POINTER(CK_MECHANISM_TYPE)
-CK_MECHANISM_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_MECHANISM_INFO_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_MECHANISM_PTR = ctypes.POINTER(CK_MECHANISM)
+CK_MECHANISM_INFO_PTR = ctypes.POINTER(CK_MECHANISM_INFO)
 CK_RV = CK_ULONG
-CK_FUNCTION_LIST = ctypes.c_void_p
-CK_FUNCTION_LIST_3_0 = ctypes.c_void_p
-CK_FUNCTION_LIST_3_2 = ctypes.c_void_p
 CK_FUNCTION_LIST_PTR = ctypes.POINTER(CK_FUNCTION_LIST)
 CK_FUNCTION_LIST_3_0_PTR = ctypes.POINTER(CK_FUNCTION_LIST_3_0)
 CK_FUNCTION_LIST_3_2_PTR = ctypes.POINTER(CK_FUNCTION_LIST_3_2)
 CK_FUNCTION_LIST_PTR_PTR = ctypes.POINTER(CK_FUNCTION_LIST_PTR)
 CK_FUNCTION_LIST_3_0_PTR_PTR = ctypes.POINTER(CK_FUNCTION_LIST_3_0_PTR)
 CK_FUNCTION_LIST_3_2_PTR_PTR = ctypes.POINTER(CK_FUNCTION_LIST_3_2_PTR)
-CK_INTERFACE_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_INTERFACE_PTR = ctypes.POINTER(CK_INTERFACE)
 CK_INTERFACE_PTR_PTR = ctypes.POINTER(CK_INTERFACE_PTR)
-CK_C_INITIALIZE_ARGS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_C_INITIALIZE_ARGS_PTR = ctypes.POINTER(CK_C_INITIALIZE_ARGS)
 CK_RSA_PKCS_MGF_TYPE = CK_ULONG
 CK_RSA_PKCS_MGF_TYPE_PTR = ctypes.POINTER(CK_RSA_PKCS_MGF_TYPE)
 CK_RSA_PKCS_OAEP_SOURCE_TYPE = CK_ULONG
 CK_RSA_PKCS_OAEP_SOURCE_TYPE_PTR = ctypes.POINTER(CK_RSA_PKCS_OAEP_SOURCE_TYPE)
-CK_RSA_PKCS_OAEP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_RSA_PKCS_PSS_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_RSA_PKCS_OAEP_PARAMS_PTR = ctypes.POINTER(CK_RSA_PKCS_OAEP_PARAMS)
+CK_RSA_PKCS_PSS_PARAMS_PTR = ctypes.POINTER(CK_RSA_PKCS_PSS_PARAMS)
 CK_EC_KDF_TYPE = CK_ULONG
 CK_EC_KDF_TYPE_PTR = ctypes.POINTER(CK_EC_KDF_TYPE)
-CK_ECDH1_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_ECDH2_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_ECMQV_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_ECDH1_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_ECDH1_DERIVE_PARAMS)
+CK_ECDH2_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_ECDH2_DERIVE_PARAMS)
+CK_ECMQV_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_ECMQV_DERIVE_PARAMS)
 CK_X9_42_DH_KDF_TYPE = CK_ULONG
 CK_X9_42_DH_KDF_TYPE_PTR = ctypes.POINTER(CK_X9_42_DH_KDF_TYPE)
-CK_X9_42_DH1_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_void_p)
-CK_X9_42_DH2_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_X9_42_MQV_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_KEA_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_X9_42_DH2_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_X9_42_DH2_DERIVE_PARAMS)
+CK_X9_42_MQV_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_X9_42_MQV_DERIVE_PARAMS)
+CK_KEA_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_KEA_DERIVE_PARAMS)
 CK_RC2_PARAMS = CK_ULONG
 CK_RC2_PARAMS_PTR = ctypes.POINTER(CK_RC2_PARAMS)
-CK_RC2_CBC_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_RC2_CBC_PARAMS_PTR = ctypes.POINTER(CK_RC2_CBC_PARAMS)
 CK_RC2_MAC_GENERAL_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_RC5_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_RC5_CBC_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_RC5_PARAMS_PTR = ctypes.POINTER(CK_RC5_PARAMS)
+CK_RC5_CBC_PARAMS_PTR = ctypes.POINTER(CK_RC5_CBC_PARAMS)
 CK_RC5_MAC_GENERAL_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
 CK_MAC_GENERAL_PARAMS = CK_ULONG
 CK_MAC_GENERAL_PARAMS_PTR = ctypes.POINTER(CK_MAC_GENERAL_PARAMS)
-CK_DES_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_AES_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_DES_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(CK_DES_CBC_ENCRYPT_DATA_PARAMS)
+CK_AES_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(CK_AES_CBC_ENCRYPT_DATA_PARAMS)
 CK_SKIPJACK_PRIVATE_WRAP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
 CK_SKIPJACK_RELAYX_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_PBE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_KEY_WRAP_SET_OAEP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_SSL3_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_void_p)
-CK_SSL3_KEY_MAT_OUT_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_SSL3_KEY_MAT_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_TLS_PRF_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_WTLS_RANDOM_DATA_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_PBE_PARAMS_PTR = ctypes.POINTER(CK_PBE_PARAMS)
+CK_KEY_WRAP_SET_OAEP_PARAMS_PTR = ctypes.POINTER(CK_KEY_WRAP_SET_OAEP_PARAMS)
+CK_SSL3_KEY_MAT_OUT_PTR = ctypes.POINTER(CK_SSL3_KEY_MAT_OUT)
+CK_SSL3_KEY_MAT_PARAMS_PTR = ctypes.POINTER(CK_SSL3_KEY_MAT_PARAMS)
+CK_TLS_PRF_PARAMS_PTR = ctypes.POINTER(CK_TLS_PRF_PARAMS)
+CK_WTLS_RANDOM_DATA_PTR = ctypes.POINTER(CK_WTLS_RANDOM_DATA)
 CK_WTLS_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_WTLS_PRF_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_WTLS_KEY_MAT_OUT_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_WTLS_KEY_MAT_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_CMS_SIG_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_WTLS_PRF_PARAMS_PTR = ctypes.POINTER(CK_WTLS_PRF_PARAMS)
+CK_WTLS_KEY_MAT_OUT_PTR = ctypes.POINTER(CK_WTLS_KEY_MAT_OUT)
+CK_WTLS_KEY_MAT_PARAMS_PTR = ctypes.POINTER(CK_WTLS_KEY_MAT_PARAMS)
+CK_CMS_SIG_PARAMS_PTR = ctypes.POINTER(CK_CMS_SIG_PARAMS)
 CK_KEY_DERIVATION_STRING_DATA_PTR = ctypes.POINTER(ctypes.c_ulong)
 CK_EXTRACT_PARAMS = CK_ULONG
 CK_EXTRACT_PARAMS_PTR = ctypes.POINTER(CK_EXTRACT_PARAMS)
@@ -106,67 +404,67 @@ CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE = CK_ULONG
 CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE_PTR = ctypes.POINTER(ctypes.c_ulong)
 CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE = CK_ULONG
 CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_PKCS5_PBKD2_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_PKCS5_PBKD2_PARAMS2_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_PKCS5_PBKD2_PARAMS_PTR = ctypes.POINTER(CK_PKCS5_PBKD2_PARAMS)
+CK_PKCS5_PBKD2_PARAMS2_PTR = ctypes.POINTER(CK_PKCS5_PBKD2_PARAMS2)
 CK_OTP_PARAM_TYPE = CK_ULONG
-CK_OTP_PARAM_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_OTP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_OTP_SIGNATURE_INFO_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_KIP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_AES_CTR_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_GCM_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_OTP_PARAM_PTR = ctypes.POINTER(CK_OTP_PARAM)
+CK_OTP_PARAMS_PTR = ctypes.POINTER(CK_OTP_PARAMS)
+CK_OTP_SIGNATURE_INFO_PTR = ctypes.POINTER(CK_OTP_SIGNATURE_INFO)
+CK_KIP_PARAMS_PTR = ctypes.POINTER(CK_KIP_PARAMS)
+CK_AES_CTR_PARAMS_PTR = ctypes.POINTER(CK_AES_CTR_PARAMS)
+CK_GCM_PARAMS_PTR = ctypes.POINTER(CK_GCM_PARAMS)
 CK_GENERATOR_FUNCTION = CK_ULONG
-CK_GCM_MESSAGE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_GCM_WRAP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_CCM_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_CCM_MESSAGE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_CCM_WRAP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_AES_GCM_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_AES_CCM_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_CAMELLIA_CTR_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_GCM_MESSAGE_PARAMS_PTR = ctypes.POINTER(CK_GCM_MESSAGE_PARAMS)
+CK_GCM_WRAP_PARAMS_PTR = ctypes.POINTER(CK_GCM_WRAP_PARAMS)
+CK_CCM_PARAMS_PTR = ctypes.POINTER(CK_CCM_PARAMS)
+CK_CCM_MESSAGE_PARAMS_PTR = ctypes.POINTER(CK_CCM_MESSAGE_PARAMS)
+CK_CCM_WRAP_PARAMS_PTR = ctypes.POINTER(CK_CCM_WRAP_PARAMS)
+CK_AES_GCM_PARAMS_PTR = ctypes.POINTER(CK_AES_GCM_PARAMS)
+CK_AES_CCM_PARAMS_PTR = ctypes.POINTER(CK_AES_CCM_PARAMS)
+CK_CAMELLIA_CTR_PARAMS_PTR = ctypes.POINTER(CK_CAMELLIA_CTR_PARAMS)
 CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
 CK_ARIA_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_DSA_PARAMETER_GEN_PARAM_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_ECDH_AES_KEY_WRAP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_DSA_PARAMETER_GEN_PARAM_PTR = ctypes.POINTER(CK_DSA_PARAMETER_GEN_PARAM)
+CK_ECDH_AES_KEY_WRAP_PARAMS_PTR = ctypes.POINTER(CK_ECDH_AES_KEY_WRAP_PARAMS)
 CK_JAVA_MIDP_SECURITY_DOMAIN = CK_ULONG
 CK_CERTIFICATE_CATEGORY = CK_ULONG
-CK_RSA_AES_KEY_WRAP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_RSA_AES_KEY_WRAP_PARAMS_PTR = ctypes.POINTER(CK_RSA_AES_KEY_WRAP_PARAMS)
 CK_TLS12_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_TLS12_KEY_MAT_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_TLS_KDF_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_TLS_MAC_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_GOSTR3410_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_GOSTR3410_KEY_WRAP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_TLS12_KEY_MAT_PARAMS_PTR = ctypes.POINTER(CK_TLS12_KEY_MAT_PARAMS)
+CK_TLS_KDF_PARAMS_PTR = ctypes.POINTER(CK_TLS_KDF_PARAMS)
+CK_TLS_MAC_PARAMS_PTR = ctypes.POINTER(CK_TLS_MAC_PARAMS)
+CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS)
+CK_GOSTR3410_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_GOSTR3410_DERIVE_PARAMS)
+CK_GOSTR3410_KEY_WRAP_PARAMS_PTR = ctypes.POINTER(CK_GOSTR3410_KEY_WRAP_PARAMS)
 CK_SEED_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
 CK_PROFILE_ID = CK_ULONG
 CK_PROFILE_ID_PTR = ctypes.POINTER(CK_PROFILE_ID)
 CK_PRF_DATA_TYPE = CK_ULONG
 CK_SP800_108_PRF_TYPE = CK_MECHANISM_TYPE
-CK_PRF_DATA_PARAM_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_SP800_108_COUNTER_FORMAT_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_PRF_DATA_PARAM_PTR = ctypes.POINTER(CK_PRF_DATA_PARAM)
+CK_SP800_108_COUNTER_FORMAT_PTR = ctypes.POINTER(CK_SP800_108_COUNTER_FORMAT)
 CK_SP800_108_DKM_LENGTH_METHOD = CK_ULONG
-CK_DERIVED_KEY_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_SP800_108_KDF_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_EDDSA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_CHACHA20_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_SALSA20_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_DERIVED_KEY_PTR = ctypes.POINTER(CK_DERIVED_KEY)
+CK_SP800_108_KDF_PARAMS_PTR = ctypes.POINTER(CK_SP800_108_KDF_PARAMS)
+CK_EDDSA_PARAMS_PTR = ctypes.POINTER(CK_EDDSA_PARAMS)
+CK_CHACHA20_PARAMS_PTR = ctypes.POINTER(CK_CHACHA20_PARAMS)
+CK_SALSA20_PARAMS_PTR = ctypes.POINTER(CK_SALSA20_PARAMS)
 CK_X3DH_KDF_TYPE = CK_ULONG
 CK_X3DH_KDF_TYPE_PTR = ctypes.POINTER(CK_X3DH_KDF_TYPE)
 CK_X2RATCHET_KDF_TYPE = CK_ULONG
 CK_X2RATCHET_KDF_TYPE_PTR = ctypes.POINTER(CK_X2RATCHET_KDF_TYPE)
 CK_XEDDSA_HASH_TYPE = CK_ULONG
 CK_XEDDSA_HASH_TYPE_PTR = ctypes.POINTER(CK_XEDDSA_HASH_TYPE)
-CK_XEDDSA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_HKDF_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_XEDDSA_PARAMS_PTR = ctypes.POINTER(CK_XEDDSA_PARAMS)
+CK_HKDF_PARAMS_PTR = ctypes.POINTER(CK_HKDF_PARAMS)
 CK_HSS_LEVELS = CK_ULONG
 CK_LMS_TYPE = CK_ULONG
 CK_LMOTS_TYPE = CK_ULONG
-CK_IKE2_PRF_PLUS_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_IKE_PRF_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_IKE1_PRF_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_IKE1_EXTENDED_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_ASYNC_DATA_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_IKE2_PRF_PLUS_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_IKE2_PRF_PLUS_DERIVE_PARAMS)
+CK_IKE_PRF_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_IKE_PRF_DERIVE_PARAMS)
+CK_IKE1_PRF_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_IKE1_PRF_DERIVE_PARAMS)
+CK_IKE1_EXTENDED_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_IKE1_EXTENDED_DERIVE_PARAMS)
+CK_ASYNC_DATA_PTR = ctypes.POINTER(CK_ASYNC_DATA)
 CK_SESSION_VALIDATION_FLAGS_TYPE = CK_ULONG
 CK_VALIDATION_TYPE = CK_ULONG
 CK_VALIDATION_TYPE_PTR = ctypes.POINTER(CK_VALIDATION_TYPE)
@@ -180,872 +478,788 @@ CK_SLH_DSA_PARAMETER_SET_TYPE = CK_ULONG
 CK_ML_KEM_PARAMETER_SET_TYPE = CK_ULONG
 CK_TRUST = CK_ULONG
 
-class CK_VERSION(ctypes.Structure):
-    _fields_ = [
-        ("major", CK_BYTE),
-        ("minor", CK_BYTE),
-    ]
-
-class CK_INFO(ctypes.Structure):
-    _fields_ = [
-        ("cryptokiVersion", ctypes.c_ulong),
-        ("manufacturerID", CK_UTF8CHAR * 32),
-        ("flags", CK_FLAGS),
-        ("libraryDescription", CK_UTF8CHAR * 32),
-        ("libraryVersion", ctypes.c_ulong),
-    ]
-
-class CK_SLOT_INFO(ctypes.Structure):
-    _fields_ = [
-        ("slotDescription", CK_UTF8CHAR * 64),
-        ("manufacturerID", CK_UTF8CHAR * 32),
-        ("flags", CK_FLAGS),
-        ("hardwareVersion", ctypes.c_ulong),
-        ("firmwareVersion", ctypes.c_ulong),
-    ]
-
-class CK_TOKEN_INFO(ctypes.Structure):
-    _fields_ = [
-        ("label", CK_UTF8CHAR * 32),
-        ("manufacturerID", CK_UTF8CHAR * 32),
-        ("model", CK_UTF8CHAR * 16),
-        ("serialNumber", CK_CHAR * 16),
-        ("flags", CK_FLAGS),
-        ("ulMaxSessionCount", CK_ULONG),
-        ("ulSessionCount", CK_ULONG),
-        ("ulMaxRwSessionCount", CK_ULONG),
-        ("ulRwSessionCount", CK_ULONG),
-        ("ulMaxPinLen", CK_ULONG),
-        ("ulMinPinLen", CK_ULONG),
-        ("ulTotalPublicMemory", CK_ULONG),
-        ("ulFreePublicMemory", CK_ULONG),
-        ("ulTotalPrivateMemory", CK_ULONG),
-        ("ulFreePrivateMemory", CK_ULONG),
-        ("hardwareVersion", ctypes.c_ulong),
-        ("firmwareVersion", ctypes.c_ulong),
-        ("utcTime", CK_CHAR * 16),
-    ]
-
-class CK_SESSION_INFO(ctypes.Structure):
-    _fields_ = [
-        ("slotID", CK_SLOT_ID),
-        ("state", CK_STATE),
-        ("flags", CK_FLAGS),
-        ("ulDeviceError", CK_ULONG),
-    ]
-
-class CK_ATTRIBUTE(ctypes.Structure):
-    _fields_ = [
-        ("type", CK_ATTRIBUTE_TYPE),
-        ("pValue", CK_VOID_PTR),
-        ("ulValueLen", CK_ULONG),
-    ]
-
-class CK_DATE(ctypes.Structure):
-    _fields_ = [
-        ("year", CK_CHAR * 4),
-        ("month", CK_CHAR * 2),
-        ("day", CK_CHAR * 2),
-    ]
-
-class CK_MECHANISM(ctypes.Structure):
-    _fields_ = [
-        ("mechanism", CK_MECHANISM_TYPE),
-        ("pParameter", CK_VOID_PTR),
-        ("ulParameterLen", CK_ULONG),
-    ]
-
-class CK_MECHANISM_INFO(ctypes.Structure):
-    _fields_ = [
-        ("ulMinKeySize", CK_ULONG),
-        ("ulMaxKeySize", CK_ULONG),
-        ("flags", CK_FLAGS),
-    ]
-
-class CK_INTERFACE(ctypes.Structure):
-    _fields_ = [
-        ("pInterfaceName", CK_UTF8CHAR_PTR),
-        ("pFunctionList", CK_VOID_PTR),
-        ("flags", CK_FLAGS),
-    ]
-
-class CK_C_INITIALIZE_ARGS(ctypes.Structure):
-    _fields_ = [
-        ("CreateMutex", ctypes.c_ulong),
-        ("DestroyMutex", ctypes.c_ulong),
-        ("LockMutex", ctypes.c_ulong),
-        ("UnlockMutex", ctypes.c_ulong),
-        ("flags", CK_FLAGS),
-        ("pReserved", CK_VOID_PTR),
-    ]
-
-class CK_RSA_PKCS_OAEP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("hashAlg", CK_MECHANISM_TYPE),
-        ("mgf", CK_RSA_PKCS_MGF_TYPE),
-        ("source", CK_RSA_PKCS_OAEP_SOURCE_TYPE),
-        ("pSourceData", CK_VOID_PTR),
-        ("ulSourceDataLen", CK_ULONG),
-    ]
-
-class CK_RSA_PKCS_PSS_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("hashAlg", CK_MECHANISM_TYPE),
-        ("mgf", CK_RSA_PKCS_MGF_TYPE),
-        ("sLen", CK_ULONG),
-    ]
-
-class CK_ECDH1_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("kdf", CK_EC_KDF_TYPE),
-        ("ulSharedDataLen", CK_ULONG),
-        ("pSharedData", CK_BYTE_PTR),
-        ("ulPublicDataLen", CK_ULONG),
-        ("pPublicData", CK_BYTE_PTR),
-    ]
-
-class CK_ECDH2_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("kdf", CK_EC_KDF_TYPE),
-        ("ulSharedDataLen", CK_ULONG),
-        ("pSharedData", CK_BYTE_PTR),
-        ("ulPublicDataLen", CK_ULONG),
-        ("pPublicData", CK_BYTE_PTR),
-        ("ulPrivateDataLen", CK_ULONG),
-        ("hPrivateData", CK_OBJECT_HANDLE),
-        ("ulPublicDataLen2", CK_ULONG),
-        ("pPublicData2", CK_BYTE_PTR),
-    ]
-
-class CK_ECMQV_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("kdf", CK_EC_KDF_TYPE),
-        ("ulSharedDataLen", CK_ULONG),
-        ("pSharedData", CK_BYTE_PTR),
-        ("ulPublicDataLen", CK_ULONG),
-        ("pPublicData", CK_BYTE_PTR),
-        ("ulPrivateDataLen", CK_ULONG),
-        ("hPrivateData", CK_OBJECT_HANDLE),
-        ("ulPublicDataLen2", CK_ULONG),
-        ("pPublicData2", CK_BYTE_PTR),
-        ("publicKey", CK_OBJECT_HANDLE),
-    ]
-
-class CK_X9_42_DH1_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("kdf", CK_X9_42_DH_KDF_TYPE),
-        ("ulOtherInfoLen", CK_ULONG),
-        ("pOtherInfo", CK_BYTE_PTR),
-        ("ulPublicDataLen", CK_ULONG),
-        ("pPublicData", CK_BYTE_PTR),
-    ]
-
-class CK_X9_42_DH2_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("kdf", CK_X9_42_DH_KDF_TYPE),
-        ("ulOtherInfoLen", CK_ULONG),
-        ("pOtherInfo", CK_BYTE_PTR),
-        ("ulPublicDataLen", CK_ULONG),
-        ("pPublicData", CK_BYTE_PTR),
-        ("ulPrivateDataLen", CK_ULONG),
-        ("hPrivateData", CK_OBJECT_HANDLE),
-        ("ulPublicDataLen2", CK_ULONG),
-        ("pPublicData2", CK_BYTE_PTR),
-    ]
-
-class CK_X9_42_MQV_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("kdf", CK_X9_42_DH_KDF_TYPE),
-        ("ulOtherInfoLen", CK_ULONG),
-        ("pOtherInfo", CK_BYTE_PTR),
-        ("ulPublicDataLen", CK_ULONG),
-        ("pPublicData", CK_BYTE_PTR),
-        ("ulPrivateDataLen", CK_ULONG),
-        ("hPrivateData", CK_OBJECT_HANDLE),
-        ("ulPublicDataLen2", CK_ULONG),
-        ("pPublicData2", CK_BYTE_PTR),
-        ("publicKey", CK_OBJECT_HANDLE),
-    ]
-
-class CK_KEA_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("isSender", CK_BBOOL),
-        ("ulRandomLen", CK_ULONG),
-        ("pRandomA", CK_BYTE_PTR),
-        ("pRandomB", CK_BYTE_PTR),
-        ("ulPublicDataLen", CK_ULONG),
-        ("pPublicData", CK_BYTE_PTR),
-    ]
-
-class CK_RC2_CBC_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulEffectiveBits", CK_ULONG),
-        ("iv", CK_BYTE * 8),
-    ]
-
-class CK_RC2_MAC_GENERAL_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulEffectiveBits", CK_ULONG),
-        ("ulMacLength", CK_ULONG),
-    ]
-
-class CK_RC5_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulWordsize", CK_ULONG),
-        ("ulRounds", CK_ULONG),
-    ]
-
-class CK_RC5_CBC_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulWordsize", CK_ULONG),
-        ("ulRounds", CK_ULONG),
-        ("pIv", CK_BYTE_PTR),
-        ("ulIvLen", CK_ULONG),
-    ]
-
-class CK_RC5_MAC_GENERAL_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulWordsize", CK_ULONG),
-        ("ulRounds", CK_ULONG),
-        ("ulMacLength", CK_ULONG),
-    ]
-
-class CK_DES_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("iv", CK_BYTE * 8),
-        ("pData", CK_BYTE_PTR),
-        ("length", CK_ULONG),
-    ]
-
-class CK_AES_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("iv", CK_BYTE * 16),
-        ("pData", CK_BYTE_PTR),
-        ("length", CK_ULONG),
-    ]
-
-class CK_SKIPJACK_PRIVATE_WRAP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulPasswordLen", CK_ULONG),
-        ("pPassword", CK_BYTE_PTR),
-        ("ulPublicDataLen", CK_ULONG),
-        ("pPublicData", CK_BYTE_PTR),
-        ("ulPAndGLen", CK_ULONG),
-        ("ulQLen", CK_ULONG),
-        ("ulRandomLen", CK_ULONG),
-        ("pRandomA", CK_BYTE_PTR),
-        ("pPrimeP", CK_BYTE_PTR),
-        ("pBaseG", CK_BYTE_PTR),
-        ("pSubprimeQ", CK_BYTE_PTR),
-    ]
-
-class CK_SKIPJACK_RELAYX_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulOldWrappedXLen", CK_ULONG),
-        ("pOldWrappedX", CK_BYTE_PTR),
-        ("ulOldPasswordLen", CK_ULONG),
-        ("pOldPassword", CK_BYTE_PTR),
-        ("ulOldPublicDataLen", CK_ULONG),
-        ("pOldPublicData", CK_BYTE_PTR),
-        ("ulOldRandomLen", CK_ULONG),
-        ("pOldRandomA", CK_BYTE_PTR),
-        ("ulNewPasswordLen", CK_ULONG),
-        ("pNewPassword", CK_BYTE_PTR),
-        ("ulNewPublicDataLen", CK_ULONG),
-        ("pNewPublicData", CK_BYTE_PTR),
-        ("ulNewRandomLen", CK_ULONG),
-        ("pNewRandomA", CK_BYTE_PTR),
-    ]
-
-class CK_PBE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pInitVector", CK_BYTE_PTR),
-        ("pPassword", CK_UTF8CHAR_PTR),
-        ("ulPasswordLen", CK_ULONG),
-        ("pSalt", CK_BYTE_PTR),
-        ("ulSaltLen", CK_ULONG),
-        ("ulIteration", CK_ULONG),
-    ]
-
-class CK_KEY_WRAP_SET_OAEP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("bBC", CK_BYTE),
-        ("pX", CK_BYTE_PTR),
-        ("ulXLen", CK_ULONG),
-    ]
-
-class CK_SSL3_RANDOM_DATA(ctypes.Structure):
-    _fields_ = [
-        ("pClientRandom", CK_BYTE_PTR),
-        ("ulClientRandomLen", CK_ULONG),
-        ("pServerRandom", CK_BYTE_PTR),
-        ("ulServerRandomLen", CK_ULONG),
-    ]
-
-class CK_SSL3_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("RandomInfo", ctypes.c_ulong),
-        ("pVersion", CK_VERSION_PTR),
-    ]
-
-class CK_SSL3_KEY_MAT_OUT(ctypes.Structure):
-    _fields_ = [
-        ("hClientMacSecret", CK_OBJECT_HANDLE),
-        ("hServerMacSecret", CK_OBJECT_HANDLE),
-        ("hClientKey", CK_OBJECT_HANDLE),
-        ("hServerKey", CK_OBJECT_HANDLE),
-        ("pIVClient", CK_BYTE_PTR),
-        ("pIVServer", CK_BYTE_PTR),
-    ]
-
-class CK_SSL3_KEY_MAT_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulMacSizeInBits", CK_ULONG),
-        ("ulKeySizeInBits", CK_ULONG),
-        ("ulIVSizeInBits", CK_ULONG),
-        ("bIsExport", CK_BBOOL),
-        ("RandomInfo", ctypes.c_ulong),
-        ("pReturnedKeyMaterial", CK_SSL3_KEY_MAT_OUT_PTR),
-    ]
-
-class CK_TLS_PRF_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pSeed", CK_BYTE_PTR),
-        ("ulSeedLen", CK_ULONG),
-        ("pLabel", CK_BYTE_PTR),
-        ("ulLabelLen", CK_ULONG),
-        ("pOutput", CK_BYTE_PTR),
-        ("pulOutputLen", CK_ULONG_PTR),
-    ]
-
-class CK_WTLS_RANDOM_DATA(ctypes.Structure):
-    _fields_ = [
-        ("pClientRandom", CK_BYTE_PTR),
-        ("ulClientRandomLen", CK_ULONG),
-        ("pServerRandom", CK_BYTE_PTR),
-        ("ulServerRandomLen", CK_ULONG),
-    ]
-
-class CK_WTLS_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("DigestMechanism", CK_MECHANISM_TYPE),
-        ("RandomInfo", ctypes.c_ulong),
-        ("pVersion", CK_BYTE_PTR),
-    ]
-
-class CK_WTLS_PRF_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("DigestMechanism", CK_MECHANISM_TYPE),
-        ("pSeed", CK_BYTE_PTR),
-        ("ulSeedLen", CK_ULONG),
-        ("pLabel", CK_BYTE_PTR),
-        ("ulLabelLen", CK_ULONG),
-        ("pOutput", CK_BYTE_PTR),
-        ("pulOutputLen", CK_ULONG_PTR),
-    ]
-
-class CK_WTLS_KEY_MAT_OUT(ctypes.Structure):
-    _fields_ = [
-        ("hMacSecret", CK_OBJECT_HANDLE),
-        ("hKey", CK_OBJECT_HANDLE),
-        ("pIV", CK_BYTE_PTR),
-    ]
-
-class CK_WTLS_KEY_MAT_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("DigestMechanism", CK_MECHANISM_TYPE),
-        ("ulMacSizeInBits", CK_ULONG),
-        ("ulKeySizeInBits", CK_ULONG),
-        ("ulIVSizeInBits", CK_ULONG),
-        ("ulSequenceNumber", CK_ULONG),
-        ("bIsExport", CK_BBOOL),
-        ("RandomInfo", ctypes.c_ulong),
-        ("pReturnedKeyMaterial", CK_WTLS_KEY_MAT_OUT_PTR),
-    ]
-
-class CK_CMS_SIG_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("certificateHandle", CK_OBJECT_HANDLE),
-        ("pSigningMechanism", CK_MECHANISM_PTR),
-        ("pDigestMechanism", CK_MECHANISM_PTR),
-        ("pContentType", CK_UTF8CHAR_PTR),
-        ("pRequestedAttributes", CK_BYTE_PTR),
-        ("ulRequestedAttributesLen", CK_ULONG),
-        ("pRequiredAttributes", CK_BYTE_PTR),
-        ("ulRequiredAttributesLen", CK_ULONG),
-    ]
-
-class CK_KEY_DERIVATION_STRING_DATA(ctypes.Structure):
-    _fields_ = [
-        ("pData", CK_BYTE_PTR),
-        ("ulLen", CK_ULONG),
-    ]
-
-class CK_PKCS5_PBKD2_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("saltSource", CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE),
-        ("pSaltSourceData", CK_VOID_PTR),
-        ("ulSaltSourceDataLen", CK_ULONG),
-        ("iterations", CK_ULONG),
-        ("prf", CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE),
-        ("pPrfData", CK_VOID_PTR),
-        ("ulPrfDataLen", CK_ULONG),
-        ("pPassword", CK_UTF8CHAR_PTR),
-        ("ulPasswordLen", CK_ULONG_PTR),
-    ]
-
-class CK_PKCS5_PBKD2_PARAMS2(ctypes.Structure):
-    _fields_ = [
-        ("saltSource", CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE),
-        ("pSaltSourceData", CK_VOID_PTR),
-        ("ulSaltSourceDataLen", CK_ULONG),
-        ("iterations", CK_ULONG),
-        ("prf", CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE),
-        ("pPrfData", CK_VOID_PTR),
-        ("ulPrfDataLen", CK_ULONG),
-        ("pPassword", CK_UTF8CHAR_PTR),
-        ("ulPasswordLen", CK_ULONG),
-    ]
-
-class CK_OTP_PARAM(ctypes.Structure):
-    _fields_ = [
-        ("type", CK_OTP_PARAM_TYPE),
-        ("pValue", CK_VOID_PTR),
-        ("ulValueLen", CK_ULONG),
-    ]
-
-class CK_OTP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pParams", CK_OTP_PARAM_PTR),
-        ("ulCount", CK_ULONG),
-    ]
-
-class CK_OTP_SIGNATURE_INFO(ctypes.Structure):
-    _fields_ = [
-        ("pParams", CK_OTP_PARAM_PTR),
-        ("ulCount", CK_ULONG),
-    ]
-
-class CK_KIP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pMechanism", CK_MECHANISM_PTR),
-        ("hKey", CK_OBJECT_HANDLE),
-        ("pSeed", CK_BYTE_PTR),
-        ("ulSeedLen", CK_ULONG),
-    ]
-
-class CK_AES_CTR_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulCounterBits", CK_ULONG),
-        ("cb", CK_BYTE * 16),
-    ]
-
-class CK_GCM_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pIv", CK_BYTE_PTR),
-        ("ulIvLen", CK_ULONG),
-        ("ulIvBits", CK_ULONG),
-        ("pAAD", CK_BYTE_PTR),
-        ("ulAADLen", CK_ULONG),
-        ("ulTagBits", CK_ULONG),
-    ]
-
-class CK_GCM_MESSAGE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pIv", CK_BYTE_PTR),
-        ("ulIvLen", CK_ULONG),
-        ("ulIvFixedBits", CK_ULONG),
-        ("ivGenerator", CK_GENERATOR_FUNCTION),
-        ("pTag", CK_BYTE_PTR),
-        ("ulTagBits", CK_ULONG),
-    ]
-
-class CK_GCM_WRAP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pIv", CK_BYTE_PTR),
-        ("ulIvLen", CK_ULONG),
-        ("ulIvFixedBits", CK_ULONG),
-        ("ivGenerator", CK_GENERATOR_FUNCTION),
-        ("pAAD", CK_BYTE_PTR),
-        ("ulAADLen", CK_ULONG),
-        ("ulTagBits", CK_ULONG),
-    ]
-
-class CK_CCM_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulDataLen", CK_ULONG),
-        ("pNonce", CK_BYTE_PTR),
-        ("ulNonceLen", CK_ULONG),
-        ("pAAD", CK_BYTE_PTR),
-        ("ulAADLen", CK_ULONG),
-        ("ulMACLen", CK_ULONG),
-    ]
-
-class CK_CCM_MESSAGE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulDataLen", CK_ULONG),
-        ("pNonce", CK_BYTE_PTR),
-        ("ulNonceLen", CK_ULONG),
-        ("ulNonceFixedBits", CK_ULONG),
-        ("nonceGenerator", CK_GENERATOR_FUNCTION),
-        ("pMAC", CK_BYTE_PTR),
-        ("ulMACLen", CK_ULONG),
-    ]
-
-class CK_CCM_WRAP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulDataLen", CK_ULONG),
-        ("pNonce", CK_BYTE_PTR),
-        ("ulNonceLen", CK_ULONG),
-        ("ulNonceFixedBits", CK_ULONG),
-        ("nonceGenerator", CK_GENERATOR_FUNCTION),
-        ("pAAD", CK_BYTE_PTR),
-        ("ulAADLen", CK_ULONG),
-        ("ulMACLen", CK_ULONG),
-    ]
-
-class CK_AES_GCM_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pIv", CK_BYTE_PTR),
-        ("ulIvLen", CK_ULONG),
-        ("ulIvBits", CK_ULONG),
-        ("pAAD", CK_BYTE_PTR),
-        ("ulAADLen", CK_ULONG),
-        ("ulTagBits", CK_ULONG),
-    ]
-
-class CK_AES_CCM_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulDataLen", CK_ULONG),
-        ("pNonce", CK_BYTE_PTR),
-        ("ulNonceLen", CK_ULONG),
-        ("pAAD", CK_BYTE_PTR),
-        ("ulAADLen", CK_ULONG),
-        ("ulMACLen", CK_ULONG),
-    ]
-
-class CK_CAMELLIA_CTR_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulCounterBits", CK_ULONG),
-        ("cb", CK_BYTE * 16),
-    ]
-
-class CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("iv", CK_BYTE * 16),
-        ("pData", CK_BYTE_PTR),
-        ("length", CK_ULONG),
-    ]
-
-class CK_ARIA_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("iv", CK_BYTE * 16),
-        ("pData", CK_BYTE_PTR),
-        ("length", CK_ULONG),
-    ]
-
-class CK_DSA_PARAMETER_GEN_PARAM(ctypes.Structure):
-    _fields_ = [
-        ("hash", CK_MECHANISM_TYPE),
-        ("pSeed", CK_BYTE_PTR),
-        ("ulSeedLen", CK_ULONG),
-        ("ulIndex", CK_ULONG),
-    ]
-
-class CK_ECDH_AES_KEY_WRAP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulAESKeyBits", CK_ULONG),
-        ("kdf", CK_EC_KDF_TYPE),
-        ("ulSharedDataLen", CK_ULONG),
-        ("pSharedData", CK_BYTE_PTR),
-    ]
-
-class CK_RSA_AES_KEY_WRAP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulAESKeyBits", CK_ULONG),
-        ("pOAEPParams", CK_RSA_PKCS_OAEP_PARAMS_PTR),
-    ]
-
-class CK_TLS12_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("RandomInfo", ctypes.c_ulong),
-        ("pVersion", CK_VERSION_PTR),
-        ("prfHashMechanism", CK_MECHANISM_TYPE),
-    ]
-
-class CK_TLS12_KEY_MAT_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("ulMacSizeInBits", CK_ULONG),
-        ("ulKeySizeInBits", CK_ULONG),
-        ("ulIVSizeInBits", CK_ULONG),
-        ("bIsExport", CK_BBOOL),
-        ("RandomInfo", ctypes.c_ulong),
-        ("pReturnedKeyMaterial", CK_SSL3_KEY_MAT_OUT_PTR),
-        ("prfHashMechanism", CK_MECHANISM_TYPE),
-    ]
-
-class CK_TLS_KDF_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("prfMechanism", CK_MECHANISM_TYPE),
-        ("pLabel", CK_BYTE_PTR),
-        ("ulLabelLength", CK_ULONG),
-        ("RandomInfo", ctypes.c_ulong),
-        ("pContextData", CK_BYTE_PTR),
-        ("ulContextDataLength", CK_ULONG),
-    ]
-
-class CK_TLS_MAC_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("prfHashMechanism", CK_MECHANISM_TYPE),
-        ("ulMacLength", CK_ULONG),
-        ("ulServerOrClient", CK_ULONG),
-    ]
-
-class CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("prfHashMechanism", CK_MECHANISM_TYPE),
-        ("pSessionHash", CK_BYTE_PTR),
-        ("ulSessionHashLen", CK_ULONG),
-        ("pVersion", CK_VERSION_PTR),
-    ]
-
-class CK_GOSTR3410_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("kdf", CK_EC_KDF_TYPE),
-        ("pPublicData", CK_BYTE_PTR),
-        ("ulPublicDataLen", CK_ULONG),
-        ("pUKM", CK_BYTE_PTR),
-        ("ulUKMLen", CK_ULONG),
-    ]
-
-class CK_GOSTR3410_KEY_WRAP_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pWrapOID", CK_BYTE_PTR),
-        ("ulWrapOIDLen", CK_ULONG),
-        ("pUKM", CK_BYTE_PTR),
-        ("ulUKMLen", CK_ULONG),
-        ("hKey", CK_OBJECT_HANDLE),
-    ]
-
-class CK_SEED_CBC_ENCRYPT_DATA_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("iv", CK_BYTE * 16),
-        ("pData", CK_BYTE_PTR),
-        ("length", CK_ULONG),
-    ]
-
-class CK_PRF_DATA_PARAM(ctypes.Structure):
-    _fields_ = [
-        ("type", CK_PRF_DATA_TYPE),
-        ("pValue", CK_VOID_PTR),
-        ("ulValueLen", CK_ULONG),
-    ]
-
-class CK_SP800_108_COUNTER_FORMAT(ctypes.Structure):
-    _fields_ = [
-        ("bLittleEndian", CK_BBOOL),
-        ("ulWidthInBits", CK_ULONG),
-    ]
-
-class CK_SP800_108_DKM_LENGTH_FORMAT(ctypes.Structure):
-    _fields_ = [
-        ("dkmLengthMethod", CK_SP800_108_DKM_LENGTH_METHOD),
-        ("bLittleEndian", CK_BBOOL),
-        ("ulWidthInBits", CK_ULONG),
-    ]
-
-class CK_DERIVED_KEY(ctypes.Structure):
-    _fields_ = [
-        ("pTemplate", CK_ATTRIBUTE_PTR),
-        ("ulAttributeCount", CK_ULONG),
-        ("phKey", CK_OBJECT_HANDLE_PTR),
-    ]
-
-class CK_SP800_108_KDF_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("prfType", CK_SP800_108_PRF_TYPE),
-        ("ulNumberOfDataParams", CK_ULONG),
-        ("pDataParams", CK_PRF_DATA_PARAM_PTR),
-        ("ulAdditionalDerivedKeys", CK_ULONG),
-        ("pAdditionalDerivedKeys", CK_DERIVED_KEY_PTR),
-    ]
-
-class CK_SP800_108_FEEDBACK_KDF_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("prfType", CK_SP800_108_PRF_TYPE),
-        ("ulNumberOfDataParams", CK_ULONG),
-        ("pDataParams", CK_PRF_DATA_PARAM_PTR),
-        ("ulIVLen", CK_ULONG),
-        ("pIV", CK_BYTE_PTR),
-        ("ulAdditionalDerivedKeys", CK_ULONG),
-        ("pAdditionalDerivedKeys", CK_DERIVED_KEY_PTR),
-    ]
-
-class CK_EDDSA_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("phFlag", CK_BBOOL),
-        ("ulContextDataLen", CK_ULONG),
-        ("pContextData", CK_BYTE_PTR),
-    ]
-
-class CK_CHACHA20_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pBlockCounter", CK_BYTE_PTR),
-        ("blockCounterBits", CK_ULONG),
-        ("pNonce", CK_BYTE_PTR),
-        ("ulNonceBits", CK_ULONG),
-    ]
-
-class CK_SALSA20_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pBlockCounter", CK_BYTE_PTR),
-        ("pNonce", CK_BYTE_PTR),
-        ("ulNonceBits", CK_ULONG),
-    ]
-
-class CK_SALSA20_CHACHA20_POLY1305_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pNonce", CK_BYTE_PTR),
-        ("ulNonceLen", CK_ULONG),
-        ("pAAD", CK_BYTE_PTR),
-        ("ulAADLen", CK_ULONG),
-    ]
-
-class CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("pNonce", CK_BYTE_PTR),
-        ("ulNonceLen", CK_ULONG),
-        ("pTag", CK_BYTE_PTR),
-    ]
-
-class CK_X3DH_INITIATE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("kdf", CK_X3DH_KDF_TYPE),
-        ("pPeer_identity", CK_OBJECT_HANDLE),
-        ("pPeer_prekey", CK_OBJECT_HANDLE),
-        ("pPrekey_signature", CK_BYTE_PTR),
-        ("pOnetime_key", CK_BYTE_PTR),
-        ("pOwn_identity", CK_OBJECT_HANDLE),
-        ("pOwn_ephemeral", CK_OBJECT_HANDLE),
-    ]
-
-class CK_X3DH_RESPOND_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("kdf", CK_X3DH_KDF_TYPE),
-        ("pIdentity_id", CK_BYTE_PTR),
-        ("pPrekey_id", CK_BYTE_PTR),
-        ("pOnetime_id", CK_BYTE_PTR),
-        ("pInitiator_identity", CK_OBJECT_HANDLE),
-        ("pInitiator_ephemeral", CK_BYTE_PTR),
-    ]
-
-class CK_X2RATCHET_INITIALIZE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("sk", CK_BYTE_PTR),
-        ("peer_public_prekey", CK_OBJECT_HANDLE),
-        ("peer_public_identity", CK_OBJECT_HANDLE),
-        ("own_public_identity", CK_OBJECT_HANDLE),
-        ("bEncryptedHeader", CK_BBOOL),
-        ("eCurve", CK_ULONG),
-        ("aeadMechanism", CK_MECHANISM_TYPE),
-        ("kdfMechanism", CK_X2RATCHET_KDF_TYPE),
-    ]
-
-class CK_X2RATCHET_RESPOND_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("sk", CK_BYTE_PTR),
-        ("own_prekey", CK_OBJECT_HANDLE),
-        ("initiator_identity", CK_OBJECT_HANDLE),
-        ("own_public_identity", CK_OBJECT_HANDLE),
-        ("bEncryptedHeader", CK_BBOOL),
-        ("eCurve", CK_ULONG),
-        ("aeadMechanism", CK_MECHANISM_TYPE),
-        ("kdfMechanism", CK_X2RATCHET_KDF_TYPE),
-    ]
-
-class CK_XEDDSA_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("hash", CK_XEDDSA_HASH_TYPE),
-    ]
-
-class CK_HKDF_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("bExtract", CK_BBOOL),
-        ("bExpand", CK_BBOOL),
-        ("prfHashMechanism", CK_MECHANISM_TYPE),
-        ("ulSaltType", CK_ULONG),
-        ("pSalt", CK_BYTE_PTR),
-        ("ulSaltLen", CK_ULONG),
-        ("hSaltKey", CK_OBJECT_HANDLE),
-        ("pInfo", CK_BYTE_PTR),
-        ("ulInfoLen", CK_ULONG),
-    ]
-
-class CK_IKE2_PRF_PLUS_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("prfMechanism", CK_MECHANISM_TYPE),
-        ("bHasSeedKey", CK_BBOOL),
-        ("hSeedKey", CK_OBJECT_HANDLE),
-        ("pSeedData", CK_BYTE_PTR),
-        ("ulSeedDataLen", CK_ULONG),
-    ]
-
-class CK_IKE_PRF_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("prfMechanism", CK_MECHANISM_TYPE),
-        ("bDataAsKey", CK_BBOOL),
-        ("bRekey", CK_BBOOL),
-        ("pNi", CK_BYTE_PTR),
-        ("ulNiLen", CK_ULONG),
-        ("pNr", CK_BYTE_PTR),
-        ("ulNrLen", CK_ULONG),
-        ("hNewKey", CK_OBJECT_HANDLE),
-    ]
-
-class CK_IKE1_PRF_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("prfMechanism", CK_MECHANISM_TYPE),
-        ("bHasPrevKey", CK_BBOOL),
-        ("hKeygxy", CK_OBJECT_HANDLE),
-        ("hPrevKey", CK_OBJECT_HANDLE),
-        ("pCKYi", CK_BYTE_PTR),
-        ("ulCKYiLen", CK_ULONG),
-        ("pCKYr", CK_BYTE_PTR),
-        ("ulCKYrLen", CK_ULONG),
-        ("keyNumber", CK_BYTE),
-    ]
-
-class CK_IKE1_EXTENDED_DERIVE_PARAMS(ctypes.Structure):
-    _fields_ = [
-        ("prfMechanism", CK_MECHANISM_TYPE),
-        ("bHasKeygxy", CK_BBOOL),
-        ("hKeygxy", CK_OBJECT_HANDLE),
-        ("pExtraData", CK_BYTE_PTR),
-        ("ulExtraDataLen", CK_ULONG),
-    ]
-
-class CK_ASYNC_DATA(ctypes.Structure):
-    _fields_ = [
-        ("ulVersion", CK_ULONG),
-        ("pValue", CK_BYTE_PTR),
-        ("ulValue", CK_ULONG),
-        ("hObject", CK_OBJECT_HANDLE),
-        ("hAdditionalObject", CK_OBJECT_HANDLE),
-    ]
-
-class CK_SIGN_ADDITIONAL_CONTEXT(ctypes.Structure):
-    _fields_ = [
-        ("hedgeVariant", CK_HEDGE_TYPE),
-        ("pContext", CK_BYTE_PTR),
-        ("ulContextLen", CK_ULONG),
-    ]
-
-class CK_HASH_SIGN_ADDITIONAL_CONTEXT(ctypes.Structure):
-    _fields_ = [
-        ("hedgeVariant", CK_HEDGE_TYPE),
-        ("pContext", CK_BYTE_PTR),
-        ("ulContextLen", CK_ULONG),
-        ("hash", CK_MECHANISM_TYPE),
+CK_VERSION._fields_ = [
+    ("major", CK_BYTE),
+    ("minor", CK_BYTE),
+    ]
+
+CK_INFO._fields_ = [
+    ("cryptokiVersion", CK_VERSION),
+    ("manufacturerID", CK_UTF8CHAR * 32),
+    ("flags", CK_FLAGS),
+    ("libraryDescription", CK_UTF8CHAR * 32),
+    ("libraryVersion", CK_VERSION),
+    ]
+
+CK_SLOT_INFO._fields_ = [
+    ("slotDescription", CK_UTF8CHAR * 64),
+    ("manufacturerID", CK_UTF8CHAR * 32),
+    ("flags", CK_FLAGS),
+    ("hardwareVersion", CK_VERSION),
+    ("firmwareVersion", CK_VERSION),
+    ]
+
+CK_TOKEN_INFO._fields_ = [
+    ("label", CK_UTF8CHAR * 32),
+    ("manufacturerID", CK_UTF8CHAR * 32),
+    ("model", CK_UTF8CHAR * 16),
+    ("serialNumber", CK_CHAR * 16),
+    ("flags", CK_FLAGS),
+    ("ulMaxSessionCount", CK_ULONG),
+    ("ulSessionCount", CK_ULONG),
+    ("ulMaxRwSessionCount", CK_ULONG),
+    ("ulRwSessionCount", CK_ULONG),
+    ("ulMaxPinLen", CK_ULONG),
+    ("ulMinPinLen", CK_ULONG),
+    ("ulTotalPublicMemory", CK_ULONG),
+    ("ulFreePublicMemory", CK_ULONG),
+    ("ulTotalPrivateMemory", CK_ULONG),
+    ("ulFreePrivateMemory", CK_ULONG),
+    ("hardwareVersion", CK_VERSION),
+    ("firmwareVersion", CK_VERSION),
+    ("utcTime", CK_CHAR * 16),
+    ]
+
+CK_SESSION_INFO._fields_ = [
+    ("slotID", CK_SLOT_ID),
+    ("state", CK_STATE),
+    ("flags", CK_FLAGS),
+    ("ulDeviceError", CK_ULONG),
+    ]
+
+CK_ATTRIBUTE._fields_ = [
+    ("type", CK_ATTRIBUTE_TYPE),
+    ("pValue", CK_VOID_PTR),
+    ("ulValueLen", CK_ULONG),
+    ]
+
+CK_DATE._fields_ = [
+    ("year", CK_CHAR * 4),
+    ("month", CK_CHAR * 2),
+    ("day", CK_CHAR * 2),
+    ]
+
+CK_MECHANISM._fields_ = [
+    ("mechanism", CK_MECHANISM_TYPE),
+    ("pParameter", CK_VOID_PTR),
+    ("ulParameterLen", CK_ULONG),
+    ]
+
+CK_MECHANISM_INFO._fields_ = [
+    ("ulMinKeySize", CK_ULONG),
+    ("ulMaxKeySize", CK_ULONG),
+    ("flags", CK_FLAGS),
+    ]
+
+CK_INTERFACE._fields_ = [
+    ("pInterfaceName", CK_UTF8CHAR_PTR),
+    ("pFunctionList", CK_VOID_PTR),
+    ("flags", CK_FLAGS),
+    ]
+
+CK_C_INITIALIZE_ARGS._fields_ = [
+    ("CreateMutex", ctypes.c_ulong),
+    ("DestroyMutex", ctypes.c_ulong),
+    ("LockMutex", ctypes.c_ulong),
+    ("UnlockMutex", ctypes.c_ulong),
+    ("flags", CK_FLAGS),
+    ("pReserved", CK_VOID_PTR),
+    ]
+
+CK_RSA_PKCS_OAEP_PARAMS._fields_ = [
+    ("hashAlg", CK_MECHANISM_TYPE),
+    ("mgf", CK_RSA_PKCS_MGF_TYPE),
+    ("source", CK_RSA_PKCS_OAEP_SOURCE_TYPE),
+    ("pSourceData", CK_VOID_PTR),
+    ("ulSourceDataLen", CK_ULONG),
+    ]
+
+CK_RSA_PKCS_PSS_PARAMS._fields_ = [
+    ("hashAlg", CK_MECHANISM_TYPE),
+    ("mgf", CK_RSA_PKCS_MGF_TYPE),
+    ("sLen", CK_ULONG),
+    ]
+
+CK_ECDH1_DERIVE_PARAMS._fields_ = [
+    ("kdf", CK_EC_KDF_TYPE),
+    ("ulSharedDataLen", CK_ULONG),
+    ("pSharedData", CK_BYTE_PTR),
+    ("ulPublicDataLen", CK_ULONG),
+    ("pPublicData", CK_BYTE_PTR),
+    ]
+
+CK_ECDH2_DERIVE_PARAMS._fields_ = [
+    ("kdf", CK_EC_KDF_TYPE),
+    ("ulSharedDataLen", CK_ULONG),
+    ("pSharedData", CK_BYTE_PTR),
+    ("ulPublicDataLen", CK_ULONG),
+    ("pPublicData", CK_BYTE_PTR),
+    ("ulPrivateDataLen", CK_ULONG),
+    ("hPrivateData", CK_OBJECT_HANDLE),
+    ("ulPublicDataLen2", CK_ULONG),
+    ("pPublicData2", CK_BYTE_PTR),
+    ]
+
+CK_ECMQV_DERIVE_PARAMS._fields_ = [
+    ("kdf", CK_EC_KDF_TYPE),
+    ("ulSharedDataLen", CK_ULONG),
+    ("pSharedData", CK_BYTE_PTR),
+    ("ulPublicDataLen", CK_ULONG),
+    ("pPublicData", CK_BYTE_PTR),
+    ("ulPrivateDataLen", CK_ULONG),
+    ("hPrivateData", CK_OBJECT_HANDLE),
+    ("ulPublicDataLen2", CK_ULONG),
+    ("pPublicData2", CK_BYTE_PTR),
+    ("publicKey", CK_OBJECT_HANDLE),
+    ]
+
+CK_X9_42_DH1_DERIVE_PARAMS._fields_ = [
+    ("kdf", CK_X9_42_DH_KDF_TYPE),
+    ("ulOtherInfoLen", CK_ULONG),
+    ("pOtherInfo", CK_BYTE_PTR),
+    ("ulPublicDataLen", CK_ULONG),
+    ("pPublicData", CK_BYTE_PTR),
+    ]
+
+CK_X9_42_DH2_DERIVE_PARAMS._fields_ = [
+    ("kdf", CK_X9_42_DH_KDF_TYPE),
+    ("ulOtherInfoLen", CK_ULONG),
+    ("pOtherInfo", CK_BYTE_PTR),
+    ("ulPublicDataLen", CK_ULONG),
+    ("pPublicData", CK_BYTE_PTR),
+    ("ulPrivateDataLen", CK_ULONG),
+    ("hPrivateData", CK_OBJECT_HANDLE),
+    ("ulPublicDataLen2", CK_ULONG),
+    ("pPublicData2", CK_BYTE_PTR),
+    ]
+
+CK_X9_42_MQV_DERIVE_PARAMS._fields_ = [
+    ("kdf", CK_X9_42_DH_KDF_TYPE),
+    ("ulOtherInfoLen", CK_ULONG),
+    ("pOtherInfo", CK_BYTE_PTR),
+    ("ulPublicDataLen", CK_ULONG),
+    ("pPublicData", CK_BYTE_PTR),
+    ("ulPrivateDataLen", CK_ULONG),
+    ("hPrivateData", CK_OBJECT_HANDLE),
+    ("ulPublicDataLen2", CK_ULONG),
+    ("pPublicData2", CK_BYTE_PTR),
+    ("publicKey", CK_OBJECT_HANDLE),
+    ]
+
+CK_KEA_DERIVE_PARAMS._fields_ = [
+    ("isSender", CK_BBOOL),
+    ("ulRandomLen", CK_ULONG),
+    ("pRandomA", CK_BYTE_PTR),
+    ("pRandomB", CK_BYTE_PTR),
+    ("ulPublicDataLen", CK_ULONG),
+    ("pPublicData", CK_BYTE_PTR),
+    ]
+
+CK_RC2_CBC_PARAMS._fields_ = [
+    ("ulEffectiveBits", CK_ULONG),
+    ("iv", CK_BYTE * 8),
+    ]
+
+CK_RC2_MAC_GENERAL_PARAMS._fields_ = [
+    ("ulEffectiveBits", CK_ULONG),
+    ("ulMacLength", CK_ULONG),
+    ]
+
+CK_RC5_PARAMS._fields_ = [
+    ("ulWordsize", CK_ULONG),
+    ("ulRounds", CK_ULONG),
+    ]
+
+CK_RC5_CBC_PARAMS._fields_ = [
+    ("ulWordsize", CK_ULONG),
+    ("ulRounds", CK_ULONG),
+    ("pIv", CK_BYTE_PTR),
+    ("ulIvLen", CK_ULONG),
+    ]
+
+CK_RC5_MAC_GENERAL_PARAMS._fields_ = [
+    ("ulWordsize", CK_ULONG),
+    ("ulRounds", CK_ULONG),
+    ("ulMacLength", CK_ULONG),
+    ]
+
+CK_DES_CBC_ENCRYPT_DATA_PARAMS._fields_ = [
+    ("iv", CK_BYTE * 8),
+    ("pData", CK_BYTE_PTR),
+    ("length", CK_ULONG),
+    ]
+
+CK_AES_CBC_ENCRYPT_DATA_PARAMS._fields_ = [
+    ("iv", CK_BYTE * 16),
+    ("pData", CK_BYTE_PTR),
+    ("length", CK_ULONG),
+    ]
+
+CK_SKIPJACK_PRIVATE_WRAP_PARAMS._fields_ = [
+    ("ulPasswordLen", CK_ULONG),
+    ("pPassword", CK_BYTE_PTR),
+    ("ulPublicDataLen", CK_ULONG),
+    ("pPublicData", CK_BYTE_PTR),
+    ("ulPAndGLen", CK_ULONG),
+    ("ulQLen", CK_ULONG),
+    ("ulRandomLen", CK_ULONG),
+    ("pRandomA", CK_BYTE_PTR),
+    ("pPrimeP", CK_BYTE_PTR),
+    ("pBaseG", CK_BYTE_PTR),
+    ("pSubprimeQ", CK_BYTE_PTR),
+    ]
+
+CK_SKIPJACK_RELAYX_PARAMS._fields_ = [
+    ("ulOldWrappedXLen", CK_ULONG),
+    ("pOldWrappedX", CK_BYTE_PTR),
+    ("ulOldPasswordLen", CK_ULONG),
+    ("pOldPassword", CK_BYTE_PTR),
+    ("ulOldPublicDataLen", CK_ULONG),
+    ("pOldPublicData", CK_BYTE_PTR),
+    ("ulOldRandomLen", CK_ULONG),
+    ("pOldRandomA", CK_BYTE_PTR),
+    ("ulNewPasswordLen", CK_ULONG),
+    ("pNewPassword", CK_BYTE_PTR),
+    ("ulNewPublicDataLen", CK_ULONG),
+    ("pNewPublicData", CK_BYTE_PTR),
+    ("ulNewRandomLen", CK_ULONG),
+    ("pNewRandomA", CK_BYTE_PTR),
+    ]
+
+CK_PBE_PARAMS._fields_ = [
+    ("pInitVector", CK_BYTE_PTR),
+    ("pPassword", CK_UTF8CHAR_PTR),
+    ("ulPasswordLen", CK_ULONG),
+    ("pSalt", CK_BYTE_PTR),
+    ("ulSaltLen", CK_ULONG),
+    ("ulIteration", CK_ULONG),
+    ]
+
+CK_KEY_WRAP_SET_OAEP_PARAMS._fields_ = [
+    ("bBC", CK_BYTE),
+    ("pX", CK_BYTE_PTR),
+    ("ulXLen", CK_ULONG),
+    ]
+
+CK_SSL3_RANDOM_DATA._fields_ = [
+    ("pClientRandom", CK_BYTE_PTR),
+    ("ulClientRandomLen", CK_ULONG),
+    ("pServerRandom", CK_BYTE_PTR),
+    ("ulServerRandomLen", CK_ULONG),
+    ]
+
+CK_SSL3_MASTER_KEY_DERIVE_PARAMS._fields_ = [
+    ("RandomInfo", CK_SSL3_RANDOM_DATA),
+    ("pVersion", CK_VERSION_PTR),
+    ]
+
+CK_SSL3_KEY_MAT_OUT._fields_ = [
+    ("hClientMacSecret", CK_OBJECT_HANDLE),
+    ("hServerMacSecret", CK_OBJECT_HANDLE),
+    ("hClientKey", CK_OBJECT_HANDLE),
+    ("hServerKey", CK_OBJECT_HANDLE),
+    ("pIVClient", CK_BYTE_PTR),
+    ("pIVServer", CK_BYTE_PTR),
+    ]
+
+CK_SSL3_KEY_MAT_PARAMS._fields_ = [
+    ("ulMacSizeInBits", CK_ULONG),
+    ("ulKeySizeInBits", CK_ULONG),
+    ("ulIVSizeInBits", CK_ULONG),
+    ("bIsExport", CK_BBOOL),
+    ("RandomInfo", CK_SSL3_RANDOM_DATA),
+    ("pReturnedKeyMaterial", CK_SSL3_KEY_MAT_OUT_PTR),
+    ]
+
+CK_TLS_PRF_PARAMS._fields_ = [
+    ("pSeed", CK_BYTE_PTR),
+    ("ulSeedLen", CK_ULONG),
+    ("pLabel", CK_BYTE_PTR),
+    ("ulLabelLen", CK_ULONG),
+    ("pOutput", CK_BYTE_PTR),
+    ("pulOutputLen", CK_ULONG_PTR),
+    ]
+
+CK_WTLS_RANDOM_DATA._fields_ = [
+    ("pClientRandom", CK_BYTE_PTR),
+    ("ulClientRandomLen", CK_ULONG),
+    ("pServerRandom", CK_BYTE_PTR),
+    ("ulServerRandomLen", CK_ULONG),
+    ]
+
+CK_WTLS_MASTER_KEY_DERIVE_PARAMS._fields_ = [
+    ("DigestMechanism", CK_MECHANISM_TYPE),
+    ("RandomInfo", CK_WTLS_RANDOM_DATA),
+    ("pVersion", CK_BYTE_PTR),
+    ]
+
+CK_WTLS_PRF_PARAMS._fields_ = [
+    ("DigestMechanism", CK_MECHANISM_TYPE),
+    ("pSeed", CK_BYTE_PTR),
+    ("ulSeedLen", CK_ULONG),
+    ("pLabel", CK_BYTE_PTR),
+    ("ulLabelLen", CK_ULONG),
+    ("pOutput", CK_BYTE_PTR),
+    ("pulOutputLen", CK_ULONG_PTR),
+    ]
+
+CK_WTLS_KEY_MAT_OUT._fields_ = [
+    ("hMacSecret", CK_OBJECT_HANDLE),
+    ("hKey", CK_OBJECT_HANDLE),
+    ("pIV", CK_BYTE_PTR),
+    ]
+
+CK_WTLS_KEY_MAT_PARAMS._fields_ = [
+    ("DigestMechanism", CK_MECHANISM_TYPE),
+    ("ulMacSizeInBits", CK_ULONG),
+    ("ulKeySizeInBits", CK_ULONG),
+    ("ulIVSizeInBits", CK_ULONG),
+    ("ulSequenceNumber", CK_ULONG),
+    ("bIsExport", CK_BBOOL),
+    ("RandomInfo", CK_WTLS_RANDOM_DATA),
+    ("pReturnedKeyMaterial", CK_WTLS_KEY_MAT_OUT_PTR),
+    ]
+
+CK_CMS_SIG_PARAMS._fields_ = [
+    ("certificateHandle", CK_OBJECT_HANDLE),
+    ("pSigningMechanism", CK_MECHANISM_PTR),
+    ("pDigestMechanism", CK_MECHANISM_PTR),
+    ("pContentType", CK_UTF8CHAR_PTR),
+    ("pRequestedAttributes", CK_BYTE_PTR),
+    ("ulRequestedAttributesLen", CK_ULONG),
+    ("pRequiredAttributes", CK_BYTE_PTR),
+    ("ulRequiredAttributesLen", CK_ULONG),
+    ]
+
+CK_KEY_DERIVATION_STRING_DATA._fields_ = [
+    ("pData", CK_BYTE_PTR),
+    ("ulLen", CK_ULONG),
+    ]
+
+CK_PKCS5_PBKD2_PARAMS._fields_ = [
+    ("saltSource", CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE),
+    ("pSaltSourceData", CK_VOID_PTR),
+    ("ulSaltSourceDataLen", CK_ULONG),
+    ("iterations", CK_ULONG),
+    ("prf", CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE),
+    ("pPrfData", CK_VOID_PTR),
+    ("ulPrfDataLen", CK_ULONG),
+    ("pPassword", CK_UTF8CHAR_PTR),
+    ("ulPasswordLen", CK_ULONG_PTR),
+    ]
+
+CK_PKCS5_PBKD2_PARAMS2._fields_ = [
+    ("saltSource", CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE),
+    ("pSaltSourceData", CK_VOID_PTR),
+    ("ulSaltSourceDataLen", CK_ULONG),
+    ("iterations", CK_ULONG),
+    ("prf", CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE),
+    ("pPrfData", CK_VOID_PTR),
+    ("ulPrfDataLen", CK_ULONG),
+    ("pPassword", CK_UTF8CHAR_PTR),
+    ("ulPasswordLen", CK_ULONG),
+    ]
+
+CK_OTP_PARAM._fields_ = [
+    ("type", CK_OTP_PARAM_TYPE),
+    ("pValue", CK_VOID_PTR),
+    ("ulValueLen", CK_ULONG),
+    ]
+
+CK_OTP_PARAMS._fields_ = [
+    ("pParams", CK_OTP_PARAM_PTR),
+    ("ulCount", CK_ULONG),
+    ]
+
+CK_OTP_SIGNATURE_INFO._fields_ = [
+    ("pParams", CK_OTP_PARAM_PTR),
+    ("ulCount", CK_ULONG),
+    ]
+
+CK_KIP_PARAMS._fields_ = [
+    ("pMechanism", CK_MECHANISM_PTR),
+    ("hKey", CK_OBJECT_HANDLE),
+    ("pSeed", CK_BYTE_PTR),
+    ("ulSeedLen", CK_ULONG),
+    ]
+
+CK_AES_CTR_PARAMS._fields_ = [
+    ("ulCounterBits", CK_ULONG),
+    ("cb", CK_BYTE * 16),
+    ]
+
+CK_GCM_PARAMS._fields_ = [
+    ("pIv", CK_BYTE_PTR),
+    ("ulIvLen", CK_ULONG),
+    ("ulIvBits", CK_ULONG),
+    ("pAAD", CK_BYTE_PTR),
+    ("ulAADLen", CK_ULONG),
+    ("ulTagBits", CK_ULONG),
+    ]
+
+CK_GCM_MESSAGE_PARAMS._fields_ = [
+    ("pIv", CK_BYTE_PTR),
+    ("ulIvLen", CK_ULONG),
+    ("ulIvFixedBits", CK_ULONG),
+    ("ivGenerator", CK_GENERATOR_FUNCTION),
+    ("pTag", CK_BYTE_PTR),
+    ("ulTagBits", CK_ULONG),
+    ]
+
+CK_GCM_WRAP_PARAMS._fields_ = [
+    ("pIv", CK_BYTE_PTR),
+    ("ulIvLen", CK_ULONG),
+    ("ulIvFixedBits", CK_ULONG),
+    ("ivGenerator", CK_GENERATOR_FUNCTION),
+    ("pAAD", CK_BYTE_PTR),
+    ("ulAADLen", CK_ULONG),
+    ("ulTagBits", CK_ULONG),
+    ]
+
+CK_CCM_PARAMS._fields_ = [
+    ("ulDataLen", CK_ULONG),
+    ("pNonce", CK_BYTE_PTR),
+    ("ulNonceLen", CK_ULONG),
+    ("pAAD", CK_BYTE_PTR),
+    ("ulAADLen", CK_ULONG),
+    ("ulMACLen", CK_ULONG),
+    ]
+
+CK_CCM_MESSAGE_PARAMS._fields_ = [
+    ("ulDataLen", CK_ULONG),
+    ("pNonce", CK_BYTE_PTR),
+    ("ulNonceLen", CK_ULONG),
+    ("ulNonceFixedBits", CK_ULONG),
+    ("nonceGenerator", CK_GENERATOR_FUNCTION),
+    ("pMAC", CK_BYTE_PTR),
+    ("ulMACLen", CK_ULONG),
+    ]
+
+CK_CCM_WRAP_PARAMS._fields_ = [
+    ("ulDataLen", CK_ULONG),
+    ("pNonce", CK_BYTE_PTR),
+    ("ulNonceLen", CK_ULONG),
+    ("ulNonceFixedBits", CK_ULONG),
+    ("nonceGenerator", CK_GENERATOR_FUNCTION),
+    ("pAAD", CK_BYTE_PTR),
+    ("ulAADLen", CK_ULONG),
+    ("ulMACLen", CK_ULONG),
+    ]
+
+CK_AES_GCM_PARAMS._fields_ = [
+    ("pIv", CK_BYTE_PTR),
+    ("ulIvLen", CK_ULONG),
+    ("ulIvBits", CK_ULONG),
+    ("pAAD", CK_BYTE_PTR),
+    ("ulAADLen", CK_ULONG),
+    ("ulTagBits", CK_ULONG),
+    ]
+
+CK_AES_CCM_PARAMS._fields_ = [
+    ("ulDataLen", CK_ULONG),
+    ("pNonce", CK_BYTE_PTR),
+    ("ulNonceLen", CK_ULONG),
+    ("pAAD", CK_BYTE_PTR),
+    ("ulAADLen", CK_ULONG),
+    ("ulMACLen", CK_ULONG),
+    ]
+
+CK_CAMELLIA_CTR_PARAMS._fields_ = [
+    ("ulCounterBits", CK_ULONG),
+    ("cb", CK_BYTE * 16),
+    ]
+
+CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS._fields_ = [
+    ("iv", CK_BYTE * 16),
+    ("pData", CK_BYTE_PTR),
+    ("length", CK_ULONG),
+    ]
+
+CK_ARIA_CBC_ENCRYPT_DATA_PARAMS._fields_ = [
+    ("iv", CK_BYTE * 16),
+    ("pData", CK_BYTE_PTR),
+    ("length", CK_ULONG),
+    ]
+
+CK_DSA_PARAMETER_GEN_PARAM._fields_ = [
+    ("hash", CK_MECHANISM_TYPE),
+    ("pSeed", CK_BYTE_PTR),
+    ("ulSeedLen", CK_ULONG),
+    ("ulIndex", CK_ULONG),
+    ]
+
+CK_ECDH_AES_KEY_WRAP_PARAMS._fields_ = [
+    ("ulAESKeyBits", CK_ULONG),
+    ("kdf", CK_EC_KDF_TYPE),
+    ("ulSharedDataLen", CK_ULONG),
+    ("pSharedData", CK_BYTE_PTR),
+    ]
+
+CK_RSA_AES_KEY_WRAP_PARAMS._fields_ = [
+    ("ulAESKeyBits", CK_ULONG),
+    ("pOAEPParams", CK_RSA_PKCS_OAEP_PARAMS_PTR),
+    ]
+
+CK_TLS12_MASTER_KEY_DERIVE_PARAMS._fields_ = [
+    ("RandomInfo", CK_SSL3_RANDOM_DATA),
+    ("pVersion", CK_VERSION_PTR),
+    ("prfHashMechanism", CK_MECHANISM_TYPE),
+    ]
+
+CK_TLS12_KEY_MAT_PARAMS._fields_ = [
+    ("ulMacSizeInBits", CK_ULONG),
+    ("ulKeySizeInBits", CK_ULONG),
+    ("ulIVSizeInBits", CK_ULONG),
+    ("bIsExport", CK_BBOOL),
+    ("RandomInfo", CK_SSL3_RANDOM_DATA),
+    ("pReturnedKeyMaterial", CK_SSL3_KEY_MAT_OUT_PTR),
+    ("prfHashMechanism", CK_MECHANISM_TYPE),
+    ]
+
+CK_TLS_KDF_PARAMS._fields_ = [
+    ("prfMechanism", CK_MECHANISM_TYPE),
+    ("pLabel", CK_BYTE_PTR),
+    ("ulLabelLength", CK_ULONG),
+    ("RandomInfo", CK_SSL3_RANDOM_DATA),
+    ("pContextData", CK_BYTE_PTR),
+    ("ulContextDataLength", CK_ULONG),
+    ]
+
+CK_TLS_MAC_PARAMS._fields_ = [
+    ("prfHashMechanism", CK_MECHANISM_TYPE),
+    ("ulMacLength", CK_ULONG),
+    ("ulServerOrClient", CK_ULONG),
+    ]
+
+CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS._fields_ = [
+    ("prfHashMechanism", CK_MECHANISM_TYPE),
+    ("pSessionHash", CK_BYTE_PTR),
+    ("ulSessionHashLen", CK_ULONG),
+    ("pVersion", CK_VERSION_PTR),
+    ]
+
+CK_GOSTR3410_DERIVE_PARAMS._fields_ = [
+    ("kdf", CK_EC_KDF_TYPE),
+    ("pPublicData", CK_BYTE_PTR),
+    ("ulPublicDataLen", CK_ULONG),
+    ("pUKM", CK_BYTE_PTR),
+    ("ulUKMLen", CK_ULONG),
+    ]
+
+CK_GOSTR3410_KEY_WRAP_PARAMS._fields_ = [
+    ("pWrapOID", CK_BYTE_PTR),
+    ("ulWrapOIDLen", CK_ULONG),
+    ("pUKM", CK_BYTE_PTR),
+    ("ulUKMLen", CK_ULONG),
+    ("hKey", CK_OBJECT_HANDLE),
+    ]
+
+CK_SEED_CBC_ENCRYPT_DATA_PARAMS._fields_ = [
+    ("iv", CK_BYTE * 16),
+    ("pData", CK_BYTE_PTR),
+    ("length", CK_ULONG),
+    ]
+
+CK_PRF_DATA_PARAM._fields_ = [
+    ("type", CK_PRF_DATA_TYPE),
+    ("pValue", CK_VOID_PTR),
+    ("ulValueLen", CK_ULONG),
+    ]
+
+CK_SP800_108_COUNTER_FORMAT._fields_ = [
+    ("bLittleEndian", CK_BBOOL),
+    ("ulWidthInBits", CK_ULONG),
+    ]
+
+CK_SP800_108_DKM_LENGTH_FORMAT._fields_ = [
+    ("dkmLengthMethod", CK_SP800_108_DKM_LENGTH_METHOD),
+    ("bLittleEndian", CK_BBOOL),
+    ("ulWidthInBits", CK_ULONG),
+    ]
+
+CK_DERIVED_KEY._fields_ = [
+    ("pTemplate", CK_ATTRIBUTE_PTR),
+    ("ulAttributeCount", CK_ULONG),
+    ("phKey", CK_OBJECT_HANDLE_PTR),
+    ]
+
+CK_SP800_108_KDF_PARAMS._fields_ = [
+    ("prfType", CK_SP800_108_PRF_TYPE),
+    ("ulNumberOfDataParams", CK_ULONG),
+    ("pDataParams", CK_PRF_DATA_PARAM_PTR),
+    ("ulAdditionalDerivedKeys", CK_ULONG),
+    ("pAdditionalDerivedKeys", CK_DERIVED_KEY_PTR),
+    ]
+
+CK_SP800_108_FEEDBACK_KDF_PARAMS._fields_ = [
+    ("prfType", CK_SP800_108_PRF_TYPE),
+    ("ulNumberOfDataParams", CK_ULONG),
+    ("pDataParams", CK_PRF_DATA_PARAM_PTR),
+    ("ulIVLen", CK_ULONG),
+    ("pIV", CK_BYTE_PTR),
+    ("ulAdditionalDerivedKeys", CK_ULONG),
+    ("pAdditionalDerivedKeys", CK_DERIVED_KEY_PTR),
+    ]
+
+CK_EDDSA_PARAMS._fields_ = [
+    ("phFlag", CK_BBOOL),
+    ("ulContextDataLen", CK_ULONG),
+    ("pContextData", CK_BYTE_PTR),
+    ]
+
+CK_CHACHA20_PARAMS._fields_ = [
+    ("pBlockCounter", CK_BYTE_PTR),
+    ("blockCounterBits", CK_ULONG),
+    ("pNonce", CK_BYTE_PTR),
+    ("ulNonceBits", CK_ULONG),
+    ]
+
+CK_SALSA20_PARAMS._fields_ = [
+    ("pBlockCounter", CK_BYTE_PTR),
+    ("pNonce", CK_BYTE_PTR),
+    ("ulNonceBits", CK_ULONG),
+    ]
+
+CK_SALSA20_CHACHA20_POLY1305_PARAMS._fields_ = [
+    ("pNonce", CK_BYTE_PTR),
+    ("ulNonceLen", CK_ULONG),
+    ("pAAD", CK_BYTE_PTR),
+    ("ulAADLen", CK_ULONG),
+    ]
+
+CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS._fields_ = [
+    ("pNonce", CK_BYTE_PTR),
+    ("ulNonceLen", CK_ULONG),
+    ("pTag", CK_BYTE_PTR),
+    ]
+
+CK_X3DH_INITIATE_PARAMS._fields_ = [
+    ("kdf", CK_X3DH_KDF_TYPE),
+    ("pPeer_identity", CK_OBJECT_HANDLE),
+    ("pPeer_prekey", CK_OBJECT_HANDLE),
+    ("pPrekey_signature", CK_BYTE_PTR),
+    ("pOnetime_key", CK_BYTE_PTR),
+    ("pOwn_identity", CK_OBJECT_HANDLE),
+    ("pOwn_ephemeral", CK_OBJECT_HANDLE),
+    ]
+
+CK_X3DH_RESPOND_PARAMS._fields_ = [
+    ("kdf", CK_X3DH_KDF_TYPE),
+    ("pIdentity_id", CK_BYTE_PTR),
+    ("pPrekey_id", CK_BYTE_PTR),
+    ("pOnetime_id", CK_BYTE_PTR),
+    ("pInitiator_identity", CK_OBJECT_HANDLE),
+    ("pInitiator_ephemeral", CK_BYTE_PTR),
+    ]
+
+CK_X2RATCHET_INITIALIZE_PARAMS._fields_ = [
+    ("sk", CK_BYTE_PTR),
+    ("peer_public_prekey", CK_OBJECT_HANDLE),
+    ("peer_public_identity", CK_OBJECT_HANDLE),
+    ("own_public_identity", CK_OBJECT_HANDLE),
+    ("bEncryptedHeader", CK_BBOOL),
+    ("eCurve", CK_ULONG),
+    ("aeadMechanism", CK_MECHANISM_TYPE),
+    ("kdfMechanism", CK_X2RATCHET_KDF_TYPE),
+    ]
+
+CK_X2RATCHET_RESPOND_PARAMS._fields_ = [
+    ("sk", CK_BYTE_PTR),
+    ("own_prekey", CK_OBJECT_HANDLE),
+    ("initiator_identity", CK_OBJECT_HANDLE),
+    ("own_public_identity", CK_OBJECT_HANDLE),
+    ("bEncryptedHeader", CK_BBOOL),
+    ("eCurve", CK_ULONG),
+    ("aeadMechanism", CK_MECHANISM_TYPE),
+    ("kdfMechanism", CK_X2RATCHET_KDF_TYPE),
+    ]
+
+CK_XEDDSA_PARAMS._fields_ = [
+    ("hash", CK_XEDDSA_HASH_TYPE),
+    ]
+
+CK_HKDF_PARAMS._fields_ = [
+    ("bExtract", CK_BBOOL),
+    ("bExpand", CK_BBOOL),
+    ("prfHashMechanism", CK_MECHANISM_TYPE),
+    ("ulSaltType", CK_ULONG),
+    ("pSalt", CK_BYTE_PTR),
+    ("ulSaltLen", CK_ULONG),
+    ("hSaltKey", CK_OBJECT_HANDLE),
+    ("pInfo", CK_BYTE_PTR),
+    ("ulInfoLen", CK_ULONG),
+    ]
+
+CK_IKE2_PRF_PLUS_DERIVE_PARAMS._fields_ = [
+    ("prfMechanism", CK_MECHANISM_TYPE),
+    ("bHasSeedKey", CK_BBOOL),
+    ("hSeedKey", CK_OBJECT_HANDLE),
+    ("pSeedData", CK_BYTE_PTR),
+    ("ulSeedDataLen", CK_ULONG),
+    ]
+
+CK_IKE_PRF_DERIVE_PARAMS._fields_ = [
+    ("prfMechanism", CK_MECHANISM_TYPE),
+    ("bDataAsKey", CK_BBOOL),
+    ("bRekey", CK_BBOOL),
+    ("pNi", CK_BYTE_PTR),
+    ("ulNiLen", CK_ULONG),
+    ("pNr", CK_BYTE_PTR),
+    ("ulNrLen", CK_ULONG),
+    ("hNewKey", CK_OBJECT_HANDLE),
+    ]
+
+CK_IKE1_PRF_DERIVE_PARAMS._fields_ = [
+    ("prfMechanism", CK_MECHANISM_TYPE),
+    ("bHasPrevKey", CK_BBOOL),
+    ("hKeygxy", CK_OBJECT_HANDLE),
+    ("hPrevKey", CK_OBJECT_HANDLE),
+    ("pCKYi", CK_BYTE_PTR),
+    ("ulCKYiLen", CK_ULONG),
+    ("pCKYr", CK_BYTE_PTR),
+    ("ulCKYrLen", CK_ULONG),
+    ("keyNumber", CK_BYTE),
+    ]
+
+CK_IKE1_EXTENDED_DERIVE_PARAMS._fields_ = [
+    ("prfMechanism", CK_MECHANISM_TYPE),
+    ("bHasKeygxy", CK_BBOOL),
+    ("hKeygxy", CK_OBJECT_HANDLE),
+    ("pExtraData", CK_BYTE_PTR),
+    ("ulExtraDataLen", CK_ULONG),
+    ]
+
+CK_ASYNC_DATA._fields_ = [
+    ("ulVersion", CK_ULONG),
+    ("pValue", CK_BYTE_PTR),
+    ("ulValue", CK_ULONG),
+    ("hObject", CK_OBJECT_HANDLE),
+    ("hAdditionalObject", CK_OBJECT_HANDLE),
+    ]
+
+CK_SIGN_ADDITIONAL_CONTEXT._fields_ = [
+    ("hedgeVariant", CK_HEDGE_TYPE),
+    ("pContext", CK_BYTE_PTR),
+    ("ulContextLen", CK_ULONG),
+    ]
+
+CK_HASH_SIGN_ADDITIONAL_CONTEXT._fields_ = [
+    ("hedgeVariant", CK_HEDGE_TYPE),
+    ("pContext", CK_BYTE_PTR),
+    ("ulContextLen", CK_ULONG),
+    ("hash", CK_MECHANISM_TYPE),
+    ]
+
+CK_FUNCTION_LIST_3_2._fields_ = [
+    ("version", CK_VERSION),
+    ]
+
+CK_FUNCTION_LIST_3_0._fields_ = [
+    ("version", CK_VERSION),
+    ]
+
+CK_FUNCTION_LIST._fields_ = [
+    ("version", CK_VERSION),
     ]
 
 CKF_TOKEN_PRESENT = 0x1

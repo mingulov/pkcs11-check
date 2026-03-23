@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import importlib.util
 import re
 import subprocess
@@ -76,3 +77,31 @@ def test_generated_standard_symbols_cover_representative_values() -> None:
     assert hasattr(types_std, "CKM_AES_GCM")
     assert hasattr(types_std, "CKK_AES")
     assert hasattr(types_std, "CK_GCM_PARAMS")
+
+
+def test_generated_standard_types_preserve_struct_pointer_aliases() -> None:
+    from pkcs11_check.raw import types_std
+
+    assert hasattr(types_std, "CK_NOTIFY")
+    assert types_std.CK_INFO_PTR._type_ is types_std.CK_INFO
+    assert types_std.CK_MECHANISM_PTR._type_ is types_std.CK_MECHANISM
+    assert types_std.CK_GCM_PARAMS_PTR._type_ is types_std.CK_GCM_PARAMS
+
+
+def test_generated_standard_types_preserve_nested_struct_fields() -> None:
+    from pkcs11_check.raw import types_std
+
+    assert dict(types_std.CK_INFO._fields_)["cryptokiVersion"] is types_std.CK_VERSION
+    assert dict(types_std.CK_SLOT_INFO._fields_)["hardwareVersion"] is types_std.CK_VERSION
+
+
+def test_generated_standard_function_list_structs_are_real_structures() -> None:
+    from pkcs11_check.raw import types_std
+
+    assert hasattr(types_std, "CK_FUNCTION_LIST")
+    assert issubclass(types_std.CK_FUNCTION_LIST, ctypes.Structure)
+    assert issubclass(types_std.CK_FUNCTION_LIST_3_0, ctypes.Structure)
+    assert issubclass(types_std.CK_FUNCTION_LIST_3_2, ctypes.Structure)
+    assert dict(types_std.CK_FUNCTION_LIST._fields_)["version"] is types_std.CK_VERSION
+    assert dict(types_std.CK_FUNCTION_LIST_3_0._fields_)["version"] is types_std.CK_VERSION
+    assert dict(types_std.CK_FUNCTION_LIST_3_2._fields_)["version"] is types_std.CK_VERSION

@@ -23,9 +23,18 @@ STRUCT_PATTERN = re.compile(
     r"typedef struct\s+(CK_\w+)\s*\{(?P<body>.*?)\}\s*(CK_\w+)\s*;",
     re.DOTALL,
 )
+PLAIN_STRUCT_PATTERN = re.compile(
+    r"^struct\s+(CK_\w+)\s*\{(?P<body>.*?)\};",
+    re.DOTALL | re.MULTILINE,
+)
 FUNCTION_PATTERN = re.compile(
     r"CK_PKCS11_FUNCTION_INFO\((C_\w+)\)\s*"
     r"#ifdef CK_NEED_ARG_LIST\s*\((?P<args>.*?)\);\s*#endif",
+    re.DOTALL,
+)
+OPAQUE_STRUCT_PATTERN = re.compile(r"^typedef struct (CK_\w+)\s+(CK_\w+)\s*;$", re.MULTILINE)
+CALLBACK_PATTERN = re.compile(
+    r"typedef CK_CALLBACK_FUNCTION\([^,]+,\s*(CK_\w+)\)\((?P<args>.*?)\);",
     re.DOTALL,
 )
 
@@ -87,6 +96,8 @@ def _parse_aliases(text: str) -> dict[str, tuple[str, int]]:
         source, target = match.groups()
         if "{" in source or "}" in source:
             continue
+        if source.startswith("struct "):
+            continue
         pointer_depth = source.count("CK_PTR")
         base = _normalize_spaces(source.replace("CK_PTR", " ").strip())
         if not base:
@@ -95,10 +106,39 @@ def _parse_aliases(text: str) -> dict[str, tuple[str, int]]:
     return aliases
 
 
+def _parse_opaque_structs(text: str) -> set[str]:
+    structs: set[str] = set()
+    for match in OPAQUE_STRUCT_PATTERN.finditer(text):
+        struct_name, target_name = match.groups()
+        if struct_name == target_name:
+            structs.add(target_name)
+    return structs
+
+
+def _parse_callbacks(text: str) -> set[str]:
+    return {match.group(1) for match in CALLBACK_PATTERN.finditer(text)}
+
+
 def _parse_structs(text: str) -> dict[str, list[tuple[str, str]]]:
     structs: dict[str, list[tuple[str, str]]] = {}
     for match in STRUCT_PATTERN.finditer(text):
         name = match.group(3)
+        fields: list[tuple[str, str]] = []
+        body = _strip_comments(match.group("body"))
+        for raw_field in body.split(";"):
+            field = _normalize_spaces(raw_field)
+            if not field:
+                continue
+            field_match = re.match(r"(.+?)\s+(\w+)(\[\d+\])?$", field)
+            if field_match is None:
+                continue
+            field_type, field_name, array_suffix = field_match.groups()
+            if array_suffix is not None:
+                field_type = f"{field_type}{array_suffix}"
+            fields.append((field_name, field_type))
+        structs[name] = fields
+    for match in PLAIN_STRUCT_PATTERN.finditer(text):
+        name = match.group(1)
         fields: list[tuple[str, str]] = []
         body = _strip_comments(match.group("body"))
         for raw_field in body.split(";"):
@@ -137,12 +177,16 @@ def _parse_functions(text: str) -> list[tuple[str, list[str]]]:
     return functions
 
 
-def _render_alias(name: str, aliases: dict[str, tuple[str, int]]) -> str:
+def _render_alias(
+    name: str,
+    aliases: dict[str, tuple[str, int]],
+    struct_names: set[str],
+) -> str:
     base, pointer_depth = aliases[name]
     if pointer_depth == 0:
-        return _render_ctype(base, aliases)
+        return _render_ctype(base, aliases, struct_names)
 
-    target = _render_ctype(base, aliases)
+    target = _render_ctype(base, aliases, struct_names)
     for _ in range(pointer_depth):
         if target == "None":
             target = "ctypes.c_void_p"
@@ -151,11 +195,19 @@ def _render_alias(name: str, aliases: dict[str, tuple[str, int]]) -> str:
     return target
 
 
-def _render_ctype(type_name: str, aliases: dict[str, tuple[str, int]]) -> str:
+def _render_ctype(
+    type_name: str,
+    aliases: dict[str, tuple[str, int]],
+    struct_names: set[str],
+) -> str:
     normalized = _normalize_spaces(type_name)
     primitive = C_PRIMITIVES.get(normalized)
     if primitive is not None:
         return primitive
+    if normalized.startswith("struct "):
+        normalized = normalized.removeprefix("struct ")
+    if normalized in struct_names:
+        return normalized
     if normalized in aliases:
         return normalized
     if normalized.endswith("_PTR") or normalized == "CK_VOID_PTR":
@@ -165,12 +217,16 @@ def _render_ctype(type_name: str, aliases: dict[str, tuple[str, int]]) -> str:
     return "ctypes.c_void_p"
 
 
-def _field_ctype(field_type: str, aliases: dict[str, tuple[str, int]]) -> str:
+def _field_ctype(
+    field_type: str,
+    aliases: dict[str, tuple[str, int]],
+    struct_names: set[str],
+) -> str:
     array_match = re.match(r"(.+?)\[(\d+)\]$", field_type)
     if array_match is None:
-        return _render_ctype(field_type, aliases)
+        return _render_ctype(field_type, aliases, struct_names)
     base_type, size = array_match.groups()
-    return f"{_render_ctype(base_type, aliases)} * {size}"
+    return f"{_render_ctype(base_type, aliases, struct_names)} * {size}"
 
 
 def _render_types_module(
@@ -178,8 +234,10 @@ def _render_types_module(
     symbols: dict[str, int | str],
     structs: dict[str, list[tuple[str, str]]],
     aliases: dict[str, tuple[str, int]],
+    opaque_structs: set[str],
+    callbacks: set[str],
 ) -> str:
-    if not symbols and not structs:
+    if not symbols and not structs and not callbacks:
         return (
             '"""Generated PKCS#11 standard types/constants."""\n'
             "from __future__ import annotations\n\n"
@@ -196,20 +254,32 @@ def _render_types_module(
         "",
     ]
 
+    struct_names = opaque_structs | set(structs)
+    for name in sorted(struct_names):
+        lines.append(f"class {name}(ctypes.Structure):")
+        lines.append("    pass")
+        lines.append("")
+
+    for name in sorted(callbacks):
+        lines.append(f"{name} = ctypes.c_void_p")
+    if callbacks:
+        lines.append("")
+
     for name in aliases:
         if not name.startswith("CK_"):
             continue
-        lines.append(f"{name} = {_render_alias(name, aliases)}")
+        lines.append(f"{name} = {_render_alias(name, aliases, struct_names)}")
     lines.append("")
 
     for name, fields in structs.items():
-        lines.append(f"class {name}(ctypes.Structure):")
         if not fields:
-            lines.append("    _fields_: list[tuple[str, object]] = []")
+            lines.append(f"{name}._fields_: list[tuple[str, object]] = []")
         else:
-            lines.append("    _fields_ = [")
+            lines.append(f"{name}._fields_ = [")
             for field_name, field_type in fields:
-                lines.append(f'        ("{field_name}", {_field_ctype(field_type, aliases)}),')
+                lines.append(
+                    f'    ("{field_name}", {_field_ctype(field_type, aliases, struct_names)}),'
+                )
             lines.append("    ]")
         lines.append("")
 
@@ -284,7 +354,10 @@ def _load_inputs(header: Path) -> tuple[str, str]:
     header_dir = header.parent
     type_header = header_dir / "pkcs11t.h"
     function_header = header_dir / "pkcs11f.h"
-    return type_header.read_text() if type_header.is_file() else root_text, (
+    types_text = type_header.read_text() if type_header.is_file() else root_text
+    if type_header.is_file():
+        types_text = f"{types_text}\n{root_text}"
+    return types_text, (
         function_header.read_text() if function_header.is_file() else root_text
     )
 
@@ -296,11 +369,19 @@ def generate_raw_standard(*, header: Path, out_types: Path, out_metadata: Path) 
     types_text, functions_text = _load_inputs(header)
     symbols = _parse_symbols(types_text)
     aliases = _parse_aliases(types_text)
+    opaque_structs = _parse_opaque_structs(types_text)
+    callbacks = _parse_callbacks(types_text)
     structs = _parse_structs(types_text)
     functions = _parse_functions(functions_text)
 
     out_types.write_text(
-        _render_types_module(symbols=symbols, structs=structs, aliases=aliases)
+        _render_types_module(
+            symbols=symbols,
+            structs=structs,
+            aliases=aliases,
+            opaque_structs=opaque_structs,
+            callbacks=callbacks,
+        )
     )
     out_metadata.write_text(_render_metadata_module(symbols=symbols, functions=functions))
 
