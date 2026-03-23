@@ -63,6 +63,7 @@ malformed calls without fighting the API.
 
 - make `pkcs11_check.raw` the exact-call trust boundary for pkcs11-check
 - support the full standard PKCS#11 v3.2 raw surface from a pinned header snapshot
+- support ABI-correct runtime sizing on the host platform rather than hardcoding LP64 assumptions
 - support exact modeling of both valid and intentionally malformed calls
 - keep manual `ctypes` escape hatches always possible
 - support later vendor-specific mechanisms, parameters, and symbols without redesign
@@ -89,6 +90,32 @@ The standard raw layer must obey these invariants:
 - no mandatory registration for unknown vendor mechanisms
 
 The library may help construct the call, but it must never silently change the call's meaning.
+
+## Platform And ABI Model
+
+The standard layer must be ABI-correct for the current Python process and host C ABI.
+
+### Sizing Rules
+
+- `CK_ULONG`, `CK_FLAGS`, handle types, and related aliases must be modeled through platform-native
+  `ctypes` aliases rather than hardcoded widths
+- on LP64 platforms this usually means `CK_ULONG == 8` bytes
+- on LLP64 platforms such as 64-bit Windows this usually means `CK_ULONG == 4` bytes
+
+The generator is responsible for symbol and declaration extraction, but runtime type aliases must be
+bound through platform-native `ctypes` definitions.
+
+### Packing Rules
+
+- standard structs use the platform-default ABI layout as represented by `ctypes.Structure`
+- the standard generated layer does not invent custom packing rules
+- if a vendor extension requires non-standard packing or layout, that must live in the extension layer
+  or in manual `ctypes` declarations
+
+### Initial Support Envelope
+
+The immediate target remains the project's current Linux-first environment, but the design must not
+encode Linux-only assumptions into generated declarations or runtime sizing logic.
 
 ## Architecture
 
@@ -125,6 +152,13 @@ Responsibilities:
 - feature and availability introspection
 
 This layer must accept manually prepared `ctypes` pointers directly.
+
+It must support two loading modes:
+
+- standalone loading from a module path via exported `C_GetInterface` or `C_GetFunctionList`
+- bridge loading from a library already loaded through the python-pkcs11 fork
+
+This keeps the existing bridge useful without making the fork mandatory.
 
 #### `pkcs11_check.raw.pack`
 
@@ -182,6 +216,31 @@ Responsibilities:
 - helpers that still require explicit mechanisms/templates when correctness depends on them
 
 This layer is allowed to improve readability, but it is not allowed to become a policy-heavy wrapper.
+
+## Threading Model
+
+`RawPKCS11` should be designed as a thin dispatch object with minimal mutable state.
+
+### Wrapper-Level Guarantees
+
+- function pointer tables are immutable after construction
+- dispatch methods do not mutate global call state
+- independently created packed values are safe to use concurrently as long as callers do not share and
+  mutate the same backing objects across threads
+
+### Non-Guarantees
+
+- the raw layer does not add global locking around PKCS#11 calls
+- it does not promise stronger thread safety than the underlying module provides
+- it does not hide module bugs related to concurrent access
+
+### Practical Rule
+
+The wrapper itself should be reentrant for concurrent dispatch, but thread safety of actual PKCS#11
+operations remains a property of the module, session usage pattern, and PKCS#11 initialization mode.
+
+Crash-oriented and destructive tests should continue preferring subprocess isolation over in-process
+threading where safety matters.
 
 ## Value Model
 
@@ -243,12 +302,111 @@ tmpl = TemplateArg([
 The important point is not the exact spelling. The important point is that malformedness becomes
 explicit and inspectable instead of being spread through hand-written `ctypes` code.
 
+## Memory Lifetime Model
+
+The raw layer must make lifetime rules explicit.
+
+### Base Rule
+
+Owned storage created by `pack` or `faults` must remain alive at least until the PKCS#11 call using it
+returns.
+
+### Standard Assumption
+
+For standard PKCS#11 calls, mechanism parameters, templates, and input buffers are assumed to be
+consumed during the call itself. The raw layer does not promise that helper-owned storage remains
+valid beyond the end of that call unless the caller keeps the owner object alive explicitly.
+
+This means:
+
+- `C_EncryptInit`, `C_SignInit`, `C_DigestInit`, `C_CreateObject`, and similar calls only require the
+  associated helper-owned storage to survive for the duration of that call
+- output buffers must remain valid for the duration of the output-producing call
+- if a caller wants longer retention, it must keep explicit references to the owner objects
+
+### Conformance Note
+
+If a module incorrectly retains caller-owned pointers after a call returns, that is a module behavior
+or bug. The raw layer should not silently extend lifetimes to mask such behavior.
+
+## Output Buffer Pattern
+
+PKCS#11's standard two-call output pattern must remain explicit in the exact layer.
+
+### Exact Layer Rule
+
+`raw.api` keeps output probing manual:
+
+1. call with `NULL` output buffer to query required length
+2. allocate exact output storage
+3. call again with the real buffer
+
+This is important because many negative tests intentionally vary the pointer/length relationship.
+
+### Optional Helper Rule
+
+A small optional helper may exist outside the exact dispatch core for happy-path probing, but it must:
+
+- expose both calls clearly
+- surface both `CK_RV` values
+- avoid hiding buffer sizes or retries
+- remain unsuitable for malformed-input tests by design
+
+## Bootstrap And Session Helpers
+
+The raw architecture does not include a policy-heavy session/object API, but adoption still needs a
+small amount of bootstrap support earlier than a full recipe layer.
+
+### Allowed Bootstrap Scope
+
+Small explicit helpers are acceptable for:
+
+- loading the first slot or a requested slot
+- opening a session with explicit flags
+- logging in with an explicit user type and PIN
+- closing/finalizing in teardown
+
+These helpers are acceptable because they do not alter cryptographic call semantics. They only reduce
+boilerplate required to reach the actual exact-control operations.
+
+### Not Allowed In Bootstrap
+
+- implicit object wrappers
+- automatic attribute defaults
+- automatic mechanism choice
+- hidden retries
+- stateful high-level session magic
+
 ## Source Of Truth And Code Generation
 
 The standard raw layer should be generated from a pinned header snapshot committed to the repo.
 
 This follows the same general vendored-header pattern used by other low-level bindings such as
 `rust-cryptoki`'s `cryptoki-sys`: pin the header snapshot, generate from it, and make drift visible.
+
+### Parsing Strategy
+
+The initial generator should target the pinned, known PKCS#11 public-domain 3.2 header format rather
+than pretending to parse arbitrary C headers.
+
+Recommended approach:
+
+- a constrained parser over the vendored standard header
+- parse the declaration forms actually present in that header:
+  - `#define` constants
+  - typedef-style aliases/macros
+  - function prototypes
+  - `struct CK_* { ... }` blocks
+- reject unsupported constructs loudly rather than guessing
+
+This is preferable to regex-only scraping of arbitrary headers, and simpler than taking a heavy
+dependency on a full C parser for phase 1.
+
+### Limitations
+
+- phase 1 generation targets the vendored standard header only
+- vendor extension headers are not part of the initial generator scope
+- vendor additions remain manual registrations unless a later importer is added intentionally
 
 ### Proposed Source Chain
 
@@ -345,6 +503,29 @@ mech = MechanismArg(0x80010001, param=manual_vendor_param)
 
 That keeps vendor support from being framework-gated.
 
+## Loading And Subprocess Model
+
+The raw layer must support both in-process bridge use and standalone subprocess use.
+
+### In-Process Bridge Mode
+
+When pkcs11-check already loaded a module via the fork, `pkcs11_check.raw` may build a raw view from
+the fork-exposed function-list pointers.
+
+This preserves compatibility with existing fixtures and avoids double-loading the same module.
+
+### Standalone Mode
+
+For crash-safe or isolated tests, `pkcs11_check.raw` must also work from a module path alone:
+
+- load the shared library directly
+- attempt `C_GetInterface` first when available
+- fall back to `C_GetFunctionList`
+- initialize and operate without requiring the fork
+
+This standalone mode is mandatory for subprocess crash tests and for reducing long-term dependence on
+the python-pkcs11 fork.
+
 ## Relationship To The python-pkcs11 Fork
 
 The fork remains useful during migration, but it should stop being the exact-call substrate.
@@ -365,27 +546,40 @@ The fork remains useful during migration, but it should stop being the exact-cal
 
 ### Phase 0: Stabilize the Extraction
 
+- priority: immediate
+- rough effort: 1-2 days
 - keep `RawPKCS11` in `src/pkcs11_check/raw/`
 - finish the missing `7` public `C_*` wrappers
 - stop adding new ad hoc raw ctypes logic outside the raw package
 
 ### Phase 1: Build the Standard Generated Layer
 
+- priority: highest structural priority
+- rough effort: about 1-2 weeks
 - vendor the pinned PKCS#11 v3.2 header snapshot
 - add the generator
 - generate constants, structs, and function metadata
 - refactor `RawPKCS11` to use generated metadata
 - add drift checks
 
+This phase comes before broad migration because migrating onto an incomplete manually maintained base
+would create churn and repeat work.
+
 ### Phase 2: Add Exact Pack/Fault/Inspect
 
+- priority: highest usability priority after generation
+- rough effort: about 1-2 weeks
 - add exact packing helpers
 - add explicit malformed-input helpers
 - add exact call inspection
 - make `pkcs11_check.raw` a trustworthy migration target
 
+Minimal bootstrap helpers for session/slot/login setup may land here as part of adoption support.
+
 ### Phase 3: Migrate Raw-Heavy Existing Tests
 
+- priority: start once phases 1-2 cover the needed surfaces
+- rough effort: incremental, file-by-file
 Start with files that already need exact raw behavior:
 
 - CKR raw tests
@@ -398,8 +592,13 @@ Start with files that already need exact raw behavior:
 
 The goal is to remove duplicated low-level ctypes glue from tests first.
 
+Small tactical migrations can happen earlier for files already covered by the current surface, but the
+main migration wave should wait for the generated exact layer to exist.
+
 ### Phase 4: Add Optional Recipes
 
+- priority: optional after migration pressure appears
+- rough effort: incremental
 - add readability helpers on top of raw
 - keep them explicit and policy-free
 - never make recipes mandatory for exact work
@@ -417,6 +616,47 @@ Only after earlier phases are stable:
 - add a broader raw-first testing API if still desirable
 - build it on top of the exact raw stack
 - do not let it weaken exactness guarantees
+
+## Recipe Boundary Example
+
+Recipes are allowed to reduce obvious boilerplate, but they must stay explicit.
+
+Illustrative direction:
+
+```python
+slot = first_usable_slot(raw)
+session = open_session(raw, slot=slot, flags=CKF_SERIAL_SESSION | CKF_RW_SESSION)
+login_user(raw, session, pin_bytes)
+
+template = secret_key_template(
+    key_type=CKK_AES,
+    value_len=32,
+    attrs=[
+        attr_bool(CKA_ENCRYPT, True),
+        attr_bool(CKA_DECRYPT, True),
+        attr_bool(CKA_TOKEN, False),
+    ],
+)
+
+mech = mech_simple(CKM_AES_KEY_GEN)
+key = c_object_handle()
+rv = raw.C_GenerateKey(session, mech.byref(), template.ptr, template.count, key.byref())
+```
+
+What makes this acceptable:
+
+- the slot, session flags, and login are explicit
+- the mechanism is explicit
+- the template contents are explicit
+- the call site still chooses the raw function
+- callers can still replace any helper-built value with manual `ctypes`
+
+What would be unacceptable:
+
+- `session.generate_aes_key(256)` selecting attributes implicitly
+- helpers that silently probe mechanisms and choose alternatives
+- helpers that remove attributes thought to be "invalid"
+- helpers that switch between `NULL` and empty buffers automatically
 
 ## Verification Strategy
 
