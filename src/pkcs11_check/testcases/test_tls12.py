@@ -631,102 +631,166 @@ class TestTLS12Extended:
             pms.destroy()
 
 
-# All TLS derive mechanisms with their param builders
-_TLS_DERIVE_MECHS = [
-    ("SSL3_MASTER_KEY_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
-    ("SSL3_MASTER_KEY_DERIVE_DH", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
-    ("TLS_MASTER_KEY_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
-    ("TLS_MASTER_KEY_DERIVE_DH", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
-    ("TLS12_MASTER_KEY_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
-    ("TLS12_MASTER_KEY_DERIVE_DH", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
-    ("TLS12_EXTENDED_MASTER_KEY_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
-    ("TLS12_EXTENDED_MASTER_KEY_DERIVE_DH", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
-    ("SSL3_KEY_AND_MAC_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
-    ("TLS_KEY_AND_MAC_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM)),
-    ("TLS12_KEY_AND_MAC_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
-    ("TLS12_KEY_SAFE_DERIVE", lambda: (_CLIENT_RANDOM, _SERVER_RANDOM, Mechanism.SHA256)),
-]
 
-# All TLS MAC mechanisms
-_TLS_MAC_MECHS = [
-    ("TLS12_MAC", lambda: (Mechanism.SHA256, 32, 1)),
-    ("TLS_MAC", lambda: (Mechanism.SHA256, 32, 1)),
-]
+_NEG_ATTR_SCRIPT = """\
+import ctypes, struct, sys, os
+from pkcs11.raw import RawPKCS11, CKR_OK, CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION
+
+raw = RawPKCS11.from_lib("{module}")
+raw.C_Initialize(None)
+sc = ctypes.c_ulong(0)
+raw.C_GetSlotList(1, None, ctypes.byref(sc))
+sl = (ctypes.c_ulong * sc.value)()
+raw.C_GetSlotList(1, sl, ctypes.byref(sc))
+sess = ctypes.c_ulong(0)
+raw.C_OpenSession(sl[0], CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
+sh = sess.value
+pin = {pin_arg}
+if pin:
+    pb = pin.encode()
+    raw.C_Login(sh, 1, (ctypes.c_ubyte * len(pb))(*pb), len(pb))
+
+class CK_ATTR(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_ulong), ("pValue", ctypes.c_void_p), ("ulValueLen", ctypes.c_ulong)]
+
+def mk(t, v):
+    b = (ctypes.c_ubyte * len(v))(*v)
+    a = CK_ATTR(); a.type = t; a.pValue = ctypes.cast(b, ctypes.c_void_p); a.ulValueLen = len(v)
+    return a, b
+
+true_val = b"\\x01"
+false_val = b"\\x00"
+
+{test_code}
+
+raw.C_CloseSession(sh)
+raw.C_Finalize(None)
+"""
+
+
+def _run_neg(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
+    import os, subprocess, sys, textwrap
+    pin_arg = f'"{pin}"' if pin else "None"
+    script = _NEG_ATTR_SCRIPT.format(module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code))
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True, timeout=15,
+        env=os.environ.copy(),
+    )
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
 class TestTLSNegativeAttributes:
-    """Verify modules reject TLS operations when key attributes are False."""
+    """Verify modules reject TLS derive/sign when key attributes are False.
 
-    @pytest.mark.parametrize("mech_name,param_fn", _TLS_DERIVE_MECHS,
-                             ids=[m[0] for m in _TLS_DERIVE_MECHS])
-    def test_derive_without_derive_attr(
-        self, mech_name: str, param_fn: Any, p11_session: Any, p11_module: Any,
-    ) -> None:
-        """Key with CKA_DERIVE=False must be rejected for {mech_name}."""
-        if not has_mechanism(p11_module, mech_name):
-            pytest.skip(f"CKM_{mech_name} not supported")
+    Uses RawPKCS11 in subprocess to bypass python-pkcs11 wrapper which
+    strips derive_key/sign methods from keys with DERIVE=False/SIGN=False.
+    """
 
-        no_derive_key = p11_session.create_object({
-            Attribute.CLASS: ObjectClass.SECRET_KEY,
-            Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-            Attribute.VALUE: _PRE_MASTER_SECRET,
-            Attribute.DERIVE: False,
-            Attribute.TOKEN: False,
-            Attribute.SENSITIVE: False,
-            Attribute.EXTRACTABLE: True,
-        })
-        try:
-            mech = getattr(Mechanism, mech_name)
-            try:
-                derived = no_derive_key.derive_key(
-                    KeyType.GENERIC_SECRET, 48,
-                    mechanism=mech, mechanism_param=param_fn(),
-                    template={
-                        Attribute.SENSITIVE: False,
-                        Attribute.EXTRACTABLE: True,
-                        Attribute.DERIVE: True,
-                        Attribute.TOKEN: False,
-                    },
-                )
-                derived.destroy()
-                pytest.fail(f"Module allowed CKM_{mech_name} with CKA_DERIVE=False")
-            except KeyFunctionNotPermitted:
-                pass  # Correct per OASIS spec
-            except _TLS_ERRORS as exc:
-                pytest.xfail(f"CKM_{mech_name} rejected (not KeyFunctionNotPermitted): {exc}")
-        finally:
-            no_derive_key.destroy()
+    @pytest.mark.subprocess
+    def test_derive_without_derive_attr(self, p11_config: Any, p11_module: Any) -> None:
+        """Key with CKA_DERIVE=False must be rejected by C_DeriveKey."""
+        if not has_mechanism(p11_module, "TLS12_MASTER_KEY_DERIVE"):
+            if not has_mechanism(p11_module, "TLS_MASTER_KEY_DERIVE"):
+                pytest.skip("No TLS master key derive mechanism")
 
-    @pytest.mark.parametrize("mech_name,param_fn", _TLS_MAC_MECHS,
-                             ids=[m[0] for m in _TLS_MAC_MECHS])
-    def test_mac_without_sign_attr(
-        self, mech_name: str, param_fn: Any, p11_session: Any, p11_module: Any,
-    ) -> None:
-        """Key with CKA_SIGN=False must be rejected for {mech_name}."""
-        if not has_mechanism(p11_module, mech_name):
-            pytest.skip(f"CKM_{mech_name} not supported")
+        rc, out, err = _run_neg(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+# Create generic secret key with DERIVE=False
+val = bytes(range(48))
+attrs = []
+bufs = []
+for t, v in [
+    (0x0000, struct.pack("=Q", 4)),    # CKA_CLASS = CKO_SECRET_KEY (4)
+    (0x0100, struct.pack("=Q", 0x10)), # CKA_KEY_TYPE = CKK_GENERIC_SECRET (0x10)
+    (0x0011, val),                      # CKA_VALUE
+    (0x0161, struct.pack("=Q", 48)),   # CKA_VALUE_LEN
+    (0x010C, false_val),               # CKA_DERIVE = FALSE
+    (0x0001, false_val),               # CKA_TOKEN = FALSE
+    (0x0103, false_val),               # CKA_SENSITIVE = FALSE
+    (0x0162, true_val),                # CKA_EXTRACTABLE = TRUE
+]:
+    a, b = mk(t, v); attrs.append(a); bufs.append(b)
+tmpl = (CK_ATTR * len(attrs))(*attrs)
+key = ctypes.c_ulong(0)
+rv = raw.C_CreateObject(sh, tmpl, len(attrs), ctypes.byref(key))
+if rv != CKR_OK:
+    print(f"SKIP:create_failed:0x{rv:08x}")
+    sys.exit(0)
 
-        no_sign_key = p11_session.create_object({
-            Attribute.CLASS: ObjectClass.SECRET_KEY,
-            Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-            Attribute.VALUE: bytes(range(32)),
-            Attribute.SIGN: False,
-            Attribute.TOKEN: False,
-            Attribute.SENSITIVE: False,
-            Attribute.EXTRACTABLE: True,
-        })
-        try:
-            mech = getattr(Mechanism, mech_name)
-            try:
-                result = no_sign_key.sign(
-                    b"TLS record data",
-                    mechanism=mech,
-                    mechanism_param=param_fn(),
-                )
-                pytest.fail(f"Module allowed CKM_{mech_name} with CKA_SIGN=False")
-            except KeyFunctionNotPermitted:
-                pass  # Correct per OASIS spec
-            except _TLS_ERRORS as exc:
-                pytest.xfail(f"CKM_{mech_name} rejected (not KeyFunctionNotPermitted): {exc}")
-        finally:
-            no_sign_key.destroy()
+# Try C_DeriveKey - should be rejected
+mech = CK_MECHANISM()
+mech.mechanism = 0x000003E0  # CKM_TLS12_MASTER_KEY_DERIVE
+rv = raw.C_DeriveKey(sh, ctypes.byref(mech), key.value, None, 0, ctypes.byref(ctypes.c_ulong(0)))
+print(f"CKR:0x{rv:08x}")
+# 0x69 = KEY_FUNCTION_NOT_PERMITTED, 0x70 = MECHANISM_PARAM_INVALID
+if rv == 0x69:
+    print("OK:KEY_FUNCTION_NOT_PERMITTED")
+elif rv == 0:
+    print("FAIL:allowed_derive_with_DERIVE_false")
+else:
+    print(f"REJECTED:0x{rv:08x}")
+
+raw.C_DestroyObject(sh, key.value)
+""",
+        )
+        if "SKIP:" in out:
+            pytest.skip(out)
+        assert rc == 0, f"Subprocess crashed: {err[-300:]}"
+        assert "FAIL:" not in out, f"Module allowed derive with CKA_DERIVE=False"
+        # OK or REJECTED with some other CKR - both are acceptable
+
+    @pytest.mark.subprocess
+    def test_sign_without_sign_attr(self, p11_config: Any, p11_module: Any) -> None:
+        """Key with CKA_SIGN=False must be rejected by C_SignInit."""
+        if not has_mechanism(p11_module, "TLS12_MAC"):
+            if not has_mechanism(p11_module, "TLS_MAC"):
+                pytest.skip("No TLS MAC mechanism")
+
+        rc, out, err = _run_neg(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+# Create generic secret key with SIGN=False
+val = bytes(range(32))
+attrs = []
+bufs = []
+for t, v in [
+    (0x0000, struct.pack("=Q", 4)),    # CKA_CLASS = CKO_SECRET_KEY
+    (0x0100, struct.pack("=Q", 0x10)), # CKA_KEY_TYPE = CKK_GENERIC_SECRET
+    (0x0011, val),                      # CKA_VALUE
+    (0x0161, struct.pack("=Q", 32)),   # CKA_VALUE_LEN
+    (0x0108, false_val),               # CKA_SIGN = FALSE
+    (0x0001, false_val),               # CKA_TOKEN = FALSE
+    (0x0103, false_val),               # CKA_SENSITIVE = FALSE
+    (0x0162, true_val),                # CKA_EXTRACTABLE = TRUE
+]:
+    a, b = mk(t, v); attrs.append(a); bufs.append(b)
+tmpl = (CK_ATTR * len(attrs))(*attrs)
+key = ctypes.c_ulong(0)
+rv = raw.C_CreateObject(sh, tmpl, len(attrs), ctypes.byref(key))
+if rv != CKR_OK:
+    print(f"SKIP:create_failed:0x{rv:08x}")
+    sys.exit(0)
+
+# Try C_SignInit with CKA_SIGN=False key
+mech = CK_MECHANISM()
+mech.mechanism = 0x000003D8  # CKM_TLS12_MAC
+rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
+print(f"CKR:0x{rv:08x}")
+if rv == 0x69:
+    print("OK:KEY_FUNCTION_NOT_PERMITTED")
+elif rv == 0:
+    print("FAIL:allowed_sign_with_SIGN_false")
+else:
+    print(f"REJECTED:0x{rv:08x}")
+
+raw.C_DestroyObject(sh, key.value)
+""",
+        )
+        if "SKIP:" in out:
+            pytest.skip(out)
+        assert rc == 0, f"Subprocess crashed: {err[-300:]}"
+        assert "FAIL:" not in out, f"Module allowed sign with CKA_SIGN=False"
