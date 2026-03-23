@@ -31,6 +31,8 @@ RUN /opt/openssl/bin/openssl version
 # Build SoftHSM2 against custom OpenSSL
 RUN git clone --depth 1 --branch main https://github.com/softhsm/SoftHSMv2.git /build/softhsm2
 WORKDIR /build/softhsm2
+COPY docker/softhsm2/patches/*.patch /tmp/patches/
+RUN for p in /tmp/patches/*.patch; do git apply "$p"; done
 RUN sh autogen.sh && \
     PKG_CONFIG_PATH=/opt/openssl/lib64/pkgconfig \
     CPPFLAGS="-I/opt/openssl/include" \
