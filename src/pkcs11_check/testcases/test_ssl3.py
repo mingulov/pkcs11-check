@@ -29,6 +29,7 @@ from pkcs11.exceptions import (
     KeyTypeInconsistent,
     MechanismInvalid,
     MechanismParamInvalid,
+    ObjectHandleInvalid,
     TemplateIncomplete,
     TemplateInconsistent,
 )
@@ -54,6 +55,7 @@ _DERIVE_ERRORS = (
     TemplateIncomplete,
     TemplateInconsistent,
     KeyTypeInconsistent,
+    ObjectHandleInvalid,
 )
 
 # Errors acceptable for MAC sign/verify operations
@@ -191,7 +193,7 @@ class TestSSL3MasterKeyDerive:
                 KeyType.GENERIC_SECRET,
                 384,  # 48-byte master secret
                 mechanism=Mechanism.SSL3_MASTER_KEY_DERIVE,
-                mechanism_param=_CLIENT_RANDOM + _SERVER_RANDOM,
+                mechanism_param=(_CLIENT_RANDOM, _SERVER_RANDOM),
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
@@ -240,7 +242,7 @@ class TestSSL3MasterKeyDeriveDH:
                 KeyType.GENERIC_SECRET,
                 384,
                 mechanism=Mechanism.SSL3_MASTER_KEY_DERIVE_DH,
-                mechanism_param=_CLIENT_RANDOM + _SERVER_RANDOM,
+                mechanism_param=(_CLIENT_RANDOM, _SERVER_RANDOM),
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
@@ -296,7 +298,7 @@ class TestSSL3KeyAndMacDerive:
                 KeyType.AES,
                 128,
                 mechanism=Mechanism.SSL3_KEY_AND_MAC_DERIVE,
-                mechanism_param=_CLIENT_RANDOM + _SERVER_RANDOM,
+                mechanism_param=(_CLIENT_RANDOM, _SERVER_RANDOM),
                 template={
                     Attribute.SENSITIVE: False,
                     Attribute.EXTRACTABLE: True,
