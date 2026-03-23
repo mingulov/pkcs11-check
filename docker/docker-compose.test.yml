@@ -59,11 +59,14 @@ services:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss
 
   # NSS PQC (Fedora Rawhide, v3.2 PQC)
+  # NSS PQC (source build, configurable tag, default: tip)
   test-nss-pqc:
     <<: *artifacts
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile.rawhide
+      args:
+        NSS_TAG: "tip"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-pqc
 
