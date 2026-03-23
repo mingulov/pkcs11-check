@@ -100,17 +100,13 @@ def test_ecdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any
     except Exception:
         pytest.skip(f"No EC params mapping for curve {curve}")
 
-    result = vec["result"]
     try:
         public_point = decode_ec_public_point(vec["public"], encoding_name, curve)
         private_scalar = decode_ec_private_scalar(vec["private"], encoding_name, curve)
     except Exception as exc:
-        if result == "invalid":
-            return  # Malformed key correctly rejected at decode
-        if result == "acceptable":
-            return  # Acceptable to reject malformed encoding
         pytest.skip(f"Cannot decode {encoding_name} ECDH vector: {type(exc).__name__}")
     shared_expected = bytes.fromhex(vec["shared"])
+    result = vec["result"]
 
     # Import EC private key
     try:
