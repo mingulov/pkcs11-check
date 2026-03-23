@@ -84,12 +84,14 @@ services:
   # Development branches — bleeding edge, may break
   # ==========================================================
 
-  # OpenCryptoki master branch (built from source)
+  # OpenCryptoki master branch (built from source + custom OpenSSL)
   test-opencryptoki-master:
     <<: *artifacts
     build:
       context: ..
       dockerfile: docker/opencryptoki/Dockerfile.master
+      args:
+        OPENSSL_VERSION: "3.6.1"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki-master
       PKCS11_CHECK_PIN: "1234"

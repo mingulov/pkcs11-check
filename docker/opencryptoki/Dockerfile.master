@@ -1,56 +1,105 @@
-# OpenCryptoki master — latest development branch (built from source)
+# OpenCryptoki master - latest development branch (built from source)
 # IBM's PKCS#11 implementation with SWToken backend
+# Uses OpenSSL built from source (master requires legacy provider)
 
-FROM fedora:44 AS builder
+FROM quay.io/fedora/fedora:44 AS builder
+
+ARG OPENSSL_VERSION=3.6.1
 
 RUN dnf -y install git gcc gcc-c++ make automake autoconf autoconf-archive libtool \
-    openssl-devel sqlite-devel trousers-devel libcap-devel openldap-devel \
-    bison flex \
+    sqlite-devel trousers-devel libcap-devel openldap-devel \
+    bison flex perl-core \
     && dnf clean all
 
+# Build OpenSSL from source (with legacy provider)
+RUN mkdir -p /build && \
+    curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz \
+    | tar xz -C /build/ && \
+    cd /build/openssl-${OPENSSL_VERSION} && \
+    ./Configure --prefix=/opt/openssl --openssldir=/opt/openssl/ssl \
+    shared enable-legacy linux-x86_64 && \
+    make -j$(nproc) && \
+    make install_sw install_ssldirs
+
+ENV LD_LIBRARY_PATH=/opt/openssl/lib64
+ENV PKG_CONFIG_PATH=/opt/openssl/lib64/pkgconfig
+RUN /opt/openssl/bin/openssl version
+
+# Build OpenCryptoki against custom OpenSSL
 RUN git clone --depth 1 https://github.com/opencryptoki/opencryptoki.git /build/opencryptoki
 WORKDIR /build/opencryptoki
-RUN sh bootstrap.sh && \
+
+RUN rm -rf /var/lock && ln -s /run/lock /var/lock && \
+    mkdir -p /run/lock/opencryptoki && \
+    sh bootstrap.sh && \
+    CPPFLAGS="-I/opt/openssl/include" \
+    LDFLAGS="-L/opt/openssl/lib64 -Wl,-rpath,/opt/openssl/lib64" \
     ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
     --enable-swtok --disable-icatok --disable-ccatok --disable-ep11tok \
     --disable-tpmtok --disable-icsftok --disable-p11sak && \
     make -j$(nproc) && \
-    make install && \
-    ls -la /usr/lib64/pkcs11/ /usr/lib64/opencryptoki/ 2>/dev/null || true
+    make install
+
+# Extract version for config file
+RUN VER=$(grep -oP '\[openCryptoki\],\[\K[0-9.]+' /build/opencryptoki/configure.ac | head -1) && \
+    echo "opencryptoki-${VER}" > /tmp/oc_version.txt && \
+    cat /tmp/oc_version.txt
 
 # ---------- runtime ----------
-FROM fedora:44
+FROM quay.io/fedora/fedora:44
 
-RUN dnf -y install python3.12 python3.12-devel gcc git openssl procps-ng libcap \
+RUN dnf -y install python3.12 python3.12-devel gcc git procps-ng libcap sqlite \
     && dnf clean all
 
-# Copy built opencryptoki from builder's /usr
+# Copy OpenSSL
+COPY --from=builder /opt/openssl /opt/openssl
+
+# Copy built opencryptoki
 COPY --from=builder /usr/lib64/pkcs11/ /usr/lib64/pkcs11/
 COPY --from=builder /usr/lib64/opencryptoki/ /usr/lib64/opencryptoki/
 COPY --from=builder /usr/sbin/pkcsslotd /usr/sbin/pkcsslotd
-COPY --from=builder /usr/bin/pkcsconf /usr/bin/pkcsconf
+COPY --from=builder /usr/sbin/pkcsconf /usr/sbin/pkcsconf
 COPY --from=builder /etc/opencryptoki/ /etc/opencryptoki/
+COPY --from=builder /tmp/oc_version.txt /tmp/oc_version.txt
 
-# Make opencryptoki libs discoverable by ldconfig
+# Make libs discoverable
 RUN echo "/usr/lib64/pkcs11" > /etc/ld.so.conf.d/opencryptoki.conf && \
     echo "/usr/lib64/opencryptoki" >> /etc/ld.so.conf.d/opencryptoki.conf && \
+    echo "/usr/lib64/opencryptoki/stdll" >> /etc/ld.so.conf.d/opencryptoki.conf && \
+    echo "/opt/openssl/lib64" >> /etc/ld.so.conf.d/opencryptoki.conf && \
     ldconfig
 
-# Create pkcs11 group and pkcsslotd user (required by the daemon)
+# Create pkcs11 group and pkcsslotd user
 RUN groupadd -f pkcs11 && \
     useradd -r -g pkcs11 -s /sbin/nologin pkcsslotd 2>/dev/null || true && \
     usermod -a -G pkcs11 root
 
-# OpenCryptoki runtime directories — match packaged version permissions
+# Fix NSS group lookup: systemd NSS module fails without systemd running
+RUN sed -i 's/group:.*systemd/group:      files/' /etc/nsswitch.conf && \
+    sed -i 's/passwd:.*systemd/passwd:     files/' /etc/nsswitch.conf
+
+# OpenCryptoki runtime directories
 RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ /run/lock/opencryptoki && \
     ln -sf /run/lock /var/lock 2>/dev/null || true && \
     chown -R root:pkcs11 /var/lib/opencryptoki /run/lock/opencryptoki && \
     chmod -R 770 /var/lib/opencryptoki /run/lock/opencryptoki
 
-# Override config to put SW token at slot 0
-RUN printf 'version opencryptoki-3.26\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
-    > /etc/opencryptoki/opencryptoki.conf
+# Fix config file ownership (builder GID != runtime GID)
+RUN chown -R root:pkcs11 /etc/opencryptoki && \
+    chmod 640 /etc/opencryptoki/strength.conf /etc/opencryptoki/p11kmip.conf
 
+# Config: SW token at slot 0
+RUN OC_VER=$(cat /tmp/oc_version.txt 2>/dev/null || echo "opencryptoki-3.26") && \
+    printf "version %s\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n" "$OC_VER" \
+    > /etc/opencryptoki/opencryptoki.conf && \
+    cat /etc/opencryptoki/opencryptoki.conf
+
+# Enable legacy provider in OpenSSL config (required by opencryptoki master)
+RUN printf 'openssl_conf = openssl_init\n\n[openssl_init]\nproviders = provider_sect\n\n[provider_sect]\ndefault = default_sect\nlegacy = legacy_sect\n\n[default_sect]\nactivate = 1\n\n[legacy_sect]\nactivate = 1\n' \
+    > /opt/openssl/ssl/openssl.cnf
+
+ENV LD_LIBRARY_PATH=/opt/openssl/lib64
+ENV OPENSSL_CONF=/opt/openssl/ssl/openssl.cnf
 ENV PKCS11_CHECK_MODULE=/usr/lib64/pkcs11/libopencryptoki.so
 ENV PKCS11_CHECK_PIN=1234
 ENV PKCS11_CHECK_PYTHON=python3.12
