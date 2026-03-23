@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -59,6 +60,27 @@ class TestP11Module:
         module = P11Module(path=Path("/fake.so"), lib=mock_lib)
         slots = module.get_slots()
         assert len(slots) == 2
+
+    def test_get_interface_list_passthrough(self) -> None:
+        mock_lib = MagicMock()
+        mock_lib.get_interface_list.return_value = [("PKCS 11", 3, 2)]
+        module = P11Module(path=Path("/fake.so"), lib=mock_lib)
+
+        assert module.get_interface_list() == [("PKCS 11", 3, 2)]
+
+    def test_raw_uses_bridge(self) -> None:
+        module = P11Module(path=Path("/fake.so"), lib=SimpleNamespace())
+
+        with patch("pkcs11_check.core.loader.raw_from_lib", return_value="raw-view") as raw_mock:
+            assert module.raw() == "raw-view"
+
+        raw_mock.assert_called_once_with(module.lib)
+
+    def test_loader_exports_api_rawpkcs11(self) -> None:
+        from pkcs11_check.raw.api import RawPKCS11
+        from pkcs11_check.raw.bridge import RawPKCS11 as BridgeRawPKCS11
+
+        assert BridgeRawPKCS11 is RawPKCS11
 
     def test_get_token_invalid_slot(self) -> None:
         mock_lib = MagicMock()
