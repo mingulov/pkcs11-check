@@ -58,6 +58,13 @@ _ECDH_FILES = [
 ]
 
 
+# Flags for vectors that test ASN.1/PEM container parsing, not the
+# cryptographic operation. These are not testable through PKCS#11
+# because C_CreateObject takes pre-extracted EC points and scalars,
+# not SubjectPublicKeyInfo containers.
+_UNTESTABLE_FLAGS = {"InvalidAsn", "InvalidPem"}
+
+
 def _load_ecdh_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load ECDH vectors across multiple input encodings."""
     vectors = []
@@ -69,6 +76,8 @@ def _load_ecdh_vectors() -> list[tuple[str, dict[str, Any]]]:
             data = json.load(f)
         for group in data["testGroups"]:
             for test in group["tests"]:
+                if _UNTESTABLE_FLAGS & set(test.get("flags", [])):
+                    continue
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}
                 test["_curve"] = curve
                 test["_encoding"] = encoding_name
