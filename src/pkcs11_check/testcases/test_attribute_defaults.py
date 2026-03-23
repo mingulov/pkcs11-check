@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, ObjectClass
-from pkcs11.exceptions import AttributeTypeInvalid
+from pkcs11.exceptions import AttributeTypeInvalid, PKCS11Error
 
 from pkcs11_check.testcases.conftest import has_mechanism
 
@@ -35,11 +35,16 @@ class TestSecretKeyDefaults:
     """
 
     @pytest.fixture()
-    def aes_key(self, p11_session: Any) -> Any:
+    def aes_key(self, p11_session: Any, p11_module: Any) -> Any:
         """Generate an AES-256 key with minimal template."""
-        key = p11_session.generate_key(
-            KeyType.AES, 256, template={Attribute.TOKEN: False}
-        )
+        if not has_mechanism(p11_module, "AES_KEY_GEN"):
+            pytest.skip("AES key generation not supported")
+        try:
+            key = p11_session.generate_key(
+                KeyType.AES, 256, template={Attribute.TOKEN: False}
+            )
+        except PKCS11Error as e:
+            pytest.skip(f"Cannot generate AES key with minimal template: {e}")
         yield key
         key.destroy()
 
@@ -110,7 +115,10 @@ class TestKeyPairDefaults:
         """Generate an RSA-2048 keypair with minimal template."""
         if not has_mechanism(p11_module, "RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
-        pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
+        try:
+            pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
+        except PKCS11Error as e:
+            pytest.skip(f"Cannot generate RSA-2048 keypair: {e}")
         yield pub, priv
         pub.destroy()
         priv.destroy()

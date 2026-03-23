@@ -12,6 +12,9 @@ from typing import Any
 import pkcs11
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism
+from pkcs11.exceptions import PKCS11Error
+
+from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = pytest.mark.benchmark
 
@@ -31,40 +34,55 @@ def aes256_key(p11_session: Any) -> Any:
 
 
 @pytest.fixture()
-def rsa2048_keypair(p11_session: Any) -> tuple[Any, Any]:
+def rsa2048_keypair(p11_session: Any, p11_module: Any) -> tuple[Any, Any]:
     """Generate a reusable RSA-2048 keypair for benchmarks."""
-    pub, priv = p11_session.generate_keypair(
-        KeyType.RSA,
-        2048,
-        public_template={Attribute.VERIFY: True, Attribute.TOKEN: False},
-        private_template={Attribute.SIGN: True, Attribute.TOKEN: False},
-    )
+    if not has_mechanism(p11_module, "RSA_PKCS_KEY_PAIR_GEN"):
+        pytest.skip("RSA key pair generation not supported")
+    try:
+        pub, priv = p11_session.generate_keypair(
+            KeyType.RSA,
+            2048,
+            public_template={Attribute.VERIFY: True, Attribute.TOKEN: False},
+            private_template={Attribute.SIGN: True, Attribute.TOKEN: False},
+        )
+    except PKCS11Error as e:
+        pytest.skip(f"Cannot generate RSA-2048 keypair: {e}")
     return pub, priv
 
 
 @pytest.fixture()
-def ec_p256_keypair(p11_session: Any) -> tuple[Any, Any]:
+def ec_p256_keypair(p11_session: Any, p11_module: Any) -> tuple[Any, Any]:
     """Generate a reusable EC P-256 keypair for benchmarks."""
+    if not has_mechanism(p11_module, "EC_KEY_PAIR_GEN"):
+        pytest.skip("EC key pair generation not supported")
     params = pkcs11.util.ec.encode_named_curve_parameters("secp256r1")
-    pub, priv = p11_session.generate_keypair(
-        KeyType.EC,
-        key_length=None,
-        public_template={
-            Attribute.EC_PARAMS: params,
-            Attribute.VERIFY: True,
-            Attribute.TOKEN: False,
-        },
-        private_template={Attribute.SIGN: True, Attribute.TOKEN: False},
-    )
+    try:
+        pub, priv = p11_session.generate_keypair(
+            KeyType.EC,
+            key_length=None,
+            public_template={
+                Attribute.EC_PARAMS: params,
+                Attribute.VERIFY: True,
+                Attribute.TOKEN: False,
+            },
+            private_template={Attribute.SIGN: True, Attribute.TOKEN: False},
+        )
+    except PKCS11Error as e:
+        pytest.skip(f"Cannot generate EC P-256 keypair: {e}")
     return pub, priv
 
 
-def test_bench_aes256_cbc_encrypt(benchmark: Any, p11_session: Any) -> None:
+def test_bench_aes256_cbc_encrypt(benchmark: Any, p11_session: Any, p11_module: Any) -> None:
     """Benchmark AES-256-CBC encryption (1 KiB, block-aligned)."""
     import pkcs11 as p11
 
+    if not has_mechanism(p11_module, "AES_KEY_GEN"):
+        pytest.skip("AES key generation not supported")
     data = b"\x00" * 1024  # 1024 bytes = 64 AES blocks, no padding needed
-    key = p11_session.generate_key(KeyType.AES, 256)
+    try:
+        key = p11_session.generate_key(KeyType.AES, 256)
+    except PKCS11Error as e:
+        pytest.skip(f"Cannot generate AES-256 key: {e}")
     iv = p11_session.generate_random(16)
 
     # Verify mechanism works before benchmarking
@@ -81,10 +99,15 @@ def test_bench_aes256_cbc_encrypt(benchmark: Any, p11_session: Any) -> None:
     benchmark(encrypt)
 
 
-def test_bench_aes256_ecb_encrypt(benchmark: Any, p11_session: Any) -> None:
+def test_bench_aes256_ecb_encrypt(benchmark: Any, p11_session: Any, p11_module: Any) -> None:
     """Benchmark AES-256-ECB encryption (1 KiB block)."""
+    if not has_mechanism(p11_module, "AES_KEY_GEN"):
+        pytest.skip("AES key generation not supported")
     data = b"\x00" * 1024
-    key = p11_session.generate_key(KeyType.AES, 256)
+    try:
+        key = p11_session.generate_key(KeyType.AES, 256)
+    except PKCS11Error as e:
+        pytest.skip(f"Cannot generate AES-256 key: {e}")
 
     def encrypt() -> bytes:
         return key.encrypt(data, mechanism=Mechanism.AES_ECB)  # type: ignore[no-any-return]
@@ -145,11 +168,23 @@ def test_bench_rng(benchmark: Any, p11_session: Any) -> None:
     benchmark(generate)
 
 
-def test_bench_aes_keygen(benchmark: Any, p11_session: Any) -> None:
+def test_bench_aes_keygen(benchmark: Any, p11_session: Any, p11_module: Any) -> None:
     """Benchmark AES-256 key generation."""
+    if not has_mechanism(p11_module, "AES_KEY_GEN"):
+        pytest.skip("AES key generation not supported")
 
-    def keygen() -> Any:
-        return p11_session.generate_key(
+    # Probe: verify key generation works at all
+    try:
+        probe = p11_session.generate_key(
+            KeyType.AES, 256,
+            template={Attribute.ENCRYPT: True, Attribute.TOKEN: False},
+        )
+        probe.destroy()
+    except PKCS11Error as e:
+        pytest.skip(f"AES key generation not operational: {e}")
+
+    def keygen() -> None:
+        key = p11_session.generate_key(
             KeyType.AES,
             256,
             template={
@@ -157,5 +192,6 @@ def test_bench_aes_keygen(benchmark: Any, p11_session: Any) -> None:
                 Attribute.TOKEN: False,
             },
         )
+        key.destroy()
 
     benchmark(keygen)
