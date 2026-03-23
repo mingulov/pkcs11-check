@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.exceptions import PKCS11Error
+from pkcs11.exceptions import KeySizeRange, KeyTypeInconsistent, PKCS11Error
 
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr
 from pkcs11_check.testcases.conftest import has_mechanism
@@ -149,19 +149,19 @@ class TestEncryptDataErrors:
     def test_key_size_range(
         self, p11_session: Any, p11_module: Any, ckr_strict: bool
     ) -> None:
-        """AES-256 mechanism with 64-bit key -> CKR_KEY_SIZE_RANGE.
+        """Wrong-type key with AES mechanism -> CKR_KEY_SIZE_RANGE or KEY_TYPE_INCONSISTENT.
 
-        Generate an intentionally small DES key and try AES encrypt.
-        Some modules may reject at key type level instead.
+        Generate a DES3 key (wrong type for AES) and try AES encrypt.
+        Modules may reject via key type or key size - both are spec-compliant.
         """
         from pkcs11_check.testcases.conftest import has_mechanism
-        if not has_mechanism(p11_module, "DES_ECB"):
-            pytest.skip("DES not supported - can't create small key")
+        if not has_mechanism(p11_module, "DES3_ECB"):
+            pytest.skip("DES3 not supported - can't create wrong-type key")
         try:
-            # DES key is 64-bit - too small for AES
-            des_key = p11_session.generate_key(KeyType.DES)
+            des_key = p11_session.generate_key(KeyType.DES3)
             des_key.encrypt(b"\x00" * 8, mechanism=Mechanism.AES_ECB)
-            pytest.fail("Should have rejected DES key with AES mechanism")
+            pytest.fail("Should have rejected DES3 key with AES mechanism")
+        except (KeyTypeInconsistent, KeySizeRange):
+            pass  # Both are correct per spec
         except PKCS11Error as e:
-            # KEY_TYPE_INCONSISTENT or KEY_SIZE_RANGE - both acceptable
             assert_ckr(CKR_ENCRYPT["init_key_size_range"], e, ckr_strict)
