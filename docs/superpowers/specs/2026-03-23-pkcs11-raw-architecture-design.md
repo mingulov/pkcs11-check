@@ -17,8 +17,6 @@ This design uses a two-stage architecture:
 1. build an authoritative, generated, PKCS#11 v3.2 standard raw layer;
 2. later add optional convenience layers on top of it without weakening exactness.
 
-This means "approach 2 first, approach 3 later" rather than choosing between them.
-
 ## Current State
 
 pkcs11-check already depends on raw PKCS#11 behavior heavily:
@@ -90,6 +88,24 @@ The standard raw layer must obey these invariants:
 - no mandatory registration for unknown vendor mechanisms
 
 The library may help construct the call, but it must never silently change the call's meaning.
+
+## Error Reporting Model
+
+The exact raw layer always surfaces PKCS#11 return values as raw integer `CK_RV` values.
+
+### Rules
+
+- `raw.api` returns integer `CK_RV` values from `C_*` calls
+- `raw.api` never auto-raises PKCS#11-specific Python exceptions
+- `raw.api` never converts a non-`CKR_OK` result into control flow implicitly
+- name lookup helpers such as `ckr_name(rv)` or `rv_name(rv)` are encouraged for readability
+- optional assertion helpers may exist, but only as explicit opt-in helpers outside the dispatch core
+
+### Rationale
+
+This project needs exact-control testing. For many tests, especially negative, CKR, and crash-adjacent
+cases, the return code itself is the primary result under test. Auto-raising would hide the raw
+interface contract and make malformed-input tests harder to write and reason about.
 
 ## Platform And ABI Model
 
@@ -738,6 +754,6 @@ Proceed with:
 
 In short:
 
-- build approach 2 first
-- let approach 3 grow from it later
+- build the authoritative generated exact raw layer first
+- let any later raw-first convenience API grow on top of that layer
 - keep `pkcs11_check.raw` as the trust boundary
