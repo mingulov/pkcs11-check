@@ -64,3 +64,15 @@ def test_generator_script_works_outside_repo_root(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert (repo_root / "src/pkcs11_check/raw/types_std.py").is_file()
     assert (repo_root / "src/pkcs11_check/raw/metadata_std.py").is_file()
+
+
+def test_generated_standard_symbols_cover_representative_values() -> None:
+    from pkcs11_check.raw import metadata_std, types_std
+
+    assert metadata_std.STANDARD_COUNTS["functions"] == 104
+    assert metadata_std.STANDARD_COUNTS["attrs"] >= 160
+    assert metadata_std.STANDARD_COUNTS["mechanisms"] >= 480
+    assert hasattr(types_std, "CKA_CLASS")
+    assert hasattr(types_std, "CKM_AES_GCM")
+    assert hasattr(types_std, "CKK_AES")
+    assert hasattr(types_std, "CK_GCM_PARAMS")
