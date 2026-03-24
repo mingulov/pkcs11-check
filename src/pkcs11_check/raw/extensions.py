@@ -26,6 +26,8 @@ _ALIASES = {
     "rv": "rvs",
 }
 
+_STANDARD_MECHANISM_NAMES = set(_STANDARD_TABLES["mechanisms"].values())
+
 
 @dataclass
 class ExtensionNamespace:
@@ -112,6 +114,8 @@ def _validate_name_mapping(
             raise ValueError(f"name mapping keys must be int, got {type(key).__name__}")
         if not isinstance(mapping[key], str):
             raise ValueError(f"name mapping values must be str, got {type(mapping[key]).__name__}")
+        if category == "mechanisms" and mapping[key] in _STANDARD_MECHANISM_NAMES:
+            raise ValueError("standard mechanism names are not allowed in vendor extensions")
         if key in _STANDARD_TABLES[category]:
             if category == "mechanisms":
                 raise ValueError(f"standard mechanism ids are not allowed in vendor extensions: 0x{key:08x}")
@@ -293,7 +297,16 @@ def _lookup_vendor_helper(
 ) -> Any | None:
     helpers = vendor.packers if helper_type == "packers" else vendor.inspectors
     if isinstance(value, str):
-        return helpers.get(value)
+        direct = helpers.get(value)
+        if direct is not None:
+            return direct
+        mechanism_id = next(
+            (candidate_id for candidate_id, candidate_name in vendor.names["mechanisms"].items() if candidate_name == value),
+            None,
+        )
+        if mechanism_id is None:
+            return None
+        return helpers.get(mechanism_id)
     if value in helpers:
         return helpers[value]
     symbol = vendor.names["mechanisms"].get(value)

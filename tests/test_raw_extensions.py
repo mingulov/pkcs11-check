@@ -38,6 +38,7 @@ def test_extension_global_symbol_lookup_returns_none_for_equal_value_collision()
 
 def test_extension_registry_supports_structs_packers_and_inspectors() -> None:
     from pkcs11_check.raw.extensions import (
+        clear_extensions,
         lookup_inspector,
         lookup_packer,
         lookup_struct,
@@ -50,16 +51,20 @@ def test_extension_registry_supports_structs_packers_and_inspectors() -> None:
     def inspector(value: object) -> str:
         return repr(value)
 
+    clear_extensions()
     register_extension(
         namespace="ibm",
         structs={"CK_IBM_KYBER_PARAMS": object()},
-        packers={0x80010001: packer},
-        inspectors={0x80010001: inspector},
+        packers={0x8001AA01: packer},
+        inspectors={0x8001AA01: inspector},
+        mechanisms={0x8001AA01: "CKM_IBM_KYBER"},
     )
 
     assert lookup_struct("CK_IBM_KYBER_PARAMS", namespace="ibm") is not None
-    assert lookup_packer(0x80010001, namespace="ibm") is packer
-    assert lookup_inspector(0x80010001, namespace="ibm") is inspector
+    assert lookup_packer(0x8001AA01, namespace="ibm") is packer
+    assert lookup_inspector(0x8001AA01, namespace="ibm") is inspector
+    assert lookup_packer("CKM_IBM_KYBER", namespace="ibm") is packer
+    assert lookup_inspector("CKM_IBM_KYBER", namespace="ibm") is inspector
 
 
 def test_extension_global_helper_lookup_returns_none_for_equal_value_collision() -> None:
@@ -139,11 +144,25 @@ def test_extension_global_numeric_lookup_does_not_leak_standard_symbol_fallback(
         register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": lambda value: value})
 
 
-def test_extension_namespaced_numeric_lookup_does_not_fall_back_to_standard_name() -> None:
+def test_extension_register_rejects_standard_mechanism_name_as_vendor_alias() -> None:
     import pytest
 
     from pkcs11_check.raw.extensions import register_extension
 
+    with pytest.raises(ValueError, match="standard mechanism names are not allowed in vendor extensions"):
+        register_extension(
+            namespace="ibm",
+            mechanisms={0x80010005: "CKM_AES_KEY_GEN"},
+            inspectors={"CKM_AES_KEY_GEN": lambda value: value},
+        )
+
+
+def test_extension_namespaced_numeric_lookup_does_not_fall_back_to_standard_name() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import clear_extensions, register_extension
+
+    clear_extensions()
     with pytest.raises(ValueError, match="unknown vendor mechanism helper key"):
         register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": lambda value: value})
 
