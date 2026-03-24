@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from . import metadata_std
 from .extensions import lookup_symbol_name
+from .types_std import CKR
 
 
 _RV_NAMES = dict(metadata_std.RV_NAMES)
@@ -19,7 +20,7 @@ def ckr_name(rv: int) -> str:
     return rv_name(rv)
 
 
-def expect_rv(rv: int, *allowed: int) -> int:
+def expect_rv(rv: int, *allowed: CKR) -> int:
     """Return rv if allowed, otherwise raise an AssertionError."""
     if rv in allowed:
         return rv

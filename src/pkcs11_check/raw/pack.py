@@ -6,7 +6,7 @@ import ctypes
 from dataclasses import dataclass
 from typing import Any
 
-from .core import CK_ATTRIBUTE, CK_BBOOL, CK_DATE, CK_MECHANISM, CK_ULONG, CK_VOID_PTR
+from .types_std import CK_ATTRIBUTE, CK_BBOOL, CK_DATE, CK_MECHANISM, CK_ULONG, CK_VOID_PTR, CKA, CKM
 
 
 @dataclass(frozen=True)
@@ -165,7 +165,7 @@ def _coerce_length(length: LengthArg | None, storage: Any) -> LengthArg:
     return _native_length(storage)
 
 
-def attr_bool(attr_type: int, value: bool, *, length: LengthArg | None = None) -> PackedAttribute:
+def attr_bool(attr_type: CKA, value: bool, *, length: LengthArg | None = None) -> PackedAttribute:
     storage = CK_BBOOL(1 if value else 0)
     return _build_attribute(
         attr_type,
@@ -174,7 +174,7 @@ def attr_bool(attr_type: int, value: bool, *, length: LengthArg | None = None) -
     )
 
 
-def attr_ulong(attr_type: int, value: int, *, length: LengthArg | None = None) -> PackedAttribute:
+def attr_ulong(attr_type: CKA, value: int, *, length: LengthArg | None = None) -> PackedAttribute:
     storage = CK_ULONG(value)
     return _build_attribute(
         attr_type,
@@ -184,7 +184,7 @@ def attr_ulong(attr_type: int, value: int, *, length: LengthArg | None = None) -
 
 
 def attr_bytes(
-    attr_type: int,
+    attr_type: CKA,
     value: bytes | bytearray | memoryview,
     *,
     length: LengthArg | None = None,
@@ -199,7 +199,7 @@ def attr_bytes(
 
 
 def attr_string(
-    attr_type: int,
+    attr_type: CKA,
     value: str,
     *,
     encoding: str = "utf-8",
@@ -209,7 +209,7 @@ def attr_string(
 
 
 def attr_date(
-    attr_type: int,
+    attr_type: CKA,
     year: str,
     month: str,
     day: str,
@@ -225,7 +225,7 @@ def attr_date(
 
 
 def attr_array(
-    attr_type: int,
+    attr_type: CKA,
     values: list[int] | tuple[int, ...],
     *,
     ctype: Any = CK_ULONG,
@@ -240,7 +240,7 @@ def attr_array(
 
 
 def attr_template(
-    attr_type: int,
+    attr_type: CKA,
     value: TemplateArg,
     *,
     length: LengthArg | None = None,
@@ -272,7 +272,7 @@ def template(*attributes: PackedAttribute) -> TemplateArg:
     return TemplateArg(*attributes)
 
 
-def mech_simple(mechanism_type: int) -> PackedMechanism:
+def mech_simple(mechanism_type: CKM) -> PackedMechanism:
     pointer_arg = PointerArg.null(origin="mech_simple")
     length_arg = LengthArg.explicit_value(0)
     return PackedMechanism(
@@ -283,7 +283,7 @@ def mech_simple(mechanism_type: int) -> PackedMechanism:
 
 
 def mech_bytes(
-    mechanism_type: int,
+    mechanism_type: CKM,
     value: bytes | bytearray | memoryview,
     *,
     length: LengthArg | None = None,

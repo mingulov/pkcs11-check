@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from ctypes import byref
 
-from .core import CKR_OK, CKR_USER_ALREADY_LOGGED_IN
+from .api import RawPKCS11
 from .rv import expect_rv
+
 from .types_std import (
+    CKR_OK,
+    CKR_USER_ALREADY_LOGGED_IN,
     CK_NOTIFY,
     CK_SESSION_HANDLE,
     CK_SLOT_ID,
@@ -15,16 +18,32 @@ from .types_std import (
 )
 
 
-def get_slot_ids(raw: object, token_present: bool = True) -> list[int]:
+def get_slot_ids(raw: RawPKCS11, token_present: bool = True, label: str | None = None) -> list[int]:
     count = CK_ULONG()
     present = 1 if token_present else 0
     expect_rv(int(raw.C_GetSlotList(present, None, byref(count))), CKR_OK)
+    if count.value == 0:
+        return []
     slots = (CK_SLOT_ID * int(count.value))()
     expect_rv(int(raw.C_GetSlotList(present, slots, byref(count))), CKR_OK)
-    return [int(slots[index]) for index in range(int(count.value))]
+    
+    found_slots = [int(slots[index]) for index in range(int(count.value))]
+    if label is None:
+        return found_slots
+        
+    # Filter by label
+    matching = []
+    from .types_std import CK_TOKEN_INFO
+    for slot_id in found_slots:
+        info = CK_TOKEN_INFO()
+        if int(raw.C_GetTokenInfo(slot_id, byref(info))) == CKR_OK:
+            token_label = bytes(info.label).decode("utf-8").strip()
+            if label in token_label:
+                matching.append(slot_id)
+    return matching
 
 
-def open_session(raw: object, slot_id: int, flags: int) -> int:
+def open_session(raw: RawPKCS11, slot_id: int, flags: int) -> int:
     session = CK_SESSION_HANDLE()
     expect_rv(
         int(
@@ -41,7 +60,7 @@ def open_session(raw: object, slot_id: int, flags: int) -> int:
     return int(session.value)
 
 
-def login_user(raw: object, session: int, user_type: int, pin: bytes | bytearray | memoryview) -> None:
+def login_user(raw: RawPKCS11, session: int, user_type: int, pin: bytes | bytearray | memoryview) -> None:
     if isinstance(pin, str):
         raise TypeError("pin must be bytes-like")
     try:
@@ -63,7 +82,7 @@ def login_user(raw: object, session: int, user_type: int, pin: bytes | bytearray
     )
 
 
-def close_session_quietly(raw: object, session: int) -> None:
+def close_session_quietly(raw: RawPKCS11, session: int) -> None:
     try:
         raw.C_CloseSession(session)
     except Exception:

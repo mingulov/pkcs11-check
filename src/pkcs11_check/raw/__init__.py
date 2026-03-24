@@ -2,16 +2,61 @@
 
 from __future__ import annotations
 
-from . import metadata_std, types_std
+from . import extensions, metadata_std, recipes, types_std
 from .api import RawPKCS11
 from .bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
 from .bridge import raw_from_lib, raw_from_module
-from .core import *  # noqa: F403
+# Removed wildcard import to prevent namespace pollution.
+# Existing tests that need standard constants should import them from .types_std.
+from .types_std import (
+    CK_ATTRIBUTE,
+    CK_CONSTANT,
+    CK_MECHANISM,
+    CKA,
+    CKC,
+    CKD,
+    CKF,
+    CKG,
+    CKH,
+    CKK,
+    CKM,
+    CKN,
+    CKO,
+    CKP,
+    CKR,
+    CKR_OK,
+    CKS,
+    CKT,
+    CKU,
+    CKV,
+    CKZ,
+)
 
 from_lib = raw_from_lib
 from_module = raw_from_module
 
 __all__ = [
+    "CK_ATTRIBUTE",
+    "CK_CONSTANT",
+    "CK_MECHANISM",
+    "CKA",
+    "CKC",
+    "CKD",
+    "CKF",
+    "CKG",
+    "CKH",
+    "CKK",
+    "CKM",
+    "CKN",
+    "CKO",
+    "CKP",
+    "CKR",
+    "CKR_OK",
+    "CKS",
+    "CKT",
+    "CKU",
+    "CKV",
+    "CKZ",
     "RawPKCS11",
     "close_session_quietly",
     "get_slot_ids",
@@ -23,4 +68,6 @@ __all__ = [
     "from_module",
     "raw_from_lib",
     "raw_from_module",
+    "recipes",
+    "extensions",
 ]
