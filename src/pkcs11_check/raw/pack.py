@@ -42,26 +42,32 @@ class PointerArg:
         return cls(pointer=None, origin=origin)
 
     @classmethod
-    def to_storage(cls, storage: Any, *, origin: str = "unknown") -> PointerArg:
+    def to_storage(
+        cls,
+        storage: Any,
+        *,
+        origin: str = "unknown",
+        native_length: int | None = None,
+    ) -> PointerArg:
         if storage is None:
             return cls.null(origin=origin)
         if isinstance(storage, ctypes.Structure):
             pointer = ctypes.cast(ctypes.pointer(storage), CK_VOID_PTR)
             kind = "struct"
-            native_length = ctypes.sizeof(storage)
+            resolved_native_length = ctypes.sizeof(storage)
             element_count = 1
             element_type = type(storage).__name__
         elif isinstance(storage, ctypes.Array):
             pointer = ctypes.cast(storage, CK_VOID_PTR)
             item_type = getattr(type(storage), "_type_", None)
             kind = "bytes" if item_type in (ctypes.c_char, ctypes.c_byte, ctypes.c_ubyte) else "array"
-            native_length = ctypes.sizeof(storage)
+            resolved_native_length = ctypes.sizeof(storage)
             element_count = len(storage)
             element_type = getattr(item_type, "__name__", type(item_type).__name__ if item_type else None)
         else:
             pointer = ctypes.cast(ctypes.pointer(storage), CK_VOID_PTR)
             kind = "scalar"
-            native_length = ctypes.sizeof(storage)
+            resolved_native_length = ctypes.sizeof(storage)
             element_count = 1
             element_type = type(storage).__name__
         return cls(
@@ -69,7 +75,7 @@ class PointerArg:
             storage=storage,
             kind=kind,
             origin=origin,
-            native_length=native_length,
+            native_length=resolved_native_length if native_length is None else native_length,
             element_count=element_count,
             element_type=element_type,
         )
@@ -178,7 +184,7 @@ def attr_bytes(
     storage = ctypes.create_string_buffer(data)
     return _build_attribute(
         attr_type,
-        PointerArg.to_storage(storage, origin="attr_bytes"),
+        PointerArg.to_storage(storage, origin="attr_bytes", native_length=len(data)),
         length or LengthArg.native(len(data)),
     )
 
@@ -275,7 +281,7 @@ def mech_bytes(
 ) -> PackedMechanism:
     data = bytes(value)
     storage = ctypes.create_string_buffer(data)
-    pointer_arg = PointerArg.to_storage(storage, origin="mech_bytes")
+    pointer_arg = PointerArg.to_storage(storage, origin="mech_bytes", native_length=len(data))
     length_arg = length if length is not None else LengthArg.native(len(data))
     return PackedMechanism(
         CK_MECHANISM(mechanism_type, pointer_arg.pointer, length_arg.value),

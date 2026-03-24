@@ -117,3 +117,17 @@ def test_extension_read_only_lookup_does_not_create_namespace() -> None:
     before = set(extensions._EXTENSIONS)
     assert extensions.lookup_inspector(0x8FFF0001, namespace="ghost") is None
     assert set(extensions._EXTENSIONS) == before
+
+
+def test_extension_global_numeric_lookup_uses_unique_vendor_symbolic_helper() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, register_extension
+
+    inspector = lambda value: "vendor-numeric-fallback"
+
+    register_extension(
+        namespace="ibm",
+        mechanisms={0x80019999: "CKM_IBM_UNIQUE_VENDOR"},
+        inspectors={"CKM_IBM_UNIQUE_VENDOR": inspector},
+    )
+
+    assert lookup_inspector(0x80019999) is inspector

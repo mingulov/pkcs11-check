@@ -23,6 +23,7 @@ def test_pack_retains_pointer_and_length_provenance_metadata() -> None:
 
     assert attr.pointer_arg.kind == "bytes"
     assert attr.pointer_arg.origin == "attr_bytes"
+    assert attr.pointer_arg.native_length == 4
     assert attr.length_arg.explicit is True
     assert attr.length_arg.value == 2
 
@@ -34,3 +35,10 @@ def test_template_retains_packed_attributes_for_inspection() -> None:
 
     assert len(value.attributes) == 2
     assert value.attributes[0].pointer_arg.kind == "scalar"
+
+
+def test_pack_mech_bytes_native_length_matches_payload_length() -> None:
+    from pkcs11_check.raw.pack import mech_bytes
+
+    value = mech_bytes(0x80010099, b"abc")
+    assert value.pointer_arg.native_length == 3

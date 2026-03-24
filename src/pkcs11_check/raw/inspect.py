@@ -26,13 +26,17 @@ def _byte_preview(storage: Any) -> str | None:
         raw = storage
     if raw is None and hasattr(storage, "_type_") and isinstance(storage, object):
         item_type = getattr(type(storage), "_type_", None)
-        if item_type in (bytes,):
-            raw = bytes(storage)
-        elif item_type in (ctypes.c_char, ctypes.c_byte, ctypes.c_ubyte):
+        if item_type in (bytes, ctypes.c_char, ctypes.c_byte, ctypes.c_ubyte):
             raw = bytes(storage)
     if raw is None:
         return None
-    data = raw[:-1] if raw.endswith(b"\x00") else raw
+    return raw[:16].hex()
+
+
+def _preview_from_pointer(pointer: PointerArg) -> str | None:
+    if pointer.pointer is None or pointer.native_length is None:
+        return None
+    data = ctypes.string_at(pointer.pointer, pointer.native_length)
     return data[:16].hex()
 
 
@@ -45,7 +49,9 @@ def render_pointer(pointer: PointerArg) -> str:
     if pointer.native_length is not None:
         parts.append(f"native_len={pointer.native_length}")
     if pointer.kind == "bytes":
-        preview = _byte_preview(pointer.storage)
+        preview = _preview_from_pointer(pointer)
+        if preview is None:
+            preview = _byte_preview(pointer.storage)
         if preview is not None:
             parts.append(f"preview={preview}")
     elif pointer.kind == "struct":

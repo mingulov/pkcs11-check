@@ -140,7 +140,10 @@ def lookup_struct(name: str, *, namespace: str | None = None) -> Any | None:
 def _helper_keys(value: int | str, *, namespace: str | None = None) -> tuple[int | str, ...]:
     if isinstance(value, int):
         if namespace is None:
-            return (value,)
+            if value in _STANDARD_TABLES["mechanisms"]:
+                return (value,)
+            symbol = lookup_symbol_name("mechanisms", value)
+            return (value,) if symbol is None else (value, symbol)
         vendor = _vendor_or_none(namespace)
         if vendor is None:
             return (value,)
