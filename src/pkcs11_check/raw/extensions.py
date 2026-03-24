@@ -93,18 +93,36 @@ def _validate_helper_numeric_keys(keys: Mapping[int | str, Any] | None) -> None:
     if not keys:
         return
     for key in keys:
+        if not isinstance(key, (int, str)):
+            raise ValueError(f"helper keys must be int or str, got {type(key).__name__}")
         if isinstance(key, int) and key in _STANDARD_TABLES["mechanisms"]:
             raise ValueError(f"standard mechanism ids are not allowed in extension helpers: 0x{key:08x}")
 
 
-def _validate_vendor_mechanism_ids(mechanisms: Mapping[int, str] | None) -> None:
-    if not mechanisms:
+def _validate_name_mapping(
+    category: str,
+    mapping: Mapping[int, str] | None,
+    *,
+    namespace: str,
+) -> None:
+    if not mapping:
         return
-    for mechanism_id in mechanisms:
-        if mechanism_id in _STANDARD_TABLES["mechanisms"]:
-            raise ValueError(
-                f"standard mechanism ids are not allowed in vendor extensions: 0x{mechanism_id:08x}"
-            )
+    for key in mapping:
+        if not isinstance(key, int):
+            raise ValueError(f"name mapping keys must be int, got {type(key).__name__}")
+        if key in _STANDARD_TABLES[category]:
+            if category == "mechanisms":
+                raise ValueError(f"standard mechanism ids are not allowed in vendor extensions: 0x{key:08x}")
+            raise ValueError(f"standard symbol ids are not allowed in vendor extensions: 0x{key:08x}")
+    if category != "mechanisms":
+        return
+    vendor = _vendor_or_none(namespace)
+    existing_names = set(vendor.names["mechanisms"].values()) if vendor is not None else set()
+    new_names = list(mapping.values())
+    if len(new_names) != len(set(new_names)):
+        raise ValueError("duplicate mechanism name in namespace")
+    if existing_names.intersection(new_names):
+        raise ValueError("duplicate mechanism name in namespace")
 
 
 def register_extension(
@@ -120,7 +138,11 @@ def register_extension(
     inspectors: Mapping[int | str, Any] | None = None,
 ) -> None:
     """Register vendor-specific names and helper objects."""
-    _validate_vendor_mechanism_ids(mechanisms)
+    _validate_name_mapping("mechanisms", mechanisms, namespace=namespace)
+    _validate_name_mapping("attrs", attrs, namespace=namespace)
+    _validate_name_mapping("key_types", key_types, namespace=namespace)
+    _validate_name_mapping("object_classes", object_classes, namespace=namespace)
+    _validate_name_mapping("rvs", rvs, namespace=namespace)
     _validate_helper_numeric_keys(packers)
     _validate_helper_numeric_keys(inspectors)
     _validate_helper_string_keys(namespace, packers, mechanisms)

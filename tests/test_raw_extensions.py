@@ -280,3 +280,57 @@ def test_extension_register_rejects_standard_numeric_mechanism_override() -> Non
             mechanisms={CKM_AES_KEY_GEN: "CKM_IBM_SHADOW"},
             inspectors={"CKM_IBM_SHADOW": lambda value: value},
         )
+
+
+def test_extension_register_rejects_duplicate_mechanism_name_in_same_namespace() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    register_extension(namespace="ibm", mechanisms={0x80015551: "CKM_IBM_DUP"})
+
+    with pytest.raises(ValueError, match="duplicate mechanism name in namespace"):
+        register_extension(namespace="ibm", mechanisms={0x80015552: "CKM_IBM_DUP"})
+
+
+def test_extension_register_rejects_duplicate_mechanism_name_in_single_call() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    with pytest.raises(ValueError, match="duplicate mechanism name in namespace"):
+        register_extension(
+            namespace="ibm",
+            mechanisms={
+                0x80015553: "CKM_IBM_DUP_ONE",
+                0x80015554: "CKM_IBM_DUP_ONE",
+            },
+        )
+
+
+def test_extension_register_rejects_standard_numeric_attr_override() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+    from pkcs11_check.raw.types_std import CKA_VALUE
+
+    with pytest.raises(ValueError, match="standard symbol ids are not allowed"):
+        register_extension(namespace="ibm", attrs={CKA_VALUE: "CKA_IBM_SHADOW"})
+
+
+def test_extension_register_rejects_non_int_name_mapping_key() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    with pytest.raises(ValueError, match="name mapping keys must be int"):
+        register_extension(namespace="ibm", mechanisms={"0x80015555": "CKM_IBM_BAD"})  # type: ignore[arg-type]
+
+
+def test_extension_register_rejects_bad_helper_key_type() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    with pytest.raises(ValueError, match="helper keys must be int or str"):
+        register_extension(namespace="ibm", inspectors={None: lambda value: value})  # type: ignore[dict-item]
