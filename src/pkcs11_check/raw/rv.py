@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from . import core
+from . import metadata_std
+from .extensions import lookup_symbol_name
 
 
-_RV_NAMES = {
-    value: name
-    for name, value in vars(core).items()
-    if name.startswith("CKR_") and isinstance(value, int)
-}
+_RV_NAMES = dict(metadata_std.RV_NAMES)
 
 
 def rv_name(rv: int) -> str:
     """Return a symbolic name for a CK_RV integer when known."""
-    return _RV_NAMES.get(rv, f"0x{rv:08x}")
+    return lookup_symbol_name("rvs", rv) or _RV_NAMES.get(rv, f"0x{rv:08x}")
 
 
 def ckr_name(rv: int) -> str:
