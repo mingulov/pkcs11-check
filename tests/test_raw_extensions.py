@@ -27,6 +27,15 @@ def test_extension_collision_does_not_leak_across_namespaces() -> None:
     assert lookup_symbol_name("mechanisms", 0x80010002, namespace="acme") == "CKM_ACME_BAR"
 
 
+def test_extension_global_symbol_lookup_returns_none_for_equal_value_collision() -> None:
+    from pkcs11_check.raw.extensions import lookup_symbol_name, register_extension
+
+    register_extension(namespace="ibm", mechanisms={0x80012222: "CKM_SHARED_NAME"})
+    register_extension(namespace="acme", mechanisms={0x80012222: "CKM_SHARED_NAME"})
+
+    assert lookup_symbol_name("mechanisms", 0x80012222) is None
+
+
 def test_extension_registry_supports_structs_packers_and_inspectors() -> None:
     from pkcs11_check.raw.extensions import (
         lookup_inspector,
@@ -51,6 +60,39 @@ def test_extension_registry_supports_structs_packers_and_inspectors() -> None:
     assert lookup_struct("CK_IBM_KYBER_PARAMS", namespace="ibm") is not None
     assert lookup_packer(0x80010001, namespace="ibm") is packer
     assert lookup_inspector(0x80010001, namespace="ibm") is inspector
+
+
+def test_extension_global_helper_lookup_returns_none_for_equal_value_collision() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, lookup_packer, register_extension
+
+    helper = lambda value: value
+
+    register_extension(
+        namespace="ibm",
+        mechanisms={0x80012223: "CKM_SHARED_HELPER"},
+        packers={"CKM_SHARED_HELPER": helper},
+        inspectors={"CKM_SHARED_HELPER": helper},
+    )
+    register_extension(
+        namespace="acme",
+        mechanisms={0x80012223: "CKM_SHARED_HELPER"},
+        packers={"CKM_SHARED_HELPER": helper},
+        inspectors={"CKM_SHARED_HELPER": helper},
+    )
+
+    assert lookup_packer(0x80012223) is None
+    assert lookup_inspector(0x80012223) is None
+
+
+def test_extension_global_struct_lookup_returns_none_for_equal_value_collision() -> None:
+    from pkcs11_check.raw.extensions import lookup_struct, register_extension
+
+    shared = object()
+
+    register_extension(namespace="ibm", structs={"CK_SHARED_STRUCT": shared})
+    register_extension(namespace="acme", structs={"CK_SHARED_STRUCT": shared})
+
+    assert lookup_struct("CK_SHARED_STRUCT") is None
 
 
 def test_extension_numeric_helper_collision_requires_namespace() -> None:

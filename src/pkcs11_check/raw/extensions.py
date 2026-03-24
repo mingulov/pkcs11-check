@@ -132,6 +132,12 @@ def _lookup_unique(values: list[Any]) -> Any | None:
     return None
 
 
+def _lookup_single_namespace(matches: list[tuple[str, Any]]) -> Any | None:
+    if len(matches) != 1:
+        return None
+    return matches[0][1]
+
+
 def lookup_symbol_name(category: str, value: int, *, namespace: str | None = None) -> str | None:
     """Return a standard or vendor-registered symbolic name for a numeric identifier."""
     symbol_category = _canonical_symbol_namespace(category)
@@ -146,11 +152,11 @@ def lookup_symbol_name(category: str, value: int, *, namespace: str | None = Non
             return None
         return vendor.names[symbol_category].get(value)
     matches = [
-        vendor.names[symbol_category][value]
-        for vendor in _EXTENSIONS.values()
+        (vendor_name, vendor.names[symbol_category][value])
+        for vendor_name, vendor in _EXTENSIONS.items()
         if value in vendor.names[symbol_category]
     ]
-    return _lookup_unique(matches)
+    return _lookup_single_namespace(matches)
 
 
 def lookup_struct(name: str, *, namespace: str | None = None) -> Any | None:
@@ -160,8 +166,12 @@ def lookup_struct(name: str, *, namespace: str | None = None) -> Any | None:
         if vendor is None:
             return None
         return vendor.structs.get(name)
-    matches = [vendor.structs[name] for vendor in _EXTENSIONS.values() if name in vendor.structs]
-    return _lookup_unique(matches)
+    matches = [
+        (vendor_name, vendor.structs[name])
+        for vendor_name, vendor in _EXTENSIONS.items()
+        if name in vendor.structs
+    ]
+    return _lookup_single_namespace(matches)
 
 
 def _lookup_vendor_helper(
@@ -196,16 +206,20 @@ def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | No
             return None
         return _lookup_vendor_helper(vendor, "packers", value)
     if isinstance(value, int):
-        matching_vendors = [vendor for vendor in _EXTENSIONS.values() if _vendor_knows_mechanism_id(vendor, value)]
+        matching_vendors = [
+            (vendor_name, vendor)
+            for vendor_name, vendor in _EXTENSIONS.items()
+            if _vendor_knows_mechanism_id(vendor, value)
+        ]
         if len(matching_vendors) != 1:
             return None
-        return _lookup_vendor_helper(matching_vendors[0], "packers", value)
+        return _lookup_vendor_helper(matching_vendors[0][1], "packers", value)
     matches = [
-        helper
-        for vendor in _EXTENSIONS.values()
+        (vendor_name, helper)
+        for vendor_name, vendor in _EXTENSIONS.items()
         if (helper := _lookup_vendor_helper(vendor, "packers", value)) is not None
     ]
-    return _lookup_unique(matches)
+    return _lookup_single_namespace(matches)
 
 
 def lookup_inspector(value: int | str, *, namespace: str | None = None) -> Any | None:
@@ -216,13 +230,17 @@ def lookup_inspector(value: int | str, *, namespace: str | None = None) -> Any |
             return None
         return _lookup_vendor_helper(vendor, "inspectors", value)
     if isinstance(value, int):
-        matching_vendors = [vendor for vendor in _EXTENSIONS.values() if _vendor_knows_mechanism_id(vendor, value)]
+        matching_vendors = [
+            (vendor_name, vendor)
+            for vendor_name, vendor in _EXTENSIONS.items()
+            if _vendor_knows_mechanism_id(vendor, value)
+        ]
         if len(matching_vendors) != 1:
             return None
-        return _lookup_vendor_helper(matching_vendors[0], "inspectors", value)
+        return _lookup_vendor_helper(matching_vendors[0][1], "inspectors", value)
     matches = [
-        helper
-        for vendor in _EXTENSIONS.values()
+        (vendor_name, helper)
+        for vendor_name, vendor in _EXTENSIONS.items()
         if (helper := _lookup_vendor_helper(vendor, "inspectors", value)) is not None
     ]
-    return _lookup_unique(matches)
+    return _lookup_single_namespace(matches)
