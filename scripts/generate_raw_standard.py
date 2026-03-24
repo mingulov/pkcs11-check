@@ -9,7 +9,29 @@ HEADER = REPO_ROOT / "third_party/pkcs11-headers/3.2/pkcs11.h"
 OUT_TYPES = REPO_ROOT / "src/pkcs11_check/raw/types_std.py"
 OUT_METADATA = REPO_ROOT / "src/pkcs11_check/raw/metadata_std.py"
 
-SYMBOL_PREFIXES = ("CKA_", "CKM_", "CKK_", "CKO_", "CKR_", "CKF_")
+SYMBOL_PREFIXES = (
+    "CKA_", "CKC_", "CKD_", "CKF_", "CKG_", "CKH_", "CKK_", "CKM_",
+    "CKN_", "CKO_", "CKP_", "CKR_", "CKS_", "CKT_", "CKU_", "CKV_", "CKZ_",
+    "CK_",  # CK_CERTIFICATE_CATEGORY_*, CK_SECURITY_DOMAIN_*, etc.
+    "CRYPTOKI_VERSION_",
+)
+
+# Last-match-wins prefix ordering for typed constant families.
+CONSTANT_TYPE_MAP = [
+    ("CK_", "CK_CONSTANT"),
+    ("CKA_", "CKA"), ("CKC_", "CKC"), ("CKD_", "CKD"),
+    ("CKF_", "CKF"), ("CKG_", "CKG"), ("CKH_", "CKH"),
+    ("CKK_", "CKK"), ("CKM_", "CKM"), ("CKN_", "CKN"),
+    ("CKO_", "CKO"), ("CKP_", "CKP"), ("CKR_", "CKR"),
+    ("CKS_", "CKS"), ("CKT_", "CKT"), ("CKU_", "CKU"),
+    ("CKV_", "CKV"), ("CKZ_", "CKZ"),
+    ("CRYPTOKI_VERSION_", "CK_CONSTANT"),
+    # 3.x overrides (more specific prefixes win over shorter ones)
+    ("CKG_MGF1_", "CKG"), ("CKH_HEDGE_", "CKH"), ("CKH_DETERMINISTIC_", "CKH"),
+    ("CKP_ML_DSA_", "CKP"), ("CKP_ML_KEM_", "CKP"), ("CKP_SLH_DSA_", "CKP"),
+    ("CKP_PKCS5_PBKD2_", "CKP"), ("CKS_LAST_VALIDATION_", "CKS"),
+    ("CK_CERTIFICATE_CATEGORY_", "CK_CONSTANT"), ("CK_SECURITY_DOMAIN_", "CK_CONSTANT"),
+]
 NAME_TABLES = {
     "ATTR_NAMES": "CKA_",
     "MECHANISM_NAMES": "CKM_",
@@ -18,6 +40,16 @@ NAME_TABLES = {
     "RV_NAMES": "CKR_",
     "FLAG_NAMES": "CKF_",
 }
+
+
+def _resolve_constant_type(name: str) -> str:
+    """Return the typed constant class name for a symbol, using last-match-wins."""
+    result = "CK_CONSTANT"  # fallback
+    for prefix, cls_name in CONSTANT_TYPE_MAP:
+        if name.startswith(prefix):
+            result = cls_name
+    return result
+
 
 # OASIS-style: typedef struct CK_X { ... } CK_X;
 STRUCT_PATTERN = re.compile(
@@ -96,7 +128,7 @@ def _parse_symbols(text: str) -> dict[str, int | str]:
     symbols: dict[str, int | str] = {}
     resolved: dict[str, int] = {}
     for line in text.splitlines():
-        match = re.match(r"#define\s+(CK[A-Z0-9_]+)\s+(.+)$", line)
+        match = re.match(r"#define\s+((?:CK|CRYPTOKI_)[A-Z0-9_]+)\s+(.+)$", line)
         if match is None:
             continue
         name, expr = match.groups()
@@ -438,6 +470,55 @@ def _function_list_fields(
     return version_fields + [(name, _function_pointer_name(name)) for name, _ in selected]
 
 
+def _constant_class_lines() -> list[str]:
+    """Return Python source lines defining the typed constant class hierarchy."""
+    return [
+        "class CK_CONSTANT(int):",
+        "    _name: str | None",
+        "    def __new__(cls, value: int, name: str | None = None):",
+        "        obj = super().__new__(cls, value)",
+        "        obj._name = name",
+        "        return obj",
+        "    def _hex(self) -> str:",
+        "        import ctypes as _ct",
+        "        mask = (1 << (_ct.sizeof(_ct.c_ulong) * 8)) - 1",
+        "        return f'0x{self & mask:08x}'",
+        "    def __repr__(self) -> str:",
+        "        if self._name:",
+        "            return f'<{self._name}: {self._hex()}>'",
+        "        return f'<{self.__class__.__name__}({self._hex()})>'",
+        "    def __str__(self) -> str:",
+        "        if self._name:",
+        "            return self._name",
+        "        return self._hex()",
+        "    def __getnewargs__(self) -> tuple:",
+        "        return (int(self), self._name)",
+        "",
+        "class CKA(CK_CONSTANT): pass",
+        "class CKC(CK_CONSTANT): pass",
+        "class CKD(CK_CONSTANT): pass",
+        "class CKF(CK_CONSTANT):",
+        "    def __or__(self, other): return CKF(int.__or__(self, other))",
+        "    def __ror__(self, other): return CKF(int.__or__(self, other))",
+        "    def __and__(self, other): return CKF(int.__and__(self, other))",
+        "    def __rand__(self, other): return CKF(int.__and__(self, other))",
+        "    def __invert__(self): return CKF(int.__invert__(self))",
+        "class CKG(CK_CONSTANT): pass",
+        "class CKH(CK_CONSTANT): pass",
+        "class CKK(CK_CONSTANT): pass",
+        "class CKM(CK_CONSTANT): pass",
+        "class CKN(CK_CONSTANT): pass",
+        "class CKO(CK_CONSTANT): pass",
+        "class CKP(CK_CONSTANT): pass",
+        "class CKR(CK_CONSTANT): pass",
+        "class CKS(CK_CONSTANT): pass",
+        "class CKT(CK_CONSTANT): pass",
+        "class CKU(CK_CONSTANT): pass",
+        "class CKV(CK_CONSTANT): pass",
+        "class CKZ(CK_CONSTANT): pass",
+    ]
+
+
 def _render_types_module(
     *,
     symbols: dict[str, int | str],
@@ -463,6 +544,10 @@ def _render_types_module(
         "STANDARD_GENERATED = True",
         "",
     ]
+
+    # Emit typed constant class hierarchy
+    lines.extend(_constant_class_lines())
+    lines.append("")
 
     struct_names = opaque_structs | set(structs)
     function_pointer_names = {_function_pointer_name(name) for name, _ in functions}
@@ -521,8 +606,14 @@ def _render_types_module(
         lines.append("")
 
     for name, value in symbols.items():
-        rendered = value if isinstance(value, str) else hex(value)
-        lines.append(f"{name} = {rendered}")
+        if isinstance(value, str):
+            # Unresolved expression — emit as plain constant
+            lines.append(f"{name} = {value}")
+        else:
+            cls = _resolve_constant_type(name)
+            # Mask to unsigned to handle ~0 (-1) correctly
+            uval = value & 0xFFFFFFFFFFFFFFFF
+            lines.append(f"{name} = {cls}(0x{uval:08x}, {name!r})")
     return "\n".join(lines) + "\n"
 
 
