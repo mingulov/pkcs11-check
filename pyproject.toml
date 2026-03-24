@@ -59,6 +59,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pkcs11_check"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"third_party/pkcs11-headers/3.2/pkcs11.h" = "pkcs11_check/_vendor/pkcs11-headers/3.2/pkcs11.h"
+"third_party/pkcs11-headers/3.2/pkcs11f.h" = "pkcs11_check/_vendor/pkcs11-headers/3.2/pkcs11f.h"
+"third_party/pkcs11-headers/3.2/pkcs11t.h" = "pkcs11_check/_vendor/pkcs11-headers/3.2/pkcs11t.h"
+
 [tool.uv.sources]
 python-pkcs11 = { path = "python-pkcs11", editable = true }
 

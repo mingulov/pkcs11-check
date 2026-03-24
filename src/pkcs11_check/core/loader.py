@@ -8,6 +8,9 @@ from typing import Any
 
 import pkcs11
 
+from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.bridge import raw_from_lib
+
 # Alias to allow mocking in tests
 pkcs11_lib = pkcs11.lib
 
@@ -33,6 +36,17 @@ class P11Module:
             msg = f"Slot {slot_index} not found (available: {len(slots)})"
             raise IndexError(msg)
         return slots[slot_index].get_token()
+
+    def get_interface_list(self) -> list[tuple[str, int, int]]:
+        """Return supported interfaces when the underlying lib exposes them."""
+        get_interface_list = getattr(self.lib, "get_interface_list", None)
+        if get_interface_list is None:
+            return []
+        return get_interface_list()  # type: ignore[no-any-return]
+
+    def raw(self) -> RawPKCS11:
+        """Return a RawPKCS11 view over the loaded library."""
+        return raw_from_lib(self.lib)
 
 
 def load_module(

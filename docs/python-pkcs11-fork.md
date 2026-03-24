@@ -4,7 +4,9 @@ Fork: `github.com/mingulov/python-pkcs11` (git submodule at `python-pkcs11/`)
 
 ## Summary
 
-18 commits over upstream (`ecf10f7`), adding PKCS#11 v3.0/3.1/3.2 support:
+18 commits over upstream (`ecf10f7`), adding PKCS#11 v3.0/3.1/3.2 support.
+
+The fork is now focused on high-level binding responsibilities:
 
 - v3.0/3.1/3.2 interface negotiation via `C_GetInterface`
 - Post-quantum cryptography: ML-KEM, ML-DSA, SLH-DSA
@@ -12,6 +14,32 @@ Fork: `github.com/mingulov/python-pkcs11` (git submodule at `python-pkcs11/`)
 - 50+ new mechanism and key type enums
 - 4 parameter struct implementations
 - Bug fixes (GCM IV restriction, attribute registry)
+
+The generic raw ctypes surface is no longer part of the fork scope. `RawPKCS11`, the generated
+standard type/metadata modules, and the shared raw bootstrap/packing/fault helpers now live in
+`pkcs11_check.raw` in the main repo.
+
+Packaging of the vendored PKCS#11 standard headers and generated raw modules is now owned by the
+main repo, not the fork. The packaging contract is:
+
+- `uv build --wheel` includes `pkcs11_check/raw/types_std.py`, `pkcs11_check/raw/metadata_std.py`,
+  and the vendored standard headers `pkcs11.h`, `pkcs11f.h`, and `pkcs11t.h`
+- `uv build --sdist` includes the same generated raw modules under `src/pkcs11_check/raw/` and the
+  vendored headers under `third_party/pkcs11-headers/3.2/`
+
+## Current Fork Responsibilities
+
+- Negotiate and expose v2.40/v3.0/v3.1/v3.2 interfaces to the higher-level binding
+- Carry upstream-missing enums, attributes, and parameter structs needed by the object-oriented API
+- Provide KEM and PQC support in the high-level binding layer
+- Preserve binding-level fixes that belong in `python-pkcs11` itself
+
+## No Longer Fork Responsibilities
+
+- Generic raw PKCS#11 ctypes calling surface
+- Generated standard symbol/type metadata from vendored PKCS#11 headers
+- Shared raw bootstrap, packing, inspection, and fault-injection helpers for product tests
+- Packaging the vendored PKCS#11 standard headers for the `pkcs11-check` wheel and sdist
 
 ## Changes by Category
 
@@ -85,6 +113,17 @@ Fork: `github.com/mingulov/python-pkcs11` (git submodule at `python-pkcs11/`)
 4. **PR: v3.0/3.1/3.2 interface negotiation** — HasFuncList, C_GetInterface, fallback (3 commits)
 5. **PR: PQC support** — ML-KEM/DSA/SLH-DSA, KEM operations, parameter sets (4 commits)
 6. **PR: CKO_PROFILE and attribute registry** — ProfileID, v3.2 compat (2 commits)
+
+## Raw Layer Drift Check
+
+The generated standard raw layer lives in `pkcs11-check`, not in the fork. When the vendored
+headers or generator change, use:
+
+```bash
+uv run python scripts/generate_raw_standard.py
+uv run python -m pytest tests/test_raw_generation.py -q
+uv run python -m pytest tests/test_raw_pack.py -q
+```
 
 ## Verification
 

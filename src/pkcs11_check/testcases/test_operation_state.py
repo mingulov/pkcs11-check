@@ -18,10 +18,6 @@ init/update/final as individually callable Python steps for digest.
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
@@ -32,197 +28,91 @@ from pkcs11.exceptions import (
     StateUnsaveable,
 )
 
+from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
+from pkcs11_check.testcases._raw_subprocess import run_raw_script
+
 pytestmark = pytest.mark.operation_state
 
-# ---------------------------------------------------------------------------
-# Subprocess runner
-# ---------------------------------------------------------------------------
-
-_SUBPROCESS_BOILERPLATE = """\
-import ctypes
-from ctypes import c_ulong, c_void_p, c_ubyte, c_char_p, POINTER, byref, cast
-import sys
+_SCRIPT_PREAMBLE = """\
 import binascii
+import ctypes
+import sys
+from ctypes import byref, c_char_p, c_ubyte, cast
 
-CK_RV = c_ulong
-CKR_OK = 0x00000000
-CKR_FUNCTION_NOT_SUPPORTED = 0x00000054
-CKR_STATE_UNSAVEABLE = 0x00000180
-CKR_SAVED_STATE_INVALID = 0x00000160
-CKR_USER_ALREADY_LOGGED_IN = 0x00000100
-CKR_CRYPTOKI_ALREADY_INITIALIZED = 0x00000191
-CKF_SERIAL_SESSION = 0x00000004
-CKF_RW_SESSION = 0x00000002
-CKM_SHA256 = 0x00000250
-CKM_AES_KEY_GEN = 0x00001080
-CKM_AES_CBC = 0x00001082
-CKA_CLASS = 0x00000000
-CKA_KEY_TYPE = 0x00000100
-CKA_TOKEN = 0x00000001
-CKA_ENCRYPT = 0x00000104
-CKA_DECRYPT = 0x00000105
-CKA_VALUE_LEN = 0x00000161
-CKO_SECRET_KEY = 0x00000004
-CKK_AES = 0x0000001F
+from pkcs11_check.raw import (
+    CKA_CLASS,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_KEY_TYPE,
+    CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKK_AES,
+    CKM_AES_CBC,
+    CKM_AES_KEY_GEN,
+    CKM_SHA256,
+    CKO_SECRET_KEY,
+    CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_OK,
+    CKR_SAVED_STATE_INVALID,
+    CKR_STATE_UNSAVEABLE,
+    CK_ATTRIBUTE_PTR,
+    CK_MECHANISM,
+    CK_OBJECT_HANDLE,
+    RawPKCS11,
+)
+from pkcs11_check.raw.bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
+from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 
-lib = ctypes.CDLL({module_path!r})
 
-C_GetFunctionList = lib.C_GetFunctionList
-C_GetFunctionList.restype = CK_RV
-C_GetFunctionList.argtypes = [POINTER(c_void_p)]
+def _template_ptr(attrs):
+    return cast(attrs.ptr, CK_ATTRIBUTE_PTR)
 
-funclist_ptr = c_void_p()
-rv = C_GetFunctionList(byref(funclist_ptr))
-if rv != CKR_OK:
-    print(f"FATAL:GetFunctionList:0x{{rv:08x}}")
-    sys.exit(1)
 
-ptr_size = ctypes.sizeof(c_void_p)
-base = funclist_ptr.value
+def _byte_array(data: bytes):
+    return (c_ubyte * len(data)).from_buffer_copy(data)
 
-def _get_func(index):
-    offset = ptr_size + (index * ptr_size)
-    addr = ctypes.cast(base + offset, POINTER(c_void_p)).contents.value
-    return addr
 
-# CK_FUNCTION_LIST indices (0-based, after version field):
-# 0=C_Initialize, 1=C_Finalize, 4=C_GetSlotList,
-# 12=C_OpenSession, 13=C_CloseSession,
-# 16=C_GetOperationState, 17=C_SetOperationState,
-# 18=C_Login, 19=C_Logout,
-# 29=C_EncryptInit, 31=C_EncryptUpdate, 32=C_EncryptFinal,
-# 37=C_DigestInit, 39=C_DigestUpdate, 41=C_DigestFinal,
-# 58=C_GenerateKey
-
-_cache = {{}}
-
-def _cfunc(name, restype, argtypes, idx):
-    if name not in _cache:
-        addr = _get_func(idx)
-        ft = ctypes.CFUNCTYPE(restype, *argtypes)
-        _cache[name] = ft(addr)
-    return _cache[name]
-
-def C_Initialize():
-    return _cfunc("C_Initialize", CK_RV, [c_void_p], 0)(c_void_p(None))
-
-def C_Finalize():
-    return _cfunc("C_Finalize", CK_RV, [c_void_p], 1)(c_void_p(None))
-
-def C_GetSlotList(present, slots, count):
-    return _cfunc("C_GetSlotList", CK_RV,
-        [c_ubyte, POINTER(c_ulong), POINTER(c_ulong)], 4)(present, slots, count)
-
-def C_OpenSession(slot, flags, app, notify, phSession):
-    return _cfunc("C_OpenSession", CK_RV,
-        [c_ulong, c_ulong, c_void_p, c_void_p, POINTER(c_ulong)], 12)(
-        slot, flags, app, notify, phSession)
-
-def C_CloseSession(hSession):
-    return _cfunc("C_CloseSession", CK_RV, [c_ulong], 13)(hSession)
-
-def C_Login(hSession, userType, pin, pinLen):
-    return _cfunc("C_Login", CK_RV,
-        [c_ulong, c_ulong, c_char_p, c_ulong], 18)(hSession, userType, pin, pinLen)
-
-def C_DigestInit(hSession, pMechanism):
-    return _cfunc("C_DigestInit", CK_RV,
-        [c_ulong, c_void_p], 37)(hSession, pMechanism)
-
-def C_DigestUpdate(hSession, pPart, ulPartLen):
-    return _cfunc("C_DigestUpdate", CK_RV,
-        [c_ulong, c_char_p, c_ulong], 39)(hSession, pPart, ulPartLen)
-
-def C_DigestFinal(hSession, pDigest, pulDigestLen):
-    return _cfunc("C_DigestFinal", CK_RV,
-        [c_ulong, c_void_p, POINTER(c_ulong)], 41)(hSession, pDigest, pulDigestLen)
-
-def C_EncryptInit(hSession, pMechanism, hKey):
-    return _cfunc("C_EncryptInit", CK_RV,
-        [c_ulong, c_void_p, c_ulong], 29)(hSession, pMechanism, hKey)
-
-def C_EncryptUpdate(hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen):
-    return _cfunc("C_EncryptUpdate", CK_RV,
-        [c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong)], 31)(
-        hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen)
-
-def C_EncryptFinal(hSession, pLastEncryptedPart, pulLastEncryptedPartLen):
-    return _cfunc("C_EncryptFinal", CK_RV,
-        [c_ulong, c_void_p, POINTER(c_ulong)], 32)(
-        hSession, pLastEncryptedPart, pulLastEncryptedPartLen)
-
-def C_GenerateKey(hSession, pMechanism, pTemplate, ulCount, phKey):
-    return _cfunc("C_GenerateKey", CK_RV,
-        [c_ulong, c_void_p, c_void_p, c_ulong, POINTER(c_ulong)], 58)(
-        hSession, pMechanism, pTemplate, ulCount, phKey)
-
-def C_GetOperationState(hSession, pState, pulStateLen):
-    return _cfunc("C_GetOperationState", CK_RV,
-        [c_ulong, c_void_p, POINTER(c_ulong)], 16)(hSession, pState, pulStateLen)
-
-def C_SetOperationState(hSession, pOperationState, ulOperationStateLen,
-                        hEncryptionKey, hAuthenticationKey):
-    return _cfunc("C_SetOperationState", CK_RV,
-        [c_ulong, c_char_p, c_ulong, c_ulong, c_ulong], 17)(
-        hSession, pOperationState, ulOperationStateLen,
-        hEncryptionKey, hAuthenticationKey)
-
-class CK_MECHANISM(ctypes.Structure):
-    _fields_ = [
-        ("mechanism", c_ulong),
-        ("pParameter", c_void_p),
-        ("ulParameterLen", c_ulong),
-    ]
-
-class CK_ATTRIBUTE(ctypes.Structure):
-    _fields_ = [
-        ("type", c_ulong),
-        ("pValue", c_void_p),
-        ("ulValueLen", c_ulong),
-    ]
-
-# Initialise
-rv = C_Initialize()
-if rv != CKR_OK and rv != CKR_CRYPTOKI_ALREADY_INITIALIZED:
+raw = RawPKCS11.from_lib({module_path!r})
+hSession = None
+rv = raw.C_Initialize(None)
+if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):
     print(f"FATAL:Initialize:0x{{rv:08x}}")
     sys.exit(1)
 
-# Get slot list
-count = c_ulong(0)
-rv = C_GetSlotList(1, None, byref(count))
-if rv != CKR_OK or count.value == 0:
-    print(f"FATAL:GetSlotList:0x{{rv:08x}}:count={{count.value}}")
-    C_Finalize()
+slot_ids = get_slot_ids(raw)
+if len(slot_ids) <= {slot_index}:
+    print(f"FATAL:GetSlotList:index={slot_index}:count={{len(slot_ids)}}")
+    raw.C_Finalize(None)
     sys.exit(1)
 
-slots = (c_ulong * count.value)()
-rv = C_GetSlotList(1, slots, byref(count))
-if rv != CKR_OK:
-    print(f"FATAL:GetSlotList2:0x{{rv:08x}}")
-    C_Finalize()
-    sys.exit(1)
+slot_id = slot_ids[{slot_index}]
+hSession = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
-slot_id = slots[{slot_index}]
-
-# Open session
-hSession = c_ulong(0)
-flags = c_ulong(CKF_SERIAL_SESSION | CKF_RW_SESSION)
-rv = C_OpenSession(slot_id, flags, c_void_p(None), c_void_p(None), byref(hSession))
-if rv != CKR_OK:
-    print(f"FATAL:OpenSession:0x{{rv:08x}}")
-    C_Finalize()
-    sys.exit(1)
-
-# Login if PIN provided
 _PIN = {pin_bytes!r}
 if _PIN:
-    rv = C_Login(hSession, c_ulong(1), c_char_p(_PIN), c_ulong(len(_PIN)))
-    if rv != CKR_OK and rv != CKR_USER_ALREADY_LOGGED_IN:
-        print(f"FATAL:Login:0x{{rv:08x}}")
-        C_CloseSession(hSession)
-        C_Finalize()
-        sys.exit(1)
+    login_user(raw, hSession, 1, _PIN)
 
+c_ulong = ctypes.c_ulong
+c_void_p = ctypes.c_void_p
+C_DigestInit = raw.C_DigestInit
+C_DigestUpdate = raw.C_DigestUpdate
+C_DigestFinal = raw.C_DigestFinal
+C_EncryptInit = raw.C_EncryptInit
+C_EncryptUpdate = raw.C_EncryptUpdate
+C_EncryptFinal = raw.C_EncryptFinal
+C_GenerateKey = raw.C_GenerateKey
+C_GetOperationState = raw.C_GetOperationState
+C_SetOperationState = raw.C_SetOperationState
+C_OpenSession = raw.C_OpenSession
+C_CloseSession = raw.C_CloseSession
+"""
+
+_SCRIPT_CLEANUP = """\
+close_session_quietly(raw, hSession)
+raw.C_Finalize(None)
 """
 
 
@@ -233,38 +123,16 @@ def _run_state_script(
     script_body: str,
     timeout: int = 15,
 ) -> tuple[int, str, str]:
-    """Run a ctypes-based operation state script in a subprocess.
-
-    The boilerplate sets up lib, hSession, slot_id, and all helpers.
-    script_body is appended and must print ``KEY:value`` lines.
-    Returns (returncode, stdout, stderr).
-    """
-    boilerplate = _SUBPROCESS_BOILERPLATE.format(
-        module_path=module_path,
-        slot_index=slot_index,
-        pin_bytes=pin_bytes,
-    )
-    full_script = (
-        boilerplate
-        + textwrap.dedent(script_body)
-        + textwrap.dedent("""\
-
-        C_CloseSession(hSession)
-        C_Finalize()
-    """)
-    )
-
-    result = subprocess.run(
-        [sys.executable, "-c", full_script],
-        capture_output=True,
-        text=True,
+    return run_raw_script(
+        _SCRIPT_PREAMBLE.format(
+            module_path=module_path,
+            slot_index=slot_index,
+            pin_bytes=pin_bytes,
+        ),
+        script_body,
+        cleanup=_SCRIPT_CLEANUP,
         timeout=timeout,
-        env=os.environ.copy(),
     )
-    return result.returncode, result.stdout.strip(), result.stderr.strip()
-
-
-from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +241,8 @@ class TestDigestStateRoundTrip:
                 print(f"FATAL:DigestInit_1shot:0x{rv:08x}")
                 sys.exit(1)
             full = part1 + part2
-            rv = C_DigestUpdate(hSession, c_char_p(full), c_ulong(len(full)))
+            full_buf = _byte_array(full)
+            rv = C_DigestUpdate(hSession, full_buf, c_ulong(len(full)))
             if rv != CKR_OK:
                 print(f"FATAL:DigestUpdate_1shot:0x{rv:08x}")
                 sys.exit(1)
@@ -394,7 +263,8 @@ class TestDigestStateRoundTrip:
             if rv != CKR_OK:
                 print(f"FATAL:DigestInit_mp:0x{rv:08x}")
                 sys.exit(1)
-            rv = C_DigestUpdate(hSession, c_char_p(part1), c_ulong(len(part1)))
+            part1_buf = _byte_array(part1)
+            rv = C_DigestUpdate(hSession, part1_buf, c_ulong(len(part1)))
             if rv != CKR_OK:
                 print(f"FATAL:DigestUpdate_mp:0x{rv:08x}")
                 sys.exit(1)
@@ -419,12 +289,13 @@ class TestDigestStateRoundTrip:
                 print(f"FATAL:GetState_data:0x{rv:08x}")
                 sys.exit(1)
             state_bytes = bytes(state_buf[:state_len.value])
+            state_bytes_buf = _byte_array(state_bytes)
             print(f"STATE_SAVED:{len(state_bytes)}")
 
             # Restore state on the same session
             rv = C_SetOperationState(
                 hSession,
-                c_char_p(state_bytes),
+                state_bytes_buf,
                 c_ulong(len(state_bytes)),
                 c_ulong(0),
                 c_ulong(0),
@@ -435,7 +306,8 @@ class TestDigestStateRoundTrip:
             print("STATE_RESTORED")
 
             # Continue with part2 and finalise
-            rv = C_DigestUpdate(hSession, c_char_p(part2), c_ulong(len(part2)))
+            part2_buf = _byte_array(part2)
+            rv = C_DigestUpdate(hSession, part2_buf, c_ulong(len(part2)))
             if rv != CKR_OK:
                 print(f"FATAL:DigestUpdate_part2:0x{rv:08x}")
                 sys.exit(1)
@@ -486,13 +358,14 @@ class TestDigestStateRoundTrip:
             mech.mechanism = CKM_SHA256
 
             part1 = b"cross-session data"
+            part1_buf = _byte_array(part1)
 
             rv = C_DigestInit(hSession, ctypes.byref(mech))
             if rv != CKR_OK:
                 print(f"SKIP:DigestInitFailed:0x{rv:08x}")
                 sys.exit(0)
 
-            rv = C_DigestUpdate(hSession, c_char_p(part1), c_ulong(len(part1)))
+            rv = C_DigestUpdate(hSession, part1_buf, c_ulong(len(part1)))
             if rv != CKR_OK:
                 print(f"SKIP:DigestUpdateFailed:0x{rv:08x}")
                 sys.exit(0)
@@ -516,20 +389,22 @@ class TestDigestStateRoundTrip:
                 print(f"SKIP:GetStateDataFailed:0x{rv:08x}")
                 sys.exit(0)
             state_bytes = bytes(state_buf[:state_len.value])
+            state_bytes_buf = _byte_array(state_bytes)
             print(f"STATE_SAVED:{len(state_bytes)}")
 
             # Open a second session
-            hSession2 = c_ulong(0)
-            flags2 = c_ulong(CKF_SERIAL_SESSION | CKF_RW_SESSION)
-            rv = C_OpenSession(slot_id, flags2, c_void_p(None), c_void_p(None), byref(hSession2))
-            if rv != CKR_OK:
-                print(f"SKIP:OpenSession2Failed:0x{rv:08x}")
-                sys.exit(0)
+            try:
+                hSession2 = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
+            except AssertionError as exc:
+                if "CKR_" in str(exc):
+                    print(f"SKIP:OpenSession2Failed:{exc}")
+                    sys.exit(0)
+                raise
 
             # Try to restore state on the second session
             rv2 = C_SetOperationState(
                 hSession2,
-                c_char_p(state_bytes),
+                state_bytes_buf,
                 c_ulong(len(state_bytes)),
                 c_ulong(0),
                 c_ulong(0),
@@ -539,7 +414,7 @@ class TestDigestStateRoundTrip:
             else:
                 print(f"CROSS_SESSION_REJECTED:0x{rv2:08x}")
 
-            C_CloseSession(hSession2)
+            close_session_quietly(raw, hSession2)
         """
 
         returncode, stdout, stderr = _run_state_script(module_path, slot_index, pin_bytes, script)
@@ -615,35 +490,23 @@ class TestEncryptStateRoundTrip:
             iv = b"\\x00" * 16
             part1 = b"Block-one-data!!"  # 16 bytes
             part2 = b"Block-two-data!!"  # 16 bytes
+            part1_buf = _byte_array(part1)
+            part2_buf = _byte_array(part2)
 
             # Build AES key-gen template
-            cls_val = c_ulong(CKO_SECRET_KEY)
-            ktype_val = c_ulong(CKK_AES)
-            vlen_val = c_ulong(32)
-            enc_val = c_ubyte(1)
-            dec_val = c_ubyte(1)
-            tok_val = c_ubyte(0)  # session key
-
-            def _attr(atype, val):
-                return CK_ATTRIBUTE(
-                    atype,
-                    ctypes.cast(ctypes.byref(val), c_void_p),
-                    ctypes.sizeof(val),
-                )
-            template = (CK_ATTRIBUTE * 6)(
-                _attr(CKA_CLASS,     cls_val),
-                _attr(CKA_KEY_TYPE,  ktype_val),
-                _attr(CKA_VALUE_LEN, vlen_val),
-                _attr(CKA_ENCRYPT,   enc_val),
-                _attr(CKA_DECRYPT,   dec_val),
-                _attr(CKA_TOKEN,     tok_val),
+            attrs = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_AES),
+                attr_ulong(CKA_VALUE_LEN, 32),
+                attr_bool(CKA_ENCRYPT, True),
+                attr_bool(CKA_DECRYPT, True),
+                attr_bool(CKA_TOKEN, False),
             )
 
-            kg_mech = CK_MECHANISM()
-            kg_mech.mechanism = CKM_AES_KEY_GEN
+            kg_mech = mech_simple(CKM_AES_KEY_GEN)
 
-            hKey = c_ulong(0)
-            rv = C_GenerateKey(hSession, ctypes.byref(kg_mech), template, 6, byref(hKey))
+            hKey = CK_OBJECT_HANDLE(0)
+            rv = C_GenerateKey(hSession, kg_mech.byref(), _template_ptr(attrs), attrs.count, byref(hKey))
             if rv in (CKR_FUNCTION_NOT_SUPPORTED,):
                 print(f"SKIP:GenerateKeyUnsupported:0x{rv:08x}")
                 sys.exit(0)
@@ -672,7 +535,7 @@ class TestEncryptStateRoundTrip:
             out_len = c_ulong(32)
             out_buf = (c_ubyte * 32)()
 
-            rv = C_EncryptUpdate(hSession, c_char_p(part1), c_ulong(len(part1)),
+            rv = C_EncryptUpdate(hSession, part1_buf, c_ulong(len(part1)),
                                  out_buf, byref(out_len))
             if rv != CKR_OK:
                 print(f"FATAL:EncryptUpdate_ref1:0x{rv:08x}")
@@ -681,7 +544,7 @@ class TestEncryptStateRoundTrip:
 
             out_len2 = c_ulong(32)
             out_buf2 = (c_ubyte * 32)()
-            rv = C_EncryptUpdate(hSession, c_char_p(part2), c_ulong(len(part2)),
+            rv = C_EncryptUpdate(hSession, part2_buf, c_ulong(len(part2)),
                                  out_buf2, byref(out_len2))
             if rv != CKR_OK:
                 print(f"FATAL:EncryptUpdate_ref2:0x{rv:08x}")
@@ -707,7 +570,7 @@ class TestEncryptStateRoundTrip:
             mp_out = bytearray()
             mp_len1 = c_ulong(32)
             mp_buf1 = (c_ubyte * 32)()
-            rv = C_EncryptUpdate(hSession, c_char_p(part1), c_ulong(len(part1)),
+            rv = C_EncryptUpdate(hSession, part1_buf, c_ulong(len(part1)),
                                  mp_buf1, byref(mp_len1))
             if rv != CKR_OK:
                 print(f"FATAL:EncryptUpdate_mp1:0x{rv:08x}")
@@ -734,12 +597,13 @@ class TestEncryptStateRoundTrip:
                 print(f"FATAL:GetState_data:0x{rv:08x}")
                 sys.exit(1)
             state_bytes = bytes(state_buf[:state_len.value])
+            state_bytes_buf = _byte_array(state_bytes)
             print(f"STATE_SAVED:{len(state_bytes)}")
 
             # Restore state on the same session, supplying the encryption key handle
             rv = C_SetOperationState(
                 hSession,
-                c_char_p(state_bytes),
+                state_bytes_buf,
                 c_ulong(len(state_bytes)),
                 hKey,       # hEncryptionKey
                 c_ulong(0), # hAuthenticationKey (not used)
@@ -752,7 +616,7 @@ class TestEncryptStateRoundTrip:
             # Continue encryption from restored state
             mp_len2 = c_ulong(32)
             mp_buf2 = (c_ubyte * 32)()
-            rv = C_EncryptUpdate(hSession, c_char_p(part2), c_ulong(len(part2)),
+            rv = C_EncryptUpdate(hSession, part2_buf, c_ulong(len(part2)),
                                  mp_buf2, byref(mp_len2))
             if rv != CKR_OK:
                 print(f"FATAL:EncryptUpdate_mp2:0x{rv:08x}")
