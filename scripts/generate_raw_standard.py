@@ -19,23 +19,42 @@ NAME_TABLES = {
     "FLAG_NAMES": "CKF_",
 }
 
+# OASIS-style: typedef struct CK_X { ... } CK_X;
 STRUCT_PATTERN = re.compile(
     r"typedef struct\s+(CK_\w+)\s*\{(?P<body>.*?)\}\s*(CK_\w+)\s*;",
     re.DOTALL,
 )
+# Public-domain / plain-style: struct CK_X { ... };
 PLAIN_STRUCT_PATTERN = re.compile(
     r"^struct\s+(CK_\w+)\s*\{(?P<body>.*?)\};",
     re.DOTALL | re.MULTILINE,
 )
+# OASIS-style function prototypes (pkcs11f.h)
 FUNCTION_PATTERN = re.compile(
     r"CK_PKCS11_FUNCTION_INFO\((C_\w+)\)\s*"
     r"#ifdef CK_NEED_ARG_LIST\s*\((?P<args>.*?)\);\s*#endif",
     re.DOTALL,
 )
+# Public-domain function pointer typedefs: typedef CK_RV (* CK_C_Foo)(args);
+PD_FUNCPTR_PATTERN = re.compile(
+    r"typedef\s+CK_RV\s*\(\*\s*(?P<name>CK_C_\w+)\)\((?P<args>[^)]*)\)\s*;",
+)
+# Public-domain extern prototypes: extern CK_RV C_Foo(args);
+PD_EXTERN_PATTERN = re.compile(
+    r"extern\s+CK_RV\s+(C_\w+)\((?P<args>[^)]*)\)\s*;",
+)
+# OASIS-style: typedef struct CK_X CK_X;
 OPAQUE_STRUCT_PATTERN = re.compile(r"^typedef struct (CK_\w+)\s+(CK_\w+)\s*;$", re.MULTILINE)
+# Public-domain: STRUCTDEF(CK_X);
+PD_STRUCTDEF_PATTERN = re.compile(r"^STRUCTDEF\((CK_\w+)\)\s*;", re.MULTILINE)
+# OASIS-style callbacks
 CALLBACK_PATTERN = re.compile(
     r"typedef CK_CALLBACK_FUNCTION\((?P<return_type>[^,]+),\s*(?P<name>CK_\w+)\)\((?P<args>.*?)\);",
     re.DOTALL,
+)
+# Public-domain callbacks: typedef CK_RV (* CK_NOTIFY)(...);
+PD_CALLBACK_PATTERN = re.compile(
+    r"typedef\s+CK_RV\s*\(\*\s*(?P<name>CK_(?!C_)\w+)\)\((?P<args>[^)]*)\)\s*;",
 )
 
 C_PRIMITIVES = {
@@ -92,9 +111,19 @@ def _parse_symbols(text: str) -> dict[str, int | str]:
 
 def _parse_aliases(text: str) -> dict[str, tuple[str, int]]:
     aliases: dict[str, tuple[str, int]] = {}
+
+    # Public-domain: ULONGDEF(CK_X) -> typedef CK_ULONG CK_X; typedef CK_X * CK_X_PTR;
+    for match in re.finditer(r"^ULONGDEF\((CK_\w+)\)\s*;", text, re.MULTILINE):
+        name = match.group(1)
+        aliases[name] = ("CK_ULONG", 0)
+        aliases[f"{name}_PTR"] = (name, 1)
+
     for match in re.finditer(r"typedef\s+(?P<body>[^;{}]+);", text, re.DOTALL):
         body = _normalize_spaces(match.group("body").replace("\\\n", " "))
         if "(" in body or ")" in body:
+            continue
+        # Skip macro template lines
+        if "__name__" in body:
             continue
         target_match = re.match(r"(?P<source>.+?)\s+(?P<target>CK_\w+)$", body)
         if target_match is None:
@@ -102,8 +131,11 @@ def _parse_aliases(text: str) -> dict[str, tuple[str, int]]:
         source, target = target_match.groups()
         if source.startswith("struct "):
             continue
-        pointer_depth = source.count("CK_PTR")
-        base = _normalize_spaces(source.replace("CK_PTR", " ").strip())
+        if target in aliases:
+            continue  # Don't overwrite ULONGDEF-generated aliases
+        # Count pointer depth from CK_PTR (OASIS) and * (public-domain)
+        pointer_depth = source.count("CK_PTR") + source.count("*")
+        base = _normalize_spaces(source.replace("CK_PTR", " ").replace("*", " ").strip())
         if not base:
             continue
         aliases[target] = (base, pointer_depth)
@@ -112,11 +144,31 @@ def _parse_aliases(text: str) -> dict[str, tuple[str, int]]:
 
 def _parse_opaque_structs(text: str) -> set[str]:
     structs: set[str] = set()
+    # OASIS: typedef struct CK_X CK_X;
     for match in OPAQUE_STRUCT_PATTERN.finditer(text):
         struct_name, target_name = match.groups()
         if struct_name == target_name:
             structs.add(target_name)
+    # Public-domain: STRUCTDEF(CK_X);
+    for match in PD_STRUCTDEF_PATTERN.finditer(text):
+        structs.add(match.group(1))
     return structs
+
+
+def _generate_struct_ptr_aliases(
+    opaque_structs: set[str],
+    parsed_structs: dict[str, list[tuple[str, str]]],
+    aliases: dict[str, tuple[str, int]],
+) -> None:
+    """Generate *_PTR and *_PTR_PTR aliases for struct types (STRUCTDEF expansion)."""
+    all_struct_names = opaque_structs | set(parsed_structs)
+    for name in all_struct_names:
+        ptr_name = f"{name}_PTR"
+        ptr_ptr_name = f"{name}_PTR_PTR"
+        if ptr_name not in aliases:
+            aliases[ptr_name] = (name, 1)
+        if ptr_ptr_name not in aliases:
+            aliases[ptr_ptr_name] = (name, 2)
 
 
 def _parse_arg_types(args_block: str) -> list[str]:
@@ -138,11 +190,17 @@ def _parse_arg_types(args_block: str) -> list[str]:
 
 def _parse_callbacks(text: str) -> dict[str, tuple[str, list[str]]]:
     callbacks: dict[str, tuple[str, list[str]]] = {}
+    # OASIS: CK_CALLBACK_FUNCTION(CK_RV, CK_NOTIFY)(...)
     for match in CALLBACK_PATTERN.finditer(text):
         callbacks[match.group("name")] = (
             _normalize_spaces(match.group("return_type")),
             _parse_arg_types(match.group("args")),
         )
+    # Public-domain: typedef CK_RV (* CK_NOTIFY)(...);
+    for match in PD_CALLBACK_PATTERN.finditer(text):
+        name = match.group("name")
+        if name not in callbacks:
+            callbacks[name] = ("CK_RV", _parse_pd_arg_types(match.group("args")))
     return callbacks
 
 
@@ -183,11 +241,97 @@ def _parse_structs(text: str) -> dict[str, list[tuple[str, str]]]:
     return structs
 
 
+def _normalize_arg_type(type_str: str) -> str:
+    """Normalize C arg types to PKCS#11 typedef names for metadata."""
+    t = _normalize_spaces(type_str)
+    # void * -> CK_VOID_PTR
+    if t == "void *":
+        return "CK_VOID_PTR"
+    # CK_X * * -> CK_X_PTR_PTR
+    m = re.match(r"(CK_\w+)\s*\*\s*\*$", t)
+    if m:
+        return f"{m.group(1)}_PTR_PTR"
+    # CK_X * -> CK_X_PTR
+    m = re.match(r"(CK_\w+)\s*\*$", t)
+    if m:
+        return f"{m.group(1)}_PTR"
+    return t
+
+
+def _parse_pd_arg_types(args: str) -> list[str]:
+    """Parse argument types from a public-domain function pointer typedef."""
+    args = _strip_comments(args).strip()
+    if not args or args == "void":
+        return []
+    types = []
+    for arg in args.split(","):
+        arg = _normalize_spaces(arg.strip())
+        if not arg or arg == "void":
+            continue
+        # "CK_SESSION_HANDLE hSession" -> "CK_SESSION_HANDLE"
+        # "void *pReserved" -> "void *"
+        # "CK_FUNCTION_LIST **ppFunctionList" -> "CK_FUNCTION_LIST **"
+        parts = arg.rsplit(" ", 1)
+        if len(parts) == 2:
+            type_part = parts[0].strip()
+            name_part = parts[1].strip()
+            # Move pointer stars from name to type
+            while name_part.startswith("*"):
+                type_part += " *"
+                name_part = name_part[1:]
+            types.append(_normalize_arg_type(_normalize_spaces(type_part)))
+        else:
+            types.append(_normalize_arg_type(arg))
+    return types
+
+
 def _parse_functions(text: str) -> list[tuple[str, list[str]]]:
     functions: list[tuple[str, list[str]]] = []
+    seen = set()
+
+    # OASIS: CK_PKCS11_FUNCTION_INFO(C_*)
     for match in FUNCTION_PATTERN.finditer(text):
         name = match.group(1)
-        functions.append((name, _parse_arg_types(match.group("args"))))
+        if name not in seen:
+            functions.append((name, _parse_arg_types(match.group("args"))))
+            seen.add(name)
+
+    # Public-domain: extract order from CK_FUNCTION_LIST_3_2 struct,
+    # and signatures from typedef CK_RV (* CK_C_*)(...)
+    if not functions:
+        # Parse function pointer typedefs for signatures
+        funcptr_sigs: dict[str, list[str]] = {}
+        for match in PD_FUNCPTR_PATTERN.finditer(text):
+            ck_name = match.group("name")  # CK_C_Initialize
+            func_name = ck_name[3:]  # C_Initialize
+            funcptr_sigs[func_name] = _parse_pd_arg_types(match.group("args"))
+
+        # Also try extern prototypes
+        for match in PD_EXTERN_PATTERN.finditer(text):
+            func_name = match.group(1)
+            if func_name not in funcptr_sigs:
+                funcptr_sigs[func_name] = _parse_pd_arg_types(match.group("args"))
+
+        # Extract function order from CK_FUNCTION_LIST_3_2 (the most complete one)
+        fl32_match = re.search(
+            r"struct\s+CK_FUNCTION_LIST_3_2\s*\{(?P<body>.*?)\};",
+            text, re.DOTALL,
+        )
+        if fl32_match:
+            body = _strip_comments(fl32_match.group("body"))
+            for line in body.splitlines():
+                line = _normalize_spaces(line.strip()).rstrip(";").strip()
+                if not line:
+                    continue
+                # "CK_C_Initialize C_Initialize" or "CK_VERSION version"
+                parts = line.split()
+                if len(parts) == 2 and parts[1].startswith("C_"):
+                    func_name = parts[1]
+                    if func_name not in seen:
+                        sig = funcptr_sigs.get(func_name, [])
+                        functions.append((func_name, sig))
+                        seen.add(func_name)
+
     return functions
 
 
@@ -242,10 +386,14 @@ def _field_ctype(
     callable_names: set[str],
 ) -> str:
     array_match = re.match(r"(.+?)\[(\d+)\]$", field_type)
-    if array_match is None:
-        return _render_ctype(field_type, aliases, struct_names, callable_names)
-    base_type, size = array_match.groups()
-    return f"{_render_ctype(base_type, aliases, struct_names, callable_names)} * {size}"
+    if array_match is not None:
+        base_type, size = array_match.groups()
+        return f"{_render_ctype(base_type, aliases, struct_names, callable_names)} * {size}"
+    # Handle pointer fields: "CK_UTF8CHAR *" -> ctypes.c_void_p
+    ptr_match = re.match(r"(.+?)\s*(\*+)$", field_type)
+    if ptr_match is not None:
+        return "ctypes.c_void_p"
+    return _render_ctype(field_type, aliases, struct_names, callable_names)
 
 
 def _function_pointer_name(name: str) -> str:
@@ -324,10 +472,22 @@ def _render_types_module(
         lines.append("    pass")
         lines.append("")
 
-    for name in aliases:
-        if not name.startswith("CK_"):
-            continue
+    # Render aliases with dependency ordering: base types before types that reference them
+    rendered_aliases: set[str] = set()
+
+    def _render_alias_with_deps(name: str) -> None:
+        if name in rendered_aliases or not name.startswith("CK_"):
+            return
+        base, _ = aliases[name]
+        # Ensure the base type is rendered first if it's also an alias
+        clean_base = _normalize_spaces(base.replace("*", " ").replace("CK_PTR", " ").strip())
+        if clean_base in aliases and clean_base not in rendered_aliases:
+            _render_alias_with_deps(clean_base)
+        rendered_aliases.add(name)
         lines.append(f"{name} = {_render_alias(name, aliases, struct_names, callable_names)}")
+
+    for name in sorted(aliases):
+        _render_alias_with_deps(name)
     lines.append("")
 
     for name in sorted(callbacks):
@@ -430,12 +590,13 @@ def _load_inputs(header: Path) -> tuple[str, str]:
     header_dir = header.parent
     type_header = header_dir / "pkcs11t.h"
     function_header = header_dir / "pkcs11f.h"
-    types_text = type_header.read_text() if type_header.is_file() else root_text
+    # Multi-file OASIS headers: pkcs11.h + pkcs11t.h + pkcs11f.h
     if type_header.is_file():
-        types_text = f"{types_text}\n{root_text}"
-    return types_text, (
-        function_header.read_text() if function_header.is_file() else root_text
-    )
+        types_text = f"{type_header.read_text()}\n{root_text}"
+        functions_text = function_header.read_text() if function_header.is_file() else root_text
+        return types_text, functions_text
+    # Single-file public-domain header: everything in pkcs11.h
+    return root_text, root_text
 
 
 def generate_raw_standard(*, header: Path, out_types: Path, out_metadata: Path) -> None:
@@ -448,6 +609,7 @@ def generate_raw_standard(*, header: Path, out_types: Path, out_metadata: Path) 
     opaque_structs = _parse_opaque_structs(types_text)
     callbacks = _parse_callbacks(types_text)
     structs = _parse_structs(types_text)
+    _generate_struct_ptr_aliases(opaque_structs, structs, aliases)
     functions = _parse_functions(functions_text)
 
     out_types.write_text(
