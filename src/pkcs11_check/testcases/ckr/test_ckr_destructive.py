@@ -46,8 +46,9 @@ def _run_destructive(test_code: str) -> tuple[int, str, str]:
     script = textwrap.dedent(f"""\
         import os, ctypes
         os.environ["SOFTHSM2_CONF"] = "{conf}"
-        from pkcs11.raw import (
-            RawPKCS11, CKR_OK, CKR_SESSION_EXISTS, CKR_PIN_INCORRECT,
+        from pkcs11_check.raw.api import RawPKCS11
+        from pkcs11_check.raw.types_std import (
+            CKR_OK, CKR_SESSION_EXISTS, CKR_PIN_INCORRECT,
             CKR_PIN_LEN_RANGE, CKR_USER_NOT_LOGGED_IN, CKR_PIN_LOCKED,
             CKF_SERIAL_SESSION, CKF_RW_SESSION,
         )

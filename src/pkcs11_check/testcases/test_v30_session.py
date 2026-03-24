@@ -546,7 +546,8 @@ class TestSessionCancel:
             f"""\
             import ctypes
             from ctypes import c_ulong, c_ubyte, c_void_p, byref, pointer, POINTER
-            from pkcs11.raw import RawPKCS11, CK_MECHANISM
+            from pkcs11_check.raw.api import RawPKCS11
+            from pkcs11_check.raw.types_std import CK_MECHANISM
 
             CKR_OK = 0x00000000
             CKR_FUNCTION_NOT_SUPPORTED = 0x00000054

@@ -22,8 +22,9 @@ pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.requires_v
 
 _SCRIPT_TEMPLATE = """\
 import ctypes, os, sys
-from pkcs11.raw import (
-    RawPKCS11, CKR_OK, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED,
+from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.types_std import (
+    CKR_OK, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED,
     CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT,
     CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD, CKR_OPERATION_ACTIVE,
     CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION,

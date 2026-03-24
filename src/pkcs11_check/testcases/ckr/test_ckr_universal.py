@@ -86,7 +86,8 @@ class TestUniversalRealTriggers:
         """CKR_SESSION_HANDLE_INVALID - use invalid session handle via raw."""
         import ctypes
 
-        from pkcs11.raw import CKR_ARGUMENTS_BAD, CKR_SESSION_HANDLE_INVALID, RawPKCS11
+        from pkcs11_check.raw.api import RawPKCS11
+        from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_SESSION_HANDLE_INVALID
         raw = RawPKCS11(p11_module.lib._raw_funclist_ptr)
         # Provide a real buffer to avoid ARGUMENTS_BAD on NULL
         buf = (ctypes.c_ubyte * 64)()
@@ -98,7 +99,8 @@ class TestUniversalRealTriggers:
         """CKR_CRYPTOKI_NOT_INITIALIZED - call after C_Finalize."""
         import os
         script = textwrap.dedent(f"""\
-            from pkcs11.raw import RawPKCS11, CKR_CRYPTOKI_NOT_INITIALIZED
+            from pkcs11_check.raw.api import RawPKCS11
+            from pkcs11_check.raw.types_std import CKR_CRYPTOKI_NOT_INITIALIZED
             import ctypes
             raw = RawPKCS11.from_lib("{p11_config.module}")
             raw.C_Initialize(None)
