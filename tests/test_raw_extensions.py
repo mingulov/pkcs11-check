@@ -44,10 +44,27 @@ def test_extension_registry_supports_structs_packers_and_inspectors() -> None:
     register_extension(
         namespace="ibm",
         structs={"CK_IBM_KYBER_PARAMS": object()},
-        packers={"CKM_IBM_KYBER": packer},
-        inspectors={"CKM_IBM_KYBER": inspector},
+        packers={0x80010001: packer},
+        inspectors={0x80010001: inspector},
     )
 
     assert lookup_struct("CK_IBM_KYBER_PARAMS", namespace="ibm") is not None
-    assert lookup_packer("CKM_IBM_KYBER", namespace="ibm") is packer
-    assert lookup_inspector("CKM_IBM_KYBER", namespace="ibm") is inspector
+    assert lookup_packer(0x80010001, namespace="ibm") is packer
+    assert lookup_inspector(0x80010001, namespace="ibm") is inspector
+
+
+def test_extension_numeric_helper_collision_requires_namespace() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, lookup_packer, register_extension
+
+    packer_a = lambda value: value
+    packer_b = lambda value: value + 1
+    inspector_a = lambda value: "a"
+    inspector_b = lambda value: "b"
+
+    register_extension(namespace="ibm", packers={0x80010003: packer_a}, inspectors={0x80010003: inspector_a})
+    register_extension(namespace="acme", packers={0x80010003: packer_b}, inspectors={0x80010003: inspector_b})
+
+    assert lookup_packer(0x80010003) is None
+    assert lookup_inspector(0x80010003) is None
+    assert lookup_packer(0x80010003, namespace="ibm") is packer_a
+    assert lookup_inspector(0x80010003, namespace="acme") is inspector_b

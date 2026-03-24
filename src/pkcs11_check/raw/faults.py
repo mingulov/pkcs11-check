@@ -174,3 +174,13 @@ def mismatched_template_count(
         actual_count=storage.actual_count,
         note="mismatched template count",
     )
+
+
+def wrong_buffer_shape_ulong_array_as_bytes(values: list[int] | tuple[int, ...]) -> SizedFaultArg:
+    """Model a CK_ULONG array passed as though it were a byte buffer."""
+    return _fault_from_storage(
+        (CK_ULONG * len(values))(*values),
+        length=len(values),
+        origin="fault_wrong_buffer_shape_ulong_array_as_bytes",
+        note="wrong buffer width/shape: ulong array passed as bytes",
+    )

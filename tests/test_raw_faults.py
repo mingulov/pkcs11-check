@@ -41,3 +41,13 @@ def test_mismatched_template_count_keeps_actual_and_claimed_counts() -> None:
     assert value.actual_count == 1
     assert value.claimed_count == 4
     assert value.pointer_arg.kind == "array"
+
+
+def test_wrong_buffer_shape_ulong_array_as_bytes_is_first_class() -> None:
+    from pkcs11_check.raw.faults import wrong_buffer_shape_ulong_array_as_bytes
+
+    value = wrong_buffer_shape_ulong_array_as_bytes([1, 2, 3])
+    assert value.pointer_arg.kind == "array"
+    assert value.pointer_arg.element_type == "c_ulong"
+    assert value.length_arg.value == 3
+    assert value.note == "wrong buffer width/shape: ulong array passed as bytes"

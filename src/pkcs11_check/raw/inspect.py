@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .extensions import lookup_inspector, lookup_symbol_name
+from .faults import CountFaultArg
 from .pack import LengthArg, PackedAttribute, PackedMechanism, PointerArg, TemplateArg
 
 
@@ -63,15 +64,24 @@ def render_template(template: TemplateArg) -> str:
     return f"template[count={template.count}] [{rendered}]"
 
 
+def render_count_fault(fault: CountFaultArg) -> str:
+    """Render a malformed pointer/count state such as a mismatched template count."""
+    return (
+        f"count_fault[{fault.note}] (claimed={fault.claimed_count}, actual={fault.actual_count}, "
+        f"{render_pointer(fault.pointer_arg)})"
+    )
+
+
 def render_mechanism(mechanism: PackedMechanism) -> str:
     """Render a packed mechanism using symbolic naming when available."""
-    name = _render_symbol("mechanisms", int(mechanism.ck.mechanism))
-    inspector = lookup_inspector(name)
+    mechanism_id = int(mechanism.ck.mechanism)
+    name = _render_symbol("mechanisms", mechanism_id)
+    inspector = lookup_inspector(mechanism_id)
     if inspector is not None:
         detail = inspector(mechanism)
     else:
         detail = render_pointer(mechanism.pointer_arg)
     return (
-        f"{name} (0x{int(mechanism.ck.mechanism):08x}, "
+        f"{name} (0x{mechanism_id:08x}, "
         f"{render_length(mechanism.length_arg)}, {detail})"
     )
