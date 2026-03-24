@@ -23,11 +23,27 @@ def _run_raw(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
         import ctypes
         from ctypes import byref, cast
 
-        from pkcs11_check.raw import CKR_BUFFER_TOO_SMALL, CKR_OK
+        from pkcs11_check.raw.types_std import (
+            CKA_ENCRYPT,
+            CKA_MODULUS_BITS,
+            CKA_SIGN,
+            CKA_TOKEN,
+            CKA_VALUE_LEN,
+            CKF_RW_SESSION,
+            CKF_SERIAL_SESSION,
+            CKM_AES_ECB,
+            CKM_AES_KEY_GEN,
+            CKM_RSA_PKCS_KEY_PAIR_GEN,
+            CKM_SHA256,
+            CKM_SHA256_RSA_PKCS,
+            CKR_BUFFER_TOO_SMALL,
+            CKR_OK,
+            CK_ATTRIBUTE_PTR,
+            CK_OBJECT_HANDLE,
+        )
         from pkcs11_check.raw.api import RawPKCS11
         from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
         from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
-        from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE
 
         def _template_ptr(attrs):
             return cast(attrs.array, CK_ATTRIBUTE_PTR)
@@ -56,7 +72,7 @@ class TestBufferTooSmall:
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-mech = mech_simple(0x0250)  # CKM_SHA256
+mech = mech_simple(CKM_SHA256)
 rv = raw.C_DigestInit(sh, mech.byref())
 assert rv == CKR_OK, f"DigestInit: 0x{rv:08x}"
 
@@ -81,18 +97,18 @@ print("OK")
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 attrs = template(
-    attr_ulong(0x161, 32),  # CKA_VALUE_LEN=32
-    attr_bool(0x104, True),  # CKA_ENCRYPT=True
-    attr_bool(0x01, False),  # CKA_TOKEN=False
+    attr_ulong(CKA_VALUE_LEN, 32),
+    attr_bool(CKA_ENCRYPT, True),
+    attr_bool(CKA_TOKEN, False),
 )
 
-mech_kg = mech_simple(0x1080)  # AES_KEY_GEN
+mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
 # EncryptInit
-mech = mech_simple(0x1081)  # AES_ECB
+mech = mech_simple(CKM_AES_ECB)
 rv = raw.C_EncryptInit(sh, mech.byref(), int(key.value))
 assert rv == CKR_OK
 
@@ -116,14 +132,14 @@ print("OK")
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 # Generate RSA keypair for sign
-mech_rsa = mech_simple(0x0000)  # CKM_RSA_PKCS_KEY_PAIR_GEN
+mech_rsa = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
 pub_tmpl = template(
-    attr_ulong(0x0121, 2048),  # CKA_MODULUS_BITS=2048
-    attr_bool(0x01, False),  # CKA_TOKEN=False
+    attr_ulong(CKA_MODULUS_BITS, 2048),
+    attr_bool(CKA_TOKEN, False),
 )
 priv_tmpl = template(
-    attr_bool(0x108, True),  # CKA_SIGN=True
-    attr_bool(0x01, False),
+    attr_bool(CKA_SIGN, True),
+    attr_bool(CKA_TOKEN, False),
 )
 pub = CK_OBJECT_HANDLE(0)
 priv = CK_OBJECT_HANDLE(0)
@@ -142,7 +158,7 @@ if rv != CKR_OK:
     print("OK")  # Skip if keygen fails
 else:
     # SignInit with SHA256_RSA_PKCS
-    sign_mech = mech_simple(0x0040)  # CKM_SHA256_RSA_PKCS
+    sign_mech = mech_simple(CKM_SHA256_RSA_PKCS)
     rv = raw.C_SignInit(sh, sign_mech.byref(), int(priv.value))
     if rv != CKR_OK:
         print(f"CKR:0x{rv:08x}:signinit_failed")

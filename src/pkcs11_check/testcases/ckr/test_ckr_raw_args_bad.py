@@ -22,12 +22,23 @@ _PREAMBLE = """\
 import ctypes
 from ctypes import byref, cast
 
-from pkcs11_check.raw import CKR_ARGUMENTS_BAD, CKR_OK
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKM_AES_KEY_GEN,
+    CKR_ARGUMENTS_BAD,
+    CKR_OK,
+    CK_ATTRIBUTE_PTR,
+    CK_OBJECT_HANDLE,
+)
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
 from pkcs11_check.raw.faults import null_pointer
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
-from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE
 
 
 def _template_ptr(attrs):
@@ -36,7 +47,10 @@ def _template_ptr(attrs):
 
 raw = RawPKCS11.from_lib("{module}")
 raw.C_Initialize(None)
-sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
+slots = get_slot_ids(raw, label="pkcs11-check")
+if not slots:
+    slots = get_slot_ids(raw)
+sh = open_session(raw, slots[0], CKF_RW_SESSION | CKF_SERIAL_SESSION)
 pin = {pin_arg}
 if pin is not None:
     login_user(raw, sh, 1, pin.encode())
@@ -45,7 +59,7 @@ if pin is not None:
 
 def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
     pin_arg = repr(pin) if pin is not None else "None"
-    script = _PREAMBLE.format(module=module, pin_arg=pin_arg) + textwrap.dedent(code) + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
+    script = _PREAMBLE.format(module=module, pin_arg=pin_arg) + textwrap.indent(textwrap.dedent(code), "    ") + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True, text=True, timeout=15,
@@ -68,11 +82,11 @@ class TestArgsBadNullPointers:
         """C_EncryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
 attrs = template(
-    attr_ulong(0x161, 32),
-    attr_bool(0x104, True),
-    attr_bool(0x01, False),
+    attr_ulong(CKA_VALUE_LEN, 32),
+    attr_bool(CKA_ENCRYPT, True),
+    attr_bool(CKA_TOKEN, False),
 )
-mech_kg = mech_simple(0x1080)
+mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
@@ -88,11 +102,11 @@ print("OK")
         """C_DecryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
 attrs = template(
-    attr_ulong(0x161, 32),
-    attr_bool(0x105, True),
-    attr_bool(0x01, False),
+    attr_ulong(CKA_VALUE_LEN, 32),
+    attr_bool(CKA_DECRYPT, True),
+    attr_bool(CKA_TOKEN, False),
 )
-mech_kg = mech_simple(0x1080)
+mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"

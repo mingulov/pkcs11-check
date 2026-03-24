@@ -23,11 +23,27 @@ _SCRIPT_TEMPLATE = """\
 import ctypes
 from ctypes import byref, cast
 
-from pkcs11_check.raw import CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT, CKR_MECHANISM_INVALID, CKR_OK
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKM_AES_ECB,
+    CKM_AES_KEY_GEN,
+    CKM_SHA256_HMAC,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_OK,
+    CK_ATTRIBUTE_PTR,
+    CK_OBJECT_HANDLE,
+)
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
-from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE
 
 def _template_ptr(attrs):
     return cast(attrs.array, CK_ATTRIBUTE_PTR)
@@ -68,18 +84,18 @@ class TestKeyFunctionNotPermitted:
             """\
 # Generate key with ENCRYPT=False
 attrs = template(
-    attr_ulong(0x161, 32),
-    attr_bool(0x104, False),
-    attr_bool(0x105, True),
-    attr_bool(0x01, False),
+    attr_ulong(CKA_VALUE_LEN, 32),
+    attr_bool(CKA_ENCRYPT, False),
+    attr_bool(CKA_DECRYPT, True),
+    attr_bool(CKA_TOKEN, False),
 )
-mech_kg = mech_simple(0x1080)  # AES_KEY_GEN
+mech_kg = mech_simple(CKM_AES_KEY_GEN)  # AES_KEY_GEN
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
 # Try EncryptInit with CKA_ENCRYPT=False key
-mech = mech_simple(0x1081)  # AES_ECB
+mech = mech_simple(CKM_AES_ECB)  # AES_ECB
 rv = raw.C_EncryptInit(sh, mech.byref(), int(key.value))
 print(f"CKR:0x{rv:08x}")
 assert rv == CKR_KEY_FUNCTION_NOT_PERMITTED, f"Expected NOT_PERMITTED, got 0x{rv:08x}"
@@ -97,17 +113,17 @@ print("OK")
             """\
 # Generate key with SIGN=False
 attrs = template(
-    attr_ulong(0x161, 32),
-    attr_bool(0x108, False),
-    attr_bool(0x104, True),
-    attr_bool(0x01, False),
+    attr_ulong(CKA_VALUE_LEN, 32),
+    attr_bool(CKA_SIGN, False),
+    attr_bool(CKA_ENCRYPT, True),
+    attr_bool(CKA_TOKEN, False),
 )
-mech_kg = mech_simple(0x1080)
+mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
-mech = mech_simple(0x0251)  # AES_CMAC
+mech = mech_simple(CKM_SHA256_HMAC)  # sign mech to test CKA_SIGN=False
 rv = raw.C_SignInit(sh, mech.byref(), int(key.value))
 print(f"CKR:0x{rv:08x}")
 # KEY_FUNCTION_NOT_PERMITTED or MECHANISM_INVALID (if module doesn't support CMAC)
@@ -126,17 +142,17 @@ print("OK")
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 attrs = template(
-    attr_ulong(0x161, 32),
-    attr_bool(0x105, False),
-    attr_bool(0x104, True),
-    attr_bool(0x01, False),
+    attr_ulong(CKA_VALUE_LEN, 32),
+    attr_bool(CKA_DECRYPT, False),
+    attr_bool(CKA_ENCRYPT, True),
+    attr_bool(CKA_TOKEN, False),
 )
-mech_kg = mech_simple(0x1080)
+mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
-mech = mech_simple(0x1081)  # AES_ECB
+mech = mech_simple(CKM_AES_ECB)  # AES_ECB
 rv = raw.C_DecryptInit(sh, mech.byref(), int(key.value))
 print(f"CKR:0x{rv:08x}")
 assert rv == CKR_KEY_FUNCTION_NOT_PERMITTED, f"Expected NOT_PERMITTED, got 0x{rv:08x}"

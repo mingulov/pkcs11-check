@@ -25,11 +25,27 @@ _SCRIPT_PREAMBLE = """\
 import ctypes
 from ctypes import byref, cast
 
-from pkcs11_check.raw import CKR_OK, CKR_OPERATION_ACTIVE, CKR_OPERATION_NOT_INITIALIZED
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKM_AES_ECB,
+    CKM_AES_KEY_GEN,
+    CKM_SHA256,
+    CKM_SHA256_HMAC,
+    CKR_OK,
+    CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CK_ATTRIBUTE_PTR,
+    CK_OBJECT_HANDLE,
+)
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
-from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE
 
 
 def _template_ptr(attrs):
@@ -46,14 +62,14 @@ if pin is not None:
     login_user(raw, sh, 1, pin.encode())
 
 # Generate AES key for encrypt tests
-mech_keygen = mech_simple(0x1080)  # CKM_AES_KEY_GEN
+mech_keygen = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 attrs = template(
-    attr_ulong(0x161, 32),  # CKA_VALUE_LEN = 32
-    attr_bool(0x104, True),  # CKA_ENCRYPT = True
-    attr_bool(0x105, True),  # CKA_DECRYPT = True
-    attr_bool(0x108, True),  # CKA_SIGN = True
-    attr_bool(0x01, False),  # CKA_TOKEN = False
+    attr_ulong(CKA_VALUE_LEN, 32),
+    attr_bool(CKA_ENCRYPT, True),
+    attr_bool(CKA_DECRYPT, True),
+    attr_bool(CKA_SIGN, True),
+    attr_bool(CKA_TOKEN, False),
 )
 rv = raw.C_GenerateKey(sh, mech_keygen.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenerateKey failed: 0x{{rv:08x}}"
@@ -81,7 +97,7 @@ class TestOperationActive:
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-mech = mech_simple(0x1081)  # CKM_AES_ECB
+mech = mech_simple(CKM_AES_ECB)
 rv1 = raw.C_EncryptInit(sh, mech.byref(), key_handle)
 assert rv1 == CKR_OK, f"First EncryptInit failed: 0x{rv1:08x}"
 rv2 = raw.C_EncryptInit(sh, mech.byref(), key_handle)
@@ -100,12 +116,12 @@ print("OK")
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-mech = mech_simple(0x1081)  # CKM_AES_ECB
+mech = mech_simple(CKM_AES_ECB)
 rv1 = raw.C_EncryptInit(sh, mech.byref(), key_handle)
 assert rv1 == CKR_OK
 
 # Now try SignInit - should be OPERATION_ACTIVE
-sign_mech = mech_simple(0x0251)  # CKM_AES_CMAC
+sign_mech = mech_simple(CKM_SHA256_HMAC)
 rv2 = raw.C_SignInit(sh, sign_mech.byref(), key_handle)
 print(f"CKR:0x{rv2:08x}")
 # OPERATION_ACTIVE, OK (dual-crypto), MECHANISM_INVALID (no CMAC support),
@@ -124,7 +140,7 @@ print("OK")
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-mech = mech_simple(0x0250)  # CKM_SHA256
+mech = mech_simple(CKM_SHA256)
 rv1 = raw.C_DigestInit(sh, mech.byref())
 assert rv1 == CKR_OK
 
@@ -143,7 +159,7 @@ print("OK")
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-mech = mech_simple(0x1081)  # CKM_AES_ECB (for CMAC or just to test state)
+mech = mech_simple(CKM_AES_ECB)  # AES_ECB (for testing state)
 # Use key_handle from preamble (AES key with SIGN=True)
 rv1 = raw.C_SignInit(sh, mech.byref(), key_handle)
 # First init may fail if AES-ECB not valid for sign - that's OK
@@ -165,7 +181,7 @@ print("OK")
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-mech = mech_simple(0x1081)  # CKM_AES_ECB
+mech = mech_simple(CKM_AES_ECB)
 rv1 = raw.C_DecryptInit(sh, mech.byref(), key_handle)
 assert rv1 == CKR_OK, f"First DecryptInit: 0x{rv1:08x}"
 rv2 = raw.C_DecryptInit(sh, mech.byref(), key_handle)
