@@ -18,10 +18,19 @@ FORBIDDEN_PATTERNS = (
 TASK8_SPEC_FIX_PATTERNS = {
     ROOT / "src/pkcs11_check/testcases/test_remaining_gaps.py": (
         "raw._funcs",
+        "SEU:EXCEPTION",
+        "DVU:EXCEPTION",
     ),
     ROOT / "src/pkcs11_check/testcases/test_operation_state.py": (
         "C_OpenSession(slot_id, flags2, c_void_p(None), c_void_p(None), byref(hSession2))",
         "C_CloseSession(hSession2)",
+        "cast(attrs.array, CK_ATTRIBUTE_PTR)",
+    ),
+    ROOT / "src/pkcs11_check/testcases/test_sign_recover.py": (
+        "cast(attrs.array, CK_ATTRIBUTE_PTR)",
+    ),
+    ROOT / "src/pkcs11_check/testcases/test_dual_function.py": (
+        "cast(attrs.array, CK_ATTRIBUTE_PTR)",
     ),
 }
 

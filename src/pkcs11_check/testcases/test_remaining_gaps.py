@@ -572,17 +572,21 @@ class TestDualFunctionRemaining:
         returncode, stdout, stderr = _run_config_script(
             p11_config,
             """\
-part = ctypes.create_string_buffer(b"test", 4)
+if "C_SignEncryptUpdate" not in raw.available_function_names():
+    print("SKIP:C_SignEncryptUpdate not in function list")
+    sys.exit(0)
+part = (ctypes.c_ubyte * 4)(*b"test")
 out_len = ctypes.c_ulong()
-try:
-    rv = raw.C_SignEncryptUpdate(hSession, part, 4, None, byref(out_len))
-    print(f"SEU:0x{rv:08x}")
-except Exception as e:
-    print(f"SEU:EXCEPTION:{e}")
+rv = raw.C_SignEncryptUpdate(hSession, part, 4, None, byref(out_len))
+print(f"SEU:0x{rv:08x}")
 """,
         )
+        if "SKIP:" in stdout:
+            pytest.skip(stdout.strip())
         if returncode < 0:
             pytest.xfail(f"C_SignEncryptUpdate crashed (signal {-returncode})")
+        if returncode != 0:
+            pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
         seu_line = next((l for l in stdout.strip().split("\n") if l.startswith("SEU:")), None)
         assert seu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
         # Any CKR response is valid - we're testing the function exists and doesn't crash
@@ -594,16 +598,20 @@ except Exception as e:
         returncode, stdout, stderr = _run_config_script(
             p11_config,
             """\
-part = ctypes.create_string_buffer(b"test", 4)
+if "C_DecryptVerifyUpdate" not in raw.available_function_names():
+    print("SKIP:C_DecryptVerifyUpdate not in function list")
+    sys.exit(0)
+part = (ctypes.c_ubyte * 4)(*b"test")
 out_len = ctypes.c_ulong()
-try:
-    rv = raw.C_DecryptVerifyUpdate(hSession, part, 4, None, byref(out_len))
-    print(f"DVU:0x{rv:08x}")
-except Exception as e:
-    print(f"DVU:EXCEPTION:{e}")
+rv = raw.C_DecryptVerifyUpdate(hSession, part, 4, None, byref(out_len))
+print(f"DVU:0x{rv:08x}")
 """,
         )
+        if "SKIP:" in stdout:
+            pytest.skip(stdout.strip())
         if returncode < 0:
             pytest.xfail(f"C_DecryptVerifyUpdate crashed (signal {-returncode})")
+        if returncode != 0:
+            pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
         dvu_line = next((l for l in stdout.strip().split("\n") if l.startswith("DVU:")), None)
         assert dvu_line is not None, f"No output: {stdout!r} {stderr[:200]}"

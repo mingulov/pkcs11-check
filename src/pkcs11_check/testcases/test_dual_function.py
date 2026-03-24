@@ -78,7 +78,7 @@ _DUAL_UNSUPPORTED = (CKR_FUNCTION_NOT_SUPPORTED, CKR_OPERATION_ACTIVE)
 
 
 def _template_ptr(attrs):
-    return cast(attrs.array, CK_ATTRIBUTE_PTR)
+    return cast(attrs.ptr, CK_ATTRIBUTE_PTR)
 
 
 def _byte_array(data: bytes):

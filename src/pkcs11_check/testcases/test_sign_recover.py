@@ -72,7 +72,7 @@ from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple
 
 
 def _template_ptr(attrs):
-    return cast(attrs.array, CK_ATTRIBUTE_PTR)
+    return cast(attrs.ptr, CK_ATTRIBUTE_PTR)
 
 
 def _byte_array(data: bytes):
