@@ -266,3 +266,17 @@ def test_extension_register_rejects_standard_numeric_helper_key() -> None:
 
     with pytest.raises(ValueError, match="standard mechanism ids are not allowed"):
         register_extension(namespace="ibm", inspectors={CKM_AES_KEY_GEN: lambda value: value})
+
+
+def test_extension_register_rejects_standard_numeric_mechanism_override() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+    from pkcs11_check.raw.types_std import CKM_AES_KEY_GEN
+
+    with pytest.raises(ValueError, match="standard mechanism ids are not allowed"):
+        register_extension(
+            namespace="ibm",
+            mechanisms={CKM_AES_KEY_GEN: "CKM_IBM_SHADOW"},
+            inspectors={"CKM_IBM_SHADOW": lambda value: value},
+        )
