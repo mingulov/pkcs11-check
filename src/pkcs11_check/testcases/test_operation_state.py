@@ -393,12 +393,13 @@ class TestDigestStateRoundTrip:
             print(f"STATE_SAVED:{len(state_bytes)}")
 
             # Open a second session
-            hSession2 = c_ulong(0)
-            flags2 = c_ulong(CKF_SERIAL_SESSION | CKF_RW_SESSION)
-            rv = C_OpenSession(slot_id, flags2, c_void_p(None), c_void_p(None), byref(hSession2))
-            if rv != CKR_OK:
-                print(f"SKIP:OpenSession2Failed:0x{rv:08x}")
-                sys.exit(0)
+            try:
+                hSession2 = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
+            except AssertionError as exc:
+                if "CKR_" in str(exc):
+                    print(f"SKIP:OpenSession2Failed:{exc}")
+                    sys.exit(0)
+                raise
 
             # Try to restore state on the second session
             rv2 = C_SetOperationState(
@@ -413,7 +414,7 @@ class TestDigestStateRoundTrip:
             else:
                 print(f"CROSS_SESSION_REJECTED:0x{rv2:08x}")
 
-            C_CloseSession(hSession2)
+            close_session_quietly(raw, hSession2)
         """
 
         returncode, stdout, stderr = _run_state_script(module_path, slot_index, pin_bytes, script)

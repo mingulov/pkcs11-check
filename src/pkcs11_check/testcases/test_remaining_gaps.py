@@ -372,8 +372,7 @@ class TestMessageFinalizers:
             from pkcs11_check.raw.bridge import raw_from_module
 
             raw = raw_from_module(p11_module)
-            # Just check the function exists in the function list
-            assert hasattr(raw, "C_MessageEncryptFinal") or "C_MessageEncryptFinal" in raw._funcs
+            assert "C_MessageEncryptFinal" in raw.available_function_names()
         except (AttributeError, ImportError):
             pytest.skip("Cannot access raw function list")
 
@@ -386,7 +385,7 @@ class TestMessageFinalizers:
             from pkcs11_check.raw.bridge import raw_from_module
 
             raw = raw_from_module(p11_module)
-            assert hasattr(raw, "C_MessageVerifyFinal") or "C_MessageVerifyFinal" in raw._funcs
+            assert "C_MessageVerifyFinal" in raw.available_function_names()
         except (AttributeError, ImportError):
             pytest.skip("Cannot access raw function list")
 
@@ -406,7 +405,7 @@ class TestAsyncLifecycle:
             from pkcs11_check.raw.bridge import raw_from_module
 
             raw = raw_from_module(p11_module)
-            has_func = "C_AsyncComplete" in raw._funcs
+            has_func = "C_AsyncComplete" in raw.available_function_names()
             if not has_func:
                 pytest.skip("C_AsyncComplete not in function list")
         except (AttributeError, ImportError):
@@ -419,7 +418,7 @@ class TestAsyncLifecycle:
             from pkcs11_check.raw.bridge import raw_from_module
 
             raw = raw_from_module(p11_module)
-            has_func = "C_AsyncJoin" in raw._funcs
+            has_func = "C_AsyncJoin" in raw.available_function_names()
             if not has_func:
                 pytest.skip("C_AsyncJoin not in function list")
         except (AttributeError, ImportError):
