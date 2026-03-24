@@ -180,6 +180,14 @@ def _lookup_vendor_helper(
     return helpers.get(symbol)
 
 
+def _vendor_knows_mechanism_id(vendor: ExtensionNamespace, value: int) -> bool:
+    return (
+        value in vendor.names["mechanisms"]
+        or value in vendor.packers
+        or value in vendor.inspectors
+    )
+
+
 def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | None:
     """Return a registered extension packer by namespace or by unique global match."""
     if namespace is not None:
@@ -187,6 +195,11 @@ def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | No
         if vendor is None:
             return None
         return _lookup_vendor_helper(vendor, "packers", value)
+    if isinstance(value, int):
+        matching_vendors = [vendor for vendor in _EXTENSIONS.values() if _vendor_knows_mechanism_id(vendor, value)]
+        if len(matching_vendors) != 1:
+            return None
+        return _lookup_vendor_helper(matching_vendors[0], "packers", value)
     matches = [
         helper
         for vendor in _EXTENSIONS.values()
@@ -202,6 +215,11 @@ def lookup_inspector(value: int | str, *, namespace: str | None = None) -> Any |
         if vendor is None:
             return None
         return _lookup_vendor_helper(vendor, "inspectors", value)
+    if isinstance(value, int):
+        matching_vendors = [vendor for vendor in _EXTENSIONS.values() if _vendor_knows_mechanism_id(vendor, value)]
+        if len(matching_vendors) != 1:
+            return None
+        return _lookup_vendor_helper(matching_vendors[0], "inspectors", value)
     matches = [
         helper
         for vendor in _EXTENSIONS.values()

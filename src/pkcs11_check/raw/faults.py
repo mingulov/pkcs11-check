@@ -7,7 +7,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from .core import CK_ATTRIBUTE, CK_ULONG
-from .pack import LengthArg, PackedAttribute, PointerArg, TemplateArg, explicit_length as pack_explicit_length
+from .pack import (
+    LengthArg,
+    PackedAttribute,
+    PointerArg,
+    TemplateArg,
+    _exact_byte_storage,
+    explicit_length as pack_explicit_length,
+)
 
 
 @dataclass(frozen=True)
@@ -83,7 +90,7 @@ def nonnull_zero_length_bytes(value: bytes | bytearray | memoryview) -> SizedFau
     """Model a live non-NULL byte pointer passed with length zero."""
     data = bytes(value)
     return _fault_from_storage(
-        ctypes.create_string_buffer(data),
+        _exact_byte_storage(data),
         length=0,
         origin="fault_nonnull_zero_length_bytes",
         note="nonnull pointer with zero length",
@@ -133,7 +140,7 @@ def incorrect_explicit_length_bytes(
     """Model a live byte buffer passed with an incorrect explicit length."""
     data = bytes(value)
     return _fault_from_storage(
-        ctypes.create_string_buffer(data),
+        _exact_byte_storage(data),
         length=claim,
         origin="fault_incorrect_explicit_length_bytes",
         note="nonnull byte pointer with incorrect explicit length",

@@ -24,6 +24,7 @@ def test_pack_retains_pointer_and_length_provenance_metadata() -> None:
     assert attr.pointer_arg.kind == "bytes"
     assert attr.pointer_arg.origin == "attr_bytes"
     assert attr.pointer_arg.native_length == 4
+    assert len(attr.storage) == 4
     assert attr.length_arg.explicit is True
     assert attr.length_arg.value == 2
 
@@ -42,3 +43,4 @@ def test_pack_mech_bytes_native_length_matches_payload_length() -> None:
 
     value = mech_bytes(0x80010099, b"abc")
     assert value.pointer_arg.native_length == 3
+    assert len(value.storage) == 3

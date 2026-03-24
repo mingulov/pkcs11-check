@@ -129,6 +129,10 @@ def explicit_length(size: int) -> LengthArg:
     return LengthArg.explicit_value(size)
 
 
+def _exact_byte_storage(data: bytes) -> Any:
+    return ctypes.create_string_buffer(data, len(data))
+
+
 def _native_length(storage: Any) -> LengthArg:
     return LengthArg.native(ctypes.sizeof(storage))
 
@@ -181,7 +185,7 @@ def attr_bytes(
     length: LengthArg | None = None,
 ) -> PackedAttribute:
     data = bytes(value)
-    storage = ctypes.create_string_buffer(data)
+    storage = _exact_byte_storage(data)
     return _build_attribute(
         attr_type,
         PointerArg.to_storage(storage, origin="attr_bytes", native_length=len(data)),
@@ -280,7 +284,7 @@ def mech_bytes(
     length: LengthArg | None = None,
 ) -> PackedMechanism:
     data = bytes(value)
-    storage = ctypes.create_string_buffer(data)
+    storage = _exact_byte_storage(data)
     pointer_arg = PointerArg.to_storage(storage, origin="mech_bytes", native_length=len(data))
     length_arg = length if length is not None else LengthArg.native(len(data))
     return PackedMechanism(

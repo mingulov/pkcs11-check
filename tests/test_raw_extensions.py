@@ -148,6 +148,19 @@ def test_extension_global_numeric_lookup_keeps_vendor_symbolic_fallback_local() 
     assert lookup_inspector(0x80018888) is ibm_inspector
 
 
+def test_extension_global_numeric_lookup_returns_none_when_vendor_id_is_ambiguous() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, register_extension
+
+    register_extension(
+        namespace="ibm",
+        mechanisms={0x80016666: "CKM_IBM_AMBIG"},
+        inspectors={"CKM_IBM_AMBIG": lambda value: "ibm"},
+    )
+    register_extension(namespace="acme", mechanisms={0x80016666: "CKM_ACME_AMBIG"})
+
+    assert lookup_inspector(0x80016666) is None
+
+
 def test_extension_clear_can_reset_one_namespace_or_all() -> None:
     from pkcs11_check.raw.extensions import clear_extensions, lookup_symbol_name, register_extension
 
