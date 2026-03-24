@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -50,12 +51,35 @@ def test_pack_mech_bytes_native_length_matches_payload_length() -> None:
     assert len(value.storage) == 3
 
 
-def test_wheel_includes_vendored_standard_header_and_generated_raw_modules(tmp_path: Path) -> None:
+_STANDARD_RAW_MODULES = (
+    "raw/types_std.py",
+    "raw/metadata_std.py",
+)
+
+_STANDARD_HEADERS = (
+    "pkcs11.h",
+    "pkcs11f.h",
+    "pkcs11t.h",
+)
+
+
+def _assert_standard_raw_pack_contents(
+    archive_names: set[str], *, module_prefix: str, header_prefix: str
+) -> None:
+    for module in _STANDARD_RAW_MODULES:
+        assert f"{module_prefix}/{module}" in archive_names
+    for header in _STANDARD_HEADERS:
+        assert f"{header_prefix}/{header}" in archive_names
+
+
+def test_sdist_and_wheel_include_vendored_standard_headers_and_generated_raw_modules(
+    tmp_path: Path,
+) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     dist_dir = tmp_path / "dist"
 
     result = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(dist_dir)],
+        ["uv", "build", "--sdist", "--wheel", "--out-dir", str(dist_dir)],
         cwd=repo_root,
         capture_output=True,
         text=True,
@@ -65,8 +89,23 @@ def test_wheel_includes_vendored_standard_header_and_generated_raw_modules(tmp_p
 
     wheel_path = next(dist_dir.glob("*.whl"))
     with zipfile.ZipFile(wheel_path) as wheel:
-        names = set(wheel.namelist())
+        wheel_names = set(wheel.namelist())
 
-    assert "pkcs11_check/raw/types_std.py" in names
-    assert "pkcs11_check/raw/metadata_std.py" in names
-    assert "pkcs11_check/_vendor/pkcs11-headers/3.2/pkcs11.h" in names
+    sdist_path = next(dist_dir.glob("*.tar.gz"))
+    with tarfile.open(sdist_path, mode="r:gz") as sdist:
+        sdist_names = {
+            member.name.split("/", 1)[1]
+            for member in sdist.getmembers()
+            if member.isfile() and "/" in member.name
+        }
+
+    _assert_standard_raw_pack_contents(
+        wheel_names,
+        module_prefix="pkcs11_check",
+        header_prefix="pkcs11_check/_vendor/pkcs11-headers/3.2",
+    )
+    _assert_standard_raw_pack_contents(
+        sdist_names,
+        module_prefix="src/pkcs11_check",
+        header_prefix="third_party/pkcs11-headers/3.2",
+    )

@@ -19,6 +19,14 @@ The generic raw ctypes surface is no longer part of the fork scope. `RawPKCS11`,
 standard type/metadata modules, and the shared raw bootstrap/packing/fault helpers now live in
 `pkcs11_check.raw` in the main repo.
 
+Packaging of the vendored PKCS#11 standard headers and generated raw modules is now owned by the
+main repo, not the fork. The packaging contract is:
+
+- `uv build --wheel` includes `pkcs11_check/raw/types_std.py`, `pkcs11_check/raw/metadata_std.py`,
+  and the vendored standard headers `pkcs11.h`, `pkcs11f.h`, and `pkcs11t.h`
+- `uv build --sdist` includes the same generated raw modules under `src/pkcs11_check/raw/` and the
+  vendored headers under `third_party/pkcs11-headers/3.2/`
+
 ## Current Fork Responsibilities
 
 - Negotiate and expose v2.40/v3.0/v3.1/v3.2 interfaces to the higher-level binding
@@ -31,7 +39,7 @@ standard type/metadata modules, and the shared raw bootstrap/packing/fault helpe
 - Generic raw PKCS#11 ctypes calling surface
 - Generated standard symbol/type metadata from vendored PKCS#11 headers
 - Shared raw bootstrap, packing, inspection, and fault-injection helpers for product tests
-- Packaging the vendored standard header for the `pkcs11-check` wheel
+- Packaging the vendored PKCS#11 standard headers for the `pkcs11-check` wheel and sdist
 
 ## Changes by Category
 
@@ -114,6 +122,7 @@ headers or generator change, use:
 ```bash
 uv run python scripts/generate_raw_standard.py
 uv run python -m pytest tests/test_raw_generation.py -q
+uv run python -m pytest tests/test_raw_pack.py -q
 ```
 
 ## Verification
