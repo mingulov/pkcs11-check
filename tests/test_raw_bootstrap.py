@@ -31,7 +31,7 @@ def test_get_slot_ids_uses_explicit_token_present_and_two_call_pattern() -> None
 def test_open_session_returns_handle_and_passes_explicit_flags() -> None:
     from pkcs11_check.raw.bootstrap import open_session
     from pkcs11_check.raw.core import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OK
-    from pkcs11_check.raw.types_std import CK_SESSION_HANDLE_PTR
+    from pkcs11_check.raw.types_std import CK_NOTIFY, CK_SESSION_HANDLE_PTR
 
     seen: list[tuple[int, int, object, object]] = []
 
@@ -52,7 +52,12 @@ def test_open_session_returns_handle_and_passes_explicit_flags() -> None:
     handle = open_session(FakeRaw(), slot_id=5, flags=CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
     assert handle == 41
-    assert seen == [(5, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None)]
+    assert len(seen) == 1
+    assert seen[0][0] == 5
+    assert seen[0][1] == CKF_SERIAL_SESSION | CKF_RW_SESSION
+    assert seen[0][2] is None
+    assert isinstance(seen[0][3], CK_NOTIFY)
+    assert not bool(seen[0][3])
 
 
 def test_login_user_passes_explicit_user_type_and_pin_bytes() -> None:
@@ -126,6 +131,17 @@ def test_login_user_keeps_empty_pin_explicit_instead_of_null() -> None:
     assert len(seen) == 1
     assert seen[0][0] is not None
     assert seen[0][1] == 0
+
+
+def test_login_user_tolerates_user_already_logged_in_for_setup_flows() -> None:
+    from pkcs11_check.raw.bootstrap import login_user
+    from pkcs11_check.raw.core import CKR_USER_ALREADY_LOGGED_IN, CKU_USER
+
+    class FakeRaw:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+            return CKR_USER_ALREADY_LOGGED_IN
+
+    login_user(FakeRaw(), session=17, user_type=CKU_USER, pin=b"1234")
 
 
 def test_login_user_rejects_text_pin_input() -> None:

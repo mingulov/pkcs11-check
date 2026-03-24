@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from ctypes import byref
 
-from .core import CKR_OK
+from .core import CKR_OK, CKR_USER_ALREADY_LOGGED_IN
 from .rv import expect_rv
 from .types_std import (
+    CK_NOTIFY,
     CK_SESSION_HANDLE,
     CK_SLOT_ID,
     CK_ULONG,
@@ -31,7 +32,7 @@ def open_session(raw: object, slot_id: int, flags: int) -> int:
                 slot_id,
                 flags,
                 None,
-                None,
+                CK_NOTIFY(),
                 byref(session),
             )
         ),
@@ -58,6 +59,7 @@ def login_user(raw: object, session: int, user_type: int, pin: bytes | bytearray
             )
         ),
         CKR_OK,
+        CKR_USER_ALREADY_LOGGED_IN,
     )
 
 

@@ -86,6 +86,10 @@ def test_generated_standard_types_preserve_struct_pointer_aliases() -> None:
     assert types_std.CK_INFO_PTR._type_ is types_std.CK_INFO
     assert types_std.CK_MECHANISM_PTR._type_ is types_std.CK_MECHANISM
     assert types_std.CK_GCM_PARAMS_PTR._type_ is types_std.CK_GCM_PARAMS
+    assert (
+        types_std.CK_TLS12_MASTER_KEY_DERIVE_PARAMS_PTR._type_
+        is types_std.CK_TLS12_MASTER_KEY_DERIVE_PARAMS
+    )
 
 
 def test_generated_standard_types_preserve_nested_struct_fields() -> None:
@@ -95,6 +99,17 @@ def test_generated_standard_types_preserve_nested_struct_fields() -> None:
     assert dict(types_std.CK_SLOT_INFO._fields_)["hardwareVersion"] is types_std.CK_VERSION
 
 
+def test_generated_standard_callback_typedefs_are_usable_field_types() -> None:
+    from pkcs11_check.raw import types_std
+
+    fields = dict(types_std.CK_C_INITIALIZE_ARGS._fields_)
+
+    assert fields["CreateMutex"] is types_std.CK_CREATEMUTEX
+    assert fields["DestroyMutex"] is types_std.CK_DESTROYMUTEX
+    assert fields["LockMutex"] is types_std.CK_LOCKMUTEX
+    assert fields["UnlockMutex"] is types_std.CK_UNLOCKMUTEX
+
+
 def test_generated_standard_function_list_structs_are_real_structures() -> None:
     from pkcs11_check.raw import types_std
 
@@ -102,6 +117,17 @@ def test_generated_standard_function_list_structs_are_real_structures() -> None:
     assert issubclass(types_std.CK_FUNCTION_LIST, ctypes.Structure)
     assert issubclass(types_std.CK_FUNCTION_LIST_3_0, ctypes.Structure)
     assert issubclass(types_std.CK_FUNCTION_LIST_3_2, ctypes.Structure)
-    assert dict(types_std.CK_FUNCTION_LIST._fields_)["version"] is types_std.CK_VERSION
-    assert dict(types_std.CK_FUNCTION_LIST_3_0._fields_)["version"] is types_std.CK_VERSION
-    assert dict(types_std.CK_FUNCTION_LIST_3_2._fields_)["version"] is types_std.CK_VERSION
+    fields_240 = dict(types_std.CK_FUNCTION_LIST._fields_)
+    fields_30 = dict(types_std.CK_FUNCTION_LIST_3_0._fields_)
+    fields_32 = dict(types_std.CK_FUNCTION_LIST_3_2._fields_)
+
+    assert fields_240["version"] is types_std.CK_VERSION
+    assert fields_240["C_Initialize"] is types_std.CK_C_Initialize
+    assert "C_GetInterfaceList" not in fields_240
+
+    assert fields_30["version"] is types_std.CK_VERSION
+    assert fields_30["C_GetInterfaceList"] is types_std.CK_C_GetInterfaceList
+    assert "C_EncapsulateKey" not in fields_30
+
+    assert fields_32["version"] is types_std.CK_VERSION
+    assert fields_32["C_EncapsulateKey"] is types_std.CK_C_EncapsulateKey

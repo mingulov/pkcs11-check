@@ -302,12 +302,6 @@ class CK_X9_42_MQV_DERIVE_PARAMS(ctypes.Structure):
 class CK_XEDDSA_PARAMS(ctypes.Structure):
     pass
 
-CK_CREATEMUTEX = ctypes.c_void_p
-CK_DESTROYMUTEX = ctypes.c_void_p
-CK_LOCKMUTEX = ctypes.c_void_p
-CK_NOTIFY = ctypes.c_void_p
-CK_UNLOCKMUTEX = ctypes.c_void_p
-
 CK_BYTE = ctypes.c_ubyte
 CK_CHAR = CK_BYTE
 CK_UTF8CHAR = CK_BYTE
@@ -376,37 +370,38 @@ CK_KEA_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_KEA_DERIVE_PARAMS)
 CK_RC2_PARAMS = CK_ULONG
 CK_RC2_PARAMS_PTR = ctypes.POINTER(CK_RC2_PARAMS)
 CK_RC2_CBC_PARAMS_PTR = ctypes.POINTER(CK_RC2_CBC_PARAMS)
-CK_RC2_MAC_GENERAL_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_RC2_MAC_GENERAL_PARAMS_PTR = ctypes.POINTER(CK_RC2_MAC_GENERAL_PARAMS)
 CK_RC5_PARAMS_PTR = ctypes.POINTER(CK_RC5_PARAMS)
 CK_RC5_CBC_PARAMS_PTR = ctypes.POINTER(CK_RC5_CBC_PARAMS)
-CK_RC5_MAC_GENERAL_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_RC5_MAC_GENERAL_PARAMS_PTR = ctypes.POINTER(CK_RC5_MAC_GENERAL_PARAMS)
 CK_MAC_GENERAL_PARAMS = CK_ULONG
 CK_MAC_GENERAL_PARAMS_PTR = ctypes.POINTER(CK_MAC_GENERAL_PARAMS)
 CK_DES_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(CK_DES_CBC_ENCRYPT_DATA_PARAMS)
 CK_AES_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(CK_AES_CBC_ENCRYPT_DATA_PARAMS)
-CK_SKIPJACK_PRIVATE_WRAP_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_SKIPJACK_RELAYX_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_SKIPJACK_PRIVATE_WRAP_PARAMS_PTR = ctypes.POINTER(CK_SKIPJACK_PRIVATE_WRAP_PARAMS)
+CK_SKIPJACK_RELAYX_PARAMS_PTR = ctypes.POINTER(CK_SKIPJACK_RELAYX_PARAMS)
 CK_PBE_PARAMS_PTR = ctypes.POINTER(CK_PBE_PARAMS)
 CK_KEY_WRAP_SET_OAEP_PARAMS_PTR = ctypes.POINTER(CK_KEY_WRAP_SET_OAEP_PARAMS)
 CK_SSL3_KEY_MAT_OUT_PTR = ctypes.POINTER(CK_SSL3_KEY_MAT_OUT)
 CK_SSL3_KEY_MAT_PARAMS_PTR = ctypes.POINTER(CK_SSL3_KEY_MAT_PARAMS)
 CK_TLS_PRF_PARAMS_PTR = ctypes.POINTER(CK_TLS_PRF_PARAMS)
 CK_WTLS_RANDOM_DATA_PTR = ctypes.POINTER(CK_WTLS_RANDOM_DATA)
-CK_WTLS_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_WTLS_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_WTLS_MASTER_KEY_DERIVE_PARAMS)
 CK_WTLS_PRF_PARAMS_PTR = ctypes.POINTER(CK_WTLS_PRF_PARAMS)
 CK_WTLS_KEY_MAT_OUT_PTR = ctypes.POINTER(CK_WTLS_KEY_MAT_OUT)
 CK_WTLS_KEY_MAT_PARAMS_PTR = ctypes.POINTER(CK_WTLS_KEY_MAT_PARAMS)
 CK_CMS_SIG_PARAMS_PTR = ctypes.POINTER(CK_CMS_SIG_PARAMS)
-CK_KEY_DERIVATION_STRING_DATA_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_KEY_DERIVATION_STRING_DATA_PTR = ctypes.POINTER(CK_KEY_DERIVATION_STRING_DATA)
 CK_EXTRACT_PARAMS = CK_ULONG
 CK_EXTRACT_PARAMS_PTR = ctypes.POINTER(CK_EXTRACT_PARAMS)
 CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE = CK_ULONG
-CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE_PTR = ctypes.POINTER(CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE)
 CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE = CK_ULONG
-CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE_PTR = ctypes.POINTER(CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE)
 CK_PKCS5_PBKD2_PARAMS_PTR = ctypes.POINTER(CK_PKCS5_PBKD2_PARAMS)
 CK_PKCS5_PBKD2_PARAMS2_PTR = ctypes.POINTER(CK_PKCS5_PBKD2_PARAMS2)
 CK_OTP_PARAM_TYPE = CK_ULONG
+CK_PARAM_TYPE = CK_OTP_PARAM_TYPE
 CK_OTP_PARAM_PTR = ctypes.POINTER(CK_OTP_PARAM)
 CK_OTP_PARAMS_PTR = ctypes.POINTER(CK_OTP_PARAMS)
 CK_OTP_SIGNATURE_INFO_PTR = ctypes.POINTER(CK_OTP_SIGNATURE_INFO)
@@ -422,21 +417,21 @@ CK_CCM_WRAP_PARAMS_PTR = ctypes.POINTER(CK_CCM_WRAP_PARAMS)
 CK_AES_GCM_PARAMS_PTR = ctypes.POINTER(CK_AES_GCM_PARAMS)
 CK_AES_CCM_PARAMS_PTR = ctypes.POINTER(CK_AES_CCM_PARAMS)
 CK_CAMELLIA_CTR_PARAMS_PTR = ctypes.POINTER(CK_CAMELLIA_CTR_PARAMS)
-CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
-CK_ARIA_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(CK_CAMELLIA_CBC_ENCRYPT_DATA_PARAMS)
+CK_ARIA_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(CK_ARIA_CBC_ENCRYPT_DATA_PARAMS)
 CK_DSA_PARAMETER_GEN_PARAM_PTR = ctypes.POINTER(CK_DSA_PARAMETER_GEN_PARAM)
 CK_ECDH_AES_KEY_WRAP_PARAMS_PTR = ctypes.POINTER(CK_ECDH_AES_KEY_WRAP_PARAMS)
 CK_JAVA_MIDP_SECURITY_DOMAIN = CK_ULONG
 CK_CERTIFICATE_CATEGORY = CK_ULONG
 CK_RSA_AES_KEY_WRAP_PARAMS_PTR = ctypes.POINTER(CK_RSA_AES_KEY_WRAP_PARAMS)
-CK_TLS12_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_TLS12_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_TLS12_MASTER_KEY_DERIVE_PARAMS)
 CK_TLS12_KEY_MAT_PARAMS_PTR = ctypes.POINTER(CK_TLS12_KEY_MAT_PARAMS)
 CK_TLS_KDF_PARAMS_PTR = ctypes.POINTER(CK_TLS_KDF_PARAMS)
 CK_TLS_MAC_PARAMS_PTR = ctypes.POINTER(CK_TLS_MAC_PARAMS)
 CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS)
 CK_GOSTR3410_DERIVE_PARAMS_PTR = ctypes.POINTER(CK_GOSTR3410_DERIVE_PARAMS)
 CK_GOSTR3410_KEY_WRAP_PARAMS_PTR = ctypes.POINTER(CK_GOSTR3410_KEY_WRAP_PARAMS)
-CK_SEED_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(ctypes.c_ulong)
+CK_SEED_CBC_ENCRYPT_DATA_PARAMS_PTR = ctypes.POINTER(CK_SEED_CBC_ENCRYPT_DATA_PARAMS)
 CK_PROFILE_ID = CK_ULONG
 CK_PROFILE_ID_PTR = ctypes.POINTER(CK_PROFILE_ID)
 CK_PRF_DATA_TYPE = CK_ULONG
@@ -444,15 +439,21 @@ CK_SP800_108_PRF_TYPE = CK_MECHANISM_TYPE
 CK_PRF_DATA_PARAM_PTR = ctypes.POINTER(CK_PRF_DATA_PARAM)
 CK_SP800_108_COUNTER_FORMAT_PTR = ctypes.POINTER(CK_SP800_108_COUNTER_FORMAT)
 CK_SP800_108_DKM_LENGTH_METHOD = CK_ULONG
+CK_SP800_108_DKM_LENGTH_FORMAT_PTR = ctypes.POINTER(CK_SP800_108_DKM_LENGTH_FORMAT)
 CK_DERIVED_KEY_PTR = ctypes.POINTER(CK_DERIVED_KEY)
 CK_SP800_108_KDF_PARAMS_PTR = ctypes.POINTER(CK_SP800_108_KDF_PARAMS)
+CK_SP800_108_FEEDBACK_KDF_PARAMS_PTR = ctypes.POINTER(CK_SP800_108_FEEDBACK_KDF_PARAMS)
 CK_EDDSA_PARAMS_PTR = ctypes.POINTER(CK_EDDSA_PARAMS)
 CK_CHACHA20_PARAMS_PTR = ctypes.POINTER(CK_CHACHA20_PARAMS)
 CK_SALSA20_PARAMS_PTR = ctypes.POINTER(CK_SALSA20_PARAMS)
+CK_SALSA20_CHACHA20_POLY1305_PARAMS_PTR = ctypes.POINTER(CK_SALSA20_CHACHA20_POLY1305_PARAMS)
+CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS_PTR = ctypes.POINTER(CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS)
 CK_X3DH_KDF_TYPE = CK_ULONG
 CK_X3DH_KDF_TYPE_PTR = ctypes.POINTER(CK_X3DH_KDF_TYPE)
 CK_X2RATCHET_KDF_TYPE = CK_ULONG
 CK_X2RATCHET_KDF_TYPE_PTR = ctypes.POINTER(CK_X2RATCHET_KDF_TYPE)
+CK_X2RATCHET_INITIALIZE_PARAMS_PTR = ctypes.POINTER(CK_X2RATCHET_INITIALIZE_PARAMS)
+CK_X2RATCHET_RESPOND_PARAMS_PTR = ctypes.POINTER(CK_X2RATCHET_RESPOND_PARAMS)
 CK_XEDDSA_HASH_TYPE = CK_ULONG
 CK_XEDDSA_HASH_TYPE_PTR = ctypes.POINTER(CK_XEDDSA_HASH_TYPE)
 CK_XEDDSA_PARAMS_PTR = ctypes.POINTER(CK_XEDDSA_PARAMS)
@@ -477,6 +478,117 @@ CK_ML_DSA_PARAMETER_SET_TYPE = CK_ULONG
 CK_SLH_DSA_PARAMETER_SET_TYPE = CK_ULONG
 CK_ML_KEM_PARAMETER_SET_TYPE = CK_ULONG
 CK_TRUST = CK_ULONG
+
+CK_CREATEMUTEX = ctypes.CFUNCTYPE(CK_RV, CK_VOID_PTR_PTR)
+CK_DESTROYMUTEX = ctypes.CFUNCTYPE(CK_RV, CK_VOID_PTR)
+CK_LOCKMUTEX = ctypes.CFUNCTYPE(CK_RV, CK_VOID_PTR)
+CK_NOTIFY = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_NOTIFICATION, CK_VOID_PTR)
+CK_UNLOCKMUTEX = ctypes.CFUNCTYPE(CK_RV, CK_VOID_PTR)
+
+CK_C_Initialize = ctypes.CFUNCTYPE(CK_RV, CK_VOID_PTR)
+CK_C_Finalize = ctypes.CFUNCTYPE(CK_RV, CK_VOID_PTR)
+CK_C_GetInfo = ctypes.CFUNCTYPE(CK_RV, CK_INFO_PTR)
+CK_C_GetFunctionList = ctypes.CFUNCTYPE(CK_RV, CK_FUNCTION_LIST_PTR_PTR)
+CK_C_GetSlotList = ctypes.CFUNCTYPE(CK_RV, CK_BBOOL, CK_SLOT_ID_PTR, CK_ULONG_PTR)
+CK_C_GetSlotInfo = ctypes.CFUNCTYPE(CK_RV, CK_SLOT_ID, CK_SLOT_INFO_PTR)
+CK_C_GetTokenInfo = ctypes.CFUNCTYPE(CK_RV, CK_SLOT_ID, CK_TOKEN_INFO_PTR)
+CK_C_GetMechanismList = ctypes.CFUNCTYPE(CK_RV, CK_SLOT_ID, CK_MECHANISM_TYPE_PTR, CK_ULONG_PTR)
+CK_C_GetMechanismInfo = ctypes.CFUNCTYPE(CK_RV, CK_SLOT_ID, CK_MECHANISM_TYPE, CK_MECHANISM_INFO_PTR)
+CK_C_InitToken = ctypes.CFUNCTYPE(CK_RV, CK_SLOT_ID, CK_UTF8CHAR_PTR, CK_ULONG, CK_UTF8CHAR_PTR)
+CK_C_InitPIN = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_UTF8CHAR_PTR, CK_ULONG)
+CK_C_SetPIN = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_UTF8CHAR_PTR, CK_ULONG, CK_UTF8CHAR_PTR, CK_ULONG)
+CK_C_OpenSession = ctypes.CFUNCTYPE(CK_RV, CK_SLOT_ID, CK_FLAGS, CK_VOID_PTR, CK_NOTIFY, CK_SESSION_HANDLE_PTR)
+CK_C_CloseSession = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_CloseAllSessions = ctypes.CFUNCTYPE(CK_RV, CK_SLOT_ID)
+CK_C_GetSessionInfo = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_SESSION_INFO_PTR)
+CK_C_GetOperationState = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_SetOperationState = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_OBJECT_HANDLE, CK_OBJECT_HANDLE)
+CK_C_Login = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_USER_TYPE, CK_UTF8CHAR_PTR, CK_ULONG)
+CK_C_Logout = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_CreateObject = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_ATTRIBUTE_PTR, CK_ULONG, CK_OBJECT_HANDLE_PTR)
+CK_C_CopyObject = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_OBJECT_HANDLE, CK_ATTRIBUTE_PTR, CK_ULONG, CK_OBJECT_HANDLE_PTR)
+CK_C_DestroyObject = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_OBJECT_HANDLE)
+CK_C_GetObjectSize = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_OBJECT_HANDLE, CK_ULONG_PTR)
+CK_C_GetAttributeValue = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_OBJECT_HANDLE, CK_ATTRIBUTE_PTR, CK_ULONG)
+CK_C_SetAttributeValue = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_OBJECT_HANDLE, CK_ATTRIBUTE_PTR, CK_ULONG)
+CK_C_FindObjectsInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_ATTRIBUTE_PTR, CK_ULONG)
+CK_C_FindObjects = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_OBJECT_HANDLE_PTR, CK_ULONG, CK_ULONG_PTR)
+CK_C_FindObjectsFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_EncryptInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_Encrypt = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_EncryptUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_EncryptFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_DecryptInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_Decrypt = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_DecryptUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_DecryptFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_DigestInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR)
+CK_C_Digest = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_DigestUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_DigestKey = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_OBJECT_HANDLE)
+CK_C_DigestFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_SignInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_Sign = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_SignUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_SignFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_SignRecoverInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_SignRecover = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_VerifyInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_Verify = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG)
+CK_C_VerifyUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_VerifyFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_VerifyRecoverInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_VerifyRecover = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_DigestEncryptUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_DecryptDigestUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_SignEncryptUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_DecryptVerifyUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_GenerateKey = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_ATTRIBUTE_PTR, CK_ULONG, CK_OBJECT_HANDLE_PTR)
+CK_C_GenerateKeyPair = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_ATTRIBUTE_PTR, CK_ULONG, CK_ATTRIBUTE_PTR, CK_ULONG, CK_OBJECT_HANDLE_PTR, CK_OBJECT_HANDLE_PTR)
+CK_C_WrapKey = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE, CK_OBJECT_HANDLE, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_UnwrapKey = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_ATTRIBUTE_PTR, CK_ULONG, CK_OBJECT_HANDLE_PTR)
+CK_C_DeriveKey = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE, CK_ATTRIBUTE_PTR, CK_ULONG, CK_OBJECT_HANDLE_PTR)
+CK_C_SeedRandom = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_GenerateRandom = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_GetFunctionStatus = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_CancelFunction = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_WaitForSlotEvent = ctypes.CFUNCTYPE(CK_RV, CK_FLAGS, CK_SLOT_ID_PTR, CK_VOID_PTR)
+CK_C_GetInterfaceList = ctypes.CFUNCTYPE(CK_RV, CK_INTERFACE_PTR, CK_ULONG_PTR)
+CK_C_GetInterface = ctypes.CFUNCTYPE(CK_RV, CK_UTF8CHAR_PTR, CK_VERSION_PTR, CK_INTERFACE_PTR_PTR, CK_FLAGS)
+CK_C_LoginUser = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_USER_TYPE, CK_UTF8CHAR_PTR, CK_ULONG, CK_UTF8CHAR_PTR, CK_ULONG)
+CK_C_SessionCancel = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_FLAGS)
+CK_C_MessageEncryptInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_EncryptMessage = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_EncryptMessageBegin = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG)
+CK_C_EncryptMessageNext = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR, CK_FLAGS)
+CK_C_MessageEncryptFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_MessageDecryptInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_DecryptMessage = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_DecryptMessageBegin = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG)
+CK_C_DecryptMessageNext = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR, CK_FLAGS)
+CK_C_MessageDecryptFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_MessageSignInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_SignMessage = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_SignMessageBegin = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG)
+CK_C_SignMessageNext = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_MessageSignFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_MessageVerifyInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE)
+CK_C_VerifyMessage = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG)
+CK_C_VerifyMessageBegin = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG)
+CK_C_VerifyMessageNext = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG)
+CK_C_MessageVerifyFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_EncapsulateKey = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE, CK_ATTRIBUTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR, CK_OBJECT_HANDLE_PTR)
+CK_C_DecapsulateKey = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE, CK_ATTRIBUTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_OBJECT_HANDLE_PTR)
+CK_C_VerifySignatureInit = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_VerifySignature = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_VerifySignatureUpdate = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_BYTE_PTR, CK_ULONG)
+CK_C_VerifySignatureFinal = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE)
+CK_C_GetSessionValidationFlags = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_SESSION_VALIDATION_FLAGS_TYPE, CK_FLAGS_PTR)
+CK_C_AsyncComplete = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_UTF8CHAR_PTR, CK_ASYNC_DATA_PTR)
+CK_C_AsyncGetID = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_UTF8CHAR_PTR, CK_ULONG_PTR)
+CK_C_AsyncJoin = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_UTF8CHAR_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG)
+CK_C_WrapKeyAuthenticated = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE, CK_OBJECT_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG_PTR)
+CK_C_UnwrapKeyAuthenticated = ctypes.CFUNCTYPE(CK_RV, CK_SESSION_HANDLE, CK_MECHANISM_PTR, CK_OBJECT_HANDLE, CK_BYTE_PTR, CK_ULONG, CK_ATTRIBUTE_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG, CK_OBJECT_HANDLE_PTR)
 
 CK_VERSION._fields_ = [
     ("major", CK_BYTE),
@@ -558,10 +670,10 @@ CK_INTERFACE._fields_ = [
     ]
 
 CK_C_INITIALIZE_ARGS._fields_ = [
-    ("CreateMutex", ctypes.c_ulong),
-    ("DestroyMutex", ctypes.c_ulong),
-    ("LockMutex", ctypes.c_ulong),
-    ("UnlockMutex", ctypes.c_ulong),
+    ("CreateMutex", CK_CREATEMUTEX),
+    ("DestroyMutex", CK_DESTROYMUTEX),
+    ("LockMutex", CK_LOCKMUTEX),
+    ("UnlockMutex", CK_UNLOCKMUTEX),
     ("flags", CK_FLAGS),
     ("pReserved", CK_VOID_PTR),
     ]
@@ -1252,14 +1364,278 @@ CK_HASH_SIGN_ADDITIONAL_CONTEXT._fields_ = [
 
 CK_FUNCTION_LIST_3_2._fields_ = [
     ("version", CK_VERSION),
+    ("C_Initialize", CK_C_Initialize),
+    ("C_Finalize", CK_C_Finalize),
+    ("C_GetInfo", CK_C_GetInfo),
+    ("C_GetFunctionList", CK_C_GetFunctionList),
+    ("C_GetSlotList", CK_C_GetSlotList),
+    ("C_GetSlotInfo", CK_C_GetSlotInfo),
+    ("C_GetTokenInfo", CK_C_GetTokenInfo),
+    ("C_GetMechanismList", CK_C_GetMechanismList),
+    ("C_GetMechanismInfo", CK_C_GetMechanismInfo),
+    ("C_InitToken", CK_C_InitToken),
+    ("C_InitPIN", CK_C_InitPIN),
+    ("C_SetPIN", CK_C_SetPIN),
+    ("C_OpenSession", CK_C_OpenSession),
+    ("C_CloseSession", CK_C_CloseSession),
+    ("C_CloseAllSessions", CK_C_CloseAllSessions),
+    ("C_GetSessionInfo", CK_C_GetSessionInfo),
+    ("C_GetOperationState", CK_C_GetOperationState),
+    ("C_SetOperationState", CK_C_SetOperationState),
+    ("C_Login", CK_C_Login),
+    ("C_Logout", CK_C_Logout),
+    ("C_CreateObject", CK_C_CreateObject),
+    ("C_CopyObject", CK_C_CopyObject),
+    ("C_DestroyObject", CK_C_DestroyObject),
+    ("C_GetObjectSize", CK_C_GetObjectSize),
+    ("C_GetAttributeValue", CK_C_GetAttributeValue),
+    ("C_SetAttributeValue", CK_C_SetAttributeValue),
+    ("C_FindObjectsInit", CK_C_FindObjectsInit),
+    ("C_FindObjects", CK_C_FindObjects),
+    ("C_FindObjectsFinal", CK_C_FindObjectsFinal),
+    ("C_EncryptInit", CK_C_EncryptInit),
+    ("C_Encrypt", CK_C_Encrypt),
+    ("C_EncryptUpdate", CK_C_EncryptUpdate),
+    ("C_EncryptFinal", CK_C_EncryptFinal),
+    ("C_DecryptInit", CK_C_DecryptInit),
+    ("C_Decrypt", CK_C_Decrypt),
+    ("C_DecryptUpdate", CK_C_DecryptUpdate),
+    ("C_DecryptFinal", CK_C_DecryptFinal),
+    ("C_DigestInit", CK_C_DigestInit),
+    ("C_Digest", CK_C_Digest),
+    ("C_DigestUpdate", CK_C_DigestUpdate),
+    ("C_DigestKey", CK_C_DigestKey),
+    ("C_DigestFinal", CK_C_DigestFinal),
+    ("C_SignInit", CK_C_SignInit),
+    ("C_Sign", CK_C_Sign),
+    ("C_SignUpdate", CK_C_SignUpdate),
+    ("C_SignFinal", CK_C_SignFinal),
+    ("C_SignRecoverInit", CK_C_SignRecoverInit),
+    ("C_SignRecover", CK_C_SignRecover),
+    ("C_VerifyInit", CK_C_VerifyInit),
+    ("C_Verify", CK_C_Verify),
+    ("C_VerifyUpdate", CK_C_VerifyUpdate),
+    ("C_VerifyFinal", CK_C_VerifyFinal),
+    ("C_VerifyRecoverInit", CK_C_VerifyRecoverInit),
+    ("C_VerifyRecover", CK_C_VerifyRecover),
+    ("C_DigestEncryptUpdate", CK_C_DigestEncryptUpdate),
+    ("C_DecryptDigestUpdate", CK_C_DecryptDigestUpdate),
+    ("C_SignEncryptUpdate", CK_C_SignEncryptUpdate),
+    ("C_DecryptVerifyUpdate", CK_C_DecryptVerifyUpdate),
+    ("C_GenerateKey", CK_C_GenerateKey),
+    ("C_GenerateKeyPair", CK_C_GenerateKeyPair),
+    ("C_WrapKey", CK_C_WrapKey),
+    ("C_UnwrapKey", CK_C_UnwrapKey),
+    ("C_DeriveKey", CK_C_DeriveKey),
+    ("C_SeedRandom", CK_C_SeedRandom),
+    ("C_GenerateRandom", CK_C_GenerateRandom),
+    ("C_GetFunctionStatus", CK_C_GetFunctionStatus),
+    ("C_CancelFunction", CK_C_CancelFunction),
+    ("C_WaitForSlotEvent", CK_C_WaitForSlotEvent),
+    ("C_GetInterfaceList", CK_C_GetInterfaceList),
+    ("C_GetInterface", CK_C_GetInterface),
+    ("C_LoginUser", CK_C_LoginUser),
+    ("C_SessionCancel", CK_C_SessionCancel),
+    ("C_MessageEncryptInit", CK_C_MessageEncryptInit),
+    ("C_EncryptMessage", CK_C_EncryptMessage),
+    ("C_EncryptMessageBegin", CK_C_EncryptMessageBegin),
+    ("C_EncryptMessageNext", CK_C_EncryptMessageNext),
+    ("C_MessageEncryptFinal", CK_C_MessageEncryptFinal),
+    ("C_MessageDecryptInit", CK_C_MessageDecryptInit),
+    ("C_DecryptMessage", CK_C_DecryptMessage),
+    ("C_DecryptMessageBegin", CK_C_DecryptMessageBegin),
+    ("C_DecryptMessageNext", CK_C_DecryptMessageNext),
+    ("C_MessageDecryptFinal", CK_C_MessageDecryptFinal),
+    ("C_MessageSignInit", CK_C_MessageSignInit),
+    ("C_SignMessage", CK_C_SignMessage),
+    ("C_SignMessageBegin", CK_C_SignMessageBegin),
+    ("C_SignMessageNext", CK_C_SignMessageNext),
+    ("C_MessageSignFinal", CK_C_MessageSignFinal),
+    ("C_MessageVerifyInit", CK_C_MessageVerifyInit),
+    ("C_VerifyMessage", CK_C_VerifyMessage),
+    ("C_VerifyMessageBegin", CK_C_VerifyMessageBegin),
+    ("C_VerifyMessageNext", CK_C_VerifyMessageNext),
+    ("C_MessageVerifyFinal", CK_C_MessageVerifyFinal),
+    ("C_EncapsulateKey", CK_C_EncapsulateKey),
+    ("C_DecapsulateKey", CK_C_DecapsulateKey),
+    ("C_VerifySignatureInit", CK_C_VerifySignatureInit),
+    ("C_VerifySignature", CK_C_VerifySignature),
+    ("C_VerifySignatureUpdate", CK_C_VerifySignatureUpdate),
+    ("C_VerifySignatureFinal", CK_C_VerifySignatureFinal),
+    ("C_GetSessionValidationFlags", CK_C_GetSessionValidationFlags),
+    ("C_AsyncComplete", CK_C_AsyncComplete),
+    ("C_AsyncGetID", CK_C_AsyncGetID),
+    ("C_AsyncJoin", CK_C_AsyncJoin),
+    ("C_WrapKeyAuthenticated", CK_C_WrapKeyAuthenticated),
+    ("C_UnwrapKeyAuthenticated", CK_C_UnwrapKeyAuthenticated),
     ]
 
 CK_FUNCTION_LIST_3_0._fields_ = [
     ("version", CK_VERSION),
+    ("C_Initialize", CK_C_Initialize),
+    ("C_Finalize", CK_C_Finalize),
+    ("C_GetInfo", CK_C_GetInfo),
+    ("C_GetFunctionList", CK_C_GetFunctionList),
+    ("C_GetSlotList", CK_C_GetSlotList),
+    ("C_GetSlotInfo", CK_C_GetSlotInfo),
+    ("C_GetTokenInfo", CK_C_GetTokenInfo),
+    ("C_GetMechanismList", CK_C_GetMechanismList),
+    ("C_GetMechanismInfo", CK_C_GetMechanismInfo),
+    ("C_InitToken", CK_C_InitToken),
+    ("C_InitPIN", CK_C_InitPIN),
+    ("C_SetPIN", CK_C_SetPIN),
+    ("C_OpenSession", CK_C_OpenSession),
+    ("C_CloseSession", CK_C_CloseSession),
+    ("C_CloseAllSessions", CK_C_CloseAllSessions),
+    ("C_GetSessionInfo", CK_C_GetSessionInfo),
+    ("C_GetOperationState", CK_C_GetOperationState),
+    ("C_SetOperationState", CK_C_SetOperationState),
+    ("C_Login", CK_C_Login),
+    ("C_Logout", CK_C_Logout),
+    ("C_CreateObject", CK_C_CreateObject),
+    ("C_CopyObject", CK_C_CopyObject),
+    ("C_DestroyObject", CK_C_DestroyObject),
+    ("C_GetObjectSize", CK_C_GetObjectSize),
+    ("C_GetAttributeValue", CK_C_GetAttributeValue),
+    ("C_SetAttributeValue", CK_C_SetAttributeValue),
+    ("C_FindObjectsInit", CK_C_FindObjectsInit),
+    ("C_FindObjects", CK_C_FindObjects),
+    ("C_FindObjectsFinal", CK_C_FindObjectsFinal),
+    ("C_EncryptInit", CK_C_EncryptInit),
+    ("C_Encrypt", CK_C_Encrypt),
+    ("C_EncryptUpdate", CK_C_EncryptUpdate),
+    ("C_EncryptFinal", CK_C_EncryptFinal),
+    ("C_DecryptInit", CK_C_DecryptInit),
+    ("C_Decrypt", CK_C_Decrypt),
+    ("C_DecryptUpdate", CK_C_DecryptUpdate),
+    ("C_DecryptFinal", CK_C_DecryptFinal),
+    ("C_DigestInit", CK_C_DigestInit),
+    ("C_Digest", CK_C_Digest),
+    ("C_DigestUpdate", CK_C_DigestUpdate),
+    ("C_DigestKey", CK_C_DigestKey),
+    ("C_DigestFinal", CK_C_DigestFinal),
+    ("C_SignInit", CK_C_SignInit),
+    ("C_Sign", CK_C_Sign),
+    ("C_SignUpdate", CK_C_SignUpdate),
+    ("C_SignFinal", CK_C_SignFinal),
+    ("C_SignRecoverInit", CK_C_SignRecoverInit),
+    ("C_SignRecover", CK_C_SignRecover),
+    ("C_VerifyInit", CK_C_VerifyInit),
+    ("C_Verify", CK_C_Verify),
+    ("C_VerifyUpdate", CK_C_VerifyUpdate),
+    ("C_VerifyFinal", CK_C_VerifyFinal),
+    ("C_VerifyRecoverInit", CK_C_VerifyRecoverInit),
+    ("C_VerifyRecover", CK_C_VerifyRecover),
+    ("C_DigestEncryptUpdate", CK_C_DigestEncryptUpdate),
+    ("C_DecryptDigestUpdate", CK_C_DecryptDigestUpdate),
+    ("C_SignEncryptUpdate", CK_C_SignEncryptUpdate),
+    ("C_DecryptVerifyUpdate", CK_C_DecryptVerifyUpdate),
+    ("C_GenerateKey", CK_C_GenerateKey),
+    ("C_GenerateKeyPair", CK_C_GenerateKeyPair),
+    ("C_WrapKey", CK_C_WrapKey),
+    ("C_UnwrapKey", CK_C_UnwrapKey),
+    ("C_DeriveKey", CK_C_DeriveKey),
+    ("C_SeedRandom", CK_C_SeedRandom),
+    ("C_GenerateRandom", CK_C_GenerateRandom),
+    ("C_GetFunctionStatus", CK_C_GetFunctionStatus),
+    ("C_CancelFunction", CK_C_CancelFunction),
+    ("C_WaitForSlotEvent", CK_C_WaitForSlotEvent),
+    ("C_GetInterfaceList", CK_C_GetInterfaceList),
+    ("C_GetInterface", CK_C_GetInterface),
+    ("C_LoginUser", CK_C_LoginUser),
+    ("C_SessionCancel", CK_C_SessionCancel),
+    ("C_MessageEncryptInit", CK_C_MessageEncryptInit),
+    ("C_EncryptMessage", CK_C_EncryptMessage),
+    ("C_EncryptMessageBegin", CK_C_EncryptMessageBegin),
+    ("C_EncryptMessageNext", CK_C_EncryptMessageNext),
+    ("C_MessageEncryptFinal", CK_C_MessageEncryptFinal),
+    ("C_MessageDecryptInit", CK_C_MessageDecryptInit),
+    ("C_DecryptMessage", CK_C_DecryptMessage),
+    ("C_DecryptMessageBegin", CK_C_DecryptMessageBegin),
+    ("C_DecryptMessageNext", CK_C_DecryptMessageNext),
+    ("C_MessageDecryptFinal", CK_C_MessageDecryptFinal),
+    ("C_MessageSignInit", CK_C_MessageSignInit),
+    ("C_SignMessage", CK_C_SignMessage),
+    ("C_SignMessageBegin", CK_C_SignMessageBegin),
+    ("C_SignMessageNext", CK_C_SignMessageNext),
+    ("C_MessageSignFinal", CK_C_MessageSignFinal),
+    ("C_MessageVerifyInit", CK_C_MessageVerifyInit),
+    ("C_VerifyMessage", CK_C_VerifyMessage),
+    ("C_VerifyMessageBegin", CK_C_VerifyMessageBegin),
+    ("C_VerifyMessageNext", CK_C_VerifyMessageNext),
+    ("C_MessageVerifyFinal", CK_C_MessageVerifyFinal),
     ]
 
 CK_FUNCTION_LIST._fields_ = [
     ("version", CK_VERSION),
+    ("C_Initialize", CK_C_Initialize),
+    ("C_Finalize", CK_C_Finalize),
+    ("C_GetInfo", CK_C_GetInfo),
+    ("C_GetFunctionList", CK_C_GetFunctionList),
+    ("C_GetSlotList", CK_C_GetSlotList),
+    ("C_GetSlotInfo", CK_C_GetSlotInfo),
+    ("C_GetTokenInfo", CK_C_GetTokenInfo),
+    ("C_GetMechanismList", CK_C_GetMechanismList),
+    ("C_GetMechanismInfo", CK_C_GetMechanismInfo),
+    ("C_InitToken", CK_C_InitToken),
+    ("C_InitPIN", CK_C_InitPIN),
+    ("C_SetPIN", CK_C_SetPIN),
+    ("C_OpenSession", CK_C_OpenSession),
+    ("C_CloseSession", CK_C_CloseSession),
+    ("C_CloseAllSessions", CK_C_CloseAllSessions),
+    ("C_GetSessionInfo", CK_C_GetSessionInfo),
+    ("C_GetOperationState", CK_C_GetOperationState),
+    ("C_SetOperationState", CK_C_SetOperationState),
+    ("C_Login", CK_C_Login),
+    ("C_Logout", CK_C_Logout),
+    ("C_CreateObject", CK_C_CreateObject),
+    ("C_CopyObject", CK_C_CopyObject),
+    ("C_DestroyObject", CK_C_DestroyObject),
+    ("C_GetObjectSize", CK_C_GetObjectSize),
+    ("C_GetAttributeValue", CK_C_GetAttributeValue),
+    ("C_SetAttributeValue", CK_C_SetAttributeValue),
+    ("C_FindObjectsInit", CK_C_FindObjectsInit),
+    ("C_FindObjects", CK_C_FindObjects),
+    ("C_FindObjectsFinal", CK_C_FindObjectsFinal),
+    ("C_EncryptInit", CK_C_EncryptInit),
+    ("C_Encrypt", CK_C_Encrypt),
+    ("C_EncryptUpdate", CK_C_EncryptUpdate),
+    ("C_EncryptFinal", CK_C_EncryptFinal),
+    ("C_DecryptInit", CK_C_DecryptInit),
+    ("C_Decrypt", CK_C_Decrypt),
+    ("C_DecryptUpdate", CK_C_DecryptUpdate),
+    ("C_DecryptFinal", CK_C_DecryptFinal),
+    ("C_DigestInit", CK_C_DigestInit),
+    ("C_Digest", CK_C_Digest),
+    ("C_DigestUpdate", CK_C_DigestUpdate),
+    ("C_DigestKey", CK_C_DigestKey),
+    ("C_DigestFinal", CK_C_DigestFinal),
+    ("C_SignInit", CK_C_SignInit),
+    ("C_Sign", CK_C_Sign),
+    ("C_SignUpdate", CK_C_SignUpdate),
+    ("C_SignFinal", CK_C_SignFinal),
+    ("C_SignRecoverInit", CK_C_SignRecoverInit),
+    ("C_SignRecover", CK_C_SignRecover),
+    ("C_VerifyInit", CK_C_VerifyInit),
+    ("C_Verify", CK_C_Verify),
+    ("C_VerifyUpdate", CK_C_VerifyUpdate),
+    ("C_VerifyFinal", CK_C_VerifyFinal),
+    ("C_VerifyRecoverInit", CK_C_VerifyRecoverInit),
+    ("C_VerifyRecover", CK_C_VerifyRecover),
+    ("C_DigestEncryptUpdate", CK_C_DigestEncryptUpdate),
+    ("C_DecryptDigestUpdate", CK_C_DecryptDigestUpdate),
+    ("C_SignEncryptUpdate", CK_C_SignEncryptUpdate),
+    ("C_DecryptVerifyUpdate", CK_C_DecryptVerifyUpdate),
+    ("C_GenerateKey", CK_C_GenerateKey),
+    ("C_GenerateKeyPair", CK_C_GenerateKeyPair),
+    ("C_WrapKey", CK_C_WrapKey),
+    ("C_UnwrapKey", CK_C_UnwrapKey),
+    ("C_DeriveKey", CK_C_DeriveKey),
+    ("C_SeedRandom", CK_C_SeedRandom),
+    ("C_GenerateRandom", CK_C_GenerateRandom),
+    ("C_GetFunctionStatus", CK_C_GetFunctionStatus),
+    ("C_CancelFunction", CK_C_CancelFunction),
+    ("C_WaitForSlotEvent", CK_C_WaitForSlotEvent),
     ]
 
 CKF_TOKEN_PRESENT = 0x1

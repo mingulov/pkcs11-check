@@ -90,6 +90,18 @@ class RawPKCS11:
     def _load_v32_from_ptr(self, ptr: int) -> None:
         self._load_functions_from_ptr(ptr, _V32_FUNCTION_NAMES)
 
+    def _function_list_version(self, ptr: int) -> tuple[int, int]:
+        version = cast(ptr, ctypes.POINTER(CK_VERSION)).contents
+        return int(version.major), int(version.minor)
+
+    def _load_versioned_function_list(self, ptr: int) -> None:
+        self._load_from_ptr(ptr)
+        major, minor = self._function_list_version(ptr)
+        if (major, minor) >= (3, 0):
+            self._load_v30_from_ptr(ptr)
+        if (major, minor) >= (3, 2):
+            self._load_v32_from_ptr(ptr)
+
     def _get_interface_function_list_ptr(self, get_interface: Any, version: tuple[int, int] | None) -> int | None:
         interface_ptr = CK_INTERFACE_PTR()
         version_ptr = None
@@ -122,15 +134,12 @@ class RawPKCS11:
             ]
             function_list_ptr = self._get_interface_function_list_ptr(get_interface, (3, 2))
             if function_list_ptr is not None:
-                self._load_from_ptr(function_list_ptr)
-                self._load_v30_from_ptr(function_list_ptr)
-                self._load_v32_from_ptr(function_list_ptr)
+                self._load_versioned_function_list(function_list_ptr)
                 return
 
             function_list_ptr = self._get_interface_function_list_ptr(get_interface, None)
             if function_list_ptr is not None:
-                self._load_from_ptr(function_list_ptr)
-                self._load_v30_from_ptr(function_list_ptr)
+                self._load_versioned_function_list(function_list_ptr)
                 return
         except (AttributeError, OSError, TypeError, ValueError):
             pass

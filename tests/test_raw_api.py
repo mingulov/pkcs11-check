@@ -29,16 +29,24 @@ def test_raw_api_never_auto_raises() -> None:
     assert ckr_name(0x00000007) == "CKR_ARGUMENTS_BAD"
 
 
-def test_from_lib_does_not_load_v32_from_generic_interface_success() -> None:
+def test_from_lib_generic_240_interface_does_not_load_v30_or_v32_tails() -> None:
     from pkcs11_check.raw.api import RawPKCS11
     from pkcs11_check.raw.core import CKR_FUNCTION_FAILED, CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
-    from pkcs11_check.raw.types_std import CK_VERSION_PTR
+    from pkcs11_check.raw.types_std import CK_VERSION, CK_VERSION_PTR
+
+    class FakeFunctionList(ctypes.Structure):
+        _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
 
     class FakeGetInterface:
         def __init__(self) -> None:
+            self.function_list = FakeFunctionList()
+            self.function_list.version.major = 2
+            self.function_list.version.minor = 40
             self.interface = CK_INTERFACE()
             self.interface.pInterfaceName = None
-            self.interface.pFunctionList = 0x1234
+            self.interface.pFunctionList = ctypes.cast(
+                ctypes.pointer(self.function_list), ctypes.c_void_p
+            ).value
             self.interface.flags = 0
             self.interface_ptr = ctypes.pointer(self.interface)
             self.calls: list[tuple[int | None, int | None]] = []
@@ -66,21 +74,81 @@ def test_from_lib_does_not_load_v32_from_generic_interface_success() -> None:
         RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so")
 
     assert fake_get_interface.calls == [(3, 2), (None, None)]
-    raw._load_from_ptr.assert_called_once_with(0x1234)
-    raw._load_v30_from_ptr.assert_called_once_with(0x1234)
+    function_list_ptr = ctypes.cast(ctypes.pointer(fake_get_interface.function_list), ctypes.c_void_p).value
+    raw._load_from_ptr.assert_called_once_with(function_list_ptr)
+    raw._load_v30_from_ptr.assert_not_called()
+    raw._load_v32_from_ptr.assert_not_called()
+
+
+def test_from_lib_generic_30_interface_loads_v30_but_not_v32_tails() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.core import CKR_FUNCTION_FAILED, CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
+    from pkcs11_check.raw.types_std import CK_VERSION, CK_VERSION_PTR
+
+    class FakeFunctionList(ctypes.Structure):
+        _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
+
+    class FakeGetInterface:
+        def __init__(self) -> None:
+            self.function_list = FakeFunctionList()
+            self.function_list.version.major = 3
+            self.function_list.version.minor = 0
+            self.interface = CK_INTERFACE()
+            self.interface.pInterfaceName = None
+            self.interface.pFunctionList = ctypes.cast(
+                ctypes.pointer(self.function_list), ctypes.c_void_p
+            ).value
+            self.interface.flags = 0
+            self.interface_ptr = ctypes.pointer(self.interface)
+            self.calls: list[tuple[int | None, int | None]] = []
+
+        def __call__(self, _name: object, version: object, interface_out: object, _flags: object) -> int:
+            if version is not None:
+                requested = ctypes.cast(version, CK_VERSION_PTR).contents
+                self.calls.append((int(requested.major), int(requested.minor)))
+                return CKR_FUNCTION_FAILED
+
+            self.calls.append((None, None))
+            ctypes.cast(interface_out, ctypes.POINTER(CK_INTERFACE_PTR))[0] = self.interface_ptr
+            return CKR_OK
+
+    fake_get_interface = FakeGetInterface()
+    fake_lib = type("FakeLib", (), {"C_GetInterface": fake_get_interface})()
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = None
+    raw._load_from_ptr = Mock()
+    raw._load_v30_from_ptr = Mock()
+    raw._load_v32_from_ptr = Mock()
+
+    with patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib):
+        RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so")
+
+    assert fake_get_interface.calls == [(3, 2), (None, None)]
+    function_list_ptr = ctypes.cast(ctypes.pointer(fake_get_interface.function_list), ctypes.c_void_p).value
+    raw._load_from_ptr.assert_called_once_with(function_list_ptr)
+    raw._load_v30_from_ptr.assert_called_once_with(function_list_ptr)
     raw._load_v32_from_ptr.assert_not_called()
 
 
 def test_from_lib_loads_v32_when_explicit_32_interface_is_available() -> None:
     from pkcs11_check.raw.api import RawPKCS11
     from pkcs11_check.raw.core import CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
-    from pkcs11_check.raw.types_std import CK_VERSION_PTR
+    from pkcs11_check.raw.types_std import CK_VERSION, CK_VERSION_PTR
+
+    class FakeFunctionList(ctypes.Structure):
+        _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
 
     class FakeGetInterface:
         def __init__(self) -> None:
+            self.function_list = FakeFunctionList()
+            self.function_list.version.major = 3
+            self.function_list.version.minor = 2
             self.interface = CK_INTERFACE()
             self.interface.pInterfaceName = None
-            self.interface.pFunctionList = 0x4321
+            self.interface.pFunctionList = ctypes.cast(
+                ctypes.pointer(self.function_list), ctypes.c_void_p
+            ).value
             self.interface.flags = 0
             self.interface_ptr = ctypes.pointer(self.interface)
             self.calls: list[tuple[int | None, int | None]] = []
@@ -104,6 +172,7 @@ def test_from_lib_loads_v32_when_explicit_32_interface_is_available() -> None:
         RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so")
 
     assert fake_get_interface.calls == [(3, 2)]
-    raw._load_from_ptr.assert_called_once_with(0x4321)
-    raw._load_v30_from_ptr.assert_called_once_with(0x4321)
-    raw._load_v32_from_ptr.assert_called_once_with(0x4321)
+    function_list_ptr = ctypes.cast(ctypes.pointer(fake_get_interface.function_list), ctypes.c_void_p).value
+    raw._load_from_ptr.assert_called_once_with(function_list_ptr)
+    raw._load_v30_from_ptr.assert_called_once_with(function_list_ptr)
+    raw._load_v32_from_ptr.assert_called_once_with(function_list_ptr)
