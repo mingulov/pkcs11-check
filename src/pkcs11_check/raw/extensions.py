@@ -132,6 +132,60 @@ def _validate_name_mapping(
         raise ValueError("duplicate mechanism name in namespace")
 
 
+def _validate_namespace_mapping_update(existing: Mapping[Any, Any], new_values: Mapping[Any, Any] | None) -> None:
+    if not new_values:
+        return
+    for key, value in new_values.items():
+        if key in existing and existing[key] != value:
+            raise ValueError("existing namespace entry differs")
+
+
+def _validate_helper_alias_consistency(
+    namespace: str,
+    helper_type: str,
+    mechanisms: Mapping[int, str] | None,
+    helpers: Mapping[int | str, Any] | None,
+) -> None:
+    if not helpers:
+        return
+    vendor = _vendor_or_none(namespace)
+    mechanism_names: dict[int, str] = {}
+    if vendor is not None:
+        mechanism_names.update(vendor.names["mechanisms"])
+    if mechanisms is not None:
+        mechanism_names.update(mechanisms)
+
+    resolved: dict[int, Any] = {}
+    for key, value in helpers.items():
+        if isinstance(key, int):
+            mechanism_id = key
+        elif isinstance(key, str):
+            mechanism_id = next(
+                (candidate_id for candidate_id, candidate_name in mechanism_names.items() if candidate_name == key),
+                None,
+            )
+            if mechanism_id is None:
+                continue
+        else:
+            continue
+        if mechanism_id in resolved and resolved[mechanism_id] != value:
+            raise ValueError("conflicting helper registration")
+        resolved[mechanism_id] = value
+
+    existing_helpers = None
+    if vendor is not None:
+        existing_helpers = vendor.packers if helper_type == "packers" else vendor.inspectors
+    if existing_helpers is None:
+        return
+    for mechanism_id, helper in resolved.items():
+        mechanism_name = mechanism_names.get(mechanism_id)
+        existing_numeric = existing_helpers.get(mechanism_id)
+        existing_symbolic = existing_helpers.get(mechanism_name) if mechanism_name is not None else None
+        for existing in (existing_numeric, existing_symbolic):
+            if existing is not None and existing != helper:
+                raise ValueError("existing namespace entry differs")
+
+
 def register_extension(
     *,
     namespace: str,
@@ -154,6 +208,8 @@ def register_extension(
     _validate_helper_numeric_keys(inspectors)
     _validate_helper_string_keys(namespace, packers, mechanisms)
     _validate_helper_string_keys(namespace, inspectors, mechanisms)
+    _validate_helper_alias_consistency(namespace, "packers", mechanisms, packers)
+    _validate_helper_alias_consistency(namespace, "inspectors", mechanisms, inspectors)
     vendor = _vendor(namespace)
     name_mappings = {
         "mechanisms": mechanisms,
@@ -162,6 +218,12 @@ def register_extension(
         "object_classes": object_classes,
         "rvs": rvs,
     }
+    for category, values in name_mappings.items():
+        if values is not None:
+            _validate_namespace_mapping_update(vendor.names[category], values)
+    _validate_namespace_mapping_update(vendor.structs, structs)
+    _validate_namespace_mapping_update(vendor.packers, packers)
+    _validate_namespace_mapping_update(vendor.inspectors, inspectors)
     for category, values in name_mappings.items():
         if values is not None:
             vendor.names[category].update(values)

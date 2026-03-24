@@ -379,3 +379,52 @@ def test_extension_register_rejects_bad_helper_key_type() -> None:
 
     with pytest.raises(ValueError, match="helper keys must be int or str"):
         register_extension(namespace="ibm", inspectors={None: lambda value: value})  # type: ignore[dict-item]
+
+
+def test_extension_register_rejects_conflicting_numeric_and_symbolic_helper_values() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    helper_a = lambda value: "a"
+    helper_b = lambda value: "b"
+
+    with pytest.raises(ValueError, match="conflicting helper registration"):
+        register_extension(
+            namespace="ibm",
+            mechanisms={0x80015558: "CKM_IBM_HELPER"},
+            inspectors={0x80015558: helper_a, "CKM_IBM_HELPER": helper_b},
+        )
+
+
+def test_extension_register_rejects_non_mechanism_name_overwrite_with_different_value() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    register_extension(namespace="ibm", attrs={0x80025559: "CKA_IBM_ONE"})
+
+    with pytest.raises(ValueError, match="existing namespace entry differs"):
+        register_extension(namespace="ibm", attrs={0x80025559: "CKA_IBM_TWO"})
+
+
+def test_extension_register_rejects_struct_overwrite_with_different_value() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    register_extension(namespace="ibm", structs={"CK_IBM_STRUCT": object()})
+
+    with pytest.raises(ValueError, match="existing namespace entry differs"):
+        register_extension(namespace="ibm", structs={"CK_IBM_STRUCT": object()})
+
+
+def test_extension_register_rejects_helper_overwrite_with_different_value() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    register_extension(namespace="ibm", packers={0x8001555A: lambda value: value})
+
+    with pytest.raises(ValueError, match="existing namespace entry differs"):
+        register_extension(namespace="ibm", packers={0x8001555A: lambda value: value + 1})
