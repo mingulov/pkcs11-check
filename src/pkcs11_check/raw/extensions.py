@@ -137,51 +137,47 @@ def lookup_struct(name: str, *, namespace: str | None = None) -> Any | None:
     return _lookup_unique(matches)
 
 
-def _helper_keys(value: int | str, *, namespace: str | None = None) -> tuple[int | str, ...]:
-    if isinstance(value, int):
-        if namespace is None:
-            if value in _STANDARD_TABLES["mechanisms"]:
-                return (value,)
-            symbol = lookup_symbol_name("mechanisms", value)
-            return (value,) if symbol is None else (value, symbol)
-        vendor = _vendor_or_none(namespace)
-        if vendor is None:
-            return (value,)
-        symbol = vendor.names["mechanisms"].get(value)
-        return (value,) if symbol is None else (value, symbol)
-    return (value,)
+def _lookup_vendor_helper(
+    vendor: ExtensionNamespace,
+    helper_type: str,
+    value: int | str,
+) -> Any | None:
+    helpers = vendor.packers if helper_type == "packers" else vendor.inspectors
+    if isinstance(value, str):
+        return helpers.get(value)
+    if value in helpers:
+        return helpers[value]
+    symbol = vendor.names["mechanisms"].get(value)
+    if symbol is None:
+        return None
+    return helpers.get(symbol)
 
 
 def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | None:
     """Return a registered extension packer by namespace or by unique global match."""
-    keys = _helper_keys(value, namespace=namespace)
     if namespace is not None:
         vendor = _vendor_or_none(namespace)
         if vendor is None:
             return None
-        for key in keys:
-            if key in vendor.packers:
-                return vendor.packers[key]
-        return None
-    matches = [vendor.packers[key] for vendor in _EXTENSIONS.values() for key in keys if key in vendor.packers]
+        return _lookup_vendor_helper(vendor, "packers", value)
+    matches = [
+        helper
+        for vendor in _EXTENSIONS.values()
+        if (helper := _lookup_vendor_helper(vendor, "packers", value)) is not None
+    ]
     return _lookup_unique(matches)
 
 
 def lookup_inspector(value: int | str, *, namespace: str | None = None) -> Any | None:
     """Return a registered extension inspector by namespace or by unique global match."""
-    keys = _helper_keys(value, namespace=namespace)
     if namespace is not None:
         vendor = _vendor_or_none(namespace)
         if vendor is None:
             return None
-        for key in keys:
-            if key in vendor.inspectors:
-                return vendor.inspectors[key]
-        return None
+        return _lookup_vendor_helper(vendor, "inspectors", value)
     matches = [
-        vendor.inspectors[key]
+        helper
         for vendor in _EXTENSIONS.values()
-        for key in keys
-        if key in vendor.inspectors
+        if (helper := _lookup_vendor_helper(vendor, "inspectors", value)) is not None
     ]
     return _lookup_unique(matches)

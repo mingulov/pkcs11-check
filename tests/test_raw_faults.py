@@ -20,6 +20,7 @@ def test_nonnull_zero_length_bytes_model_is_first_class() -> None:
 
     value = nonnull_zero_length_bytes(b"abc")
     assert value.pointer_arg.kind == "bytes"
+    assert value.pointer_arg.native_length == 3
     assert value.length_arg.value == 0
     assert value.length_arg.explicit is True
 
@@ -29,7 +30,7 @@ def test_incorrect_explicit_length_keeps_live_storage_metadata() -> None:
 
     value = incorrect_explicit_length_bytes(b"abcd", claim=9)
     assert value.pointer_arg.kind == "bytes"
-    assert value.pointer_arg.native_length == 5
+    assert value.pointer_arg.native_length == 4
     assert value.length_arg.value == 9
 
 

@@ -64,9 +64,16 @@ def zero_length() -> LengthArg:
     return explicit_length(0)
 
 
-def _fault_from_storage(storage: Any, *, length: int, origin: str, note: str) -> SizedFaultArg:
+def _fault_from_storage(
+    storage: Any,
+    *,
+    length: int,
+    origin: str,
+    note: str,
+    native_length: int | None = None,
+) -> SizedFaultArg:
     return SizedFaultArg(
-        pointer_arg=PointerArg.to_storage(storage, origin=origin),
+        pointer_arg=PointerArg.to_storage(storage, origin=origin, native_length=native_length),
         length_arg=explicit_length(length),
         note=note,
     )
@@ -74,11 +81,13 @@ def _fault_from_storage(storage: Any, *, length: int, origin: str, note: str) ->
 
 def nonnull_zero_length_bytes(value: bytes | bytearray | memoryview) -> SizedFaultArg:
     """Model a live non-NULL byte pointer passed with length zero."""
+    data = bytes(value)
     return _fault_from_storage(
-        ctypes.create_string_buffer(bytes(value)),
+        ctypes.create_string_buffer(data),
         length=0,
         origin="fault_nonnull_zero_length_bytes",
         note="nonnull pointer with zero length",
+        native_length=len(data),
     )
 
 
@@ -122,11 +131,13 @@ def incorrect_explicit_length_bytes(
     claim: int,
 ) -> SizedFaultArg:
     """Model a live byte buffer passed with an incorrect explicit length."""
+    data = bytes(value)
     return _fault_from_storage(
-        ctypes.create_string_buffer(bytes(value)),
+        ctypes.create_string_buffer(data),
         length=claim,
         origin="fault_incorrect_explicit_length_bytes",
         note="nonnull byte pointer with incorrect explicit length",
+        native_length=len(data),
     )
 
 

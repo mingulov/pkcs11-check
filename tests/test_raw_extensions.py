@@ -131,3 +131,22 @@ def test_extension_global_numeric_lookup_uses_unique_vendor_symbolic_helper() ->
     )
 
     assert lookup_inspector(0x80019999) is inspector
+
+
+def test_extension_global_numeric_lookup_keeps_vendor_symbolic_fallback_local() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, register_extension
+
+    ibm_inspector = lambda value: "ibm-local"
+    acme_inspector = lambda value: "acme-local"
+
+    register_extension(
+        namespace="ibm",
+        mechanisms={0x80018888: "CKM_SHARED_VENDOR_NAME"},
+        inspectors={"CKM_SHARED_VENDOR_NAME": ibm_inspector},
+    )
+    register_extension(
+        namespace="acme",
+        inspectors={"CKM_SHARED_VENDOR_NAME": acme_inspector},
+    )
+
+    assert lookup_inspector(0x80018888) is ibm_inspector
