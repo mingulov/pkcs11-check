@@ -90,6 +90,24 @@ class RawPKCS11:
     def _load_v32_from_ptr(self, ptr: int) -> None:
         self._load_functions_from_ptr(ptr, _V32_FUNCTION_NAMES)
 
+    def _get_interface_function_list_ptr(self, get_interface: Any, version: tuple[int, int] | None) -> int | None:
+        interface_ptr = CK_INTERFACE_PTR()
+        version_ptr = None
+        requested_version: CK_VERSION | None = None
+        if version is not None:
+            requested_version = CK_VERSION()
+            requested_version.major = version[0]
+            requested_version.minor = version[1]
+            version_ptr = byref(requested_version)
+
+        rv = int(get_interface(None, version_ptr, byref(interface_ptr), 0))
+        if rv != CKR_OK or not bool(interface_ptr):
+            return None
+        function_list_ptr = interface_ptr.contents.pFunctionList
+        if not function_list_ptr:
+            return None
+        return int(function_list_ptr)
+
     def _load_from_lib(self, lib_path: str) -> None:
         self._lib = ctypes.CDLL(lib_path)
 
@@ -102,13 +120,17 @@ class RawPKCS11:
                 CK_INTERFACE_PTR_PTR,
                 CK_FLAGS,
             ]
-            interface_ptr = CK_INTERFACE_PTR()
-            rv = int(get_interface(None, None, byref(interface_ptr), 0))
-            if rv == CKR_OK and bool(interface_ptr):
-                function_list_ptr = int(interface_ptr.contents.pFunctionList)
+            function_list_ptr = self._get_interface_function_list_ptr(get_interface, (3, 2))
+            if function_list_ptr is not None:
                 self._load_from_ptr(function_list_ptr)
                 self._load_v30_from_ptr(function_list_ptr)
                 self._load_v32_from_ptr(function_list_ptr)
+                return
+
+            function_list_ptr = self._get_interface_function_list_ptr(get_interface, None)
+            if function_list_ptr is not None:
+                self._load_from_ptr(function_list_ptr)
+                self._load_v30_from_ptr(function_list_ptr)
                 return
         except (AttributeError, OSError, TypeError, ValueError):
             pass
