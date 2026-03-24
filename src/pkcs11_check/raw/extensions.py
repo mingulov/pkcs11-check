@@ -64,6 +64,31 @@ def _vendor_or_none(namespace: str) -> ExtensionNamespace | None:
     return _EXTENSIONS.get(key)
 
 
+def clear_extensions(namespace: str | None = None) -> None:
+    """Clear all extension registrations or a single vendor namespace."""
+    if namespace is None:
+        _EXTENSIONS.clear()
+        return
+    key = _canonical_vendor_namespace(namespace)
+    _EXTENSIONS.pop(key, None)
+
+
+def _validate_helper_string_keys(
+    namespace: str,
+    keys: Mapping[int | str, Any] | None,
+    same_call_mechanisms: Mapping[int, str] | None,
+) -> None:
+    if not keys:
+        return
+    vendor = _vendor_or_none(namespace)
+    vendor_names = set(vendor.names["mechanisms"].values()) if vendor is not None else set()
+    if same_call_mechanisms is not None:
+        vendor_names.update(same_call_mechanisms.values())
+    for key in keys:
+        if isinstance(key, str) and key not in vendor_names:
+            raise ValueError(f"unknown vendor mechanism helper key: {key}")
+
+
 def register_extension(
     *,
     namespace: str,
@@ -77,6 +102,8 @@ def register_extension(
     inspectors: Mapping[int | str, Any] | None = None,
 ) -> None:
     """Register vendor-specific names and helper objects."""
+    _validate_helper_string_keys(namespace, packers, mechanisms)
+    _validate_helper_string_keys(namespace, inspectors, mechanisms)
     vendor = _vendor(namespace)
     name_mappings = {
         "mechanisms": mechanisms,

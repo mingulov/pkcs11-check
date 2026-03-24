@@ -89,26 +89,21 @@ def test_extension_namespaced_numeric_lookup_uses_vendor_symbol_mapping() -> Non
 
 
 def test_extension_global_numeric_lookup_does_not_leak_standard_symbol_fallback() -> None:
-    from pkcs11_check.raw.extensions import lookup_inspector, register_extension
-    from pkcs11_check.raw.types_std import CKM_AES_KEY_GEN
+    import pytest
 
-    inspector = lambda value: "vendor-standard-name-leak"
+    from pkcs11_check.raw.extensions import register_extension
 
-    register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": inspector})
-
-    assert lookup_inspector(CKM_AES_KEY_GEN) is None
-    assert lookup_inspector("CKM_AES_KEY_GEN") is inspector
+    with pytest.raises(ValueError, match="unknown vendor mechanism helper key"):
+        register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": lambda value: value})
 
 
 def test_extension_namespaced_numeric_lookup_does_not_fall_back_to_standard_name() -> None:
-    from pkcs11_check.raw.extensions import lookup_inspector, register_extension
-    from pkcs11_check.raw.types_std import CKM_AES_KEY_GEN
+    import pytest
 
-    inspector = lambda value: "vendor-standard-name-leak"
+    from pkcs11_check.raw.extensions import register_extension
 
-    register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": inspector})
-
-    assert lookup_inspector(CKM_AES_KEY_GEN, namespace="ibm") is None
+    with pytest.raises(ValueError, match="unknown vendor mechanism helper key"):
+        register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": lambda value: value})
 
 
 def test_extension_read_only_lookup_does_not_create_namespace() -> None:
@@ -146,7 +141,63 @@ def test_extension_global_numeric_lookup_keeps_vendor_symbolic_fallback_local() 
     )
     register_extension(
         namespace="acme",
+        mechanisms={0x80018889: "CKM_SHARED_VENDOR_NAME"},
         inspectors={"CKM_SHARED_VENDOR_NAME": acme_inspector},
     )
 
     assert lookup_inspector(0x80018888) is ibm_inspector
+
+
+def test_extension_clear_can_reset_one_namespace_or_all() -> None:
+    from pkcs11_check.raw.extensions import clear_extensions, lookup_symbol_name, register_extension
+
+    register_extension(namespace="ibm", mechanisms={0x80017771: "CKM_IBM_ONE"})
+    register_extension(namespace="acme", mechanisms={0x80017772: "CKM_ACME_TWO"})
+
+    clear_extensions(namespace="ibm")
+    assert lookup_symbol_name("mechanisms", 0x80017771, namespace="ibm") is None
+    assert lookup_symbol_name("mechanisms", 0x80017772, namespace="acme") == "CKM_ACME_TWO"
+
+    clear_extensions()
+    assert lookup_symbol_name("mechanisms", 0x80017772, namespace="acme") is None
+
+
+def test_extension_clear_missing_namespace_is_noop() -> None:
+    from pkcs11_check.raw import extensions
+    from pkcs11_check.raw.extensions import clear_extensions
+
+    before = set(extensions._EXTENSIONS)
+    clear_extensions(namespace="ghost")
+    assert set(extensions._EXTENSIONS) == before
+
+
+def test_extension_register_rejects_dead_string_helper_key() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    with pytest.raises(ValueError, match="unknown vendor mechanism helper key"):
+        register_extension(namespace="ibm", inspectors={"CKM_IBM_MISSING": lambda value: value})
+
+
+def test_extension_register_accepts_same_call_vendor_string_helper_key() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, register_extension
+
+    inspector = lambda value: "ok"
+
+    register_extension(
+        namespace="ibm",
+        mechanisms={0x80017773: "CKM_IBM_SAME_CALL"},
+        inspectors={"CKM_IBM_SAME_CALL": inspector},
+    )
+
+    assert lookup_inspector(0x80017773, namespace="ibm") is inspector
+
+
+def test_extension_register_rejects_standard_name_as_vendor_helper_alias() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    with pytest.raises(ValueError, match="unknown vendor mechanism helper key"):
+        register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": lambda value: value})
