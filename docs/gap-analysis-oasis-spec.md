@@ -18,6 +18,10 @@ The 2026-03-20 gap analysis is no longer accurate. Phases A-H were implemented s
 the suite now far exceeds the old size baseline. The remaining work is not "grow the suite"; it is
 "finish the missing OASIS corners, fix stale accounting, and keep the docs honest."
 
+One structural change since the older analysis: Phase A and other direct-entry-point coverage now
+sit on the generated `pkcs11_check.raw` substrate (`types_std.py`, `metadata_std.py`, shared raw
+bootstrap/pack/fault helpers) instead of file-local ad hoc `ctypes` walkers.
+
 | Area | Current status | Main remaining gaps |
 |------|----------------|---------------------|
 | Mechanisms | Broad expansion across Phases C-G | `ML_DSA_EXTERNAL_MU*`, `KMAC`, standalone SHAKE, `PKCS12_PBE_EXPORT` / `IMPORT`, `RSA_PKCS_NULL`, some Tier 1 stragglers |
@@ -32,7 +36,7 @@ the suite now far exceeds the old size baseline. The remaining work is not "grow
 
 | Phase | Status | Audit summary |
 |------|--------|---------------|
-| A | Partial | `test_operation_state.py`, `test_sign_recover.py`, `test_v30_session.py`, and `test_dual_function.py` landed, but Phase A acceptance is still blocked by missing success-path coverage for `C_WaitForSlotEvent`, `C_SignEncryptUpdate`, `C_DecryptVerifyUpdate`, message finalizers, and async lifecycle |
+| A | Partial | `test_operation_state.py`, `test_sign_recover.py`, `test_v30_session.py`, and `test_dual_function.py` now share the generated `pkcs11_check.raw` substrate rather than local function-list walkers, but Phase A acceptance is still blocked by missing success-path coverage for `C_WaitForSlotEvent`, `C_SignEncryptUpdate`, `C_DecryptVerifyUpdate`, message finalizers, and async lifecycle |
 | B | Partial | Major object and attribute-enforcement files landed, including `test_attribute_enforcement.py`, but template-constraint attrs and explicit `CKO_OTP_KEY` object coverage remain open |
 | C | Mostly complete | All major planned files exist; the remaining work is narrower mechanism-level cleanup rather than whole families |
 | D | Partial | `test_hash_ml_dsa.py`, `test_hash_slh_dsa.py`, and `test_stateful_sigs.py` exist, but `ML_DSA_EXTERNAL_MU*`, `KMAC`, and standalone SHAKE are still missing, and the generic `CKM_HASH_*` cases are still skipped due to missing binding support |
@@ -55,6 +59,11 @@ Clearly implemented since the previous analysis:
 - `C_SessionCancel`
 - `C_DigestEncryptUpdate`
 - `C_DecryptDigestUpdate`
+
+Structural coverage change since the previous analysis:
+- the standard raw type/metadata layer is generated once from the vendored PKCS#11 headers and reused across the raw API/tests
+- migrated product tests now use shared `pkcs11_check.raw` bootstrap and packing helpers
+- the ad hoc manual `C_GetFunctionList` / file-local `ctypes` walkers were removed from the migrated Task 7 and Task 8 files in favor of that shared substrate
 
 Closed in `test_remaining_gaps.py`:
 - `C_WaitForSlotEvent` — non-blocking success-path test added

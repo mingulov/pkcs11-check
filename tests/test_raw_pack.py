@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import subprocess
+import zipfile
+from pathlib import Path
+
 
 def test_pack_template_keeps_pointer_and_length_separate() -> None:
     from pkcs11_check.raw.pack import attr_ulong, explicit_length
@@ -44,3 +48,25 @@ def test_pack_mech_bytes_native_length_matches_payload_length() -> None:
     value = mech_bytes(0x80010099, b"abc")
     assert value.pointer_arg.native_length == 3
     assert len(value.storage) == 3
+
+
+def test_wheel_includes_vendored_standard_header_and_generated_raw_modules(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    dist_dir = tmp_path / "dist"
+
+    result = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(dist_dir)],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    wheel_path = next(dist_dir.glob("*.whl"))
+    with zipfile.ZipFile(wheel_path) as wheel:
+        names = set(wheel.namelist())
+
+    assert "pkcs11_check/raw/types_std.py" in names
+    assert "pkcs11_check/raw/metadata_std.py" in names
+    assert "pkcs11_check/_vendor/pkcs11-headers/3.2/pkcs11.h" in names
