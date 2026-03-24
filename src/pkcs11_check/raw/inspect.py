@@ -10,8 +10,8 @@ from .faults import CountFaultArg, SizedFaultArg
 from .pack import LengthArg, PackedAttribute, PackedMechanism, PointerArg, TemplateArg
 
 
-def _render_symbol(namespace: str, value: int) -> str:
-    return lookup_symbol_name(namespace, value) or f"0x{value:08x}"
+def _render_symbol(category: str, value: int, *, namespace: str | None = None) -> str:
+    return lookup_symbol_name(category, value, namespace=namespace) or f"0x{value:08x}"
 
 
 def render_length(length: LengthArg) -> str:
@@ -61,15 +61,15 @@ def render_pointer(pointer: PointerArg) -> str:
     return " ".join(parts)
 
 
-def render_attribute(attribute: PackedAttribute) -> str:
+def render_attribute(attribute: PackedAttribute, *, namespace: str | None = None) -> str:
     """Render a packed attribute with its pointer and length provenance."""
-    name = _render_symbol("attrs", int(attribute.attribute.type))
+    name = _render_symbol("attrs", int(attribute.attribute.type), namespace=namespace)
     return f"{name} ({render_pointer(attribute.pointer_arg)} {render_length(attribute.length_arg)})"
 
 
-def render_template(template: TemplateArg) -> str:
+def render_template(template: TemplateArg, *, namespace: str | None = None) -> str:
     """Render a CK_ATTRIBUTE template and its packed attributes."""
-    rendered = ", ".join(render_attribute(attribute) for attribute in template.attributes)
+    rendered = ", ".join(render_attribute(attribute, namespace=namespace) for attribute in template.attributes)
     return f"template[count={template.count}] [{rendered}]"
 
 
@@ -86,11 +86,11 @@ def render_sized_fault(fault: SizedFaultArg) -> str:
     return f"sized_fault[{fault.note}] ({render_pointer(fault.pointer_arg)}, {render_length(fault.length_arg)})"
 
 
-def render_mechanism(mechanism: PackedMechanism) -> str:
+def render_mechanism(mechanism: PackedMechanism, *, namespace: str | None = None) -> str:
     """Render a packed mechanism using symbolic naming when available."""
     mechanism_id = int(mechanism.ck.mechanism)
-    name = _render_symbol("mechanisms", mechanism_id)
-    inspector = lookup_inspector(mechanism_id)
+    name = _render_symbol("mechanisms", mechanism_id, namespace=namespace)
+    inspector = lookup_inspector(mechanism_id, namespace=namespace)
     if inspector is not None:
         detail = inspector(mechanism)
     else:

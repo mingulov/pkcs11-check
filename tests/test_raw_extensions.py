@@ -98,3 +98,22 @@ def test_extension_global_numeric_lookup_does_not_leak_standard_symbol_fallback(
 
     assert lookup_inspector(CKM_AES_KEY_GEN) is None
     assert lookup_inspector("CKM_AES_KEY_GEN") is inspector
+
+
+def test_extension_namespaced_numeric_lookup_does_not_fall_back_to_standard_name() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, register_extension
+    from pkcs11_check.raw.types_std import CKM_AES_KEY_GEN
+
+    inspector = lambda value: "vendor-standard-name-leak"
+
+    register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": inspector})
+
+    assert lookup_inspector(CKM_AES_KEY_GEN, namespace="ibm") is None
+
+
+def test_extension_read_only_lookup_does_not_create_namespace() -> None:
+    from pkcs11_check.raw import extensions
+
+    before = set(extensions._EXTENSIONS)
+    assert extensions.lookup_inspector(0x8FFF0001, namespace="ghost") is None
+    assert set(extensions._EXTENSIONS) == before

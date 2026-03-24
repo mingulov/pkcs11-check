@@ -59,6 +59,11 @@ def _vendor(namespace: str) -> ExtensionNamespace:
     return _EXTENSIONS.setdefault(key, ExtensionNamespace())
 
 
+def _vendor_or_none(namespace: str) -> ExtensionNamespace | None:
+    key = _canonical_vendor_namespace(namespace)
+    return _EXTENSIONS.get(key)
+
+
 def register_extension(
     *,
     namespace: str,
@@ -109,7 +114,10 @@ def lookup_symbol_name(category: str, value: int, *, namespace: str | None = Non
     if value in standard:
         return standard[value]
     if namespace is not None:
-        return _vendor(namespace).names[symbol_category].get(value)
+        vendor = _vendor_or_none(namespace)
+        if vendor is None:
+            return None
+        return vendor.names[symbol_category].get(value)
     matches = [
         vendor.names[symbol_category][value]
         for vendor in _EXTENSIONS.values()
@@ -121,7 +129,10 @@ def lookup_symbol_name(category: str, value: int, *, namespace: str | None = Non
 def lookup_struct(name: str, *, namespace: str | None = None) -> Any | None:
     """Return a registered extension struct by namespace or by unique global match."""
     if namespace is not None:
-        return _vendor(namespace).structs.get(name)
+        vendor = _vendor_or_none(namespace)
+        if vendor is None:
+            return None
+        return vendor.structs.get(name)
     matches = [vendor.structs[name] for vendor in _EXTENSIONS.values() if name in vendor.structs]
     return _lookup_unique(matches)
 
@@ -130,7 +141,10 @@ def _helper_keys(value: int | str, *, namespace: str | None = None) -> tuple[int
     if isinstance(value, int):
         if namespace is None:
             return (value,)
-        symbol = lookup_symbol_name("mechanisms", value, namespace=namespace)
+        vendor = _vendor_or_none(namespace)
+        if vendor is None:
+            return (value,)
+        symbol = vendor.names["mechanisms"].get(value)
         return (value,) if symbol is None else (value, symbol)
     return (value,)
 
@@ -139,7 +153,9 @@ def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | No
     """Return a registered extension packer by namespace or by unique global match."""
     keys = _helper_keys(value, namespace=namespace)
     if namespace is not None:
-        vendor = _vendor(namespace)
+        vendor = _vendor_or_none(namespace)
+        if vendor is None:
+            return None
         for key in keys:
             if key in vendor.packers:
                 return vendor.packers[key]
@@ -152,7 +168,9 @@ def lookup_inspector(value: int | str, *, namespace: str | None = None) -> Any |
     """Return a registered extension inspector by namespace or by unique global match."""
     keys = _helper_keys(value, namespace=namespace)
     if namespace is not None:
-        vendor = _vendor(namespace)
+        vendor = _vendor_or_none(namespace)
+        if vendor is None:
+            return None
         for key in keys:
             if key in vendor.inspectors:
                 return vendor.inspectors[key]

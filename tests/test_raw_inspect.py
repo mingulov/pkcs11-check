@@ -79,3 +79,28 @@ def test_inspect_attribute_shows_preview_for_ctypes_byte_array() -> None:
     text = render_attribute(attr_array(0x00000011, [1, 2, 3], ctype=ctypes.c_ubyte))
     assert "kind=bytes" in text
     assert "preview=010203" in text
+
+
+def test_inspect_mechanism_can_render_colliding_vendor_ids_by_namespace() -> None:
+    from pkcs11_check.raw.extensions import register_extension
+    from pkcs11_check.raw.inspect import render_mechanism
+    from pkcs11_check.raw.pack import mech_simple
+
+    register_extension(
+        namespace="ibm",
+        mechanisms={0x80010030: "CKM_IBM_COLLIDE"},
+        inspectors={0x80010030: lambda _value: "ibm-detail"},
+    )
+    register_extension(
+        namespace="acme",
+        mechanisms={0x80010030: "CKM_ACME_COLLIDE"},
+        inspectors={0x80010030: lambda _value: "acme-detail"},
+    )
+
+    ibm_text = render_mechanism(mech_simple(0x80010030), namespace="ibm")
+    acme_text = render_mechanism(mech_simple(0x80010030), namespace="acme")
+
+    assert "CKM_IBM_COLLIDE" in ibm_text
+    assert "ibm-detail" in ibm_text
+    assert "CKM_ACME_COLLIDE" in acme_text
+    assert "acme-detail" in acme_text
