@@ -34,13 +34,15 @@ def _byte_preview(storage: Any) -> str | None:
 
 
 def _preview_from_pointer(pointer: PointerArg) -> str | None:
-    if pointer.pointer is None or pointer.storage_size is None:
+    if pointer.pointer is None or pointer.storage_size is None or pointer.storage is None:
+        return None
+    raw = _byte_preview(pointer.storage)
+    if raw is None:
         return None
     read_size = pointer.storage_size
     if pointer.native_length is not None:
         read_size = min(pointer.native_length, pointer.storage_size)
-    data = ctypes.string_at(pointer.pointer, read_size)
-    return data[:16].hex()
+    return raw[: read_size * 2][:32]
 
 
 def render_pointer(pointer: PointerArg) -> str:

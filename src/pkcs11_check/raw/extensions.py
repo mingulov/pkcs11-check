@@ -119,6 +119,11 @@ def _validate_name_mapping(
     if category != "mechanisms":
         return
     vendor = _vendor_or_none(namespace)
+    if vendor is not None:
+        for key, value in mapping.items():
+            existing = vendor.names["mechanisms"].get(key)
+            if existing is not None and existing != value:
+                raise ValueError("mechanism id already mapped in namespace")
     existing_names = set(vendor.names["mechanisms"].values()) if vendor is not None else set()
     new_names = list(mapping.values())
     if len(new_names) != len(set(new_names)):

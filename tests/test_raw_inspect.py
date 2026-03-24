@@ -125,3 +125,23 @@ def test_inspect_byte_preview_is_clamped_to_owned_storage() -> None:
 
     text = render_pointer(pointer)
     assert "preview=616263" in text
+
+
+def test_inspect_pointer_does_not_preview_unowned_invalid_byte_pointer() -> None:
+    import ctypes
+
+    from pkcs11_check.raw.inspect import render_pointer
+    from pkcs11_check.raw.pack import PointerArg
+
+    pointer = PointerArg(
+        pointer=ctypes.c_void_p(1),
+        storage=None,
+        kind="bytes",
+        origin="invalid",
+        native_length=16,
+        storage_size=16,
+    )
+
+    text = render_pointer(pointer)
+    assert "kind=bytes" in text
+    assert "preview=" not in text

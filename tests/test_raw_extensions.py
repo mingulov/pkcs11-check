@@ -318,6 +318,17 @@ def test_extension_register_rejects_duplicate_mechanism_name_in_same_namespace()
         register_extension(namespace="ibm", mechanisms={0x80015552: "CKM_IBM_DUP"})
 
 
+def test_extension_register_rejects_mechanism_id_remap_in_same_namespace() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    register_extension(namespace="ibm", mechanisms={0x80015557: "CKM_IBM_ORIG"})
+
+    with pytest.raises(ValueError, match="mechanism id already mapped in namespace"):
+        register_extension(namespace="ibm", mechanisms={0x80015557: "CKM_IBM_REMAP"})
+
+
 def test_extension_register_rejects_duplicate_mechanism_name_in_single_call() -> None:
     import pytest
 
