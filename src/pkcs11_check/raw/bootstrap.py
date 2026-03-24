@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ctypes
 from ctypes import byref
 
 from .core import CKR_OK
@@ -12,7 +11,6 @@ from .types_std import (
     CK_SLOT_ID,
     CK_ULONG,
     CK_UTF8CHAR,
-    CK_UTF8CHAR_PTR,
 )
 
 
@@ -42,20 +40,20 @@ def open_session(raw: object, slot_id: int, flags: int) -> int:
     return int(session.value)
 
 
-def login_user(raw: object, session: int, user_type: int, pin: str | bytes) -> None:
-    pin_bytes = pin.encode("utf-8") if isinstance(pin, str) else pin
+def login_user(raw: object, session: int, user_type: int, pin: bytes | bytearray | memoryview) -> None:
+    if isinstance(pin, str):
+        raise TypeError("pin must be bytes-like")
+    try:
+        pin_bytes = bytes(memoryview(pin))
+    except TypeError as exc:
+        raise TypeError("pin must be bytes-like") from exc
     pin_buffer = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-    pin_ptr: CK_UTF8CHAR_PTR | None
-    if pin_bytes:
-        pin_ptr = pin_buffer
-    else:
-        pin_ptr = None
     expect_rv(
         int(
             raw.C_Login(
                 session,
                 user_type,
-                pin_ptr,
+                pin_buffer,
                 len(pin_bytes),
             )
         ),
