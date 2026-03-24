@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
 from .extensions import lookup_inspector, lookup_symbol_name
@@ -21,6 +22,14 @@ def render_length(length: LengthArg) -> str:
 
 def _byte_preview(storage: Any) -> str | None:
     raw = getattr(storage, "raw", None)
+    if raw is None and isinstance(storage, bytes):
+        raw = storage
+    if raw is None and hasattr(storage, "_type_") and isinstance(storage, object):
+        item_type = getattr(type(storage), "_type_", None)
+        if item_type in (bytes,):
+            raw = bytes(storage)
+        elif item_type in (ctypes.c_char, ctypes.c_byte, ctypes.c_ubyte):
+            raw = bytes(storage)
     if raw is None:
         return None
     data = raw[:-1] if raw.endswith(b"\x00") else raw

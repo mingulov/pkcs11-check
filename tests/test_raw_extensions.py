@@ -86,3 +86,15 @@ def test_extension_namespaced_numeric_lookup_uses_vendor_symbol_mapping() -> Non
 
     assert lookup_packer(0x80010004, namespace="ibm") is packer_ibm
     assert lookup_inspector(0x80010004, namespace="ibm") is inspector_ibm
+
+
+def test_extension_global_numeric_lookup_does_not_leak_standard_symbol_fallback() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, register_extension
+    from pkcs11_check.raw.types_std import CKM_AES_KEY_GEN
+
+    inspector = lambda value: "vendor-standard-name-leak"
+
+    register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": inspector})
+
+    assert lookup_inspector(CKM_AES_KEY_GEN) is None
+    assert lookup_inspector("CKM_AES_KEY_GEN") is inspector

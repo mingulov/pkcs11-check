@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+
 
 def test_inspect_mechanism_shows_symbol_and_length() -> None:
     from pkcs11_check.raw.inspect import render_mechanism
@@ -68,3 +70,12 @@ def test_inspect_sized_fault_renders_note_pointer_and_explicit_length() -> None:
     assert "nonnull pointer with zero length" in text
     assert "kind=bytes" in text
     assert "len=0 explicit" in text
+
+
+def test_inspect_attribute_shows_preview_for_ctypes_byte_array() -> None:
+    from pkcs11_check.raw.inspect import render_attribute
+    from pkcs11_check.raw.pack import attr_array
+
+    text = render_attribute(attr_array(0x00000011, [1, 2, 3], ctype=ctypes.c_ubyte))
+    assert "kind=bytes" in text
+    assert "preview=010203" in text
