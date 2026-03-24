@@ -256,3 +256,13 @@ def test_extension_register_rejects_standard_name_as_vendor_helper_alias() -> No
 
     with pytest.raises(ValueError, match="unknown vendor mechanism helper key"):
         register_extension(namespace="ibm", inspectors={"CKM_AES_KEY_GEN": lambda value: value})
+
+
+def test_extension_register_rejects_standard_numeric_helper_key() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+    from pkcs11_check.raw.types_std import CKM_AES_KEY_GEN
+
+    with pytest.raises(ValueError, match="standard mechanism ids are not allowed"):
+        register_extension(namespace="ibm", inspectors={CKM_AES_KEY_GEN: lambda value: value})

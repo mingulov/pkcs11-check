@@ -112,3 +112,16 @@ def test_inspect_mechanism_can_render_colliding_vendor_ids_by_namespace() -> Non
     assert "ibm-detail" in ibm_text
     assert "CKM_ACME_COLLIDE" in acme_text
     assert "acme-detail" in acme_text
+
+
+def test_inspect_byte_preview_is_clamped_to_owned_storage() -> None:
+    import ctypes
+
+    from pkcs11_check.raw.inspect import render_pointer
+    from pkcs11_check.raw.pack import PointerArg
+
+    storage = ctypes.create_string_buffer(b"abc", 3)
+    pointer = PointerArg.to_storage(storage, origin="test_preview", native_length=10)
+
+    text = render_pointer(pointer)
+    assert "preview=616263" in text

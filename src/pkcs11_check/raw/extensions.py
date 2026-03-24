@@ -89,6 +89,14 @@ def _validate_helper_string_keys(
             raise ValueError(f"unknown vendor mechanism helper key: {key}")
 
 
+def _validate_helper_numeric_keys(keys: Mapping[int | str, Any] | None) -> None:
+    if not keys:
+        return
+    for key in keys:
+        if isinstance(key, int) and key in _STANDARD_TABLES["mechanisms"]:
+            raise ValueError(f"standard mechanism ids are not allowed in extension helpers: 0x{key:08x}")
+
+
 def register_extension(
     *,
     namespace: str,
@@ -102,6 +110,8 @@ def register_extension(
     inspectors: Mapping[int | str, Any] | None = None,
 ) -> None:
     """Register vendor-specific names and helper objects."""
+    _validate_helper_numeric_keys(packers)
+    _validate_helper_numeric_keys(inspectors)
     _validate_helper_string_keys(namespace, packers, mechanisms)
     _validate_helper_string_keys(namespace, inspectors, mechanisms)
     vendor = _vendor(namespace)

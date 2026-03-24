@@ -34,6 +34,7 @@ class PointerArg:
     kind: str = "null"
     origin: str = "unknown"
     native_length: int | None = None
+    storage_size: int | None = None
     element_count: int | None = None
     element_type: str | None = None
 
@@ -55,6 +56,7 @@ class PointerArg:
             pointer = ctypes.cast(ctypes.pointer(storage), CK_VOID_PTR)
             kind = "struct"
             resolved_native_length = ctypes.sizeof(storage)
+            storage_size = ctypes.sizeof(storage)
             element_count = 1
             element_type = type(storage).__name__
         elif isinstance(storage, ctypes.Array):
@@ -62,12 +64,14 @@ class PointerArg:
             item_type = getattr(type(storage), "_type_", None)
             kind = "bytes" if item_type in (ctypes.c_char, ctypes.c_byte, ctypes.c_ubyte) else "array"
             resolved_native_length = ctypes.sizeof(storage)
+            storage_size = ctypes.sizeof(storage)
             element_count = len(storage)
             element_type = getattr(item_type, "__name__", type(item_type).__name__ if item_type else None)
         else:
             pointer = ctypes.cast(ctypes.pointer(storage), CK_VOID_PTR)
             kind = "scalar"
             resolved_native_length = ctypes.sizeof(storage)
+            storage_size = ctypes.sizeof(storage)
             element_count = 1
             element_type = type(storage).__name__
         return cls(
@@ -76,6 +80,7 @@ class PointerArg:
             kind=kind,
             origin=origin,
             native_length=resolved_native_length if native_length is None else native_length,
+            storage_size=storage_size,
             element_count=element_count,
             element_type=element_type,
         )
