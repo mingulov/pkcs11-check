@@ -68,3 +68,14 @@ class TestMetadataParity:
             (Path(__file__).parents[1] / "src/pkcs11_check/raw/metadata_std.py").read_text()
         )
         assert len(cur) >= len(ref), f"Function count regressed: {len(cur)} < {len(ref)}"
+
+
+class TestTypedConstants:
+    """Verify all generated constants use typed families, not plain int."""
+
+    def test_no_plain_int_constants(self) -> None:
+        text = (Path(__file__).parents[1] / "src/pkcs11_check/raw/types_std.py").read_text()
+        # Match lines like "CKA_TOKEN = 0x00000001" (plain int, no class wrapper)
+        plain_pattern = re.compile(r"^(CK[A-Z_]+)\s*=\s*0x[0-9a-fA-F]+$", re.MULTILINE)
+        plain_ints = plain_pattern.findall(text)
+        assert not plain_ints, f"Plain int constants found (should use typed classes): {plain_ints[:10]}"

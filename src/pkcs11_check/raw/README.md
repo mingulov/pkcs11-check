@@ -30,6 +30,56 @@ What it must not become:
 If a future helper changes the meaning of the call without the test author opting into that change
 explicitly, it does not belong in `pkcs11_check.raw`.
 
+## Typed Constants
+
+All PKCS#11 constants are typed int subclasses organized by family:
+
+| Class | Family | Example |
+|-------|--------|---------|
+| `CKA` | Attributes | `CKA_TOKEN`, `CKA_ENCRYPT` |
+| `CKM` | Mechanisms | `CKM_AES_KEY_GEN`, `CKM_RSA_PKCS` |
+| `CKK` | Key types | `CKK_AES`, `CKK_RSA` |
+| `CKO` | Object classes | `CKO_SECRET_KEY`, `CKO_PUBLIC_KEY` |
+| `CKR` | Return values | `CKR_OK`, `CKR_GENERAL_ERROR` |
+| `CKF` | Flags | `CKF_RW_SESSION`, `CKF_ENCRYPT` |
+
+Import constant classes from `pkcs11_check.raw`, individual constants from `types_std`:
+
+```python
+from pkcs11_check.raw import CKA, CKM, RawPKCS11
+from pkcs11_check.raw.types_std import CKA_TOKEN, CKM_AES_KEY_GEN
+```
+
+Vendor constants need no registration:
+
+```python
+CKM_VENDOR_ALGO = CKM(0x80010001, "CKM_VENDOR_ALGO")
+# or inline:
+mech_simple(CKM(0x80010001))
+```
+
+CKF flags support bitwise operations:
+
+```python
+flags = CKF_RW_SESSION | CKF_SERIAL_SESSION  # returns CKF
+```
+
+## Recipes
+
+Convenience helpers that reduce boilerplate without hiding PKCS#11 semantics.
+All take `raw: RawPKCS11` as first parameter and use `expect_rv()` for errors.
+
+- `quick_session(raw, slot_id, flags, pin, user_type)` - open session + login
+- `gen_aes_key(raw, session, bits, attrs)` - generate AES key
+- `gen_rsa_keypair(raw, session, bits, public_attrs, private_attrs)` - generate RSA keypair
+- `gen_ec_keypair(raw, session, curve_oid, public_attrs, private_attrs)` - generate EC keypair
+- `import_secret_key(raw, session, key_type, value, attrs)` - import secret key
+- `destroy_quietly(raw, session, handle)` - destroy object, ignore errors
+- `encrypt_single(raw, session, key, mechanism, plaintext)` - single-part encrypt
+- `sign_single(raw, session, key, mechanism, data)` - single-part sign
+
+Recipes call `expect_rv()` and raise on non-OK. For exact CK_RV control, use raw C_* calls.
+
 ## Package Layout
 
 - `types_std.py`
