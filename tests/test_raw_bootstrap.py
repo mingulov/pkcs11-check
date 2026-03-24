@@ -74,6 +74,42 @@ def test_login_user_passes_explicit_user_type_and_pin_bytes() -> None:
     assert seen == [(99, CKU_CONTEXT_SPECIFIC, b"1234", 4)]
 
 
+def test_login_user_accepts_bytearray_pin_input() -> None:
+    from pkcs11_check.raw.bootstrap import login_user
+    from pkcs11_check.raw.core import CKR_OK, CKU_USER
+    from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
+
+    seen: list[bytes] = []
+
+    class FakeRaw:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+            pin_ptr = ctypes.cast(pin, CK_UTF8CHAR_PTR)
+            seen.append(bytes(pin_ptr[index] for index in range(pin_len)))
+            return CKR_OK
+
+    login_user(FakeRaw(), session=17, user_type=CKU_USER, pin=bytearray(b"5678"))
+
+    assert seen == [b"5678"]
+
+
+def test_login_user_accepts_memoryview_pin_input() -> None:
+    from pkcs11_check.raw.bootstrap import login_user
+    from pkcs11_check.raw.core import CKR_OK, CKU_USER
+    from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
+
+    seen: list[bytes] = []
+
+    class FakeRaw:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+            pin_ptr = ctypes.cast(pin, CK_UTF8CHAR_PTR)
+            seen.append(bytes(pin_ptr[index] for index in range(pin_len)))
+            return CKR_OK
+
+    login_user(FakeRaw(), session=17, user_type=CKU_USER, pin=memoryview(b"90"))
+
+    assert seen == [b"90"]
+
+
 def test_login_user_keeps_empty_pin_explicit_instead_of_null() -> None:
     from pkcs11_check.raw.bootstrap import login_user
     from pkcs11_check.raw.core import CKR_OK, CKU_USER
@@ -104,6 +140,20 @@ def test_login_user_rejects_text_pin_input() -> None:
 
     with pytest.raises(TypeError, match="pin must be bytes-like"):
         login_user(FakeRaw(), session=17, user_type=CKU_USER, pin="1234")
+
+
+def test_login_user_rejects_non_buffer_input() -> None:
+    import pytest
+
+    from pkcs11_check.raw.bootstrap import login_user
+    from pkcs11_check.raw.core import CKU_USER
+
+    class FakeRaw:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+            raise AssertionError("should not be called")
+
+    with pytest.raises(TypeError, match="pin must be bytes-like"):
+        login_user(FakeRaw(), session=17, user_type=CKU_USER, pin=None)
 
 
 def test_close_session_quietly_is_best_effort_for_teardown() -> None:
