@@ -33,262 +33,105 @@ C_GetFunctionList at index 3):
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
+from pkcs11_check.testcases._raw_subprocess import run_raw_script
+
 pytestmark = pytest.mark.full
 
-# ---------------------------------------------------------------------------
-# Subprocess boilerplate (same pattern as test_operation_state.py)
-# ---------------------------------------------------------------------------
-
-_SUBPROCESS_BOILERPLATE = """\
-import ctypes
-from ctypes import c_ulong, c_void_p, c_ubyte, c_char_p, POINTER, byref, cast
-import sys
+_SCRIPT_PREAMBLE = """\
 import binascii
+import ctypes
+import sys
+from ctypes import byref, c_char_p, c_ubyte, cast
 
-CK_RV = c_ulong
-CKR_OK = 0x00000000
-CKR_FUNCTION_NOT_SUPPORTED = 0x00000054
-CKR_OPERATION_ACTIVE = 0x00000090
-CKR_OPERATION_NOT_INITIALIZED = 0x00000091
-CKR_USER_ALREADY_LOGGED_IN = 0x00000100
-CKR_CRYPTOKI_ALREADY_INITIALIZED = 0x00000191
-CKF_SERIAL_SESSION = 0x00000004
-CKF_RW_SESSION = 0x00000002
-CKM_SHA256 = 0x00000250
-CKM_AES_KEY_GEN = 0x00001080
-CKM_AES_CBC = 0x00001082
-CKA_CLASS = 0x00000000
-CKA_KEY_TYPE = 0x00000100
-CKA_TOKEN = 0x00000001
-CKA_ENCRYPT = 0x00000104
-CKA_DECRYPT = 0x00000105
-CKA_VALUE_LEN = 0x00000161
-CKO_SECRET_KEY = 0x00000004
-CKK_AES = 0x0000001F
+from pkcs11_check.raw import (
+    CKA_CLASS,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_KEY_TYPE,
+    CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKK_AES,
+    CKM_AES_CBC,
+    CKM_AES_KEY_GEN,
+    CKM_SHA256,
+    CKO_SECRET_KEY,
+    CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_OK,
+    CKR_OPERATION_ACTIVE,
+    CK_ATTRIBUTE_PTR,
+    CK_MECHANISM,
+    CK_OBJECT_HANDLE,
+    RawPKCS11,
+)
+from pkcs11_check.raw.bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
+from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 
-# Codes that indicate the module does not support dual-function operations.
-# CKR_FUNCTION_NOT_SUPPORTED (0x54): function pointer is a stub.
-# CKR_OPERATION_ACTIVE (0x90): module allows only one active op per session,
-#   so starting a second active operation (e.g. EncryptInit after DigestInit)
-#   fails with OPERATION_ACTIVE rather than silently permitting the dual state.
 _DUAL_UNSUPPORTED = (CKR_FUNCTION_NOT_SUPPORTED, CKR_OPERATION_ACTIVE)
 
-lib = ctypes.CDLL({module_path!r})
 
-C_GetFunctionList = lib.C_GetFunctionList
-C_GetFunctionList.restype = CK_RV
-C_GetFunctionList.argtypes = [POINTER(c_void_p)]
+def _template_ptr(attrs):
+    return cast(attrs.array, CK_ATTRIBUTE_PTR)
 
-funclist_ptr = c_void_p()
-rv = C_GetFunctionList(byref(funclist_ptr))
-if rv != CKR_OK:
-    print(f"FATAL:GetFunctionList:0x{{rv:08x}}")
-    sys.exit(1)
 
-ptr_size = ctypes.sizeof(c_void_p)
-base = funclist_ptr.value
+def _byte_array(data: bytes):
+    return (c_ubyte * len(data)).from_buffer_copy(data)
 
-def _get_func(index):
-    offset = ptr_size + (index * ptr_size)
-    addr = ctypes.cast(base + offset, POINTER(c_void_p)).contents.value
-    return addr
 
-# CK_FUNCTION_LIST indices (0-based, after version field, C_GetFunctionList=3):
-# 0=C_Initialize, 1=C_Finalize, 2=C_GetInfo, 3=C_GetFunctionList,
-# 4=C_GetSlotList, 12=C_OpenSession, 13=C_CloseSession, 18=C_Login,
-# 29=C_EncryptInit, 31=C_EncryptUpdate, 32=C_EncryptFinal,
-# 33=C_DecryptInit, 35=C_DecryptUpdate, 36=C_DecryptFinal,
-# 37=C_DigestInit, 39=C_DigestUpdate, 41=C_DigestFinal,
-# 54=C_DigestEncryptUpdate, 55=C_DecryptDigestUpdate,
-# 58=C_GenerateKey
-
-_cache = {{}}
-
-def _cfunc(name, restype, argtypes, idx):
-    if name not in _cache:
-        addr = _get_func(idx)
-        ft = ctypes.CFUNCTYPE(restype, *argtypes)
-        _cache[name] = ft(addr)
-    return _cache[name]
-
-def C_Initialize():
-    return _cfunc("C_Initialize", CK_RV, [c_void_p], 0)(c_void_p(None))
-
-def C_Finalize():
-    return _cfunc("C_Finalize", CK_RV, [c_void_p], 1)(c_void_p(None))
-
-def C_GetSlotList(present, slots, count):
-    return _cfunc("C_GetSlotList", CK_RV,
-        [c_ubyte, POINTER(c_ulong), POINTER(c_ulong)], 4)(present, slots, count)
-
-def C_OpenSession(slot, flags, app, notify, phSession):
-    return _cfunc("C_OpenSession", CK_RV,
-        [c_ulong, c_ulong, c_void_p, c_void_p, POINTER(c_ulong)], 12)(
-        slot, flags, app, notify, phSession)
-
-def C_CloseSession(hSession):
-    return _cfunc("C_CloseSession", CK_RV, [c_ulong], 13)(hSession)
-
-def C_Login(hSession, userType, pin, pinLen):
-    return _cfunc("C_Login", CK_RV,
-        [c_ulong, c_ulong, c_char_p, c_ulong], 18)(hSession, userType, pin, pinLen)
-
-def C_EncryptInit(hSession, pMechanism, hKey):
-    return _cfunc("C_EncryptInit", CK_RV,
-        [c_ulong, c_void_p, c_ulong], 29)(hSession, pMechanism, hKey)
-
-def C_EncryptUpdate(hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen):
-    return _cfunc("C_EncryptUpdate", CK_RV,
-        [c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong)], 31)(
-        hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen)
-
-def C_EncryptFinal(hSession, pLastEncryptedPart, pulLastEncryptedPartLen):
-    return _cfunc("C_EncryptFinal", CK_RV,
-        [c_ulong, c_void_p, POINTER(c_ulong)], 32)(
-        hSession, pLastEncryptedPart, pulLastEncryptedPartLen)
-
-def C_DecryptInit(hSession, pMechanism, hKey):
-    return _cfunc("C_DecryptInit", CK_RV,
-        [c_ulong, c_void_p, c_ulong], 33)(hSession, pMechanism, hKey)
-
-def C_DecryptUpdate(hSession, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen):
-    return _cfunc("C_DecryptUpdate", CK_RV,
-        [c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong)], 35)(
-        hSession, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen)
-
-def C_DecryptFinal(hSession, pLastPart, pulLastPartLen):
-    return _cfunc("C_DecryptFinal", CK_RV,
-        [c_ulong, c_void_p, POINTER(c_ulong)], 36)(
-        hSession, pLastPart, pulLastPartLen)
-
-def C_DigestInit(hSession, pMechanism):
-    return _cfunc("C_DigestInit", CK_RV,
-        [c_ulong, c_void_p], 37)(hSession, pMechanism)
-
-def C_DigestUpdate(hSession, pPart, ulPartLen):
-    return _cfunc("C_DigestUpdate", CK_RV,
-        [c_ulong, c_char_p, c_ulong], 39)(hSession, pPart, ulPartLen)
-
-def C_DigestFinal(hSession, pDigest, pulDigestLen):
-    return _cfunc("C_DigestFinal", CK_RV,
-        [c_ulong, c_void_p, POINTER(c_ulong)], 41)(hSession, pDigest, pulDigestLen)
-
-def C_DigestEncryptUpdate(hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen):
-    return _cfunc("C_DigestEncryptUpdate", CK_RV,
-        [c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong)], 54)(
-        hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen)
-
-def C_DecryptDigestUpdate(hSession, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen):
-    return _cfunc("C_DecryptDigestUpdate", CK_RV,
-        [c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong)], 55)(
-        hSession, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen)
-
-def C_GenerateKey(hSession, pMechanism, pTemplate, ulCount, phKey):
-    return _cfunc("C_GenerateKey", CK_RV,
-        [c_ulong, c_void_p, c_void_p, c_ulong, POINTER(c_ulong)], 58)(
-        hSession, pMechanism, pTemplate, ulCount, phKey)
-
-class CK_MECHANISM(ctypes.Structure):
-    _fields_ = [
-        ("mechanism", c_ulong),
-        ("pParameter", c_void_p),
-        ("ulParameterLen", c_ulong),
-    ]
-
-class CK_ATTRIBUTE(ctypes.Structure):
-    _fields_ = [
-        ("type", c_ulong),
-        ("pValue", c_void_p),
-        ("ulValueLen", c_ulong),
-    ]
-
-# Initialise
-rv = C_Initialize()
-if rv != CKR_OK and rv != CKR_CRYPTOKI_ALREADY_INITIALIZED:
+raw = RawPKCS11.from_lib({module_path!r})
+hSession = None
+rv = raw.C_Initialize(None)
+if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):
     print(f"FATAL:Initialize:0x{{rv:08x}}")
     sys.exit(1)
 
-# Get slot list
-count = c_ulong(0)
-rv = C_GetSlotList(1, None, byref(count))
-if rv != CKR_OK or count.value == 0:
-    print(f"FATAL:GetSlotList:0x{{rv:08x}}:count={{count.value}}")
-    C_Finalize()
+slot_ids = get_slot_ids(raw)
+if len(slot_ids) <= {slot_index}:
+    print(f"FATAL:GetSlotList:index={slot_index}:count={{len(slot_ids)}}")
+    raw.C_Finalize(None)
     sys.exit(1)
 
-slots = (c_ulong * count.value)()
-rv = C_GetSlotList(1, slots, byref(count))
-if rv != CKR_OK:
-    print(f"FATAL:GetSlotList2:0x{{rv:08x}}")
-    C_Finalize()
-    sys.exit(1)
+hSession = open_session(raw, slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
-slot_id = slots[{slot_index}]
-
-# Open session
-hSession = c_ulong(0)
-flags = c_ulong(CKF_SERIAL_SESSION | CKF_RW_SESSION)
-rv = C_OpenSession(slot_id, flags, c_void_p(None), c_void_p(None), byref(hSession))
-if rv != CKR_OK:
-    print(f"FATAL:OpenSession:0x{{rv:08x}}")
-    C_Finalize()
-    sys.exit(1)
-
-# Login if PIN provided
 _PIN = {pin_bytes!r}
 if _PIN:
-    rv = C_Login(hSession, c_ulong(1), c_char_p(_PIN), c_ulong(len(_PIN)))
-    if rv != CKR_OK and rv != CKR_USER_ALREADY_LOGGED_IN:
-        print(f"FATAL:Login:0x{{rv:08x}}")
-        C_CloseSession(hSession)
-        C_Finalize()
-        sys.exit(1)
+    login_user(raw, hSession, 1, _PIN)
 
+c_ulong = ctypes.c_ulong
+c_void_p = ctypes.c_void_p
+C_EncryptInit = raw.C_EncryptInit
+C_EncryptUpdate = raw.C_EncryptUpdate
+C_EncryptFinal = raw.C_EncryptFinal
+C_DecryptInit = raw.C_DecryptInit
+C_DecryptUpdate = raw.C_DecryptUpdate
+C_DecryptFinal = raw.C_DecryptFinal
+C_DigestInit = raw.C_DigestInit
+C_DigestUpdate = raw.C_DigestUpdate
+C_DigestFinal = raw.C_DigestFinal
+C_DigestEncryptUpdate = raw.C_DigestEncryptUpdate
+C_DecryptDigestUpdate = raw.C_DecryptDigestUpdate
 """
 
-# ---------------------------------------------------------------------------
-# Subprocess helpers
-# ---------------------------------------------------------------------------
-
-# Script fragment that generates an AES-256 session key.
-# Sets hKey in the subprocess context.
 _KEYGEN_SCRIPT = """\
-    def _attr(atype, val):
-        return CK_ATTRIBUTE(
-            atype,
-            ctypes.cast(ctypes.byref(val), c_void_p),
-            ctypes.sizeof(val),
-        )
-
-    cls_val = c_ulong(CKO_SECRET_KEY)
-    ktype_val = c_ulong(CKK_AES)
-    vlen_val = c_ulong(32)
-    enc_val = c_ubyte(1)
-    dec_val = c_ubyte(1)
-    tok_val = c_ubyte(0)
-
-    template = (CK_ATTRIBUTE * 6)(
-        _attr(CKA_CLASS,     cls_val),
-        _attr(CKA_KEY_TYPE,  ktype_val),
-        _attr(CKA_VALUE_LEN, vlen_val),
-        _attr(CKA_ENCRYPT,   enc_val),
-        _attr(CKA_DECRYPT,   dec_val),
-        _attr(CKA_TOKEN,     tok_val),
+    attrs = template(
+        attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+        attr_ulong(CKA_KEY_TYPE, CKK_AES),
+        attr_ulong(CKA_VALUE_LEN, 32),
+        attr_bool(CKA_ENCRYPT, True),
+        attr_bool(CKA_DECRYPT, True),
+        attr_bool(CKA_TOKEN, False),
     )
+    kg_mech = mech_simple(CKM_AES_KEY_GEN)
 
-    kg_mech = CK_MECHANISM()
-    kg_mech.mechanism = CKM_AES_KEY_GEN
-
-    hKey = c_ulong(0)
-    rv = C_GenerateKey(hSession, ctypes.byref(kg_mech), template, 6, byref(hKey))
+    hKey = CK_OBJECT_HANDLE(0)
+    rv = raw.C_GenerateKey(hSession, kg_mech.byref(), _template_ptr(attrs), attrs.count, byref(hKey))
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
         print(f"SKIP:GenerateKeyUnsupported:0x{rv:08x}")
         sys.exit(0)
@@ -296,6 +139,11 @@ _KEYGEN_SCRIPT = """\
         print(f"FATAL:GenerateKey:0x{rv:08x}")
         sys.exit(1)
     print(f"KEY_GENERATED:{hKey.value}")
+"""
+
+_SCRIPT_CLEANUP = """\
+close_session_quietly(raw, hSession)
+raw.C_Finalize(None)
 """
 
 
@@ -306,40 +154,16 @@ def _run_script(
     script_body: str,
     timeout: int = 30,
 ) -> tuple[int, str, str]:
-    """Run a ctypes PKCS#11 script in a subprocess.
-
-    The boilerplate sets up lib, hSession, slot_id, and all helpers.
-    script_body is appended and must print KEY:value lines.
-    Returns (returncode, stdout, stderr).
-    """
-    boilerplate = _SUBPROCESS_BOILERPLATE.format(
-        module_path=module_path,
-        slot_index=slot_index,
-        pin_bytes=pin_bytes,
-    )
-    full_script = (
-        boilerplate
-        + textwrap.dedent(script_body)
-        + textwrap.dedent(
-            """\
-
-        C_CloseSession(hSession)
-        C_Finalize()
-    """
-        )
-    )
-
-    result = subprocess.run(
-        [sys.executable, "-c", full_script],
-        capture_output=True,
-        text=True,
+    return run_raw_script(
+        _SCRIPT_PREAMBLE.format(
+            module_path=module_path,
+            slot_index=slot_index,
+            pin_bytes=pin_bytes,
+        ),
+        script_body,
+        cleanup=_SCRIPT_CLEANUP,
         timeout=timeout,
-        env=os.environ.copy(),
     )
-    return result.returncode, result.stdout.strip(), result.stderr.strip()
-
-
-from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 
 
 def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
@@ -397,6 +221,7 @@ class TestDigestEncryptUpdate:
     # 16-byte IV; two 16-byte plaintext blocks (AES-CBC requires block alignment)
     iv = b"\\x00" * 16
     data = b"Block-one-here!!" + b"Block-two-here!!"  # 32 bytes, 2 AES blocks
+    data_buf = _byte_array(data)
 
     # --- Build AES-CBC mechanism ---
     iv_buf = (c_ubyte * 16)(*iv)
@@ -428,7 +253,7 @@ class TestDigestEncryptUpdate:
     ct_ref = bytearray()
     out_len = c_ulong(64)
     out_buf = (c_ubyte * 64)()
-    rv = C_EncryptUpdate(hSession, c_char_p(data), c_ulong(len(data)),
+    rv = C_EncryptUpdate(hSession, data_buf, c_ulong(len(data)),
                          out_buf, byref(out_len))
     if rv != CKR_OK:
         print(f"FATAL:EncryptUpdate_ref:0x{rv:08x}")
@@ -471,7 +296,7 @@ class TestDigestEncryptUpdate:
     ct_dual = bytearray()
     deu_len = c_ulong(64)
     deu_buf = (c_ubyte * 64)()
-    rv = C_DigestEncryptUpdate(hSession, c_char_p(data), c_ulong(len(data)),
+    rv = C_DigestEncryptUpdate(hSession, data_buf, c_ulong(len(data)),
                                 deu_buf, byref(deu_len))
     if rv in _DUAL_UNSUPPORTED:
         print(f"SKIP:DigestEncryptUpdateUnsupported:0x{rv:08x}")
@@ -577,6 +402,7 @@ class TestDecryptDigestUpdate:
     # 16-byte IV; two 16-byte plaintext blocks (AES-CBC requires block alignment)
     iv = b"\\x00" * 16
     plaintext = b"Hello-dual-func!" + b"DecryptDigest!??"  # 32 bytes, 2 AES blocks
+    plaintext_buf = _byte_array(plaintext)
 
     # Reference digest of the plaintext
     digest_ref = hashlib.sha256(plaintext).hexdigest()
@@ -609,7 +435,7 @@ class TestDecryptDigestUpdate:
     ciphertext = bytearray()
     eu_len = c_ulong(64)
     eu_buf = (c_ubyte * 64)()
-    rv = C_EncryptUpdate(hSession, c_char_p(plaintext), c_ulong(len(plaintext)),
+    rv = C_EncryptUpdate(hSession, plaintext_buf, c_ulong(len(plaintext)),
                          eu_buf, byref(eu_len))
     if rv != CKR_OK:
         print(f"FATAL:EncryptUpdate:0x{rv:08x}")
@@ -650,10 +476,11 @@ class TestDecryptDigestUpdate:
 
     # DecryptDigestUpdate: decrypt ciphertext and simultaneously digest the plaintext
     ct_bytes = bytes(ciphertext)
+    ct_buf = _byte_array(ct_bytes)
     recovered = bytearray()
     ddu_len = c_ulong(64)
     ddu_buf = (c_ubyte * 64)()
-    rv = C_DecryptDigestUpdate(hSession, c_char_p(ct_bytes), c_ulong(len(ct_bytes)),
+    rv = C_DecryptDigestUpdate(hSession, ct_buf, c_ulong(len(ct_bytes)),
                                 ddu_buf, byref(ddu_len))
     if rv in _DUAL_UNSUPPORTED:
         print(f"SKIP:DecryptDigestUpdateUnsupported:0x{rv:08x}")

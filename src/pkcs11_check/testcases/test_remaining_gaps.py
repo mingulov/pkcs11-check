@@ -44,9 +44,65 @@ from pkcs11.exceptions import (
     PKCS11Error,
 )
 
+from pkcs11_check.testcases._raw_subprocess import run_raw_script
 from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = [pytest.mark.compliance]
+
+_RAW_PREAMBLE = """\
+import ctypes
+import sys
+from ctypes import byref
+
+from pkcs11_check.raw import (
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    CKR_OK,
+    RawPKCS11,
+)
+from pkcs11_check.raw.bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
+
+raw = RawPKCS11.from_lib({module_path!r})
+hSession = None
+rv = raw.C_Initialize(None)
+if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):
+    print(f"FATAL:Initialize:0x{{rv:08x}}")
+    sys.exit(1)
+
+slot_ids = get_slot_ids(raw)
+if len(slot_ids) <= {slot_index}:
+    print(f"FATAL:GetSlotList:index={slot_index}:count={{len(slot_ids)}}")
+    raw.C_Finalize(None)
+    sys.exit(1)
+
+hSession = open_session(raw, slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION)
+if {pin_bytes!r}:
+    login_user(raw, hSession, 1, {pin_bytes!r})
+"""
+
+_RAW_CLEANUP = """\
+close_session_quietly(raw, hSession)
+raw.C_Finalize(None)
+"""
+
+
+def _run_config_script(
+    p11_config: Any,
+    script_body: str,
+    *,
+    timeout: int = 10,
+) -> tuple[int, str, str]:
+    return run_raw_script(
+        _RAW_PREAMBLE.format(
+            module_path=str(p11_config.module),
+            slot_index=p11_config.slot if p11_config.slot is not None else 0,
+            pin_bytes=p11_config.pin.get_secret_value().encode() if p11_config.pin else b"",
+        ),
+        script_body,
+        cleanup=_RAW_CLEANUP,
+        timeout=timeout,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,52 +288,20 @@ class TestLegacyParallelFunctions:
         self, p11_session: Any, p11_config: Any
     ) -> None:
         """C_GetFunctionStatus must return CKR_FUNCTION_NOT_PARALLEL."""
-        import subprocess
-        import sys
-
-        module_path = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else ""
-        script = f"""
-import ctypes
-from ctypes import c_ulong, c_void_p, c_char_p, POINTER, byref
-lib = ctypes.CDLL({module_path!r})
-fl = c_void_p()
-lib.C_GetFunctionList.restype = c_ulong
-lib.C_GetFunctionList.argtypes = [POINTER(c_void_p)]
-lib.C_GetFunctionList(byref(fl))
-ps = ctypes.sizeof(c_void_p)
-base = fl.value
-def gf(i):
-    return ctypes.cast(base + ps + i*ps, POINTER(c_void_p)).contents.value
-# C_Initialize=0, C_GetSlotList=4, C_OpenSession=12, C_Login=18
-# C_GetFunctionStatus=49, C_CancelFunction=50
-CF = ctypes.CFUNCTYPE
-init = CF(c_ulong, c_void_p)(gf(0))
-init(None)
-cnt = c_ulong()
-CF(c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong))(gf(4))(1, None, byref(cnt))
-slots = (c_ulong * cnt.value)()
-CF(c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong))(gf(4))(1, slots, byref(cnt))
-hs = c_ulong()
-CF(c_ulong, c_ulong, c_ulong, c_void_p, c_void_p, POINTER(c_ulong))(gf(12))(
-    slots[{p11_config.slot}], 0x06, None, None, byref(hs))
-if {len(pin)} > 0:
-    CF(c_ulong, c_ulong, c_ulong, c_char_p, c_ulong)(gf(18))(hs, 1, {pin.encode()!r}, {len(pin)})
-rv = CF(c_ulong, c_ulong)(gf(49))(hs)
-print(f"GFS:0x{{rv:08x}}")
-rv2 = CF(c_ulong, c_ulong)(gf(50))(hs)
-print(f"CF:0x{{rv2:08x}}")
-CF(c_ulong, c_void_p)(gf(1))(None)
-"""
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=10,
+        returncode, stdout, stderr = _run_config_script(
+            p11_config,
+            """\
+rv = raw.C_GetFunctionStatus(hSession)
+print(f"GFS:0x{rv:08x}")
+rv2 = raw.C_CancelFunction(hSession)
+print(f"CF:0x{rv2:08x}")
+""",
         )
-        if result.returncode != 0:
-            pytest.xfail(f"Subprocess failed: {result.stderr[:200]}")
-        lines = result.stdout.strip().split("\n")
+        if returncode != 0:
+            pytest.xfail(f"Subprocess failed: {stderr[:200]}")
+        lines = stdout.strip().split("\n")
         gfs_line = next((l for l in lines if l.startswith("GFS:")), None)
-        assert gfs_line is not None, f"No GFS output: {result.stdout!r}"
+        assert gfs_line is not None, f"No GFS output: {stdout!r}"
         rv_hex = gfs_line.split(":")[1]
         # Spec says CKR_FUNCTION_NOT_PARALLEL (0x51).
         # SoftHSM2 returns CKR_OPERATION_NOT_INITIALIZED (0x91) - module quirk.
@@ -299,48 +323,18 @@ CF(c_ulong, c_void_p)(gf(1))(None)
         self, p11_session: Any, p11_config: Any
     ) -> None:
         """C_CancelFunction must return CKR_FUNCTION_NOT_PARALLEL."""
-        import subprocess
-        import sys
-
-        module_path = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else ""
-        script = f"""
-import ctypes
-from ctypes import c_ulong, c_void_p, c_char_p, POINTER, byref
-lib = ctypes.CDLL({module_path!r})
-fl = c_void_p()
-lib.C_GetFunctionList.restype = c_ulong
-lib.C_GetFunctionList.argtypes = [POINTER(c_void_p)]
-lib.C_GetFunctionList(byref(fl))
-ps = ctypes.sizeof(c_void_p)
-base = fl.value
-def gf(i):
-    return ctypes.cast(base + ps + i*ps, POINTER(c_void_p)).contents.value
-CF = ctypes.CFUNCTYPE
-init = CF(c_ulong, c_void_p)(gf(0))
-init(None)
-cnt = c_ulong()
-CF(c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong))(gf(4))(1, None, byref(cnt))
-slots = (c_ulong * cnt.value)()
-CF(c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong))(gf(4))(1, slots, byref(cnt))
-hs = c_ulong()
-CF(c_ulong, c_ulong, c_ulong, c_void_p, c_void_p, POINTER(c_ulong))(gf(12))(
-    slots[{p11_config.slot}], 0x06, None, None, byref(hs))
-if {len(pin)} > 0:
-    CF(c_ulong, c_ulong, c_ulong, c_char_p, c_ulong)(gf(18))(hs, 1, {pin.encode()!r}, {len(pin)})
-rv = CF(c_ulong, c_ulong)(gf(50))(hs)
-print(f"CF:0x{{rv:08x}}")
-CF(c_ulong, c_void_p)(gf(1))(None)
-"""
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=10,
+        returncode, stdout, stderr = _run_config_script(
+            p11_config,
+            """\
+rv = raw.C_CancelFunction(hSession)
+print(f"CF:0x{rv:08x}")
+""",
         )
-        if result.returncode != 0:
-            pytest.xfail(f"Subprocess failed: {result.stderr[:200]}")
-        lines = result.stdout.strip().split("\n")
+        if returncode != 0:
+            pytest.xfail(f"Subprocess failed: {stderr[:200]}")
+        lines = stdout.strip().split("\n")
         cf_line = next((l for l in lines if l.startswith("CF:")), None)
-        assert cf_line is not None, f"No CF output: {result.stdout!r}"
+        assert cf_line is not None, f"No CF output: {stdout!r}"
         rv_hex = cf_line.split(":")[1]
         acceptable = {"0x00000051", "0x00000091"}
         if rv_hex not in acceptable:
@@ -375,9 +369,9 @@ class TestMessageFinalizers:
     ) -> None:
         """Check if message-based encrypt final is accessible."""
         try:
-            from pkcs11.raw import RawPKCS11
+            from pkcs11_check.raw.bridge import raw_from_module
 
-            raw = RawPKCS11(p11_module.lib._raw_funclist_ptr)
+            raw = raw_from_module(p11_module)
             # Just check the function exists in the function list
             assert hasattr(raw, "C_MessageEncryptFinal") or "C_MessageEncryptFinal" in raw._funcs
         except (AttributeError, ImportError):
@@ -389,9 +383,9 @@ class TestMessageFinalizers:
     ) -> None:
         """Check if message-based verify final is accessible."""
         try:
-            from pkcs11.raw import RawPKCS11
+            from pkcs11_check.raw.bridge import raw_from_module
 
-            raw = RawPKCS11(p11_module.lib._raw_funclist_ptr)
+            raw = raw_from_module(p11_module)
             assert hasattr(raw, "C_MessageVerifyFinal") or "C_MessageVerifyFinal" in raw._funcs
         except (AttributeError, ImportError):
             pytest.skip("Cannot access raw function list")
@@ -409,9 +403,9 @@ class TestAsyncLifecycle:
     def test_async_complete_availability(self, p11_module: Any) -> None:
         """Check if C_AsyncComplete is in the function list."""
         try:
-            from pkcs11.raw import RawPKCS11
+            from pkcs11_check.raw.bridge import raw_from_module
 
-            raw = RawPKCS11(p11_module.lib._raw_funclist_ptr)
+            raw = raw_from_module(p11_module)
             has_func = "C_AsyncComplete" in raw._funcs
             if not has_func:
                 pytest.skip("C_AsyncComplete not in function list")
@@ -422,9 +416,9 @@ class TestAsyncLifecycle:
     def test_async_join_availability(self, p11_module: Any) -> None:
         """Check if C_AsyncJoin is in the function list."""
         try:
-            from pkcs11.raw import RawPKCS11
+            from pkcs11_check.raw.bridge import raw_from_module
 
-            raw = RawPKCS11(p11_module.lib._raw_funclist_ptr)
+            raw = raw_from_module(p11_module)
             has_func = "C_AsyncJoin" in raw._funcs
             if not has_func:
                 pytest.skip("C_AsyncJoin not in function list")
@@ -576,102 +570,41 @@ class TestDualFunctionRemaining:
         self, p11_config: Any
     ) -> None:
         """C_SignEncryptUpdate (index 56) exists and returns a defined CKR code."""
-        import subprocess
-        import sys
-
-        module_path = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else ""
-        script = f"""
-import ctypes
-from ctypes import c_ulong, c_void_p, c_char_p, POINTER, byref
-lib = ctypes.CDLL({module_path!r})
-fl = c_void_p()
-lib.C_GetFunctionList.restype = c_ulong
-lib.C_GetFunctionList.argtypes = [POINTER(c_void_p)]
-lib.C_GetFunctionList(byref(fl))
-ps = ctypes.sizeof(c_void_p)
-base = fl.value
-def gf(i):
-    return ctypes.cast(base + ps + i*ps, POINTER(c_void_p)).contents.value
-CF = ctypes.CFUNCTYPE
-init = CF(c_ulong, c_void_p)(gf(0))
-init(None)
-cnt = c_ulong()
-CF(c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong))(gf(4))(1, None, byref(cnt))
-slots = (c_ulong * cnt.value)()
-CF(c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong))(gf(4))(1, slots, byref(cnt))
-hs = c_ulong()
-CF(c_ulong, c_ulong, c_ulong, c_void_p, c_void_p, POINTER(c_ulong))(gf(12))(
-    slots[{p11_config.slot}], 0x06, None, None, byref(hs))
-if {len(pin)} > 0:
-    CF(c_ulong, c_ulong, c_ulong, c_char_p, c_ulong)(gf(18))(hs, 1, {pin.encode()!r}, {len(pin)})
-# C_SignEncryptUpdate = index 56
-# Call with NULL pointers - should return CKR error, not crash
+        returncode, stdout, stderr = _run_config_script(
+            p11_config,
+            """\
+part = ctypes.create_string_buffer(b"test", 4)
+out_len = ctypes.c_ulong()
 try:
-    rv = CF(c_ulong, c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong))(gf(56))(
-        hs, b"test", 4, None, byref(c_ulong()))
-    print(f"SEU:0x{{rv:08x}}")
+    rv = raw.C_SignEncryptUpdate(hSession, part, 4, None, byref(out_len))
+    print(f"SEU:0x{rv:08x}")
 except Exception as e:
-    print(f"SEU:EXCEPTION:{{e}}")
-CF(c_ulong, c_void_p)(gf(1))(None)
-"""
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=10,
+    print(f"SEU:EXCEPTION:{e}")
+""",
         )
-        if result.returncode < 0:
-            pytest.xfail(f"C_SignEncryptUpdate crashed (signal {-result.returncode})")
-        seu_line = next((l for l in result.stdout.strip().split("\n") if l.startswith("SEU:")), None)
-        assert seu_line is not None, f"No output: {result.stdout!r} {result.stderr[:200]}"
+        if returncode < 0:
+            pytest.xfail(f"C_SignEncryptUpdate crashed (signal {-returncode})")
+        seu_line = next((l for l in stdout.strip().split("\n") if l.startswith("SEU:")), None)
+        assert seu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
         # Any CKR response is valid - we're testing the function exists and doesn't crash
 
     def test_decrypt_verify_update_callable(
         self, p11_config: Any
     ) -> None:
         """C_DecryptVerifyUpdate (index 57) exists and returns a defined CKR code."""
-        import subprocess
-        import sys
-
-        module_path = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else ""
-        script = f"""
-import ctypes
-from ctypes import c_ulong, c_void_p, c_char_p, POINTER, byref
-lib = ctypes.CDLL({module_path!r})
-fl = c_void_p()
-lib.C_GetFunctionList.restype = c_ulong
-lib.C_GetFunctionList.argtypes = [POINTER(c_void_p)]
-lib.C_GetFunctionList(byref(fl))
-ps = ctypes.sizeof(c_void_p)
-base = fl.value
-def gf(i):
-    return ctypes.cast(base + ps + i*ps, POINTER(c_void_p)).contents.value
-CF = ctypes.CFUNCTYPE
-init = CF(c_ulong, c_void_p)(gf(0))
-init(None)
-cnt = c_ulong()
-CF(c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong))(gf(4))(1, None, byref(cnt))
-slots = (c_ulong * cnt.value)()
-CF(c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong))(gf(4))(1, slots, byref(cnt))
-hs = c_ulong()
-CF(c_ulong, c_ulong, c_ulong, c_void_p, c_void_p, POINTER(c_ulong))(gf(12))(
-    slots[{p11_config.slot}], 0x06, None, None, byref(hs))
-if {len(pin)} > 0:
-    CF(c_ulong, c_ulong, c_ulong, c_char_p, c_ulong)(gf(18))(hs, 1, {pin.encode()!r}, {len(pin)})
-# C_DecryptVerifyUpdate = index 57
+        returncode, stdout, stderr = _run_config_script(
+            p11_config,
+            """\
+part = ctypes.create_string_buffer(b"test", 4)
+out_len = ctypes.c_ulong()
 try:
-    rv = CF(c_ulong, c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong))(gf(57))(
-        hs, b"test", 4, None, byref(c_ulong()))
-    print(f"DVU:0x{{rv:08x}}")
+    rv = raw.C_DecryptVerifyUpdate(hSession, part, 4, None, byref(out_len))
+    print(f"DVU:0x{rv:08x}")
 except Exception as e:
-    print(f"DVU:EXCEPTION:{{e}}")
-CF(c_ulong, c_void_p)(gf(1))(None)
-"""
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=10,
+    print(f"DVU:EXCEPTION:{e}")
+""",
         )
-        if result.returncode < 0:
-            pytest.xfail(f"C_DecryptVerifyUpdate crashed (signal {-result.returncode})")
-        dvu_line = next((l for l in result.stdout.strip().split("\n") if l.startswith("DVU:")), None)
-        assert dvu_line is not None, f"No output: {result.stdout!r} {result.stderr[:200]}"
+        if returncode < 0:
+            pytest.xfail(f"C_DecryptVerifyUpdate crashed (signal {-returncode})")
+        dvu_line = next((l for l in stdout.strip().split("\n") if l.startswith("DVU:")), None)
+        assert dvu_line is not None, f"No output: {stdout!r} {stderr[:200]}"

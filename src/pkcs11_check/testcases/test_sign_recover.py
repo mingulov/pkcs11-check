@@ -28,260 +28,105 @@ CK_FUNCTION_LIST indices (0-based, after the CK_VERSION field):
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import textwrap
 from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
+from pkcs11_check.testcases._raw_subprocess import run_raw_script
+
 pytestmark = pytest.mark.full
 
-# ---------------------------------------------------------------------------
-# Subprocess boilerplate (same pattern as test_operation_state.py)
-# ---------------------------------------------------------------------------
-
-_SUBPROCESS_BOILERPLATE = """\
-import ctypes
-from ctypes import c_ulong, c_void_p, c_ubyte, c_char_p, POINTER, byref, cast
-import sys
+_SCRIPT_PREAMBLE = """\
 import binascii
+import ctypes
+import sys
+from ctypes import byref, c_ubyte, cast
 
-CK_RV = c_ulong
-CKR_OK = 0x00000000
-CKR_FUNCTION_NOT_SUPPORTED = 0x00000054
-CKR_MECHANISM_INVALID = 0x00000070
-CKR_OPERATION_NOT_INITIALIZED = 0x00000091
-CKR_USER_ALREADY_LOGGED_IN = 0x00000100
-CKR_CRYPTOKI_ALREADY_INITIALIZED = 0x00000191
-CKF_SERIAL_SESSION = 0x00000004
-CKF_RW_SESSION = 0x00000002
+from pkcs11_check.raw import (
+    CKA_CLASS,
+    CKA_KEY_TYPE,
+    CKA_MODULUS_BITS,
+    CKA_PUBLIC_EXPONENT,
+    CKA_SIGN_RECOVER,
+    CKA_TOKEN,
+    CKA_VERIFY_RECOVER,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKK_RSA,
+    CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKM_RSA_X_509,
+    CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
+    CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
+    CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CK_ATTRIBUTE_PTR,
+    CK_OBJECT_HANDLE,
+    RawPKCS11,
+)
+from pkcs11_check.raw.bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
+from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template
 
-# Mechanism and attribute constants
-CKM_RSA_X_509 = 0x00000003
-CKM_RSA_PKCS_KEY_PAIR_GEN = 0x00000000
-CKA_CLASS = 0x00000000
-CKA_KEY_TYPE = 0x00000100
-CKA_TOKEN = 0x00000001
-CKA_SIGN_RECOVER = 0x00000109
-CKA_VERIFY_RECOVER = 0x0000010B
-CKA_MODULUS_BITS = 0x00000121
-CKA_PUBLIC_EXPONENT = 0x00000122
-CKO_PUBLIC_KEY = 0x00000002
-CKO_PRIVATE_KEY = 0x00000003
-CKK_RSA = 0x00000000
 
-lib = ctypes.CDLL({module_path!r})
+def _template_ptr(attrs):
+    return cast(attrs.array, CK_ATTRIBUTE_PTR)
 
-C_GetFunctionList = lib.C_GetFunctionList
-C_GetFunctionList.restype = CK_RV
-C_GetFunctionList.argtypes = [POINTER(c_void_p)]
 
-funclist_ptr = c_void_p()
-rv = C_GetFunctionList(byref(funclist_ptr))
-if rv != CKR_OK:
-    print(f"FATAL:GetFunctionList:0x{{rv:08x}}")
-    sys.exit(1)
+def _byte_array(data: bytes):
+    return (c_ubyte * len(data)).from_buffer_copy(data)
 
-ptr_size = ctypes.sizeof(c_void_p)
-base = funclist_ptr.value
 
-def _get_func(index):
-    offset = ptr_size + (index * ptr_size)
-    addr = ctypes.cast(base + offset, POINTER(c_void_p)).contents.value
-    return addr
-
-# CK_FUNCTION_LIST indices (0-based, after version field):
-# 0=C_Initialize, 1=C_Finalize, 4=C_GetSlotList,
-# 12=C_OpenSession, 13=C_CloseSession,
-# 18=C_Login, 19=C_Logout,
-# 45=C_SignRecoverInit, 46=C_SignRecover,
-# 51=C_VerifyRecoverInit, 52=C_VerifyRecover,
-# 59=C_GenerateKeyPair
-
-_cache = {{}}
-
-def _cfunc(name, restype, argtypes, idx):
-    if name not in _cache:
-        addr = _get_func(idx)
-        ft = ctypes.CFUNCTYPE(restype, *argtypes)
-        _cache[name] = ft(addr)
-    return _cache[name]
-
-def C_Initialize():
-    return _cfunc("C_Initialize", CK_RV, [c_void_p], 0)(c_void_p(None))
-
-def C_Finalize():
-    return _cfunc("C_Finalize", CK_RV, [c_void_p], 1)(c_void_p(None))
-
-def C_GetSlotList(present, slots, count):
-    return _cfunc("C_GetSlotList", CK_RV,
-        [c_ubyte, POINTER(c_ulong), POINTER(c_ulong)], 4)(present, slots, count)
-
-def C_OpenSession(slot, flags, app, notify, phSession):
-    return _cfunc("C_OpenSession", CK_RV,
-        [c_ulong, c_ulong, c_void_p, c_void_p, POINTER(c_ulong)], 12)(
-        slot, flags, app, notify, phSession)
-
-def C_CloseSession(hSession):
-    return _cfunc("C_CloseSession", CK_RV, [c_ulong], 13)(hSession)
-
-def C_Login(hSession, userType, pin, pinLen):
-    return _cfunc("C_Login", CK_RV,
-        [c_ulong, c_ulong, c_char_p, c_ulong], 18)(hSession, userType, pin, pinLen)
-
-def C_SignRecoverInit(hSession, pMechanism, hKey):
-    return _cfunc("C_SignRecoverInit", CK_RV,
-        [c_ulong, c_void_p, c_ulong], 45)(hSession, pMechanism, hKey)
-
-def C_SignRecover(hSession, pData, ulDataLen, pSignature, pulSignatureLen):
-    return _cfunc("C_SignRecover", CK_RV,
-        [c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong)], 46)(
-        hSession, pData, ulDataLen, pSignature, pulSignatureLen)
-
-def C_VerifyRecoverInit(hSession, pMechanism, hKey):
-    return _cfunc("C_VerifyRecoverInit", CK_RV,
-        [c_ulong, c_void_p, c_ulong], 51)(hSession, pMechanism, hKey)
-
-def C_VerifyRecover(hSession, pSignature, ulSignatureLen, pData, pulDataLen):
-    return _cfunc("C_VerifyRecover", CK_RV,
-        [c_ulong, c_char_p, c_ulong, c_void_p, POINTER(c_ulong)], 52)(
-        hSession, pSignature, ulSignatureLen, pData, pulDataLen)
-
-def C_GenerateKeyPair(hSession, pMechanism, pPublicTemplate, ulPublicCount,
-                      pPrivateTemplate, ulPrivateCount, phPublicKey, phPrivateKey):
-    return _cfunc("C_GenerateKeyPair", CK_RV,
-        [c_ulong, c_void_p, c_void_p, c_ulong, c_void_p, c_ulong,
-         POINTER(c_ulong), POINTER(c_ulong)], 59)(
-        hSession, pMechanism, pPublicTemplate, ulPublicCount,
-        pPrivateTemplate, ulPrivateCount, phPublicKey, phPrivateKey)
-
-class CK_MECHANISM(ctypes.Structure):
-    _fields_ = [
-        ("mechanism", c_ulong),
-        ("pParameter", c_void_p),
-        ("ulParameterLen", c_ulong),
-    ]
-
-class CK_ATTRIBUTE(ctypes.Structure):
-    _fields_ = [
-        ("type", c_ulong),
-        ("pValue", c_void_p),
-        ("ulValueLen", c_ulong),
-    ]
-
-# Initialise
-rv = C_Initialize()
-if rv != CKR_OK and rv != CKR_CRYPTOKI_ALREADY_INITIALIZED:
+raw = RawPKCS11.from_lib({module_path!r})
+hSession = None
+rv = raw.C_Initialize(None)
+if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):
     print(f"FATAL:Initialize:0x{{rv:08x}}")
     sys.exit(1)
 
-# Get slot list
-count = c_ulong(0)
-rv = C_GetSlotList(1, None, byref(count))
-if rv != CKR_OK or count.value == 0:
-    print(f"FATAL:GetSlotList:0x{{rv:08x}}:count={{count.value}}")
-    C_Finalize()
+slot_ids = get_slot_ids(raw)
+if len(slot_ids) <= {slot_index}:
+    print(f"FATAL:GetSlotList:index={slot_index}:count={{len(slot_ids)}}")
+    raw.C_Finalize(None)
     sys.exit(1)
 
-slots = (c_ulong * count.value)()
-rv = C_GetSlotList(1, slots, byref(count))
-if rv != CKR_OK:
-    print(f"FATAL:GetSlotList2:0x{{rv:08x}}")
-    C_Finalize()
-    sys.exit(1)
+hSession = open_session(raw, slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
-slot_id = slots[{slot_index}]
-
-# Open session
-hSession = c_ulong(0)
-flags = c_ulong(CKF_SERIAL_SESSION | CKF_RW_SESSION)
-rv = C_OpenSession(slot_id, flags, c_void_p(None), c_void_p(None), byref(hSession))
-if rv != CKR_OK:
-    print(f"FATAL:OpenSession:0x{{rv:08x}}")
-    C_Finalize()
-    sys.exit(1)
-
-# Login if PIN provided
 _PIN = {pin_bytes!r}
 if _PIN:
-    rv = C_Login(hSession, c_ulong(1), c_char_p(_PIN), c_ulong(len(_PIN)))
-    if rv != CKR_OK and rv != CKR_USER_ALREADY_LOGGED_IN:
-        print(f"FATAL:Login:0x{{rv:08x}}")
-        C_CloseSession(hSession)
-        C_Finalize()
-        sys.exit(1)
-
+    login_user(raw, hSession, 1, _PIN)
 """
 
-# ---------------------------------------------------------------------------
-# Subprocess helpers
-# ---------------------------------------------------------------------------
-
-# Script that generates an RSA-2048 key pair and stores handles as KEYGEN_OK
 _KEYGEN_SCRIPT = """\
-    def _attr(atype, val):
-        return CK_ATTRIBUTE(
-            atype,
-            ctypes.cast(ctypes.byref(val), c_void_p),
-            ctypes.sizeof(val),
-        )
-
-    # Public key template
-    cls_pub = c_ulong(CKO_PUBLIC_KEY)
-    ktype_pub = c_ulong(CKK_RSA)
-    modbits = c_ulong(2048)
-    pubexp = (c_ubyte * 3)(0x01, 0x00, 0x01)  # 65537
-    tok_pub = c_ubyte(0)
-    vr_pub = c_ubyte(1)
-
-    pub_template = (CK_ATTRIBUTE * 5)(
-        _attr(CKA_CLASS,         cls_pub),
-        _attr(CKA_KEY_TYPE,      ktype_pub),
-        _attr(CKA_MODULUS_BITS,  modbits),
-        _attr(CKA_TOKEN,         tok_pub),
-        _attr(CKA_VERIFY_RECOVER, vr_pub),
+    pub_template = template(
+        attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
+        attr_ulong(CKA_KEY_TYPE, CKK_RSA),
+        attr_ulong(CKA_MODULUS_BITS, 2048),
+        attr_bool(CKA_TOKEN, False),
+        attr_bool(CKA_VERIFY_RECOVER, True),
+        attr_bytes(CKA_PUBLIC_EXPONENT, b"\\x01\\x00\\x01"),
     )
-    # Set CKA_PUBLIC_EXPONENT separately (byte array, not ulong)
-    pub_exp_attr = CK_ATTRIBUTE(
-        CKA_PUBLIC_EXPONENT,
-        ctypes.cast(pubexp, c_void_p),
-        3,
-    )
-    pub_template_full = (CK_ATTRIBUTE * 6)(
-        _attr(CKA_CLASS,          cls_pub),
-        _attr(CKA_KEY_TYPE,       ktype_pub),
-        _attr(CKA_MODULUS_BITS,   modbits),
-        _attr(CKA_TOKEN,          tok_pub),
-        _attr(CKA_VERIFY_RECOVER, vr_pub),
-        pub_exp_attr,
+    prv_template = template(
+        attr_ulong(CKA_CLASS, CKO_PRIVATE_KEY),
+        attr_ulong(CKA_KEY_TYPE, CKK_RSA),
+        attr_bool(CKA_TOKEN, False),
+        attr_bool(CKA_SIGN_RECOVER, True),
     )
 
-    # Private key template
-    cls_prv = c_ulong(CKO_PRIVATE_KEY)
-    ktype_prv = c_ulong(CKK_RSA)
-    tok_prv = c_ubyte(0)
-    sr_prv = c_ubyte(1)
-
-    prv_template = (CK_ATTRIBUTE * 4)(
-        _attr(CKA_CLASS,         cls_prv),
-        _attr(CKA_KEY_TYPE,      ktype_prv),
-        _attr(CKA_TOKEN,         tok_prv),
-        _attr(CKA_SIGN_RECOVER,  sr_prv),
-    )
-
-    kg_mech = CK_MECHANISM()
-    kg_mech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN
-
-    hPub = c_ulong(0)
-    hPrv = c_ulong(0)
-    rv = C_GenerateKeyPair(
+    kg_mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
+    hPub = CK_OBJECT_HANDLE(0)
+    hPrv = CK_OBJECT_HANDLE(0)
+    rv = raw.C_GenerateKeyPair(
         hSession,
-        ctypes.byref(kg_mech),
-        pub_template_full, 6,
-        prv_template, 4,
-        byref(hPub), byref(hPrv),
+        kg_mech.byref(),
+        _template_ptr(pub_template),
+        pub_template.count,
+        _template_ptr(prv_template),
+        prv_template.count,
+        byref(hPub),
+        byref(hPrv),
     )
     if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
         print(f"SKIP:GenerateKeyPairUnsupported:0x{rv:08x}")
@@ -292,6 +137,11 @@ _KEYGEN_SCRIPT = """\
     print(f"KEYGEN_OK:{hPub.value}:{hPrv.value}")
 """
 
+_SCRIPT_CLEANUP = """\
+close_session_quietly(raw, hSession)
+raw.C_Finalize(None)
+"""
+
 
 def _run_script(
     module_path: str,
@@ -300,40 +150,16 @@ def _run_script(
     script_body: str,
     timeout: int = 30,
 ) -> tuple[int, str, str]:
-    """Run a ctypes PKCS#11 script in a subprocess.
-
-    The boilerplate sets up lib, hSession, slot_id, and all helpers.
-    script_body is appended and must print KEY:value lines.
-    Returns (returncode, stdout, stderr).
-    """
-    boilerplate = _SUBPROCESS_BOILERPLATE.format(
-        module_path=module_path,
-        slot_index=slot_index,
-        pin_bytes=pin_bytes,
-    )
-    full_script = (
-        boilerplate
-        + textwrap.dedent(script_body)
-        + textwrap.dedent(
-            """\
-
-        C_CloseSession(hSession)
-        C_Finalize()
-    """
-        )
-    )
-
-    result = subprocess.run(
-        [sys.executable, "-c", full_script],
-        capture_output=True,
-        text=True,
+    return run_raw_script(
+        _SCRIPT_PREAMBLE.format(
+            module_path=module_path,
+            slot_index=slot_index,
+            pin_bytes=pin_bytes,
+        ),
+        script_body,
+        cleanup=_SCRIPT_CLEANUP,
         timeout=timeout,
-        env=os.environ.copy(),
     )
-    return result.returncode, result.stdout.strip(), result.stderr.strip()
-
-
-from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 
 
 def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
@@ -382,16 +208,16 @@ class TestSignRecover:
         script = (
             _KEYGEN_SCRIPT
             + """\
-    sr_mech = CK_MECHANISM()
-    sr_mech.mechanism = CKM_RSA_X_509
+    sr_mech = mech_simple(CKM_RSA_X_509)
 
     # Input must be exactly 256 bytes (RSA-2048 modulus size)
     # Use PKCS#1 v1.5-style padding: 0x00 0x01 0xFF...FF 0x00 <data>
     data = b"Hello sign-recover"
     pad_len = 256 - 3 - len(data)
     padded = b"\\x00\\x01" + b"\\xff" * pad_len + b"\\x00" + data
+    padded_buf = _byte_array(padded)
 
-    rv = C_SignRecoverInit(hSession, ctypes.byref(sr_mech), hPrv)
+    rv = raw.C_SignRecoverInit(hSession, sr_mech.byref(), hPrv)
     if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
         print(f"SKIP:SignRecoverInitUnsupported:0x{rv:08x}")
         sys.exit(0)
@@ -400,8 +226,8 @@ class TestSignRecover:
         sys.exit(1)
 
     # Length query
-    sig_len = c_ulong(0)
-    rv = C_SignRecover(hSession, c_char_p(padded), c_ulong(len(padded)), None, byref(sig_len))
+    sig_len = ctypes.c_ulong(0)
+    rv = raw.C_SignRecover(hSession, padded_buf, len(padded), None, byref(sig_len))
     if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
         print(f"SKIP:SignRecoverUnsupported:0x{rv:08x}")
         sys.exit(0)
@@ -410,8 +236,7 @@ class TestSignRecover:
         sys.exit(1)
 
     sig_buf = (c_ubyte * sig_len.value)()
-    rv = C_SignRecover(hSession, c_char_p(padded), c_ulong(len(padded)),
-                      sig_buf, byref(sig_len))
+    rv = raw.C_SignRecover(hSession, padded_buf, len(padded), sig_buf, byref(sig_len))
     if rv != CKR_OK:
         print(f"FATAL:SignRecover:0x{rv:08x}")
         sys.exit(1)
@@ -458,18 +283,18 @@ class TestSignRecover:
         script = (
             _KEYGEN_SCRIPT
             + """\
-    sr_mech = CK_MECHANISM()
-    sr_mech.mechanism = CKM_RSA_X_509
+    sr_mech = mech_simple(CKM_RSA_X_509)
 
     # Input: exactly 256 bytes with PKCS#1 type-1 padding
     data = b"Round-trip test data"
     pad_len = 256 - 3 - len(data)
     padded = b"\\x00\\x01" + b"\\xff" * pad_len + b"\\x00" + data
+    padded_buf = _byte_array(padded)
     padded_hex = binascii.hexlify(padded).decode()
     print(f"ORIGINAL:{padded_hex}")
 
     # --- Sign-recover ---
-    rv = C_SignRecoverInit(hSession, ctypes.byref(sr_mech), hPrv)
+    rv = raw.C_SignRecoverInit(hSession, sr_mech.byref(), hPrv)
     if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
         print(f"SKIP:SignRecoverInitUnsupported:0x{rv:08x}")
         sys.exit(0)
@@ -478,8 +303,8 @@ class TestSignRecover:
         sys.exit(1)
 
     # Length query
-    sig_len = c_ulong(0)
-    rv = C_SignRecover(hSession, c_char_p(padded), c_ulong(len(padded)), None, byref(sig_len))
+    sig_len = ctypes.c_ulong(0)
+    rv = raw.C_SignRecover(hSession, padded_buf, len(padded), None, byref(sig_len))
     if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
         print(f"SKIP:SignRecoverUnsupported:0x{rv:08x}")
         sys.exit(0)
@@ -488,16 +313,16 @@ class TestSignRecover:
         sys.exit(1)
 
     sig_buf = (c_ubyte * sig_len.value)()
-    rv = C_SignRecover(hSession, c_char_p(padded), c_ulong(len(padded)),
-                      sig_buf, byref(sig_len))
+    rv = raw.C_SignRecover(hSession, padded_buf, len(padded), sig_buf, byref(sig_len))
     if rv != CKR_OK:
         print(f"FATAL:SignRecover:0x{rv:08x}")
         sys.exit(1)
     sig_bytes = bytes(sig_buf[:sig_len.value])
+    sig_in = _byte_array(sig_bytes)
     print(f"SIG_LEN:{sig_len.value}")
 
     # --- Verify-recover ---
-    rv = C_VerifyRecoverInit(hSession, ctypes.byref(sr_mech), hPub)
+    rv = raw.C_VerifyRecoverInit(hSession, sr_mech.byref(), hPub)
     if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
         print(f"SKIP:VerifyRecoverInitUnsupported:0x{rv:08x}")
         sys.exit(0)
@@ -506,9 +331,8 @@ class TestSignRecover:
         sys.exit(1)
 
     # Length query
-    rec_len = c_ulong(0)
-    rv = C_VerifyRecover(hSession, c_char_p(sig_bytes), c_ulong(len(sig_bytes)),
-                         None, byref(rec_len))
+    rec_len = ctypes.c_ulong(0)
+    rv = raw.C_VerifyRecover(hSession, sig_in, len(sig_bytes), None, byref(rec_len))
     if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
         print(f"SKIP:VerifyRecoverUnsupported:0x{rv:08x}")
         sys.exit(0)
@@ -517,8 +341,7 @@ class TestSignRecover:
         sys.exit(1)
 
     rec_buf = (c_ubyte * rec_len.value)()
-    rv = C_VerifyRecover(hSession, c_char_p(sig_bytes), c_ulong(len(sig_bytes)),
-                         rec_buf, byref(rec_len))
+    rv = raw.C_VerifyRecover(hSession, sig_in, len(sig_bytes), rec_buf, byref(rec_len))
     if rv != CKR_OK:
         print(f"FATAL:VerifyRecover:0x{rv:08x}")
         sys.exit(1)
@@ -571,10 +394,9 @@ class TestSignRecover:
     CKR_ARGUMENTS_BAD  = 0x00000007
     CKR_BUFFER_TOO_SMALL = 0x00000150
 
-    sr_mech = CK_MECHANISM()
-    sr_mech.mechanism = CKM_RSA_X_509
+    sr_mech = mech_simple(CKM_RSA_X_509)
 
-    rv = C_SignRecoverInit(hSession, ctypes.byref(sr_mech), hPrv)
+    rv = raw.C_SignRecoverInit(hSession, sr_mech.byref(), hPrv)
     if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
         print(f"SKIP:SignRecoverInitUnsupported:0x{rv:08x}")
         sys.exit(0)
@@ -584,10 +406,10 @@ class TestSignRecover:
 
     # Data shorter than modulus - must be rejected
     short_data = b"too short"
-    sig_len = c_ulong(256)
+    short_data_buf = _byte_array(short_data)
+    sig_len = ctypes.c_ulong(256)
     sig_buf = (c_ubyte * 256)()
-    rv = C_SignRecover(hSession, c_char_p(short_data), c_ulong(len(short_data)),
-                      sig_buf, byref(sig_len))
+    rv = raw.C_SignRecover(hSession, short_data_buf, len(short_data), sig_buf, byref(sig_len))
 
     if rv == CKR_OK:
         print("RESULT:ACCEPTED_SHORT_DATA")
