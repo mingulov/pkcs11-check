@@ -286,7 +286,6 @@ def _render_types_module(
     for name, value in symbols.items():
         rendered = value if isinstance(value, str) else hex(value)
         lines.append(f"{name} = {rendered}")
-    lines.append("")
     return "\n".join(lines) + "\n"
 
 
