@@ -20,39 +20,24 @@ import pytest
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 _SCRIPT_TEMPLATE = """\
-import ctypes, struct
-from pkcs11.raw import (
-    RawPKCS11, CKR_OK, CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION,
-    CKR_KEY_TYPE_INCONSISTENT, CKR_MECHANISM_INVALID,
-)
+import ctypes
+from ctypes import byref, cast
+
+from pkcs11_check.raw import CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT, CKR_MECHANISM_INVALID, CKR_OK
+from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
+from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
+from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE
+
+def _template_ptr(attrs):
+    return cast(attrs.array, CK_ATTRIBUTE_PTR)
 
 raw = RawPKCS11.from_lib("{module}")
 raw.C_Initialize(None)
-sc = ctypes.c_ulong(0)
-raw.C_GetSlotList(1, None, ctypes.byref(sc))
-sl = (ctypes.c_ulong * sc.value)()
-raw.C_GetSlotList(1, sl, ctypes.byref(sc))
-sess = ctypes.c_ulong(0)
-raw.C_OpenSession(sl[0], CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
-sh = sess.value
+sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 pin = {pin_arg}
-if pin:
-    pb = pin.encode()
-    raw.C_Login(sh, 1, (ctypes.c_ubyte * len(pb))(*pb), len(pb))
-
-# Helper to build CK_ATTRIBUTE array
-class CK_ATTR(ctypes.Structure):
-    _fields_ = [("type", ctypes.c_ulong), ("pValue", ctypes.c_void_p), ("ulValueLen", ctypes.c_ulong)]
-
-def mk(t, v):
-    b = (ctypes.c_ubyte * len(v))(*v)
-    a = CK_ATTR(); a.type = t; a.pValue = ctypes.cast(b, ctypes.c_void_p); a.ulValueLen = len(v)
-    return a, b
-
-true_val = b"\\x01"
-false_val = b"\\x00"
-val_len_32 = struct.pack("=Q", 32)
+if pin is not None:
+    login_user(raw, sh, 1, pin.encode())
 
 {test_code}
 
@@ -62,7 +47,7 @@ raw.C_Finalize(None)
 
 
 def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
-    pin_arg = f'"{pin}"' if pin else "None"
+    pin_arg = repr(pin) if pin is not None else "None"
     script = _SCRIPT_TEMPLATE.format(module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code))
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -82,19 +67,20 @@ class TestKeyFunctionNotPermitted:
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 # Generate key with ENCRYPT=False
-attrs = []
-bufs = []
-for t, v in [(0x161, val_len_32), (0x104, false_val), (0x105, true_val), (0x01, false_val)]:
-    a, b = mk(t, v); attrs.append(a); bufs.append(b)
-tmpl = (CK_ATTR * len(attrs))(*attrs)
-mech_kg = CK_MECHANISM(); mech_kg.mechanism = 0x1080  # AES_KEY_GEN
-key = ctypes.c_ulong(0)
-rv = raw.C_GenerateKey(sh, ctypes.byref(mech_kg), tmpl, len(attrs), ctypes.byref(key))
+attrs = template(
+    attr_ulong(0x161, 32),
+    attr_bool(0x104, False),
+    attr_bool(0x105, True),
+    attr_bool(0x01, False),
+)
+mech_kg = mech_simple(0x1080)  # AES_KEY_GEN
+key = CK_OBJECT_HANDLE(0)
+rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
 # Try EncryptInit with CKA_ENCRYPT=False key
-mech = CK_MECHANISM(); mech.mechanism = 0x1081  # AES_ECB
-rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key.value)
+mech = mech_simple(0x1081)  # AES_ECB
+rv = raw.C_EncryptInit(sh, mech.byref(), int(key.value))
 print(f"CKR:0x{rv:08x}")
 assert rv == CKR_KEY_FUNCTION_NOT_PERMITTED, f"Expected NOT_PERMITTED, got 0x{rv:08x}"
 print("OK")
@@ -110,18 +96,19 @@ print("OK")
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
 # Generate key with SIGN=False
-attrs = []
-bufs = []
-for t, v in [(0x161, val_len_32), (0x108, false_val), (0x104, true_val), (0x01, false_val)]:
-    a, b = mk(t, v); attrs.append(a); bufs.append(b)
-tmpl = (CK_ATTR * len(attrs))(*attrs)
-mech_kg = CK_MECHANISM(); mech_kg.mechanism = 0x1080
-key = ctypes.c_ulong(0)
-rv = raw.C_GenerateKey(sh, ctypes.byref(mech_kg), tmpl, len(attrs), ctypes.byref(key))
+attrs = template(
+    attr_ulong(0x161, 32),
+    attr_bool(0x108, False),
+    attr_bool(0x104, True),
+    attr_bool(0x01, False),
+)
+mech_kg = mech_simple(0x1080)
+key = CK_OBJECT_HANDLE(0)
+rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
-mech = CK_MECHANISM(); mech.mechanism = 0x0251  # AES_CMAC
-rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
+mech = mech_simple(0x0251)  # AES_CMAC
+rv = raw.C_SignInit(sh, mech.byref(), int(key.value))
 print(f"CKR:0x{rv:08x}")
 # KEY_FUNCTION_NOT_PERMITTED or MECHANISM_INVALID (if module doesn't support CMAC)
 # KEY_FUNCTION_NOT_PERMITTED, MECHANISM_INVALID, or KEY_TYPE_INCONSISTENT
@@ -138,18 +125,19 @@ print("OK")
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
-attrs = []
-bufs = []
-for t, v in [(0x161, val_len_32), (0x105, false_val), (0x104, true_val), (0x01, false_val)]:
-    a, b = mk(t, v); attrs.append(a); bufs.append(b)
-tmpl = (CK_ATTR * len(attrs))(*attrs)
-mech_kg = CK_MECHANISM(); mech_kg.mechanism = 0x1080
-key = ctypes.c_ulong(0)
-rv = raw.C_GenerateKey(sh, ctypes.byref(mech_kg), tmpl, len(attrs), ctypes.byref(key))
+attrs = template(
+    attr_ulong(0x161, 32),
+    attr_bool(0x105, False),
+    attr_bool(0x104, True),
+    attr_bool(0x01, False),
+)
+mech_kg = mech_simple(0x1080)
+key = CK_OBJECT_HANDLE(0)
+rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
-mech = CK_MECHANISM(); mech.mechanism = 0x1081  # AES_ECB
-rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key.value)
+mech = mech_simple(0x1081)  # AES_ECB
+rv = raw.C_DecryptInit(sh, mech.byref(), int(key.value))
 print(f"CKR:0x{rv:08x}")
 assert rv == CKR_KEY_FUNCTION_NOT_PERMITTED, f"Expected NOT_PERMITTED, got 0x{rv:08x}"
 print("OK")

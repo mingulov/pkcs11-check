@@ -633,33 +633,25 @@ class TestTLS12Extended:
 
 
 _NEG_ATTR_SCRIPT = """\
-import ctypes, struct, sys, os
-from pkcs11.raw import RawPKCS11, CKR_OK, CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION
+import ctypes, sys
+from ctypes import byref, cast
+
+from pkcs11_check.raw import CKR_OK
+from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
+from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template
+from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE
+
+
+def _template_ptr(attrs):
+    return cast(attrs.array, CK_ATTRIBUTE_PTR)
 
 raw = RawPKCS11.from_lib("{module}")
 raw.C_Initialize(None)
-sc = ctypes.c_ulong(0)
-raw.C_GetSlotList(1, None, ctypes.byref(sc))
-sl = (ctypes.c_ulong * sc.value)()
-raw.C_GetSlotList(1, sl, ctypes.byref(sc))
-sess = ctypes.c_ulong(0)
-raw.C_OpenSession(sl[0], CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
-sh = sess.value
+sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 pin = {pin_arg}
-if pin:
-    pb = pin.encode()
-    raw.C_Login(sh, 1, (ctypes.c_ubyte * len(pb))(*pb), len(pb))
-
-class CK_ATTR(ctypes.Structure):
-    _fields_ = [("type", ctypes.c_ulong), ("pValue", ctypes.c_void_p), ("ulValueLen", ctypes.c_ulong)]
-
-def mk(t, v):
-    b = (ctypes.c_ubyte * len(v))(*v)
-    a = CK_ATTR(); a.type = t; a.pValue = ctypes.cast(b, ctypes.c_void_p); a.ulValueLen = len(v)
-    return a, b
-
-true_val = b"\\x01"
-false_val = b"\\x00"
+if pin is not None:
+    login_user(raw, sh, 1, pin.encode())
 
 {test_code}
 
@@ -670,7 +662,7 @@ raw.C_Finalize(None)
 
 def _run_neg(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
     import os, subprocess, sys, textwrap
-    pin_arg = f'"{pin}"' if pin else "None"
+    pin_arg = repr(pin) if pin is not None else "None"
     script = _NEG_ATTR_SCRIPT.format(module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code))
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -700,30 +692,26 @@ class TestTLSNegativeAttributes:
             """\
 # Create generic secret key with DERIVE=False
 val = bytes(range(48))
-attrs = []
-bufs = []
-for t, v in [
-    (0x0000, struct.pack("=Q", 4)),    # CKA_CLASS = CKO_SECRET_KEY (4)
-    (0x0100, struct.pack("=Q", 0x10)), # CKA_KEY_TYPE = CKK_GENERIC_SECRET (0x10)
-    (0x0011, val),                      # CKA_VALUE
-    (0x0161, struct.pack("=Q", 48)),   # CKA_VALUE_LEN
-    (0x010C, false_val),               # CKA_DERIVE = FALSE
-    (0x0001, false_val),               # CKA_TOKEN = FALSE
-    (0x0103, false_val),               # CKA_SENSITIVE = FALSE
-    (0x0162, true_val),                # CKA_EXTRACTABLE = TRUE
-]:
-    a, b = mk(t, v); attrs.append(a); bufs.append(b)
-tmpl = (CK_ATTR * len(attrs))(*attrs)
-key = ctypes.c_ulong(0)
-rv = raw.C_CreateObject(sh, tmpl, len(attrs), ctypes.byref(key))
+attrs = template(
+    attr_ulong(0x0000, 4),  # CKA_CLASS = CKO_SECRET_KEY (4)
+    attr_ulong(0x0100, 0x10),  # CKA_KEY_TYPE = CKK_GENERIC_SECRET (0x10)
+    attr_bytes(0x0011, val),  # CKA_VALUE
+    attr_ulong(0x0161, 48),  # CKA_VALUE_LEN
+    attr_bool(0x010C, False),  # CKA_DERIVE = FALSE
+    attr_bool(0x0001, False),  # CKA_TOKEN = FALSE
+    attr_bool(0x0103, False),  # CKA_SENSITIVE = FALSE
+    attr_bool(0x0162, True),  # CKA_EXTRACTABLE = TRUE
+)
+key = CK_OBJECT_HANDLE(0)
+rv = raw.C_CreateObject(sh, _template_ptr(attrs), attrs.count, byref(key))
 if rv != CKR_OK:
     print(f"SKIP:create_failed:0x{rv:08x}")
     sys.exit(0)
 
 # Try C_DeriveKey - should be rejected
-mech = CK_MECHANISM()
-mech.mechanism = 0x000003E0  # CKM_TLS12_MASTER_KEY_DERIVE
-rv = raw.C_DeriveKey(sh, ctypes.byref(mech), key.value, None, 0, ctypes.byref(ctypes.c_ulong(0)))
+mech = mech_simple(0x000003E0)  # CKM_TLS12_MASTER_KEY_DERIVE
+out_key = CK_OBJECT_HANDLE(0)
+rv = raw.C_DeriveKey(sh, mech.byref(), int(key.value), None, 0, byref(out_key))
 print(f"CKR:0x{rv:08x}")
 # 0x69 = KEY_FUNCTION_NOT_PERMITTED, 0x70 = MECHANISM_PARAM_INVALID
 if rv == 0x69:
@@ -755,30 +743,25 @@ raw.C_DestroyObject(sh, key.value)
             """\
 # Create generic secret key with SIGN=False
 val = bytes(range(32))
-attrs = []
-bufs = []
-for t, v in [
-    (0x0000, struct.pack("=Q", 4)),    # CKA_CLASS = CKO_SECRET_KEY
-    (0x0100, struct.pack("=Q", 0x10)), # CKA_KEY_TYPE = CKK_GENERIC_SECRET
-    (0x0011, val),                      # CKA_VALUE
-    (0x0161, struct.pack("=Q", 32)),   # CKA_VALUE_LEN
-    (0x0108, false_val),               # CKA_SIGN = FALSE
-    (0x0001, false_val),               # CKA_TOKEN = FALSE
-    (0x0103, false_val),               # CKA_SENSITIVE = FALSE
-    (0x0162, true_val),                # CKA_EXTRACTABLE = TRUE
-]:
-    a, b = mk(t, v); attrs.append(a); bufs.append(b)
-tmpl = (CK_ATTR * len(attrs))(*attrs)
-key = ctypes.c_ulong(0)
-rv = raw.C_CreateObject(sh, tmpl, len(attrs), ctypes.byref(key))
+attrs = template(
+    attr_ulong(0x0000, 4),  # CKA_CLASS = CKO_SECRET_KEY
+    attr_ulong(0x0100, 0x10),  # CKA_KEY_TYPE = CKK_GENERIC_SECRET
+    attr_bytes(0x0011, val),  # CKA_VALUE
+    attr_ulong(0x0161, 32),  # CKA_VALUE_LEN
+    attr_bool(0x0108, False),  # CKA_SIGN = FALSE
+    attr_bool(0x0001, False),  # CKA_TOKEN = FALSE
+    attr_bool(0x0103, False),  # CKA_SENSITIVE = FALSE
+    attr_bool(0x0162, True),  # CKA_EXTRACTABLE = TRUE
+)
+key = CK_OBJECT_HANDLE(0)
+rv = raw.C_CreateObject(sh, _template_ptr(attrs), attrs.count, byref(key))
 if rv != CKR_OK:
     print(f"SKIP:create_failed:0x{rv:08x}")
     sys.exit(0)
 
 # Try C_SignInit with CKA_SIGN=False key
-mech = CK_MECHANISM()
-mech.mechanism = 0x000003D8  # CKM_TLS12_MAC
-rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
+mech = mech_simple(0x000003D8)  # CKM_TLS12_MAC
+rv = raw.C_SignInit(sh, mech.byref(), int(key.value))
 print(f"CKR:0x{rv:08x}")
 if rv == 0x69:
     print("OK:KEY_FUNCTION_NOT_PERMITTED")

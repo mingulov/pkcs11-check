@@ -3,7 +3,7 @@
 Tests that passing NULL where a valid pointer is required returns
 CKR_ARGUMENTS_BAD (0x07). Modules that segfault instead are documented.
 
-Uses pkcs11.raw.RawPKCS11 in subprocess for safety.
+Uses pkcs11_check.raw.RawPKCS11 in subprocess for safety.
 """
 
 from __future__ import annotations
@@ -20,30 +20,31 @@ pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 _PREAMBLE = """\
 import ctypes
-from pkcs11.raw import (
-    RawPKCS11, CKR_OK, CKR_ARGUMENTS_BAD, CKR_SESSION_HANDLE_INVALID,
-    CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION,
-    CKR_CRYPTOKI_NOT_INITIALIZED, CKR_MECHANISM_INVALID,
-    CKR_OPERATION_NOT_INITIALIZED,
-)
+from ctypes import byref, cast
+
+from pkcs11_check.raw import CKR_ARGUMENTS_BAD, CKR_OK
+from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
+from pkcs11_check.raw.faults import null_pointer
+from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
+from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE
+
+
+def _template_ptr(attrs):
+    return cast(attrs.array, CK_ATTRIBUTE_PTR)
+
+
 raw = RawPKCS11.from_lib("{module}")
 raw.C_Initialize(None)
-sc = ctypes.c_ulong(0)
-raw.C_GetSlotList(1, None, ctypes.byref(sc))
-sl = (ctypes.c_ulong * sc.value)()
-raw.C_GetSlotList(1, sl, ctypes.byref(sc))
-sess = ctypes.c_ulong(0)
-raw.C_OpenSession(sl[0], CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess))
-sh = sess.value
+sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 pin = {pin_arg}
-if pin:
-    pb = pin.encode()
-    raw.C_Login(sh, 1, (ctypes.c_ubyte * len(pb))(*pb), len(pb))
+if pin is not None:
+    login_user(raw, sh, 1, pin.encode())
 """
 
 
 def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
-    pin_arg = f'"{pin}"' if pin else "None"
+    pin_arg = repr(pin) if pin is not None else "None"
     script = _PREAMBLE.format(module=module, pin_arg=pin_arg) + textwrap.dedent(code) + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -66,23 +67,17 @@ class TestArgsBadNullPointers:
     def test_encrypt_init_null_mechanism(self, p11_config: Any) -> None:
         """C_EncryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
-# Generate a key first
-import struct
-class A(ctypes.Structure):
-    _fields_ = [("type", ctypes.c_ulong), ("pValue", ctypes.c_void_p), ("ulValueLen", ctypes.c_ulong)]
-def mk(t, v):
-    b = (ctypes.c_ubyte * len(v))(*v)
-    a = A(); a.type = t; a.pValue = ctypes.cast(b, ctypes.c_void_p); a.ulValueLen = len(v)
-    return a, b
-a1, b1 = mk(0x161, struct.pack("=Q", 32))
-a2, b2 = mk(0x104, b"\\x01")
-a3, b3 = mk(0x01, b"\\x00")
-tmpl = (A * 3)(a1, a2, a3)
-mech_kg = CK_MECHANISM(); mech_kg.mechanism = 0x1080
-key = ctypes.c_ulong(0)
-raw.C_GenerateKey(sh, ctypes.byref(mech_kg), tmpl, 3, ctypes.byref(key))
+attrs = template(
+    attr_ulong(0x161, 32),
+    attr_bool(0x104, True),
+    attr_bool(0x01, False),
+)
+mech_kg = mech_simple(0x1080)
+key = CK_OBJECT_HANDLE(0)
+rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
+assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
 # EncryptInit with NULL mechanism
-rv = raw.C_EncryptInit(sh, None, key.value)
+rv = raw.C_EncryptInit(sh, null_pointer().pointer, int(key.value))
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
@@ -92,21 +87,16 @@ print("OK")
     def test_decrypt_init_null_mechanism(self, p11_config: Any) -> None:
         """C_DecryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
-import struct
-class A(ctypes.Structure):
-    _fields_ = [("type", ctypes.c_ulong), ("pValue", ctypes.c_void_p), ("ulValueLen", ctypes.c_ulong)]
-def mk(t, v):
-    b = (ctypes.c_ubyte * len(v))(*v)
-    a = A(); a.type = t; a.pValue = ctypes.cast(b, ctypes.c_void_p); a.ulValueLen = len(v)
-    return a, b
-a1, b1 = mk(0x161, struct.pack("=Q", 32))
-a2, b2 = mk(0x105, b"\\x01")
-a3, b3 = mk(0x01, b"\\x00")
-tmpl = (A * 3)(a1, a2, a3)
-mech_kg = CK_MECHANISM(); mech_kg.mechanism = 0x1080
-key = ctypes.c_ulong(0)
-raw.C_GenerateKey(sh, ctypes.byref(mech_kg), tmpl, 3, ctypes.byref(key))
-rv = raw.C_DecryptInit(sh, None, key.value)
+attrs = template(
+    attr_ulong(0x161, 32),
+    attr_bool(0x105, True),
+    attr_bool(0x01, False),
+)
+mech_kg = mech_simple(0x1080)
+key = CK_OBJECT_HANDLE(0)
+rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
+assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
+rv = raw.C_DecryptInit(sh, null_pointer().pointer, int(key.value))
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
@@ -116,7 +106,7 @@ print("OK")
     def test_sign_init_null_mechanism(self, p11_config: Any) -> None:
         """C_SignInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
-rv = raw.C_SignInit(sh, None, 0)
+rv = raw.C_SignInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
@@ -126,7 +116,7 @@ print("OK")
     def test_verify_init_null_mechanism(self, p11_config: Any) -> None:
         """C_VerifyInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
-rv = raw.C_VerifyInit(sh, None, 0)
+rv = raw.C_VerifyInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
@@ -136,7 +126,7 @@ print("OK")
     def test_digest_init_null_mechanism(self, p11_config: Any) -> None:
         """C_DigestInit(session, NULL) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
-rv = raw.C_DigestInit(sh, None)
+rv = raw.C_DigestInit(sh, null_pointer().pointer)
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
@@ -147,7 +137,7 @@ print("OK")
         """C_GenerateKey(session, NULL, ...) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
 key = ctypes.c_ulong(0)
-rv = raw.C_GenerateKey(sh, None, None, 0, ctypes.byref(key))
+rv = raw.C_GenerateKey(sh, null_pointer().pointer, None, 0, ctypes.byref(key))
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
@@ -158,7 +148,7 @@ print("OK")
         """C_WrapKey(session, NULL, ...) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
 out_len = ctypes.c_ulong(256)
-rv = raw.C_WrapKey(sh, None, 0, 0, None, ctypes.byref(out_len))
+rv = raw.C_WrapKey(sh, null_pointer().pointer, 0, 0, None, ctypes.byref(out_len))
 print(f"CKR:0x{rv:08x}")
 # ARGUMENTS_BAD or KEY_HANDLE_INVALID - both acceptable for NULL mechanism
 assert rv in (CKR_ARGUMENTS_BAD, 0x60, 0x70), f"Got 0x{rv:08x}"
@@ -170,7 +160,7 @@ print("OK")
         """C_DeriveKey(session, NULL, ...) -> CKR_ARGUMENTS_BAD."""
         rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
 key = ctypes.c_ulong(0)
-rv = raw.C_DeriveKey(sh, None, 0, None, 0, ctypes.byref(key))
+rv = raw.C_DeriveKey(sh, null_pointer().pointer, 0, None, 0, ctypes.byref(key))
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0x60, 0x70), f"Got 0x{rv:08x}"
 print("OK")
