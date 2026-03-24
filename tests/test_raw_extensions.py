@@ -198,9 +198,34 @@ def test_extension_global_numeric_lookup_returns_none_when_vendor_id_is_ambiguou
         mechanisms={0x80016666: "CKM_IBM_AMBIG"},
         inspectors={"CKM_IBM_AMBIG": lambda value: "ibm"},
     )
-    register_extension(namespace="acme", mechanisms={0x80016666: "CKM_ACME_AMBIG"})
+    register_extension(
+        namespace="acme",
+        mechanisms={0x80016666: "CKM_ACME_AMBIG"},
+        inspectors={"CKM_ACME_AMBIG": lambda value: "acme"},
+    )
 
     assert lookup_inspector(0x80016666) is None
+
+
+def test_extension_global_helper_ambiguity_is_family_specific() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, lookup_packer, register_extension
+
+    packer = lambda value: value
+    inspector = lambda value: "inspector"
+
+    register_extension(
+        namespace="ibm",
+        mechanisms={0x80016667: "CKM_IBM_FAMILY_SPLIT"},
+        packers={"CKM_IBM_FAMILY_SPLIT": packer},
+    )
+    register_extension(
+        namespace="acme",
+        mechanisms={0x80016667: "CKM_ACME_FAMILY_SPLIT"},
+        inspectors={"CKM_ACME_FAMILY_SPLIT": inspector},
+    )
+
+    assert lookup_packer(0x80016667) is packer
+    assert lookup_inspector(0x80016667) is inspector
 
 
 def test_extension_clear_can_reset_one_namespace_or_all() -> None:
@@ -325,6 +350,15 @@ def test_extension_register_rejects_non_int_name_mapping_key() -> None:
 
     with pytest.raises(ValueError, match="name mapping keys must be int"):
         register_extension(namespace="ibm", mechanisms={"0x80015555": "CKM_IBM_BAD"})  # type: ignore[arg-type]
+
+
+def test_extension_register_rejects_non_string_name_mapping_value() -> None:
+    import pytest
+
+    from pkcs11_check.raw.extensions import register_extension
+
+    with pytest.raises(ValueError, match="name mapping values must be str"):
+        register_extension(namespace="ibm", mechanisms={0x80015556: 123})  # type: ignore[dict-item]
 
 
 def test_extension_register_rejects_bad_helper_key_type() -> None:

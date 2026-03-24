@@ -110,6 +110,8 @@ def _validate_name_mapping(
     for key in mapping:
         if not isinstance(key, int):
             raise ValueError(f"name mapping keys must be int, got {type(key).__name__}")
+        if not isinstance(mapping[key], str):
+            raise ValueError(f"name mapping values must be str, got {type(mapping[key]).__name__}")
         if key in _STANDARD_TABLES[category]:
             if category == "mechanisms":
                 raise ValueError(f"standard mechanism ids are not allowed in vendor extensions: 0x{key:08x}")
@@ -233,14 +235,6 @@ def _lookup_vendor_helper(
     return helpers.get(symbol)
 
 
-def _vendor_knows_mechanism_id(vendor: ExtensionNamespace, value: int) -> bool:
-    return (
-        value in vendor.names["mechanisms"]
-        or value in vendor.packers
-        or value in vendor.inspectors
-    )
-
-
 def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | None:
     """Return a registered extension packer by namespace or by unique global match."""
     if namespace is not None:
@@ -250,13 +244,13 @@ def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | No
         return _lookup_vendor_helper(vendor, "packers", value)
     if isinstance(value, int):
         matching_vendors = [
-            (vendor_name, vendor)
+            (vendor_name, helper)
             for vendor_name, vendor in _EXTENSIONS.items()
-            if _vendor_knows_mechanism_id(vendor, value)
+            if (helper := _lookup_vendor_helper(vendor, "packers", value)) is not None
         ]
         if len(matching_vendors) != 1:
             return None
-        return _lookup_vendor_helper(matching_vendors[0][1], "packers", value)
+        return matching_vendors[0][1]
     matches = [
         (vendor_name, helper)
         for vendor_name, vendor in _EXTENSIONS.items()
@@ -274,13 +268,13 @@ def lookup_inspector(value: int | str, *, namespace: str | None = None) -> Any |
         return _lookup_vendor_helper(vendor, "inspectors", value)
     if isinstance(value, int):
         matching_vendors = [
-            (vendor_name, vendor)
+            (vendor_name, helper)
             for vendor_name, vendor in _EXTENSIONS.items()
-            if _vendor_knows_mechanism_id(vendor, value)
+            if (helper := _lookup_vendor_helper(vendor, "inspectors", value)) is not None
         ]
         if len(matching_vendors) != 1:
             return None
-        return _lookup_vendor_helper(matching_vendors[0][1], "inspectors", value)
+        return matching_vendors[0][1]
     matches = [
         (vendor_name, helper)
         for vendor_name, vendor in _EXTENSIONS.items()
