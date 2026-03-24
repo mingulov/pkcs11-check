@@ -58,3 +58,13 @@ def test_inspect_mechanism_prefers_numeric_extension_inspector_lookup() -> None:
 
     text = render_mechanism(mech_simple(0x80010021))
     assert "numeric-inspector-hit" in text
+
+
+def test_inspect_sized_fault_renders_note_pointer_and_explicit_length() -> None:
+    from pkcs11_check.raw.faults import nonnull_zero_length_bytes
+    from pkcs11_check.raw.inspect import render_sized_fault
+
+    text = render_sized_fault(nonnull_zero_length_bytes(b"abc"))
+    assert "nonnull pointer with zero length" in text
+    assert "kind=bytes" in text
+    assert "len=0 explicit" in text

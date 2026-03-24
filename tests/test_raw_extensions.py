@@ -68,3 +68,21 @@ def test_extension_numeric_helper_collision_requires_namespace() -> None:
     assert lookup_inspector(0x80010003) is None
     assert lookup_packer(0x80010003, namespace="ibm") is packer_a
     assert lookup_inspector(0x80010003, namespace="acme") is inspector_b
+
+
+def test_extension_namespaced_numeric_lookup_uses_vendor_symbol_mapping() -> None:
+    from pkcs11_check.raw.extensions import lookup_inspector, lookup_packer, register_extension
+
+    packer_ibm = lambda value: value
+    inspector_ibm = lambda value: "ibm"
+
+    register_extension(
+        namespace="ibm",
+        mechanisms={0x80010004: "CKM_IBM_SHARED_ID"},
+        packers={"CKM_IBM_SHARED_ID": packer_ibm},
+        inspectors={"CKM_IBM_SHARED_ID": inspector_ibm},
+    )
+    register_extension(namespace="acme", mechanisms={0x80010004: "CKM_ACME_SHARED_ID"})
+
+    assert lookup_packer(0x80010004, namespace="ibm") is packer_ibm
+    assert lookup_inspector(0x80010004, namespace="ibm") is inspector_ibm

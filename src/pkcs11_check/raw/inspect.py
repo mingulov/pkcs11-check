@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .extensions import lookup_inspector, lookup_symbol_name
-from .faults import CountFaultArg
+from .faults import CountFaultArg, SizedFaultArg
 from .pack import LengthArg, PackedAttribute, PackedMechanism, PointerArg, TemplateArg
 
 
@@ -70,6 +70,11 @@ def render_count_fault(fault: CountFaultArg) -> str:
         f"count_fault[{fault.note}] (claimed={fault.claimed_count}, actual={fault.actual_count}, "
         f"{render_pointer(fault.pointer_arg)})"
     )
+
+
+def render_sized_fault(fault: SizedFaultArg) -> str:
+    """Render a malformed pointer/length state such as truncated or wrong-shape input."""
+    return f"sized_fault[{fault.note}] ({render_pointer(fault.pointer_arg)}, {render_length(fault.length_arg)})"
 
 
 def render_mechanism(mechanism: PackedMechanism) -> str:

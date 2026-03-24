@@ -126,16 +126,16 @@ def lookup_struct(name: str, *, namespace: str | None = None) -> Any | None:
     return _lookup_unique(matches)
 
 
-def _helper_keys(value: int | str) -> tuple[int | str, ...]:
+def _helper_keys(value: int | str, *, namespace: str | None = None) -> tuple[int | str, ...]:
     if isinstance(value, int):
-        symbol = lookup_symbol_name("mechanisms", value)
+        symbol = lookup_symbol_name("mechanisms", value, namespace=namespace)
         return (value,) if symbol is None else (value, symbol)
     return (value,)
 
 
 def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | None:
     """Return a registered extension packer by namespace or by unique global match."""
-    keys = _helper_keys(value)
+    keys = _helper_keys(value, namespace=namespace)
     if namespace is not None:
         vendor = _vendor(namespace)
         for key in keys:
@@ -148,7 +148,7 @@ def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | No
 
 def lookup_inspector(value: int | str, *, namespace: str | None = None) -> Any | None:
     """Return a registered extension inspector by namespace or by unique global match."""
-    keys = _helper_keys(value)
+    keys = _helper_keys(value, namespace=namespace)
     if namespace is not None:
         vendor = _vendor(namespace)
         for key in keys:
