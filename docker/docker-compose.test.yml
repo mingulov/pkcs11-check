@@ -91,7 +91,10 @@ services:
       context: ..
       dockerfile: docker/opencryptoki/Dockerfile.master
       args:
-        OPENSSL_VERSION: "3.6.1"
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-3.6.1}"
+        OPENCRYPTOKI_REPO: "${OPENCRYPTOKI_REPO:-https://github.com/opencryptoki/opencryptoki.git}"
+        OPENCRYPTOKI_BRANCH: "${OPENCRYPTOKI_BRANCH:-master}"
+        OPENCRYPTOKI_PR: "${OPENCRYPTOKI_PR:-}"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki-master
       PKCS11_CHECK_PIN: "1234"

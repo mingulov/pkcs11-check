@@ -26,7 +26,18 @@ ENV PKG_CONFIG_PATH=/opt/openssl/lib64/pkgconfig
 RUN /opt/openssl/bin/openssl version
 
 # Build OpenCryptoki against custom OpenSSL
-RUN git clone --depth 1 https://github.com/opencryptoki/opencryptoki.git /build/opencryptoki
+ARG OPENCRYPTOKI_REPO=https://github.com/opencryptoki/opencryptoki.git
+ARG OPENCRYPTOKI_BRANCH=master
+ARG OPENCRYPTOKI_PR=""
+
+RUN if [ -n "${OPENCRYPTOKI_PR}" ]; then \
+        git clone --depth 1 ${OPENCRYPTOKI_REPO} /build/opencryptoki && \
+        cd /build/opencryptoki && \
+        git fetch --depth 1 origin pull/${OPENCRYPTOKI_PR}/head && \
+        git checkout FETCH_HEAD; \
+    else \
+        git clone --depth 1 --branch ${OPENCRYPTOKI_BRANCH} ${OPENCRYPTOKI_REPO} /build/opencryptoki; \
+    fi
 WORKDIR /build/opencryptoki
 
 RUN rm -rf /var/lock && ln -s /run/lock /var/lock && \
