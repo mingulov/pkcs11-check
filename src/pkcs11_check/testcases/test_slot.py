@@ -1,7 +1,10 @@
 """Tests for PKCS#11 slot, token, and session management."""
 from __future__ import annotations
+
 from typing import Any
+
 import pytest
+
 from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 from pkcs11_check.raw.recipes import generate_random, get_mechanism_list
 
