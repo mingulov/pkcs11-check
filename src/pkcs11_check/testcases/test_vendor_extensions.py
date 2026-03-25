@@ -15,8 +15,7 @@ from pkcs11.exceptions import PKCS11Error
 pytestmark = pytest.mark.smoke
 
 
-# CKM_VENDOR_DEFINED = 0x80000000
-CKM_VENDOR_DEFINED = 0x80000000
+from pkcs11_check.raw.types_std import CKM_VENDOR_DEFINED
 
 
 class TestVendorMechanisms:

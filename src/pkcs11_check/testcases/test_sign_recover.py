@@ -58,7 +58,10 @@ from pkcs11_check.raw import (
     CKM_RSA_X_509,
     CKO_PRIVATE_KEY,
     CKO_PUBLIC_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_BUFFER_TOO_SMALL,
     CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    CKR_DATA_LEN_RANGE,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_MECHANISM_INVALID,
     CKR_OK,
@@ -390,10 +393,6 @@ class TestSignRecover:
         script = (
             _KEYGEN_SCRIPT
             + """\
-    CKR_DATA_LEN_RANGE = 0x00000021
-    CKR_ARGUMENTS_BAD  = 0x00000007
-    CKR_BUFFER_TOO_SMALL = 0x00000150
-
     sr_mech = mech_simple(CKM_RSA_X_509)
 
     rv = raw.C_SignRecoverInit(hSession, sr_mech.byref(), hPrv)

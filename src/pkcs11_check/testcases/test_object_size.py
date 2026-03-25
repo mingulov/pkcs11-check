@@ -13,8 +13,7 @@ from pkcs11 import Attribute, KeyType, ObjectClass
 
 pytestmark = pytest.mark.keymgmt
 
-# CK_UNAVAILABLE_INFORMATION = ~0 (max unsigned long)
-CK_UNAVAILABLE = 0xFFFFFFFFFFFFFFFF
+from pkcs11_check.raw.types_std import CK_UNAVAILABLE_INFORMATION as CK_UNAVAILABLE
 
 
 def _get_object_size(obj: Any) -> int | None:

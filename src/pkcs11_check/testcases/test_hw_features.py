@@ -21,11 +21,12 @@ import pytest
 from pkcs11 import Attribute, ObjectClass
 from pkcs11.exceptions import PKCS11Error
 
-# Hardware feature type constants (no enum in python-pkcs11)
-CKH_MONOTONIC_COUNTER = 0x00000001
-CKH_CLOCK = 0x00000002
-CKH_USER_INTERFACE = 0x00000003
-CKH_VENDOR_DEFINED = 0x80000000
+from pkcs11_check.raw.types_std import (
+    CKH_CLOCK,
+    CKH_MONOTONIC_COUNTER,
+    CKH_USER_INTERFACE,
+    CKH_VENDOR_DEFINED,
+)
 
 _KNOWN_HW_FEATURE_TYPES = {
     CKH_MONOTONIC_COUNTER,

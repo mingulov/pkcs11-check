@@ -547,14 +547,10 @@ class TestSessionCancel:
             import ctypes
             from ctypes import c_ulong, c_ubyte, c_void_p, byref, pointer, POINTER
             from pkcs11_check.raw.api import RawPKCS11
-            from pkcs11_check.raw.types_std import CK_MECHANISM
-
-            CKR_OK = 0x00000000
-            CKR_FUNCTION_NOT_SUPPORTED = 0x00000054
-            CKF_SERIAL_SESSION = 0x00000004
-            CKF_RW_SESSION     = 0x00000002
-            CKU_USER           = 1
-            CKM_SHA256         = 0x00000250
+            from pkcs11_check.raw.types_std import (
+                CK_MECHANISM, CKR_OK, CKR_FUNCTION_NOT_SUPPORTED,
+                CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER, CKM_SHA256,
+            )
 
             # Load module and negotiate v3.0 interface for C_SessionCancel
             lib = ctypes.CDLL("{module_path}")

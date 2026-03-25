@@ -14,15 +14,14 @@ import subprocess
 import sys
 import textwrap
 
-# CKR constants
-CKR_OK = 0x00000000
-CKR_ARGUMENTS_BAD = 0x00000007
-CKR_CRYPTOKI_NOT_INITIALIZED = 0x00000190
-CKR_CRYPTOKI_ALREADY_INITIALIZED = 0x00000191
-
-# CKF constants
-CKF_SERIAL_SESSION = 0x00000004
-CKF_RW_SESSION = 0x00000002
+from pkcs11_check.raw.types_std import (
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKR_ARGUMENTS_BAD,
+    CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    CKR_CRYPTOKI_NOT_INITIALIZED,
+    CKR_OK,
+)
 
 
 def run_null_test(
@@ -46,11 +45,11 @@ def run_null_test(
     script = textwrap.dedent(f"""\
         import ctypes
         from ctypes import c_ulong, c_void_p, c_ubyte, POINTER, byref, cast
+        from pkcs11_check.raw.types_std import (
+            CKR_OK, CKF_SERIAL_SESSION, CKF_RW_SESSION,
+        )
 
         CK_RV = c_ulong
-        CKR_OK = 0
-        CKF_SERIAL_SESSION = 0x00000004
-        CKF_RW_SESSION = 0x00000002
 
         # Load module
         lib = ctypes.CDLL("{module_path}")
