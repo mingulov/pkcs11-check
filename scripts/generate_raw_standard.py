@@ -605,15 +605,21 @@ def _render_types_module(
             lines.append("    ]")
         lines.append("")
 
+    # Platform-dependent CK_ULONG mask (computed at runtime in types_std.py)
+    lines.append("_CK_ULONG_MAX = (1 << (ctypes.sizeof(ctypes.c_ulong) * 8)) - 1")
+    lines.append("")
+
     for name, value in symbols.items():
         if isinstance(value, str):
             # Unresolved expression — emit as plain constant
             lines.append(f"{name} = {value}")
+        elif value == -1 or (value < 0):
+            # Platform-dependent value like ~0UL: emit runtime expression
+            cls = _resolve_constant_type(name)
+            lines.append(f"{name} = {cls}(_CK_ULONG_MAX, {name!r})")
         else:
             cls = _resolve_constant_type(name)
-            # Mask to unsigned to handle ~0 (-1) correctly
-            uval = value & 0xFFFFFFFFFFFFFFFF
-            lines.append(f"{name} = {cls}(0x{uval:08x}, {name!r})")
+            lines.append(f"{name} = {cls}(0x{value:08x}, {name!r})")
     return "\n".join(lines) + "\n"
 
 
