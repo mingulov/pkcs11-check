@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from . import extensions, metadata_std, recipes, types_std
+from . import der, extensions, metadata_std, pack, recipes, rv, types_std
 from .api import RawPKCS11
 from .bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
 from .bridge import raw_from_lib, raw_from_module
-# Removed wildcard import to prevent namespace pollution.
-# Existing tests that need standard constants should import them from .types_std.
 from .types_std import (
     CK_ATTRIBUTE,
     CK_CONSTANT,
@@ -68,6 +66,9 @@ __all__ = [
     "from_module",
     "raw_from_lib",
     "raw_from_module",
-    "recipes",
+    "der",
     "extensions",
+    "pack",
+    "recipes",
+    "rv",
 ]

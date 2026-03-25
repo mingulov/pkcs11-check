@@ -76,7 +76,35 @@ All take `raw: RawPKCS11` as first parameter and use `expect_rv()` for errors.
 - `import_secret_key(raw, session, key_type, value, attrs)` - import secret key
 - `destroy_quietly(raw, session, handle)` - destroy object, ignore errors
 - `encrypt_single(raw, session, key, mechanism, plaintext)` - single-part encrypt
+- `decrypt_single(raw, session, key, mechanism, ciphertext)` - single-part decrypt
 - `sign_single(raw, session, key, mechanism, data)` - single-part sign
+- `verify_single(raw, session, key, mechanism, data, signature)` - single-part verify
+- `digest_single(raw, session, mechanism, data)` - single-part digest
+- `encrypt_multipart(raw, session, key, mechanism, chunks)` - multi-part encrypt
+- `decrypt_multipart(raw, session, key, mechanism, chunks)` - multi-part decrypt
+- `sign_multipart(raw, session, key, mechanism, chunks)` - multi-part sign
+- `verify_multipart(raw, session, key, mechanism, chunks, signature)` - multi-part verify
+- `digest_multipart(raw, session, mechanism, chunks)` - multi-part digest
+- `wrap_key(raw, session, wrapping_key, target_key, mechanism)` - wrap key
+- `unwrap_key(raw, session, unwrapping_key, wrapped_key, mechanism, attrs)` - unwrap key
+- `derive_key(raw, session, base_key, mechanism, attrs)` - derive key
+- `generate_random(raw, session, length)` - generate random bytes
+- `copy_object(raw, session, handle, attrs)` - copy object
+- `set_attributes(raw, session, handle, attrs)` - set attribute values
+- `read_attributes(raw, session, handle, attr_types)` - read attribute values
+- `find_objects(raw, session, tmpl)` - find objects matching template
+- `save_operation_state(raw, session)` - get operation state
+- `restore_operation_state(raw, session, state)` - set operation state
+- `init_token(raw, slot_id, so_pin, label)` - initialize token
+- `init_pin(raw, session, pin)` - set user PIN
+- `set_pin(raw, session, old_pin, new_pin)` - change PIN
+- `seed_random(raw, session, seed)` - seed the RNG
+- `message_encrypt(raw, session, key, mechanism, data)` - v3.0 message encrypt
+- `message_decrypt(raw, session, key, mechanism, ciphertext)` - v3.0 message decrypt
+- `encapsulate_key(raw, session, pub_key, mechanism, attrs)` - v3.2 KEM encapsulate
+- `decapsulate_key(raw, session, priv_key, mechanism, ciphertext, attrs)` - v3.2 KEM decapsulate
+- `wrap_key_authenticated(raw, session, wrapping_key, target_key, mechanism)` - v3.2 auth wrap
+- `unwrap_key_authenticated(raw, session, unwrapping_key, wrapped, tag, mechanism, attrs)` - v3.2 auth unwrap
 
 Recipes call `expect_rv()` and raise on non-OK. For exact CK_RV control, use raw C_* calls.
 
@@ -102,6 +130,10 @@ Recipes call `expect_rv()` and raise on non-OK. For exact CK_RV control, use raw
   Namespace-isolated vendor extension registry.
 - `rv.py`
   `CK_RV` naming and explicit assertion helpers.
+- `der.py`
+  Minimal DER encoding/decoding for ECDSA signatures, EC points, and RSA keys.
+- `ec.py`
+  EC curve OID encoding helpers.
 
 Compatibility wrappers:
 
@@ -194,7 +226,9 @@ Common helpers:
 - `template`
 - `mech_simple`
 - `mech_bytes`
-- mechanism-specific helpers in `pack.py`
+- `mech_gcm`, `mech_pss`, `mech_oaep`, `mech_ecdh`, `mech_hkdf`
+- `mech_cbc_pad`, `mech_ctr`, `mech_chacha20`, `mech_chacha20_poly1305`
+- `mech_eddsa`, `mech_pbkdf2`, `mech_string_data`
 
 ## Malformed Inputs
 
