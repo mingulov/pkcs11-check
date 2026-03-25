@@ -19,11 +19,29 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import PKCS11Error, SignatureInvalid
-from pkcs11.util.ec import encode_named_curve_parameters
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EC_PARAMS,
+    CKA_EC_POINT,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VERIFY,
+    CKK_EC,
+    CKM_ECDSA_SHA256,
+    CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.cctv]
 
@@ -60,42 +78,46 @@ _RAW_POINT = bytes([0x04]) + _PUB_QX + _PUB_QY
 _EC_POINT_DER = bytes([0x04, len(_RAW_POINT)]) + _RAW_POINT  # len=65, fits in 1-byte DER length
 
 
-def test_rfc6979_ecdsa_verify(p11_session: Any, p11_module: Any) -> None:
+def test_rfc6979_ecdsa_verify(p11_raw_session: Any) -> None:
     """Verify the RFC 6979 CCTV vector signature with the imported public key.
 
     This test confirms that the expected r||s signature (produced by an
     RFC 6979 implementation) is a VALID signature for the given (message, key)
     pair.  Any module that supports ECDSA_SHA256 must accept it.
     """
-    if not has_mechanism(p11_module, "ECDSA_SHA256"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("ECDSA_SHA256"):
         pytest.skip("ECDSA_SHA256 not supported by module")
 
-    pub_key = None
+    pub_key = 0
     try:
         try:
-            pub_key = p11_session.create_object(
+            pub_key = create_object(
+                rs.raw,
+                rs.sh,
                 {
-                    Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                    Attribute.KEY_TYPE: KeyType.EC,
-                    Attribute.EC_PARAMS: _EC_PARAMS,
-                    Attribute.EC_POINT: _EC_POINT_DER,
-                    Attribute.TOKEN: False,
-                    Attribute.VERIFY: True,
-                }
+                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_EC),
+                    int(CKA_EC_PARAMS): _EC_PARAMS,
+                    int(CKA_EC_POINT): _EC_POINT_DER,
+                    int(CKA_TOKEN): False,
+                    int(CKA_VERIFY): True,
+                },
             )
-        except PKCS11Error as e:
+        except AssertionError as e:
             pytest.skip(f"Cannot import P-256 public key: {e}")
 
-        try:
-            pub_key.verify(_MSG, _EXPECTED_SIG, mechanism=Mechanism.ECDSA_SHA256)
-        except SignatureInvalid:
+        verified = verify_single(
+            rs.raw, rs.sh, pub_key, CKM_ECDSA_SHA256, _MSG, _EXPECTED_SIG
+        )
+        if not verified:
             pytest.fail(
                 "Module rejected a VALID ECDSA-SHA256 signature - "
                 "the RFC 6979 CCTV vector should verify correctly"
             )
     finally:
-        if pub_key is not None:
-            pub_key.destroy()
+        if pub_key:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
 
 
 @pytest.mark.xfail(
@@ -106,7 +128,7 @@ def test_rfc6979_ecdsa_verify(p11_session: Any, p11_module: Any) -> None:
     ),
     strict=False,
 )
-def test_rfc6979_ecdsa_sign_deterministic(p11_session: Any, p11_module: Any) -> None:
+def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any) -> None:
     """Sign with the RFC 6979 private key and compare to the expected signature.
 
     The CCTV vector exercises the P-256 rejection-sampling path (first k
@@ -114,33 +136,36 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_session: Any, p11_module: Any) -> 
     produce the expected r||s bytes.  All others will produce a different but
     mathematically valid signature - those runs are marked xfail.
     """
-    if not has_mechanism(p11_module, "ECDSA_SHA256"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("ECDSA_SHA256"):
         pytest.skip("ECDSA_SHA256 not supported by module")
 
-    priv_key = None
+    priv_key = 0
     try:
         try:
-            priv_key = p11_session.create_object(
+            priv_key = create_object(
+                rs.raw,
+                rs.sh,
                 {
-                    Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-                    Attribute.KEY_TYPE: KeyType.EC,
-                    Attribute.EC_PARAMS: _EC_PARAMS,
-                    Attribute.EC_POINT: _EC_POINT_DER,
-                    Attribute.VALUE: _PRIV_D,
-                    Attribute.TOKEN: False,
-                    Attribute.SENSITIVE: False,
-                    Attribute.SIGN: True,
-                }
+                    int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_EC),
+                    int(CKA_EC_PARAMS): _EC_PARAMS,
+                    int(CKA_EC_POINT): _EC_POINT_DER,
+                    int(CKA_VALUE): _PRIV_D,
+                    int(CKA_TOKEN): False,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_SIGN): True,
+                },
             )
-        except PKCS11Error as e:
+        except AssertionError as e:
             pytest.skip(f"Cannot import P-256 private key: {e}")
 
-        sig = priv_key.sign(_MSG, mechanism=Mechanism.ECDSA_SHA256)
+        sig = sign_single(rs.raw, rs.sh, priv_key, CKM_ECDSA_SHA256, _MSG)
         assert sig == _EXPECTED_SIG, (
             f"Signature mismatch: got {sig.hex()[:32]}... "
             f"expected {_EXPECTED_SIG.hex()[:32]}... "
             "(module does not use RFC 6979 deterministic k - xfail is expected)"
         )
     finally:
-        if priv_key is not None:
-            priv_key.destroy()
+        if priv_key:
+            destroy_quietly(rs.raw, rs.sh, priv_key)

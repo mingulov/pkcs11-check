@@ -18,22 +18,34 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.constants import MLDsaParameterSet
-from pkcs11.exceptions import FunctionFailed, MechanismInvalid
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_PARAMETER_SET,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKM_ML_DSA,
+    CKM_ML_DSA_KEY_PAIR_GEN,
+    CKP_ML_DSA_44,
+    CKP_ML_DSA_65,
+    CKP_ML_DSA_87,
+)
 from pkcs11_check.testcases.data import CCTV_DIR
 
 pytestmark = [pytest.mark.pqc, pytest.mark.requires_v32, pytest.mark.kat, pytest.mark.cctv]
 
 _BENCHMARK_DIR = CCTV_DIR / "ML-DSA" / "benchmark"
 
-# ML-DSA parameter set name -> (MLDsaParameterSet enum, benchmark file)
-_PARAM_CONFIGS: list[tuple[str, MLDsaParameterSet, Path]] = [
-    ("ML-DSA-44", MLDsaParameterSet.ML_DSA_44, _BENCHMARK_DIR / "ML-DSA-44.json"),
-    ("ML-DSA-65", MLDsaParameterSet.ML_DSA_65, _BENCHMARK_DIR / "ML-DSA-65.json"),
-    ("ML-DSA-87", MLDsaParameterSet.ML_DSA_87, _BENCHMARK_DIR / "ML-DSA-87.json"),
+# ML-DSA parameter set name -> (CKP parameter set int, benchmark file)
+_PARAM_CONFIGS: list[tuple[str, int, Path]] = [
+    ("ML-DSA-44", int(CKP_ML_DSA_44), _BENCHMARK_DIR / "ML-DSA-44.json"),
+    ("ML-DSA-65", int(CKP_ML_DSA_65), _BENCHMARK_DIR / "ML-DSA-65.json"),
+    ("ML-DSA-87", int(CKP_ML_DSA_87), _BENCHMARK_DIR / "ML-DSA-87.json"),
 ]
 
 # Limit to first N messages per parameter set for speed
@@ -63,13 +75,44 @@ def _build_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_VECTORS = _build_vectors()
 
 
+def _gen_mldsa_keypair(rs: Any, param_set: int) -> tuple[int, int]:
+    """Generate an ML-DSA key pair using the raw API."""
+    from ctypes import byref
+
+    from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
+    from pkcs11_check.raw.rv import expect_rv
+    from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CKR_OK
+
+    pub_tmpl = template(
+        attr_bool(CKA_VERIFY, True),
+        attr_ulong(CKA_PARAMETER_SET, param_set),
+        attr_bool(CKA_TOKEN, False),
+    )
+    priv_tmpl = template(
+        attr_bool(CKA_SIGN, True),
+        attr_ulong(CKA_PARAMETER_SET, param_set),
+        attr_bool(CKA_TOKEN, False),
+    )
+    mech = mech_simple(CKM_ML_DSA_KEY_PAIR_GEN)
+    pub_h = CK_OBJECT_HANDLE(0)
+    priv_h = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_GenerateKeyPair(
+        rs.sh, mech.byref(),
+        pub_tmpl.ptr, pub_tmpl.count,
+        priv_tmpl.ptr, priv_tmpl.count,
+        byref(pub_h), byref(priv_h),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(pub_h.value), int(priv_h.value)
+
+
 @pytest.mark.parametrize(
     "vec_id,vec",
     _ALL_VECTORS,
     ids=[v[0] for v in _ALL_VECTORS],
 )
 def test_cctv_mldsa_sign_verify(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """ML-DSA sign + verify round-trip using CCTV benchmark messages.
 
@@ -80,44 +123,41 @@ def test_cctv_mldsa_sign_verify(
     Security property: if sign succeeds and verify rejects the fresh
     signature, the module has a sign/verify inconsistency (test failure).
     """
+    rs = p11_raw_session
     if not _BENCHMARK_DIR.exists():
         pytest.skip("CCTV ML-DSA benchmark data not found")
 
     param_name: str = vec["param_name"]
-    param_set: MLDsaParameterSet = vec["param_set"]
+    param_set: int = vec["param_set"]
     msg: bytes = vec["msg"]
 
-    if not has_mechanism(p11_module, "ML_DSA"):
+    if not rs.has_mechanism("ML_DSA"):
         pytest.skip(f"{param_name}: ML_DSA not supported by module")
 
-    pub_key = None
-    priv_key = None
+    pub_key = 0
+    priv_key = 0
     try:
         try:
-            pub_key, priv_key = p11_session.generate_keypair(
-                KeyType.ML_DSA,
-                mechanism=Mechanism.ML_DSA_KEY_PAIR_GEN,
-                public_template={
-                    Attribute.VERIFY: True,
-                    Attribute.PARAMETER_SET: int(param_set),
-                    Attribute.TOKEN: False,
-                },
-                private_template={
-                    Attribute.SIGN: True,
-                    Attribute.PARAMETER_SET: int(param_set),
-                    Attribute.TOKEN: False,
-                },
-            )
-        except (MechanismInvalid, FunctionFailed) as e:
-            pytest.skip(f"{param_name}: key generation failed - {e}")
+            pub_key, priv_key = _gen_mldsa_keypair(rs, param_set)
+        except AssertionError as e:
+            exc_msg = str(e)
+            if any(
+                name in exc_msg
+                for name in (
+                    "CKR_MECHANISM_INVALID", "CKR_FUNCTION_FAILED",
+                )
+            ):
+                pytest.skip(f"{param_name}: key generation failed - {exc_msg}")
+            raise
 
-        sig = priv_key.sign(msg, mechanism=Mechanism.ML_DSA)
+        sig = sign_single(rs.raw, rs.sh, priv_key, CKM_ML_DSA, msg)
         assert len(sig) > 0, f"{vec_id}: sign() returned empty signature"
 
-        pub_key.verify(msg, sig, mechanism=Mechanism.ML_DSA)
+        verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ML_DSA, msg, sig)
+        assert verified, f"{vec_id}: verify rejected a freshly-signed signature"
 
     finally:
-        if pub_key is not None:
-            pub_key.destroy()
-        if priv_key is not None:
-            priv_key.destroy()
+        if pub_key:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+        if priv_key:
+            destroy_quietly(rs.raw, rs.sh, priv_key)
