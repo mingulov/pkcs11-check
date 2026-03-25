@@ -1,19 +1,45 @@
-"""Wycheproof AES-CMAC, AES Key Wrap, AES-KWP, and AES-CCM vectors."""
+"""Wycheproof AES-CMAC, AES Key Wrap, AES-KWP, AES-CCM, AES-GMAC, and AES-XTS vectors."""
 
 from __future__ import annotations
 
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.pack import mech_bytes, mech_ccm
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    encrypt_single,
+    generate_random,
+    import_secret_key,
+    sign_single,
+    wrap_key,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_UNWRAP,
+    CKA_VALUE_LEN,
+    CKA_VERIFY,
+    CKA_WRAP,
+    CKK_AES,
+    CKK_AES_XTS,
+    CKK_GENERIC_SECRET,
+    CKM_AES_CCM,
+    CKM_AES_CMAC,
+    CKM_AES_GMAC,
+    CKM_AES_KEY_WRAP,
+    CKM_AES_KEY_WRAP_PAD,
+    CKM_AES_XTS,
+)
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
-
-from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 
 def _load_flat(filename: str) -> list[tuple[str, dict[str, Any]]]:
@@ -37,16 +63,11 @@ def _load_flat(filename: str) -> list[tuple[str, dict[str, Any]]]:
 _AES_CMAC_VECTORS = _load_flat("aes_cmac_test.json")
 
 
-def _has_aes_cmac(p11_module: Any) -> bool:
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return "AES_CMAC" in names
-
-
 @pytest.mark.parametrize("vec_id,vec", _AES_CMAC_VECTORS, ids=[v[0] for v in _AES_CMAC_VECTORS])
-def test_aes_cmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CMAC verification from Wycheproof vectors."""
-    if not _has_aes_cmac(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("AES_CMAC"):
         pytest.skip("AES_CMAC not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
@@ -56,34 +77,37 @@ def test_aes_cmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
     tag_size = vec["_group"].get("tagSize", 128) // 8
 
     try:
-        key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: key_bytes,
-                Attribute.SIGN: True,
-                Attribute.VERIFY: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+        key = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
+            attrs={
+                int(CKA_SIGN): True,
+                int(CKA_VERIFY): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "invalid":
             return
         raise
 
     try:
-        mac = key.sign(msg, mechanism=Mechanism.AES_CMAC)
+        mac = sign_single(rs.raw, rs.sh, key, CKM_AES_CMAC, msg)
         truncated = mac[:tag_size]
         if result == "valid":
             assert truncated == tag_expected
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"AES-CMAC failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, key)
 
-    p11_session.generate_random(64)
+    generate_random(rs.raw, rs.sh, 64)
 
 
 # --- AES Key Wrap (RFC 3394) ---
@@ -91,20 +115,15 @@ def test_aes_cmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
 _AES_WRAP_VECTORS = _load_flat("aes_wrap_test.json")
 
 
-def _has_aes_kw(p11_module: Any) -> bool:
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return "AES_KEY_WRAP" in names
-
-
 @pytest.mark.parametrize("vec_id,vec", _AES_WRAP_VECTORS, ids=[v[0] for v in _AES_WRAP_VECTORS])
-def test_aes_key_wrap(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES Key Wrap (RFC 3394) from Wycheproof vectors.
 
     For valid vectors: wrap(msg) with key should produce ct.
     We test by importing wrapping key, wrapping a target key, comparing output.
     """
-    if not _has_aes_kw(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("AES_KEY_WRAP"):
         pytest.skip("AES_KEY_WRAP not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
@@ -114,47 +133,53 @@ def test_aes_key_wrap(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[
 
     # Import wrapping key
     try:
-        wrap_key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: key_bytes,
-                Attribute.WRAP: True,
-                Attribute.UNWRAP: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+        wrap_key_h = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
+            attrs={
+                int(CKA_WRAP): True,
+                int(CKA_UNWRAP): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         pytest.skip("Cannot import AES wrapping key")
 
     # Import target key (the material being wrapped)
     try:
-        target_key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: msg,
-                Attribute.EXTRACTABLE: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+        target_key = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            msg,
+            attrs={
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
+        destroy_quietly(rs.raw, rs.sh, wrap_key_h)
         if result == "invalid":
             return
         pytest.skip("Cannot import target key")
 
     # Wrap and compare
     try:
-        wrapped = wrap_key.wrap_key(target_key, mechanism=Mechanism.AES_KEY_WRAP)
+        wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP)
         if result == "valid":
             assert wrapped == ct_expected
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"AES-KW wrap failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, target_key)
+        destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
 
 # --- AES Key Wrap with Padding (RFC 5649) ---
@@ -162,20 +187,15 @@ def test_aes_key_wrap(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[
 _AES_KWP_VECTORS = _load_flat("aes_kwp_test.json")
 
 
-def _has_aes_kwp(p11_module: Any) -> bool:
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return "AES_KEY_WRAP_PAD" in names
-
-
 @pytest.mark.parametrize("vec_id,vec", _AES_KWP_VECTORS, ids=[v[0] for v in _AES_KWP_VECTORS])
-def test_aes_kwp(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES Key Wrap with Padding (RFC 5649) from Wycheproof vectors.
 
     KWP allows wrapping data that is not a multiple of 8 bytes,
     unlike basic AES-KW which requires 8-byte aligned data.
     """
-    if not _has_aes_kwp(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("AES_KEY_WRAP_PAD"):
         pytest.skip("AES_KEY_WRAP_PAD not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
@@ -185,53 +205,61 @@ def test_aes_kwp(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
 
     # Import wrapping key
     try:
-        wrap_key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: key_bytes,
-                Attribute.WRAP: True,
-                Attribute.UNWRAP: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+        wrap_key_h = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
+            attrs={
+                int(CKA_WRAP): True,
+                int(CKA_UNWRAP): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         pytest.skip("Cannot import AES wrapping key")
 
     # KWP can wrap arbitrary-length data - import as generic secret
     # For non-aligned sizes, we use GENERIC_SECRET instead of AES
-    key_type = KeyType.AES if len(msg) in (16, 24, 32) else KeyType.GENERIC_SECRET
+    key_type = CKK_AES if len(msg) in (16, 24, 32) else CKK_GENERIC_SECRET
+    extra_attrs: dict[int, Any] = {
+        int(CKA_EXTRACTABLE): True,
+        int(CKA_TOKEN): False,
+        int(CKA_SENSITIVE): False,
+    }
+    if key_type == CKK_GENERIC_SECRET:
+        extra_attrs[int(CKA_VALUE_LEN)] = len(msg)
     try:
-        target_key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: key_type,
-                Attribute.VALUE: msg,
-                Attribute.EXTRACTABLE: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-                **({Attribute.VALUE_LEN: len(msg)} if key_type == KeyType.GENERIC_SECRET else {}),
-            }
+        target_key = import_secret_key(
+            rs.raw,
+            rs.sh,
+            key_type,
+            msg,
+            attrs=extra_attrs,
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
+        destroy_quietly(rs.raw, rs.sh, wrap_key_h)
         if result == "invalid":
             return
         pytest.skip("Cannot import target key for KWP")
 
     # Wrap with padding and compare
     try:
-        wrapped = wrap_key.wrap_key(target_key, mechanism=Mechanism.AES_KEY_WRAP_PAD)
+        wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP_PAD)
         if result == "valid" and wrapped != ct_expected:
             pytest.xfail(
                 f"AES-KWP wrap output differs for {vec_id} "
                 f"(got {len(wrapped)}B, expected {len(ct_expected)}B)"
             )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"AES-KWP wrap failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, target_key)
+        destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
 
 # --- AES-CCM ---
@@ -239,19 +267,14 @@ def test_aes_kwp(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
 _AES_CCM_VECTORS = _load_flat("aes_ccm_test.json")
 
 
-def _has_aes_ccm(p11_module: Any) -> bool:
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return "AES_CCM" in names
-
-
 @pytest.mark.parametrize("vec_id,vec", _AES_CCM_VECTORS, ids=[v[0] for v in _AES_CCM_VECTORS])
-def test_aes_ccm(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CCM AEAD encryption/decryption from Wycheproof vectors.
 
     For valid vectors: encrypt(msg, aad, iv) should produce ct||tag.
     """
-    if not _has_aes_ccm(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("AES_CCM"):
         pytest.skip("AES_CCM not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
@@ -263,42 +286,50 @@ def test_aes_ccm(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
     result = vec["result"]
 
     try:
-        key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: key_bytes,
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+        key = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
+            attrs={
+                int(CKA_ENCRYPT): True,
+                int(CKA_DECRYPT): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "invalid":
             return
         raise
 
     # Encrypt and compare
     try:
-        ciphertext = key.encrypt(
+        ccm_param = mech_ccm(
+            CKM_AES_CCM,
+            iv,
+            data_len=len(msg),
+            aad=aad if aad else None,
+            mac_len=len(tag_expected),
+        )
+        ciphertext = encrypt_single(
+            rs.raw,
+            rs.sh,
+            key,
+            CKM_AES_CCM,
             msg,
-            mechanism=Mechanism.AES_CCM,
-            mechanism_param={
-                "data_len": len(msg),
-                "nonce": iv,
-                "associated_data": aad,
-                "mac_length": len(tag_expected),
-            },
+            mech_param=ccm_param,
         )
         # AES-CCM output is ct||tag
         if result == "valid":
             assert ciphertext == ct_expected + tag_expected
-    except (p11.exceptions.PKCS11Error, TypeError, NotImplementedError):
+    except (AssertionError, TypeError, NotImplementedError):
         if result == "valid":
             pytest.xfail(f"AES-CCM encrypt failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, key)
 
 
 # --- AES-GMAC ---
@@ -306,19 +337,14 @@ def test_aes_ccm(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
 _AES_GMAC_VECTORS = _load_flat("aes_gmac_test.json")
 
 
-def _has_aes_gmac(p11_module: Any) -> bool:
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return "AES_GMAC" in names
-
-
 @pytest.mark.parametrize("vec_id,vec", _AES_GMAC_VECTORS, ids=[v[0] for v in _AES_GMAC_VECTORS])
-def test_aes_gmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GMAC (authentication-only GCM) from Wycheproof vectors.
 
     GMAC is GCM with empty plaintext - produces only a tag over AAD.
     """
-    if not _has_aes_gmac(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("AES_GMAC"):
         pytest.skip("AES_GMAC not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
@@ -328,35 +354,41 @@ def test_aes_gmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
     result = vec["result"]
 
     try:
-        key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: key_bytes,
-                Attribute.SIGN: True,
-                Attribute.VERIFY: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+        key = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
+            attrs={
+                int(CKA_SIGN): True,
+                int(CKA_VERIFY): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "invalid":
             return
         raise
 
     try:
-        mac = key.sign(
+        mac = sign_single(
+            rs.raw,
+            rs.sh,
+            key,
+            CKM_AES_GMAC,
             msg,
-            mechanism=Mechanism.AES_GMAC,
-            mechanism_param=iv,
+            mech_param=mech_bytes(CKM_AES_GMAC, iv),
         )
         if result == "valid":
             assert mac == tag_expected
-    except (p11.exceptions.PKCS11Error, TypeError):
+    except (AssertionError, TypeError):
         if result == "valid":
             pytest.xfail(f"AES-GMAC sign failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, key)
 
 
 # --- AES-XTS ---
@@ -364,20 +396,15 @@ def test_aes_gmac(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
 _AES_XTS_VECTORS = _load_flat("aes_xts_test.json")
 
 
-def _has_aes_xts(p11_module: Any) -> bool:
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return "AES_XTS" in names
-
-
 @pytest.mark.parametrize("vec_id,vec", _AES_XTS_VECTORS, ids=[v[0] for v in _AES_XTS_VECTORS])
-def test_aes_xts(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_xts(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-XTS disk encryption mode from Wycheproof vectors.
 
     XTS uses a double-size key (e.g. 512 bits = two 256-bit keys)
     and a tweak (IV) for sector-based encryption.
     """
-    if not _has_aes_xts(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("AES_XTS"):
         pytest.skip("AES_XTS not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
@@ -388,28 +415,38 @@ def test_aes_xts(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
 
     # XTS uses AES_XTS key type with double-size key
     try:
-        key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES_XTS,
-                Attribute.VALUE: key_bytes,
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+        key = import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES_XTS,
+            key_bytes,
+            attrs={
+                int(CKA_ENCRYPT): True,
+                int(CKA_DECRYPT): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except (p11.exceptions.PKCS11Error, AttributeError):
+    except (AssertionError, AttributeError):
         if result == "invalid":
             return
         pytest.skip("Cannot import AES-XTS key")
 
     try:
-        ct = key.encrypt(msg, mechanism=Mechanism.AES_XTS, mechanism_param=iv)
+        ct = encrypt_single(
+            rs.raw,
+            rs.sh,
+            key,
+            CKM_AES_XTS,
+            msg,
+            mech_param=mech_bytes(CKM_AES_XTS, iv),
+        )
         if result == "valid":
             assert ct == ct_expected
-    except (p11.exceptions.PKCS11Error, TypeError):
+    except (AssertionError, TypeError):
         if result == "valid":
             pytest.xfail(f"AES-XTS encrypt failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, key)

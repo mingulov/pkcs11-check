@@ -15,7 +15,8 @@ from cryptography.hazmat.primitives.serialization import (
     PrivateFormat,
     PublicFormat,
 )
-from pkcs11 import util as p11_util
+
+from pkcs11_check.raw.ec import encode_named_curve_parameters
 
 _EC_CURVE_ALIASES: dict[str, tuple[str, int]] = {
     "P-256": ("secp256r1", 256),
@@ -57,7 +58,7 @@ def normalize_ec_curve(curve_name: str) -> tuple[str, int]:
 
 def ec_params_for_curve(curve_name: str) -> bytes:
     canonical, _bits = normalize_ec_curve(curve_name)
-    return p11_util.ec.encode_named_curve_parameters(canonical)
+    return encode_named_curve_parameters(canonical)
 
 
 def ec_key_bits(curve_name: str) -> int:

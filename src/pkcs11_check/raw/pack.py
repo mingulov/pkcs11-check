@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .types_std import (
+    CK_AES_CCM_PARAMS,
     CK_AES_CTR_PARAMS,
     CK_AES_GCM_PARAMS,
     CK_ATTRIBUTE,
@@ -473,18 +474,49 @@ def mech_gcm(
     mechanism_type: CKM,
     iv: bytes,
     *,
+    aad: bytes | None = None,
     aad_len: int = 0,
     tag_bits: int = 128,
 ) -> PackedMechanism:
-    """Pack CK_AES_GCM_PARAMS."""
+    """Pack CK_AES_GCM_PARAMS.
+
+    Pass ``aad`` for actual AAD data; ``aad_len`` is a legacy shortcut that
+    sets ulAADLen without a pointer (only valid when the module ignores pAAD).
+    When ``aad`` is provided its length overrides ``aad_len``.
+    """
     ka: list[Any] = []
     params = CK_AES_GCM_PARAMS()
     params.pIv, params.ulIvLen = _pack_bytes(iv, ka)
     params.ulIvBits = params.ulIvLen * 8
-    params.pAAD = None
-    params.ulAADLen = aad_len
+    if aad is not None:
+        params.pAAD, params.ulAADLen = _pack_bytes(aad, ka)
+    else:
+        params.pAAD = None
+        params.ulAADLen = aad_len
     params.ulTagBits = tag_bits
     return _mech_struct(mechanism_type, params, "mech_gcm", ka)
+
+
+def mech_ccm(
+    mechanism_type: CKM,
+    nonce: bytes,
+    *,
+    data_len: int = 0,
+    aad: bytes | None = None,
+    mac_len: int = 16,
+) -> PackedMechanism:
+    """Pack CK_AES_CCM_PARAMS."""
+    ka: list[Any] = []
+    params = CK_AES_CCM_PARAMS()
+    params.ulDataLen = data_len
+    params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
+    if aad is not None:
+        params.pAAD, params.ulAADLen = _pack_bytes(aad, ka)
+    else:
+        params.pAAD = None
+        params.ulAADLen = 0
+    params.ulMACLen = mac_len
+    return _mech_struct(mechanism_type, params, "mech_ccm", ka)
 
 
 def mech_pss(
