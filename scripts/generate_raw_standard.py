@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HEADER = REPO_ROOT / "third_party/pkcs11-headers/3.2/pkcs11.h"
@@ -623,6 +623,161 @@ def _render_types_module(
     return "\n".join(lines) + "\n"
 
 
+# Attribute value types per OASIS PKCS#11 v3.2 spec.
+# Curated from OASIS spec markdown attribute tables and cross-checked
+# against python-pkcs11 ATTRIBUTE_TYPES.
+#
+# Types: 'bool' (CK_BBOOL), 'ulong' (CK_ULONG / CK_ULONG enum),
+#        'bytes' (byte array / big integer), 'str' (RFC2279 UTF-8 string),
+#        'date' (CK_DATE), 'ulong_array' (CK_ULONG[]),
+#        'template' (CK_ATTRIBUTE[]).
+# Attributes not in this table default to 'bytes' in read_attributes.
+_ATTR_TYPE_TABLE: dict[str, str] = {
+    # Common object attributes
+    "CKA_CLASS": "ulong",
+    "CKA_TOKEN": "bool",
+    "CKA_PRIVATE": "bool",
+    "CKA_LABEL": "str",
+    "CKA_UNIQUE_ID": "str",
+    "CKA_APPLICATION": "str",
+    "CKA_VALUE": "bytes",
+    "CKA_OBJECT_ID": "bytes",
+    "CKA_CERTIFICATE_TYPE": "ulong",
+    "CKA_ISSUER": "bytes",
+    "CKA_SERIAL_NUMBER": "bytes",
+    "CKA_AC_ISSUER": "bytes",
+    "CKA_OWNER": "bytes",
+    "CKA_ATTR_TYPES": "bytes",
+    "CKA_SUBJECT": "bytes",
+    "CKA_ID": "bytes",
+    "CKA_URL": "str",
+    "CKA_HASH_OF_SUBJECT_PUBLIC_KEY": "bytes",
+    "CKA_HASH_OF_ISSUER_PUBLIC_KEY": "bytes",
+    "CKA_HASH_OF_CERTIFICATE": "bytes",
+    "CKA_CHECK_VALUE": "bytes",
+    "CKA_PUBLIC_KEY_INFO": "bytes",
+    "CKA_CERTIFICATE_CATEGORY": "ulong",
+    "CKA_JAVA_MIDP_SECURITY_DOMAIN": "ulong",
+    "CKA_NAME_HASH_ALGORITHM": "ulong",
+    "CKA_TRUSTED": "bool",
+    # Key attributes
+    "CKA_KEY_TYPE": "ulong",
+    "CKA_SENSITIVE": "bool",
+    "CKA_ENCRYPT": "bool",
+    "CKA_DECRYPT": "bool",
+    "CKA_WRAP": "bool",
+    "CKA_UNWRAP": "bool",
+    "CKA_SIGN": "bool",
+    "CKA_SIGN_RECOVER": "bool",
+    "CKA_VERIFY": "bool",
+    "CKA_VERIFY_RECOVER": "bool",
+    "CKA_DERIVE": "bool",
+    "CKA_ENCAPSULATE": "bool",
+    "CKA_DECAPSULATE": "bool",
+    "CKA_START_DATE": "date",
+    "CKA_END_DATE": "date",
+    "CKA_MODULUS": "bytes",
+    "CKA_MODULUS_BITS": "ulong",
+    "CKA_PUBLIC_EXPONENT": "bytes",
+    "CKA_PRIVATE_EXPONENT": "bytes",
+    "CKA_PRIME_1": "bytes",
+    "CKA_PRIME_2": "bytes",
+    "CKA_EXPONENT_1": "bytes",
+    "CKA_EXPONENT_2": "bytes",
+    "CKA_COEFFICIENT": "bytes",
+    "CKA_PRIME": "bytes",
+    "CKA_SUBPRIME": "bytes",
+    "CKA_BASE": "bytes",
+    "CKA_PRIME_BITS": "ulong",
+    "CKA_SUBPRIME_BITS": "ulong",
+    "CKA_VALUE_BITS": "ulong",
+    "CKA_VALUE_LEN": "ulong",
+    "CKA_EXTRACTABLE": "bool",
+    "CKA_LOCAL": "bool",
+    "CKA_NEVER_EXTRACTABLE": "bool",
+    "CKA_ALWAYS_SENSITIVE": "bool",
+    "CKA_KEY_GEN_MECHANISM": "ulong",
+    "CKA_MODIFIABLE": "bool",
+    "CKA_COPYABLE": "bool",
+    "CKA_DESTROYABLE": "bool",
+    "CKA_EC_PARAMS": "bytes",
+    "CKA_EC_POINT": "bytes",
+    "CKA_ALWAYS_AUTHENTICATE": "bool",
+    "CKA_WRAP_WITH_TRUSTED": "bool",
+    "CKA_WRAP_TEMPLATE": "template",
+    "CKA_UNWRAP_TEMPLATE": "template",
+    "CKA_DERIVE_TEMPLATE": "template",
+    "CKA_ENCAPSULATE_TEMPLATE": "template",
+    "CKA_DECAPSULATE_TEMPLATE": "template",
+    "CKA_ALLOWED_MECHANISMS": "ulong_array",
+    "CKA_PROFILE_ID": "ulong",
+    "CKA_MECHANISM_TYPE": "ulong",
+    "CKA_PARAMETER_SET": "ulong",
+    "CKA_SEED": "bytes",
+    "CKA_PUBLIC_CRC64_VALUE": "bytes",
+    # HSS attributes
+    "CKA_HSS_LEVELS": "ulong",
+    "CKA_HSS_LMS_TYPE": "ulong",
+    "CKA_HSS_LMOTS_TYPE": "ulong",
+    "CKA_HSS_LMS_TYPES": "ulong_array",
+    "CKA_HSS_LMOTS_TYPES": "ulong_array",
+    "CKA_HSS_KEYS_REMAINING": "ulong",
+    # Validation attributes
+    "CKA_OBJECT_VALIDATION_FLAGS": "ulong",
+    "CKA_VALIDATION_TYPE": "ulong",
+    "CKA_VALIDATION_VERSION": "bytes",
+    "CKA_VALIDATION_LEVEL": "ulong",
+    "CKA_VALIDATION_MODULE_ID": "str",
+    "CKA_VALIDATION_FLAG": "ulong",
+    "CKA_VALIDATION_AUTHORITY_TYPE": "ulong",
+    "CKA_VALIDATION_COUNTRY": "str",
+    "CKA_VALIDATION_CERTIFICATE_IDENTIFIER": "str",
+    "CKA_VALIDATION_CERTIFICATE_URI": "str",
+    "CKA_VALIDATION_VENDOR_URI": "str",
+    "CKA_VALIDATION_PROFILE": "str",
+    # GOST
+    "CKA_GOSTR3410_PARAMS": "bytes",
+    "CKA_GOSTR3411_PARAMS": "bytes",
+    # NSS trust attributes (vendor but widely used)
+    "CKA_TRUST_SERVER_AUTH": "ulong",
+    "CKA_TRUST_CLIENT_AUTH": "ulong",
+    "CKA_TRUST_CODE_SIGNING": "ulong",
+    "CKA_TRUST_EMAIL_PROTECTION": "ulong",
+    "CKA_TRUST_IPSEC_IKE": "ulong",
+    "CKA_TRUST_TIME_STAMPING": "ulong",
+    "CKA_TRUST_OCSP_SIGNING": "ulong",
+}
+
+
+def _emit_attr_value_types(constants: dict[str, int | str]) -> str:
+    """Emit ATTR_VALUE_TYPES mapping CKA int -> value type string."""
+    lines = [
+        "",
+        "ATTR_VALUE_TYPES: dict[int, str] = {",
+    ]
+    for name, vtype in sorted(
+        _ATTR_TYPE_TABLE.items(), key=lambda x: constants.get(x[0], 0)
+    ):
+        val = constants.get(name)
+        if val is not None and isinstance(val, int):
+            lines.append(f"    {val:#010x}: {vtype!r},  # {name}")
+    lines.append("}")
+    lines.append("")
+
+    # Coverage stats to stderr
+    known_cka = {n for n in constants if n.startswith("CKA_") and isinstance(constants[n], int)}
+    covered = known_cka & set(_ATTR_TYPE_TABLE)
+    missing = known_cka - set(_ATTR_TYPE_TABLE)
+    print(
+        f"ATTR_VALUE_TYPES: {len(covered)}/{len(known_cka)} attrs covered",
+        file=sys.stderr,
+    )
+    if missing:
+        print(f"  Missing: {sorted(missing)}", file=sys.stderr)
+
+    return "\n".join(lines)
+
+
 def _render_metadata_module(
     *,
     symbols: dict[str, int | str],
@@ -678,7 +833,10 @@ def _render_metadata_module(
     for table_name in NAME_TABLES:
         lines.append(f'    "{table_name}": {table_name},')
     lines.append("}")
-    lines.append("")
+
+    # Emit ATTR_VALUE_TYPES
+    lines.append(_emit_attr_value_types(symbols))
+
     return "\n".join(lines)
 
 
