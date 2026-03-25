@@ -87,6 +87,14 @@ ignore_missing_imports = true
 module = ["pkcs11_check.testcases.data.*"]
 ignore_errors = true
 
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+pythonPlatform = "Linux"
+reportMissingImports = false
+reportAttributeAccessIssue = false
+reportArgumentType = "warning"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
