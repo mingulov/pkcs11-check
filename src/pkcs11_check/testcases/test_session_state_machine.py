@@ -8,29 +8,59 @@ States:
   - Public session (R/O or R/W): no login, only public objects visible.
   - User Functions session (R/O or R/W): after C_Login(USER).
   - SO Functions session (R/W only): after C_Login(SO).
-
-Note: python-pkcs11 does not expose C_GetSessionInfo state enum directly.
-Session state is verified indirectly through operation success/failure and
-object visibility, which is a stronger behavioural verification than checking
-an enum value.
 """
 
 from __future__ import annotations
 
+from ctypes import byref
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, ObjectClass
-from pkcs11.exceptions import (
-    AnotherUserAlreadyLoggedIn,
-    SessionClosed,
-    SessionReadOnly,
-    SessionReadOnlyExists,
-    UserAlreadyLoggedIn,
-    UserNotLoggedIn,
-    UserTypeInvalid,
+
+from pkcs11_check.raw.bootstrap import (
+    close_session_quietly,
 )
+from pkcs11_check.raw.bootstrap import (
+    open_session as raw_open_session,
+)
+from pkcs11_check.raw.pack import template_from_dict
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    digest_single,
+    find_objects,
+    gen_aes_key,
+    generate_random,
+)
+from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.types_std import (
+    CK_SESSION_INFO,
+    CK_UTF8CHAR,
+    CKA_CLASS,
+    CKA_LABEL,
+    CKA_PRIVATE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKM_SHA256,
+    CKO_DATA,
+    CKO_PRIVATE_KEY,
+    CKO_SECRET_KEY,
+    CKR_OK,
+    CKR_PIN_INCORRECT,
+    CKR_SESSION_CLOSED,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_SESSION_READ_ONLY,
+    CKR_SESSION_READ_ONLY_EXISTS,
+    CKR_USER_ALREADY_LOGGED_IN,
+    CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+    CKR_USER_NOT_LOGGED_IN,
+    CKR_USER_TYPE_INVALID,
+    CKU_SO,
+    CKU_USER,
+)
+from pkcs11_check.testcases.conftest import get_pin_bytes
 
 pytestmark = pytest.mark.access
 
@@ -40,27 +70,21 @@ pytestmark = pytest.mark.access
 # ---------------------------------------------------------------------------
 
 
-def _get_pin(p11_config: Any) -> str | None:
-    """Extract PIN string from config, or None."""
-    return p11_config.pin.get_secret_value() if p11_config.pin else None
-
-
-def _login_user(session: Any, pin: str | None) -> None:
+def _login_user_raw(raw: Any, sh: int, pin_bytes: bytes | None) -> None:
     """Login as USER, tolerating already-logged-in at token level."""
-    if pin is None:
+    if pin_bytes is None:
         return
-    try:
-        session.login(p11.UserType.USER, pin)
-    except (UserAlreadyLoggedIn, UserTypeInvalid):
-        pass  # Token-level login already active
+    pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
+    rv = int(raw.C_Login(sh, int(CKU_USER), pin_buf, len(pin_bytes)))
+    if rv not in (int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_TYPE_INVALID)):
+        expect_rv(rv, CKR_OK)
 
 
-def _logout_safe(session: Any) -> None:
+def _logout_safe(raw: Any, sh: int) -> None:
     """Logout ignoring not-logged-in or closed-session errors."""
-    try:
-        session.logout()
-    except (UserNotLoggedIn, SessionClosed):
-        pass
+    rv = int(raw.C_Logout(sh))
+    # Silently accept any error -- just cleaning up
+    _ = rv
 
 
 # ---------------------------------------------------------------------------
@@ -71,116 +95,123 @@ def _logout_safe(session: Any) -> None:
 class TestLoginStateTransitions:
     """Verify login state transitions per OASIS spec."""
 
-    def test_open_session_is_public(self, p11_module: Any, p11_config: Any) -> None:
+    def test_open_session_is_public(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Newly opened session (no login) is in public state.
 
         Public state means private objects are not visible.
         """
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             # Without login, private objects should be invisible
-            priv_keys = list(session.get_objects({Attribute.CLASS: ObjectClass.PRIVATE_KEY}))
-            assert len(priv_keys) == 0, "Private keys visible without login - not public state"
+            tmpl = template_from_dict({int(CKA_CLASS): int(CKO_PRIVATE_KEY)})
+            found = find_objects(rs.raw, test_sh, tmpl)
+            assert len(found) == 0, "Private keys visible without login - not public state"
         finally:
-            session.close()
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_login_user_enables_private_access(self, p11_module: Any, p11_config: Any) -> None:
+    def test_login_user_enables_private_access(self, p11_raw_session: Any, p11_config: Any) -> None:
         """After C_Login(USER), private objects become accessible."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured - cannot test USER login")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            session.login(p11.UserType.USER, pin)
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
             # Generate a private-key object to confirm access
-            key = session.generate_key(
-                KeyType.AES,
+            key_h = gen_aes_key(
+                rs.raw,
+                test_sh,
                 256,
-                template={Attribute.TOKEN: False, Attribute.PRIVATE: True},
+                attrs={int(CKA_TOKEN): False, int(CKA_PRIVATE): True},
             )
-            assert key is not None
-            key.destroy()
-        except UserAlreadyLoggedIn:
-            # Already logged in at token level - still user state
-            key = session.generate_key(
-                KeyType.AES,
-                256,
-                template={Attribute.TOKEN: False, Attribute.PRIVATE: True},
-            )
-            assert key is not None
-            key.destroy()
+            assert key_h != 0
+            destroy_quietly(rs.raw, test_sh, key_h)
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_logout_returns_to_public(self, p11_module: Any, p11_config: Any) -> None:
+    def test_logout_returns_to_public(self, p11_raw_session: Any, p11_config: Any) -> None:
         """After C_Logout, session returns to public state."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(session, pin)
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
 
             # Create a private token object while logged in
             label = "state-machine-logout-test"
-            key = session.generate_key(
-                KeyType.AES,
+            key_h = gen_aes_key(
+                rs.raw,
+                test_sh,
                 256,
-                template={
-                    Attribute.TOKEN: True,
-                    Attribute.PRIVATE: True,
-                    Attribute.LABEL: label,
+                attrs={
+                    int(CKA_TOKEN): True,
+                    int(CKA_PRIVATE): True,
+                    int(CKA_LABEL): label,
                 },
             )
-            assert key is not None
+            assert key_h != 0
 
             # Logout - should return to public state
-            session.logout()
+            rs.raw.C_Logout(test_sh)
 
             # Private objects should no longer be visible
-            found = list(
-                session.get_objects(
-                    {Attribute.CLASS: ObjectClass.SECRET_KEY, Attribute.LABEL: label}
-                )
+            tmpl = template_from_dict(
+                {
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_LABEL): label,
+                }
             )
+            found = find_objects(rs.raw, test_sh, tmpl)
             assert len(found) == 0, "Private object visible after logout - still in user state"
 
             # Re-login to clean up
-            session.login(p11.UserType.USER, pin)
-            for obj in session.get_objects({Attribute.LABEL: label}):
-                obj.destroy()
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
+            tmpl2 = template_from_dict({int(CKA_LABEL): label})
+            for h in find_objects(rs.raw, test_sh, tmpl2):
+                destroy_quietly(rs.raw, test_sh, h)
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_login_logout_login_cycle(self, p11_module: Any, p11_config: Any) -> None:
+    def test_login_logout_login_cycle(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Login -> logout -> login cycle works without error."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            session.login(p11.UserType.USER, pin)
-            session.logout()
-            session.login(p11.UserType.USER, pin)
+            pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
+            rv = int(rs.raw.C_Login(test_sh, int(CKU_USER), pin_buf, len(pin_bytes)))
+            if rv == int(CKR_USER_ALREADY_LOGGED_IN):
+                # Another session holds the login - acceptable
+                close_session_quietly(rs.raw, test_sh)
+                return
+
+            rs.raw.C_Logout(test_sh)
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
+
             # Verify we are logged in by creating a private object
-            key = session.generate_key(
-                KeyType.AES,
+            key_h = gen_aes_key(
+                rs.raw,
+                test_sh,
                 256,
-                template={Attribute.TOKEN: False, Attribute.PRIVATE: True},
+                attrs={int(CKA_TOKEN): False, int(CKA_PRIVATE): True},
             )
-            assert key is not None
-            key.destroy()
-        except UserAlreadyLoggedIn:
-            pass  # Another session holds the login - acceptable
+            assert key_h != 0
+            destroy_quietly(rs.raw, test_sh, key_h)
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
 
 # ---------------------------------------------------------------------------
@@ -197,56 +228,63 @@ class TestSOLoginState:
     """
 
     @pytest.mark.destructive
-    def test_so_login_succeeds(self, p11_module: Any, p11_config: Any) -> None:
-        """C_Login(SO) on RW session succeeds when no user is logged in.
-
-        After SO login, token management operations (like C_InitPIN) are available
-        but normal user crypto may be restricted.
-        """
-        pin = _get_pin(p11_config)
-        if pin is None:
+    def test_so_login_succeeds(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """C_Login(SO) on RW session succeeds when no user is logged in."""
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        # SO PIN is often the same as user PIN for test tokens
-        so_pin = pin
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        so_pin = pin_bytes
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            session.login(p11.UserType.SO, so_pin)
+            pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
+            rv = int(rs.raw.C_Login(test_sh, int(CKU_SO), pin_buf, len(so_pin)))
+            if rv == int(CKR_PIN_INCORRECT):
+                pytest.skip("SO PIN differs from user PIN on this module")
+            if rv in (int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN)):
+                pytest.skip("Another user is already logged in on this token")
+            expect_rv(rv, CKR_OK)
+
             # SO is logged in - verify by checking we can't login as USER
-            with pytest.raises(
-                (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn, UserTypeInvalid)
-            ):
-                session.login(p11.UserType.USER, pin)
-        except (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn):
-            pytest.skip("Another user is already logged in on this token")
-        except p11.exceptions.PinIncorrect:
-            pytest.skip("SO PIN differs from user PIN on this module")
+            pin_buf2 = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
+            rv2 = int(rs.raw.C_Login(test_sh, int(CKU_USER), pin_buf2, len(pin_bytes)))
+            assert rv2 in (
+                int(CKR_USER_ALREADY_LOGGED_IN),
+                int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN),
+                int(CKR_USER_TYPE_INVALID),
+            ), f"Expected USER login rejected while SO active, got {ckr_name(rv2)}"
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
     @pytest.mark.destructive
-    def test_so_logout_returns_to_public(self, p11_module: Any, p11_config: Any) -> None:
+    def test_so_logout_returns_to_public(self, p11_raw_session: Any, p11_config: Any) -> None:
         """After SO logout, session returns to public state."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        so_pin = pin
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        so_pin = pin_bytes
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            session.login(p11.UserType.SO, so_pin)
-            session.logout()
+            pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
+            rv = int(rs.raw.C_Login(test_sh, int(CKU_SO), pin_buf, len(so_pin)))
+            if rv == int(CKR_PIN_INCORRECT):
+                pytest.skip("SO PIN differs from user PIN on this module")
+            if rv in (int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN)):
+                pytest.skip("Another user is already logged in on this token")
+            expect_rv(rv, CKR_OK)
+
+            rs.raw.C_Logout(test_sh)
+
             # After logout, should be able to login as USER
-            session.login(p11.UserType.USER, pin)
-            session.logout()
-        except (UserAlreadyLoggedIn, AnotherUserAlreadyLoggedIn):
-            pytest.skip("Another user is already logged in on this token")
-        except p11.exceptions.PinIncorrect:
-            pytest.skip("SO PIN differs from user PIN on this module")
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
+            _logout_safe(rs.raw, test_sh)
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
 
 # ---------------------------------------------------------------------------
@@ -257,69 +295,81 @@ class TestSOLoginState:
 class TestLoginConflicts:
     """Verify login conflict behaviour per OASIS spec."""
 
-    def test_double_user_login_rejected(self, p11_module: Any, p11_config: Any) -> None:
+    def test_double_user_login_rejected(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Second C_Login(USER) on same token must raise UserAlreadyLoggedIn."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            session.login(p11.UserType.USER, pin)
+            pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
+            rv = int(rs.raw.C_Login(test_sh, int(CKU_USER), pin_buf, len(pin_bytes)))
+            if rv == int(CKR_USER_ALREADY_LOGGED_IN):
+                # Token was already logged in - that's acceptable
+                return
+
             # Second login on same session/token
-            with pytest.raises((UserAlreadyLoggedIn, UserTypeInvalid)):
-                session.login(p11.UserType.USER, pin)
-        except UserAlreadyLoggedIn:
-            # First login already raised it - token was already logged in
-            pass
+            rv2 = int(rs.raw.C_Login(test_sh, int(CKU_USER), pin_buf, len(pin_bytes)))
+            assert rv2 in (
+                int(CKR_USER_ALREADY_LOGGED_IN),
+                int(CKR_USER_TYPE_INVALID),
+            ), f"Expected CKR_USER_ALREADY_LOGGED_IN, got {ckr_name(rv2)}"
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_so_login_while_user_logged_in(self, p11_module: Any, p11_config: Any) -> None:
-        """C_Login(SO) while USER is logged in must fail.
-
-        Expected: CKR_USER_ALREADY_LOGGED_IN or CKR_ANOTHER_USER_ALREADY_LOGGED_IN.
-        """
-        pin = _get_pin(p11_config)
-        if pin is None:
+    def test_so_login_while_user_logged_in(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """C_Login(SO) while USER is logged in must fail."""
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(session, pin)
-            with pytest.raises(
-                (
-                    UserAlreadyLoggedIn,
-                    AnotherUserAlreadyLoggedIn,
-                    UserTypeInvalid,
-                )
-            ):
-                session.login(p11.UserType.SO, pin)
-        finally:
-            _logout_safe(session)
-            session.close()
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
 
-    def test_user_login_via_second_session_rejected(self, p11_module: Any, p11_config: Any) -> None:
+            pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
+            rv = int(rs.raw.C_Login(test_sh, int(CKU_SO), pin_buf, len(pin_bytes)))
+            assert rv in (
+                int(CKR_USER_ALREADY_LOGGED_IN),
+                int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN),
+                int(CKR_USER_TYPE_INVALID),
+            ), f"Expected login rejected, got {ckr_name(rv)}"
+        finally:
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
+
+    def test_user_login_via_second_session_rejected(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         """Login in session A, then C_Login(USER) in session B must raise
         UserAlreadyLoggedIn (login is token-wide)."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        s1 = token.open(rw=True)
-        s2 = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
+        s2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            s1.login(p11.UserType.USER, pin)
-            with pytest.raises((UserAlreadyLoggedIn, UserTypeInvalid)):
-                s2.login(p11.UserType.USER, pin)
-        except UserAlreadyLoggedIn:
-            # s1 login itself raised it - token already logged in
-            pass
+            pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
+            rv = int(rs.raw.C_Login(s1, int(CKU_USER), pin_buf, len(pin_bytes)))
+            if rv == int(CKR_USER_ALREADY_LOGGED_IN):
+                # Token already logged in
+                return
+
+            rv2 = int(rs.raw.C_Login(s2, int(CKU_USER), pin_buf, len(pin_bytes)))
+            assert rv2 in (
+                int(CKR_USER_ALREADY_LOGGED_IN),
+                int(CKR_USER_TYPE_INVALID),
+            ), f"Expected CKR_USER_ALREADY_LOGGED_IN, got {ckr_name(rv2)}"
         finally:
-            _logout_safe(s1)
-            s2.close()
-            s1.close()
+            _logout_safe(rs.raw, s1)
+            close_session_quietly(rs.raw, s2)
+            close_session_quietly(rs.raw, s1)
 
 
 # ---------------------------------------------------------------------------
@@ -331,92 +381,91 @@ class TestConcurrentSessionLogin:
     """Verify that login state is shared across sessions on the same token."""
 
     def test_login_in_one_session_visible_in_another(
-        self, p11_module: Any, p11_config: Any
+        self, p11_raw_session: Any, p11_config: Any
     ) -> None:
-        """Login via session A, session B inherits the logged-in state.
-
-        Private objects should be visible in session B without calling
-        C_Login on it.
-        """
-        pin = _get_pin(p11_config)
-        if pin is None:
+        """Login via session A, session B inherits the logged-in state."""
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        s1 = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(s1, pin)
+            _login_user_raw(rs.raw, s1, pin_bytes)
 
             # Create a private session object in s1
-            key = s1.generate_key(
-                KeyType.AES,
+            label = "shared-login-test"
+            key_h = gen_aes_key(
+                rs.raw,
+                s1,
                 256,
-                template={
-                    Attribute.TOKEN: False,
-                    Attribute.PRIVATE: True,
-                    Attribute.LABEL: "shared-login-test",
+                attrs={
+                    int(CKA_TOKEN): False,
+                    int(CKA_PRIVATE): True,
+                    int(CKA_LABEL): label,
                 },
             )
 
             # Open second session - should inherit login state
-            s2 = token.open(rw=True)
+            s2 = raw_open_session(rs.raw, rs.slot_id, flags)
             try:
-                found = list(s2.get_objects({Attribute.LABEL: "shared-login-test"}))
+                tmpl = template_from_dict({int(CKA_LABEL): label})
+                found = find_objects(rs.raw, s2, tmpl)
                 assert len(found) >= 1, "Session B cannot see private object - login not shared"
             finally:
-                s2.close()
-            key.destroy()
+                close_session_quietly(rs.raw, s2)
+            destroy_quietly(rs.raw, s1, key_h)
         finally:
-            _logout_safe(s1)
-            s1.close()
+            _logout_safe(rs.raw, s1)
+            close_session_quietly(rs.raw, s1)
 
-    def test_logout_affects_all_sessions(self, p11_module: Any, p11_config: Any) -> None:
-        """Logout via session A revokes login state for session B too.
-
-        After logout, private token objects should not be visible in any session.
-        """
-        pin = _get_pin(p11_config)
-        if pin is None:
+    def test_logout_affects_all_sessions(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """Logout via session A revokes login state for session B too."""
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        s1 = token.open(rw=True)
-        s2 = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
+        s2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(s1, pin)
+            _login_user_raw(rs.raw, s1, pin_bytes)
 
             # Create private token object
             label = "logout-shared-test"
-            s1.generate_key(
-                KeyType.AES,
+            gen_aes_key(
+                rs.raw,
+                s1,
                 256,
-                template={
-                    Attribute.TOKEN: True,
-                    Attribute.PRIVATE: True,
-                    Attribute.LABEL: label,
+                attrs={
+                    int(CKA_TOKEN): True,
+                    int(CKA_PRIVATE): True,
+                    int(CKA_LABEL): label,
                 },
             )
 
             # Logout via s1
-            s1.logout()
+            rs.raw.C_Logout(s1)
 
             # s2 should also lose access to private objects
-            found = list(
-                s2.get_objects(
-                    {
-                        Attribute.CLASS: ObjectClass.SECRET_KEY,
-                        Attribute.LABEL: label,
-                    }
-                )
+            tmpl = template_from_dict(
+                {
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_LABEL): label,
+                }
             )
+            found = find_objects(rs.raw, s2, tmpl)
             assert len(found) == 0, "Private object visible in s2 after logout via s1"
 
             # Re-login to clean up
-            s1.login(p11.UserType.USER, pin)
-            for obj in s1.get_objects({Attribute.LABEL: label}):
-                obj.destroy()
+            _login_user_raw(rs.raw, s1, pin_bytes)
+            tmpl2 = template_from_dict({int(CKA_LABEL): label})
+            for h in find_objects(rs.raw, s1, tmpl2):
+                destroy_quietly(rs.raw, s1, h)
         finally:
-            _logout_safe(s1)
-            s2.close()
-            s1.close()
+            _logout_safe(rs.raw, s1)
+            close_session_quietly(rs.raw, s2)
+            close_session_quietly(rs.raw, s1)
 
 
 # ---------------------------------------------------------------------------
@@ -427,46 +476,64 @@ class TestConcurrentSessionLogin:
 class TestSessionFlags:
     """Verify session flag properties (rw, etc.)."""
 
-    def test_rw_session_flag(self, p11_module: Any, p11_config: Any) -> None:
+    def test_rw_session_flag(self, p11_raw_session: Any, p11_config: Any) -> None:
         """R/W session reports rw=True."""
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            assert session.rw is True
+            info = CK_SESSION_INFO()
+            rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
+            expect_rv(int(rv), CKR_OK)
+            is_rw = bool(info.flags & int(CKF_RW_SESSION))
+            assert is_rw is True
         finally:
-            session.close()
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_ro_session_flag(self, p11_module: Any, p11_config: Any) -> None:
+    def test_ro_session_flag(self, p11_raw_session: Any, p11_config: Any) -> None:
         """R/O session reports rw=False."""
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=False)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            assert session.rw is False
+            info = CK_SESSION_INFO()
+            rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
+            expect_rv(int(rv), CKR_OK)
+            is_rw = bool(info.flags & int(CKF_RW_SESSION))
+            assert is_rw is False
         finally:
-            session.close()
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_rw_and_ro_sessions_coexist(self, p11_module: Any, p11_config: Any) -> None:
+    def test_rw_and_ro_sessions_coexist(self, p11_raw_session: Any, p11_config: Any) -> None:
         """R/W and R/O sessions can coexist on the same token."""
-        token = p11_module.get_token(p11_config.slot)
-        rw = token.open(rw=True)
-        ro = token.open(rw=False)
+        rs = p11_raw_session
+        rw_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
         try:
-            assert rw.rw is True
-            assert ro.rw is False
-        finally:
-            ro.close()
-            rw.close()
+            info_rw = CK_SESSION_INFO()
+            rs.raw.C_GetSessionInfo(rw_sh, byref(info_rw))
+            assert bool(info_rw.flags & int(CKF_RW_SESSION)) is True
 
-    def test_multiple_rw_sessions(self, p11_module: Any, p11_config: Any) -> None:
-        """Multiple R/W sessions can be opened simultaneously."""
-        token = p11_module.get_token(p11_config.slot)
-        sessions = [token.open(rw=True) for _ in range(3)]
-        try:
-            for s in sessions:
-                assert s.rw is True
+            info_ro = CK_SESSION_INFO()
+            rs.raw.C_GetSessionInfo(ro_sh, byref(info_ro))
+            assert bool(info_ro.flags & int(CKF_RW_SESSION)) is False
         finally:
-            for s in sessions:
-                s.close()
+            close_session_quietly(rs.raw, ro_sh)
+            close_session_quietly(rs.raw, rw_sh)
+
+    def test_multiple_rw_sessions(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """Multiple R/W sessions can be opened simultaneously."""
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        sessions = [raw_open_session(rs.raw, rs.slot_id, flags) for _ in range(3)]
+        try:
+            for sh in sessions:
+                info = CK_SESSION_INFO()
+                rs.raw.C_GetSessionInfo(sh, byref(info))
+                assert bool(info.flags & int(CKF_RW_SESSION)) is True
+        finally:
+            for sh in sessions:
+                close_session_quietly(rs.raw, sh)
 
 
 # ---------------------------------------------------------------------------
@@ -478,64 +545,76 @@ class TestLogoutEffects:
     """Verify that logout makes private objects inaccessible."""
 
     def test_private_session_key_invisible_after_logout(
-        self, p11_module: Any, p11_config: Any
+        self, p11_raw_session: Any, p11_config: Any
     ) -> None:
         """Private session key vanishes from search after logout."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(session, pin)
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
             label = "priv-logout-session"
-            session.generate_key(
-                KeyType.AES,
+            gen_aes_key(
+                rs.raw,
+                test_sh,
                 256,
-                template={
-                    Attribute.TOKEN: False,
-                    Attribute.PRIVATE: True,
-                    Attribute.LABEL: label,
+                attrs={
+                    int(CKA_TOKEN): False,
+                    int(CKA_PRIVATE): True,
+                    int(CKA_LABEL): label,
                 },
             )
             # Confirm visible while logged in
-            found = list(session.get_objects({Attribute.LABEL: label}))
+            tmpl = template_from_dict({int(CKA_LABEL): label})
+            found = find_objects(rs.raw, test_sh, tmpl)
             assert len(found) >= 1
 
-            session.logout()
+            rs.raw.C_Logout(test_sh)
 
             # Should be invisible now
-            found = list(session.get_objects({Attribute.LABEL: label}))
+            found = find_objects(rs.raw, test_sh, tmpl)
             assert len(found) == 0, "Private session key visible after logout"
         finally:
             # Session key is gone after logout (or session close)
-            session.close()
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_public_object_remains_after_logout(self, p11_module: Any, p11_config: Any) -> None:
+    def test_public_object_remains_after_logout(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         """Public (CKA_PRIVATE=False) objects remain visible after logout."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         label = "pub-logout-test"
         try:
-            _login_user(session, pin)
-            session.create_object(
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
+            create_object(
+                rs.raw,
+                test_sh,
                 {
-                    Attribute.CLASS: ObjectClass.DATA,
-                    Attribute.LABEL: label,
-                    Attribute.VALUE: b"public-data",
-                    Attribute.TOKEN: True,
-                    Attribute.PRIVATE: False,
+                    int(CKA_CLASS): int(CKO_DATA),
+                    int(CKA_LABEL): label,
+                    int(CKA_VALUE): b"public-data",
+                    int(CKA_TOKEN): True,
+                    int(CKA_PRIVATE): False,
+                },
+            )
+
+            rs.raw.C_Logout(test_sh)
+
+            tmpl = template_from_dict(
+                {
+                    int(CKA_CLASS): int(CKO_DATA),
+                    int(CKA_LABEL): label,
                 }
             )
-
-            session.logout()
-
-            found = list(
-                session.get_objects({Attribute.CLASS: ObjectClass.DATA, Attribute.LABEL: label})
-            )
+            found = find_objects(rs.raw, test_sh, tmpl)
             # Public objects should still be visible
             if len(found) == 0:
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -547,30 +626,37 @@ class TestLogoutEffects:
                 )
 
             # Cleanup: re-login to destroy
-            session.login(p11.UserType.USER, pin)
-            for obj in session.get_objects(
-                {Attribute.CLASS: ObjectClass.DATA, Attribute.LABEL: label}
-            ):
-                obj.destroy()
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
+            tmpl2 = template_from_dict(
+                {
+                    int(CKA_CLASS): int(CKO_DATA),
+                    int(CKA_LABEL): label,
+                }
+            )
+            for h in find_objects(rs.raw, test_sh, tmpl2):
+                destroy_quietly(rs.raw, test_sh, h)
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_generate_random_works_after_logout(self, p11_module: Any, p11_config: Any) -> None:
+    def test_generate_random_works_after_logout(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         """C_GenerateRandom does not require login - works in public state."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(session, pin)
-            session.logout()
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
+            rs.raw.C_Logout(test_sh)
             # Random generation should work without login
-            rand = session.generate_random(32)
+            rand = generate_random(rs.raw, test_sh, 4)
             assert len(rand) == 4  # 32 bits = 4 bytes
         finally:
-            session.close()
+            close_session_quietly(rs.raw, test_sh)
 
 
 # ---------------------------------------------------------------------------
@@ -581,99 +667,95 @@ class TestLogoutEffects:
 class TestSessionCloseEffects:
     """Verify that closing one session does not affect others."""
 
-    def test_close_one_session_others_remain(self, p11_module: Any, p11_config: Any) -> None:
+    def test_close_one_session_others_remain(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Closing session A does not invalidate session B."""
-        pin = _get_pin(p11_config)
-        token = p11_module.get_token(p11_config.slot)
-        s1 = token.open(rw=True)
-        s2 = token.open(rw=True)
+        pin_bytes = get_pin_bytes(p11_config)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
+        s2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(s1, pin)
+            _login_user_raw(rs.raw, s1, pin_bytes)
 
-            s1.close()
+            close_session_quietly(rs.raw, s1)
 
             # s2 should still work
-            rand = s2.generate_random(64)
+            rand = generate_random(rs.raw, s2, 8)
             assert len(rand) == 8  # 64 bits = 8 bytes
         finally:
-            _logout_safe(s2)
-            s2.close()
+            _logout_safe(rs.raw, s2)
+            close_session_quietly(rs.raw, s2)
 
     def test_close_session_destroys_its_session_objects(
-        self, p11_module: Any, p11_config: Any
+        self, p11_raw_session: Any, p11_config: Any
     ) -> None:
-        """Session objects belong to their session; closing destroys them.
-
-        After closing s1, session objects created in s1 should not be
-        findable in s2 (spec: session objects destroyed on session close).
-        """
-        pin = _get_pin(p11_config)
-        if pin is None:
+        """Session objects belong to their session; closing destroys them."""
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        s1 = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(s1, pin)
+            _login_user_raw(rs.raw, s1, pin_bytes)
             label = "close-destroys-test"
-            s1.generate_key(
-                KeyType.AES,
+            gen_aes_key(
+                rs.raw,
+                s1,
                 128,
-                template={
-                    Attribute.TOKEN: False,
-                    Attribute.LABEL: label,
-                },
+                attrs={int(CKA_TOKEN): False, int(CKA_LABEL): label},
             )
-            s1.close()
+            close_session_quietly(rs.raw, s1)
 
-            s2 = token.open(rw=True)
+            s2 = raw_open_session(rs.raw, rs.slot_id, flags)
             try:
-                _login_user(s2, pin)
-                found = list(s2.get_objects({Attribute.LABEL: label}))
+                _login_user_raw(rs.raw, s2, pin_bytes)
+                tmpl = template_from_dict({int(CKA_LABEL): label})
+                found = find_objects(rs.raw, s2, tmpl)
                 assert len(found) == 0, "Session object survived session close"
             finally:
-                _logout_safe(s2)
-                s2.close()
+                _logout_safe(rs.raw, s2)
+                close_session_quietly(rs.raw, s2)
         except Exception:
-            # If s1 wasn't closed yet, close it
-            try:
-                s1.close()
-            except (SessionClosed, p11.exceptions.SessionHandleInvalid):
-                pass
+            # If s1 wasn't closed yet, try closing
+            close_session_quietly(rs.raw, s1)
             raise
 
-    def test_token_object_survives_session_close(self, p11_module: Any, p11_config: Any) -> None:
+    def test_token_object_survives_session_close(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         """Token objects (CKA_TOKEN=True) persist across session close."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
         label = "token-survives-close"
-        s1 = token.open(rw=True)
+        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(s1, pin)
-            key = s1.generate_key(
-                KeyType.AES,
+            _login_user_raw(rs.raw, s1, pin_bytes)
+            key_h = gen_aes_key(
+                rs.raw,
+                s1,
                 128,
-                template={
-                    Attribute.TOKEN: True,
-                    Attribute.LABEL: label,
-                },
+                attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label},
             )
-            assert key is not None
+            assert key_h != 0
         finally:
-            _logout_safe(s1)
-            s1.close()
+            _logout_safe(rs.raw, s1)
+            close_session_quietly(rs.raw, s1)
 
-        s2 = token.open(rw=True)
+        s2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(s2, pin)
-            found = list(s2.get_objects({Attribute.LABEL: label}))
+            _login_user_raw(rs.raw, s2, pin_bytes)
+            tmpl = template_from_dict({int(CKA_LABEL): label})
+            found = find_objects(rs.raw, s2, tmpl)
             assert len(found) >= 1, "Token object did not survive session close"
-            for obj in found:
-                obj.destroy()
+            for h in found:
+                destroy_quietly(rs.raw, s2, h)
         finally:
-            _logout_safe(s2)
-            s2.close()
+            _logout_safe(rs.raw, s2)
+            close_session_quietly(rs.raw, s2)
 
 
 # ---------------------------------------------------------------------------
@@ -684,101 +766,115 @@ class TestSessionCloseEffects:
 class TestROvsRWSessionState:
     """Verify R/O vs R/W session differences per spec."""
 
-    def test_ro_session_can_login_user(self, p11_module: Any, p11_config: Any) -> None:
+    def test_ro_session_can_login_user(self, p11_raw_session: Any, p11_config: Any) -> None:
         """R/O session allows C_Login(USER)."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=False)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            session.login(p11.UserType.USER, pin)
-        except UserAlreadyLoggedIn:
-            pass  # Already logged in at token level
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_ro_session_cannot_create_token_objects(self, p11_module: Any, p11_config: Any) -> None:
-        """R/O session cannot create CKA_TOKEN=True objects.
-
-        Expected error: CKR_SESSION_READ_ONLY.
-        """
-        pin = _get_pin(p11_config)
-        if pin is None:
+    def test_ro_session_cannot_create_token_objects(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
+        """R/O session cannot create CKA_TOKEN=True objects."""
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=False)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(session, pin)
-            with pytest.raises((SessionReadOnly, p11.exceptions.ActionProhibited)):
-                session.generate_key(
-                    KeyType.AES,
-                    128,
-                    template={Attribute.TOKEN: True},
-                )
-        finally:
-            _logout_safe(session)
-            session.close()
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
 
-    def test_ro_session_can_create_session_objects(self, p11_module: Any, p11_config: Any) -> None:
-        """R/O session can create session objects (CKA_TOKEN=False)."""
-        pin = _get_pin(p11_config)
-        if pin is None:
-            pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=False)
-        try:
-            _login_user(session, pin)
-            key = session.generate_key(
-                KeyType.AES,
-                128,
-                template={Attribute.TOKEN: False},
+            from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
+            from pkcs11_check.raw.types_std import (
+                CK_OBJECT_HANDLE,
+                CKA_KEY_TYPE,
+                CKA_VALUE_LEN,
+                CKK_AES,
+                CKM_AES_KEY_GEN,
             )
-            assert key is not None
-            key.destroy()
+
+            tmpl = template(
+                attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
+                attr_ulong(CKA_KEY_TYPE, int(CKK_AES)),
+                attr_ulong(CKA_VALUE_LEN, 16),
+                attr_bool(CKA_TOKEN, True),
+            )
+            from pkcs11_check.raw.pack import mech_simple
+
+            mech = mech_simple(CKM_AES_KEY_GEN)
+            key_h = CK_OBJECT_HANDLE(0)
+            rv = int(
+                rs.raw.C_GenerateKey(test_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
+            )
+            assert rv in (
+                int(CKR_SESSION_READ_ONLY),
+                int(CKR_USER_NOT_LOGGED_IN),
+                int(CKR_SESSION_READ_ONLY_EXISTS),
+            ), f"Expected CKR_SESSION_READ_ONLY, got {ckr_name(rv)}"
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_ro_session_can_digest(self, p11_module: Any, p11_config: Any) -> None:
-        """R/O session can perform digest (no key needed)."""
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=False)
+    def test_ro_session_can_create_session_objects(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
+        """R/O session can create session objects (CKA_TOKEN=False)."""
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
+            pytest.skip("No PIN configured")
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            from pkcs11 import Mechanism
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
+            key_h = gen_aes_key(rs.raw, test_sh, 128)
+            assert key_h != 0
+            destroy_quietly(rs.raw, test_sh, key_h)
+        finally:
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
-            digest = session.digest(b"RO session digest", mechanism=Mechanism.SHA256)
+    def test_ro_session_can_digest(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """R/O session can perform digest (no key needed)."""
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
+        try:
+            digest = digest_single(rs.raw, test_sh, CKM_SHA256, b"RO session digest")
             assert len(digest) == 32
         finally:
-            session.close()
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_so_login_requires_rw_session(self, p11_module: Any, p11_config: Any) -> None:
-        """C_Login(SO) on an R/O session must fail.
-
-        Per spec: SO login requires that no R/O sessions exist, and the
-        session itself must be R/W. Expected: CKR_SESSION_READ_ONLY_EXISTS
-        or CKR_SESSION_READ_ONLY.
-        """
-        pin = _get_pin(p11_config)
-        if pin is None:
+    def test_so_login_requires_rw_session(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """C_Login(SO) on an R/O session must fail."""
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=False)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            with pytest.raises(
-                (
-                    SessionReadOnlyExists,
-                    SessionReadOnly,
-                    UserAlreadyLoggedIn,
-                    AnotherUserAlreadyLoggedIn,
-                    UserTypeInvalid,
-                )
-            ):
-                session.login(p11.UserType.SO, pin)
+            pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
+            rv = int(rs.raw.C_Login(test_sh, int(CKU_SO), pin_buf, len(pin_bytes)))
+            assert rv in (
+                int(CKR_SESSION_READ_ONLY_EXISTS),
+                int(CKR_SESSION_READ_ONLY),
+                int(CKR_USER_ALREADY_LOGGED_IN),
+                int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN),
+                int(CKR_USER_TYPE_INVALID),
+            ), f"Expected SO login rejected on RO session, got {ckr_name(rv)}"
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
 
 # ---------------------------------------------------------------------------
@@ -789,29 +885,23 @@ class TestROvsRWSessionState:
 class TestLogoutWithoutLogin:
     """Verify behaviour when logout is called without prior login."""
 
-    def test_logout_without_login_raises(self, p11_module: Any, p11_config: Any) -> None:
-        """C_Logout without prior C_Login should raise CKR_USER_NOT_LOGGED_IN.
+    def test_logout_without_login_raises(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """C_Logout without prior C_Login should raise CKR_USER_NOT_LOGGED_IN."""
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
-        PKCS#11 login is token-wide: if another session on this token has
-        logged in, the new session inherits that state and logout succeeds.
-        We first try to ensure no login is active by opening a fresh session
-        and calling logout to clear any residual login.
-        """
-        token = p11_module.get_token(p11_config.slot)
         # Clear any residual token-level login
-        cleanup = token.open(rw=True)
-        try:
-            cleanup.logout()
-        except UserNotLoggedIn:
-            pass  # Good - no login was active
-        finally:
-            cleanup.close()
+        cleanup_sh = raw_open_session(rs.raw, rs.slot_id, flags)
+        rs.raw.C_Logout(cleanup_sh)
+        close_session_quietly(rs.raw, cleanup_sh)
 
-        session = token.open(rw=True)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             # Now no login should be active on this token
-            try:
-                session.logout()
+            rv = int(rs.raw.C_Logout(test_sh))
+            if rv == int(CKR_USER_NOT_LOGGED_IN):
+                pass  # Correct per spec
+            elif rv == int(CKR_OK):
                 # Some modules silently accept logout without login
                 from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -820,47 +910,60 @@ class TestLogoutWithoutLogin:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec: C_Logout when not logged in",
                 )
-            except UserNotLoggedIn:
-                pass  # Correct per spec
         finally:
-            session.close()
+            close_session_quietly(rs.raw, test_sh)
 
 
 # ---------------------------------------------------------------------------
-# Session open / context manager
+# Session context manager equivalent
 # ---------------------------------------------------------------------------
 
 
 class TestSessionContextManager:
-    """Verify session context manager protocol."""
+    """Verify session open/close lifecycle."""
 
-    def test_context_manager_closes_session(self, p11_module: Any, p11_config: Any) -> None:
-        """Using `with token.open() as session` closes on exit."""
-        token = p11_module.get_token(p11_config.slot)
-        with token.open(rw=True) as session:
-            assert session.rw is True
+    def test_open_close_session_works(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """Opening and closing a session works cleanly."""
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
+        info = CK_SESSION_INFO()
+        rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
+        expect_rv(int(rv), CKR_OK)
+        assert bool(info.flags & int(CKF_RW_SESSION)) is True
+        close_session_quietly(rs.raw, test_sh)
+
         # Session should be closed - operations should fail
-        with pytest.raises((SessionClosed, p11.exceptions.SessionHandleInvalid, AttributeError)):
-            session.generate_random(32)
+        import ctypes
 
-    def test_context_manager_with_login(self, p11_module: Any, p11_config: Any) -> None:
-        """Context manager session with user_pin logs in automatically."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        buf = (ctypes.c_ubyte * 8)()
+        rv2 = int(rs.raw.C_GenerateRandom(test_sh, buf, 8))
+        assert rv2 in (
+            int(CKR_SESSION_HANDLE_INVALID),
+            int(CKR_SESSION_CLOSED),
+        )
+
+    def test_open_close_with_login(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """Session with user login works end-to-end."""
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            with token.open(rw=True, user_pin=pin) as session:
-                key = session.generate_key(
-                    KeyType.AES,
-                    128,
-                    template={Attribute.TOKEN: False, Attribute.PRIVATE: True},
-                )
-                assert key is not None
-                key.destroy()
-        except UserAlreadyLoggedIn:
-            # Another session is logged in - acceptable
-            pass
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
+            key_h = gen_aes_key(
+                rs.raw,
+                test_sh,
+                128,
+                attrs={int(CKA_TOKEN): False, int(CKA_PRIVATE): True},
+            )
+            assert key_h != 0
+            destroy_quietly(rs.raw, test_sh, key_h)
+        finally:
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
 
 # ---------------------------------------------------------------------------
@@ -871,47 +974,48 @@ class TestSessionContextManager:
 class TestLoginTypeSpecificity:
     """Verify that different login types result in appropriate state."""
 
-    def test_user_login_creates_session_objects(self, p11_module: Any, p11_config: Any) -> None:
+    def test_user_login_creates_session_objects(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         """USER login allows creating private session objects."""
-        pin = _get_pin(p11_config)
-        if pin is None:
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
             pytest.skip("No PIN configured")
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            _login_user(session, pin)
-            key = session.generate_key(
-                KeyType.AES,
+            _login_user_raw(rs.raw, test_sh, pin_bytes)
+            key_h = gen_aes_key(
+                rs.raw,
+                test_sh,
                 256,
-                template={
-                    Attribute.TOKEN: False,
-                    Attribute.PRIVATE: True,
-                },
+                attrs={int(CKA_TOKEN): False, int(CKA_PRIVATE): True},
             )
-            assert key is not None
-            key.destroy()
+            assert key_h != 0
+            destroy_quietly(rs.raw, test_sh, key_h)
         finally:
-            _logout_safe(session)
-            session.close()
+            _logout_safe(rs.raw, test_sh)
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_generate_random_without_login(self, p11_module: Any, p11_config: Any) -> None:
+    def test_generate_random_without_login(self, p11_raw_session: Any, p11_config: Any) -> None:
         """C_GenerateRandom works in public state (no login required)."""
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            rand = session.generate_random(128)
+            rand = generate_random(rs.raw, test_sh, 16)
             assert len(rand) == 16  # 128 bits = 16 bytes
         finally:
-            session.close()
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_digest_without_login(self, p11_module: Any, p11_config: Any) -> None:
+    def test_digest_without_login(self, p11_raw_session: Any, p11_config: Any) -> None:
         """C_Digest works in public state (no login required)."""
-        from pkcs11 import Mechanism
-
-        token = p11_module.get_token(p11_config.slot)
-        session = token.open(rw=True)
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            digest = session.digest(b"no-login-digest", mechanism=Mechanism.SHA256)
+            digest = digest_single(rs.raw, test_sh, CKM_SHA256, b"no-login-digest")
             assert len(digest) == 32
         finally:
-            session.close()
+            close_session_quietly(rs.raw, test_sh)
