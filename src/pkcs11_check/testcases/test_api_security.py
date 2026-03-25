@@ -10,9 +10,42 @@ from __future__ import annotations
 
 from typing import Any
 
-import pkcs11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+
+from pkcs11_check.raw.bootstrap import (
+    close_session_quietly,
+)
+from pkcs11_check.raw.bootstrap import (
+    open_session as raw_open_session,
+)
+from pkcs11_check.raw.pack import template_from_dict
+from pkcs11_check.raw.recipes import (
+    copy_object,
+    decrypt_single,
+    destroy_quietly,
+    find_objects,
+    gen_aes_key,
+    gen_rsa_keypair,
+    read_attributes,
+    set_attributes,
+    wrap_key,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_COPYABLE,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_LABEL,
+    CKA_PRIVATE_EXPONENT,
+    CKA_SENSITIVE,
+    CKA_UNWRAP,
+    CKA_VALUE,
+    CKA_WRAP,
+    CKF_SERIAL_SESSION,
+    CKM_AES_ECB,
+    CKO_PRIVATE_KEY,
+)
 
 pytestmark = pytest.mark.security
 
@@ -27,89 +60,127 @@ class TestWrapDecryptOracle:
     A secure module should prevent keys from having both CKA_WRAP and CKA_DECRYPT.
     """
 
-    def test_wrap_decrypt_combination_prevented(self, p11_session: Any) -> None:
+    def test_wrap_decrypt_combination_prevented(self, p11_raw_session: Any) -> None:
         """Module should prevent creating key with both WRAP and DECRYPT."""
+        rs = p11_raw_session
         try:
-            dual_key = p11_session.generate_key(
-                KeyType.AES,
+            dual_key_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
                 256,
-                template={
-                    Attribute.WRAP: True,
-                    Attribute.UNWRAP: True,
-                    Attribute.ENCRYPT: True,
-                    Attribute.DECRYPT: True,
+                attrs={
+                    int(CKA_WRAP): True,
+                    int(CKA_UNWRAP): True,
+                    int(CKA_ENCRYPT): True,
+                    int(CKA_DECRYPT): True,
                 },
             )
-            # If module allows it, this is a security finding (but common)
-            # Try the actual attack
-            target = p11_session.generate_key(
-                KeyType.AES,
-                128,
-                template={Attribute.EXTRACTABLE: True},
-            )
-            wrapped = dual_key.wrap_key(target)
-            try:
-                # Decrypt the wrapped blob = extract the key material
-                raw_key = dual_key.decrypt(wrapped, mechanism=Mechanism.AES_ECB)
-                if raw_key and len(raw_key) > 0:
-                    pytest.xfail(
-                        "SECURITY: Wrap-decrypt oracle possible - "
-                        "key has both CKA_WRAP and CKA_DECRYPT"
-                    )
-            except pkcs11.exceptions.PKCS11Error:
-                pass  # Module prevented the attack at decrypt time - good
-        except pkcs11.exceptions.PKCS11Error:
+        except AssertionError:
             pass  # Module prevented dual-purpose key creation - best
+            return
+
+        try:
+            # Try the actual attack
+            target_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={int(CKA_EXTRACTABLE): True},
+            )
+            try:
+                wrapped = wrap_key(rs.raw, rs.sh, dual_key_h, target_h, CKM_AES_ECB)
+                # Decrypt the wrapped blob = extract the key material
+                try:
+                    raw_key = decrypt_single(rs.raw, rs.sh, dual_key_h, CKM_AES_ECB, wrapped)
+                    if raw_key and len(raw_key) > 0:
+                        pytest.xfail(
+                            "SECURITY: Wrap-decrypt oracle possible - "
+                            "key has both CKA_WRAP and CKA_DECRYPT"
+                        )
+                except AssertionError:
+                    pass  # Module prevented the attack at decrypt time - good
+            except AssertionError:
+                pass  # Wrap failed - acceptable
+            finally:
+                destroy_quietly(rs.raw, rs.sh, target_h)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, dual_key_h)
 
 
 class TestSensitiveExtraction:
     """Verify sensitive key material cannot be read."""
 
-    def test_sensitive_key_value_not_readable(self, p11_session: Any) -> None:
+    def test_sensitive_key_value_not_readable(self, p11_raw_session: Any) -> None:
         """CKA_SENSITIVE=True key: C_GetAttributeValue(CKA_VALUE) must fail."""
-        key = p11_session.generate_key(
-            KeyType.AES,
+        rs = p11_raw_session
+        key_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
             256,
-            template={Attribute.SENSITIVE: True, Attribute.EXTRACTABLE: False},
+            attrs={int(CKA_SENSITIVE): True, int(CKA_EXTRACTABLE): False},
         )
-        with pytest.raises(pkcs11.exceptions.PKCS11Error):
-            _ = key[Attribute.VALUE]
+        try:
+            try:
+                read_attributes(rs.raw, rs.sh, key_h, [int(CKA_VALUE)])
+                pytest.fail("Reading CKA_VALUE on SENSITIVE key should fail")
+            except AssertionError:
+                pass  # Expected
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
 
-    def test_private_key_not_extractable(self, p11_session: Any) -> None:
+    def test_private_key_not_extractable(self, p11_raw_session: Any) -> None:
         """RSA private key material must not be readable."""
-        _, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
-        with pytest.raises(pkcs11.exceptions.PKCS11Error):
-            _ = priv[Attribute.PRIVATE_EXPONENT]
+        rs = p11_raw_session
+        pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        try:
+            try:
+                read_attributes(rs.raw, rs.sh, priv_h, [int(CKA_PRIVATE_EXPONENT)])
+                pytest.fail("Reading CKA_PRIVATE_EXPONENT should fail")
+            except AssertionError:
+                pass  # Expected
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub_h)
+            destroy_quietly(rs.raw, rs.sh, priv_h)
 
 
 class TestAttributeEscalation:
     """Verify attributes cannot be escalated after creation."""
 
-    def test_extractable_cannot_be_set_true(self, p11_session: Any) -> None:
+    def test_extractable_cannot_be_set_true(self, p11_raw_session: Any) -> None:
         """CKA_EXTRACTABLE=False cannot be changed to True."""
-        key = p11_session.generate_key(
-            KeyType.AES,
+        rs = p11_raw_session
+        key_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
             256,
-            template={Attribute.EXTRACTABLE: False},
+            attrs={int(CKA_EXTRACTABLE): False},
         )
         try:
-            key[Attribute.EXTRACTABLE] = True
-            pytest.xfail("SECURITY: CKA_EXTRACTABLE escalated from False to True")
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Module prevented escalation - correct
+            try:
+                set_attributes(rs.raw, rs.sh, key_h, {int(CKA_EXTRACTABLE): True})
+                pytest.xfail("SECURITY: CKA_EXTRACTABLE escalated from False to True")
+            except AssertionError:
+                pass  # Module prevented escalation - correct
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
 
-    def test_sensitive_cannot_be_set_false(self, p11_session: Any) -> None:
+    def test_sensitive_cannot_be_set_false(self, p11_raw_session: Any) -> None:
         """CKA_SENSITIVE=True cannot be changed to False."""
-        key = p11_session.generate_key(
-            KeyType.AES,
+        rs = p11_raw_session
+        key_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
             256,
-            template={Attribute.SENSITIVE: True},
+            attrs={int(CKA_SENSITIVE): True},
         )
         try:
-            key[Attribute.SENSITIVE] = False
-            pytest.xfail("SECURITY: CKA_SENSITIVE downgraded from True to False")
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Correct
+            try:
+                set_attributes(rs.raw, rs.sh, key_h, {int(CKA_SENSITIVE): False})
+                pytest.xfail("SECURITY: CKA_SENSITIVE downgraded from True to False")
+            except AssertionError:
+                pass  # Correct
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
 
 
 class TestAttributeLaunderingViaCopy:
@@ -119,109 +190,143 @@ class TestAttributeLaunderingViaCopy:
     to bypass security restrictions.
     """
 
-    def test_copy_cannot_escalate_extractable(self, p11_session: Any) -> None:
+    def test_copy_cannot_escalate_extractable(self, p11_raw_session: Any) -> None:
         """Copying a non-extractable key with CKA_EXTRACTABLE=True must fail."""
-        key = p11_session.generate_key(
-            KeyType.AES,
+        rs = p11_raw_session
+        key_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
             256,
-            template={Attribute.EXTRACTABLE: False, Attribute.COPYABLE: True},
+            attrs={int(CKA_EXTRACTABLE): False, int(CKA_COPYABLE): True},
         )
         try:
-            copy = key.copy({Attribute.EXTRACTABLE: True})
-            # If copy succeeded, try to read the value
             try:
-                _ = copy[Attribute.VALUE]
-                pytest.xfail("SECURITY: Copy escalated CKA_EXTRACTABLE, key material readable")
-            except pkcs11.exceptions.PKCS11Error:
-                pass  # Value still protected despite attribute change
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Module prevented the copy - correct
+                copy_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_EXTRACTABLE): True})
+                # If copy succeeded, try to read the value
+                try:
+                    read_attributes(rs.raw, rs.sh, copy_h, [int(CKA_VALUE)])
+                    pytest.xfail("SECURITY: Copy escalated CKA_EXTRACTABLE, key material readable")
+                except AssertionError:
+                    pass  # Value still protected despite attribute change
+                finally:
+                    destroy_quietly(rs.raw, rs.sh, copy_h)
+            except AssertionError:
+                pass  # Module prevented the copy - correct
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
 
-    def test_copy_cannot_downgrade_sensitive(self, p11_session: Any) -> None:
+    def test_copy_cannot_downgrade_sensitive(self, p11_raw_session: Any) -> None:
         """Copying with CKA_SENSITIVE=False when original is True must fail."""
-        key = p11_session.generate_key(
-            KeyType.AES,
+        rs = p11_raw_session
+        key_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
             256,
-            template={Attribute.SENSITIVE: True, Attribute.COPYABLE: True},
+            attrs={int(CKA_SENSITIVE): True, int(CKA_COPYABLE): True},
         )
         try:
-            copy = key.copy({Attribute.SENSITIVE: False})
             try:
-                _ = copy[Attribute.VALUE]
-                pytest.xfail("SECURITY: Copy downgraded CKA_SENSITIVE, key material readable")
-            except pkcs11.exceptions.PKCS11Error:
-                pass
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Correct
+                copy_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_SENSITIVE): False})
+                try:
+                    read_attributes(rs.raw, rs.sh, copy_h, [int(CKA_VALUE)])
+                    pytest.xfail("SECURITY: Copy downgraded CKA_SENSITIVE, key material readable")
+                except AssertionError:
+                    pass
+                finally:
+                    destroy_quietly(rs.raw, rs.sh, copy_h)
+            except AssertionError:
+                pass  # Correct
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
 
 
 class TestKeyUsageRestrictions:
-    """Verify key usage attributes are enforced.
+    """Verify key usage attributes are enforced."""
 
-    python-pkcs11 removes methods (encrypt/sign/wrap) from keys
-    when the corresponding attribute is False. This IS the enforcement --
-    we verify the attribute was correctly applied.
-    """
-
-    def test_encrypt_disabled_removes_capability(self, p11_session: Any) -> None:
+    def test_encrypt_disabled_removes_capability(self, p11_raw_session: Any) -> None:
         """Key with CKA_ENCRYPT=False should not have encrypt capability."""
-        key = p11_session.generate_key(
-            KeyType.AES,
+        rs = p11_raw_session
+        key_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
             256,
-            template={Attribute.ENCRYPT: False, Attribute.DECRYPT: True},
+            attrs={int(CKA_ENCRYPT): False, int(CKA_DECRYPT): True},
         )
-        # python-pkcs11 enforces this by not exposing encrypt method
-        assert not hasattr(key, "encrypt") or key[Attribute.ENCRYPT] is False
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_ENCRYPT)])
+            assert attrs[int(CKA_ENCRYPT)] is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
 
-    def test_non_extractable_enforced(self, p11_session: Any) -> None:
+    def test_non_extractable_enforced(self, p11_raw_session: Any) -> None:
         """Non-extractable key material cannot be read."""
-        key = p11_session.generate_key(
-            KeyType.AES,
+        rs = p11_raw_session
+        key_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
             256,
-            template={Attribute.EXTRACTABLE: False, Attribute.SENSITIVE: True},
+            attrs={int(CKA_EXTRACTABLE): False, int(CKA_SENSITIVE): True},
         )
-        with pytest.raises(pkcs11.exceptions.PKCS11Error):
-            _ = key[Attribute.VALUE]
+        try:
+            try:
+                read_attributes(rs.raw, rs.sh, key_h, [int(CKA_VALUE)])
+                pytest.fail("Reading CKA_VALUE on non-extractable key should fail")
+            except AssertionError as e:
+                if "Reading CKA_VALUE" in str(e):
+                    raise
+                pass  # Expected
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
 
-    def test_decrypt_only_key(self, p11_session: Any) -> None:
+    def test_decrypt_only_key(self, p11_raw_session: Any) -> None:
         """Key created for decrypt-only should have correct attributes."""
-        key = p11_session.generate_key(
-            KeyType.AES,
+        rs = p11_raw_session
+        key_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
             256,
-            template={
-                Attribute.ENCRYPT: False,
-                Attribute.DECRYPT: True,
-                Attribute.WRAP: False,
-                Attribute.UNWRAP: False,
+            attrs={
+                int(CKA_ENCRYPT): False,
+                int(CKA_DECRYPT): True,
+                int(CKA_WRAP): False,
+                int(CKA_UNWRAP): False,
             },
         )
-        assert key[Attribute.DECRYPT] is True
-        assert key[Attribute.ENCRYPT] is False
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_DECRYPT), int(CKA_ENCRYPT)])
+            assert attrs[int(CKA_DECRYPT)] is True
+            assert attrs[int(CKA_ENCRYPT)] is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
 
 
 class TestAccessControl:
     """Test session access control enforcement."""
 
-    def test_no_login_private_objects_invisible(self, p11_module: Any) -> None:
+    def test_no_login_private_objects_invisible(self, p11_raw_session: Any) -> None:
         """Without login, private objects should not be visible."""
+        rs = p11_raw_session
         # Open a public (non-logged-in) session
-        token = p11_module.get_token()
-        with token.open(rw=False) as public_session:
-            # Search for private keys - should find none
-            found = list(public_session.get_objects({Attribute.CLASS: ObjectClass.PRIVATE_KEY}))
+        pub_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        try:
+            tmpl = template_from_dict({int(CKA_CLASS): int(CKO_PRIVATE_KEY)})
+            found = find_objects(rs.raw, pub_sh, tmpl)
             # This isn't a hard assertion since there may be no private keys at all
             # The point is that the search doesn't crash and doesn't leak
             assert isinstance(found, list)
+        finally:
+            close_session_quietly(rs.raw, pub_sh)
 
-    def test_handle_prediction(self, p11_session: Any) -> None:
+    def test_handle_prediction(self, p11_raw_session: Any) -> None:
         """Object handles should not be trivially sequential/predictable."""
+        rs = p11_raw_session
         # Create multiple keys simultaneously (don't destroy) to get unique handles
         keys = []
         for i in range(10):
-            key = p11_session.generate_key(KeyType.AES, 128, label=f"handle-{i}")
-            keys.append(key)
-        # All should be distinct Python objects
+            key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={int(CKA_LABEL): f"handle-{i}"})
+            keys.append(key_h)
+        # All should be distinct handles
         assert len(keys) == 10
         # Clean up
-        for key in keys:
-            key.destroy()
+        for key_h in keys:
+            destroy_quietly(rs.raw, rs.sh, key_h)
