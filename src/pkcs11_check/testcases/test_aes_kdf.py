@@ -11,9 +11,28 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.pack import mech_string_data
+from pkcs11_check.raw.recipes import (
+    derive_key,
+    destroy_quietly,
+    import_secret_key,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DERIVE,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKK_AES,
+    CKM_AES_CBC_ENCRYPT_DATA,
+    CKM_AES_ECB_ENCRYPT_DATA,
+    CKO_SECRET_KEY,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -28,267 +47,313 @@ _ALT_DATA_16 = b"alt_derive_data!"  # 16 bytes, different content
 # 16-byte IV for CBC mode
 _IV = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"
 
-_DERIVE_TEMPLATE: dict[Attribute, Any] = {
-    Attribute.SENSITIVE: False,
-    Attribute.EXTRACTABLE: True,
-    Attribute.TOKEN: False,
+
+def _mech_cbc_encrypt_data(iv: bytes, data: bytes) -> Any:
+    """Build a PackedMechanism for CKM_AES_CBC_ENCRYPT_DATA with proper struct."""
+    import ctypes
+
+    from pkcs11_check.raw.pack import PackedMechanism, PointerArg
+    from pkcs11_check.raw.types_std import (
+        CK_AES_CBC_ENCRYPT_DATA_PARAMS,
+        CK_BYTE,
+        CK_MECHANISM,
+    )
+
+    params = CK_AES_CBC_ENCRYPT_DATA_PARAMS()
+    for i in range(16):
+        params.iv[i] = CK_BYTE(iv[i])
+    data_buf = (ctypes.c_ubyte * len(data))(*data)
+    params.pData = ctypes.cast(data_buf, ctypes.c_void_p)
+    params.length = len(data)
+    pointer_arg = PointerArg.to_storage(params, origin="mech_cbc_encrypt_data")
+    from pkcs11_check.raw.pack import LengthArg
+
+    length_arg = LengthArg.native(ctypes.sizeof(params))
+    result = PackedMechanism(
+        CK_MECHANISM(CKM_AES_CBC_ENCRYPT_DATA, pointer_arg.pointer, length_arg.value),
+        storage=params,
+        pointer_arg=pointer_arg,
+        length_arg=length_arg,
+        params=params,
+    )
+    result._keepalive.append(data_buf)
+    return result
+
+
+def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
+    """Create an AES base key suitable for derivation."""
+    return import_secret_key(
+        rs.raw, rs.sh, CKK_AES, key_bytes,
+        attrs={
+            int(CKA_DERIVE): True,
+            int(CKA_TOKEN): False,
+            int(CKA_SENSITIVE): False,
+        },
+    )
+
+
+_DERIVE_ATTRS: dict[int, Any] = {
+    int(CKA_CLASS): int(CKO_SECRET_KEY),
+    int(CKA_KEY_TYPE): int(CKK_AES),
+    int(CKA_SENSITIVE): False,
+    int(CKA_EXTRACTABLE): True,
+    int(CKA_TOKEN): False,
+    int(CKA_VALUE_LEN): 16,
 }
 
-
-def _create_base_key(session: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> Any:
-    """Create an AES base key suitable for derivation."""
-    return session.create_object(
-        {
-            Attribute.CLASS: ObjectClass.SECRET_KEY,
-            Attribute.KEY_TYPE: KeyType.AES,
-            Attribute.VALUE: key_bytes,
-            Attribute.DERIVE: True,
-            Attribute.TOKEN: False,
-            Attribute.SENSITIVE: False,
-        }
-    )
+_DERIVE_ATTRS_32: dict[int, Any] = {
+    int(CKA_CLASS): int(CKO_SECRET_KEY),
+    int(CKA_KEY_TYPE): int(CKK_AES),
+    int(CKA_SENSITIVE): False,
+    int(CKA_EXTRACTABLE): True,
+    int(CKA_TOKEN): False,
+    int(CKA_VALUE_LEN): 32,
+}
 
 
 class TestAESECBEncryptData:
     """CKM_AES_ECB_ENCRYPT_DATA - derive keys by AES-ECB encrypting data."""
 
-    def test_derive_basic(self, p11_session: Any, p11_module: Any) -> None:
+    def test_derive_basic(self, p11_raw_session: Any) -> None:
         """Derive an AES key via ECB encryption and verify it is non-empty."""
-        if not has_mechanism(p11_module, "AES_ECB_ENCRYPT_DATA"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_ECB_ENCRYPT_DATA not supported")
 
-        base_key = _create_base_key(p11_session)
+        base_key = _create_base_key(rs)
         try:
-            derived = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_ECB_ENCRYPT_DATA,
-                mechanism_param=_DATA_16,
-                template=_DERIVE_TEMPLATE,
+            derived = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
             try:
-                okm = derived[Attribute.VALUE]
+                okm = read_attributes(
+                    rs.raw, rs.sh, derived, [int(CKA_VALUE)]
+                )[int(CKA_VALUE)]
+                assert isinstance(okm, bytes)
                 assert len(okm) == 16, f"Expected 16-byte derived key, got {len(okm)}"
                 assert okm != b"\x00" * 16, "Derived key is all zeros"
             finally:
-                derived.destroy()
+                destroy_quietly(rs.raw, rs.sh, derived)
         finally:
-            base_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, base_key)
 
-    def test_derive_deterministic(self, p11_session: Any, p11_module: Any) -> None:
+    def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         """Same base key + same data produces the same derived key."""
-        if not has_mechanism(p11_module, "AES_ECB_ENCRYPT_DATA"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_ECB_ENCRYPT_DATA not supported")
 
-        base_key = _create_base_key(p11_session)
+        base_key = _create_base_key(rs)
         try:
-            derived1 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_ECB_ENCRYPT_DATA,
-                mechanism_param=_DATA_16,
-                template=_DERIVE_TEMPLATE,
+            derived1 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
-            derived2 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_ECB_ENCRYPT_DATA,
-                mechanism_param=_DATA_16,
-                template=_DERIVE_TEMPLATE,
+            derived2 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
             try:
-                assert derived1[Attribute.VALUE] == derived2[Attribute.VALUE]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                assert v1 == v2
             finally:
-                derived2.destroy()
-                derived1.destroy()
+                destroy_quietly(rs.raw, rs.sh, derived2)
+                destroy_quietly(rs.raw, rs.sh, derived1)
         finally:
-            base_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, base_key)
 
-    def test_derive_different_data(self, p11_session: Any, p11_module: Any) -> None:
+    def test_derive_different_data(self, p11_raw_session: Any) -> None:
         """Different input data produces different derived keys."""
-        if not has_mechanism(p11_module, "AES_ECB_ENCRYPT_DATA"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_ECB_ENCRYPT_DATA not supported")
 
-        base_key = _create_base_key(p11_session)
+        base_key = _create_base_key(rs)
         try:
-            derived1 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_ECB_ENCRYPT_DATA,
-                mechanism_param=_DATA_16,
-                template=_DERIVE_TEMPLATE,
+            derived1 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
-            derived2 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_ECB_ENCRYPT_DATA,
-                mechanism_param=_ALT_DATA_16,
-                template=_DERIVE_TEMPLATE,
+            derived2 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _ALT_DATA_16),
             )
             try:
-                assert derived1[Attribute.VALUE] != derived2[Attribute.VALUE]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                assert v1 != v2
             finally:
-                derived2.destroy()
-                derived1.destroy()
+                destroy_quietly(rs.raw, rs.sh, derived2)
+                destroy_quietly(rs.raw, rs.sh, derived1)
         finally:
-            base_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, base_key)
 
-    def test_derive_32_byte_data(self, p11_session: Any, p11_module: Any) -> None:
+    def test_derive_32_byte_data(self, p11_raw_session: Any) -> None:
         """Derive a 256-bit key from 32 bytes of input data."""
-        if not has_mechanism(p11_module, "AES_ECB_ENCRYPT_DATA"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_ECB_ENCRYPT_DATA not supported")
 
-        base_key = _create_base_key(p11_session)
+        base_key = _create_base_key(rs)
         try:
-            derived = base_key.derive_key(
-                KeyType.AES,
-                256,
-                mechanism=Mechanism.AES_ECB_ENCRYPT_DATA,
-                mechanism_param=_DATA_32,
-                template=_DERIVE_TEMPLATE,
+            derived = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS_32,
+                mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_32),
             )
             try:
-                okm = derived[Attribute.VALUE]
+                okm = read_attributes(
+                    rs.raw, rs.sh, derived, [int(CKA_VALUE)]
+                )[int(CKA_VALUE)]
+                assert isinstance(okm, bytes)
                 assert len(okm) == 32, f"Expected 32-byte derived key, got {len(okm)}"
             finally:
-                derived.destroy()
+                destroy_quietly(rs.raw, rs.sh, derived)
         finally:
-            base_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, base_key)
 
 
 class TestAESCBCEncryptData:
     """CKM_AES_CBC_ENCRYPT_DATA - derive keys by AES-CBC encrypting data."""
 
-    def test_derive_basic(self, p11_session: Any, p11_module: Any) -> None:
+    def test_derive_basic(self, p11_raw_session: Any) -> None:
         """Derive an AES key via CBC encryption and verify it is non-empty."""
-        if not has_mechanism(p11_module, "AES_CBC_ENCRYPT_DATA"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_CBC_ENCRYPT_DATA not supported")
 
-        base_key = _create_base_key(p11_session)
+        base_key = _create_base_key(rs)
         try:
-            derived = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_CBC_ENCRYPT_DATA,
-                mechanism_param=(_IV, _DATA_16),
-                template=_DERIVE_TEMPLATE,
+            derived = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
             try:
-                okm = derived[Attribute.VALUE]
+                okm = read_attributes(
+                    rs.raw, rs.sh, derived, [int(CKA_VALUE)]
+                )[int(CKA_VALUE)]
+                assert isinstance(okm, bytes)
                 assert len(okm) == 16, f"Expected 16-byte derived key, got {len(okm)}"
                 assert okm != b"\x00" * 16, "Derived key is all zeros"
             finally:
-                derived.destroy()
+                destroy_quietly(rs.raw, rs.sh, derived)
         finally:
-            base_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, base_key)
 
-    def test_derive_deterministic(self, p11_session: Any, p11_module: Any) -> None:
+    def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         """Same base key + same IV + same data produces the same derived key."""
-        if not has_mechanism(p11_module, "AES_CBC_ENCRYPT_DATA"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_CBC_ENCRYPT_DATA not supported")
 
-        base_key = _create_base_key(p11_session)
+        base_key = _create_base_key(rs)
         try:
-            derived1 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_CBC_ENCRYPT_DATA,
-                mechanism_param=(_IV, _DATA_16),
-                template=_DERIVE_TEMPLATE,
+            derived1 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
-            derived2 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_CBC_ENCRYPT_DATA,
-                mechanism_param=(_IV, _DATA_16),
-                template=_DERIVE_TEMPLATE,
+            derived2 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
             try:
-                assert derived1[Attribute.VALUE] == derived2[Attribute.VALUE]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                assert v1 == v2
             finally:
-                derived2.destroy()
-                derived1.destroy()
+                destroy_quietly(rs.raw, rs.sh, derived2)
+                destroy_quietly(rs.raw, rs.sh, derived1)
         finally:
-            base_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, base_key)
 
-    def test_derive_different_data(self, p11_session: Any, p11_module: Any) -> None:
+    def test_derive_different_data(self, p11_raw_session: Any) -> None:
         """Different input data produces different derived keys."""
-        if not has_mechanism(p11_module, "AES_CBC_ENCRYPT_DATA"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_CBC_ENCRYPT_DATA not supported")
 
-        base_key = _create_base_key(p11_session)
+        base_key = _create_base_key(rs)
         try:
-            derived1 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_CBC_ENCRYPT_DATA,
-                mechanism_param=(_IV, _DATA_16),
-                template=_DERIVE_TEMPLATE,
+            derived1 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
-            derived2 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_CBC_ENCRYPT_DATA,
-                mechanism_param=(_IV, _ALT_DATA_16),
-                template=_DERIVE_TEMPLATE,
+            derived2 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=_mech_cbc_encrypt_data(_IV, _ALT_DATA_16),
             )
             try:
-                assert derived1[Attribute.VALUE] != derived2[Attribute.VALUE]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                assert v1 != v2
             finally:
-                derived2.destroy()
-                derived1.destroy()
+                destroy_quietly(rs.raw, rs.sh, derived2)
+                destroy_quietly(rs.raw, rs.sh, derived1)
         finally:
-            base_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, base_key)
 
-    def test_derive_different_iv(self, p11_session: Any, p11_module: Any) -> None:
+    def test_derive_different_iv(self, p11_raw_session: Any) -> None:
         """Different IVs with same data produce different derived keys."""
-        if not has_mechanism(p11_module, "AES_CBC_ENCRYPT_DATA"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_CBC_ENCRYPT_DATA not supported")
 
         alt_iv = b"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"
 
-        base_key = _create_base_key(p11_session)
+        base_key = _create_base_key(rs)
         try:
-            derived1 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_CBC_ENCRYPT_DATA,
-                mechanism_param=(_IV, _DATA_16),
-                template=_DERIVE_TEMPLATE,
+            derived1 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
-            derived2 = base_key.derive_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_CBC_ENCRYPT_DATA,
-                mechanism_param=(alt_iv, _DATA_16),
-                template=_DERIVE_TEMPLATE,
+            derived2 = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS,
+                mech_param=_mech_cbc_encrypt_data(alt_iv, _DATA_16),
             )
             try:
-                assert derived1[Attribute.VALUE] != derived2[Attribute.VALUE]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                assert v1 != v2
             finally:
-                derived2.destroy()
-                derived1.destroy()
+                destroy_quietly(rs.raw, rs.sh, derived2)
+                destroy_quietly(rs.raw, rs.sh, derived1)
         finally:
-            base_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, base_key)
 
-    def test_derive_32_byte_data(self, p11_session: Any, p11_module: Any) -> None:
+    def test_derive_32_byte_data(self, p11_raw_session: Any) -> None:
         """Derive a 256-bit key from 32 bytes of input data."""
-        if not has_mechanism(p11_module, "AES_CBC_ENCRYPT_DATA"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_AES_CBC_ENCRYPT_DATA not supported")
 
-        base_key = _create_base_key(p11_session)
+        base_key = _create_base_key(rs)
         try:
-            derived = base_key.derive_key(
-                KeyType.AES,
-                256,
-                mechanism=Mechanism.AES_CBC_ENCRYPT_DATA,
-                mechanism_param=(_IV, _DATA_32),
-                template=_DERIVE_TEMPLATE,
+            derived = derive_key(
+                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                attrs=_DERIVE_ATTRS_32,
+                mech_param=_mech_cbc_encrypt_data(_IV, _DATA_32),
             )
             try:
-                okm = derived[Attribute.VALUE]
+                okm = read_attributes(
+                    rs.raw, rs.sh, derived, [int(CKA_VALUE)]
+                )[int(CKA_VALUE)]
+                assert isinstance(okm, bytes)
                 assert len(okm) == 32, f"Expected 32-byte derived key, got {len(okm)}"
             finally:
-                derived.destroy()
+                destroy_quietly(rs.raw, rs.sh, derived)
         finally:
-            base_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, base_key)
