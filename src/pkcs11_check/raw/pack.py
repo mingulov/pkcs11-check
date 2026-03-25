@@ -319,7 +319,7 @@ def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
     For deliberate mispacking (fault tests), use attr_bool/attr_ulong/attr_bytes
     directly.
     """
-    from .metadata_std import ATTR_VALUE_TYPES
+    from .attr_metadata import ATTR_VALUE_TYPES
 
     vtype = ATTR_VALUE_TYPES.get(int(attr_type))
 

@@ -13,7 +13,7 @@ from typing import Any
 
 from .api import RawPKCS11
 from .bootstrap import get_slot_ids, login_user, open_session
-from .metadata_std import ATTR_VALUE_TYPES
+from .attr_metadata import ATTR_VALUE_TYPES
 from .pack import PackedMechanism, attr_bytes, attr_ulong, mech_simple, template
 from .rv import expect_rv
 from .types_std import (

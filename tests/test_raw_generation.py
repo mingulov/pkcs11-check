@@ -135,7 +135,8 @@ def test_generated_standard_function_list_structs_are_real_structures() -> None:
 
 def test_attr_value_types_covers_common_attrs() -> None:
     """ATTR_VALUE_TYPES covers at least the common attributes."""
-    from pkcs11_check.raw.metadata_std import ATTR_NAMES, ATTR_VALUE_TYPES
+    from pkcs11_check.raw.attr_metadata import ATTR_VALUE_TYPES
+    from pkcs11_check.raw.metadata_std import ATTR_NAMES
 
     # Every entry in ATTR_VALUE_TYPES must be a valid CKA constant
     for attr_id in ATTR_VALUE_TYPES:
@@ -163,7 +164,7 @@ def test_attr_value_types_covers_common_attrs() -> None:
 
 def test_attr_value_types_valid_type_strings() -> None:
     """All type values are recognized strings."""
-    from pkcs11_check.raw.metadata_std import ATTR_VALUE_TYPES
+    from pkcs11_check.raw.attr_metadata import ATTR_VALUE_TYPES
 
     valid = {"bool", "ulong", "bytes", "str", "date", "ulong_array", "template"}
     for attr_id, vtype in ATTR_VALUE_TYPES.items():
@@ -174,7 +175,7 @@ def test_attr_value_types_matches_python_pkcs11() -> None:
     """ATTR_VALUE_TYPES agrees with python-pkcs11 on value type categories."""
     import pytest
 
-    from pkcs11_check.raw.metadata_std import ATTR_VALUE_TYPES
+    from pkcs11_check.raw.attr_metadata import ATTR_VALUE_TYPES
 
     try:
         from pkcs11.attributes import (
