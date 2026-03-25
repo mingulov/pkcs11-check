@@ -19,21 +19,15 @@ from pkcs11_check.raw.recipes import (
     unwrap_key_authenticated,
     wrap_key_authenticated,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
     CKA_SENSITIVE,
-    CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
     CKA_WRAP,
-    CKK_AES,
     CKM_AES_GCM,
-    CKO_SECRET_KEY,
-    CKR_OK,
 )
 
 pytestmark = pytest.mark.keymgmt

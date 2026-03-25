@@ -13,9 +13,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
-    create_object,
     decrypt_single,
     destroy_quietly,
     digest_single,
@@ -26,21 +24,16 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     sign_single,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
     CKA_DECRYPT,
-    CKA_EC_PARAMS,
     CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
-    CKA_VALUE,
     CKA_VERIFY,
     CKK_AES,
     CKK_GENERIC_SECRET,
@@ -60,8 +53,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS,
     CKM_SHA_1,
     CKM_SHA_1_HMAC,
-    CKO_SECRET_KEY,
-    CKR_OK,
 )
 
 pytestmark = pytest.mark.crossverify

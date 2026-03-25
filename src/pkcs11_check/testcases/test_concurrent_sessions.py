@@ -20,7 +20,6 @@ import pytest
 
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
-    login_user,
     open_session,
 )
 from pkcs11_check.raw.pack import attr_bytes, template
@@ -33,7 +32,6 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -45,16 +43,13 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKM_AES_ECB,
     CKO_DATA,
-    CKR_OK,
-    CKR_USER_ALREADY_LOGGED_IN,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
 
 pytestmark = pytest.mark.security
 
 
 def _unique_label(prefix: str = "conc") -> bytes:
-    return f"{prefix}-{uuid.uuid4().hex[:8]}".encode("utf-8")
+    return f"{prefix}-{uuid.uuid4().hex[:8]}".encode()
 
 
 def _open_second_session(rs: Any) -> int:

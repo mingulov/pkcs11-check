@@ -24,7 +24,6 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.recipes import (
     wrap_key as wrap_key_recipe,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -43,8 +42,6 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
     CKO_SECRET_KEY,
-    CKR_KEY_NOT_WRAPPABLE,
-    CKR_OK,
 )
 
 pytestmark = pytest.mark.keymgmt

@@ -14,7 +14,6 @@ import pytest
 
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
-    login_user,
     open_session,
 )
 from pkcs11_check.raw.recipes import (
@@ -36,7 +35,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
 
 pytestmark = pytest.mark.stress
 
@@ -54,7 +52,6 @@ class TestMultiSessionConcurrency:
     ) -> None:
         """Open multiple sessions sequentially and operate independently."""
         rs = p11_raw_session
-        pin_bytes = get_pin_bytes(p11_config)
         flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
 
         # Open first session (p11_raw_session already has one)

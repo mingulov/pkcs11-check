@@ -13,12 +13,10 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.bootstrap import (
-    close_session_quietly,
     login_user,
-    open_session,
 )
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import attr_bytes, mech_simple, template
+from pkcs11_check.raw.pack import attr_bool, attr_bytes, mech_simple, template
 from pkcs11_check.raw.recipes import (
     create_object,
     decrypt_single,
@@ -39,27 +37,21 @@ from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_CLASS,
-    CKA_DECRYPT,
     CKA_DERIVE,
     CKA_EC_PARAMS,
     CKA_EC_POINT,
-    CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS,
     CKA_SENSITIVE,
-    CKA_SIGN,
     CKA_TOKEN,
     CKA_TRUSTED,
     CKA_UNWRAP,
     CKA_VALUE,
     CKA_VERIFY,
     CKA_WRAP,
-    CKF_RW_SESSION,
-    CKF_SERIAL_SESSION,
     CKK_AES,
-    CKK_DES3,
     CKK_EC,
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP,
@@ -70,9 +62,9 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_ARGUMENTS_BAD,
     CKR_DATA_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
@@ -86,7 +78,6 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
-    CKR_USER_ALREADY_LOGGED_IN,
 )
 from pkcs11_check.testcases.conftest import get_pin_bytes
 
@@ -256,7 +247,7 @@ class TestSessionObjectsAfterLogout:
         if pin_bytes is None:
             pytest.skip("No PIN configured - can't test logout")
 
-        label = f"logout-test-{id(self)}".encode("utf-8")
+        label = f"logout-test-{id(self)}".encode()
 
         # Generate a key with a unique label
         key = gen_aes_key(
@@ -496,8 +487,7 @@ class TestSoftHSM2Issue596:
             attrs={int(CKA_WRAP): True, int(CKA_UNWRAP): True},
         )
         # 3DES keygen uses CKM_DES3_KEY_GEN with no CKA_VALUE_LEN
-        from pkcs11_check.raw.pack import attr_bool, mech_simple, template as tmpl_fn
-        des3_tmpl = tmpl_fn(
+        des3_tmpl = template(
             attr_bool(CKA_EXTRACTABLE, True),
             attr_bool(CKA_SENSITIVE, False),
         )
