@@ -1,9 +1,28 @@
 from __future__ import annotations
 
+import ctypes
+import datetime
 import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
+
+import pytest
+
+from pkcs11_check.raw.pack import attr_auto
+from pkcs11_check.raw.types_std import (
+    CKA_ALLOWED_MECHANISMS,
+    CKA_CLASS,
+    CKA_EC_PARAMS,
+    CKA_ENCRYPT,
+    CKA_LABEL,
+    CKA_MODULUS_BITS,
+    CKA_START_DATE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_WRAP_TEMPLATE,
+)
 
 
 def test_pack_template_keeps_pointer_and_length_separate() -> None:
@@ -313,9 +332,7 @@ def test_mech_pbkdf2_with_password() -> None:
     from pkcs11_check.raw.pack import mech_pbkdf2
     from pkcs11_check.raw.types_std import CKM_PKCS5_PBKD2
 
-    m = mech_pbkdf2(
-        CKM_PKCS5_PBKD2, salt=b"s", iterations=1, prf=1, password=b"secret"
-    )
+    m = mech_pbkdf2(CKM_PKCS5_PBKD2, salt=b"s", iterations=1, prf=1, password=b"secret")
     assert m.params.ulPasswordLen == 6
     assert m.params.pPassword is not None
 
@@ -335,6 +352,185 @@ def test_mech_string_data_sets_pointer_and_length() -> None:
     assert isinstance(params, CK_KEY_DERIVATION_STRING_DATA)
     assert params.ulLen == 16
     assert params.pData is not None
+
+
+class TestAttrAutoBool:
+    """attr_auto with 'bool' type attributes."""
+
+    def test_bool_true(self) -> None:
+        pa = attr_auto(int(CKA_TOKEN), True)
+        assert pa.storage.value == 1
+
+    def test_bool_false(self) -> None:
+        pa = attr_auto(int(CKA_TOKEN), False)
+        assert pa.storage.value == 0
+
+    def test_bool_from_int_1(self) -> None:
+        """int 1 coerced to True for bool attrs."""
+        pa = attr_auto(int(CKA_ENCRYPT), 1)
+        assert pa.storage.value == 1
+
+    def test_bool_from_int_0(self) -> None:
+        """int 0 coerced to False for bool attrs."""
+        pa = attr_auto(int(CKA_ENCRYPT), 0)
+        assert pa.storage.value == 0
+
+
+class TestAttrAutoUlong:
+    """attr_auto with 'ulong' type attributes."""
+
+    TEST_CLASS_VALUE = 3
+
+    def test_ulong_int(self) -> None:
+        pa = attr_auto(int(CKA_CLASS), self.TEST_CLASS_VALUE)
+        # CK_ULONG is platform-sized, just verify it roundtrips
+        assert pa.storage.value == self.TEST_CLASS_VALUE
+
+    def test_ulong_from_bool(self) -> None:
+        """bool True coerced to int 1 for ulong attrs."""
+        pa = attr_auto(int(CKA_MODULUS_BITS), True)
+        assert pa.storage.value == 1
+
+
+class TestAttrAutoStr:
+    """attr_auto with 'str' type attributes."""
+
+    TEST_STR_HELLO = "hello"
+    TEST_STR_LABEL = b"raw-label"
+    TEST_STR_CAFE = "café"
+
+    def test_str_from_str(self) -> None:
+        pa = attr_auto(int(CKA_LABEL), self.TEST_STR_HELLO)
+        assert bytes(pa.storage[: len(self.TEST_STR_HELLO)]) == self.TEST_STR_HELLO.encode()
+
+    def test_str_from_bytes(self) -> None:
+        """bytes passed to str attr stay as bytes (no double-encoding)."""
+        pa = attr_auto(int(CKA_LABEL), self.TEST_STR_LABEL)
+        assert bytes(pa.storage[: len(self.TEST_STR_LABEL)]) == self.TEST_STR_LABEL
+
+    def test_str_utf8(self) -> None:
+        pa = attr_auto(int(CKA_LABEL), self.TEST_STR_CAFE)
+        expected = self.TEST_STR_CAFE.encode("utf-8")
+        assert bytes(pa.storage[: len(expected)]) == expected
+
+
+class TestAttrAutoBytes:
+    """attr_auto with 'bytes' type attributes."""
+
+    TEST_BYTES_DATA = b"\x01\x02\x03"
+    TEST_BYTES_EC_PARAMS = b"\x06\x05"
+    TEST_BYTES_INT = 42
+    TEST_BYTES_STR = "hello"
+
+    def test_bytes_from_bytes(self) -> None:
+        pa = attr_auto(int(CKA_VALUE), self.TEST_BYTES_DATA)
+        assert bytes(pa.storage[: len(self.TEST_BYTES_DATA)]) == self.TEST_BYTES_DATA
+
+    def test_bytes_from_bytearray(self) -> None:
+        pa = attr_auto(int(CKA_EC_PARAMS), bytearray(self.TEST_BYTES_EC_PARAMS))
+        assert bytes(pa.storage[: len(self.TEST_BYTES_EC_PARAMS)]) == self.TEST_BYTES_EC_PARAMS
+
+    def test_bytes_rejects_int(self) -> None:
+        with pytest.raises(TypeError, match="bytes.*expects bytes"):
+            attr_auto(int(CKA_VALUE), self.TEST_BYTES_INT)
+
+    def test_bytes_from_str_encodes_utf8(self) -> None:
+        """str is accepted for 'bytes' attrs via UTF-8 encoding."""
+        pa = attr_auto(int(CKA_VALUE), self.TEST_BYTES_STR)
+        expected = self.TEST_BYTES_STR.encode()
+        assert bytes(pa.storage[: len(expected)]) == expected
+
+
+class TestAttrAutoDate:
+    """attr_auto with 'date' type attributes."""
+
+    TEST_DATE_STR = "20260325"
+    TEST_DATE_BYTES = TEST_DATE_STR.encode()
+    TEST_DATE_INT = 20260325
+
+    def test_date_from_datetime(self) -> None:
+        d = datetime.date(2026, 3, 25)
+        pa = attr_auto(int(CKA_START_DATE), d)
+        assert bytes(pa.storage[: len(self.TEST_DATE_BYTES)]) == self.TEST_DATE_BYTES
+
+    def test_date_from_str(self) -> None:
+        pa = attr_auto(int(CKA_START_DATE), self.TEST_DATE_STR)
+        assert bytes(pa.storage[: len(self.TEST_DATE_BYTES)]) == self.TEST_DATE_BYTES
+
+    def test_date_from_bytes(self) -> None:
+        pa = attr_auto(int(CKA_START_DATE), self.TEST_DATE_BYTES)
+        assert bytes(pa.storage[: len(self.TEST_DATE_BYTES)]) == self.TEST_DATE_BYTES
+
+    def test_date_rejects_bad_str(self) -> None:
+        with pytest.raises(ValueError, match="YYYYMMDD"):
+            attr_auto(int(CKA_START_DATE), "not-a-date")
+
+    def test_date_rejects_int(self) -> None:
+        with pytest.raises(TypeError, match="date"):
+            attr_auto(int(CKA_START_DATE), self.TEST_DATE_INT)
+
+
+class TestAttrAutoUlongArray:
+    """attr_auto with 'ulong_array' type attributes."""
+
+    CKM_SHA256_HMAC = 0x00000250
+    CKM_AES_CBC = 0x00001082
+    TEST_ULONG_INT = 42
+
+    def test_ulong_array_list(self) -> None:
+        mechs = [self.CKM_SHA256_HMAC, self.CKM_AES_CBC]
+        pa = attr_auto(int(CKA_ALLOWED_MECHANISMS), mechs)
+        ulong_size = ctypes.sizeof(ctypes.c_ulong)
+        assert len(bytes(pa.storage)) == len(mechs) * ulong_size
+        v0 = int.from_bytes(bytes(pa.storage[:ulong_size]), byteorder=sys.byteorder)
+        v1 = int.from_bytes(bytes(pa.storage[ulong_size : 2 * ulong_size]), byteorder=sys.byteorder)
+        assert v0 == self.CKM_SHA256_HMAC
+        assert v1 == self.CKM_AES_CBC
+
+    def test_ulong_array_empty(self) -> None:
+        pa = attr_auto(int(CKA_ALLOWED_MECHANISMS), [])
+        assert len(bytes(pa.storage)) == 0
+
+    def test_ulong_array_rejects_int(self) -> None:
+        with pytest.raises(TypeError, match="ulong_array.*list"):
+            attr_auto(int(CKA_ALLOWED_MECHANISMS), self.TEST_ULONG_INT)
+
+
+class TestAttrAutoTemplate:
+    """attr_auto with 'template' type attributes."""
+
+    TEST_TEMPLATE_BYTES = b"\x00"
+
+    def test_template_raises(self) -> None:
+        with pytest.raises(TypeError, match="template.*cannot be auto-packed"):
+            attr_auto(int(CKA_WRAP_TEMPLATE), self.TEST_TEMPLATE_BYTES)
+
+
+class TestAttrAutoUnknown:
+    """attr_auto with unknown (vendor) attributes."""
+
+    VENDOR_ATTR = 0x80000001
+    TEST_BOOL_TRUE = 1
+    TEST_INT = 42
+    TEST_BYTES = b"\xab\xcd"
+    TEST_LIST = [1, 2, 3]
+
+    def test_unknown_bool(self) -> None:
+        """Unknown attr with bool value uses Python type inference."""
+        pa = attr_auto(self.VENDOR_ATTR, True)
+        assert pa.storage.value == self.TEST_BOOL_TRUE
+
+    def test_unknown_int(self) -> None:
+        pa = attr_auto(self.VENDOR_ATTR, self.TEST_INT)
+        assert pa.storage.value == self.TEST_INT
+
+    def test_unknown_bytes(self) -> None:
+        pa = attr_auto(self.VENDOR_ATTR, self.TEST_BYTES)
+        assert bytes(pa.storage[: len(self.TEST_BYTES)]) == self.TEST_BYTES
+
+    def test_unknown_rejects_unsupported_type(self) -> None:
+        with pytest.raises(TypeError, match="cannot infer"):
+            attr_auto(self.VENDOR_ATTR, self.TEST_LIST)
 
 
 _STANDARD_RAW_MODULES = (
