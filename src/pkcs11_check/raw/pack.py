@@ -312,12 +312,16 @@ def template(*attributes: PackedAttribute) -> TemplateArg:
 def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
     """Pack an attribute using ATTR_VALUE_TYPES for spec-correct wire type.
 
-    Uses the generated attribute type table to determine whether to pack as
-    CK_BBOOL, CK_ULONG, UTF-8 string, or raw bytes. Falls back to Python
-    type inference for unknown attributes.
+    Supports all PKCS#11 attribute types:
+    - 'bool': CK_BBOOL (accepts bool or int)
+    - 'ulong': CK_ULONG (accepts int)
+    - 'str': RFC2279 UTF-8 (accepts str or bytes)
+    - 'bytes': raw byte array (accepts bytes, bytearray)
+    - 'date': CK_DATE 8-byte YYYYMMDD (accepts datetime.date or str 'YYYYMMDD')
+    - 'ulong_array': CK_ULONG[] (accepts list[int] or tuple[int, ...])
+    - 'template': CK_ATTRIBUTE[] — not supported for auto-packing, use pack.template() directly
 
-    For deliberate mispacking (fault tests), use attr_bool/attr_ulong/attr_bytes
-    directly.
+    For deliberate mispacking (fault tests), use attr_bool/attr_ulong/attr_bytes directly.
     """
     from .attr_metadata import ATTR_VALUE_TYPES
 
@@ -331,24 +335,69 @@ def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
         if isinstance(value, bytes):
             return attr_bytes(attr_type, value)
         return attr_bytes(attr_type, str(value).encode("utf-8"))
-    elif vtype is not None:
-        # bytes, date, template, ulong_array, biginteger -> raw bytes
+    elif vtype == "bytes":
         if isinstance(value, str):
             return attr_bytes(attr_type, value.encode("utf-8"))
-        if not isinstance(value, (bytes, bytearray)):
+        if isinstance(value, (bytes, bytearray, memoryview)):
             return attr_bytes(attr_type, bytes(value))
-        return attr_bytes(attr_type, value)
+        raise TypeError(
+            f"attr_auto: 'bytes' type expects bytes/bytearray, got {type(value).__name__} "
+            f"for attr {attr_type:#x}"
+        )
+    elif vtype == "date":
+        # CK_DATE is 8 bytes: YYYYMMDD in ASCII
+        import datetime
 
-    # Unknown attribute: fall back to Python type inference
-    if isinstance(value, bool):
-        return attr_bool(attr_type, value)
-    elif isinstance(value, int):
-        return attr_ulong(attr_type, value)
-    elif isinstance(value, str):
-        return attr_bytes(attr_type, value.encode("utf-8"))
-    elif isinstance(value, (bytes, bytearray)):
-        return attr_bytes(attr_type, value)
-    raise TypeError(f"Cannot pack {type(value)} for attr {attr_type:#x}")
+        if isinstance(value, datetime.date):
+            date_bytes = value.strftime("%Y%m%d").encode("ascii")
+        elif isinstance(value, str):
+            # Validate format
+            if len(value) != 8 or not value.isdigit():
+                raise ValueError(
+                    f"attr_auto: 'date' string must be 'YYYYMMDD', got {value!r}"
+                )
+            date_bytes = value.encode("ascii")
+        elif isinstance(value, bytes) and len(value) == 8:
+            date_bytes = value
+        else:
+            raise TypeError(
+                f"attr_auto: 'date' type expects datetime.date, 'YYYYMMDD' str, or 8 bytes, "
+                f"got {type(value).__name__} for attr {attr_type:#x}"
+            )
+        return attr_bytes(attr_type, date_bytes)
+    elif vtype == "ulong_array":
+        # Pack list of ints as CK_ULONG array
+        if not isinstance(value, (list, tuple)):
+            raise TypeError(
+                f"attr_auto: 'ulong_array' type expects list[int] or tuple[int, ...], "
+                f"got {type(value).__name__} for attr {attr_type:#x}"
+            )
+        arr = (CK_ULONG * len(value))(*value)
+        return attr_bytes(attr_type, bytes(arr))
+    elif vtype == "template":
+        raise TypeError(
+            f"attr_auto: 'template' attributes (attr {attr_type:#x}) cannot be auto-packed. "
+            f"Use pack.template() and pack.attr_template() directly."
+        )
+    elif vtype is None:
+        # Unknown attribute not in ATTR_VALUE_TYPES — fall back to Python type inference
+        # but only for vendor/unknown attrs
+        if isinstance(value, bool):
+            return attr_bool(attr_type, value)
+        elif isinstance(value, int):
+            return attr_ulong(attr_type, value)
+        elif isinstance(value, str):
+            return attr_bytes(attr_type, value.encode("utf-8"))
+        elif isinstance(value, (bytes, bytearray)):
+            return attr_bytes(attr_type, value)
+        raise TypeError(
+            f"attr_auto: unknown attr {attr_type:#x} not in ATTR_VALUE_TYPES, "
+            f"and cannot infer type from {type(value).__name__}"
+        )
+    else:
+        raise TypeError(
+            f"attr_auto: unsupported value type {vtype!r} for attr {attr_type:#x}"
+        )
 
 
 def template_from_dict(attrs: dict[int, Any]) -> TemplateArg:

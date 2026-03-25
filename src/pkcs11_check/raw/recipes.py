@@ -12,8 +12,8 @@ from ctypes import byref
 from typing import Any
 
 from .api import RawPKCS11
-from .bootstrap import get_slot_ids, login_user, open_session
 from .attr_metadata import ATTR_VALUE_TYPES
+from .bootstrap import get_slot_ids, login_user, open_session
 from .pack import PackedMechanism, attr_bytes, attr_ulong, mech_simple, template
 from .rv import expect_rv
 from .types_std import (
@@ -358,12 +358,13 @@ def read_attributes(
     session: int,
     handle: int,
     attr_types: list[int] | tuple[int, ...],
-) -> dict[int, bytes | int | bool | str]:
+) -> dict[int, bytes | int | bool | str | list[int]]:
     """Read attribute values from an object.
 
     Returns a dict mapping attribute type to its value. Uses the generated
     ATTR_VALUE_TYPES table for spec-correct decoding: bool attrs as bool,
-    ulong attrs as int, str attrs as str, others as bytes.
+    ulong attrs as int, str attrs as str, date attrs as 'YYYYMMDD' str,
+    ulong_array attrs as list[int], template and unknown attrs as bytes.
     """
     count = len(attr_types)
     tmpl = (CK_ATTRIBUTE * count)()
@@ -389,7 +390,7 @@ def read_attributes(
     rv = raw.C_GetAttributeValue(session, handle, tmpl, count)
     expect_rv(int(rv), CKR_OK)
 
-    result: dict[int, bytes | int | bool | str] = {}
+    result: dict[int, bytes | int | bool | str | list[int]] = {}
     for i, at in enumerate(attr_types):
         size = int(tmpl[i].ulValueLen)
         raw_bytes = bytes(buffers[i][:size])
@@ -400,8 +401,26 @@ def read_attributes(
             result[at] = int.from_bytes(raw_bytes, byteorder=sys.byteorder)
         elif vtype == "str":
             result[at] = raw_bytes.decode("utf-8")
+        elif vtype == "date":
+            # Return as str 'YYYYMMDD' — callers can parse if needed
+            result[at] = raw_bytes.decode("ascii") if raw_bytes else ""
+        elif vtype == "ulong_array":
+            # Decode CK_ULONG array
+            ulong_size = ctypes.sizeof(CK_ULONG)
+            count_elems = size // ulong_size
+            result[at] = [
+                int.from_bytes(
+                    raw_bytes[j * ulong_size : (j + 1) * ulong_size],
+                    byteorder=sys.byteorder,
+                )
+                for j in range(count_elems)
+            ]
+        elif vtype == "template":
+            # Template attributes are complex — return raw bytes
+            # Proper decoding requires recursive CK_ATTRIBUTE parsing
+            result[at] = raw_bytes
         else:
-            # bytes, date, template, ulong_array, biginteger, unknown -> raw bytes
+            # 'bytes' or any unrecognized type
             result[at] = raw_bytes
     return result
 
