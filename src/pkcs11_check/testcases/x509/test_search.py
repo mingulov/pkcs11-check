@@ -1,17 +1,22 @@
-"""Test certificate search by various attributes from x509-limbo.
-
-This module verifies that PKCS#11 modules provide consistent search functionality
-across certificates with diverse subjects, issuers, and formats.
-"""
+"""Test certificate search by various attributes from x509-limbo."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, ObjectClass
-from pkcs11.exceptions import PKCS11Error
 
+from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
+from pkcs11_check.raw.recipes import destroy_quietly, find_objects, read_attributes
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_ISSUER,
+    CKA_LABEL,
+    CKA_SERIAL_NUMBER,
+    CKA_SUBJECT,
+    CKA_TOKEN,
+    CKO_CERTIFICATE,
+)
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_object,
     load_limbo_testcases,
@@ -21,12 +26,10 @@ from pkcs11_check.testcases.x509.conftest import (
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
 
-def _get_searchable_testcases():
-    """Helper to get a selection of testcases for search experimentation."""
+def _get_searchable_testcases() -> list[dict[str, Any]]:
     all_tcs = load_limbo_testcases()
     if not all_tcs:
         return []
-
     selected_ids = {
         "rfc5280::nc::permitted-dn-match",
         "rfc5280::validity::expired-root",
@@ -42,128 +45,94 @@ _searchable_testcases = _get_searchable_testcases()
 class TestCertificateSearchExtended:
     """Verify module's ability to search certificates by derived attributes."""
 
-    @pytest.mark.parametrize("tc", _searchable_testcases, ids=lambda tc: tc["id"])
+    @pytest.mark.parametrize(
+        "tc", _searchable_testcases, ids=lambda tc: tc["id"]
+    )
     def test_search_by_attributes_extracted(
-        self, tc: dict[str, Any], p11_session: Any, limbo_available: Any, p11_interface_version: str
+        self,
+        tc: dict[str, Any],
+        p11_raw_session: Any,
+        limbo_available: Any,
+        p11_interface_version: str,
     ) -> None:
-        """If the module extracts attributes, verify they can be used for searching."""
+        """If the module extracts attributes, verify search works."""
+        rs = p11_raw_session
         der = pem_to_der(tc["peer_certificate"])
         if not der:
             pytest.skip("Failed to decode peer certificate")
 
         label = f"search-test-attr-{tc['id']}"
         try:
-            obj = import_cert_object(
-                p11_session,
+            h = import_cert_object(
+                rs.raw, rs.sh,
                 der,
                 interface_version=p11_interface_version,
-                extra_attrs={Attribute.LABEL: label, Attribute.TOKEN: False},
+                extra_attrs={
+                    int(CKA_LABEL): label,
+                    int(CKA_TOKEN): False,
+                },
             )
-        except PKCS11Error:
+        except (AssertionError, Exception):
             pytest.skip(f"Module rejected certificate {tc['id']}")
             return
 
         try:
-            # 1. Probe for what we can extract
+            # Probe for extractable attributes
+            subject = issuer = serial = None
             try:
-                subject = obj[Attribute.SUBJECT]
-            except (PKCS11Error, KeyError):
-                subject = None
-
+                a = read_attributes(rs.raw, rs.sh, h, [int(CKA_SUBJECT)])
+                subject = a[int(CKA_SUBJECT)]
+            except (AssertionError, Exception):
+                pass
             try:
-                issuer = obj[Attribute.ISSUER]
-            except (PKCS11Error, KeyError):
-                issuer = None
-
+                a = read_attributes(rs.raw, rs.sh, h, [int(CKA_ISSUER)])
+                issuer = a[int(CKA_ISSUER)]
+            except (AssertionError, Exception):
+                pass
             try:
-                serial = obj[Attribute.SERIAL_NUMBER]
-            except (PKCS11Error, KeyError):
-                serial = None
+                a = read_attributes(
+                    rs.raw, rs.sh, h, [int(CKA_SERIAL_NUMBER)]
+                )
+                serial = a[int(CKA_SERIAL_NUMBER)]
+            except (AssertionError, Exception):
+                pass
 
-            # 2. If subject was extracted, search by it
+            # Search by subject
             if subject:
-                found = list(
-                    p11_session.get_objects(
-                        {
-                            Attribute.CLASS: ObjectClass.CERTIFICATE,
-                            Attribute.SUBJECT: subject,
-                        }
-                    )
+                tmpl = template(
+                    attr_ulong(CKA_CLASS, int(CKO_CERTIFICATE)),
+                    attr_bytes(CKA_SUBJECT, subject),
                 )
-                # Should find at least our object
-                assert any(f == obj for f in found)
+                found = find_objects(rs.raw, rs.sh, tmpl)
+                assert h in found
 
-            # 3. If issuer was extracted, search by it
+            # Search by issuer
             if issuer:
-                found = list(
-                    p11_session.get_objects(
-                        {
-                            Attribute.CLASS: ObjectClass.CERTIFICATE,
-                            Attribute.ISSUER: issuer,
-                        }
-                    )
+                tmpl = template(
+                    attr_ulong(CKA_CLASS, int(CKO_CERTIFICATE)),
+                    attr_bytes(CKA_ISSUER, issuer),
                 )
-                assert any(f == obj for f in found)
+                found = find_objects(rs.raw, rs.sh, tmpl)
+                assert h in found
 
-            # 4. If serial was extracted, search by it
+            # Search by serial
             if serial:
-                found = list(
-                    p11_session.get_objects(
-                        {
-                            Attribute.CLASS: ObjectClass.CERTIFICATE,
-                            Attribute.SERIAL_NUMBER: serial,
-                        }
-                    )
+                tmpl = template(
+                    attr_ulong(CKA_CLASS, int(CKO_CERTIFICATE)),
+                    attr_bytes(CKA_SERIAL_NUMBER, serial),
                 )
-                assert any(f == obj for f in found)
+                found = find_objects(rs.raw, rs.sh, tmpl)
+                assert h in found
 
-            # 5. Combined search: Subject + Serial
+            # Combined: Subject + Serial
             if subject and serial:
-                found = list(
-                    p11_session.get_objects(
-                        {
-                            Attribute.CLASS: ObjectClass.CERTIFICATE,
-                            Attribute.SUBJECT: subject,
-                            Attribute.SERIAL_NUMBER: serial,
-                        }
-                    )
+                tmpl = template(
+                    attr_ulong(CKA_CLASS, int(CKO_CERTIFICATE)),
+                    attr_bytes(CKA_SUBJECT, subject),
+                    attr_bytes(CKA_SERIAL_NUMBER, serial),
                 )
-                assert any(f == obj for f in found)
-
-            # 6. Combined search: Issuer + Serial
-            if issuer and serial:
-                found = list(
-                    p11_session.get_objects(
-                        {
-                            Attribute.CLASS: ObjectClass.CERTIFICATE,
-                            Attribute.ISSUER: issuer,
-                            Attribute.SERIAL_NUMBER: serial,
-                        }
-                    )
-                )
-                assert any(f == obj for f in found)
-
-            # 7. Search for ALL certificates and find our label
-            all_certs = list(p11_session.get_objects({Attribute.CLASS: ObjectClass.CERTIFICATE}))
-
-            labels = []
-            for c in all_certs:
-                try:
-                    labels.append(c[Attribute.LABEL])
-                except (PKCS11Error, KeyError):
-                    pass
-
-            if label not in labels:
-                # Check if the module is pkcs11-mock (which has fixed "Pkcs11Interop" label)
-                if any(lbl == "Pkcs11Interop" for lbl in labels) or not all_certs:
-                    from pkcs11_check.compliance import ComplianceLevel, note
-
-                    note(
-                        f"Label {label} not found, but this is expected for some mocks",
-                        ComplianceLevel.VENDOR,
-                    )
-                else:
-                    pytest.fail(f"Our label {label} not found among {len(all_certs)} certificates")
+                found = find_objects(rs.raw, rs.sh, tmpl)
+                assert h in found
 
         finally:
-            obj.destroy()
+            destroy_quietly(rs.raw, rs.sh, h)

@@ -9,10 +9,27 @@ from typing import Any
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from pkcs11 import Attribute, ObjectClass
-from pkcs11.exceptions import PKCS11Error
-from pkcs11.util.x509 import decode_x509_certificate
 
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CERTIFICATE_TYPE,
+    CKA_CLASS,
+    CKA_END_DATE,
+    CKA_ISSUER,
+    CKA_LABEL,
+    CKA_PUBLIC_KEY_INFO,
+    CKA_SERIAL_NUMBER,
+    CKA_START_DATE,
+    CKA_SUBJECT,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKC_X_509,
+    CKO_CERTIFICATE,
+)
 from pkcs11_check.testcases.data import X509_LIMBO_DIR
 
 _LIMBO_FILE = X509_LIMBO_DIR / "limbo.json"
@@ -38,8 +55,25 @@ def pem_to_der(pem: str | dict[str, Any] | None) -> bytes | None:
         return None
 
 
+def _parse_cert_attrs(der_data: bytes) -> dict[int, Any]:
+    """Extract PKCS#11 cert attributes from DER bytes using cryptography lib."""
+    cert = x509.load_der_x509_certificate(der_data)
+    attrs: dict[int, Any] = {}
+    attrs[int(CKA_SUBJECT)] = cert.subject.public_bytes(serialization.Encoding.DER)
+    attrs[int(CKA_ISSUER)] = cert.issuer.public_bytes(serialization.Encoding.DER)
+    # Serial as DER INTEGER
+    sn = cert.serial_number
+    if sn == 0:
+        attrs[int(CKA_SERIAL_NUMBER)] = b"\x02\x01\x00"
+    else:
+        b = sn.to_bytes((sn.bit_length() + 8) // 8, "big", signed=True)
+        attrs[int(CKA_SERIAL_NUMBER)] = b"\x02" + bytes([len(b)]) + b
+    return attrs
+
+
 def verify_attribute_parity(
-    p11_obj: Any, der_data: bytes, interface_version: str = "2.40"
+    raw: Any, sh: int, handle: int,
+    der_data: bytes, interface_version: str = "2.40",
 ) -> dict[str, Any]:
     """Compare PKCS#11 attributes against ground truth from cryptography.
 
@@ -47,7 +81,7 @@ def verify_attribute_parity(
     'required' is based on the OASIS spec for CKC_X_509.
     """
     cert = x509.load_der_x509_certificate(der_data)
-    results = {}
+    results: dict[str, Any] = {}
 
     def _to_hex(val: Any) -> str:
         if isinstance(val, (bytes, bytearray)):
@@ -56,7 +90,8 @@ def verify_attribute_parity(
 
     # CKA_SUBJECT (Mandatory)
     try:
-        p11_subject = p11_obj[Attribute.SUBJECT]
+        attrs = read_attributes(raw, sh, handle, [int(CKA_SUBJECT)])
+        p11_subject = attrs[int(CKA_SUBJECT)]
         expected_subject = cert.subject.public_bytes(serialization.Encoding.DER)
         results["SUBJECT"] = (
             p11_subject == expected_subject,
@@ -64,7 +99,7 @@ def verify_attribute_parity(
             _to_hex(expected_subject),
             True,
         )
-    except (PKCS11Error, KeyError):
+    except (AssertionError, Exception):
         results["SUBJECT"] = (
             None,
             None,
@@ -74,7 +109,8 @@ def verify_attribute_parity(
 
     # CKA_ISSUER (Mandatory in v3.0+)
     try:
-        p11_issuer = p11_obj[Attribute.ISSUER]
+        attrs = read_attributes(raw, sh, handle, [int(CKA_ISSUER)])
+        p11_issuer = attrs[int(CKA_ISSUER)]
         expected_issuer = cert.issuer.public_bytes(serialization.Encoding.DER)
         results["ISSUER"] = (
             p11_issuer == expected_issuer,
@@ -82,7 +118,7 @@ def verify_attribute_parity(
             _to_hex(expected_issuer),
             True,
         )
-    except (PKCS11Error, KeyError):
+    except (AssertionError, Exception):
         results["ISSUER"] = (
             None,
             None,
@@ -92,9 +128,10 @@ def verify_attribute_parity(
 
     # CKA_SERIAL_NUMBER (Mandatory in v3.0+)
     try:
-        p11_serial = p11_obj[Attribute.SERIAL_NUMBER]
+        attrs = read_attributes(raw, sh, handle, [int(CKA_SERIAL_NUMBER)])
+        p11_serial = attrs[int(CKA_SERIAL_NUMBER)]
 
-        def to_der_int(n):
+        def to_der_int(n: int) -> bytes:
             if n == 0:
                 return b"\x02\x01\x00"
             b = n.to_bytes((n.bit_length() + 8) // 8, "big", signed=True)
@@ -107,48 +144,50 @@ def verify_attribute_parity(
             _to_hex(expected_serial_der),
             True,
         )
-    except (PKCS11Error, KeyError):
-        results["SERIAL_NUMBER"] = (None, None, _to_hex(to_der_int(cert.serial_number)), True)
+    except (AssertionError, Exception):
+        results["SERIAL_NUMBER"] = (None, None, None, True)
 
-    # CKA_START_DATE (Optional, default empty per OASIS spec)
+    # CKA_START_DATE (Optional)
     try:
-        p11_start = p11_obj[Attribute.START_DATE]
+        attrs = read_attributes(raw, sh, handle, [int(CKA_START_DATE)])
+        p11_start = attrs[int(CKA_START_DATE)]
         expected_start = cert.not_valid_before_utc.date()
-        if p11_start is None:
-            # Module returned empty CK_DATE - valid per spec
+        if not p11_start:
             results["START_DATE"] = (None, "empty", str(expected_start), False)
         else:
             results["START_DATE"] = (
-                p11_start == expected_start,
+                str(p11_start) == expected_start.strftime("%Y%m%d"),
                 str(p11_start),
                 str(expected_start),
                 False,
             )
-    except (PKCS11Error, KeyError, AttributeError):
+    except (AssertionError, Exception):
         results["START_DATE"] = (None, None, None, False)
 
-    # CKA_END_DATE (Optional, default empty per OASIS spec)
+    # CKA_END_DATE (Optional)
     try:
-        p11_end = p11_obj[Attribute.END_DATE]
+        attrs = read_attributes(raw, sh, handle, [int(CKA_END_DATE)])
+        p11_end = attrs[int(CKA_END_DATE)]
         expected_end = cert.not_valid_after_utc.date()
-        if p11_end is None:
+        if not p11_end:
             results["END_DATE"] = (None, "empty", str(expected_end), False)
         else:
             results["END_DATE"] = (
-                p11_end == expected_end,
+                str(p11_end) == expected_end.strftime("%Y%m%d"),
                 str(p11_end),
                 str(expected_end),
                 False,
             )
-    except (PKCS11Error, KeyError, AttributeError):
+    except (AssertionError, Exception):
         results["END_DATE"] = (None, None, None, False)
 
-    # v3.0+ attributes (optional - many modules don't populate these even on v3.0+)
-    # CKA_PUBLIC_KEY_INFO
+    # CKA_PUBLIC_KEY_INFO (v3.0+)
     try:
-        p11_pk_info = p11_obj[Attribute.PUBLIC_KEY_INFO]
+        attrs = read_attributes(raw, sh, handle, [int(CKA_PUBLIC_KEY_INFO)])
+        p11_pk_info = attrs[int(CKA_PUBLIC_KEY_INFO)]
         expected_pk_info = cert.public_key().public_bytes(
-            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
         )
         results["PUBLIC_KEY_INFO"] = (
             p11_pk_info == expected_pk_info if p11_pk_info else None,
@@ -156,135 +195,121 @@ def verify_attribute_parity(
             _to_hex(expected_pk_info),
             False,
         )
-    except (PKCS11Error, KeyError, AttributeError):
+    except (AssertionError, Exception):
         results["PUBLIC_KEY_INFO"] = (None, None, None, False)
 
     return results
 
 
-def x509_to_p11_template(der_data: bytes, interface_version: str = "2.40") -> dict[Attribute, Any]:
-    """Convert DER certificate to PKCS#11 attribute template.
-
-    Filters out attributes not supported by the specified interface version.
-    """
-    template = decode_x509_certificate(der_data)
-
-    # Filter out v3.0+ attributes if interface is older
-    v30_attrs = {
-        Attribute.PUBLIC_KEY_INFO,
-        Attribute.HASH_OF_SUBJECT_PUBLIC_KEY,
-        Attribute.HASH_OF_ISSUER_PUBLIC_KEY,
-    }
-
-    if interface_version < "3.0":
-        for attr in v30_attrs:
-            if attr in template:
-                del template[attr]
-
-    return template
-
-
-def import_cert_raw(
-    p11_session: Any,
+def _build_cert_template(
     der_data: bytes,
-    extra_attrs: dict[Attribute, Any] | None = None,
-) -> tuple[Any, bool]:
-    """Import a DER certificate using a minimal template (CKA_VALUE only).
+    interface_version: str = "2.40",
+    extra_attrs: dict[int, Any] | None = None,
+) -> dict[int, Any]:
+    """Build a CKO_CERTIFICATE template from DER data."""
+    cert = x509.load_der_x509_certificate(der_data)
 
-    Sends the raw DER bytes directly to C_CreateObject without pre-parsing or
-    pre-extracting any attributes. This forces the module to deal with the cert
-    as-is - exposing any parsing bugs, over-strict validation, or silent mangling.
-
-    Returns (obj, needed_explicit_attrs):
-      - needed_explicit_attrs=False: module accepted raw CKA_VALUE without help
-      - needed_explicit_attrs=True: module returned TemplateIncomplete so
-        SUBJECT/ISSUER/SERIAL_NUMBER were added (required by some modules)
-
-    Raises any PKCS11Error other than TemplateIncomplete without retrying --
-    callers must handle module rejections explicitly.
-    """
-    from asn1crypto.x509 import Certificate as Asn1Cert
-    from pkcs11.constants import CertificateType
-    from pkcs11.exceptions import TemplateIncomplete
-
-    minimal: dict[Attribute, Any] = {
-        Attribute.CLASS: ObjectClass.CERTIFICATE,
-        Attribute.CERTIFICATE_TYPE: CertificateType.X_509,
-        Attribute.VALUE: der_data,
+    tmpl: dict[int, Any] = {
+        int(CKA_CLASS): int(CKO_CERTIFICATE),
+        int(CKA_CERTIFICATE_TYPE): int(CKC_X_509),
+        int(CKA_VALUE): der_data,
+        int(CKA_SUBJECT): cert.subject.public_bytes(serialization.Encoding.DER),
+        int(CKA_ISSUER): cert.issuer.public_bytes(serialization.Encoding.DER),
     }
+
+    # Serial as DER INTEGER
+    sn = cert.serial_number
+    if sn == 0:
+        tmpl[int(CKA_SERIAL_NUMBER)] = b"\x02\x01\x00"
+    else:
+        b = sn.to_bytes((sn.bit_length() + 8) // 8, "big", signed=True)
+        tmpl[int(CKA_SERIAL_NUMBER)] = b"\x02" + bytes([len(b)]) + b
+
+    # v3.0+ attributes
+    if interface_version >= "3.0":
+        try:
+            tmpl[int(CKA_PUBLIC_KEY_INFO)] = cert.public_key().public_bytes(
+                serialization.Encoding.DER,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        except Exception:
+            pass
+
     if extra_attrs:
-        minimal.update(extra_attrs)
+        tmpl.update(extra_attrs)
 
-    try:
-        return p11_session.create_object(minimal), False
-    except TemplateIncomplete:
-        pass  # Module requires explicit SUBJECT/ISSUER/SERIAL_NUMBER - add them
-
-    # asn1crypto parses leniently: if the cert is syntactically malformed enough
-    # to fail here, that is itself a finding - let the exception propagate.
-    cert_asn1 = Asn1Cert.load(der_data)
-    full: dict[Attribute, Any] = dict(minimal)
-    full[Attribute.SUBJECT] = cert_asn1.subject.dump()
-    full[Attribute.ISSUER] = cert_asn1.issuer.dump()
-    full[Attribute.SERIAL_NUMBER] = cert_asn1["tbs_certificate"]["serial_number"].dump()
-    return p11_session.create_object(full), True
+    return tmpl
 
 
 def import_cert_object(
-    p11_session: Any,
+    raw: Any, sh: int,
     der_data: bytes,
     interface_version: str = "2.40",
-    extra_attrs: dict[Attribute, Any] | None = None,
-) -> Any:
+    extra_attrs: dict[int, Any] | None = None,
+) -> int:
     """Import a DER certificate into PKCS#11, handling v3.0+ attribute bugs.
 
-    Tries with full v3.0+ attributes first. If the module returns
-    AttributeValueInvalid (known Kryoptic bug), retries with v3.0+ attrs
-    stripped and records a compliance note.
-    """
-    from pkcs11.exceptions import AttributeValueInvalid
+    Returns object handle.
 
+    Tries with full v3.0+ attributes first. If the module returns
+    CKR_ATTRIBUTE_VALUE_INVALID, retries with v3.0+ attrs stripped.
+    """
     from pkcs11_check.compliance import ComplianceLevel, note
 
-    template = x509_to_p11_template(der_data, interface_version=interface_version)
-    if extra_attrs:
-        template.update(extra_attrs)
+    tmpl = _build_cert_template(der_data, interface_version, extra_attrs)
 
     try:
-        return p11_session.create_object(template)
-    except AttributeValueInvalid:
+        return create_object(raw, sh, tmpl)
+    except AssertionError as e:
+        if "CKR_ATTRIBUTE_VALUE_INVALID" not in str(e):
+            raise
         if interface_version < "3.0":
             raise
         # Retry with v3.0+ attributes stripped
-        template_v240 = x509_to_p11_template(der_data, interface_version="2.40")
-        if extra_attrs:
-            template_v240.update(extra_attrs)
-        obj = p11_session.create_object(template_v240)
+        tmpl_v240 = _build_cert_template(der_data, "2.40", extra_attrs)
+        h = create_object(raw, sh, tmpl_v240)
         note(
             "Module claims v3.0+ but rejects v3.0+ cert attributes "
             "(CKA_PUBLIC_KEY_INFO) - falling back to v2.40 template",
             ComplianceLevel.VENDOR,
         )
-        return obj
+        return h
 
 
-def get_crl_class(p11_session: Any) -> int | None:
-    """Probe for the correct CKO_X_509_CRL value on this module."""
-    # Common vendor values: 0x00000004 (NSS conflict!), 0x10000001, etc.
-    # If the module doesn't support a specific class, applications use CKO_DATA.
+def import_cert_raw(
+    raw: Any, sh: int,
+    der_data: bytes,
+    extra_attrs: dict[int, Any] | None = None,
+) -> tuple[int, bool]:
+    """Import a DER certificate using a minimal template (CKA_VALUE only).
 
-    # We try to find any existing CRL first
-    possible_classes = [0x00000004, 0x10000001, 0x10000002]  # Add more if known
-    for cls in possible_classes:
-        try:
-            objs = list(p11_session.get_objects({Attribute.CLASS: cls}))
-            if objs:
-                return cls
-        except Exception:
-            continue
+    Returns (handle, needed_explicit_attrs).
+    """
+    from asn1crypto.x509 import Certificate as Asn1Cert
 
-    # If nothing found, we return a default but warn about the 0x4 conflict
-    return getattr(ObjectClass, "X_509_CRL", 0x00000004)
+    minimal: dict[int, Any] = {
+        int(CKA_CLASS): int(CKO_CERTIFICATE),
+        int(CKA_CERTIFICATE_TYPE): int(CKC_X_509),
+        int(CKA_VALUE): der_data,
+    }
+    if extra_attrs:
+        minimal.update(extra_attrs)
+
+    try:
+        return create_object(raw, sh, minimal), False
+    except AssertionError as e:
+        if "CKR_TEMPLATE_INCOMPLETE" not in str(e):
+            raise
+
+    # Module requires explicit SUBJECT/ISSUER/SERIAL_NUMBER
+    cert_asn1 = Asn1Cert.load(der_data)
+    full: dict[int, Any] = dict(minimal)
+    full[int(CKA_SUBJECT)] = cert_asn1.subject.dump()
+    full[int(CKA_ISSUER)] = cert_asn1.issuer.dump()
+    full[int(CKA_SERIAL_NUMBER)] = (
+        cert_asn1["tbs_certificate"]["serial_number"].dump()
+    )
+    return create_object(raw, sh, full), True
 
 
 def load_limbo_testcases() -> list[dict[str, Any]]:
@@ -298,18 +323,18 @@ def load_limbo_testcases() -> list[dict[str, Any]]:
     return data.get("testcases", [])
 
 
-def get_unique_limbo_certs(cases: list[dict[str, Any]]) -> list[tuple[str, bytes]]:
+def get_unique_limbo_certs(
+    cases: list[dict[str, Any]],
+) -> list[tuple[str, bytes]]:
     """Extract every unique DER certificate from limbo.json."""
     certs: list[tuple[str, bytes]] = []
     seen: set[bytes] = set()
 
     for tc in cases:
         chain = tc.get("peer_certificate_chain", []) or []
-        # Support peer_certificate as either dict or str (old/new Limbo)
         peer = tc.get("peer_certificate")
         all_pems = [peer] + list(chain)
 
-        # Add trusted and intermediates
         all_pems += list(tc.get("trusted_certs", []) or [])
         all_pems += list(tc.get("untrusted_intermediates", []) or [])
 
@@ -323,7 +348,9 @@ def get_unique_limbo_certs(cases: list[dict[str, Any]]) -> list[tuple[str, bytes
     return certs
 
 
-def get_unique_limbo_crls(cases: list[dict[str, Any]]) -> list[tuple[str, bytes]]:
+def get_unique_limbo_crls(
+    cases: list[dict[str, Any]],
+) -> list[tuple[str, bytes]]:
     """Extract every unique DER CRL from limbo.json."""
     crls: list[tuple[str, bytes]] = []
     seen: set[bytes] = set()
@@ -342,20 +369,18 @@ def get_unique_limbo_crls(cases: list[dict[str, Any]]) -> list[tuple[str, bytes]
 @pytest.fixture(scope="session")
 def limbo_available() -> None:
     if not _LIMBO_FILE.exists():
-        pytest.skip("x509-limbo data not found. Run scripts/fetch-optional-data.sh x509-limbo")
+        pytest.skip(
+            "x509-limbo data not found. "
+            "Run scripts/fetch-optional-data.sh x509-limbo"
+        )
 
 
 @pytest.fixture
-def cert_support(p11_session: Any, p11_interface_version: str) -> bool:
-    """Probe if the PKCS#11 module supports CKO_CERTIFICATE objects.
-
-    Returns True if supported, False otherwise.
-    Used to skip certificate tests on non-supporting modules.
-    """
-    # A very simple self-signed cert placeholder for probing
-    # If the module rejects this with CKR_FUNCTION_NOT_SUPPORTED or template inconsistent
-    # then we assume no certificate support.
-    # Generate a minimal valid self-signed cert for probing
+def cert_support(
+    p11_raw_session: Any, p11_interface_version: str,
+) -> bool:
+    """Probe if the PKCS#11 module supports CKO_CERTIFICATE objects."""
+    rs = p11_raw_session
     try:
         import datetime as _dt
 
@@ -366,7 +391,9 @@ def cert_support(p11_session: Any, p11_interface_version: str) -> bool:
         from cryptography.x509.oid import NameOID as _NameOID
 
         key = _rsa.generate_private_key(65537, 2048)
-        subject = issuer = _x509.Name([_x509.NameAttribute(_NameOID.COMMON_NAME, "probe")])
+        subject = issuer = _x509.Name(
+            [_x509.NameAttribute(_NameOID.COMMON_NAME, "probe")]
+        )
         probe_cert = (
             _x509.CertificateBuilder()
             .subject_name(subject)
@@ -374,7 +401,9 @@ def cert_support(p11_session: Any, p11_interface_version: str) -> bool:
             .public_key(key.public_key())
             .serial_number(_x509.random_serial_number())
             .not_valid_before(_dt.datetime.now(_dt.UTC))
-            .not_valid_after(_dt.datetime.now(_dt.UTC) + _dt.timedelta(days=1))
+            .not_valid_after(
+                _dt.datetime.now(_dt.UTC) + _dt.timedelta(days=1)
+            )
             .sign(key, _hashes.SHA256())
         )
         probe_der = probe_cert.public_bytes(_ser.Encoding.DER)
@@ -382,20 +411,19 @@ def cert_support(p11_session: Any, p11_interface_version: str) -> bool:
         return False
 
     try:
-        obj = import_cert_object(
-            p11_session,
+        h = import_cert_object(
+            rs.raw, rs.sh,
             probe_der,
             interface_version=p11_interface_version,
-            extra_attrs={Attribute.LABEL: "probe", Attribute.TOKEN: False},
+            extra_attrs={
+                int(CKA_LABEL): "probe",
+                int(CKA_TOKEN): False,
+            },
         )
-        obj.destroy()
+        destroy_quietly(rs.raw, rs.sh, h)
         return True
-    except (PKCS11Error, Exception):
-        try:
-            list(p11_session.get_objects({Attribute.CLASS: ObjectClass.CERTIFICATE}))
-            return True
-        except (PKCS11Error, Exception):
-            return False
+    except Exception:
+        return False
 
 
 @pytest.fixture(scope="session")
@@ -404,7 +432,7 @@ def all_limbo_cases(limbo_available: Any) -> list[dict[str, Any]]:
 
 
 @pytest.fixture
-def limbo_filter():
+def limbo_filter() -> Any:
     """Returns a function to filter limbo testcases."""
 
     def _filter(
@@ -416,11 +444,21 @@ def limbo_filter():
     ) -> list[dict[str, Any]]:
         result = cases
         if features:
-            result = [tc for tc in result if any(f in tc.get("features", []) for f in features)]
+            result = [
+                tc
+                for tc in result
+                if any(f in tc.get("features", []) for f in features)
+            ]
         if importance:
-            result = [tc for tc in result if tc.get("importance") in importance]
+            result = [
+                tc for tc in result if tc.get("importance") in importance
+            ]
         if expected_result:
-            result = [tc for tc in result if tc.get("expected_result") == expected_result]
+            result = [
+                tc
+                for tc in result
+                if tc.get("expected_result") == expected_result
+            ]
 
         if limit:
             result = result[:limit]

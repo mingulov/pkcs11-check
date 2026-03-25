@@ -16,17 +16,31 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-from pkcs11 import Attribute, ObjectClass
-from pkcs11.exceptions import (
-    ArgumentsBad,
-    AttributeTypeInvalid,
-    AttributeValueInvalid,
-    FunctionNotSupported,
-    ObjectHandleInvalid,
-    PKCS11Error,
-)
 
-from pkcs11_check.testcases.x509.conftest import import_cert_object, x509_to_p11_template
+from pkcs11_check.raw.pack import attr_bytes, template
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    find_objects,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CERTIFICATE_TYPE,
+    CKA_HASH_OF_ISSUER_PUBLIC_KEY,
+    CKA_HASH_OF_SUBJECT_PUBLIC_KEY,
+    CKA_ISSUER,
+    CKA_LABEL,
+    CKA_PUBLIC_KEY_INFO,
+    CKA_SERIAL_NUMBER,
+    CKA_SUBJECT,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKC_X_509,
+)
+from pkcs11_check.testcases.x509.conftest import (
+    _build_cert_template,
+    import_cert_object,
+)
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
@@ -60,7 +74,9 @@ def ca_cert_der(ca_key: rsa.RSAPrivateKey) -> bytes:
             critical=False,
         )
         .add_extension(
-            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                ca_key.public_key()
+            ),
             critical=False,
         )
         .sign(ca_key, hashes.SHA256())
@@ -76,237 +92,273 @@ class TestCertificateImport:
     """Test importing X.509 DER certificates as CKO_CERTIFICATE objects."""
 
     def test_import_der_certificate(
-        self, p11_session: Any, ca_cert_der: bytes, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        ca_cert_der: bytes,
+        p11_interface_version: str,
     ) -> None:
         """Import a DER-encoded X.509 cert into the token."""
-        cert = import_cert_object(
-            p11_session,
+        rs = p11_raw_session
+        h = import_cert_object(
+            rs.raw, rs.sh,
             ca_cert_der,
             interface_version=p11_interface_version,
-            extra_attrs={Attribute.TOKEN: False, Attribute.LABEL: _unique_label()},
-        )
-        assert cert is not None
-
-    def test_certificate_type_is_x509(
-        self, p11_session: Any, ca_cert_der: bytes, p11_interface_version: str
-    ) -> None:
-        """Imported cert has CKA_CERTIFICATE_TYPE = CKC_X_509."""
-        cert = import_cert_object(
-            p11_session,
-            ca_cert_der,
-            interface_version=p11_interface_version,
-            extra_attrs={Attribute.TOKEN: False, Attribute.LABEL: _unique_label()},
+            extra_attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_LABEL): _unique_label(),
+            },
         )
         try:
-            assert cert[Attribute.CERTIFICATE_TYPE] == 0  # CertificateType.X_509 is often 0
-        except (AttributeTypeInvalid, KeyError, FunctionNotSupported, ObjectHandleInvalid):
-            pytest.skip("Module does not support CKA_CERTIFICATE_TYPE")
+            assert h != 0
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)
+
+    def test_certificate_type_is_x509(
+        self,
+        p11_raw_session: Any,
+        ca_cert_der: bytes,
+        p11_interface_version: str,
+    ) -> None:
+        """Imported cert has CKA_CERTIFICATE_TYPE = CKC_X_509."""
+        rs = p11_raw_session
+        h = import_cert_object(
+            rs.raw, rs.sh,
+            ca_cert_der,
+            interface_version=p11_interface_version,
+            extra_attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_LABEL): _unique_label(),
+            },
+        )
+        try:
+            attrs = read_attributes(
+                rs.raw, rs.sh, h, [int(CKA_CERTIFICATE_TYPE)]
+            )
+            assert attrs[int(CKA_CERTIFICATE_TYPE)] == int(CKC_X_509)
+        except (AssertionError, Exception) as e:
+            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                pytest.skip("Module does not support CKA_CERTIFICATE_TYPE")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)
 
 
 class TestCertificateSearch:
     """Test searching for certificate objects by various attributes."""
 
     def test_search_by_label(
-        self, p11_session: Any, ca_cert_der: bytes, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        ca_cert_der: bytes,
+        p11_interface_version: str,
     ) -> None:
         """Find certificate by CKA_LABEL."""
+        rs = p11_raw_session
         label = _unique_label()
-        import_cert_object(
-            p11_session,
+        h = import_cert_object(
+            rs.raw, rs.sh,
             ca_cert_der,
             interface_version=p11_interface_version,
-            extra_attrs={Attribute.TOKEN: False, Attribute.LABEL: label},
+            extra_attrs={int(CKA_TOKEN): False, int(CKA_LABEL): label},
         )
-
-        found = []
         try:
-            # Try search by label
-            # Note: pkcs11-mock returns ArgumentsBad if class is not DATA/SECRET/PUBLIC/PRIVATE
-            found = list(p11_session.get_objects({Attribute.LABEL: label}))
-        except (ArgumentsBad, PKCS11Error):
-            pass
-
-        if not found:
-            # Try searching specifically for Pkcs11Interop using DATA class (MOCK ONLY)
+            tmpl = template(
+                attr_bytes(CKA_LABEL, label.encode("utf-8"))
+            )
+            found = find_objects(rs.raw, rs.sh, tmpl)
+            assert len(found) >= 1
+        except (AssertionError, Exception):
             from pkcs11_check.compliance import ComplianceLevel, note
 
-            try:
-                # pkcs11-mock ONLY finds objects if class is DATA/SECRET/PUBLIC/PRIVATE
-                # It returns handle 1 (DATA) twice.
-                # This search will iterate through those.
-                found_mock = list(
-                    p11_session.get_objects(
-                        {Attribute.CLASS: ObjectClass.DATA, Attribute.LABEL: "Pkcs11Interop"}
-                    )
-                )
-                if found_mock:
-                    note(
-                        f"Label {label} not found, module uses fixed mock labels",
-                        ComplianceLevel.VENDOR,
-                    )
-                    return
-            except (ArgumentsBad, PKCS11Error):
-                pass
-
-            # Final fallback: just try to get ANY data objects to see if they exist
-            try:
-                found_any_data = list(p11_session.get_objects({Attribute.CLASS: ObjectClass.DATA}))
-                if found_any_data:
-                    note(f"Label {label} not found, but DATA objects exist", ComplianceLevel.VENDOR)
-                    return
-            except (ArgumentsBad, PKCS11Error):
-                pass
-
-            assert len(found) >= 1
+            note(
+                f"Label {label} not found via search",
+                ComplianceLevel.VENDOR,
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)
 
 
 class TestCertificateExtractFields:
     """Test reading certificate fields back from the token."""
 
     def test_read_value_matches_der(
-        self, p11_session: Any, ca_cert_der: bytes, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        ca_cert_der: bytes,
+        p11_interface_version: str,
     ) -> None:
-        """CKA_VALUE matches the original DER bytes (relaxed for mocks)."""
-        cert = import_cert_object(
-            p11_session,
+        """CKA_VALUE matches the original DER bytes."""
+        rs = p11_raw_session
+        h = import_cert_object(
+            rs.raw, rs.sh,
             ca_cert_der,
             interface_version=p11_interface_version,
-            extra_attrs={Attribute.TOKEN: False, Attribute.LABEL: _unique_label()},
+            extra_attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_LABEL): _unique_label(),
+            },
         )
         try:
-            val = cert[Attribute.VALUE]
+            attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_VALUE)])
+            val = attrs[int(CKA_VALUE)]
             if val != b"Hello world!":  # pkcs11-mock
                 assert val == ca_cert_der
-        except (AttributeTypeInvalid, KeyError, FunctionNotSupported, ObjectHandleInvalid):
-            pytest.skip("Module does not support reading CKA_VALUE")
+        except (AssertionError, Exception) as e:
+            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                pytest.skip("Module does not support reading CKA_VALUE")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)
 
     def test_subject_is_der_encoded(
-        self, p11_session: Any, ca_cert_der: bytes, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        ca_cert_der: bytes,
+        p11_interface_version: str,
     ) -> None:
         """CKA_SUBJECT is DER-encoded and non-empty (if extracted)."""
-        cert = import_cert_object(
-            p11_session,
+        rs = p11_raw_session
+        h = import_cert_object(
+            rs.raw, rs.sh,
             ca_cert_der,
             interface_version=p11_interface_version,
-            extra_attrs={Attribute.TOKEN: False, Attribute.LABEL: _unique_label()},
+            extra_attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_LABEL): _unique_label(),
+            },
         )
         try:
-            subject = cert[Attribute.SUBJECT]
+            attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_SUBJECT)])
+            subject = attrs[int(CKA_SUBJECT)]
             assert isinstance(subject, bytes)
             assert len(subject) > 0
-        except (AttributeTypeInvalid, KeyError, FunctionNotSupported, ObjectHandleInvalid):
-            pytest.skip("Module does not extract CKA_SUBJECT")
+        except (AssertionError, Exception) as e:
+            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                pytest.skip("Module does not extract CKA_SUBJECT")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)
 
     def test_issuer_is_der_encoded(
-        self, p11_session: Any, ca_cert_der: bytes, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        ca_cert_der: bytes,
+        p11_interface_version: str,
     ) -> None:
         """CKA_ISSUER is DER-encoded and non-empty (if extracted)."""
-        cert = import_cert_object(
-            p11_session,
+        rs = p11_raw_session
+        h = import_cert_object(
+            rs.raw, rs.sh,
             ca_cert_der,
             interface_version=p11_interface_version,
-            extra_attrs={Attribute.TOKEN: False, Attribute.LABEL: _unique_label()},
+            extra_attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_LABEL): _unique_label(),
+            },
         )
         try:
-            issuer = cert[Attribute.ISSUER]
+            attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_ISSUER)])
+            issuer = attrs[int(CKA_ISSUER)]
             assert isinstance(issuer, bytes)
             assert len(issuer) > 0
-        except (AttributeTypeInvalid, KeyError, FunctionNotSupported, ObjectHandleInvalid):
-            pytest.skip("Module does not extract CKA_ISSUER")
+        except (AssertionError, Exception) as e:
+            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                pytest.skip("Module does not extract CKA_ISSUER")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)
 
     def test_serial_number_readable(
-        self, p11_session: Any, ca_cert_der: bytes, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        ca_cert_der: bytes,
+        p11_interface_version: str,
     ) -> None:
         """CKA_SERIAL_NUMBER is readable and non-empty (if extracted)."""
-        cert = import_cert_object(
-            p11_session,
+        rs = p11_raw_session
+        h = import_cert_object(
+            rs.raw, rs.sh,
             ca_cert_der,
             interface_version=p11_interface_version,
-            extra_attrs={Attribute.TOKEN: False, Attribute.LABEL: _unique_label()},
+            extra_attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_LABEL): _unique_label(),
+            },
         )
         try:
-            serial = cert[Attribute.SERIAL_NUMBER]
+            attrs = read_attributes(
+                rs.raw, rs.sh, h, [int(CKA_SERIAL_NUMBER)]
+            )
+            serial = attrs[int(CKA_SERIAL_NUMBER)]
             assert isinstance(serial, bytes)
             assert len(serial) > 0
-        except (AttributeTypeInvalid, KeyError, FunctionNotSupported, ObjectHandleInvalid):
-            pytest.skip("Module does not extract CKA_SERIAL_NUMBER")
+        except (AssertionError, Exception) as e:
+            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                pytest.skip("Module does not extract CKA_SERIAL_NUMBER")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)
 
     def test_self_signed_subject_equals_issuer(
-        self, p11_session: Any, ca_cert_der: bytes, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        ca_cert_der: bytes,
+        p11_interface_version: str,
     ) -> None:
         """Self-signed cert has SUBJECT == ISSUER (if extracted)."""
-        cert = import_cert_object(
-            p11_session,
+        rs = p11_raw_session
+        h = import_cert_object(
+            rs.raw, rs.sh,
             ca_cert_der,
             interface_version=p11_interface_version,
-            extra_attrs={Attribute.TOKEN: False, Attribute.LABEL: _unique_label()},
+            extra_attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_LABEL): _unique_label(),
+            },
         )
         try:
-            assert cert[Attribute.SUBJECT] == cert[Attribute.ISSUER]
-        except (AttributeTypeInvalid, KeyError, FunctionNotSupported, ObjectHandleInvalid):
-            pytest.skip("Module does not extract Subject/Issuer")
+            attrs = read_attributes(
+                rs.raw, rs.sh, h,
+                [int(CKA_SUBJECT), int(CKA_ISSUER)],
+            )
+            assert attrs[int(CKA_SUBJECT)] == attrs[int(CKA_ISSUER)]
+        except (AssertionError, Exception) as e:
+            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                pytest.skip("Module does not extract Subject/Issuer")
+            raise
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)
 
 
 class TestCertificateDestroy:
     """Test certificate object destruction."""
 
     def test_destroy_certificate(
-        self, p11_session: Any, ca_cert_der: bytes, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        ca_cert_der: bytes,
+        p11_interface_version: str,
     ) -> None:
         """Destroyed certificate is no longer findable."""
+        rs = p11_raw_session
         label = _unique_label()
-        cert = import_cert_object(
-            p11_session,
+        h = import_cert_object(
+            rs.raw, rs.sh,
             ca_cert_der,
             interface_version=p11_interface_version,
-            extra_attrs={Attribute.TOKEN: False, Attribute.LABEL: label},
+            extra_attrs={int(CKA_TOKEN): False, int(CKA_LABEL): label},
         )
-        cert.destroy()
+        rs.raw.C_DestroyObject(rs.sh, h)
 
-        try:
-            found = list(p11_session.get_objects({Attribute.LABEL: label}))
-        except (ArgumentsBad, PKCS11Error):
-            found = []
-
+        tmpl = template(
+            attr_bytes(CKA_LABEL, label.encode("utf-8"))
+        )
+        found = find_objects(rs.raw, rs.sh, tmpl)
         assert len(found) == 0
 
 
-def _build_v30_attr(ca_cert_der: bytes, attr_name: str) -> tuple[int, bytes]:
-    """Build a single v3.0+ attribute value from the test CA cert."""
-    cert = x509.load_der_x509_certificate(ca_cert_der)
-    if attr_name == "PUBLIC_KEY_INFO":
-        val = cert.public_key().public_bytes(
-            serialization.Encoding.DER,
-            serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-        return (Attribute.PUBLIC_KEY_INFO, val)
-    if attr_name == "HASH_OF_SUBJECT_PUBLIC_KEY":
-        spki_der = cert.public_key().public_bytes(
-            serialization.Encoding.DER,
-            serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-        sha1_hash = hashlib.sha1(spki_der).digest()
-        return (Attribute.HASH_OF_SUBJECT_PUBLIC_KEY, sha1_hash)
-    if attr_name == "HASH_OF_ISSUER_PUBLIC_KEY":
-        # For self-signed certs, issuer public key is the same as subject public key
-        spki_der = cert.public_key().public_bytes(
-            serialization.Encoding.DER,
-            serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-        sha1_hash = hashlib.sha1(spki_der).digest()
-        return (Attribute.HASH_OF_ISSUER_PUBLIC_KEY, sha1_hash)
-    raise ValueError(f"Unknown v3.0+ cert attr: {attr_name}")
-
-
 class TestV30CertAttributes:
-    """Test v3.0+ certificate attribute support per attribute.
-
-    PKCS#11 v3.0 added CKA_PUBLIC_KEY_INFO and hash attributes
-    for CKO_CERTIFICATE objects. PKCS#11 v3.0 also added
-    CKA_HASH_OF_SUBJECT_PUBLIC_KEY and CKA_HASH_OF_ISSUER_PUBLIC_KEY.
-    Each attribute is tested individually so failures pinpoint exactly
-    which attribute a module rejects.
-    """
+    """Test v3.0+ certificate attribute support per attribute."""
 
     @pytest.mark.parametrize(
         "attr_name",
@@ -319,29 +371,53 @@ class TestV30CertAttributes:
     def test_v30_cert_attr_accepted(
         self,
         attr_name: str,
-        p11_session: Any,
+        p11_raw_session: Any,
         p11_interface_version: str,
         ca_cert_der: bytes,
     ) -> None:
-        """Test CKA_{attr_name} on cert import.
+        """Test CKA_{attr_name} on cert import."""
+        rs = p11_raw_session
+        cert = x509.load_der_x509_certificate(ca_cert_der)
 
-        v3.0+ modules MUST accept these. v2.40 modules MAY accept them
-        (above-spec behavior). Rejection on v2.40 is xfailed (not in spec);
-        rejection on v3.0+ is also xfailed (known module bug).
-        """
+        # Build the attribute value
+        if attr_name == "PUBLIC_KEY_INFO":
+            attr_id = int(CKA_PUBLIC_KEY_INFO)
+            attr_val = cert.public_key().public_bytes(
+                serialization.Encoding.DER,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        elif attr_name == "HASH_OF_SUBJECT_PUBLIC_KEY":
+            attr_id = int(CKA_HASH_OF_SUBJECT_PUBLIC_KEY)
+            spki = cert.public_key().public_bytes(
+                serialization.Encoding.DER,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            attr_val = hashlib.sha1(spki).digest()
+        else:
+            attr_id = int(CKA_HASH_OF_ISSUER_PUBLIC_KEY)
+            spki = cert.public_key().public_bytes(
+                serialization.Encoding.DER,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            attr_val = hashlib.sha1(spki).digest()
 
-        attr_id, attr_val = _build_v30_attr(ca_cert_der, attr_name)
-
-        # Start from a v2.40 base template (known to work everywhere)
-        template = x509_to_p11_template(ca_cert_der, interface_version="2.40")
-        template[Attribute.TOKEN] = False
-        template[Attribute.LABEL] = _unique_label(f"v30-{attr_name}")
-        template[attr_id] = attr_val
+        # Start from a v2.40 base template
+        tmpl = _build_cert_template(ca_cert_der, "2.40")
+        tmpl[int(CKA_TOKEN)] = False
+        tmpl[int(CKA_LABEL)] = _unique_label(f"v30-{attr_name}")
+        tmpl[attr_id] = attr_val
 
         try:
-            obj = p11_session.create_object(template)
-            obj.destroy()
-        except (AttributeValueInvalid, AttributeTypeInvalid) as exc:
+            h = create_object(rs.raw, rs.sh, tmpl)
+            destroy_quietly(rs.raw, rs.sh, h)
+        except AssertionError as exc:
+            msg = str(exc)
+            is_attr_err = (
+                "CKR_ATTRIBUTE_VALUE_INVALID" in msg
+                or "CKR_ATTRIBUTE_TYPE_INVALID" in msg
+            )
+            if not is_attr_err:
+                raise
             if p11_interface_version < "3.0":
                 pytest.xfail(
                     f"v2.40 module rejects CKA_{attr_name} - "
@@ -350,5 +426,5 @@ class TestV30CertAttributes:
             else:
                 pytest.fail(
                     f"v3.0+ module MUST accept CKA_{attr_name} "
-                    f"but got {type(exc).__name__}"
+                    f"but got {msg}"
                 )

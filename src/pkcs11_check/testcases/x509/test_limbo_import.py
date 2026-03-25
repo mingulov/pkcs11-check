@@ -1,23 +1,11 @@
 """X.509 limbo certificate import tests.
 
 Tests certificate storage behavior of PKCS#11 modules against the x509-limbo
-corpus - a collection of both valid (SUCCESS) and semantically invalid (FAILURE)
-certificates.
+corpus.
 
 Key design principle: certificates are imported in their REAL, unmodified state.
 `import_cert_raw` sends only `CKA_VALUE = raw_DER` to `C_CreateObject`, letting
-the module parse the cert itself. SUBJECT/ISSUER/SERIAL_NUMBER are only added as a
-fallback when the module explicitly requests them (CKR_TEMPLATE_INCOMPLETE).
-
-Why this matters: if we pre-extract attributes on the Python side, modules never
-see the raw cert bytes - any module-side parsing bugs or over-strict validation
-are hidden. By sending raw DER, we expose real module behavior.
-
-x509-limbo FAILURE certs are semantically invalid for X.509 path validation
-(wrong path length, revoked, bad CRL, etc.) but are well-formed DER. A PKCS#11
-module acting as a storage token has no obligation to validate cert content and
-should accept them. If a module rejects them, it is performing above-spec cert
-validation on import - this is recorded as a compliance note, not a test failure.
+the module parse the cert itself.
 """
 
 from __future__ import annotations
@@ -25,16 +13,15 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute
-from pkcs11.exceptions import (
-    AttributeReadOnly,
-    AttributeTypeInvalid,
-    AttributeValueInvalid,
-    FunctionFailed,
-    TemplateInconsistent,
-)
 
 from pkcs11_check.compliance import ComplianceLevel, note
+from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
+from pkcs11_check.raw.types_std import (
+    CKA_LABEL,
+    CKA_TOKEN,
+    CKA_TRUSTED,
+    CKA_VALUE,
+)
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_raw,
     load_limbo_testcases,
@@ -46,19 +33,10 @@ pytestmark = [pytest.mark.cert, pytest.mark.object]
 _all_cases = load_limbo_testcases()
 
 
-# "online" cases require live network (CRL/OCSP fetches) - skip them entirely.
-# "bettertls" is a corpus of 9,572 TLS hostname-validation variants; sample 50.
-# All other categories (rfc5280, webpki, pathlen, crl, pathological, cve, invalid)
-# are run in full (183 cases, 47 SUCCESS + 136 FAILURE).
 def _build_testcase_sample(
-    cases: list[dict[str, Any]], bettertls_limit: int = 50
+    cases: list[dict[str, Any]], bettertls_limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Return all offline non-bettertls cases + a bettertls sample.
-
-    - Excludes "online" prefix (needs live CRL/OCSP servers).
-    - Includes all 183 structured offline cases (rfc5280/webpki/pathlen/crl/etc.).
-    - Samples up to bettertls_limit bettertls cases spanning both SUCCESS and FAILURE.
-    """
+    """Return all offline non-bettertls cases + a bettertls sample."""
     structured: list[dict[str, Any]] = []
     bettertls_success: list[dict[str, Any]] = []
     bettertls_failure: list[dict[str, Any]] = []
@@ -75,22 +53,21 @@ def _build_testcase_sample(
         else:
             structured.append(tc)
 
-    # Sample bettertls evenly: half SUCCESS, half FAILURE
     half = bettertls_limit // 2
-    step_s = max(1, len(bettertls_success) // half)
-    step_f = max(1, len(bettertls_failure) // half)
-    bt_sample = bettertls_success[::step_s][:half] + bettertls_failure[::step_f][:half]
-
+    step_s = max(1, len(bettertls_success) // half) if bettertls_success else 1
+    step_f = max(1, len(bettertls_failure) // half) if bettertls_failure else 1
+    bt_sample = (
+        bettertls_success[::step_s][:half]
+        + bettertls_failure[::step_f][:half]
+    )
     return structured + bt_sample
 
 
 _testcases = _build_testcase_sample(_all_cases)
 
 
-# FAILURE-only sample for the dedicated raw-import test.
-# All non-bettertls FAILURE certs (136) + 30 evenly-spaced bettertls FAILURE certs.
 def _build_failure_sample(
-    cases: list[dict[str, Any]], bettertls_limit: int = 30
+    cases: list[dict[str, Any]], bettertls_limit: int = 30,
 ) -> list[dict[str, Any]]:
     structured_failures: list[dict[str, Any]] = []
     bettertls_failures: list[dict[str, Any]] = []
@@ -106,75 +83,78 @@ def _build_failure_sample(
         else:
             structured_failures.append(tc)
 
-    step = max(1, len(bettertls_failures) // bettertls_limit)
+    step = max(1, len(bettertls_failures) // bettertls_limit) if bettertls_failures else 1
     return structured_failures + bettertls_failures[::step][:bettertls_limit]
 
 
 _failure_sample = _build_failure_sample(_all_cases)
 
 
-# ---------------------------------------------------------------------------
-# Core import test: all offline structured cases + bettertls sample
-# ---------------------------------------------------------------------------
-
-
 class TestLimboCertImport:
-    """Tests for importing certificates from x509-limbo in their real state."""
+    """Tests for importing certificates from x509-limbo."""
 
-    @pytest.mark.parametrize("tc", _testcases, ids=lambda tc: tc["id"])
+    @pytest.mark.parametrize(
+        "tc", _testcases, ids=lambda tc: tc["id"]
+    )
     def test_import_peer_cert(
-        self, tc: dict[str, Any], p11_session: Any, limbo_available: Any
+        self,
+        tc: dict[str, Any],
+        p11_raw_session: Any,
+        limbo_available: Any,
     ) -> None:
-        """Import peer certificate using raw CKA_VALUE - no pre-extraction.
-
-        The raw DER bytes reach C_CreateObject without SUBJECT/ISSUER/SERIAL_NUMBER
-        being provided unless the module explicitly requests them (TemplateIncomplete).
-        This tests how the module handles real certificate bytes, including those from
-        semantically invalid (FAILURE-expected) testcases.
-
-        SUCCESS cert rejected by module -> pytest.fail (storage bug)
-        FAILURE cert rejected by module -> compliance note (module validates on import,
-          which is above spec for a storage token but not a security issue)
-        """
+        """Import peer certificate using raw CKA_VALUE."""
+        rs = p11_raw_session
         der = pem_to_der(tc["peer_certificate"])
         if not der:
             pytest.skip("Failed to decode peer certificate PEM")
 
-        obj = None
+        h = None
         try:
-            obj, needed_attrs = import_cert_raw(
-                p11_session,
+            h, needed_attrs = import_cert_raw(
+                rs.raw, rs.sh,
                 der,
-                extra_attrs={Attribute.LABEL: tc["id"], Attribute.TOKEN: False},
+                extra_attrs={
+                    int(CKA_LABEL): tc["id"],
+                    int(CKA_TOKEN): False,
+                },
             )
-            # Sanity: label round-trips (pkcs11-mock returns a fixed label)
-            label = obj[Attribute.LABEL]
+            # Sanity: label round-trips
+            attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_LABEL)])
+            label = attrs[int(CKA_LABEL)]
             if label != "Pkcs11Interop":
                 assert label == tc["id"]
 
             if needed_attrs:
                 note(
-                    f"Module required explicit SUBJECT/ISSUER/SERIAL_NUMBER for {tc['id']} "
-                    f"(CKR_TEMPLATE_INCOMPLETE on raw CKA_VALUE import)",
+                    f"Module required explicit SUBJECT/ISSUER/SERIAL_NUMBER "
+                    f"for {tc['id']} (CKR_TEMPLATE_INCOMPLETE)",
                     ComplianceLevel.VENDOR,
                 )
 
-        except (TemplateInconsistent, AttributeValueInvalid, FunctionFailed) as e:
-            if tc["expected_result"] == "FAILURE":
-                note(
-                    f"Module rejected {tc['id']} on import ({type(e).__name__}: {e}) - "
-                    f"module performs cert validation on C_CreateObject "
-                    f"(above spec for storage token)",
-                    ComplianceLevel.VENDOR,
-                )
+        except AssertionError as e:
+            msg = str(e)
+            is_reject = (
+                "CKR_TEMPLATE_INCONSISTENT" in msg
+                or "CKR_ATTRIBUTE_VALUE_INVALID" in msg
+                or "CKR_FUNCTION_FAILED" in msg
+            )
+            if is_reject:
+                if tc["expected_result"] == "FAILURE":
+                    note(
+                        f"Module rejected {tc['id']} on import "
+                        f"({msg.split(';')[0]}) - above spec for storage",
+                        ComplianceLevel.VENDOR,
+                    )
+                else:
+                    pytest.fail(
+                        f"Module rejected valid Limbo cert {tc['id']} "
+                        f"on raw import: {msg}"
+                    )
             else:
-                pytest.fail(
-                    f"Module rejected valid Limbo cert {tc['id']} on raw import: "
-                    f"{type(e).__name__}: {e}"
-                )
+                raise
         finally:
-            if obj is not None:
-                obj.destroy()
+            if h is not None:
+                destroy_quietly(rs.raw, rs.sh, h)
 
     @pytest.mark.parametrize(
         "tc",
@@ -182,116 +162,126 @@ class TestLimboCertImport:
         ids=lambda tc: f"{tc['id']}-trusted",
     )
     def test_import_trusted_certs(
-        self, tc: dict[str, Any], p11_session: Any, limbo_available: Any
+        self,
+        tc: dict[str, Any],
+        p11_raw_session: Any,
+        limbo_available: Any,
     ) -> None:
-        """Import trusted CA certificates from a limbo testcase.
-
-        Tries with CKA_TRUSTED=True first (SO-level attribute). If the module
-        rejects the TRUSTED flag (AttributeTypeInvalid - module doesn't support it),
-        retries without. Any other rejection is recorded as a compliance note.
-        """
+        """Import trusted CA certificates from a limbo testcase."""
+        rs = p11_raw_session
         for i, pem in enumerate(tc["trusted_certs"]):
             der = pem_to_der(pem)
             if not der:
                 continue
 
             label = f"{tc['id']}-ca-{i}"
-            obj = None
+            h = None
             try:
-                # Try with TRUSTED flag first
                 try:
-                    obj, _ = import_cert_raw(
-                        p11_session,
+                    h, _ = import_cert_raw(
+                        rs.raw, rs.sh,
                         der,
                         extra_attrs={
-                            Attribute.LABEL: label,
-                            Attribute.TOKEN: False,
-                            Attribute.TRUSTED: True,
+                            int(CKA_LABEL): label,
+                            int(CKA_TOKEN): False,
+                            int(CKA_TRUSTED): True,
                         },
                     )
-                except (AttributeTypeInvalid, AttributeReadOnly):
-                    # CKA_TRUSTED is SO-only (CKR_ATTRIBUTE_READ_ONLY) or unknown --
-                    # retry without it (user session cannot mark certs as trusted)
-                    obj, _ = import_cert_raw(
-                        p11_session,
-                        der,
-                        extra_attrs={Attribute.LABEL: label, Attribute.TOKEN: False},
+                except AssertionError as e:
+                    msg = str(e)
+                    if (
+                        "CKR_ATTRIBUTE_TYPE_INVALID" in msg
+                        or "CKR_ATTRIBUTE_READ_ONLY" in msg
+                    ):
+                        h, _ = import_cert_raw(
+                            rs.raw, rs.sh,
+                            der,
+                            extra_attrs={
+                                int(CKA_LABEL): label,
+                                int(CKA_TOKEN): False,
+                            },
+                        )
+                    else:
+                        raise
+
+            except AssertionError as e:
+                msg = str(e)
+                if (
+                    "CKR_TEMPLATE_INCONSISTENT" in msg
+                    or "CKR_ATTRIBUTE_VALUE_INVALID" in msg
+                    or "CKR_FUNCTION_FAILED" in msg
+                ):
+                    note(
+                        f"Module rejected trusted CA cert {label} "
+                        f"({msg.split(';')[0]})",
+                        ComplianceLevel.VENDOR,
                     )
-
-            except (TemplateInconsistent, AttributeValueInvalid, FunctionFailed) as e:
-                note(
-                    f"Module rejected trusted CA cert {label} ({type(e).__name__}: {e})",
-                    ComplianceLevel.VENDOR,
-                )
+                else:
+                    raise
             finally:
-                if obj is not None:
-                    obj.destroy()
+                if h is not None:
+                    destroy_quietly(rs.raw, rs.sh, h)
 
 
-# ---------------------------------------------------------------------------
-# Dedicated FAILURE cert test: raw import of semantically invalid certs
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("tc", _failure_sample, ids=lambda tc: tc["id"])
+@pytest.mark.parametrize(
+    "tc", _failure_sample, ids=lambda tc: tc["id"]
+)
 def test_import_limbo_failure_cert_raw(
-    tc: dict[str, Any], p11_session: Any, limbo_available: Any
+    tc: dict[str, Any],
+    p11_raw_session: Any,
+    limbo_available: Any,
 ) -> None:
-    """Raw import of x509-limbo FAILURE certs - module receives unmodified DER.
-
-    x509-limbo FAILURE certs are semantically invalid for X.509 path validation
-    (revoked, bad path length, wrong key usage, CRL issues, etc.) but are
-    DER-syntactically well-formed. A PKCS#11 storage token must accept them --
-    it has no obligation to perform path validation on C_CreateObject.
-
-    This test explicitly verifies that the raw (unmodified) cert bytes reach the
-    module and that the module's storage behavior is observed directly:
-
-    - Module stores the FAILURE cert (CKO_CERTIFICATE accepted) -> PASS
-      (correct storage-token behavior; module doesn't validate semantics)
-    - Module rejects the FAILURE cert -> compliance note (above-spec validation
-      on import); test still passes - it's a behavioral observation, not a bug.
-    - Module crashes or returns an unexpected error -> pytest.fail (real bug).
-    """
+    """Raw import of x509-limbo FAILURE certs."""
+    rs = p11_raw_session
     der = pem_to_der(tc["peer_certificate"])
     if not der:
         pytest.skip("Failed to decode PEM")
 
-    obj = None
+    h = None
     try:
-        obj, needed_attrs = import_cert_raw(
-            p11_session,
+        h, needed_attrs = import_cert_raw(
+            rs.raw, rs.sh,
             der,
-            extra_attrs={Attribute.LABEL: tc["id"], Attribute.TOKEN: False},
+            extra_attrs={
+                int(CKA_LABEL): tc["id"],
+                int(CKA_TOKEN): False,
+            },
         )
         if needed_attrs:
             note(
-                f"[FAILURE cert] Module required explicit SUBJECT/ISSUER/SERIAL_NUMBER "
-                f"for {tc['id']} (CKR_TEMPLATE_INCOMPLETE on raw import)",
+                f"[FAILURE cert] Module required explicit "
+                f"SUBJECT/ISSUER/SERIAL_NUMBER for {tc['id']}",
                 ComplianceLevel.VENDOR,
             )
         # Cert stored - verify VALUE round-trips
-        stored_value = obj[Attribute.VALUE]
+        attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_VALUE)])
+        stored_value = attrs[int(CKA_VALUE)]
         if stored_value != der:
             pytest.fail(
                 f"{tc['id']}: module stored modified cert bytes - "
-                f"CKA_VALUE mismatch ({len(stored_value)}B stored vs {len(der)}B sent)"
+                f"CKA_VALUE mismatch ({len(stored_value)}B stored "
+                f"vs {len(der)}B sent)"
             )
 
-    except (TemplateInconsistent, AttributeValueInvalid) as e:
-        # Module rejected the cert - it validates on import (above spec for storage)
-        note(
-            f"[FAILURE cert] Module rejected {tc['id']} ({type(e).__name__}: {e}) - "
-            f"module validates cert content on C_CreateObject",
-            ComplianceLevel.VENDOR,
-        )
-    except FunctionFailed as e:
-        # FunctionFailed on cert import is unexpected - could be a real module bug
-        note(
-            f"[FAILURE cert] Module returned CKR_FUNCTION_FAILED for {tc['id']}: {e} - "
-            f"investigate whether this is a parsing bug in the module",
-            ComplianceLevel.VENDOR,
-        )
+    except AssertionError as e:
+        msg = str(e)
+        if (
+            "CKR_TEMPLATE_INCONSISTENT" in msg
+            or "CKR_ATTRIBUTE_VALUE_INVALID" in msg
+        ):
+            note(
+                f"[FAILURE cert] Module rejected {tc['id']} "
+                f"({msg.split(';')[0]}) - validates on import",
+                ComplianceLevel.VENDOR,
+            )
+        elif "CKR_FUNCTION_FAILED" in msg:
+            note(
+                f"[FAILURE cert] Module returned CKR_FUNCTION_FAILED "
+                f"for {tc['id']}",
+                ComplianceLevel.VENDOR,
+            )
+        else:
+            raise
     finally:
-        if obj is not None:
-            obj.destroy()
+        if h is not None:
+            destroy_quietly(rs.raw, rs.sh, h)

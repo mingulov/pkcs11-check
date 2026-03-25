@@ -5,111 +5,111 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import PKCS11Error
 
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    sign_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EXTRACTABLE,
+    CKA_ID,
+    CKA_KEY_TYPE,
+    CKA_LABEL,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKK_EC,
+    CKK_RSA,
+    CKM_ECDSA_SHA256,
+    CKM_SHA256_RSA_PKCS,
+    CKO_PRIVATE_KEY,
+)
 from pkcs11_check.testcases.x509.conftest import import_cert_object, pem_to_der
 
 pytestmark = [pytest.mark.cert, pytest.mark.keymgmt, pytest.mark.object]
 
 
 def test_limbo_identity_closeness(
-    p11_session: Any,
+    p11_raw_session: Any,
     cert_support: bool,
     all_limbo_cases: list[dict[str, Any]],
     limbo_filter: Any,
     p11_interface_version: str,
 ) -> None:
-    """Import Cert + Key from Limbo, link with CKA_ID, and Sign/Verify.
-
-    This test verifies that:
-    1. Private keys can be imported and linked to certificates via CKA_ID.
-    2. The private key can be found starting from the certificate's metadata.
-    3. Cryptographic operations (signing) work with the linked identity.
-    """
+    """Import Cert + Key from Limbo, link with CKA_ID, and Sign/Verify."""
     if not cert_support:
         pytest.skip("Module does not support X.509 certificates")
 
-    # We filter for cases that HAVE a private key
-    cases_with_keys = [tc for tc in all_limbo_cases if tc.get("peer_certificate_key")]
+    rs = p11_raw_session
+    cases_with_keys = [
+        tc for tc in all_limbo_cases if tc.get("peer_certificate_key")
+    ]
     if not cases_with_keys:
         pytest.skip("No testcases with private keys found in Limbo dataset")
 
-    # Sample a few for iteration
     cases = cases_with_keys[:10]
 
-    errors = []
+    errors: list[str] = []
     for tc in cases:
         cert_der = pem_to_der(tc["peer_certificate"])
         key_der = pem_to_der(tc["peer_certificate_key"])
-        cid = tc["id"].encode("utf-8")[:32]  # Unique ID for this test
+        cid = tc["id"].encode("utf-8")[:32]
 
         try:
             # 1. Import Certificate
-            cert_obj = import_cert_object(
-                p11_session,
+            cert_h = import_cert_object(
+                rs.raw, rs.sh,
                 cert_der,
                 interface_version=p11_interface_version,
                 extra_attrs={
-                    Attribute.ID: cid,
-                    Attribute.LABEL: f"Cert {tc['id']}",
-                    Attribute.TOKEN: False,
+                    int(CKA_ID): cid,
+                    int(CKA_LABEL): f"Cert {tc['id']}",
+                    int(CKA_TOKEN): False,
                 },
             )
 
             # 2. Import Private Key
-            # We need to detect key type from cert or Limbo features
-            # Limbo mostly has EC keys currently.
-            # For simplicity in this iteration, we'll try to detect from the PEM footer/header
-            # or use a generic approach if supported.
-
             key_pem = tc["peer_certificate_key"].strip()
-            key_class = ObjectClass.PRIVATE_KEY
             is_rsa = "RSA" in key_pem
-            is_ec = "EC" in key_pem or "BEGIN PRIVATE KEY" in key_pem  # PKCS#8 often EC in Limbo
 
-            key_attrs = {
-                Attribute.CLASS: key_class,
-                Attribute.VALUE: key_der,
-                Attribute.ID: cid,
-                Attribute.LABEL: f"Key {tc['id']}",
-                Attribute.TOKEN: False,
-                Attribute.SIGN: True,
-                Attribute.EXTRACTABLE: False,
-                Attribute.SENSITIVE: True,
+            key_attrs: dict[int, Any] = {
+                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                int(CKA_VALUE): key_der,
+                int(CKA_ID): cid,
+                int(CKA_LABEL): f"Key {tc['id']}",
+                int(CKA_TOKEN): False,
+                int(CKA_SIGN): True,
+                int(CKA_EXTRACTABLE): False,
+                int(CKA_SENSITIVE): True,
             }
             if is_rsa:
-                key_attrs[Attribute.KEY_TYPE] = KeyType.RSA
-            elif is_ec:
-                key_attrs[Attribute.KEY_TYPE] = KeyType.EC
+                key_attrs[int(CKA_KEY_TYPE)] = int(CKK_RSA)
+            else:
+                key_attrs[int(CKA_KEY_TYPE)] = int(CKK_EC)
 
             try:
-                key_obj = p11_session.create_object(key_attrs)
-            except PKCS11Error:
-                cert_obj.destroy()
-                # Some modules don't like CKA_VALUE for private key import,
-                # they might want components.
-                # If so, we skip for now as this is a module-specific "how to import" issue.
+                key_h = create_object(rs.raw, rs.sh, key_attrs)
+            except (AssertionError, Exception):
+                destroy_quietly(rs.raw, rs.sh, cert_h)
                 continue
 
             # 3. Perform Sign operation
             data = b"Hello PKCS#11 Identity"
-            # Mechanism detection
-            if is_rsa:
-                mech = Mechanism.SHA256_RSA_PKCS
-            else:
-                mech = Mechanism.ECDSA_SHA256
+            mech = CKM_SHA256_RSA_PKCS if is_rsa else CKM_ECDSA_SHA256
 
             try:
-                sig = key_obj.sign(data, mechanism=mech)
+                sig = sign_single(rs.raw, rs.sh, key_h, mech, data)
                 assert sig is not None
-            except PKCS11Error as e:
+            except (AssertionError, Exception) as e:
                 errors.append(f"TC {tc['id']} - Signing failed: {e}")
             finally:
-                key_obj.destroy()
-                cert_obj.destroy()
+                destroy_quietly(rs.raw, rs.sh, key_h)
+                destroy_quietly(rs.raw, rs.sh, cert_h)
 
-        except PKCS11Error:
+        except (AssertionError, Exception):
             continue
 
     if errors:

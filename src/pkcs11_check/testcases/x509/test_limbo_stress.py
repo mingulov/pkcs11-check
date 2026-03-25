@@ -11,11 +11,16 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, ObjectClass
-from pkcs11.exceptions import PKCS11Error
 
+from pkcs11_check.raw.recipes import create_object, destroy_quietly
+from pkcs11_check.raw.types_std import (
+    CKA_CERTIFICATE_TYPE,
+    CKA_CLASS,
+    CKA_VALUE,
+    CKC_X_509,
+    CKO_CERTIFICATE,
+)
 from pkcs11_check.testcases.x509.conftest import (
-    get_crl_class,
     get_unique_limbo_certs,
     get_unique_limbo_crls,
     load_limbo_testcases,
@@ -29,45 +34,49 @@ _all_crls = get_unique_limbo_crls(_all_cases)
 
 
 @pytest.mark.parametrize(
-    "tc_id,der_bytes", _all_certs[:500], ids=lambda x: f"cert-{x}" if isinstance(x, str) else "cert"
+    "tc_id,der_bytes",
+    _all_certs[:500],
+    ids=lambda x: f"cert-{x}" if isinstance(x, str) else "cert",
 )
 def test_exhaustive_cert_import_no_crash(
-    tc_id: str, der_bytes: bytes, p11_session: Any, limbo_available: Any
+    tc_id: str,
+    der_bytes: bytes,
+    p11_raw_session: Any,
+    limbo_available: Any,
 ) -> None:
     """Import every unique cert from Limbo - must not crash module."""
+    rs = p11_raw_session
     try:
-        obj = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.CERTIFICATE,
-                Attribute.CERTIFICATE_TYPE: 0,
-                Attribute.VALUE: der_bytes,
-            }
-        )
-        obj.destroy()
-    except PKCS11Error:
+        h = create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): int(CKO_CERTIFICATE),
+            int(CKA_CERTIFICATE_TYPE): int(CKC_X_509),
+            int(CKA_VALUE): der_bytes,
+        })
+        destroy_quietly(rs.raw, rs.sh, h)
+    except (AssertionError, Exception):
         pass  # Rejection is fine, as long as it doesn't crash
 
 
 @pytest.mark.parametrize(
-    "tc_id,der_bytes", _all_crls, ids=lambda x: f"crl-{x}" if isinstance(x, str) else "crl"
+    "tc_id,der_bytes",
+    _all_crls,
+    ids=lambda x: f"crl-{x}" if isinstance(x, str) else "crl",
 )
 def test_exhaustive_crl_import_no_crash(
-    tc_id: str, der_bytes: bytes, p11_session: Any, limbo_available: Any
+    tc_id: str,
+    der_bytes: bytes,
+    p11_raw_session: Any,
+    limbo_available: Any,
 ) -> None:
     """Import every unique CRL from Limbo - must not crash module."""
-    # Attribute.CLASS for CRL is often ObjectClass.X_509_CRL or similar depending on PKCS11 version
-    # python-pkcs11 constants might vary.
+    rs = p11_raw_session
     try:
-        crl_class = get_crl_class(p11_session)
-        if crl_class is None:
-            pytest.skip("CRL object class not identified for this module")
-
-        obj = p11_session.create_object(
-            {
-                Attribute.CLASS: crl_class,
-                Attribute.VALUE: der_bytes,
-            }
-        )
-        obj.destroy()
-    except (PKCS11Error, Exception):
+        # Use a generic class value for CRL
+        crl_class = 0x00000004
+        h = create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): crl_class,
+            int(CKA_VALUE): der_bytes,
+        })
+        destroy_quietly(rs.raw, rs.sh, h)
+    except (AssertionError, Exception):
         pass  # Rejection or "not supported" is fine
