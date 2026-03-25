@@ -7,15 +7,21 @@ from dataclasses import dataclass
 from typing import Any
 
 from .types_std import (
+    CK_AES_CTR_PARAMS,
     CK_AES_GCM_PARAMS,
     CK_ATTRIBUTE,
     CK_BBOOL,
+    CK_CHACHA20_PARAMS,
     CK_DATE,
     CK_ECDH1_DERIVE_PARAMS,
+    CK_EDDSA_PARAMS,
     CK_HKDF_PARAMS,
+    CK_KEY_DERIVATION_STRING_DATA,
     CK_MECHANISM,
+    CK_PKCS5_PBKD2_PARAMS2,
     CK_RSA_PKCS_OAEP_PARAMS,
     CK_RSA_PKCS_PSS_PARAMS,
+    CK_SALSA20_CHACHA20_POLY1305_PARAMS,
     CK_ULONG,
     CK_VOID_PTR,
     CKA,
@@ -461,3 +467,88 @@ def mech_hkdf(
     params.pSalt, params.ulSaltLen = _pack_bytes(salt, ka)
     params.pInfo, params.ulInfoLen = _pack_bytes(info, ka)
     return _mech_struct(mechanism_type, params, "mech_hkdf", ka)
+
+
+def mech_cbc_pad(mechanism_type: CKM, iv: bytes) -> PackedMechanism:
+    """Pack 16-byte IV for AES-CBC / AES-CBC-PAD (raw bytes parameter)."""
+    return mech_bytes(mechanism_type, iv)
+
+
+def mech_ctr(mechanism_type: CKM, bits: int = 128) -> PackedMechanism:
+    """Pack CK_AES_CTR_PARAMS with ulCounterBits=bits and zeroed counter block."""
+    params = CK_AES_CTR_PARAMS()
+    params.ulCounterBits = bits
+    for i in range(16):
+        params.cb[i] = 0
+    return _mech_struct(mechanism_type, params, "mech_ctr")
+
+
+def mech_chacha20(
+    mechanism_type: CKM,
+    nonce: bytes,
+    counter: int = 0,
+) -> PackedMechanism:
+    """Pack CK_CHACHA20_PARAMS with a counter and nonce."""
+    ka: list[Any] = []
+    params = CK_CHACHA20_PARAMS()
+    counter_bytes = counter.to_bytes(4, "little")
+    params.pBlockCounter, _ = _pack_bytes(counter_bytes, ka)
+    params.blockCounterBits = 32
+    params.pNonce, _ = _pack_bytes(nonce, ka)
+    params.ulNonceBits = len(nonce) * 8
+    return _mech_struct(mechanism_type, params, "mech_chacha20", ka)
+
+
+def mech_chacha20_poly1305(
+    mechanism_type: CKM,
+    nonce: bytes,
+    aad: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_SALSA20_CHACHA20_POLY1305_PARAMS with nonce and optional AAD."""
+    ka: list[Any] = []
+    params = CK_SALSA20_CHACHA20_POLY1305_PARAMS()
+    params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
+    params.pAAD, params.ulAADLen = _pack_bytes(aad, ka)
+    return _mech_struct(mechanism_type, params, "mech_chacha20_poly1305", ka)
+
+
+def mech_eddsa(
+    mechanism_type: CKM,
+    *,
+    context_data: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_EDDSA_PARAMS; sets phFlag=1 when context_data is provided."""
+    ka: list[Any] = []
+    params = CK_EDDSA_PARAMS()
+    params.phFlag = CK_BBOOL(1 if context_data is not None else 0)
+    params.pContextData, params.ulContextDataLen = _pack_bytes(context_data, ka)
+    return _mech_struct(mechanism_type, params, "mech_eddsa", ka)
+
+
+def mech_pbkdf2(
+    mechanism_type: CKM,
+    *,
+    salt: bytes,
+    iterations: int,
+    prf: int,
+    password: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_PKCS5_PBKD2_PARAMS2 (saltSource=CKZ_SALT_SPECIFIED=1)."""
+    ka: list[Any] = []
+    params = CK_PKCS5_PBKD2_PARAMS2()
+    params.saltSource = 1  # CKZ_SALT_SPECIFIED
+    params.pSaltSourceData, params.ulSaltSourceDataLen = _pack_bytes(salt, ka)
+    params.iterations = iterations
+    params.prf = prf
+    params.pPrfData = None
+    params.ulPrfDataLen = 0
+    params.pPassword, params.ulPasswordLen = _pack_bytes(password, ka)
+    return _mech_struct(mechanism_type, params, "mech_pbkdf2", ka)
+
+
+def mech_string_data(mechanism_type: CKM, data: bytes) -> PackedMechanism:
+    """Pack CK_KEY_DERIVATION_STRING_DATA for concatenation-style derivation."""
+    ka: list[Any] = []
+    params = CK_KEY_DERIVATION_STRING_DATA()
+    params.pData, params.ulLen = _pack_bytes(data, ka)
+    return _mech_struct(mechanism_type, params, "mech_string_data", ka)

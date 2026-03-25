@@ -165,6 +165,178 @@ def test_mech_hkdf_packs_extract_expand_and_hash() -> None:
     assert params.ulInfoLen == 12
 
 
+def test_mech_cbc_pad_sets_mechanism_and_iv_length() -> None:
+    from pkcs11_check.raw.pack import mech_cbc_pad
+    from pkcs11_check.raw.types_std import CKM_AES_CBC_PAD
+
+    iv = b"\x01" * 16
+    m = mech_cbc_pad(CKM_AES_CBC_PAD, iv)
+
+    assert m.ck.mechanism == CKM_AES_CBC_PAD
+    assert m.length_arg.value == 16
+    assert m.params is None  # mech_bytes path, no struct
+
+
+def test_mech_cbc_pad_aes_cbc_variant() -> None:
+    from pkcs11_check.raw.pack import mech_cbc_pad
+    from pkcs11_check.raw.types_std import CKM_AES_CBC
+
+    m = mech_cbc_pad(CKM_AES_CBC, b"\x00" * 16)
+    assert m.ck.mechanism == CKM_AES_CBC
+    assert m.length_arg.value == 16
+
+
+def test_mech_ctr_sets_counter_bits_and_zeroed_block() -> None:
+    from pkcs11_check.raw.pack import mech_ctr
+    from pkcs11_check.raw.types_std import CK_AES_CTR_PARAMS, CKM_AES_CTR
+
+    m = mech_ctr(CKM_AES_CTR, bits=64)
+
+    assert m.ck.mechanism == CKM_AES_CTR
+    params = m.params
+    assert isinstance(params, CK_AES_CTR_PARAMS)
+    assert params.ulCounterBits == 64
+    assert all(params.cb[i] == 0 for i in range(16))
+
+
+def test_mech_ctr_default_bits() -> None:
+    from pkcs11_check.raw.pack import mech_ctr
+    from pkcs11_check.raw.types_std import CK_AES_CTR_PARAMS, CKM_AES_CTR
+
+    m = mech_ctr(CKM_AES_CTR)
+    assert isinstance(m.params, CK_AES_CTR_PARAMS)
+    assert m.params.ulCounterBits == 128
+
+
+def test_mech_chacha20_sets_nonce_bits_and_counter() -> None:
+    from pkcs11_check.raw.pack import mech_chacha20
+    from pkcs11_check.raw.types_std import CK_CHACHA20_PARAMS, CKM_CHACHA20
+
+    nonce = b"\xab" * 12
+    m = mech_chacha20(CKM_CHACHA20, nonce, counter=1)
+
+    assert m.ck.mechanism == CKM_CHACHA20
+    params = m.params
+    assert isinstance(params, CK_CHACHA20_PARAMS)
+    assert params.ulNonceBits == 96
+    assert params.blockCounterBits == 32
+    assert params.pNonce is not None
+    assert params.pBlockCounter is not None
+
+
+def test_mech_chacha20_default_counter() -> None:
+    from pkcs11_check.raw.pack import mech_chacha20
+    from pkcs11_check.raw.types_std import CKM_CHACHA20
+
+    m = mech_chacha20(CKM_CHACHA20, b"\x00" * 12)
+    assert m.params.blockCounterBits == 32
+    assert m.params.pBlockCounter is not None
+
+
+def test_mech_chacha20_poly1305_sets_nonce_and_no_aad() -> None:
+    from pkcs11_check.raw.pack import mech_chacha20_poly1305
+    from pkcs11_check.raw.types_std import (
+        CK_SALSA20_CHACHA20_POLY1305_PARAMS,
+        CKM_CHACHA20_POLY1305,
+    )
+
+    nonce = b"\x11" * 12
+    m = mech_chacha20_poly1305(CKM_CHACHA20_POLY1305, nonce)
+
+    assert m.ck.mechanism == CKM_CHACHA20_POLY1305
+    params = m.params
+    assert isinstance(params, CK_SALSA20_CHACHA20_POLY1305_PARAMS)
+    assert params.ulNonceLen == 12
+    assert params.pNonce is not None
+    assert params.ulAADLen == 0
+    assert params.pAAD is None
+
+
+def test_mech_chacha20_poly1305_with_aad() -> None:
+    from pkcs11_check.raw.pack import mech_chacha20_poly1305
+    from pkcs11_check.raw.types_std import CKM_CHACHA20_POLY1305
+
+    aad = b"additional"
+    m = mech_chacha20_poly1305(CKM_CHACHA20_POLY1305, b"\x00" * 12, aad=aad)
+    assert m.params.ulAADLen == 10
+    assert m.params.pAAD is not None
+
+
+def test_mech_eddsa_no_context_data() -> None:
+    from pkcs11_check.raw.pack import mech_eddsa
+    from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS, CKM_EDDSA
+
+    m = mech_eddsa(CKM_EDDSA)
+
+    assert m.ck.mechanism == CKM_EDDSA
+    params = m.params
+    assert isinstance(params, CK_EDDSA_PARAMS)
+    assert params.phFlag == 0
+    assert params.ulContextDataLen == 0
+    assert params.pContextData is None
+
+
+def test_mech_eddsa_with_context_data() -> None:
+    from pkcs11_check.raw.pack import mech_eddsa
+    from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS, CKM_EDDSA
+
+    ctx = b"test-context"
+    m = mech_eddsa(CKM_EDDSA, context_data=ctx)
+
+    params = m.params
+    assert isinstance(params, CK_EDDSA_PARAMS)
+    assert params.phFlag == 1
+    assert params.ulContextDataLen == 12
+    assert params.pContextData is not None
+
+
+def test_mech_pbkdf2_sets_salt_iterations_prf() -> None:
+    from pkcs11_check.raw.pack import mech_pbkdf2
+    from pkcs11_check.raw.types_std import CK_PKCS5_PBKD2_PARAMS2, CKM_PKCS5_PBKD2
+
+    salt = b"saltsalt"
+    m = mech_pbkdf2(CKM_PKCS5_PBKD2, salt=salt, iterations=1000, prf=0x00000002)
+
+    assert m.ck.mechanism == CKM_PKCS5_PBKD2
+    params = m.params
+    assert isinstance(params, CK_PKCS5_PBKD2_PARAMS2)
+    assert params.saltSource == 1  # CKZ_SALT_SPECIFIED
+    assert params.ulSaltSourceDataLen == 8
+    assert params.pSaltSourceData is not None
+    assert params.iterations == 1000
+    assert params.prf == 0x00000002
+    assert params.ulPasswordLen == 0
+    assert params.pPassword is None
+
+
+def test_mech_pbkdf2_with_password() -> None:
+    from pkcs11_check.raw.pack import mech_pbkdf2
+    from pkcs11_check.raw.types_std import CKM_PKCS5_PBKD2
+
+    m = mech_pbkdf2(
+        CKM_PKCS5_PBKD2, salt=b"s", iterations=1, prf=1, password=b"secret"
+    )
+    assert m.params.ulPasswordLen == 6
+    assert m.params.pPassword is not None
+
+
+def test_mech_string_data_sets_pointer_and_length() -> None:
+    from pkcs11_check.raw.pack import mech_string_data
+    from pkcs11_check.raw.types_std import (
+        CK_KEY_DERIVATION_STRING_DATA,
+        CKM_CONCATENATE_BASE_AND_KEY,
+    )
+
+    data = b"derivation-label"
+    m = mech_string_data(CKM_CONCATENATE_BASE_AND_KEY, data)
+
+    assert m.ck.mechanism == CKM_CONCATENATE_BASE_AND_KEY
+    params = m.params
+    assert isinstance(params, CK_KEY_DERIVATION_STRING_DATA)
+    assert params.ulLen == 16
+    assert params.pData is not None
+
+
 _STANDARD_RAW_MODULES = (
     "raw/types_std.py",
     "raw/metadata_std.py",
