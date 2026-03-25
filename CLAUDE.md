@@ -30,12 +30,13 @@ bash local-builds/test.sh softhsm2 -m "not (wycheproof or acvp or cctv or stress
 bash local-builds/test.sh softhsm2 -m "wycheproof or acvp or cctv"       # ~72K vectors only
 bash local-builds/test.sh softhsm2                                        # full: ~75K tests, ~5min
 
-# Standard commands
+# Standard commands — ALWAYS use "uv run" prefix, tools are NOT on PATH
 uv run pkcs11-check version              # check CLI works
 uv run python -m pytest tests/      # run meta-tests (pkcs11-check's own tests)
 uv run ruff check src/ tests/       # lint
 uv run ruff format src/ tests/      # format
 uv run mypy src/                    # type check
+# NEVER run bare "ruff", "mypy", or "pytest" — they are inside the uv venv
 
 # Docker (for final validation or modules needing daemons)
 bash docker/test.sh softhsm2
