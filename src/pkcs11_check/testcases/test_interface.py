@@ -6,6 +6,16 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.pack import mech_bytes
+from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single, gen_aes_key
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKM_AES_CBC_PAD,
+)
+
 pytestmark = pytest.mark.smoke
 
 
@@ -63,25 +73,27 @@ class TestInterfaceV30:
             f"Expected PKCS 11 interface in list, got {names}"
         )
 
-    def test_v30_encrypt_decrypt_aes(self, p11_session: Any) -> None:
+    def test_v30_encrypt_decrypt_aes(self, p11_raw_session: Any) -> None:
         """v3.0 AES encrypt/decrypt round-trip via v3.0 function list."""
-        from pkcs11 import Attribute, KeyType, Mechanism
-
-        key = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            template={
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            },
-        )
-        iv = b"\x00" * 16
-        plaintext = b"v3.0 interface AES test data 123"
-        ciphertext = key.encrypt(plaintext, mechanism=Mechanism.AES_CBC_PAD, mechanism_param=iv)
-        recovered = key.decrypt(ciphertext, mechanism=Mechanism.AES_CBC_PAD, mechanism_param=iv)
-        assert recovered == plaintext
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={
+            int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True,
+            int(CKA_TOKEN): False, int(CKA_SENSITIVE): False,
+        })
+        try:
+            iv = b"\x00" * 16
+            plaintext = b"v3.0 interface AES test data 123"
+            ciphertext = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, plaintext,
+                mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+            )
+            recovered = decrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, ciphertext,
+                mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+            )
+            assert recovered == plaintext
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 @pytest.mark.v32
