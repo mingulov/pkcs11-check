@@ -331,17 +331,40 @@ def mech_bytes(
     )
 
 
-def _mech_struct(mechanism_type: CKM, params: ctypes.Structure, origin: str) -> PackedMechanism:
+def _pack_bytes(
+    data: bytes | None,
+    keepalive: list[Any],
+) -> tuple[Any, int]:
+    """Pack optional bytes into a ctypes buffer with lifetime tracking.
+
+    Returns (void_ptr_or_None, length). Appends buffer to keepalive.
+    """
+    if data is None:
+        return None, 0
+    buf = (ctypes.c_ubyte * len(data))(*data)
+    keepalive.append(buf)
+    return ctypes.cast(buf, CK_VOID_PTR), len(data)
+
+
+def _mech_struct(
+    mechanism_type: CKM,
+    params: ctypes.Structure,
+    origin: str,
+    keepalive: list[Any] | None = None,
+) -> PackedMechanism:
     """Build a PackedMechanism from a pre-populated ctypes struct."""
     pointer_arg = PointerArg.to_storage(params, origin=origin)
     length_arg = LengthArg.native(ctypes.sizeof(params))
-    return PackedMechanism(
+    result = PackedMechanism(
         CK_MECHANISM(mechanism_type, pointer_arg.pointer, length_arg.value),
         storage=params,
         pointer_arg=pointer_arg,
         length_arg=length_arg,
         params=params,
     )
+    if keepalive:
+        result._keepalive.extend(keepalive)
+    return result
 
 
 def mech_gcm(
@@ -352,17 +375,14 @@ def mech_gcm(
     tag_bits: int = 128,
 ) -> PackedMechanism:
     """Pack CK_AES_GCM_PARAMS."""
-    iv_buf = (ctypes.c_ubyte * len(iv))(*iv)
+    ka: list[Any] = []
     params = CK_AES_GCM_PARAMS()
-    params.pIv = ctypes.cast(iv_buf, CK_VOID_PTR)
-    params.ulIvLen = len(iv)
-    params.ulIvBits = len(iv) * 8
+    params.pIv, params.ulIvLen = _pack_bytes(iv, ka)
+    params.ulIvBits = params.ulIvLen * 8
     params.pAAD = None
     params.ulAADLen = aad_len
     params.ulTagBits = tag_bits
-    result = _mech_struct(mechanism_type, params, "mech_gcm")
-    result._keepalive.append(iv_buf)
-    return result
+    return _mech_struct(mechanism_type, params, "mech_gcm", ka)
 
 
 def mech_pss(
@@ -388,21 +408,15 @@ def mech_oaep(
     source_data: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_RSA_PKCS_OAEP_PARAMS."""
+    ka: list[Any] = []
     params = CK_RSA_PKCS_OAEP_PARAMS()
     params.hashAlg = hash_mech
     params.mgf = mgf
     params.source = CKZ_DATA_SPECIFIED
-    if source_data is not None:
-        src_buf = (ctypes.c_ubyte * len(source_data))(*source_data)
-        params.pSourceData = ctypes.cast(src_buf, CK_VOID_PTR)
-        params.ulSourceDataLen = len(source_data)
-    else:
-        params.pSourceData = None
-        params.ulSourceDataLen = 0
-    result = _mech_struct(mechanism_type, params, "mech_oaep")
-    if source_data is not None:
-        result._keepalive.append(src_buf)
-    return result
+    params.pSourceData, params.ulSourceDataLen = _pack_bytes(
+        source_data, ka
+    )
+    return _mech_struct(mechanism_type, params, "mech_oaep", ka)
 
 
 def mech_ecdh(
@@ -413,23 +427,16 @@ def mech_ecdh(
     shared_data: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_ECDH1_DERIVE_PARAMS."""
-    pub_buf = (ctypes.c_ubyte * len(public_data))(*public_data)
+    ka: list[Any] = []
     params = CK_ECDH1_DERIVE_PARAMS()
     params.kdf = kdf
-    params.ulPublicDataLen = len(public_data)
-    params.pPublicData = ctypes.cast(pub_buf, CK_VOID_PTR)
-    if shared_data is not None:
-        sd_buf = (ctypes.c_ubyte * len(shared_data))(*shared_data)
-        params.ulSharedDataLen = len(shared_data)
-        params.pSharedData = ctypes.cast(sd_buf, CK_VOID_PTR)
-    else:
-        params.ulSharedDataLen = 0
-        params.pSharedData = None
-    result = _mech_struct(mechanism_type, params, "mech_ecdh")
-    result._keepalive.append(pub_buf)
-    if shared_data is not None:
-        result._keepalive.append(sd_buf)
-    return result
+    params.pPublicData, params.ulPublicDataLen = _pack_bytes(
+        public_data, ka
+    )
+    params.pSharedData, params.ulSharedDataLen = _pack_bytes(
+        shared_data, ka
+    )
+    return _mech_struct(mechanism_type, params, "mech_ecdh", ka)
 
 
 def mech_hkdf(
@@ -444,29 +451,13 @@ def mech_hkdf(
     info: bytes | None = None,
 ) -> PackedMechanism:
     """Pack CK_HKDF_PARAMS."""
+    ka: list[Any] = []
     params = CK_HKDF_PARAMS()
     params.bExtract = 1 if extract else 0
     params.bExpand = 1 if expand else 0
     params.prfHashMechanism = hash_mech
     params.ulSaltType = salt_type
     params.hSaltKey = salt_key
-    if salt is not None:
-        salt_buf = (ctypes.c_ubyte * len(salt))(*salt)
-        params.pSalt = ctypes.cast(salt_buf, CK_VOID_PTR)
-        params.ulSaltLen = len(salt)
-    else:
-        params.pSalt = None
-        params.ulSaltLen = 0
-    if info is not None:
-        info_buf = (ctypes.c_ubyte * len(info))(*info)
-        params.pInfo = ctypes.cast(info_buf, CK_VOID_PTR)
-        params.ulInfoLen = len(info)
-    else:
-        params.pInfo = None
-        params.ulInfoLen = 0
-    result = _mech_struct(mechanism_type, params, "mech_hkdf")
-    if salt is not None:
-        result._keepalive.append(salt_buf)
-    if info is not None:
-        result._keepalive.append(info_buf)
-    return result
+    params.pSalt, params.ulSaltLen = _pack_bytes(salt, ka)
+    params.pInfo, params.ulInfoLen = _pack_bytes(info, ka)
+    return _mech_struct(mechanism_type, params, "mech_hkdf", ka)

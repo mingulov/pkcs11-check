@@ -63,6 +63,34 @@ def quick_session(
     return sh
 
 
+def _pack_attrs(
+    attrs: dict[int, Any] | None,
+    *,
+    skip: set[int] | None = None,
+) -> list[Any]:
+    """Convert a {attr_type: value} dict to a list of PackedAttributes.
+
+    Supports bool, int, bytes/bytearray values. Skips attr types in skip set.
+    """
+    if not attrs:
+        return []
+    result = []
+    for attr_type, value in attrs.items():
+        if skip and int(attr_type) in skip:
+            continue
+        if isinstance(value, bool):
+            result.append(attr_bool(attr_type, value))
+        elif isinstance(value, int):
+            result.append(attr_ulong(attr_type, value))
+        elif isinstance(value, (bytes, bytearray)):
+            result.append(attr_bytes(attr_type, value))
+        else:
+            raise TypeError(
+                f"Unsupported attr type {type(value)} for {attr_type}"
+            )
+    return result
+
+
 def gen_aes_key(
     raw: RawPKCS11,
     sh: int,
@@ -70,36 +98,47 @@ def gen_aes_key(
     attrs: dict[int, Any] | None = None,
     mechanism: int = CKM_AES_KEY_GEN,
 ) -> int:
-    """Generate an AES key with explicit attributes.
-
-    The CKA_VALUE_LEN is automatically added based on 'bits'.
-    Other attributes must be provided in 'attrs'.
-    """
-    packed_attrs = []
-
-    # Always include value length from bits
-    packed_attrs.append(attr_ulong(CKA_VALUE_LEN, bits // 8))
-
-    if attrs:
-        for attr_type, value in attrs.items():
-            if attr_type == CKA_VALUE_LEN:
-                continue  # Already added
-
-            if isinstance(value, bool):
-                packed_attrs.append(attr_bool(attr_type, value))
-            elif isinstance(value, int):
-                packed_attrs.append(attr_ulong(attr_type, value))
-            else:
-                raise TypeError(f"Recipe gen_aes_key doesn't handle {type(value)} for {attr_type}")
-
-    tmpl = template(*packed_attrs)
+    """Generate an AES key with explicit attributes."""
+    packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
+    packed.extend(_pack_attrs(attrs, skip={int(CKA_VALUE_LEN)}))
+    tmpl = template(*packed)
     mech = mech_simple(mechanism)
     key = CK_OBJECT_HANDLE(0)
 
-    rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
+    rv = raw.C_GenerateKey(
+        sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key)
+    )
     expect_rv(int(rv), CKR_OK)
-
     return int(key.value)
+
+
+def _gen_keypair(
+    raw: RawPKCS11,
+    session: int,
+    mechanism: int,
+    pub_base: list[Any],
+    priv_base: list[Any],
+    public_attrs: dict[CKA, Any] | None,
+    private_attrs: dict[CKA, Any] | None,
+    pub_skip: set[int] | None = None,
+) -> tuple[int, int]:
+    """Shared keypair generation logic."""
+    pub_packed = pub_base + _pack_attrs(public_attrs, skip=pub_skip)
+    priv_packed = priv_base + _pack_attrs(private_attrs)
+    pub_tmpl = template(*pub_packed)
+    priv_tmpl = template(*priv_packed)
+    mech = mech_simple(mechanism)
+    pub_handle = CK_OBJECT_HANDLE(0)
+    priv_handle = CK_OBJECT_HANDLE(0)
+
+    rv = raw.C_GenerateKeyPair(
+        session, mech.byref(),
+        pub_tmpl.ptr, pub_tmpl.count,
+        priv_tmpl.ptr, priv_tmpl.count,
+        byref(pub_handle), byref(priv_handle),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(pub_handle.value), int(priv_handle.value)
 
 
 def gen_rsa_keypair(
@@ -109,51 +148,15 @@ def gen_rsa_keypair(
     public_attrs: dict[CKA, Any] | None = None,
     private_attrs: dict[CKA, Any] | None = None,
 ) -> tuple[int, int]:
-    """Generate an RSA key pair using CKM_RSA_PKCS_KEY_PAIR_GEN.
-
-    Returns (pub_handle, priv_handle).
-    """
-    pub_packed = [attr_ulong(CKA_MODULUS_BITS, bits)]
-    if public_attrs:
-        for attr_type, value in public_attrs.items():
-            if attr_type == CKA_MODULUS_BITS:
-                continue
-            if isinstance(value, bool):
-                pub_packed.append(attr_bool(attr_type, value))
-            elif isinstance(value, int):
-                pub_packed.append(attr_ulong(attr_type, value))
-            elif isinstance(value, (bytes, bytearray)):
-                pub_packed.append(attr_bytes(attr_type, value))
-            else:
-                raise TypeError(f"gen_rsa_keypair: unsupported type {type(value)} for {attr_type}")
-
-    priv_packed = []
-    if private_attrs:
-        for attr_type, value in private_attrs.items():
-            if isinstance(value, bool):
-                priv_packed.append(attr_bool(attr_type, value))
-            elif isinstance(value, int):
-                priv_packed.append(attr_ulong(attr_type, value))
-            elif isinstance(value, (bytes, bytearray)):
-                priv_packed.append(attr_bytes(attr_type, value))
-            else:
-                raise TypeError(f"gen_rsa_keypair: unsupported type {type(value)} for {attr_type}")
-
-    pub_tmpl = template(*pub_packed)
-    priv_tmpl = template(*priv_packed)
-    mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
-    pub_handle = CK_OBJECT_HANDLE(0)
-    priv_handle = CK_OBJECT_HANDLE(0)
-
-    rv = raw.C_GenerateKeyPair(
-        session, mech.byref(),
-        pub_tmpl.ptr, pub_tmpl.count,
-        priv_tmpl.ptr, priv_tmpl.count,
-        byref(pub_handle), byref(priv_handle),
+    """Generate an RSA key pair. Returns (pub_handle, priv_handle)."""
+    return _gen_keypair(
+        raw, session, CKM_RSA_PKCS_KEY_PAIR_GEN,
+        pub_base=[attr_ulong(CKA_MODULUS_BITS, bits)],
+        priv_base=[],
+        public_attrs=public_attrs,
+        private_attrs=private_attrs,
+        pub_skip={int(CKA_MODULUS_BITS)},
     )
-    expect_rv(int(rv), CKR_OK)
-
-    return int(pub_handle.value), int(priv_handle.value)
 
 
 def gen_ec_keypair(
@@ -163,52 +166,15 @@ def gen_ec_keypair(
     public_attrs: dict[CKA, Any] | None = None,
     private_attrs: dict[CKA, Any] | None = None,
 ) -> tuple[int, int]:
-    """Generate an EC key pair using CKM_EC_KEY_PAIR_GEN.
-
-    curve_oid is the DER-encoded OID for the curve (e.g. P-256).
-    Returns (pub_handle, priv_handle).
-    """
-    pub_packed = [attr_bytes(CKA_EC_PARAMS, curve_oid)]
-    if public_attrs:
-        for attr_type, value in public_attrs.items():
-            if attr_type == CKA_EC_PARAMS:
-                continue
-            if isinstance(value, bool):
-                pub_packed.append(attr_bool(attr_type, value))
-            elif isinstance(value, int):
-                pub_packed.append(attr_ulong(attr_type, value))
-            elif isinstance(value, (bytes, bytearray)):
-                pub_packed.append(attr_bytes(attr_type, value))
-            else:
-                raise TypeError(f"gen_ec_keypair: unsupported type {type(value)} for {attr_type}")
-
-    priv_packed = []
-    if private_attrs:
-        for attr_type, value in private_attrs.items():
-            if isinstance(value, bool):
-                priv_packed.append(attr_bool(attr_type, value))
-            elif isinstance(value, int):
-                priv_packed.append(attr_ulong(attr_type, value))
-            elif isinstance(value, (bytes, bytearray)):
-                priv_packed.append(attr_bytes(attr_type, value))
-            else:
-                raise TypeError(f"gen_ec_keypair: unsupported type {type(value)} for {attr_type}")
-
-    pub_tmpl = template(*pub_packed)
-    priv_tmpl = template(*priv_packed)
-    mech = mech_simple(CKM_EC_KEY_PAIR_GEN)
-    pub_handle = CK_OBJECT_HANDLE(0)
-    priv_handle = CK_OBJECT_HANDLE(0)
-
-    rv = raw.C_GenerateKeyPair(
-        session, mech.byref(),
-        pub_tmpl.ptr, pub_tmpl.count,
-        priv_tmpl.ptr, priv_tmpl.count,
-        byref(pub_handle), byref(priv_handle),
+    """Generate an EC key pair. Returns (pub_handle, priv_handle)."""
+    return _gen_keypair(
+        raw, session, CKM_EC_KEY_PAIR_GEN,
+        pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+        priv_base=[],
+        public_attrs=public_attrs,
+        private_attrs=private_attrs,
+        pub_skip={int(CKA_EC_PARAMS)},
     )
-    expect_rv(int(rv), CKR_OK)
-
-    return int(pub_handle.value), int(priv_handle.value)
 
 
 def import_secret_key(
@@ -218,30 +184,14 @@ def import_secret_key(
     value: bytes,
     attrs: dict[CKA, Any] | None = None,
 ) -> int:
-    """Import a secret key by value using C_CreateObject.
-
-    Returns the object handle.
-    """
+    """Import a secret key by value using C_CreateObject."""
+    base = {int(CKA_CLASS), int(CKA_KEY_TYPE), int(CKA_VALUE)}
     packed = [
         attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
         attr_ulong(CKA_KEY_TYPE, int(key_type)),
         attr_bytes(CKA_VALUE, value),
     ]
-    if attrs:
-        skip = {int(CKA_CLASS), int(CKA_KEY_TYPE), int(CKA_VALUE)}
-        for attr_type, attr_value in attrs.items():
-            if int(attr_type) in skip:
-                continue
-            if isinstance(attr_value, bool):
-                packed.append(attr_bool(attr_type, attr_value))
-            elif isinstance(attr_value, int):
-                packed.append(attr_ulong(attr_type, attr_value))
-            elif isinstance(attr_value, (bytes, bytearray)):
-                packed.append(attr_bytes(attr_type, attr_value))
-            else:
-                raise TypeError(
-                    f"import_secret_key: unsupported type {type(attr_value)} for {attr_type}"
-                )
+    packed.extend(_pack_attrs(attrs, skip=base))
 
     tmpl = template(*packed)
     handle = CK_OBJECT_HANDLE(0)
