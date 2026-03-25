@@ -10,7 +10,22 @@ import uuid
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, ObjectClass
+
+from pkcs11_check.raw.pack import template_from_dict
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    find_objects,
+    gen_aes_key,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_LABEL,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKO_DATA,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -22,68 +37,82 @@ def _unique_label(prefix: str = "dup") -> str:
 class TestDuplicateLabels:
     """Test that duplicate labels are handled correctly."""
 
-    def test_two_keys_same_label(self, p11_session: Any) -> None:
+    def test_two_keys_same_label(self, p11_raw_session: Any) -> None:
         """Two AES keys with the same label - search returns both."""
+        rs = p11_raw_session
         label = _unique_label()
-        p11_session.generate_key(KeyType.AES, 128, label=label)
-        p11_session.generate_key(KeyType.AES, 256, label=label)
+        k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
+        k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
+        try:
+            found = find_objects(rs.raw, rs.sh, template_from_dict({int(CKA_LABEL): label}))
+            assert len(found) >= 2, (
+                f"Expected >=2 objects with label '{label}', got {len(found)}"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, k1)
+            destroy_quietly(rs.raw, rs.sh, k2)
 
-        found = list(p11_session.get_objects({Attribute.LABEL: label}))
-        assert len(found) >= 2, f"Expected >=2 objects with label '{label}', got {len(found)}"
-
-    def test_data_objects_same_label(self, p11_session: Any) -> None:
+    def test_data_objects_same_label(self, p11_raw_session: Any) -> None:
         """Two CKO_DATA objects with the same label - both findable."""
+        rs = p11_raw_session
         label = _unique_label()
-        p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.DATA,
-                Attribute.LABEL: label,
-                Attribute.VALUE: b"first",
-                Attribute.TOKEN: False,
-            }
-        )
-        p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.DATA,
-                Attribute.LABEL: label,
-                Attribute.VALUE: b"second",
-                Attribute.TOKEN: False,
-            }
-        )
+        o1 = create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): int(CKO_DATA),
+            int(CKA_LABEL): label,
+            int(CKA_VALUE): b"first",
+            int(CKA_TOKEN): False,
+        })
+        o2 = create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): int(CKO_DATA),
+            int(CKA_LABEL): label,
+            int(CKA_VALUE): b"second",
+            int(CKA_TOKEN): False,
+        })
+        try:
+            found = find_objects(
+                rs.raw, rs.sh,
+                template_from_dict({int(CKA_CLASS): int(CKO_DATA), int(CKA_LABEL): label}),
+            )
+            assert len(found) >= 2
 
-        found = list(
-            p11_session.get_objects({Attribute.CLASS: ObjectClass.DATA, Attribute.LABEL: label})
-        )
-        assert len(found) >= 2
+            values = sorted(
+                read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])[int(CKA_VALUE)]
+                for h in found
+            )
+            assert b"first" in values
+            assert b"second" in values
+        finally:
+            destroy_quietly(rs.raw, rs.sh, o1)
+            destroy_quietly(rs.raw, rs.sh, o2)
 
-        values = sorted(obj[Attribute.VALUE] for obj in found)
-        assert b"first" in values
-        assert b"second" in values
-
-    def test_different_types_same_label(self, p11_session: Any) -> None:
+    def test_different_types_same_label(self, p11_raw_session: Any) -> None:
         """AES key and CKO_DATA with the same label - both findable."""
+        rs = p11_raw_session
         label = _unique_label()
-        p11_session.generate_key(KeyType.AES, 128, label=label)
-        p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.DATA,
-                Attribute.LABEL: label,
-                Attribute.VALUE: b"data-obj",
-                Attribute.TOKEN: False,
-            }
-        )
+        k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
+        o1 = create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): int(CKO_DATA),
+            int(CKA_LABEL): label,
+            int(CKA_VALUE): b"data-obj",
+            int(CKA_TOKEN): False,
+        })
+        try:
+            # Search by label only (no class filter)
+            found = find_objects(rs.raw, rs.sh, template_from_dict({int(CKA_LABEL): label}))
+            assert len(found) >= 2
+        finally:
+            destroy_quietly(rs.raw, rs.sh, k1)
+            destroy_quietly(rs.raw, rs.sh, o1)
 
-        # Search by label only (no class filter)
-        found = list(p11_session.get_objects({Attribute.LABEL: label}))
-        assert len(found) >= 2
-
-    def test_destroy_one_of_duplicates(self, p11_session: Any) -> None:
+    def test_destroy_one_of_duplicates(self, p11_raw_session: Any) -> None:
         """Destroying one of two same-label objects leaves the other."""
+        rs = p11_raw_session
         label = _unique_label()
-        k1 = p11_session.generate_key(KeyType.AES, 128, label=label)
-        p11_session.generate_key(KeyType.AES, 256, label=label)
-
-        k1.destroy()
-
-        found = list(p11_session.get_objects({Attribute.LABEL: label}))
-        assert len(found) >= 1
+        k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
+        k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
+        try:
+            destroy_quietly(rs.raw, rs.sh, k1)
+            found = find_objects(rs.raw, rs.sh, template_from_dict({int(CKA_LABEL): label}))
+            assert len(found) >= 1
+        finally:
+            destroy_quietly(rs.raw, rs.sh, k2)

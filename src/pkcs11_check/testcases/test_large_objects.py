@@ -12,7 +12,26 @@ import uuid
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+
+from pkcs11_check.raw.pack import mech_bytes
+from pkcs11_check.raw.recipes import (
+    create_object,
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+    gen_aes_key,
+    generate_random,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_LABEL,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKM_AES_CBC,
+    CKM_AES_ECB,
+    CKO_DATA,
+)
 
 pytestmark = pytest.mark.security
 
@@ -24,72 +43,92 @@ def _unique_label(prefix: str = "large") -> str:
 class TestLargeDataObjects:
     """Test large CKO_DATA object storage."""
 
-    def test_1mb_data_object(self, p11_session: Any) -> None:
+    def test_1mb_data_object(self, p11_raw_session: Any) -> None:
         """Create and read back a 1MB CKO_DATA object."""
+        rs = p11_raw_session
         label = _unique_label()
         big_data = b"\xab" * (1024 * 1024)  # 1MB
 
-        obj = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.DATA,
-                Attribute.LABEL: label,
-                Attribute.VALUE: big_data,
-                Attribute.TOKEN: False,
-            }
-        )
-        stored = obj[Attribute.VALUE]
-        assert stored == big_data
-        assert len(stored) == 1024 * 1024
+        obj = create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): int(CKO_DATA),
+            int(CKA_LABEL): label,
+            int(CKA_VALUE): big_data,
+            int(CKA_TOKEN): False,
+        })
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, obj, [CKA_VALUE])
+            stored = attrs[int(CKA_VALUE)]
+            assert stored == big_data
+            assert len(stored) == 1024 * 1024
+        finally:
+            destroy_quietly(rs.raw, rs.sh, obj)
 
-    def test_100kb_data_object(self, p11_session: Any) -> None:
+    def test_100kb_data_object(self, p11_raw_session: Any) -> None:
         """Create and read back a 100KB CKO_DATA object."""
+        rs = p11_raw_session
         label = _unique_label()
         data = bytes(range(256)) * 400  # 102,400 bytes
 
-        obj = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.DATA,
-                Attribute.LABEL: label,
-                Attribute.VALUE: data,
-                Attribute.TOKEN: False,
-            }
-        )
-        assert obj[Attribute.VALUE] == data
+        obj = create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): int(CKO_DATA),
+            int(CKA_LABEL): label,
+            int(CKA_VALUE): data,
+            int(CKA_TOKEN): False,
+        })
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, obj, [CKA_VALUE])
+            assert attrs[int(CKA_VALUE)] == data
+        finally:
+            destroy_quietly(rs.raw, rs.sh, obj)
 
 
 class TestLargeRandomGeneration:
     """Test large random number generation."""
 
-    def test_generate_100kb_random(self, p11_session: Any) -> None:
+    def test_generate_100kb_random(self, p11_raw_session: Any) -> None:
         """Generate 100KB of random data via C_GenerateRandom."""
-        rand = p11_session.generate_random(100 * 1024 * 8)  # bits
+        rs = p11_raw_session
+        rand = generate_random(rs.raw, rs.sh, 100 * 1024)
         assert len(rand) == 100 * 1024
 
-    def test_generate_1kb_random_is_unique(self, p11_session: Any) -> None:
+    def test_generate_1kb_random_is_unique(self, p11_raw_session: Any) -> None:
         """Two 1KB random blocks should be different."""
-        r1 = p11_session.generate_random(1024 * 8)
-        r2 = p11_session.generate_random(1024 * 8)
+        rs = p11_raw_session
+        r1 = generate_random(rs.raw, rs.sh, 1024)
+        r2 = generate_random(rs.raw, rs.sh, 1024)
         assert r1 != r2
 
 
 class TestLargeEncryption:
     """Test encryption of large plaintexts."""
 
-    def test_encrypt_64kb_aes_ecb(self, p11_session: Any) -> None:
+    def test_encrypt_64kb_aes_ecb(self, p11_raw_session: Any) -> None:
         """AES-ECB encrypt/decrypt 64KB data."""
-        key = p11_session.generate_key(KeyType.AES, 256)
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256)
         data = b"\x42" * 65536  # 64KB, block-aligned
+        try:
+            ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
+            pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
+            assert pt == data
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-        ct = key.encrypt(data, mechanism=Mechanism.AES_ECB)
-        pt = key.decrypt(ct, mechanism=Mechanism.AES_ECB)
-        assert pt == data
-
-    def test_encrypt_1mb_aes_cbc(self, p11_session: Any) -> None:
+    def test_encrypt_1mb_aes_cbc(self, p11_raw_session: Any) -> None:
         """AES-CBC encrypt/decrypt 1MB data."""
-        key = p11_session.generate_key(KeyType.AES, 256)
-        iv = p11_session.generate_random(128)  # 16 bytes
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        iv = generate_random(rs.raw, rs.sh, 16)
         data = b"\x99" * (1024 * 1024)  # 1MB
-
-        ct = key.encrypt(data, mechanism=Mechanism.AES_CBC, mechanism_param=iv)
-        pt = key.decrypt(ct, mechanism=Mechanism.AES_CBC, mechanism_param=iv)
-        assert pt == data
+        try:
+            ct = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CBC, data,
+                mech_param=mech_bytes(CKM_AES_CBC, iv),
+            )
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CBC, ct,
+                mech_param=mech_bytes(CKM_AES_CBC, iv),
+            )
+            assert pt == data
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
