@@ -9,12 +9,31 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.mechanisms import KDF
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.pack import mech_ecdh
+from pkcs11_check.raw.recipes import (
+    create_object,
+    derive_key,
+    destroy_quietly,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DERIVE,
+    CKA_EC_PARAMS,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKD_NULL,
+    CKK_EC_MONTGOMERY,
+    CKK_GENERIC_SECRET,
+    CKM_ECDH1_DERIVE,
+    CKO_PRIVATE_KEY,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_xdh_private_bytes,
     decode_xdh_public_bytes,
@@ -65,9 +84,10 @@ _ALL_XDH_VECTORS = _load_xdh_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_XDH_VECTORS, ids=[v[0] for v in _ALL_XDH_VECTORS])
-def test_xdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """X25519/X448 key exchange from Wycheproof vectors."""
-    if not has_mechanism(p11_module, "ECDH1_DERIVE"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("ECDH1_DERIVE"):
         pytest.skip("ECDH1_DERIVE not supported")
 
     oid = vec["_oid"]
@@ -83,40 +103,51 @@ def test_xdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
 
     # Import Montgomery private key
     try:
-        priv_key = p11_session.create_object(
+        priv_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: p11.ObjectClass.PRIVATE_KEY,
-                Attribute.KEY_TYPE: KeyType.EC_MONTGOMERY,
-                Attribute.EC_PARAMS: oid,
-                Attribute.VALUE: private_bytes,
-                Attribute.DERIVE: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                int(CKA_KEY_TYPE): int(CKK_EC_MONTGOMERY),
+                int(CKA_EC_PARAMS): oid,
+                int(CKA_VALUE): private_bytes,
+                int(CKA_DERIVE): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except (p11.exceptions.PKCS11Error, AttributeError):
+    except (AssertionError, AttributeError):
         if result == "invalid":
             return
         pytest.skip("Cannot import Montgomery private key")
 
     # Derive shared secret
+    ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=int(CKD_NULL), public_data=public_bytes)
     try:
-        derived = priv_key.derive_key(
-            KeyType.GENERIC_SECRET,
-            key_size * 8,  # bits
-            mechanism=Mechanism.ECDH1_DERIVE,
-            mechanism_param=(KDF.NULL, None, public_bytes),
-            template={
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-                Attribute.TOKEN: False,
+        derived = derive_key(
+            rs.raw,
+            rs.sh,
+            priv_key,
+            CKM_ECDH1_DERIVE,
+            attrs={
+                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+                int(CKA_VALUE_LEN): key_size,
+                int(CKA_SENSITIVE): False,
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_TOKEN): False,
             },
+            mech_param=ecdh_param,
         )
-        shared = derived[Attribute.VALUE]
+        attrs = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])
+        shared = attrs[int(CKA_VALUE)]
+        assert isinstance(shared, bytes)
         if result == "valid":
             assert shared == shared_expected
-    except (p11.exceptions.PKCS11Error, TypeError):
+        destroy_quietly(rs.raw, rs.sh, derived)
+    except (AssertionError, TypeError):
         if result == "valid":
             pytest.xfail(f"X25519/X448 derive failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, priv_key)

@@ -5,21 +5,28 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EC_PARAMS,
+    CKA_EC_POINT,
+    CKA_KEY_TYPE,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKK_EC_EDWARDS,
+    CKM_EDDSA,
+    CKO_PUBLIC_KEY,
+)
 
 pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
-
-
-def _has_eddsa(p11_module: Any) -> bool:
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return "EDDSA" in names
 
 
 def _load_ed25519_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -43,10 +50,11 @@ _ED25519_VECTORS = _load_ed25519_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _ED25519_VECTORS, ids=[v[0] for v in _ED25519_VECTORS])
 def test_ed25519_wycheproof(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """Ed25519 signature verification from Wycheproof vectors."""
-    if not _has_eddsa(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA not supported")
 
     msg = bytes.fromhex(vec["msg"])
@@ -68,28 +76,32 @@ def test_ed25519_wycheproof(
     ec_point = bytes([0x04, len(pk_bytes)]) + pk_bytes
 
     try:
-        pub_key = p11_session.create_object(
+        pub_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.EC_EDWARDS,
-                Attribute.EC_PARAMS: ed25519_oid,
-                Attribute.EC_POINT: ec_point,
-                Attribute.TOKEN: False,
-                Attribute.VERIFY: True,
-            }
+                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+                int(CKA_KEY_TYPE): int(CKK_EC_EDWARDS),
+                int(CKA_EC_PARAMS): ed25519_oid,
+                int(CKA_EC_POINT): ec_point,
+                int(CKA_TOKEN): False,
+                int(CKA_VERIFY): True,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         pytest.skip("Cannot import Ed25519 public key")
 
     try:
-        pub_key.verify(msg, sig, mechanism=Mechanism.EDDSA)
+        verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, msg, sig)
         if result == "invalid":
             pass  # Some modules accept edge-case sigs
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.fail(f"Valid Ed25519 sig {vec_id} rejected")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub_key)
 
 
 # --- Ed448 ---
@@ -116,10 +128,11 @@ _ED448_VECTORS = _load_ed448_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _ED448_VECTORS, ids=[v[0] for v in _ED448_VECTORS])
 def test_ed448_wycheproof(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """Ed448 signature verification from Wycheproof vectors."""
-    if not _has_eddsa(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA not supported")
 
     msg = bytes.fromhex(vec["msg"])
@@ -139,25 +152,29 @@ def test_ed448_wycheproof(
     ec_point = bytes([0x04, len(pk_bytes)]) + pk_bytes
 
     try:
-        pub_key = p11_session.create_object(
+        pub_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.EC_EDWARDS,
-                Attribute.EC_PARAMS: ed448_oid,
-                Attribute.EC_POINT: ec_point,
-                Attribute.TOKEN: False,
-                Attribute.VERIFY: True,
-            }
+                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+                int(CKA_KEY_TYPE): int(CKK_EC_EDWARDS),
+                int(CKA_EC_PARAMS): ed448_oid,
+                int(CKA_EC_POINT): ec_point,
+                int(CKA_TOKEN): False,
+                int(CKA_VERIFY): True,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         pytest.skip("Cannot import Ed448 public key")
 
     try:
-        pub_key.verify(msg, sig, mechanism=Mechanism.EDDSA)
+        verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, msg, sig)
         if result == "invalid":
             pass
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"Valid Ed448 sig {vec_id} rejected")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub_key)

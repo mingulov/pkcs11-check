@@ -11,12 +11,27 @@ import hashlib
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    generate_random,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EC_PARAMS,
+    CKA_EC_POINT,
+    CKA_KEY_TYPE,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKK_EC,
+    CKM_ECDSA,
+    CKO_PUBLIC_KEY,
+)
 
 pytestmark = pytest.mark.wycheproof
 
@@ -158,10 +173,11 @@ _ALL_ECDSA = _load_ecdsa_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_ECDSA, ids=[v[0] for v in _ALL_ECDSA])
 def test_ecdsa_wycheproof(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """ECDSA signature verification from Wycheproof vectors."""
-    if not has_mechanism(p11_module, "ECDSA"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("ECDSA"):
         pytest.skip("ECDSA not supported")
 
     msg = bytes.fromhex(vec["msg"])
@@ -187,26 +203,39 @@ def test_ecdsa_wycheproof(
         ec_point_der = bytes([0x04, 0x81, len(uncompressed)]) + uncompressed
 
     try:
-        pub_key = p11_session.create_object(
+        ec_params = encode_named_curve_parameters(curve)
+    except Exception:
+        pytest.skip(f"No EC params for curve {curve}")
+
+    try:
+        pub_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.EC,
-                Attribute.EC_PARAMS: p11.util.ec.encode_named_curve_parameters(curve),
-                Attribute.EC_POINT: ec_point_der,
-                Attribute.TOKEN: False,
-                Attribute.VERIFY: True,
-            }
+                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+                int(CKA_KEY_TYPE): int(CKK_EC),
+                int(CKA_EC_PARAMS): ec_params,
+                int(CKA_EC_POINT): ec_point_der,
+                int(CKA_TOKEN): False,
+                int(CKA_VERIFY): True,
+            },
         )
-    except (
-        p11.exceptions.CurveNotSupported,
-        p11.exceptions.AttributeValueInvalid,
-        p11.exceptions.TemplateInconsistent,
-        p11.exceptions.DomainParamsInvalid,
-        p11.exceptions.MechanismInvalid,
-        p11.exceptions.FunctionFailed,
-        p11.exceptions.DeviceError,
-    ) as exc:
-        pytest.skip(f"Cannot import EC key for {curve}: {type(exc).__name__}")
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(
+            name in exc_msg
+            for name in (
+                "CKR_CURVE_NOT_SUPPORTED",
+                "CKR_ATTRIBUTE_VALUE_INVALID",
+                "CKR_TEMPLATE_INCONSISTENT",
+                "CKR_DOMAIN_PARAMS_INVALID",
+                "CKR_MECHANISM_INVALID",
+                "CKR_FUNCTION_FAILED",
+                "CKR_DEVICE_ERROR",
+            )
+        ):
+            pytest.skip(f"Cannot import EC key for {curve}: {exc_msg}")
+        raise
 
     if is_p1363:
         raw_sig = sig_der
@@ -222,11 +251,15 @@ def test_ecdsa_wycheproof(
     digest = hash_fn(msg).digest()
 
     try:
-        pub_key.verify(digest, raw_sig, mechanism=Mechanism.ECDSA)
+        verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
         if result == "invalid":
             pass
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"Valid ECDSA sig {vec_id} rejected")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub_key)
+
+    generate_random(rs.raw, rs.sh, 64)

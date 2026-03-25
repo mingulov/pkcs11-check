@@ -9,12 +9,31 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.mechanisms import KDF
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.pack import mech_ecdh
+from pkcs11_check.raw.recipes import (
+    create_object,
+    derive_key,
+    destroy_quietly,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DERIVE,
+    CKA_EC_PARAMS,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKD_NULL,
+    CKK_EC,
+    CKK_GENERIC_SECRET,
+    CKM_ECDH1_DERIVE,
+    CKO_PRIVATE_KEY,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_ec_private_scalar,
     decode_ec_public_point,
@@ -90,16 +109,11 @@ def _load_ecdh_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_ECDH_VECTORS = _load_ecdh_vectors()
 
 
-def _has_ecdh(p11_module: Any) -> bool:
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return "ECDH1_DERIVE" in names
-
-
 @pytest.mark.parametrize("vec_id,vec", _ALL_ECDH_VECTORS, ids=[v[0] for v in _ALL_ECDH_VECTORS])
-def test_ecdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ECDH key agreement from Wycheproof ecpoint vectors."""
-    if not _has_ecdh(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("ECDH1_DERIVE"):
         pytest.skip("ECDH1_DERIVE not supported")
 
     curve = vec["_curve"]
@@ -117,20 +131,24 @@ def test_ecdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any
     shared_expected = bytes.fromhex(vec["shared"])
     result = vec["result"]
 
+    key_bits = ec_key_bits(curve)
+
     # Import EC private key
     try:
-        priv_key = p11_session.create_object(
+        priv_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-                Attribute.KEY_TYPE: KeyType.EC,
-                Attribute.EC_PARAMS: oid,
-                Attribute.VALUE: private_scalar,
-                Attribute.DERIVE: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                int(CKA_KEY_TYPE): int(CKK_EC),
+                int(CKA_EC_PARAMS): oid,
+                int(CKA_VALUE): private_scalar,
+                int(CKA_DERIVE): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "invalid":
             return
         pytest.skip("Cannot import EC private key for ECDH")
@@ -138,28 +156,40 @@ def test_ecdh(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any
     # Derive shared secret
     # ECDH1_DERIVE params: (kdf, shared_data, public_data)
     # KDF.NULL means raw ECDH (no KDF applied to output)
+    ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=int(CKD_NULL), public_data=public_point)
     try:
-        derived_key = priv_key.derive_key(
-            KeyType.GENERIC_SECRET,
-            ec_key_bits(curve),
-            mechanism=Mechanism.ECDH1_DERIVE,
-            mechanism_param=(KDF.NULL, None, public_point),
-            template={
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-                Attribute.TOKEN: False,
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            priv_key,
+            CKM_ECDH1_DERIVE,
+            attrs={
+                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+                int(CKA_VALUE_LEN): key_bits // 8,
+                int(CKA_SENSITIVE): False,
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_TOKEN): False,
             },
+            mech_param=ecdh_param,
         )
         # Extract the derived key value
-        shared = derived_key[Attribute.VALUE]
+        attrs = read_attributes(rs.raw, rs.sh, derived_key, [int(CKA_VALUE)])
+        shared = attrs[int(CKA_VALUE)]
+        assert isinstance(shared, bytes)
         if result == "valid":
             assert shared == shared_expected, f"ECDH shared secret mismatch for {vec_id}"
         elif result == "invalid":
             pass  # Invalid but derive succeeded - module-specific
-    except p11.exceptions.PKCS11Error:
+        destroy_quietly(rs.raw, rs.sh, derived_key)
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if "mismatch" in exc_msg:
+            raise
         if result == "valid":
             pytest.xfail(f"Valid ECDH derive failed for {vec_id}")
         # acceptable: reject is fine
         return
     except (TypeError, NotImplementedError):
         pytest.skip("ECDH derive not supported by binding")
+    finally:
+        destroy_quietly(rs.raw, rs.sh, priv_key)

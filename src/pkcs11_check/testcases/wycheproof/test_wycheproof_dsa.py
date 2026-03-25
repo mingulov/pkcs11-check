@@ -9,25 +9,42 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    generate_random,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_BASE,
+    CKA_CLASS,
+    CKA_KEY_TYPE,
+    CKA_PRIME,
+    CKA_SUBPRIME,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VERIFY,
+    CKK_DSA,
+    CKM_DSA_SHA224,
+    CKM_DSA_SHA256,
+    CKO_PUBLIC_KEY,
+)
 
 pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
-_SHA_MECHANISMS: dict[str, Mechanism] = {
-    "SHA-224": Mechanism.DSA_SHA224,
-    "SHA-256": Mechanism.DSA_SHA256,
+_SHA_MECHANISMS: dict[str, int] = {
+    "SHA-224": int(CKM_DSA_SHA224),
+    "SHA-256": int(CKM_DSA_SHA256),
 }
 
 # Mechanism display names for availability checking
-_MECH_DISPLAY: dict[Mechanism, str] = {
-    Mechanism.DSA_SHA224: "DSA_SHA224",
-    Mechanism.DSA_SHA256: "DSA_SHA256",
+_MECH_DISPLAY: dict[int, str] = {
+    int(CKM_DSA_SHA224): "DSA_SHA224",
+    int(CKM_DSA_SHA256): "DSA_SHA256",
 }
 
 _DSA_FILES = [
@@ -70,13 +87,12 @@ _ALL_DSA_VECTORS = _load_dsa_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_DSA_VECTORS, ids=[v[0] for v in _ALL_DSA_VECTORS])
-def test_dsa(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """DSA signature verification from Wycheproof vectors."""
+    rs = p11_raw_session
     mechanism = vec["_mechanism"]
-    name = _MECH_DISPLAY.get(mechanism, str(mechanism))
-    slot = p11_module.get_slots(token_present=True)[0]
-    supported = {mech_name(m) for m in slot.get_mechanisms()}
-    if name not in supported:
+    name = _MECH_DISPLAY.get(mechanism, f"0x{mechanism:08x}")
+    if not rs.has_mechanism(name):
         pytest.skip(f"{name} not supported")
 
     msg = bytes.fromhex(vec["msg"])
@@ -98,27 +114,33 @@ def test_dsa(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
     value = bytes.fromhex(y_hex)
 
     try:
-        pub_key = p11_session.create_object(
+        pub_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.DSA,
-                Attribute.PRIME: prime,
-                Attribute.SUBPRIME: subprime,
-                Attribute.BASE: base,
-                Attribute.VALUE: value,
-                Attribute.TOKEN: False,
-                Attribute.VERIFY: True,
-            }
+                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+                int(CKA_KEY_TYPE): int(CKK_DSA),
+                int(CKA_PRIME): prime,
+                int(CKA_SUBPRIME): subprime,
+                int(CKA_BASE): base,
+                int(CKA_VALUE): value,
+                int(CKA_TOKEN): False,
+                int(CKA_VERIFY): True,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         pytest.skip("Cannot import DSA public key")
 
     try:
-        pub_key.verify(msg, sig, mechanism=mechanism)
+        verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
         if result == "invalid":
             pass  # Some modules accept edge-case signatures
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.fail(f"Valid DSA sig {vec_id} rejected")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub_key)
+
+    generate_random(rs.raw, rs.sh, 64)
