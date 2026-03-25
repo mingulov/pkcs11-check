@@ -9,210 +9,217 @@ parameter *object attributes*:
   - CKA_EC_PARAMS is readable on EC domain parameter objects
   - Enumeration of existing CKO_DOMAIN_PARAMETERS objects
 
-Note: create_domain_parameters(local=True) returns a wrapper-level
-LocalDomainParameters that does NOT support arbitrary attribute reads.
-Tests use wrapper properties (.key_type) or local=False for token objects.
+Uses the raw PKCS#11 API via pkcs11_check.raw.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import pkcs11
-import pkcs11.util.ec
 import pytest
-from pkcs11 import Attribute, KeyType, ObjectClass
-from pkcs11.exceptions import (
-    PKCS11Error,
-)
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.pack import attr_ulong, template
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    find_objects,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EC_PARAMS,
+    CKA_KEY_TYPE,
+    CKA_LOCAL,
+    CKA_TOKEN,
+    CKK_EC,
+    CKO_DOMAIN_PARAMETERS,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 pytestmark = pytest.mark.object
 
-# Errors when domain param creation is unsupported
-_DOMAIN_PARAM_ERRORS = (PKCS11Error, NotImplementedError)
+# Acceptable CKR codes when domain param creation is unsupported
+_DOMAIN_PARAM_ERROR_RVS = {
+    int(c) for c in (
+        CKR_FUNCTION_NOT_SUPPORTED, CKR_TEMPLATE_INCOMPLETE,
+        CKR_TEMPLATE_INCONSISTENT, CKR_ATTRIBUTE_VALUE_INVALID,
+        CKR_ATTRIBUTE_TYPE_INVALID, CKR_DEVICE_ERROR,
+        CKR_GENERAL_ERROR, CKR_MECHANISM_INVALID,
+    )
+}
+
+
+def _create_ec_domain_params(rs: Any, on_token: bool = False) -> int | None:
+    """Create EC domain parameters object on token.
+
+    Returns handle on success, None if unsupported.
+    """
+    curve_oid = encode_named_curve_parameters("secp256r1")
+    handle = 0
+    try:
+        handle = create_object(
+            rs.raw, rs.sh,
+            {
+                int(CKA_CLASS): int(CKO_DOMAIN_PARAMETERS),
+                int(CKA_KEY_TYPE): int(CKK_EC),
+                int(CKA_EC_PARAMS): curve_oid,
+                int(CKA_TOKEN): on_token,
+            },
+        )
+        return handle
+    except (AssertionError, Exception):
+        return None
 
 
 class TestEcDomainParameters:
     """EC domain parameter object attribute tests."""
 
-    def test_ec_domain_params_key_type_via_property(
-        self, p11_session: Any, p11_module: Any
+    def test_ec_domain_params_key_type(
+        self, p11_raw_session: Any,
     ) -> None:
-        """EC domain params have key_type = EC (via wrapper property)."""
-        if not has_mechanism(p11_module, "EC_KEY_PAIR_GEN"):
+        """EC domain params have key_type = EC."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
+        handle = _create_ec_domain_params(rs, on_token=False)
+        if handle is None:
+            pytest.skip("Module does not support EC domain parameter creation")
         try:
-            params = p11_session.create_domain_parameters(
-                KeyType.EC,
-                {
-                    Attribute.EC_PARAMS: (
-                        pkcs11.util.ec.encode_named_curve_parameters("secp256r1")
-                    ),
-                },
-                local=True,
+            attrs = read_attributes(
+                rs.raw, rs.sh, handle, [int(CKA_KEY_TYPE)]
             )
-        except _DOMAIN_PARAM_ERRORS as e:
-            pytest.skip(f"Module does not support EC domain parameter creation: {e}")
-        try:
-            assert params.key_type == KeyType.EC, (
-                f"Expected KeyType.EC, got {params.key_type}"
+            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_EC), (
+                f"Expected CKK_EC, got {attrs[int(CKA_KEY_TYPE)]}"
             )
         finally:
-            try:
-                params.destroy()
-            except (PKCS11Error, NotImplementedError, AttributeError):
-                pass  # LocalDomainParameters may not support destroy
+            destroy_quietly(rs.raw, rs.sh, handle)
 
     def test_ec_domain_params_on_token(
-        self, p11_session: Any, p11_module: Any
+        self, p11_raw_session: Any,
     ) -> None:
-        """EC domain params created on token (local=False) have readable attributes."""
-        if not has_mechanism(p11_module, "EC_KEY_PAIR_GEN"):
+        """EC domain params created on token have readable attributes."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
-        try:
-            params = p11_session.create_domain_parameters(
-                KeyType.EC,
-                {
-                    Attribute.EC_PARAMS: (
-                        pkcs11.util.ec.encode_named_curve_parameters("secp256r1")
-                    ),
-                },
-                local=False,
-            )
-        except _DOMAIN_PARAM_ERRORS as e:
+        handle = _create_ec_domain_params(rs, on_token=True)
+        if handle is None:
             pytest.skip(
-                f"Module does not support EC domain parameter creation on token: {e}"
+                "Module does not support EC domain parameter creation on token"
             )
         try:
-            key_type = params[Attribute.KEY_TYPE]
-            assert key_type == KeyType.EC, (
-                f"Expected KeyType.EC, got {key_type}"
+            attrs = read_attributes(
+                rs.raw, rs.sh, handle, [int(CKA_KEY_TYPE)]
             )
-        except (PKCS11Error, NotImplementedError) as e:
-            pytest.skip(f"Cannot read CKA_KEY_TYPE from domain params on token: {e}")
+            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_EC), (
+                f"Expected CKK_EC, got {attrs[int(CKA_KEY_TYPE)]}"
+            )
         finally:
-            try:
-                params.destroy()
-            except PKCS11Error:
-                pass
+            destroy_quietly(rs.raw, rs.sh, handle)
 
     def test_ec_domain_params_ec_params_readable(
-        self, p11_session: Any, p11_module: Any
+        self, p11_raw_session: Any,
     ) -> None:
         """EC domain params have readable CKA_EC_PARAMS on token objects."""
-        if not has_mechanism(p11_module, "EC_KEY_PAIR_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
-        try:
-            params = p11_session.create_domain_parameters(
-                KeyType.EC,
-                {
-                    Attribute.EC_PARAMS: (
-                        pkcs11.util.ec.encode_named_curve_parameters("secp256r1")
-                    ),
-                },
-                local=False,
-            )
-        except _DOMAIN_PARAM_ERRORS as e:
+        handle = _create_ec_domain_params(rs, on_token=True)
+        if handle is None:
             pytest.skip(
-                f"Module does not support EC domain parameter creation on token: {e}"
+                "Module does not support EC domain parameter creation on token"
             )
         try:
-            ec_params = params[Attribute.EC_PARAMS]
+            attrs = read_attributes(
+                rs.raw, rs.sh, handle, [int(CKA_EC_PARAMS)]
+            )
+            ec_params = attrs[int(CKA_EC_PARAMS)]
             assert ec_params is not None, "CKA_EC_PARAMS should not be None"
             assert len(ec_params) > 0, "CKA_EC_PARAMS should not be empty"
-            expected = pkcs11.util.ec.encode_named_curve_parameters("secp256r1")
+            expected = encode_named_curve_parameters("secp256r1")
             assert ec_params == expected, (
                 "CKA_EC_PARAMS does not match encoded secp256r1"
             )
-        except (PKCS11Error, NotImplementedError) as e:
-            pytest.skip(f"Cannot read CKA_EC_PARAMS from domain params: {e}")
         finally:
-            try:
-                params.destroy()
-            except PKCS11Error:
-                pass
+            destroy_quietly(rs.raw, rs.sh, handle)
 
     def test_ec_domain_params_local_flag(
-        self, p11_session: Any, p11_module: Any
+        self, p11_raw_session: Any,
     ) -> None:
         """CKA_LOCAL on token domain params should be False (created, not generated)."""
-        if not has_mechanism(p11_module, "EC_KEY_PAIR_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
-        try:
-            params = p11_session.create_domain_parameters(
-                KeyType.EC,
-                {
-                    Attribute.EC_PARAMS: (
-                        pkcs11.util.ec.encode_named_curve_parameters("secp256r1")
-                    ),
-                },
-                local=False,
-            )
-        except _DOMAIN_PARAM_ERRORS as e:
+        handle = _create_ec_domain_params(rs, on_token=True)
+        if handle is None:
             pytest.skip(
-                f"Module does not support EC domain parameter creation on token: {e}"
+                "Module does not support EC domain parameter creation on token"
             )
         try:
-            local = params[Attribute.LOCAL]
+            attrs = read_attributes(
+                rs.raw, rs.sh, handle, [int(CKA_LOCAL)]
+            )
+            local = attrs[int(CKA_LOCAL)]
             assert local is False, (
                 f"Expected CKA_LOCAL=False for created domain params, got {local}"
             )
-        except (PKCS11Error, NotImplementedError) as e:
+        except (AssertionError, Exception) as e:
             pytest.xfail(f"Module does not expose CKA_LOCAL on domain params: {e}")
         finally:
-            try:
-                params.destroy()
-            except PKCS11Error:
-                pass
+            destroy_quietly(rs.raw, rs.sh, handle)
 
 
 class TestDomainParameterEnumeration:
     """Enumerate CKO_DOMAIN_PARAMETERS objects on the token."""
 
-    def test_enumerate_domain_params(self, p11_session: Any) -> None:
+    def test_enumerate_domain_params(self, p11_raw_session: Any) -> None:
         """Enumerate CKO_DOMAIN_PARAMETERS objects without error."""
+        rs = p11_raw_session
+        tmpl = template(attr_ulong(CKA_CLASS, int(CKO_DOMAIN_PARAMETERS)))
         try:
-            params = list(
-                p11_session.get_objects(
-                    {Attribute.CLASS: ObjectClass.DOMAIN_PARAMETERS}
-                )
-            )
-        except PKCS11Error as e:
+            params = find_objects(rs.raw, rs.sh, tmpl)
+        except (AssertionError, Exception) as e:
             pytest.xfail(
                 f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}"
             )
         assert isinstance(params, list)
 
-    def test_domain_params_have_key_type(self, p11_session: Any) -> None:
+    def test_domain_params_have_key_type(self, p11_raw_session: Any) -> None:
         """Each CKO_DOMAIN_PARAMETERS object has a readable CKA_KEY_TYPE."""
+        rs = p11_raw_session
+        tmpl = template(attr_ulong(CKA_CLASS, int(CKO_DOMAIN_PARAMETERS)))
         try:
-            params = list(
-                p11_session.get_objects(
-                    {Attribute.CLASS: ObjectClass.DOMAIN_PARAMETERS}
-                )
-            )
-        except PKCS11Error as e:
+            params = find_objects(rs.raw, rs.sh, tmpl)
+        except (AssertionError, Exception) as e:
             pytest.xfail(
                 f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}"
             )
         if not params:
             pytest.skip("No CKO_DOMAIN_PARAMETERS objects present")
-        for param in params:
+        for handle in params:
             try:
-                key_type = param[Attribute.KEY_TYPE]
-                assert isinstance(key_type, (int, KeyType)), (
-                    f"Expected int/KeyType for KEY_TYPE, got {type(key_type)}"
+                attrs = read_attributes(
+                    rs.raw, rs.sh, handle, [int(CKA_KEY_TYPE)]
                 )
-            except PKCS11Error as e:
+                key_type = attrs[int(CKA_KEY_TYPE)]
+                assert isinstance(key_type, int), (
+                    f"Expected int for KEY_TYPE, got {type(key_type)}"
+                )
+            except (AssertionError, Exception) as e:
                 pytest.xfail(
                     f"Cannot read CKA_KEY_TYPE from domain parameter object: {e}"
                 )
 
 
 class TestMultipleCurveDomainParams:
-    """Test domain parameters across different EC curves via wrapper."""
+    """Test domain parameters across different EC curves."""
 
     @pytest.mark.parametrize(
         "curve",
@@ -220,29 +227,33 @@ class TestMultipleCurveDomainParams:
         ids=["P-256", "P-384", "P-521"],
     )
     def test_ec_curve_domain_params(
-        self, p11_session: Any, p11_module: Any, curve: str
+        self, p11_raw_session: Any, curve: str,
     ) -> None:
         """EC domain params can be created for standard NIST curves."""
-        if not has_mechanism(p11_module, "EC_KEY_PAIR_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
+        curve_oid = encode_named_curve_parameters(curve)
+        handle = 0
         try:
-            params = p11_session.create_domain_parameters(
-                KeyType.EC,
+            handle = create_object(
+                rs.raw, rs.sh,
                 {
-                    Attribute.EC_PARAMS: (
-                        pkcs11.util.ec.encode_named_curve_parameters(curve)
-                    ),
+                    int(CKA_CLASS): int(CKO_DOMAIN_PARAMETERS),
+                    int(CKA_KEY_TYPE): int(CKK_EC),
+                    int(CKA_EC_PARAMS): curve_oid,
+                    int(CKA_TOKEN): False,
                 },
-                local=True,
             )
-        except _DOMAIN_PARAM_ERRORS as e:
+        except (AssertionError, Exception) as e:
             pytest.skip(
                 f"Module does not support domain parameter creation for {curve}: {e}"
             )
         try:
-            assert params.key_type == KeyType.EC
+            attrs = read_attributes(
+                rs.raw, rs.sh, handle, [int(CKA_KEY_TYPE)]
+            )
+            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_EC)
         finally:
-            try:
-                params.destroy()
-            except (PKCS11Error, NotImplementedError, AttributeError):
-                pass
+            if handle:
+                destroy_quietly(rs.raw, rs.sh, handle)

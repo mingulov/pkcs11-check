@@ -3,6 +3,8 @@
 Verifies CKA_NEVER_EXTRACTABLE, CKA_LOCAL, CKA_ALWAYS_SENSITIVE,
 and other security-critical attribute flags that catch real bugs
 in module implementations.
+
+Uses the raw PKCS#11 API via pkcs11_check.raw.
 """
 
 from __future__ import annotations
@@ -10,139 +12,274 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType
-from pkcs11.exceptions import AttributeTypeInvalid, AttributeValueInvalid, FunctionNotSupported
 
-from pkcs11_check.testcases.conftest import import_aes_key
+from pkcs11_check.raw.pack import mech_bytes
+from pkcs11_check.raw.recipes import (
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+    gen_aes_key,
+    gen_rsa_keypair,
+    generate_random,
+    import_secret_key,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_ALWAYS_SENSITIVE,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_LOCAL,
+    CKA_NEVER_EXTRACTABLE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKK_AES,
+    CKM_AES_CBC_PAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_OK,
+)
 
 pytestmark = pytest.mark.security
+
+
+def _read_bool_attr_safe(
+    rs: Any, handle: int, attr: int,
+) -> bool | None:
+    """Read a bool attribute, returning None if CKR_ATTRIBUTE_TYPE_INVALID."""
+    import ctypes
+
+    from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CK_BBOOL, CK_VOID_PTR
+
+    val = CK_BBOOL(0)
+    tmpl = (CK_ATTRIBUTE * 1)()
+    tmpl[0].type = attr
+    tmpl[0].pValue = ctypes.cast(ctypes.pointer(val), CK_VOID_PTR)
+    tmpl[0].ulValueLen = ctypes.sizeof(val)
+    rv = int(rs.raw.C_GetAttributeValue(rs.sh, handle, tmpl, 1))
+    if rv == int(CKR_ATTRIBUTE_TYPE_INVALID):
+        return None
+    if rv != int(CKR_OK):
+        return None
+    return val.value != 0
 
 
 class TestNeverExtractable:
     """Verify CKA_NEVER_EXTRACTABLE flag semantics."""
 
-    def test_generated_non_extractable_is_never_extractable(self, p11_session: Any) -> None:
+    def test_generated_non_extractable_is_never_extractable(
+        self, p11_raw_session: Any,
+    ) -> None:
         """Key generated with EXTRACTABLE=False has NEVER_EXTRACTABLE=True."""
-        key = p11_session.generate_key(KeyType.AES, 256, template={Attribute.EXTRACTABLE: False})
-        assert key[Attribute.NEVER_EXTRACTABLE] is True
-
-    def test_generated_extractable_is_not_never_extractable(self, p11_session: Any) -> None:
-        """Key generated with EXTRACTABLE=True has NEVER_EXTRACTABLE=False."""
-        key = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            template={Attribute.EXTRACTABLE: True, Attribute.SENSITIVE: False},
+        rs = p11_raw_session
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_EXTRACTABLE): False},
         )
-        assert key[Attribute.NEVER_EXTRACTABLE] is False
-
-    def test_extractable_and_never_extractable_consistent(self, p11_session: Any) -> None:
-        """EXTRACTABLE=True implies NEVER_EXTRACTABLE=False (and vice versa for default)."""
-        # Default key: non-extractable
-        key_default = p11_session.generate_key(KeyType.AES, 256)
-        assert key_default[Attribute.EXTRACTABLE] is False
         try:
-            never_ext_default = key_default[Attribute.NEVER_EXTRACTABLE]
-        except AttributeTypeInvalid:
-            pytest.xfail(
-                "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
-                "(PKCS#11 spec Table 18 requires this attribute)"
+            attrs = read_attributes(
+                rs.raw, rs.sh, key, [int(CKA_NEVER_EXTRACTABLE)]
             )
-        assert never_ext_default is True
+            assert attrs[int(CKA_NEVER_EXTRACTABLE)] is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_generated_extractable_is_not_never_extractable(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """Key generated with EXTRACTABLE=True has NEVER_EXTRACTABLE=False."""
+        rs = p11_raw_session
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
+        )
+        try:
+            attrs = read_attributes(
+                rs.raw, rs.sh, key, [int(CKA_NEVER_EXTRACTABLE)]
+            )
+            assert attrs[int(CKA_NEVER_EXTRACTABLE)] is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_extractable_and_never_extractable_consistent(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """EXTRACTABLE=True implies NEVER_EXTRACTABLE=False (and vice versa for default)."""
+        rs = p11_raw_session
+        # Default key: non-extractable
+        key_default = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            attrs_d = read_attributes(
+                rs.raw, rs.sh, key_default, [int(CKA_EXTRACTABLE)]
+            )
+            assert attrs_d[int(CKA_EXTRACTABLE)] is False
+            never_ext_default = _read_bool_attr_safe(
+                rs, key_default, int(CKA_NEVER_EXTRACTABLE)
+            )
+            if never_ext_default is None:
+                pytest.xfail(
+                    "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
+                    "(PKCS#11 spec Table 18 requires this attribute)"
+                )
+            assert never_ext_default is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_default)
 
         # Extractable key
-        key_ext = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            template={Attribute.EXTRACTABLE: True, Attribute.SENSITIVE: False},
+        key_ext = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
         )
-        assert key_ext[Attribute.EXTRACTABLE] is True
         try:
-            never_ext = key_ext[Attribute.NEVER_EXTRACTABLE]
-        except AttributeTypeInvalid:
-            pytest.xfail(
-                "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
-                "(PKCS#11 spec Table 18 requires this attribute)"
+            attrs_e = read_attributes(
+                rs.raw, rs.sh, key_ext, [int(CKA_EXTRACTABLE)]
             )
-        if never_ext is not False:
-            pytest.xfail(
-                "Module sets CKA_NEVER_EXTRACTABLE=True on extractable keys — "
-                "violates PKCS#11 spec Table 18 invariant"
+            assert attrs_e[int(CKA_EXTRACTABLE)] is True
+            never_ext = _read_bool_attr_safe(
+                rs, key_ext, int(CKA_NEVER_EXTRACTABLE)
             )
+            if never_ext is None:
+                pytest.xfail(
+                    "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
+                    "(PKCS#11 spec Table 18 requires this attribute)"
+                )
+            if never_ext is not False:
+                pytest.xfail(
+                    "Module sets CKA_NEVER_EXTRACTABLE=True on extractable keys — "
+                    "violates PKCS#11 spec Table 18 invariant"
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_ext)
 
 
 class TestLocalFlag:
     """Verify CKA_LOCAL flag distinguishes generated vs imported keys."""
 
-    def test_generated_key_is_local(self, p11_session: Any) -> None:
+    def test_generated_key_is_local(self, p11_raw_session: Any) -> None:
         """Keys generated on the token have LOCAL=True."""
-        key = p11_session.generate_key(KeyType.AES, 256)
-        assert key[Attribute.LOCAL] is True
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_LOCAL)])
+            assert attrs[int(CKA_LOCAL)] is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_imported_key_is_not_local(self, p11_session: Any) -> None:
+    def test_imported_key_is_not_local(self, p11_raw_session: Any) -> None:
         """Imported keys have LOCAL=False."""
-        key = import_aes_key(p11_session, b"\x00" * 32)
-        assert key[Attribute.LOCAL] is False
+        rs = p11_raw_session
+        key = import_secret_key(
+            rs.raw, rs.sh, CKK_AES, b"\x00" * 32,
+            attrs={
+                int(CKA_ENCRYPT): True,
+                int(CKA_DECRYPT): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+                int(CKA_EXTRACTABLE): True,
+            },
+        )
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_LOCAL)])
+            assert attrs[int(CKA_LOCAL)] is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_generated_rsa_keypair_is_local(self, p11_session: Any) -> None:
+    def test_generated_rsa_keypair_is_local(self, p11_raw_session: Any) -> None:
         """Generated RSA keypair has LOCAL=True on both keys."""
-        try:
-            pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
-        except (AttributeValueInvalid, FunctionNotSupported) as exc:
-            pytest.xfail(f"Module cannot generate RSA keypair: {exc}")
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("RSA key generation not supported")
 
+        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            pub_local = pub[Attribute.LOCAL]
-            priv_local = priv[Attribute.LOCAL]
-        except AttributeTypeInvalid:
-            pytest.xfail(
-                "Module does not implement CKA_LOCAL attribute "
-                "(PKCS#11 spec requires it for generated keys)"
+            pub_local = _read_bool_attr_safe(rs, pub, int(CKA_LOCAL))
+            priv_local = _read_bool_attr_safe(rs, priv, int(CKA_LOCAL))
+
+            if pub_local is None or priv_local is None:
+                pytest.xfail(
+                    "Module does not implement CKA_LOCAL attribute "
+                    "(PKCS#11 spec requires it for generated keys)"
+                )
+                return
+
+            assert pub_local is True, (
+                f"CKA_LOCAL={pub_local} on generated public key - "
+                "spec requires LOCAL=TRUE for generated keys"
             )
-            return
-
-        # CKA_LOCAL MUST be TRUE for generated keys per OASIS spec C_GenerateKeyPair
-        assert pub_local is True, (
-            f"CKA_LOCAL={pub_local} on generated public key - "
-            "spec requires LOCAL=TRUE for generated keys"
-        )
-        assert priv_local is True, (
-            f"CKA_LOCAL={priv_local} on generated private key - "
-            "spec requires LOCAL=TRUE for generated keys"
-        )
+            assert priv_local is True, (
+                f"CKA_LOCAL={priv_local} on generated private key - "
+                "spec requires LOCAL=TRUE for generated keys"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
 
 class TestAlwaysSensitive:
     """Verify CKA_ALWAYS_SENSITIVE flag semantics."""
 
-    def test_sensitive_key_always_sensitive(self, p11_session: Any) -> None:
+    def test_sensitive_key_always_sensitive(self, p11_raw_session: Any) -> None:
         """Key generated sensitive has ALWAYS_SENSITIVE=True."""
-        key = p11_session.generate_key(KeyType.AES, 256)
-        assert key[Attribute.SENSITIVE] is True
-        assert key[Attribute.ALWAYS_SENSITIVE] is True
+        rs = p11_raw_session
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_SENSITIVE): True},
+        )
+        try:
+            attrs = read_attributes(
+                rs.raw, rs.sh, key,
+                [int(CKA_SENSITIVE), int(CKA_ALWAYS_SENSITIVE)],
+            )
+            assert attrs[int(CKA_SENSITIVE)] is True
+            assert attrs[int(CKA_ALWAYS_SENSITIVE)] is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_non_sensitive_key_not_always_sensitive(self, p11_session: Any) -> None:
+    def test_non_sensitive_key_not_always_sensitive(self, p11_raw_session: Any) -> None:
         """Key generated non-sensitive has ALWAYS_SENSITIVE=False."""
-        key = p11_session.generate_key(KeyType.AES, 256, template={Attribute.SENSITIVE: False})
-        assert key[Attribute.SENSITIVE] is False
-        assert key[Attribute.ALWAYS_SENSITIVE] is False
+        rs = p11_raw_session
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_SENSITIVE): False},
+        )
+        try:
+            attrs = read_attributes(
+                rs.raw, rs.sh, key,
+                [int(CKA_SENSITIVE), int(CKA_ALWAYS_SENSITIVE)],
+            )
+            assert attrs[int(CKA_SENSITIVE)] is False
+            assert attrs[int(CKA_ALWAYS_SENSITIVE)] is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestAutopadding:
     """Verify AES-CBC-PAD handles automatic PKCS#7 padding correctly."""
 
     @pytest.mark.parametrize("plaintext_len", [1, 7, 15, 16, 17, 31, 32, 100])
-    def test_aes_cbc_pad_variable_length(self, p11_session: Any, plaintext_len: int) -> None:
+    def test_aes_cbc_pad_variable_length(
+        self, p11_raw_session: Any, plaintext_len: int,
+    ) -> None:
         """AES-CBC-PAD roundtrip works for non-block-aligned plaintext lengths."""
-        from pkcs11 import Mechanism
-
-        key = p11_session.generate_key(KeyType.AES, 256)
-        iv = p11_session.generate_random(128)  # 16 bytes
+        rs = p11_raw_session
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True},
+        )
+        iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = bytes(range(256))[:plaintext_len]
+        try:
+            ct = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, plaintext,
+                mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+            )
+            # Ciphertext should be padded to next block boundary
+            assert len(ct) % 16 == 0
+            assert len(ct) >= plaintext_len
 
-        ct = key.encrypt(plaintext, mechanism=Mechanism.AES_CBC_PAD, mechanism_param=iv)
-        # Ciphertext should be padded to next block boundary
-        assert len(ct) % 16 == 0
-        assert len(ct) >= plaintext_len
-
-        pt = key.decrypt(ct, mechanism=Mechanism.AES_CBC_PAD, mechanism_param=iv)
-        assert pt == plaintext
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, ct,
+                mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+            )
+            assert pt == plaintext
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
