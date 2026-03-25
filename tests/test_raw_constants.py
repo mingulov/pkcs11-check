@@ -215,3 +215,41 @@ class TestGeneratedConstants:
 
         val = ctypes.c_ulong(CKF_RW_SESSION)
         assert val.value == CKF_RW_SESSION
+
+
+class TestPlatformDependentConstants:
+    """CK_UNAVAILABLE_INFORMATION must match the platform CK_ULONG width."""
+
+    def test_ck_unavailable_information_matches_ulong_max(self) -> None:
+        from pkcs11_check.raw.types_std import CK_UNAVAILABLE_INFORMATION
+
+        ulong_max = (1 << (ctypes.sizeof(ctypes.c_ulong) * 8)) - 1
+        assert CK_UNAVAILABLE_INFORMATION == ulong_max
+
+    def test_ck_unavailable_information_fits_in_c_ulong(self) -> None:
+        from pkcs11_check.raw.types_std import CK_UNAVAILABLE_INFORMATION
+
+        val = ctypes.c_ulong(CK_UNAVAILABLE_INFORMATION)
+        assert val.value == CK_UNAVAILABLE_INFORMATION
+
+    def test_ck_unavailable_information_is_all_bits_set(self) -> None:
+        from pkcs11_check.raw.types_std import CK_UNAVAILABLE_INFORMATION
+
+        # On any platform, all bits of CK_ULONG must be set
+        ulong_bits = ctypes.sizeof(ctypes.c_ulong) * 8
+        assert CK_UNAVAILABLE_INFORMATION == (1 << ulong_bits) - 1
+
+    def test_ck_unavailable_information_not_hardcoded_64bit(self) -> None:
+        from pkcs11_check.raw.types_std import CK_UNAVAILABLE_INFORMATION
+
+        # Must NOT be hardcoded to 0xFFFFFFFFFFFFFFFF on 32-bit platforms
+        ulong_bytes = ctypes.sizeof(ctypes.c_ulong)
+        if ulong_bytes == 4:
+            assert CK_UNAVAILABLE_INFORMATION == 0xFFFFFFFF
+        elif ulong_bytes == 8:
+            assert CK_UNAVAILABLE_INFORMATION == 0xFFFFFFFFFFFFFFFF
+
+    def test_ck_effectively_infinite_is_zero(self) -> None:
+        from pkcs11_check.raw.types_std import CK_EFFECTIVELY_INFINITE
+
+        assert CK_EFFECTIVELY_INFINITE == 0
