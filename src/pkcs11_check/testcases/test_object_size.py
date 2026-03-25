@@ -9,14 +9,29 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, ObjectClass
+
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    gen_aes_key,
+    gen_rsa_keypair,
+    get_object_size,
+)
+from pkcs11_check.raw.types_std import (
+    CK_UNAVAILABLE_INFORMATION,
+    CKA_CLASS,
+    CKA_LABEL,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKO_DATA,
+)
 
 pytestmark = pytest.mark.keymgmt
 
-from pkcs11_check.raw.types_std import CK_UNAVAILABLE_INFORMATION as CK_UNAVAILABLE
+CK_UNAVAILABLE = int(CK_UNAVAILABLE_INFORMATION)
 
 
-def _get_object_size(obj: Any) -> int | None:
+def _safe_get_size(raw: Any, sh: int, handle: int) -> int | None:
     """Get object size, returning None if not supported or not meaningful.
 
     Per PKCS#11 spec, C_GetObjectSize MAY return CK_UNAVAILABLE_INFORMATION
@@ -24,7 +39,7 @@ def _get_object_size(obj: Any) -> int | None:
     the object type. Both are treated as "not supported" here.
     """
     try:
-        size: int = obj.wrapper.get_size()
+        size = get_object_size(raw, sh, handle)
         if size == CK_UNAVAILABLE or size == 0:
             return None
         return size
@@ -35,29 +50,41 @@ def _get_object_size(obj: Any) -> int | None:
 class TestObjectSize:
     """Test C_GetObjectSize."""
 
-    def test_aes_key_has_size(self, p11_session: Any) -> None:
+    def test_aes_key_has_size(self, p11_raw_session: Any) -> None:
         """AES key reports a size (or CK_UNAVAILABLE_INFORMATION)."""
-        key = p11_session.generate_key(KeyType.AES, 256)
-        size = _get_object_size(key)
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            size = _safe_get_size(rs.raw, rs.sh, key)
 
-        if size is None:
-            pytest.skip("C_GetObjectSize not supported (returns CK_UNAVAILABLE_INFORMATION)")
+            if size is None:
+                pytest.skip("C_GetObjectSize not supported (returns CK_UNAVAILABLE_INFORMATION)")
 
-        # AES-256 key is at minimum 32 bytes of material
-        assert size >= 32, f"AES-256 object size {size} suspiciously small"
+            # AES-256 key is at minimum 32 bytes of material
+            assert size >= 32, f"AES-256 object size {size} suspiciously small"
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_rsa_key_larger_than_aes(self, p11_session: Any) -> None:
+    def test_rsa_key_larger_than_aes(self, p11_raw_session: Any) -> None:
         """RSA-2048 key should be larger than AES-256 key."""
-        aes_key = p11_session.generate_key(KeyType.AES, 256)
-        aes_size = _get_object_size(aes_key)
+        rs = p11_raw_session
+        aes_key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            aes_size = _safe_get_size(rs.raw, rs.sh, aes_key)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, aes_key)
 
         if aes_size is None:
             pytest.skip(
                 "C_GetObjectSize not supported (returns 0 or CK_UNAVAILABLE_INFORMATION)"
             )
 
-        _pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
-        rsa_size = _get_object_size(priv)
+        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        try:
+            rsa_size = _safe_get_size(rs.raw, rs.sh, priv)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
         if rsa_size is None:
             pytest.skip(
@@ -68,31 +95,31 @@ class TestObjectSize:
             f"RSA-2048 size ({rsa_size}) should be > AES-256 size ({aes_size})"
         )
 
-    def test_data_object_size_scales(self, p11_session: Any) -> None:
+    def test_data_object_size_scales(self, p11_raw_session: Any) -> None:
         """Larger CKO_DATA objects should report larger sizes."""
-        small = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.DATA,
-                Attribute.LABEL: "size-small",
-                Attribute.VALUE: b"x" * 100,
-                Attribute.TOKEN: False,
-            }
-        )
-        large = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.DATA,
-                Attribute.LABEL: "size-large",
-                Attribute.VALUE: b"x" * 10000,
-                Attribute.TOKEN: False,
-            }
-        )
+        rs = p11_raw_session
+        small = create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): int(CKO_DATA),
+            int(CKA_LABEL): "size-small",
+            int(CKA_VALUE): b"x" * 100,
+            int(CKA_TOKEN): False,
+        })
+        large = create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): int(CKO_DATA),
+            int(CKA_LABEL): "size-large",
+            int(CKA_VALUE): b"x" * 10000,
+            int(CKA_TOKEN): False,
+        })
+        try:
+            small_size = _safe_get_size(rs.raw, rs.sh, small)
+            large_size = _safe_get_size(rs.raw, rs.sh, large)
 
-        small_size = _get_object_size(small)
-        large_size = _get_object_size(large)
+            if small_size is None or large_size is None:
+                pytest.skip("C_GetObjectSize not supported")
 
-        if small_size is None or large_size is None:
-            pytest.skip("C_GetObjectSize not supported")
-
-        assert large_size > small_size, (
-            f"10KB data ({large_size}) should be > 100B data ({small_size})"
-        )
+            assert large_size > small_size, (
+                f"10KB data ({large_size}) should be > 100B data ({small_size})"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, small)
+            destroy_quietly(rs.raw, rs.sh, large)

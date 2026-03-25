@@ -10,7 +10,33 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+
+from pkcs11_check.raw.recipes import (
+    decrypt_single,
+    destroy_quietly,
+    digest_single,
+    encrypt_single,
+    gen_aes_key,
+    gen_rsa_keypair,
+    generate_random,
+    import_secret_key,
+    read_attributes,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_VALUE,
+    CKA_VERIFY,
+    CKK_AES,
+    CKM_AES_ECB,
+    CKM_SHA256,
+    CKM_SHA256_RSA_PKCS,
+)
 
 pytestmark = pytest.mark.boundary
 
@@ -18,154 +44,224 @@ pytestmark = pytest.mark.boundary
 class TestEncryptBufferSizes:
     """Test encryption with various input sizes."""
 
-    def test_single_block(self, p11_session: Any) -> None:
+    def test_single_block(self, p11_raw_session: Any) -> None:
         """Encrypt exactly one AES block (16 bytes)."""
-        key = p11_session.generate_key(KeyType.AES, 256)
-        pt = b"X" * 16
-        ct = key.encrypt(pt, mechanism=Mechanism.AES_ECB)
-        assert len(ct) == 16
-        assert key.decrypt(ct, mechanism=Mechanism.AES_ECB) == pt
+        rs = p11_raw_session
+        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        try:
+            pt = b"X" * 16
+            ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
+            assert len(ct) == 16
+            dt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
+            assert dt == pt
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_two_blocks(self, p11_session: Any) -> None:
+    def test_two_blocks(self, p11_raw_session: Any) -> None:
         """Encrypt exactly two blocks."""
-        key = p11_session.generate_key(KeyType.AES, 256)
-        pt = b"Y" * 32
-        ct = key.encrypt(pt, mechanism=Mechanism.AES_ECB)
-        assert len(ct) == 32
-        assert key.decrypt(ct, mechanism=Mechanism.AES_ECB) == pt
+        rs = p11_raw_session
+        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        try:
+            pt = b"Y" * 32
+            ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
+            assert len(ct) == 32
+            dt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
+            assert dt == pt
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_100_blocks(self, p11_session: Any) -> None:
+    def test_100_blocks(self, p11_raw_session: Any) -> None:
         """Encrypt 100 blocks (1600 bytes)."""
-        key = p11_session.generate_key(KeyType.AES, 256)
-        pt = b"Z" * 1600
-        ct = key.encrypt(pt, mechanism=Mechanism.AES_ECB)
-        assert len(ct) == 1600
-        assert key.decrypt(ct, mechanism=Mechanism.AES_ECB) == pt
+        rs = p11_raw_session
+        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        try:
+            pt = b"Z" * 1600
+            ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
+            assert len(ct) == 1600
+            dt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
+            assert dt == pt
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_64kb(self, p11_session: Any) -> None:
+    def test_64kb(self, p11_raw_session: Any) -> None:
         """Encrypt 64KB payload."""
-        key = p11_session.generate_key(KeyType.AES, 256)
-        pt = bytes(range(256)) * 256  # 64KB, block-aligned
-        ct = key.encrypt(pt, mechanism=Mechanism.AES_ECB)
-        assert len(ct) == 65536
-        assert key.decrypt(ct, mechanism=Mechanism.AES_ECB) == pt
+        rs = p11_raw_session
+        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        try:
+            pt = bytes(range(256)) * 256  # 64KB, block-aligned
+            ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
+            assert len(ct) == 65536
+            dt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
+            assert dt == pt
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_1mb(self, p11_session: Any) -> None:
+    def test_1mb(self, p11_raw_session: Any) -> None:
         """Encrypt 1MB payload - tests streaming/chunking."""
-        key = p11_session.generate_key(KeyType.AES, 256)
-        pt = b"\xAB" * (1024 * 1024)  # 1MB
-        ct = key.encrypt(pt, mechanism=Mechanism.AES_ECB)
-        assert len(ct) == 1024 * 1024
-        assert key.decrypt(ct, mechanism=Mechanism.AES_ECB) == pt
+        rs = p11_raw_session
+        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        try:
+            pt = b"\xAB" * (1024 * 1024)  # 1MB
+            ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
+            assert len(ct) == 1024 * 1024
+            dt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
+            assert dt == pt
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestDigestBufferSizes:
     """Test digest with various input sizes."""
 
-    def test_empty_input(self, p11_session: Any) -> None:
+    def test_empty_input(self, p11_raw_session: Any) -> None:
         """SHA-256 of empty data."""
-        digest = p11_session.digest(b"", mechanism=Mechanism.SHA256)
+        rs = p11_raw_session
+        digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"")
         assert len(digest) == 32
 
-    def test_single_byte(self, p11_session: Any) -> None:
+    def test_single_byte(self, p11_raw_session: Any) -> None:
         """SHA-256 of single byte."""
-        digest = p11_session.digest(b"\x00", mechanism=Mechanism.SHA256)
+        rs = p11_raw_session
+        digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"\x00")
         assert len(digest) == 32
 
-    def test_exactly_block_size(self, p11_session: Any) -> None:
+    def test_exactly_block_size(self, p11_raw_session: Any) -> None:
         """SHA-256 of exactly one SHA-256 block (64 bytes)."""
-        digest = p11_session.digest(b"A" * 64, mechanism=Mechanism.SHA256)
+        rs = p11_raw_session
+        digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"A" * 64)
         assert len(digest) == 32
 
-    def test_block_boundary_minus_one(self, p11_session: Any) -> None:
+    def test_block_boundary_minus_one(self, p11_raw_session: Any) -> None:
         """SHA-256 of 63 bytes (one less than block size)."""
-        digest = p11_session.digest(b"B" * 63, mechanism=Mechanism.SHA256)
+        rs = p11_raw_session
+        digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"B" * 63)
         assert len(digest) == 32
 
-    def test_block_boundary_plus_one(self, p11_session: Any) -> None:
+    def test_block_boundary_plus_one(self, p11_raw_session: Any) -> None:
         """SHA-256 of 65 bytes (one more than block size)."""
-        digest = p11_session.digest(b"C" * 65, mechanism=Mechanism.SHA256)
+        rs = p11_raw_session
+        digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"C" * 65)
         assert len(digest) == 32
 
-    def test_large_input(self, p11_session: Any) -> None:
+    def test_large_input(self, p11_raw_session: Any) -> None:
         """SHA-256 of 1MB input."""
+        rs = p11_raw_session
         data = b"D" * (1024 * 1024)
-        digest = p11_session.digest(data, mechanism=Mechanism.SHA256)
+        digest = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
         assert len(digest) == 32
 
 
 class TestSignBufferSizes:
     """Test signing with various data sizes."""
 
-    def test_sign_empty(self, p11_session: Any) -> None:
+    def test_sign_empty(self, p11_raw_session: Any) -> None:
         """RSA sign of empty data."""
-        pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
-        sig = priv.sign(b"", mechanism=Mechanism.SHA256_RSA_PKCS)
-        assert len(sig) == 256
-        assert pub.verify(b"", sig, mechanism=Mechanism.SHA256_RSA_PKCS)
+        rs = p11_raw_session
+        pub, priv = gen_rsa_keypair(
+            rs.raw, rs.sh, 2048,
+            public_attrs={int(CKA_VERIFY): True},
+            private_attrs={int(CKA_SIGN): True},
+        )
+        try:
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"")
+            assert len(sig) == 256
+            verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, b"", sig)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_sign_single_byte(self, p11_session: Any) -> None:
+    def test_sign_single_byte(self, p11_raw_session: Any) -> None:
         """RSA sign of single byte."""
-        pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
-        sig = priv.sign(b"X", mechanism=Mechanism.SHA256_RSA_PKCS)
-        assert pub.verify(b"X", sig, mechanism=Mechanism.SHA256_RSA_PKCS)
+        rs = p11_raw_session
+        pub, priv = gen_rsa_keypair(
+            rs.raw, rs.sh, 2048,
+            public_attrs={int(CKA_VERIFY): True},
+            private_attrs={int(CKA_SIGN): True},
+        )
+        try:
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"X")
+            verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, b"X", sig)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_sign_100kb(self, p11_session: Any) -> None:
+    def test_sign_100kb(self, p11_raw_session: Any) -> None:
         """RSA sign of 100KB payload."""
-        pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048)
-        data = b"E" * 100_000
-        sig = priv.sign(data, mechanism=Mechanism.SHA256_RSA_PKCS)
-        assert pub.verify(data, sig, mechanism=Mechanism.SHA256_RSA_PKCS)
+        rs = p11_raw_session
+        pub, priv = gen_rsa_keypair(
+            rs.raw, rs.sh, 2048,
+            public_attrs={int(CKA_VERIFY): True},
+            private_attrs={int(CKA_SIGN): True},
+        )
+        try:
+            data = b"E" * 100_000
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
+            verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
 
 class TestKeyImportBufferSizes:
     """Test key import with various key sizes."""
 
-    def test_aes_128(self, p11_session: Any) -> None:
-        key = p11_session.create_object({
-            Attribute.CLASS: ObjectClass.SECRET_KEY,
-            Attribute.KEY_TYPE: KeyType.AES,
-            Attribute.VALUE: bytes(16),
-            Attribute.TOKEN: False,
-            Attribute.SENSITIVE: False,
-            Attribute.EXTRACTABLE: True,
-        })
-        assert key[Attribute.VALUE] == bytes(16)
+    def test_aes_128(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        key = import_secret_key(
+            rs.raw, rs.sh, CKK_AES, bytes(16),
+            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+        )
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
+            assert attrs[int(CKA_VALUE)] == bytes(16)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_aes_192(self, p11_session: Any) -> None:
-        key = p11_session.create_object({
-            Attribute.CLASS: ObjectClass.SECRET_KEY,
-            Attribute.KEY_TYPE: KeyType.AES,
-            Attribute.VALUE: bytes(24),
-            Attribute.TOKEN: False,
-            Attribute.SENSITIVE: False,
-            Attribute.EXTRACTABLE: True,
-        })
-        assert key[Attribute.VALUE] == bytes(24)
+    def test_aes_192(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        key = import_secret_key(
+            rs.raw, rs.sh, CKK_AES, bytes(24),
+            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+        )
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
+            assert attrs[int(CKA_VALUE)] == bytes(24)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_aes_256(self, p11_session: Any) -> None:
-        key = p11_session.create_object({
-            Attribute.CLASS: ObjectClass.SECRET_KEY,
-            Attribute.KEY_TYPE: KeyType.AES,
-            Attribute.VALUE: bytes(32),
-            Attribute.TOKEN: False,
-            Attribute.SENSITIVE: False,
-            Attribute.EXTRACTABLE: True,
-        })
-        assert key[Attribute.VALUE] == bytes(32)
+    def test_aes_256(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        key = import_secret_key(
+            rs.raw, rs.sh, CKK_AES, bytes(32),
+            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+        )
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
+            assert attrs[int(CKA_VALUE)] == bytes(32)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestRandomBufferSizes:
     """Test C_GenerateRandom with various sizes."""
 
-    def test_1_byte(self, p11_session: Any) -> None:
-        assert len(p11_session.generate_random(8)) == 1
+    def test_1_byte(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        assert len(generate_random(rs.raw, rs.sh, 1)) == 1
 
-    def test_16_bytes(self, p11_session: Any) -> None:
-        assert len(p11_session.generate_random(128)) == 16
+    def test_16_bytes(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        assert len(generate_random(rs.raw, rs.sh, 16)) == 16
 
-    def test_256_bytes(self, p11_session: Any) -> None:
-        assert len(p11_session.generate_random(2048)) == 256
+    def test_256_bytes(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        assert len(generate_random(rs.raw, rs.sh, 256)) == 256
 
-    def test_4096_bytes(self, p11_session: Any) -> None:
-        assert len(p11_session.generate_random(32768)) == 4096
+    def test_4096_bytes(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        assert len(generate_random(rs.raw, rs.sh, 4096)) == 4096

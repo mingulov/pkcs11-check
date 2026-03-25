@@ -8,9 +8,27 @@ from __future__ import annotations
 
 from typing import Any
 
-import pkcs11
 import pytest
-from pkcs11 import Attribute, KeyType, ObjectClass
+
+from pkcs11_check.raw.pack import attr_bytes, template
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    find_objects,
+    gen_aes_key,
+    gen_rsa_keypair,
+    read_attributes,
+    set_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_ID,
+    CKA_KEY_TYPE,
+    CKA_LABEL,
+    CKA_MODULUS,
+    CKA_VALUE,
+    CKK_RSA,
+    CKO_PUBLIC_KEY,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -18,87 +36,125 @@ pytestmark = pytest.mark.keymgmt
 class TestSetAttributePositive:
     """Verify that mutable attributes can be changed."""
 
-    def test_change_label(self, p11_session: Any) -> None:
+    def test_change_label(self, p11_raw_session: Any) -> None:
         """CKA_LABEL can be changed on an existing key."""
-        key = p11_session.generate_key(KeyType.AES, 256, label="before")
-        assert key.label == "before"
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): "before"})
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_LABEL)])
+            assert attrs[int(CKA_LABEL)] == "before"
 
-        key[Attribute.LABEL] = "after"
+            set_attributes(rs.raw, rs.sh, key, {int(CKA_LABEL): "after"})
 
-        # Search by new label works (label property may be cached, use search)
-        found = list(p11_session.get_objects({Attribute.LABEL: "after"}))
-        assert len(found) >= 1
+            # Search by new label works
+            tmpl = template(attr_bytes(CKA_LABEL, b"after"))
+            found = find_objects(rs.raw, rs.sh, tmpl)
+            assert len(found) >= 1
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_change_id(self, p11_session: Any) -> None:
+    def test_change_id(self, p11_raw_session: Any) -> None:
         """CKA_ID can be changed on an existing key."""
-        key = p11_session.generate_key(KeyType.AES, 256, id=b"\x01\x02")
-        key[Attribute.ID] = b"\xaa\xbb"
-        assert key[Attribute.ID] == b"\xaa\xbb"
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_ID): b"\x01\x02"})
+        try:
+            set_attributes(rs.raw, rs.sh, key, {int(CKA_ID): b"\xaa\xbb"})
+            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_ID)])
+            assert attrs[int(CKA_ID)] == b"\xaa\xbb"
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_change_label_on_keypair(self, p11_session: Any) -> None:
+    def test_change_label_on_keypair(self, p11_raw_session: Any) -> None:
         """CKA_LABEL can be changed on RSA public and private keys."""
-        pub, priv = p11_session.generate_keypair(KeyType.RSA, 2048, label="rsa-orig")
+        rs = p11_raw_session
+        pub, priv = gen_rsa_keypair(
+            rs.raw, rs.sh, 2048,
+            public_attrs={int(CKA_LABEL): "rsa-orig"},
+            private_attrs={int(CKA_LABEL): "rsa-orig"},
+        )
+        try:
+            set_attributes(rs.raw, rs.sh, pub, {int(CKA_LABEL): "rsa-pub-new"})
+            set_attributes(rs.raw, rs.sh, priv, {int(CKA_LABEL): "rsa-priv-new"})
 
-        pub[Attribute.LABEL] = "rsa-pub-new"
-        priv[Attribute.LABEL] = "rsa-priv-new"
-
-        assert len(list(p11_session.get_objects({Attribute.LABEL: "rsa-pub-new"}))) >= 1
-        assert len(list(p11_session.get_objects({Attribute.LABEL: "rsa-priv-new"}))) >= 1
+            tmpl_pub = template(attr_bytes(CKA_LABEL, b"rsa-pub-new"))
+            assert len(find_objects(rs.raw, rs.sh, tmpl_pub)) >= 1
+            tmpl_priv = template(attr_bytes(CKA_LABEL, b"rsa-priv-new"))
+            assert len(find_objects(rs.raw, rs.sh, tmpl_priv)) >= 1
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
 
 class TestSetAttributeNegative:
     """Verify that read-only / immutable attributes are rejected."""
 
-    def test_cannot_change_class(self, p11_session: Any) -> None:
+    def test_cannot_change_class(self, p11_raw_session: Any) -> None:
         """CKA_CLASS is read-only - should reject or silently ignore."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
-        key = p11_session.generate_key(KeyType.AES, 256)
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
-            key[Attribute.CLASS] = ObjectClass.PUBLIC_KEY
-            # If no error, the module silently ignored it - flag it
-            note(
-                "Module accepted C_SetAttributeValue on CKA_CLASS without error",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 Base v3.0, Table 15 - CKA_CLASS is read-only",
-            )
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Correct behavior
+            try:
+                set_attributes(rs.raw, rs.sh, key, {int(CKA_CLASS): int(CKO_PUBLIC_KEY)})
+                # If no error, the module silently ignored it - flag it
+                note(
+                    "Module accepted C_SetAttributeValue on CKA_CLASS without error",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 Base v3.0, Table 15 - CKA_CLASS is read-only",
+                )
+            except AssertionError:
+                pass  # Correct behavior
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_cannot_change_key_type(self, p11_session: Any) -> None:
+    def test_cannot_change_key_type(self, p11_raw_session: Any) -> None:
         """CKA_KEY_TYPE is read-only - should reject or silently ignore."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
-        key = p11_session.generate_key(KeyType.AES, 256)
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
-            key[Attribute.KEY_TYPE] = KeyType.RSA
-            note(
-                "Module accepted C_SetAttributeValue on CKA_KEY_TYPE without error",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 Base v3.0, Table 15 - CKA_KEY_TYPE is read-only",
-            )
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Correct behavior
+            try:
+                set_attributes(rs.raw, rs.sh, key, {int(CKA_KEY_TYPE): int(CKK_RSA)})
+                note(
+                    "Module accepted C_SetAttributeValue on CKA_KEY_TYPE without error",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 Base v3.0, Table 15 - CKA_KEY_TYPE is read-only",
+                )
+            except AssertionError:
+                pass  # Correct behavior
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_cannot_change_modulus(self, p11_session: Any) -> None:
+    def test_cannot_change_modulus(self, p11_raw_session: Any) -> None:
         """CKA_MODULUS on RSA key is read-only - must reject."""
-        pub, _ = p11_session.generate_keypair(KeyType.RSA, 2048)
+        rs = p11_raw_session
+        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            pub[Attribute.MODULUS] = b"\x00" * 256
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Correct behavior
+            try:
+                set_attributes(rs.raw, rs.sh, pub, {int(CKA_MODULUS): b"\x00" * 256})
+            except AssertionError:
+                pass  # Correct behavior
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_cannot_set_value_on_sensitive_key(self, p11_session: Any) -> None:
+    def test_cannot_set_value_on_sensitive_key(self, p11_raw_session: Any) -> None:
         """CKA_VALUE on a sensitive key - should reject."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
-        key = p11_session.generate_key(KeyType.AES, 256)
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
-            key[Attribute.VALUE] = b"\x00" * 32
-            note(
-                "Module accepted C_SetAttributeValue on CKA_VALUE of sensitive key",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 Base v3.0 - CKA_VALUE should not be settable on sensitive keys",
-            )
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Correct behavior
+            try:
+                set_attributes(rs.raw, rs.sh, key, {int(CKA_VALUE): b"\x00" * 32})
+                note(
+                    "Module accepted C_SetAttributeValue on CKA_VALUE of sensitive key",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 Base v3.0 - CKA_VALUE not settable on sensitive keys",
+                )
+            except AssertionError:
+                pass  # Correct behavior
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
