@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKU_USER,
 )
+from pkcs11_check.testcases.conftest import get_pin_bytes
 
 pytestmark = pytest.mark.keymgmt
 
@@ -43,23 +44,10 @@ def _unique_label(prefix: str = "data") -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
-def _read_str(attrs: dict[int, bytes | int | bool], key: int) -> str:
-    """Decode a raw attribute value to str (labels / application names).
-
-    read_attributes() decodes CK_ULONG-sized values as int. When the
-    attribute is actually a UTF-8 string whose length happens to equal
-    sizeof(CK_ULONG) (8 on 64-bit), reverse the int encoding first.
-    """
-    import ctypes as _ct
-    import sys as _sys
-
+def _read_str(attrs: dict[int, Any], key: int) -> str:
+    """Decode a bytes attribute to str."""
     v = attrs[key]
-    if isinstance(v, bytes):
-        return v.decode("utf-8")
-    if isinstance(v, int):
-        raw_bytes = v.to_bytes(_ct.sizeof(_ct.c_ulong), byteorder=_sys.byteorder)
-        return raw_bytes.decode("utf-8")
-    return str(v)
+    return v.decode("utf-8") if isinstance(v, bytes) else str(v)
 
 
 def _search_by_label(raw: Any, sh: int, label: str) -> list[int]:
@@ -298,12 +286,7 @@ class TestDataObjectToken:
     ) -> None:
         """CKO_DATA with TOKEN=True persists across sessions."""
         rs = p11_raw_session
-        pin = p11_config.pin
-        pin_bytes = (
-            pin.get_secret_value().encode("utf-8")
-            if hasattr(pin, "get_secret_value")
-            else (pin.encode("utf-8") if isinstance(pin, str) else pin)
-        )
+        pin_bytes = get_pin_bytes(p11_config)
         label = _unique_label("persist")
         flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
 

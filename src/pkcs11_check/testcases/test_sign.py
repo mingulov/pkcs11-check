@@ -136,15 +136,17 @@ class TestRSASignature:
     def test_rsa_different_keys_different_signatures(self, p11_raw_session: Any) -> None:
         """Same data signed with different keys produces different signatures."""
         rs = p11_raw_session
-        _, priv1 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
-        _, priv2 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub1, priv1 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub2, priv2 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             data = b"key independence test"
             sig1 = sign_single(rs.raw, rs.sh, priv1, CKM_SHA256_RSA_PKCS, data)
             sig2 = sign_single(rs.raw, rs.sh, priv2, CKM_SHA256_RSA_PKCS, data)
             assert sig1 != sig2
         finally:
+            destroy_quietly(rs.raw, rs.sh, pub1)
             destroy_quietly(rs.raw, rs.sh, priv1)
+            destroy_quietly(rs.raw, rs.sh, pub2)
             destroy_quietly(rs.raw, rs.sh, priv2)
 
 
@@ -217,18 +219,21 @@ class TestECDSASignature:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        _, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
         try:
             digest = hashlib.sha256(b"nonce test").digest()
             sig1 = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
             sig2 = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
             assert sig1 != sig2
         finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
 
 class TestHMACSign:
     def _hmac_key(self, rs: Any) -> int:
+        if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
+            pytest.skip("CKM_GENERIC_SECRET_KEY_GEN not supported")
         return gen_aes_key(
             rs.raw, rs.sh, 256,
             mechanism=CKM_GENERIC_SECRET_KEY_GEN,

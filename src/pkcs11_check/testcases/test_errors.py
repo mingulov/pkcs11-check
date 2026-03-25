@@ -212,8 +212,8 @@ class TestInvalidOperations:
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
             rs.raw, rs.sh, 2048,
-            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
-            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
+            public_attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
+            private_attrs={int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
         try:
             garbage = generate_random(rs.raw, rs.sh, 256)  # 256 bytes

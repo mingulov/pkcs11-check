@@ -21,12 +21,35 @@ from .types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CKA,
+    CKA_ALWAYS_AUTHENTICATE,
+    CKA_ALWAYS_SENSITIVE,
+    CKA_CERTIFICATE_TYPE,
     CKA_CLASS,
+    CKA_COPYABLE,
+    CKA_DECRYPT,
+    CKA_DERIVE,
+    CKA_DESTROYABLE,
     CKA_EC_PARAMS,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_LOCAL,
+    CKA_MODIFIABLE,
     CKA_MODULUS_BITS,
+    CKA_NEVER_EXTRACTABLE,
+    CKA_PRIVATE,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_SIGN_RECOVER,
+    CKA_TOKEN,
+    CKA_TRUSTED,
+    CKA_UNWRAP,
     CKA_VALUE,
     CKA_VALUE_LEN,
+    CKA_VERIFY,
+    CKA_VERIFY_RECOVER,
+    CKA_WRAP,
+    CKA_WRAP_WITH_TRUSTED,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKK,
@@ -40,6 +63,22 @@ from .types_std import (
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
 )
+
+# Attributes with CK_ULONG values per PKCS#11 spec
+_ULONG_ATTRS: frozenset[int] = frozenset(int(c) for c in (
+    CKA_CLASS, CKA_KEY_TYPE, CKA_VALUE_LEN, CKA_MODULUS_BITS,
+    CKA_CERTIFICATE_TYPE,
+))
+
+# Attributes with CK_BBOOL values per PKCS#11 spec
+_BBOOL_ATTRS: frozenset[int] = frozenset(int(c) for c in (
+    CKA_TOKEN, CKA_PRIVATE, CKA_SENSITIVE, CKA_ENCRYPT, CKA_DECRYPT,
+    CKA_WRAP, CKA_UNWRAP, CKA_SIGN, CKA_VERIFY, CKA_DERIVE,
+    CKA_EXTRACTABLE, CKA_LOCAL, CKA_MODIFIABLE, CKA_COPYABLE,
+    CKA_DESTROYABLE, CKA_SIGN_RECOVER, CKA_VERIFY_RECOVER,
+    CKA_ALWAYS_SENSITIVE, CKA_NEVER_EXTRACTABLE, CKA_TRUSTED,
+    CKA_WRAP_WITH_TRUSTED, CKA_ALWAYS_AUTHENTICATE,
+))
 
 _VERIFY_FAIL_RVS = (int(CKR_SIGNATURE_INVALID), int(CKR_SIGNATURE_LEN_RANGE))
 
@@ -109,6 +148,7 @@ def _pack_attrs(
     for attr_type, value in attrs.items():
         if skip and int(attr_type) in skip:
             continue
+        # bool check must precede int: isinstance(True, int) is True in Python
         if isinstance(value, bool):
             result.append(attr_bool(attr_type, value))
         elif isinstance(value, int):
@@ -401,10 +441,9 @@ def read_attributes(
     for i, at in enumerate(attr_types):
         size = int(tmpl[i].ulValueLen)
         raw_bytes = bytes(buffers[i][:size])
-        if size == ctypes.sizeof(CK_BBOOL):
+        if int(at) in _BBOOL_ATTRS and size == ctypes.sizeof(CK_BBOOL):
             result[at] = raw_bytes[0] != 0
-        elif size == ctypes.sizeof(CK_ULONG):
-            # CK_ULONG is stored in native (platform) byte order
+        elif int(at) in _ULONG_ATTRS and size == ctypes.sizeof(CK_ULONG):
             result[at] = int.from_bytes(raw_bytes, byteorder=sys.byteorder)
         else:
             result[at] = raw_bytes
@@ -693,7 +732,7 @@ def verify_multipart(
     rv = int(raw.C_VerifyFinal(session, sig_buf, len(signature)))
     if rv == CKR_OK:
         return True
-    if rv in (0x000000C0, 0x000000C1):
+    if rv in _VERIFY_FAIL_RVS:
         return False
     expect_rv(rv, CKR_OK)
     return False  # unreachable

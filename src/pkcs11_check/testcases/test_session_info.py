@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_NOT_LOGGED_IN,
     CKU_USER,
 )
+from pkcs11_check.testcases.conftest import get_pin_bytes
 
 pytestmark = pytest.mark.access
 
@@ -56,10 +57,9 @@ class TestSessionInfo:
         rs = p11_raw_session
         flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
-        pin = p11_config.pin
-        if pin is not None:
-            pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
-            login_user(rs.raw, test_sh, int(CKU_USER), pin_str.encode("utf-8"))
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is not None:
+            login_user(rs.raw, test_sh, int(CKU_USER), pin_bytes)
         try:
             info = CK_SESSION_INFO()
             rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
@@ -74,10 +74,9 @@ class TestSessionInfo:
         rs = p11_raw_session
         flags = int(CKF_SERIAL_SESSION)
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
-        pin = p11_config.pin
-        if pin is not None:
-            pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
-            login_user(rs.raw, test_sh, int(CKU_USER), pin_str.encode("utf-8"))
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is not None:
+            login_user(rs.raw, test_sh, int(CKU_USER), pin_bytes)
         try:
             info = CK_SESSION_INFO()
             rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
@@ -92,10 +91,9 @@ class TestSessionInfo:
         rs = p11_raw_session
         flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
-        pin = p11_config.pin
-        if pin is not None:
-            pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
-            login_user(rs.raw, test_sh, int(CKU_USER), pin_str.encode("utf-8"))
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is not None:
+            login_user(rs.raw, test_sh, int(CKU_USER), pin_bytes)
         try:
             key_h = gen_aes_key(rs.raw, test_sh, 128)
             assert key_h != 0
@@ -110,10 +108,9 @@ class TestSessionInfo:
         rs = p11_raw_session
         flags = int(CKF_SERIAL_SESSION)
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
-        pin = p11_config.pin
-        if pin is not None:
-            pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
-            login_user(rs.raw, test_sh, int(CKU_USER), pin_str.encode("utf-8"))
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is not None:
+            login_user(rs.raw, test_sh, int(CKU_USER), pin_bytes)
         try:
             # Session (non-token) object must succeed on RO session
             session_key_h = gen_aes_key(rs.raw, test_sh, 128)

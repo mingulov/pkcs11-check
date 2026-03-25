@@ -9,12 +9,13 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+from ctypes import byref
 from typing import Any
 
 import pytest
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import attr_bytes, template
+from pkcs11_check.raw.pack import attr_bytes, mech_simple, template
 from pkcs11_check.raw.recipes import (
     create_object,
     decrypt_single,
@@ -22,7 +23,6 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     find_objects,
     gen_aes_key,
-    gen_ec_keypair,
     gen_rsa_keypair,
     read_attributes,
     sign_single,
@@ -32,7 +32,9 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.recipes import (
     wrap_key as wrap_key_recipe,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_EC_PARAMS,
@@ -55,11 +57,23 @@ from pkcs11_check.raw.types_std import (
     CKK_RSA,
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP,
+    CKM_EC_KEY_PAIR_GEN,
     CKM_ECDSA,
     CKM_SHA256_RSA_PKCS,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
 )
+
+_CURVE_UNSUPPORTED_RVS = {int(c) for c in (
+    CKR_CURVE_NOT_SUPPORTED, CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE, CKR_DEVICE_ERROR, CKR_GENERAL_ERROR,
+)}
 
 pytestmark = pytest.mark.keymgmt
 
@@ -253,17 +267,30 @@ class TestECKeyLifecycle:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("ECDSA not supported")
 
-        try:
-            pub, priv = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                encode_named_curve_parameters("secp256r1"),
-                public_attrs={int(CKA_VERIFY): True, int(CKA_TOKEN): False},
-                private_attrs={int(CKA_SIGN): True, int(CKA_TOKEN): False},
-            )
-        except AssertionError:
-            pytest.skip("secp256r1 not supported")
-            return
+        curve_oid = encode_named_curve_parameters("secp256r1")
+        pub_tmpl = template(
+            attr_bytes(CKA_EC_PARAMS, curve_oid),
+            attr_bytes(CKA_VERIFY, b"\x01"),
+            attr_bytes(CKA_TOKEN, b"\x00"),
+        )
+        priv_tmpl = template(
+            attr_bytes(CKA_SIGN, b"\x01"),
+            attr_bytes(CKA_TOKEN, b"\x00"),
+        )
+        mech = mech_simple(CKM_EC_KEY_PAIR_GEN)
+        pub_h = CK_OBJECT_HANDLE(0)
+        priv_h = CK_OBJECT_HANDLE(0)
+        rv = int(rs.raw.C_GenerateKeyPair(
+            rs.sh, mech.byref(),
+            pub_tmpl.ptr, pub_tmpl.count,
+            priv_tmpl.ptr, priv_tmpl.count,
+            byref(pub_h), byref(priv_h),
+        ))
+        if rv in _CURVE_UNSUPPORTED_RVS:
+            pytest.skip(f"secp256r1 not supported: {ckr_name(rv)}")
+        assert rv == int(CKR_OK), f"C_GenerateKeyPair failed: {ckr_name(rv)}"
+        pub = int(pub_h.value)
+        priv = int(priv_h.value)
 
         imported = 0
         try:

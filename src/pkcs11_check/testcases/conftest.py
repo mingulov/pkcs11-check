@@ -63,6 +63,15 @@ def has_mechanism(p11_module: Any, name: str) -> bool:
     return name in cached
 
 
+def get_pin_bytes(p11_config: Any) -> bytes | None:
+    """Extract PIN as bytes from config, or None if no PIN configured."""
+    if p11_config.pin is None:
+        return None
+    pin = p11_config.pin
+    pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
+    return pin_str.encode("utf-8")
+
+
 def open_session(token: Any, rw: bool = True, pin: str | None = None) -> Any:
     """Open a PKCS#11 session, handling UserAlreadyLoggedIn gracefully.
 
