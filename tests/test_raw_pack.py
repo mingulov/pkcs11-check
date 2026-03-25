@@ -51,6 +51,120 @@ def test_pack_mech_bytes_native_length_matches_payload_length() -> None:
     assert len(value.storage) == 3
 
 
+def test_mech_gcm_packs_iv_and_aad_len_and_tag_bits() -> None:
+    from pkcs11_check.raw.pack import mech_gcm
+    from pkcs11_check.raw.types_std import CK_AES_GCM_PARAMS, CKM_AES_GCM
+
+    iv = b"\x00" * 12
+    mech = mech_gcm(CKM_AES_GCM, iv, aad_len=0, tag_bits=128)
+
+    assert mech.ck.mechanism == CKM_AES_GCM
+    params = mech.params
+    assert isinstance(params, CK_AES_GCM_PARAMS)
+    assert params.ulIvLen == 12
+    assert params.ulIvBits == 96
+    assert params.ulAADLen == 0
+    assert params.ulTagBits == 128
+
+
+def test_mech_pss_packs_hash_mgf_salt() -> None:
+    from pkcs11_check.raw.pack import mech_pss
+    from pkcs11_check.raw.types_std import (
+        CK_RSA_PKCS_PSS_PARAMS,
+        CKG_MGF1_SHA256,
+        CKM_SHA256,
+        CKM_SHA256_RSA_PKCS_PSS,
+    )
+
+    mech = mech_pss(CKM_SHA256_RSA_PKCS_PSS, hash_mech=CKM_SHA256, mgf=CKG_MGF1_SHA256, salt_len=32)
+
+    assert mech.ck.mechanism == CKM_SHA256_RSA_PKCS_PSS
+    params = mech.params
+    assert isinstance(params, CK_RSA_PKCS_PSS_PARAMS)
+    assert params.hashAlg == CKM_SHA256
+    assert params.mgf == CKG_MGF1_SHA256
+    assert params.sLen == 32
+
+
+def test_mech_oaep_packs_hash_mgf_source() -> None:
+    from pkcs11_check.raw.pack import mech_oaep
+    from pkcs11_check.raw.types_std import (
+        CK_RSA_PKCS_OAEP_PARAMS,
+        CKG_MGF1_SHA256,
+        CKM_RSA_PKCS_OAEP,
+        CKM_SHA256,
+        CKZ_DATA_SPECIFIED,
+    )
+
+    mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA256, mgf=CKG_MGF1_SHA256)
+
+    assert mech.ck.mechanism == CKM_RSA_PKCS_OAEP
+    params = mech.params
+    assert isinstance(params, CK_RSA_PKCS_OAEP_PARAMS)
+    assert params.hashAlg == CKM_SHA256
+    assert params.mgf == CKG_MGF1_SHA256
+    assert params.source == CKZ_DATA_SPECIFIED
+    assert params.pSourceData is None
+    assert params.ulSourceDataLen == 0
+
+
+def test_mech_oaep_with_source_data() -> None:
+    from pkcs11_check.raw.pack import mech_oaep
+    from pkcs11_check.raw.types_std import CKG_MGF1_SHA1, CKM_RSA_PKCS_OAEP, CKM_SHA_1
+
+    label = b"test-label"
+    mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1, source_data=label)
+
+    params = mech.params
+    assert params.ulSourceDataLen == 10
+    assert params.pSourceData is not None
+
+
+def test_mech_ecdh_packs_kdf_and_public_data() -> None:
+    from pkcs11_check.raw.pack import mech_ecdh
+    from pkcs11_check.raw.types_std import CK_ECDH1_DERIVE_PARAMS, CKD_NULL, CKM_ECDH1_DERIVE
+
+    pub = b"\x04" + b"\x01" * 64
+    mech = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=pub)
+
+    assert mech.ck.mechanism == CKM_ECDH1_DERIVE
+    params = mech.params
+    assert isinstance(params, CK_ECDH1_DERIVE_PARAMS)
+    assert params.kdf == CKD_NULL
+    assert params.ulPublicDataLen == 65
+    assert params.ulSharedDataLen == 0
+    assert params.pSharedData is None
+
+
+def test_mech_hkdf_packs_extract_expand_and_hash() -> None:
+    from pkcs11_check.raw.pack import mech_hkdf
+    from pkcs11_check.raw.types_std import (
+        CK_HKDF_PARAMS,
+        CKF_HKDF_SALT_NULL,
+        CKM_HKDF_DERIVE,
+        CKM_SHA256,
+    )
+
+    info = b"context-info"
+    mech = mech_hkdf(
+        CKM_HKDF_DERIVE,
+        hash_mech=CKM_SHA256,
+        extract=True,
+        expand=True,
+        salt_type=CKF_HKDF_SALT_NULL,
+        info=info,
+    )
+
+    assert mech.ck.mechanism == CKM_HKDF_DERIVE
+    params = mech.params
+    assert isinstance(params, CK_HKDF_PARAMS)
+    assert params.bExtract == 1
+    assert params.bExpand == 1
+    assert params.prfHashMechanism == CKM_SHA256
+    assert params.ulSaltType == CKF_HKDF_SALT_NULL
+    assert params.ulInfoLen == 12
+
+
 _STANDARD_RAW_MODULES = (
     "raw/types_std.py",
     "raw/metadata_std.py",

@@ -98,3 +98,28 @@ def test_expect_rv_raises_for_unexpected_value() -> None:
 
     with pytest.raises(AssertionError, match="CKR_ARGUMENTS_BAD"):
         expect_rv(0x00000007, 0x00000000)
+
+
+def test_ckr_is_ok_returns_true_for_ok() -> None:
+    from pkcs11_check.raw.rv import ckr_is_ok
+
+    assert ckr_is_ok(0x00000000) is True
+
+
+def test_ckr_is_ok_returns_false_for_error() -> None:
+    from pkcs11_check.raw.rv import ckr_is_ok
+
+    assert ckr_is_ok(0x00000007) is False  # CKR_ARGUMENTS_BAD
+
+
+def test_ckr_in_matches_acceptable() -> None:
+    from pkcs11_check.raw.rv import ckr_in
+
+    assert ckr_in(0x00000000, 0x00000000, 0x00000007) is True
+    assert ckr_in(0x00000007, 0x00000000, 0x00000007) is True
+
+
+def test_ckr_in_rejects_unacceptable() -> None:
+    from pkcs11_check.raw.rv import ckr_in
+
+    assert ckr_in(0x00000005, 0x00000000, 0x00000007) is False

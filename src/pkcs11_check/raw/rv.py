@@ -6,7 +6,6 @@ from . import metadata_std
 from .extensions import lookup_symbol_name
 from .types_std import CKR
 
-
 _RV_NAMES = dict(metadata_std.RV_NAMES)
 
 
@@ -18,6 +17,16 @@ def rv_name(rv: int) -> str:
 def ckr_name(rv: int) -> str:
     """Return a symbolic CKR_* name for a CK_RV integer when known."""
     return rv_name(rv)
+
+
+def ckr_is_ok(rv: int) -> bool:
+    """Return True if rv is CKR_OK (0)."""
+    return rv == 0
+
+
+def ckr_in(rv: int, *acceptable: int) -> bool:
+    """Return True if rv is one of the acceptable values."""
+    return rv in acceptable
 
 
 def expect_rv(rv: int, *allowed: CKR) -> int:
