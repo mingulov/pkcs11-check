@@ -16,240 +16,238 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import (
-    FunctionNotSupported,
-    MechanismInvalid,
-    TokenWriteProtected,
-)
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.bootstrap import (
+    close_session_quietly,
+    login_user,
+    open_session,
+)
+from pkcs11_check.raw.pack import attr_bytes, template
+from pkcs11_check.raw.recipes import (
+    create_object,
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+    find_objects,
+    gen_aes_key,
+    read_attributes,
+)
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_LABEL,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKM_AES_ECB,
+    CKO_DATA,
+    CKR_OK,
+    CKR_USER_ALREADY_LOGGED_IN,
+)
+from pkcs11_check.testcases.conftest import get_pin_bytes
 
 pytestmark = pytest.mark.security
 
 
-def _unique_label(prefix: str = "conc") -> str:
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+def _unique_label(prefix: str = "conc") -> bytes:
+    return f"{prefix}-{uuid.uuid4().hex[:8]}".encode("utf-8")
 
 
-def _open_second_session(token: Any, pin_str: str) -> Any:
-    """Open a second RW session, handling already-logged-in gracefully."""
-    session = token.open(rw=True)
-    try:
-        session.login(p11.UserType.USER, pin_str)
-    except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
-        pass  # Expected - token-level login already active
-    return session
+def _open_second_session(rs: Any) -> int:
+    """Open a second RW session, login is already active at token level."""
+    flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+    return open_session(rs.raw, rs.slot_id, flags)
 
 
 class TestConcurrentSessions:
     """Two sessions operating concurrently on the same token."""
 
-    def test_two_sessions_see_same_token_object(self, p11_module: Any, p11_config: Any) -> None:
+    def test_two_sessions_see_same_token_object(
+        self, p11_raw_session: Any, p11_config: Any,
+    ) -> None:
         """Object created in session A with TOKEN=True is visible in session B."""
-        token = p11_module.get_token()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
+        rs = p11_raw_session
         label = _unique_label("vis")
 
-        with token.open(rw=True, user_pin=pin_str) as s1:
-            s1.generate_key(
-                KeyType.AES,
-                256,
-                label=label,
-                template={Attribute.TOKEN: True},
-            )
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label},
+        )
 
-            # Open a second session (already logged in at token level)
-            s2 = _open_second_session(token, pin_str)
-            try:
-                found = list(s2.get_objects({Attribute.LABEL: label}))
-                assert len(found) >= 1, "Token object not visible in concurrent session"
-            finally:
-                s2.close()
+        # Open a second session (already logged in at token level)
+        sh2 = _open_second_session(rs)
+        try:
+            tmpl = template(attr_bytes(CKA_LABEL, label))
+            found = find_objects(rs.raw, sh2, tmpl)
+            assert len(found) >= 1, "Token object not visible in concurrent session"
+        finally:
+            close_session_quietly(rs.raw, sh2)
 
-            # Cleanup
-            for obj in s1.get_objects({Attribute.LABEL: label}):
-                obj.destroy()
+        # Cleanup
+        destroy_quietly(rs.raw, rs.sh, key)
 
     def test_destroy_in_one_session_reflected_in_other(
-        self, p11_module: Any, p11_config: Any
+        self, p11_raw_session: Any, p11_config: Any,
     ) -> None:
         """Destroying a token object in session A is reflected in session B."""
-        token = p11_module.get_token()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
+        rs = p11_raw_session
         label = _unique_label("destr")
 
-        with token.open(rw=True, user_pin=pin_str) as s1:
-            key = s1.generate_key(
-                KeyType.AES,
-                256,
-                label=label,
-                template={Attribute.TOKEN: True},
-            )
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label},
+        )
 
-            s2 = _open_second_session(token, pin_str)
-            try:
-                # Visible in s2
-                found = list(s2.get_objects({Attribute.LABEL: label}))
-                assert len(found) >= 1
+        sh2 = _open_second_session(rs)
+        try:
+            # Visible in s2
+            tmpl = template(attr_bytes(CKA_LABEL, label))
+            found = find_objects(rs.raw, sh2, tmpl)
+            assert len(found) >= 1
 
-                # Destroy in s1
-                key.destroy()
+            # Destroy in s1
+            destroy_quietly(rs.raw, rs.sh, key)
 
-                # Should be gone in s2
-                found = list(s2.get_objects({Attribute.LABEL: label}))
-                assert len(found) == 0, "Destroyed object still visible in other session"
-            finally:
-                s2.close()
+            # Should be gone in s2
+            tmpl2 = template(attr_bytes(CKA_LABEL, label))
+            found = find_objects(rs.raw, sh2, tmpl2)
+            assert len(found) == 0, "Destroyed object still visible in other session"
+        finally:
+            close_session_quietly(rs.raw, sh2)
 
-    def test_use_key_from_concurrent_session(self, p11_module: Any, p11_config: Any) -> None:
+    def test_use_key_from_concurrent_session(
+        self, p11_raw_session: Any, p11_config: Any,
+    ) -> None:
         """Token key created in session A can be used for crypto in session B."""
-        if not has_mechanism(p11_module, "AES_KEY_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("CKM_AES_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "AES_ECB"):
+        if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
-        token = p11_module.get_token()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
         label = _unique_label("use")
         plaintext = b"concurrent-test!" * 2  # 32 bytes
 
-        with token.open(rw=True, user_pin=pin_str) as s1:
-            try:
-                s1.generate_key(
-                    KeyType.AES,
-                    256,
-                    label=label,
-                    template={
-                        Attribute.TOKEN: True,
-                        Attribute.ENCRYPT: True,
-                        Attribute.DECRYPT: True,
-                    },
-                )
-            except (TokenWriteProtected, FunctionNotSupported) as exc:
-                pytest.skip(f"Module cannot generate token keys in this slot: {exc}")
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={
+                int(CKA_TOKEN): True,
+                int(CKA_LABEL): label,
+                int(CKA_ENCRYPT): True,
+                int(CKA_DECRYPT): True,
+            },
+        )
 
-            s2 = _open_second_session(token, pin_str)
-            try:
-                keys = list(s2.get_objects({Attribute.LABEL: label}))
-                assert len(keys) >= 1
-                key2 = keys[0]
+        sh2 = _open_second_session(rs)
+        try:
+            tmpl = template(attr_bytes(CKA_LABEL, label))
+            keys = find_objects(rs.raw, sh2, tmpl)
+            assert len(keys) >= 1
+            key2 = keys[0]
 
-                try:
-                    ct = key2.encrypt(plaintext, mechanism=Mechanism.AES_ECB)
-                    pt = key2.decrypt(ct, mechanism=Mechanism.AES_ECB)
-                    assert pt == plaintext
-                except (MechanismInvalid, FunctionNotSupported) as exc:
-                    pytest.xfail(
-                        f"Module does not support using key handles across sessions: {exc}"
-                    )
-            finally:
-                s2.close()
+            ct = encrypt_single(rs.raw, sh2, key2, CKM_AES_ECB, plaintext)
+            pt = decrypt_single(rs.raw, sh2, key2, CKM_AES_ECB, ct)
+            assert pt == plaintext
+        finally:
+            close_session_quietly(rs.raw, sh2)
 
-            # Cleanup
-            for obj in s1.get_objects({Attribute.LABEL: label}):
-                obj.destroy()
+        # Cleanup
+        destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestConcurrentObjectCreation:
     """Test rapid object creation/destruction across sessions."""
 
-    def test_rapid_create_destroy_cycle(self, p11_module: Any, p11_config: Any) -> None:
+    def test_rapid_create_destroy_cycle(
+        self, p11_raw_session: Any, p11_config: Any,
+    ) -> None:
         """Create and immediately destroy objects in rapid succession - no leak."""
-        token = p11_module.get_token()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
+        rs = p11_raw_session
+        labels: list[bytes] = []
+        for i in range(20):
+            label = _unique_label(f"rapid-{i}")
+            labels.append(label)
+            key = gen_aes_key(
+                rs.raw, rs.sh, 128,
+                attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label},
+            )
+            destroy_quietly(rs.raw, rs.sh, key)
 
-        with token.open(rw=True, user_pin=pin_str) as session:
-            labels = []
-            for i in range(20):
-                label = _unique_label(f"rapid-{i}")
-                labels.append(label)
-                key = session.generate_key(
-                    KeyType.AES,
-                    128,
-                    label=label,
-                    template={Attribute.TOKEN: True},
-                )
-                key.destroy()
+        # Verify none leaked
+        for label in labels:
+            tmpl = template(attr_bytes(CKA_LABEL, label))
+            found = find_objects(rs.raw, rs.sh, tmpl)
+            assert len(found) == 0, f"Object '{label!r}' leaked after destroy"
 
-            # Verify none leaked
-            for label in labels:
-                found = list(session.get_objects({Attribute.LABEL: label}))
-                assert len(found) == 0, f"Object '{label}' leaked after destroy"
-
-    def test_create_in_both_sessions_no_conflict(self, p11_module: Any, p11_config: Any) -> None:
+    def test_create_in_both_sessions_no_conflict(
+        self, p11_raw_session: Any, p11_config: Any,
+    ) -> None:
         """Creating objects in two concurrent sessions doesn't cause conflicts."""
-        token = p11_module.get_token()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
+        rs = p11_raw_session
 
         label_a = _unique_label("sA")
         label_b = _unique_label("sB")
 
-        with token.open(rw=True, user_pin=pin_str) as s1:
-            s2 = _open_second_session(token, pin_str)
-            try:
-                key_a = s1.generate_key(
-                    KeyType.AES,
-                    128,
-                    label=label_a,
-                    template={Attribute.TOKEN: True},
-                )
-                key_b = s2.generate_key(
-                    KeyType.AES,
-                    128,
-                    label=label_b,
-                    template={Attribute.TOKEN: True},
-                )
+        key_a = gen_aes_key(
+            rs.raw, rs.sh, 128,
+            attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label_a},
+        )
 
-                # Both should be visible in both sessions
-                found_a = list(s2.get_objects({Attribute.LABEL: label_a}))
-                found_b = list(s1.get_objects({Attribute.LABEL: label_b}))
-                assert len(found_a) >= 1
-                assert len(found_b) >= 1
+        sh2 = _open_second_session(rs)
+        try:
+            key_b = gen_aes_key(
+                rs.raw, sh2, 128,
+                attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label_b},
+            )
 
-                key_a.destroy()
-                key_b.destroy()
-            finally:
-                s2.close()
+            # Both should be visible in both sessions
+            tmpl_a = template(attr_bytes(CKA_LABEL, label_a))
+            found_a = find_objects(rs.raw, sh2, tmpl_a)
+            tmpl_b = template(attr_bytes(CKA_LABEL, label_b))
+            found_b = find_objects(rs.raw, rs.sh, tmpl_b)
+            assert len(found_a) >= 1
+            assert len(found_b) >= 1
+
+            destroy_quietly(rs.raw, sh2, key_b)
+        finally:
+            close_session_quietly(rs.raw, sh2)
+
+        destroy_quietly(rs.raw, rs.sh, key_a)
 
 
 class TestConcurrentDataObjects:
     """Test CKO_DATA objects across concurrent sessions."""
 
-    def test_data_object_visible_across_sessions(self, p11_module: Any, p11_config: Any) -> None:
+    def test_data_object_visible_across_sessions(
+        self, p11_raw_session: Any, p11_config: Any,
+    ) -> None:
         """CKO_DATA with TOKEN=True visible in concurrent session."""
-        token = p11_module.get_token()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
+        rs = p11_raw_session
         label = _unique_label("data")
 
-        with token.open(rw=True, user_pin=pin_str) as s1:
-            s1.create_object(
-                {
-                    Attribute.CLASS: ObjectClass.DATA,
-                    Attribute.LABEL: label,
-                    Attribute.VALUE: b"shared-data",
-                    Attribute.TOKEN: True,
-                }
-            )
+        obj = create_object(
+            rs.raw, rs.sh,
+            {
+                int(CKA_CLASS): int(CKO_DATA),
+                int(CKA_LABEL): label,
+                int(CKA_VALUE): b"shared-data",
+                int(CKA_TOKEN): True,
+            },
+        )
 
-            s2 = _open_second_session(token, pin_str)
-            try:
-                found = list(
-                    s2.get_objects({Attribute.CLASS: ObjectClass.DATA, Attribute.LABEL: label})
-                )
-                assert len(found) >= 1
-                assert found[0][Attribute.VALUE] == b"shared-data"
-            finally:
-                s2.close()
+        sh2 = _open_second_session(rs)
+        try:
+            tmpl = template(attr_bytes(CKA_LABEL, label))
+            found = find_objects(rs.raw, sh2, tmpl)
+            assert len(found) >= 1
+            attrs = read_attributes(rs.raw, sh2, found[0], [int(CKA_VALUE)])
+            assert attrs[int(CKA_VALUE)] == b"shared-data"
+        finally:
+            close_session_quietly(rs.raw, sh2)
 
-            # Cleanup
-            for obj in s1.get_objects({Attribute.CLASS: ObjectClass.DATA, Attribute.LABEL: label}):
-                obj.destroy()
+        # Cleanup
+        destroy_quietly(rs.raw, rs.sh, obj)
