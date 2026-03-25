@@ -263,7 +263,7 @@ without fork workarounds (template injection, method stripping, etc.).
 After each sub-project, update this section:
 
 - [ ] Sub-project 1: Raw Layer Completion
-- [ ] Sub-project 2: Test Migration Batch 1
+- [x] Sub-project 2: Test Migration Batch 1 (2026-03-25: 10 files, 107 tests, 0 fork imports)
 - [ ] Sub-project 3: Test Migration Batch 2
 - [ ] Sub-project 4: Test Quality Audit
 - [ ] Sub-project 5: Fork Removal
