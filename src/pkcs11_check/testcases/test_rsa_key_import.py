@@ -12,7 +12,36 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    read_attributes,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_COEFFICIENT,
+    CKA_DECRYPT,
+    CKA_EXPONENT_1,
+    CKA_EXPONENT_2,
+    CKA_KEY_TYPE,
+    CKA_LOCAL,
+    CKA_MODULUS,
+    CKA_PRIME_1,
+    CKA_PRIME_2,
+    CKA_PRIVATE_EXPONENT,
+    CKA_PUBLIC_EXPONENT,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKK_RSA,
+    CKM_SHA256_RSA_PKCS,
+    CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -40,29 +69,38 @@ def _export_rsa_components(
     }
 
 
+def _pub_key_template(comp: dict[str, bytes]) -> dict[int, Any]:
+    """Build an RSA public key import template."""
+    return {
+        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+        int(CKA_KEY_TYPE): int(CKK_RSA),
+        int(CKA_MODULUS): comp["modulus"],
+        int(CKA_PUBLIC_EXPONENT): comp["public_exponent"],
+        int(CKA_VERIFY): True,
+        int(CKA_TOKEN): False,
+    }
+
+
 class TestRSAPublicKeyImport:
     """Test importing RSA public keys from components."""
 
-    def test_import_rsa_public_key(self, p11_session: Any) -> None:
+    def test_import_rsa_public_key(self, p11_raw_session: Any) -> None:
         """Import RSA public key from modulus + exponent."""
+        rs = p11_raw_session
         key = _generate_rsa_key()
         comp = _export_rsa_components(key)
 
-        imported = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.RSA,
-                Attribute.MODULUS: comp["modulus"],
-                Attribute.PUBLIC_EXPONENT: comp["public_exponent"],
-                Attribute.VERIFY: True,
-                Attribute.TOKEN: False,
-            }
-        )
-        assert imported is not None
-        assert imported.key_type == KeyType.RSA
+        imported = create_object(rs.raw, rs.sh, _pub_key_template(comp))
+        try:
+            assert imported != 0
+            attrs = read_attributes(rs.raw, rs.sh, imported, [int(CKA_KEY_TYPE)])
+            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_RSA)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, imported)
 
-    def test_imported_public_key_verifies(self, p11_session: Any) -> None:
+    def test_imported_public_key_verifies(self, p11_raw_session: Any) -> None:
         """Sign with cryptography, verify with imported PKCS#11 public key."""
+        rs = p11_raw_session
         key = _generate_rsa_key()
         comp = _export_rsa_components(key)
 
@@ -71,94 +109,90 @@ class TestRSAPublicKeyImport:
         sig = key.sign(data, padding.PKCS1v15(), hashes.SHA256())
 
         # Import public key into PKCS#11
-        imported = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.RSA,
-                Attribute.MODULUS: comp["modulus"],
-                Attribute.PUBLIC_EXPONENT: comp["public_exponent"],
-                Attribute.VERIFY: True,
-                Attribute.TOKEN: False,
-            }
-        )
-
-        # Verify with PKCS#11
-        assert imported.verify(data, sig, mechanism=Mechanism.SHA256_RSA_PKCS)
+        imported = create_object(rs.raw, rs.sh, _pub_key_template(comp))
+        try:
+            # Verify with PKCS#11
+            assert verify_single(rs.raw, rs.sh, imported, CKM_SHA256_RSA_PKCS, data, sig) is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, imported)
 
 
 class TestRSAPrivateKeyImport:
     """Test importing RSA private keys from CRT components."""
 
-    def test_import_rsa_private_key(self, p11_session: Any) -> None:
+    def _priv_key_template(
+        self,
+        comp: dict[str, bytes],
+        *,
+        sign: bool = True,
+        decrypt: bool = False,
+    ) -> dict[int, Any]:
+        """Build an RSA private key import template with CRT components."""
+        tmpl: dict[int, Any] = {
+            int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+            int(CKA_KEY_TYPE): int(CKK_RSA),
+            int(CKA_MODULUS): comp["modulus"],
+            int(CKA_PUBLIC_EXPONENT): comp["public_exponent"],
+            int(CKA_PRIVATE_EXPONENT): comp["private_exponent"],
+            int(CKA_PRIME_1): comp["prime_1"],
+            int(CKA_PRIME_2): comp["prime_2"],
+            int(CKA_EXPONENT_1): comp["exponent_1"],
+            int(CKA_EXPONENT_2): comp["exponent_2"],
+            int(CKA_COEFFICIENT): comp["coefficient"],
+            int(CKA_TOKEN): False,
+            int(CKA_SENSITIVE): False,
+        }
+        if sign:
+            tmpl[int(CKA_SIGN)] = True
+        if decrypt:
+            tmpl[int(CKA_DECRYPT)] = True
+        return tmpl
+
+    def test_import_rsa_private_key(self, p11_raw_session: Any) -> None:
         """Import RSA private key with full CRT components."""
+        rs = p11_raw_session
         key = _generate_rsa_key()
         comp = _export_rsa_components(key)
 
-        imported = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-                Attribute.KEY_TYPE: KeyType.RSA,
-                Attribute.MODULUS: comp["modulus"],
-                Attribute.PUBLIC_EXPONENT: comp["public_exponent"],
-                Attribute.PRIVATE_EXPONENT: comp["private_exponent"],
-                Attribute.PRIME_1: comp["prime_1"],
-                Attribute.PRIME_2: comp["prime_2"],
-                Attribute.EXPONENT_1: comp["exponent_1"],
-                Attribute.EXPONENT_2: comp["exponent_2"],
-                Attribute.COEFFICIENT: comp["coefficient"],
-                Attribute.SIGN: True,
-                Attribute.DECRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+        imported = create_object(
+            rs.raw,
+            rs.sh,
+            self._priv_key_template(comp, sign=True, decrypt=True),
         )
-        assert imported is not None
-        assert imported.key_type == KeyType.RSA
+        try:
+            assert imported != 0
+            attrs = read_attributes(rs.raw, rs.sh, imported, [int(CKA_KEY_TYPE)])
+            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_RSA)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, imported)
 
-    def test_imported_private_key_signs(self, p11_session: Any) -> None:
+    def test_imported_private_key_signs(self, p11_raw_session: Any) -> None:
         """Sign with imported PKCS#11 private key, verify with cryptography."""
+        rs = p11_raw_session
         crypto_key = _generate_rsa_key()
         comp = _export_rsa_components(crypto_key)
 
         # Import private key into PKCS#11
-        p11_priv = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-                Attribute.KEY_TYPE: KeyType.RSA,
-                Attribute.MODULUS: comp["modulus"],
-                Attribute.PUBLIC_EXPONENT: comp["public_exponent"],
-                Attribute.PRIVATE_EXPONENT: comp["private_exponent"],
-                Attribute.PRIME_1: comp["prime_1"],
-                Attribute.PRIME_2: comp["prime_2"],
-                Attribute.EXPONENT_1: comp["exponent_1"],
-                Attribute.EXPONENT_2: comp["exponent_2"],
-                Attribute.COEFFICIENT: comp["coefficient"],
-                Attribute.SIGN: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
-        )
+        p11_priv = create_object(rs.raw, rs.sh, self._priv_key_template(comp))
+        try:
+            # Sign with PKCS#11
+            data = b"RSA private key import test"
+            sig = sign_single(rs.raw, rs.sh, p11_priv, CKM_SHA256_RSA_PKCS, data)
 
-        # Sign with PKCS#11
-        data = b"RSA private key import test"
-        sig = p11_priv.sign(data, mechanism=Mechanism.SHA256_RSA_PKCS)
+            # Verify with cryptography
+            crypto_key.public_key().verify(sig, data, padding.PKCS1v15(), hashes.SHA256())
+        finally:
+            destroy_quietly(rs.raw, rs.sh, p11_priv)
 
-        # Verify with cryptography
-        crypto_key.public_key().verify(sig, data, padding.PKCS1v15(), hashes.SHA256())
-
-    def test_imported_key_local_flag_false(self, p11_session: Any) -> None:
+    def test_imported_key_local_flag_false(self, p11_raw_session: Any) -> None:
         """Imported RSA key has LOCAL=False."""
+        rs = p11_raw_session
         key = _generate_rsa_key()
         comp = _export_rsa_components(key)
 
-        imported = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.RSA,
-                Attribute.MODULUS: comp["modulus"],
-                Attribute.PUBLIC_EXPONENT: comp["public_exponent"],
-                Attribute.VERIFY: True,
-                Attribute.TOKEN: False,
-            }
-        )
-        assert imported[Attribute.LOCAL] is False
+        imported = create_object(rs.raw, rs.sh, _pub_key_template(comp))
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, imported, [int(CKA_LOCAL)])
+            assert attrs[int(CKA_LOCAL)] is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, imported)
