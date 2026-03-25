@@ -6,6 +6,7 @@ from __future__ import annotations
 # Each value is a complete ASN.1 OID TLV (tag 0x06 + length + OID bytes).
 _CURVE_OIDS: dict[str, bytes] = {
     # NIST/SEC P-curves (ANSI X9.62)
+    "secp224r1": bytes([0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x21]),
     "secp256r1": bytes([0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]),
     "secp384r1": bytes([0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22]),
     "secp521r1": bytes([0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23]),
@@ -24,6 +25,7 @@ _CURVE_OIDS: dict[str, bytes] = {
 
 # Common aliases
 _ALIASES: dict[str, str] = {
+    "p-224": "secp224r1",
     "p-256": "secp256r1",
     "p-384": "secp384r1",
     "p-521": "secp521r1",

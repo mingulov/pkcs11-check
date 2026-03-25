@@ -1,6 +1,7 @@
 """Tests for EC key generation and ECDSA across multiple curves.
 
 Parametrized tests for P-224, P-256, P-384, P-521.
+Uses the raw PKCS#11 API via pkcs11_check.raw.
 """
 
 from __future__ import annotations
@@ -8,14 +9,25 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-import pkcs11 as p11
 import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
-from pkcs11 import Attribute, KeyType, Mechanism
 
-from pkcs11_check.testcases.conftest import extract_ec_point
+from pkcs11_check.raw.der import decode_ec_point
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    gen_ec_keypair,
+    read_attributes,
+    sign_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_EC_POINT,
+    CKA_KEY_TYPE,
+    CKK_EC,
+    CKM_ECDSA,
+)
 
 pytestmark = pytest.mark.crossverify
 
@@ -27,25 +39,34 @@ _EC_CURVES = [
 ]
 
 
+def _try_gen_ec(rs: Any, curve_name: str) -> tuple[int, int]:
+    """Generate EC keypair, skip if curve unsupported."""
+    curve_oid = encode_named_curve_parameters(curve_name)
+    try:
+        return gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+    except (AssertionError, OSError):
+        pytest.skip(f"Curve {curve_name} not supported by module")
+        raise  # unreachable, satisfies mypy
+
+
 class TestECKeygen:
     @pytest.mark.parametrize(
         "curve_name,_,__,___",
         _EC_CURVES,
         ids=["P-224", "P-256", "P-384", "P-521"],
     )
-    def test_ec_keygen(self, p11_session: Any, curve_name: str, _: int, __: Any, ___: Any) -> None:
+    def test_ec_keygen(
+        self, p11_raw_session: Any, curve_name: str, _: int, __: Any, ___: Any
+    ) -> None:
         """Generate EC key pair on the given curve."""
-        ecparams = p11_session.create_domain_parameters(
-            KeyType.EC,
-            {Attribute.EC_PARAMS: p11.util.ec.encode_named_curve_parameters(curve_name)},
-            local=True,
-        )
+        rs = p11_raw_session
+        pub, priv = _try_gen_ec(rs, curve_name)
         try:
-            pub, priv = ecparams.generate_keypair()
-        except p11.exceptions.PKCS11Error:
-            pytest.skip(f"Curve {curve_name} not supported by module")
-        assert pub is not None
-        assert priv is not None
+            assert pub != 0
+            assert priv != 0
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
     @pytest.mark.parametrize(
         "curve_name,_,__,___",
@@ -53,20 +74,19 @@ class TestECKeygen:
         ids=["P-224", "P-256", "P-384", "P-521"],
     )
     def test_ec_key_type(
-        self, p11_session: Any, curve_name: str, _: int, __: Any, ___: Any
+        self, p11_raw_session: Any, curve_name: str, _: int, __: Any, ___: Any
     ) -> None:
         """EC key pair should have EC key type."""
-        ecparams = p11_session.create_domain_parameters(
-            KeyType.EC,
-            {Attribute.EC_PARAMS: p11.util.ec.encode_named_curve_parameters(curve_name)},
-            local=True,
-        )
+        rs = p11_raw_session
+        pub, priv = _try_gen_ec(rs, curve_name)
         try:
-            pub, priv = ecparams.generate_keypair()
-        except p11.exceptions.PKCS11Error:
-            pytest.skip(f"Curve {curve_name} not supported")
-        assert pub.key_type == KeyType.EC
-        assert priv.key_type == KeyType.EC
+            attrs_pub = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])
+            attrs_priv = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])
+            assert attrs_pub[int(CKA_KEY_TYPE)] == int(CKK_EC)
+            assert attrs_priv[int(CKA_KEY_TYPE)] == int(CKK_EC)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
 
 class TestECDSACrossVerify:
@@ -77,36 +97,38 @@ class TestECDSACrossVerify:
     )
     def test_ecdsa_sign_p11_verify_crypto(
         self,
-        p11_session: Any,
+        p11_raw_session: Any,
         curve_name: str,
         coord_size: int,
         crypto_curve: ec.EllipticCurve,
         hash_algo: hashes.HashAlgorithm,
     ) -> None:
         """ECDSA sign with PKCS#11, verify with cryptography."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("ECDSA"):
+            pytest.skip("CKM_ECDSA not supported")
+
         hash_fns = {28: hashlib.sha224, 32: hashlib.sha256, 48: hashlib.sha384, 66: hashlib.sha512}
 
-        ecparams = p11_session.create_domain_parameters(
-            KeyType.EC,
-            {Attribute.EC_PARAMS: p11.util.ec.encode_named_curve_parameters(curve_name)},
-            local=True,
-        )
+        pub, priv = _try_gen_ec(rs, curve_name)
         try:
-            pub_p11, priv_p11 = ecparams.generate_keypair()
-        except p11.exceptions.PKCS11Error:
-            pytest.skip(f"Curve {curve_name} not supported")
+            data = f"ECDSA {curve_name} cross-verify".encode()
+            digest = hash_fns[coord_size](data).digest()
 
-        data = f"ECDSA {curve_name} cross-verify".encode()
-        digest = hash_fns[coord_size](data).digest()
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
 
-        sig = priv_p11.sign(digest, mechanism=Mechanism.ECDSA)
+            ec_point_der = read_attributes(rs.raw, rs.sh, pub, [int(CKA_EC_POINT)])[
+                int(CKA_EC_POINT)
+            ]
+            point_bytes = decode_ec_point(ec_point_der)  # type: ignore[arg-type]
+            pub_crypto = ec.EllipticCurvePublicKey.from_encoded_point(crypto_curve, point_bytes)
 
-        point_bytes = extract_ec_point(pub_p11[Attribute.EC_POINT])
-        pub_crypto = ec.EllipticCurvePublicKey.from_encoded_point(crypto_curve, point_bytes)
+            half = len(sig) // 2
+            r = int.from_bytes(sig[:half], "big")
+            s = int.from_bytes(sig[half:], "big")
+            der_sig = encode_dss_signature(r, s)
 
-        half = len(sig) // 2
-        r = int.from_bytes(sig[:half], "big")
-        s = int.from_bytes(sig[half:], "big")
-        der_sig = encode_dss_signature(r, s)
-
-        pub_crypto.verify(der_sig, data, ec.ECDSA(hash_algo))
+            pub_crypto.verify(der_sig, data, ec.ECDSA(hash_algo))
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
