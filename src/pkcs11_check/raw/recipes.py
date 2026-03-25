@@ -38,6 +38,23 @@ from .types_std import (
 )
 
 
+def _two_call_output(
+    raw: RawPKCS11,
+    session: int,
+    call_fn: str,
+    *args: Any,
+) -> bytes:
+    """Execute a PKCS#11 function using the standard two-call size pattern."""
+    fn = getattr(raw, call_fn)
+    out_len = CK_ULONG(0)
+    rv = fn(session, *args, None, byref(out_len))
+    expect_rv(int(rv), CKR_OK)
+    out_buf = (ctypes.c_ubyte * out_len.value)()
+    rv = fn(session, *args, out_buf, byref(out_len))
+    expect_rv(int(rv), CKR_OK)
+    return bytes(out_buf[: out_len.value])
+
+
 def quick_session(
     raw: RawPKCS11,
     slot_id: int | None = None,
@@ -219,24 +236,12 @@ def encrypt_single(
     *,
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
-    """Encrypt data in a single operation using the two-call size pattern.
-
-    Returns the ciphertext as bytes.
-    """
+    """Encrypt data in a single operation. Returns ciphertext."""
     mech = mech_param if mech_param is not None else mech_simple(mechanism)
     rv = raw.C_EncryptInit(session, mech.byref(), key)
     expect_rv(int(rv), CKR_OK)
-
     in_buf = (ctypes.c_ubyte * len(plaintext))(*plaintext)
-    out_len = CK_ULONG(0)
-    rv = raw.C_Encrypt(session, in_buf, len(plaintext), None, byref(out_len))
-    expect_rv(int(rv), CKR_OK)
-
-    out_buf = (ctypes.c_ubyte * out_len.value)()
-    rv = raw.C_Encrypt(session, in_buf, len(plaintext), out_buf, byref(out_len))
-    expect_rv(int(rv), CKR_OK)
-
-    return bytes(out_buf[: out_len.value])
+    return _two_call_output(raw, session, "C_Encrypt", in_buf, len(plaintext))
 
 
 def sign_single(
@@ -248,24 +253,12 @@ def sign_single(
     *,
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
-    """Sign data in a single operation using the two-call size pattern.
-
-    Returns the signature as bytes.
-    """
+    """Sign data in a single operation. Returns signature."""
     mech = mech_param if mech_param is not None else mech_simple(mechanism)
     rv = raw.C_SignInit(session, mech.byref(), key)
     expect_rv(int(rv), CKR_OK)
-
     in_buf = (ctypes.c_ubyte * len(data))(*data)
-    sig_len = CK_ULONG(0)
-    rv = raw.C_Sign(session, in_buf, len(data), None, byref(sig_len))
-    expect_rv(int(rv), CKR_OK)
-
-    sig_buf = (ctypes.c_ubyte * sig_len.value)()
-    rv = raw.C_Sign(session, in_buf, len(data), sig_buf, byref(sig_len))
-    expect_rv(int(rv), CKR_OK)
-
-    return bytes(sig_buf[: sig_len.value])
+    return _two_call_output(raw, session, "C_Sign", in_buf, len(data))
 
 
 def decrypt_single(
@@ -277,24 +270,14 @@ def decrypt_single(
     *,
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
-    """Decrypt data in a single operation using the two-call size pattern.
-
-    Returns the plaintext as bytes.
-    """
+    """Decrypt data in a single operation. Returns plaintext."""
     mech = mech_param if mech_param is not None else mech_simple(mechanism)
     rv = raw.C_DecryptInit(session, mech.byref(), key)
     expect_rv(int(rv), CKR_OK)
-
     in_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
-    out_len = CK_ULONG(0)
-    rv = raw.C_Decrypt(session, in_buf, len(ciphertext), None, byref(out_len))
-    expect_rv(int(rv), CKR_OK)
-
-    out_buf = (ctypes.c_ubyte * out_len.value)()
-    rv = raw.C_Decrypt(session, in_buf, len(ciphertext), out_buf, byref(out_len))
-    expect_rv(int(rv), CKR_OK)
-
-    return bytes(out_buf[: out_len.value])
+    return _two_call_output(
+        raw, session, "C_Decrypt", in_buf, len(ciphertext),
+    )
 
 
 def verify_single(
@@ -335,24 +318,12 @@ def digest_single(
     mechanism: CKM,
     data: bytes,
 ) -> bytes:
-    """Digest data in a single operation using the two-call size pattern.
-
-    Returns the digest as bytes.
-    """
+    """Digest data in a single operation. Returns digest."""
     mech = mech_simple(mechanism)
     rv = raw.C_DigestInit(session, mech.byref())
     expect_rv(int(rv), CKR_OK)
-
     in_buf = (ctypes.c_ubyte * len(data))(*data)
-    out_len = CK_ULONG(0)
-    rv = raw.C_Digest(session, in_buf, len(data), None, byref(out_len))
-    expect_rv(int(rv), CKR_OK)
-
-    out_buf = (ctypes.c_ubyte * out_len.value)()
-    rv = raw.C_Digest(session, in_buf, len(data), out_buf, byref(out_len))
-    expect_rv(int(rv), CKR_OK)
-
-    return bytes(out_buf[: out_len.value])
+    return _two_call_output(raw, session, "C_Digest", in_buf, len(data))
 
 
 def read_attributes(
@@ -442,3 +413,262 @@ def find_objects(
     expect_rv(int(rv), CKR_OK)
 
     return [int(handles[i]) for i in range(int(found.value))]
+
+
+def wrap_key(
+    raw: RawPKCS11,
+    session: int,
+    wrapping_key: int,
+    target_key: int,
+    mechanism: CKM,
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> bytes:
+    """Wrap a key using C_WrapKey (two-call output pattern). Returns wrapped key."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    out_len = CK_ULONG(0)
+    rv = raw.C_WrapKey(
+        session, mech.byref(), wrapping_key, target_key, None, byref(out_len),
+    )
+    expect_rv(int(rv), CKR_OK)
+    out_buf = (ctypes.c_ubyte * out_len.value)()
+    rv = raw.C_WrapKey(
+        session, mech.byref(), wrapping_key, target_key, out_buf, byref(out_len),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return bytes(out_buf[: out_len.value])
+
+
+def unwrap_key(
+    raw: RawPKCS11,
+    session: int,
+    unwrapping_key: int,
+    wrapped_key: bytes,
+    mechanism: CKM,
+    attrs: dict[int, Any] | None = None,
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> int:
+    """Unwrap a key using C_UnwrapKey. Returns new key handle."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    packed = _pack_attrs(attrs)
+    tmpl = template(*packed) if packed else None
+    in_buf = (ctypes.c_ubyte * len(wrapped_key))(*wrapped_key)
+    handle = CK_OBJECT_HANDLE(0)
+    rv = raw.C_UnwrapKey(
+        session, mech.byref(), unwrapping_key,
+        in_buf, len(wrapped_key),
+        tmpl.ptr if tmpl else None, tmpl.count if tmpl else 0,
+        byref(handle),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(handle.value)
+
+
+def derive_key(
+    raw: RawPKCS11,
+    session: int,
+    base_key: int,
+    mechanism: CKM,
+    attrs: dict[int, Any] | None = None,
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> int:
+    """Derive a key using C_DeriveKey. Returns new key handle."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    packed = _pack_attrs(attrs)
+    tmpl = template(*packed) if packed else None
+    handle = CK_OBJECT_HANDLE(0)
+    rv = raw.C_DeriveKey(
+        session, mech.byref(), base_key,
+        tmpl.ptr if tmpl else None, tmpl.count if tmpl else 0,
+        byref(handle),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(handle.value)
+
+
+def generate_random(raw: RawPKCS11, session: int, length: int) -> bytes:
+    """Generate random bytes using C_GenerateRandom."""
+    buf = (ctypes.c_ubyte * length)()
+    rv = raw.C_GenerateRandom(session, buf, length)
+    expect_rv(int(rv), CKR_OK)
+    return bytes(buf)
+
+
+def copy_object(
+    raw: RawPKCS11,
+    session: int,
+    handle: int,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Copy an object using C_CopyObject. Returns new handle."""
+    packed = _pack_attrs(attrs)
+    tmpl = template(*packed) if packed else None
+    new_handle = CK_OBJECT_HANDLE(0)
+    rv = raw.C_CopyObject(
+        session, handle,
+        tmpl.ptr if tmpl else None, tmpl.count if tmpl else 0,
+        byref(new_handle),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(new_handle.value)
+
+
+def set_attributes(
+    raw: RawPKCS11,
+    session: int,
+    handle: int,
+    attrs: dict[int, Any],
+) -> None:
+    """Set attribute values on an object using C_SetAttributeValue."""
+    packed = _pack_attrs(attrs)
+    tmpl = template(*packed)
+    rv = raw.C_SetAttributeValue(session, handle, tmpl.ptr, tmpl.count)
+    expect_rv(int(rv), CKR_OK)
+
+
+# --- Multipart operation helpers ---
+
+
+def _multipart_output(
+    raw: RawPKCS11,
+    session: int,
+    init_fn: str,
+    update_fn: str,
+    final_fn: str,
+    init_args: tuple[Any, ...],
+    chunks: list[bytes] | tuple[bytes, ...],
+) -> bytes:
+    """Shared Init -> Update(chunks) -> Final pattern."""
+    rv = getattr(raw, init_fn)(session, *init_args)
+    expect_rv(int(rv), CKR_OK)
+    parts: list[bytes] = []
+    for chunk in chunks:
+        in_buf = (ctypes.c_ubyte * len(chunk))(*chunk)
+        out_len = CK_ULONG(0)
+        rv = getattr(raw, update_fn)(
+            session, in_buf, len(chunk), None, byref(out_len),
+        )
+        expect_rv(int(rv), CKR_OK)
+        if out_len.value > 0:
+            out_buf = (ctypes.c_ubyte * out_len.value)()
+            rv = getattr(raw, update_fn)(
+                session, in_buf, len(chunk), out_buf, byref(out_len),
+            )
+            expect_rv(int(rv), CKR_OK)
+            parts.append(bytes(out_buf[: out_len.value]))
+    # Final
+    out_len = CK_ULONG(0)
+    rv = getattr(raw, final_fn)(session, None, byref(out_len))
+    expect_rv(int(rv), CKR_OK)
+    if out_len.value > 0:
+        out_buf = (ctypes.c_ubyte * out_len.value)()
+        rv = getattr(raw, final_fn)(session, out_buf, byref(out_len))
+        expect_rv(int(rv), CKR_OK)
+        parts.append(bytes(out_buf[: out_len.value]))
+    return b"".join(parts)
+
+
+def encrypt_multipart(
+    raw: RawPKCS11,
+    session: int,
+    key: int,
+    mechanism: CKM,
+    chunks: list[bytes] | tuple[bytes, ...],
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> bytes:
+    """Encrypt data in multiple parts. Returns ciphertext."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    return _multipart_output(
+        raw, session,
+        "C_EncryptInit", "C_EncryptUpdate", "C_EncryptFinal",
+        (mech.byref(), key), chunks,
+    )
+
+
+def decrypt_multipart(
+    raw: RawPKCS11,
+    session: int,
+    key: int,
+    mechanism: CKM,
+    chunks: list[bytes] | tuple[bytes, ...],
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> bytes:
+    """Decrypt data in multiple parts. Returns plaintext."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    return _multipart_output(
+        raw, session,
+        "C_DecryptInit", "C_DecryptUpdate", "C_DecryptFinal",
+        (mech.byref(), key), chunks,
+    )
+
+
+def sign_multipart(
+    raw: RawPKCS11,
+    session: int,
+    key: int,
+    mechanism: CKM,
+    chunks: list[bytes] | tuple[bytes, ...],
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> bytes:
+    """Sign data in multiple parts. Returns signature."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    rv = raw.C_SignInit(session, mech.byref(), key)
+    expect_rv(int(rv), CKR_OK)
+    for chunk in chunks:
+        in_buf = (ctypes.c_ubyte * len(chunk))(*chunk)
+        rv = raw.C_SignUpdate(session, in_buf, len(chunk))
+        expect_rv(int(rv), CKR_OK)
+    return _two_call_output(raw, session, "C_SignFinal")
+
+
+def verify_multipart(
+    raw: RawPKCS11,
+    session: int,
+    key: int,
+    mechanism: CKM,
+    chunks: list[bytes] | tuple[bytes, ...],
+    signature: bytes,
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> bool:
+    """Verify a signature over multiple data parts.
+
+    Returns True if valid, False if CKR_SIGNATURE_INVALID/CKR_SIGNATURE_LEN_RANGE.
+    """
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    rv = raw.C_VerifyInit(session, mech.byref(), key)
+    expect_rv(int(rv), CKR_OK)
+    for chunk in chunks:
+        in_buf = (ctypes.c_ubyte * len(chunk))(*chunk)
+        rv = raw.C_VerifyUpdate(session, in_buf, len(chunk))
+        expect_rv(int(rv), CKR_OK)
+    sig_buf = (ctypes.c_ubyte * len(signature))(*signature)
+    rv = int(raw.C_VerifyFinal(session, sig_buf, len(signature)))
+    if rv == CKR_OK:
+        return True
+    if rv in (0x000000C0, 0x000000C1):
+        return False
+    expect_rv(rv, CKR_OK)
+    return False  # unreachable
+
+
+def digest_multipart(
+    raw: RawPKCS11,
+    session: int,
+    mechanism: CKM,
+    chunks: list[bytes] | tuple[bytes, ...],
+) -> bytes:
+    """Digest data in multiple parts. Returns digest."""
+    mech = mech_simple(mechanism)
+    rv = raw.C_DigestInit(session, mech.byref())
+    expect_rv(int(rv), CKR_OK)
+    for chunk in chunks:
+        in_buf = (ctypes.c_ubyte * len(chunk))(*chunk)
+        rv = raw.C_DigestUpdate(session, in_buf, len(chunk))
+        expect_rv(int(rv), CKR_OK)
+    return _two_call_output(raw, session, "C_DigestFinal")

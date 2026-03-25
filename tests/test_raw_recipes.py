@@ -3,20 +3,31 @@ from __future__ import annotations
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
+    copy_object,
+    decrypt_multipart,
     decrypt_single,
+    derive_key,
     destroy_quietly,
+    digest_multipart,
     digest_single,
+    encrypt_multipart,
     encrypt_single,
     find_objects,
     gen_aes_key,
     gen_ec_keypair,
     gen_rsa_keypair,
+    generate_random,
     get_object_size,
     import_secret_key,
     quick_session,
     read_attributes,
+    set_attributes,
+    sign_multipart,
     sign_single,
+    unwrap_key,
+    verify_multipart,
     verify_single,
+    wrap_key,
 )
 
 
@@ -122,3 +133,36 @@ class TestRecipeSignatures:
 
     def test_find_objects_callable(self) -> None:
         assert callable(find_objects)
+
+    def test_wrap_key_callable(self) -> None:
+        assert callable(wrap_key)
+
+    def test_unwrap_key_callable(self) -> None:
+        assert callable(unwrap_key)
+
+    def test_derive_key_callable(self) -> None:
+        assert callable(derive_key)
+
+    def test_generate_random_callable(self) -> None:
+        assert callable(generate_random)
+
+    def test_copy_object_callable(self) -> None:
+        assert callable(copy_object)
+
+    def test_set_attributes_callable(self) -> None:
+        assert callable(set_attributes)
+
+    def test_encrypt_multipart_callable(self) -> None:
+        assert callable(encrypt_multipart)
+
+    def test_decrypt_multipart_callable(self) -> None:
+        assert callable(decrypt_multipart)
+
+    def test_sign_multipart_callable(self) -> None:
+        assert callable(sign_multipart)
+
+    def test_verify_multipart_callable(self) -> None:
+        assert callable(verify_multipart)
+
+    def test_digest_multipart_callable(self) -> None:
+        assert callable(digest_multipart)
