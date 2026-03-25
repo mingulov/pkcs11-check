@@ -14,6 +14,7 @@ _STANDARD_TABLES = {
     "key_types": metadata_std.KEY_TYPE_NAMES,
     "object_classes": metadata_std.OBJECT_CLASS_NAMES,
     "rvs": metadata_std.RV_NAMES,
+    "flags": metadata_std.FLAG_NAMES,
 }
 
 _ALIASES = {
@@ -24,6 +25,7 @@ _ALIASES = {
     "key_type": "key_types",
     "object_class": "object_classes",
     "rv": "rvs",
+    "flag": "flags",
 }
 
 _STANDARD_MECHANISM_NAMES = set(_STANDARD_TABLES["mechanisms"].values())
@@ -198,6 +200,7 @@ def register_extension(
     key_types: Mapping[int, str] | None = None,
     object_classes: Mapping[int, str] | None = None,
     rvs: Mapping[int, str] | None = None,
+    flags: Mapping[int, str] | None = None,
     structs: Mapping[str, Any] | None = None,
     packers: Mapping[int | str, Any] | None = None,
     inspectors: Mapping[int | str, Any] | None = None,
@@ -208,6 +211,7 @@ def register_extension(
     _validate_name_mapping("key_types", key_types, namespace=namespace)
     _validate_name_mapping("object_classes", object_classes, namespace=namespace)
     _validate_name_mapping("rvs", rvs, namespace=namespace)
+    _validate_name_mapping("flags", flags, namespace=namespace)
     _validate_helper_numeric_keys(packers)
     _validate_helper_numeric_keys(inspectors)
     _validate_helper_string_keys(namespace, packers, mechanisms)
@@ -221,6 +225,7 @@ def register_extension(
         "key_types": key_types,
         "object_classes": object_classes,
         "rvs": rvs,
+        "flags": flags,
     }
     for category, values in name_mappings.items():
         if values is not None:

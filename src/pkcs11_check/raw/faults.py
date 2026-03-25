@@ -6,15 +6,17 @@ import ctypes
 from dataclasses import dataclass
 from typing import Any
 
-from .core import CK_ATTRIBUTE, CK_ULONG
 from .pack import (
     LengthArg,
     PackedAttribute,
     PointerArg,
     TemplateArg,
     _exact_byte_storage,
+)
+from .pack import (
     explicit_length as pack_explicit_length,
 )
+from .types_std import CK_ATTRIBUTE, CK_ULONG
 
 
 @dataclass(frozen=True)
