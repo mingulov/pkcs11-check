@@ -13,9 +13,11 @@ from pkcs11_check.core.preflight import CapabilityManifest, load_manifest, run_p
 
 # Re-export fixtures so pytest discovers them
 from pkcs11_check.fixtures import (  # noqa: F401
+    RawSession,
     p11_config,
     p11_interface_version,
     p11_module,
+    p11_raw_session,
     p11_session,
 )
 from pkcs11_check.markers import MARKER_DEFINITIONS, should_skip_for_version

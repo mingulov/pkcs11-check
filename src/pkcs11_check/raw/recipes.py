@@ -100,7 +100,8 @@ def _pack_attrs(
 ) -> list[Any]:
     """Convert a {attr_type: value} dict to a list of PackedAttributes.
 
-    Supports bool, int, bytes/bytearray values. Skips attr types in skip set.
+    Supports bool, int, str, bytes/bytearray values. Skips attr types in skip set.
+    str values are auto-encoded to UTF-8.
     """
     if not attrs:
         return []
@@ -112,6 +113,8 @@ def _pack_attrs(
             result.append(attr_bool(attr_type, value))
         elif isinstance(value, int):
             result.append(attr_ulong(attr_type, value))
+        elif isinstance(value, str):
+            result.append(attr_bytes(attr_type, value.encode("utf-8")))
         elif isinstance(value, (bytes, bytearray)):
             result.append(attr_bytes(attr_type, value))
         else:
@@ -229,6 +232,25 @@ def import_secret_key(
     rv = raw.C_CreateObject(session, tmpl.ptr, tmpl.count, byref(handle))
     expect_rv(int(rv), CKR_OK)
 
+    return int(handle.value)
+
+
+def create_object(
+    raw: RawPKCS11,
+    session: int,
+    attrs: dict[int, Any],
+) -> int:
+    """Create a PKCS#11 object with arbitrary attributes. Returns handle.
+
+    attrs maps CKA_* int constants to values (bool, int, bytes, or str).
+    str values auto-encode to UTF-8. For secret key import, prefer
+    import_secret_key() which handles CKA_CLASS/CKA_KEY_TYPE/CKA_VALUE.
+    """
+    packed = _pack_attrs(attrs)
+    tmpl = template(*packed)
+    handle = CK_OBJECT_HANDLE(0)
+    rv = raw.C_CreateObject(session, tmpl.ptr, tmpl.count, byref(handle))
+    expect_rv(int(rv), CKR_OK)
     return int(handle.value)
 
 
@@ -749,6 +771,21 @@ def seed_random(raw: RawPKCS11, session: int, seed: bytes) -> None:
     buf = (ctypes.c_ubyte * len(seed))(*seed)
     rv = raw.C_SeedRandom(session, buf, len(seed))
     expect_rv(int(rv), CKR_OK)
+
+
+def get_mechanism_list(raw: RawPKCS11, slot_id: int) -> list[int]:
+    """Get mechanisms supported by a slot. Returns list of CKM_* ints."""
+    count = CK_ULONG(0)
+    rv = raw.C_GetMechanismList(slot_id, None, byref(count))
+    expect_rv(int(rv), CKR_OK)
+    if count.value == 0:
+        return []
+    from .types_std import CK_MECHANISM_TYPE
+
+    mechs = (CK_MECHANISM_TYPE * int(count.value))()
+    rv = raw.C_GetMechanismList(slot_id, mechs, byref(count))
+    expect_rv(int(rv), CKR_OK)
+    return [int(mechs[i]) for i in range(int(count.value))]
 
 
 # --- v3.0 Message-based crypto ---
