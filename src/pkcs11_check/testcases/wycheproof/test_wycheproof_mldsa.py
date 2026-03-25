@@ -9,12 +9,27 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.constants import MLDsaParameterSet
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_KEY_TYPE,
+    CKA_PARAMETER_SET,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VERIFY,
+    CKK_ML_DSA,
+    CKM_ML_DSA,
+    CKO_PUBLIC_KEY,
+    CKP_ML_DSA_44,
+    CKP_ML_DSA_65,
+    CKP_ML_DSA_87,
+)
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v32, pytest.mark.pqc]
 
@@ -25,6 +40,12 @@ _MLDSA_FILES = [
     ("mldsa_65_verify_test.json", 65),
     ("mldsa_87_verify_test.json", 87),
 ]
+
+_PARAM_MAP: dict[int, int] = {
+    44: int(CKP_ML_DSA_44),
+    65: int(CKP_ML_DSA_65),
+    87: int(CKP_ML_DSA_87),
+}
 
 
 def _load_mldsa_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -50,9 +71,10 @@ _ALL_MLDSA_VECTORS = _load_mldsa_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_MLDSA_VECTORS, ids=[v[0] for v in _ALL_MLDSA_VECTORS])
-def test_mldsa_verify(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_mldsa_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ML-DSA signature verification from Wycheproof vectors."""
-    if not has_mechanism(p11_module, "ML_DSA"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("ML_DSA"):
         pytest.skip("ML_DSA not supported")
 
     group = vec["_group"]
@@ -66,39 +88,45 @@ def test_mldsa_verify(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[
 
     pk_bytes = bytes.fromhex(pk_hex)
 
-    _PARAM_MAP = {44: MLDsaParameterSet.ML_DSA_44,
-                  65: MLDsaParameterSet.ML_DSA_65,
-                  87: MLDsaParameterSet.ML_DSA_87}
     param_set = _PARAM_MAP.get(vec["_param_set"])
 
-    try:
-        template: dict[Attribute, Any] = {
-            Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-            Attribute.KEY_TYPE: KeyType.ML_DSA,
-            Attribute.VALUE: pk_bytes,
-            Attribute.TOKEN: False,
-            Attribute.VERIFY: True,
-        }
-        if param_set is not None:
-            template[Attribute.PARAMETER_SET] = int(param_set)
-        pub_key = p11_session.create_object(template)
-    except (
-        p11.exceptions.TemplateIncomplete,
-        p11.exceptions.TemplateInconsistent,
-        p11.exceptions.AttributeValueInvalid,
-        p11.exceptions.FunctionFailed,
-        p11.exceptions.DeviceError,
-    ) as exc:
-        if result == "invalid":
-            return  # Module correctly rejected invalid key - pass
-        pytest.skip(f"Cannot import ML-DSA public key: {type(exc).__name__}")
+    attrs: dict[int, Any] = {
+        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+        int(CKA_KEY_TYPE): int(CKK_ML_DSA),
+        int(CKA_VALUE): pk_bytes,
+        int(CKA_TOKEN): False,
+        int(CKA_VERIFY): True,
+    }
+    if param_set is not None:
+        attrs[int(CKA_PARAMETER_SET)] = param_set
 
     try:
-        pub_key.verify(msg, sig, mechanism=Mechanism.ML_DSA)
+        pub_key = create_object(rs.raw, rs.sh, attrs)
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(
+            name in exc_msg
+            for name in (
+                "CKR_TEMPLATE_INCOMPLETE",
+                "CKR_TEMPLATE_INCONSISTENT",
+                "CKR_ATTRIBUTE_VALUE_INVALID",
+                "CKR_FUNCTION_FAILED",
+                "CKR_DEVICE_ERROR",
+            )
+        ):
+            if result == "invalid":
+                return  # Module correctly rejected invalid key - pass
+            pytest.skip(f"Cannot import ML-DSA public key: {exc_msg}")
+        raise
+
+    try:
+        verify_single(rs.raw, rs.sh, pub_key, CKM_ML_DSA, msg, sig)
         if result == "invalid":
             pass  # Module accepted edge-case sig
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"Valid ML-DSA sig {vec_id} rejected")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub_key)

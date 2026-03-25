@@ -9,12 +9,27 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.constants import MLDsaParameterSet
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    sign_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_KEY_TYPE,
+    CKA_PARAMETER_SET,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKK_ML_DSA,
+    CKM_ML_DSA,
+    CKO_PRIVATE_KEY,
+    CKP_ML_DSA_44,
+    CKP_ML_DSA_65,
+    CKP_ML_DSA_87,
+)
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc, pytest.mark.requires_v32]
@@ -39,12 +54,18 @@ def _vid(v: dict[str, Any]) -> str:
     return f"tc{v['tcId']}-{v['result']}"
 
 
+_PARAM_MAP: dict[int, int] = {
+    int(CKP_ML_DSA_44): int(CKP_ML_DSA_44),
+    int(CKP_ML_DSA_65): int(CKP_ML_DSA_65),
+    int(CKP_ML_DSA_87): int(CKP_ML_DSA_87),
+}
+
 # Only noseed vectors have raw private keys suitable for CKA_VALUE import.
 # seed vectors use PKCS8-encoded keys which PKCS#11 can't import directly.
 _MLDSA_SIGN_FILES = [
-    ("mldsa_44_sign_noseed_test.json", MLDsaParameterSet.ML_DSA_44),
-    ("mldsa_65_sign_noseed_test.json", MLDsaParameterSet.ML_DSA_65),
-    ("mldsa_87_sign_noseed_test.json", MLDsaParameterSet.ML_DSA_87),
+    ("mldsa_44_sign_noseed_test.json", int(CKP_ML_DSA_44)),
+    ("mldsa_65_sign_noseed_test.json", int(CKP_ML_DSA_65)),
+    ("mldsa_87_sign_noseed_test.json", int(CKP_ML_DSA_87)),
 ]
 
 
@@ -52,7 +73,7 @@ def _load_sign_vectors() -> list[tuple[str, dict[str, Any]]]:
     vectors = []
     for filename, parameter_set in _MLDSA_SIGN_FILES:
         for vec in _load(filename):
-            vec["_parameter_set"] = int(parameter_set)
+            vec["_parameter_set"] = parameter_set
             vec["_filename"] = filename
             vectors.append((f"{filename}:tc{vec['tcId']}-{vec['result']}", vec))
     return vectors
@@ -63,10 +84,11 @@ _ALL_SIGN_VECTORS = _load_sign_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_SIGN_VECTORS, ids=[v[0] for v in _ALL_SIGN_VECTORS])
 def test_mldsa_sign(
-    vec_id: str, vec: dict[str, Any], p11_session: Any, p11_module: Any
+    vec_id: str, vec: dict[str, Any], p11_raw_session: Any
 ) -> None:
     """ML-DSA signing from Wycheproof vectors."""
-    if not has_mechanism(p11_module, "ML_DSA"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("ML_DSA"):
         pytest.skip("ML_DSA not supported")
 
     group = vec["_group"]
@@ -81,29 +103,45 @@ def test_mldsa_sign(
         pytest.skip("No private key in vector")
 
     try:
-        priv = p11_session.create_object({
-            Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-            Attribute.KEY_TYPE: KeyType.ML_DSA,
-            Attribute.VALUE: private_key_bytes,
-            Attribute.PARAMETER_SET: vec["_parameter_set"],
-            Attribute.SIGN: True,
-            Attribute.TOKEN: False,
-        })
-    except (p11.exceptions.TemplateIncomplete, p11.exceptions.TemplateInconsistent,
-            p11.exceptions.AttributeValueInvalid, p11.exceptions.FunctionFailed,
-            p11.exceptions.DeviceError) as exc:
-        if result == "invalid":
-            return
-        pytest.xfail(f"Cannot import ML-DSA private key: {type(exc).__name__}")
+        priv = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                int(CKA_KEY_TYPE): int(CKK_ML_DSA),
+                int(CKA_VALUE): private_key_bytes,
+                int(CKA_PARAMETER_SET): vec["_parameter_set"],
+                int(CKA_SIGN): True,
+                int(CKA_TOKEN): False,
+            },
+        )
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(
+            name in exc_msg
+            for name in (
+                "CKR_TEMPLATE_INCOMPLETE",
+                "CKR_TEMPLATE_INCONSISTENT",
+                "CKR_ATTRIBUTE_VALUE_INVALID",
+                "CKR_FUNCTION_FAILED",
+                "CKR_DEVICE_ERROR",
+            )
+        ):
+            if result == "invalid":
+                return
+            pytest.xfail(f"Cannot import ML-DSA private key: {exc_msg}")
+        raise
 
     try:
-        sig = priv.sign(msg, mechanism=Mechanism.ML_DSA)
+        sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, msg)
         if result == "valid":
             assert len(sig) > 0, "Empty signature"
             # Note: ML-DSA signatures are non-deterministic, so length/non-empty
             # is the meaningful invariant for this path.
-    except Exception:
+    except (AssertionError, Exception):
         if result == "valid":
             pytest.fail(f"Valid ML-DSA sign failed: {vec_id}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, priv)

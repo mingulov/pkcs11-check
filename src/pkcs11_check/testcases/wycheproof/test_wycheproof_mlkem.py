@@ -9,18 +9,35 @@ import json
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.constants import MLKemParameterSet
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import (
+    create_object,
+    decapsulate_key,
+    destroy_quietly,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DECAPSULATE,
+    CKA_KEY_TYPE,
+    CKA_PARAMETER_SET,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKK_AES,
+    CKK_ML_KEM,
+    CKM_ML_KEM,
+    CKO_PRIVATE_KEY,
+    CKP_ML_KEM_512,
+    CKP_ML_KEM_768,
+    CKP_ML_KEM_1024,
+)
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc, pytest.mark.requires_v32]
 
-_PARAM_SETS = {
-    512: MLKemParameterSet.ML_KEM_512,
-    768: MLKemParameterSet.ML_KEM_768,
-    1024: MLKemParameterSet.ML_KEM_1024,
+_PARAM_SETS: dict[int, int] = {
+    512: int(CKP_ML_KEM_512),
+    768: int(CKP_ML_KEM_768),
+    1024: int(CKP_ML_KEM_1024),
 }
 
 # Only semi_expanded_decaps vectors have dk (decapsulation key) directly.
@@ -71,10 +88,11 @@ _ALL_MLKEM_VECTORS = _load_all_mlkem_vectors()
     ids=[v[0] for v in _ALL_MLKEM_VECTORS],
 )
 def test_mlkem_decaps(
-    vec_id: str, vec: dict[str, Any], p11_session: Any, p11_module: Any
+    vec_id: str, vec: dict[str, Any], p11_raw_session: Any
 ) -> None:
     """ML-KEM decapsulation from Wycheproof vectors."""
-    if not has_mechanism(p11_module, "ML_KEM"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("ML_KEM"):
         pytest.skip("ML_KEM not supported")
 
     group = vec["_group"]
@@ -87,34 +105,46 @@ def test_mlkem_decaps(
         pytest.skip("Missing key or ciphertext in vector")
 
     # Import private key
-    param_set = int(_PARAM_SETS[vec["_parameter_set"]])
+    param_set = _PARAM_SETS[vec["_parameter_set"]]
     try:
-        priv = p11_session.create_object({
-            Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-            Attribute.KEY_TYPE: KeyType.ML_KEM,
-            Attribute.VALUE: private_key_bytes,
-            Attribute.PARAMETER_SET: param_set,
-            Attribute.DECAPSULATE: True,
-            Attribute.TOKEN: False,
-        })
-    except Exception:
+        priv = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                int(CKA_KEY_TYPE): int(CKK_ML_KEM),
+                int(CKA_VALUE): private_key_bytes,
+                int(CKA_PARAMETER_SET): param_set,
+                int(CKA_DECAPSULATE): True,
+                int(CKA_TOKEN): False,
+            },
+        )
+    except (AssertionError, Exception):
         if result == "invalid":
             return  # Invalid key correctly rejected
         raise
 
     try:
-        shared_key = priv.decapsulate_key(
-            KeyType.AES,
+        shared_key = decapsulate_key(
+            rs.raw,
+            rs.sh,
+            priv,
+            CKM_ML_KEM,
             ciphertext,
-            mechanism=Mechanism.ML_KEM,
+            attrs={
+                int(CKA_KEY_TYPE): int(CKK_AES),
+            },
         )
         # ML-KEM implicit rejection: even invalid ciphertexts produce a key
         # but the shared secret won't match
         if result == "valid" and expected_ss:
             # We can't directly compare since the key value is wrapped
             pass  # Key was produced - that's the expected behavior
-    except Exception:
+        destroy_quietly(rs.raw, rs.sh, shared_key)
+    except (AssertionError, Exception):
         if result == "valid":
             pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}")
         # acceptable/invalid: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, priv)
