@@ -5,68 +5,107 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    import_secret_key,
+    sign_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKK_GENERIC_SECRET,
+    CKK_SHA3_224_HMAC,
+    CKK_SHA3_256_HMAC,
+    CKK_SHA3_384_HMAC,
+    CKK_SHA3_512_HMAC,
+    CKK_SHA224_HMAC,
+    CKK_SHA384_HMAC,
+    CKK_SHA512_224_HMAC,
+    CKK_SHA512_256_HMAC,
+    CKK_SHA512_HMAC,
+    CKK_SHA_1_HMAC,
+    CKM_SHA3_224_HMAC,
+    CKM_SHA3_256_HMAC,
+    CKM_SHA3_384_HMAC,
+    CKM_SHA3_512_HMAC,
+    CKM_SHA224_HMAC,
+    CKM_SHA384_HMAC,
+    CKM_SHA512_224_HMAC,
+    CKM_SHA512_256_HMAC,
+    CKM_SHA512_HMAC,
+    CKM_SHA_1_HMAC,
+)
 
 pytestmark = pytest.mark.wycheproof
 
 # Map mechanisms to their name for availability checking
-_MECH_NAMES: dict[Mechanism, str] = {
-    Mechanism.SHA_1_HMAC: "SHA_1_HMAC",
-    Mechanism.SHA224_HMAC: "SHA224_HMAC",
-    Mechanism.SHA256_HMAC: "SHA256_HMAC",
-    Mechanism.SHA384_HMAC: "SHA384_HMAC",
-    Mechanism.SHA512_HMAC: "SHA512_HMAC",
-    Mechanism.SHA512_224_HMAC: "SHA512_224_HMAC",
-    Mechanism.SHA512_256_HMAC: "SHA512_256_HMAC",
-    Mechanism.SHA3_224_HMAC: "SHA3_224_HMAC",
-    Mechanism.SHA3_256_HMAC: "SHA3_256_HMAC",
-    Mechanism.SHA3_384_HMAC: "SHA3_384_HMAC",
-    Mechanism.SHA3_512_HMAC: "SHA3_512_HMAC",
+_MECH_NAMES: dict[int, str] = {
+    int(CKM_SHA_1_HMAC): "SHA_1_HMAC",
+    int(CKM_SHA224_HMAC): "SHA224_HMAC",
+    int(CKM_SHA384_HMAC): "SHA384_HMAC",
+    int(CKM_SHA512_HMAC): "SHA512_HMAC",
+    int(CKM_SHA512_224_HMAC): "SHA512_224_HMAC",
+    int(CKM_SHA512_256_HMAC): "SHA512_256_HMAC",
+    int(CKM_SHA3_224_HMAC): "SHA3_224_HMAC",
+    int(CKM_SHA3_256_HMAC): "SHA3_256_HMAC",
+    int(CKM_SHA3_384_HMAC): "SHA3_384_HMAC",
+    int(CKM_SHA3_512_HMAC): "SHA3_512_HMAC",
 }
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
-_HMAC_FILES = {
-    "hmac_sha1_test.json": (KeyType.SHA_1_HMAC, Mechanism.SHA_1_HMAC, KeyType.GENERIC_SECRET),
-    "hmac_sha224_test.json": (KeyType.SHA224_HMAC, Mechanism.SHA224_HMAC, KeyType.GENERIC_SECRET),
+_HMAC_FILES: dict[str, tuple[int | None, int | None, int | None]] = {
+    "hmac_sha1_test.json": (int(CKK_SHA_1_HMAC), int(CKM_SHA_1_HMAC), int(CKK_GENERIC_SECRET)),
+    "hmac_sha224_test.json": (
+        int(CKK_SHA224_HMAC),
+        int(CKM_SHA224_HMAC),
+        int(CKK_GENERIC_SECRET),
+    ),
     "hmac_sha256_test.json": (None, None, None),  # already in test_wycheproof.py
-    "hmac_sha384_test.json": (KeyType.SHA384_HMAC, Mechanism.SHA384_HMAC, KeyType.GENERIC_SECRET),
-    "hmac_sha512_test.json": (KeyType.SHA512_HMAC, Mechanism.SHA512_HMAC, KeyType.GENERIC_SECRET),
+    "hmac_sha384_test.json": (
+        int(CKK_SHA384_HMAC),
+        int(CKM_SHA384_HMAC),
+        int(CKK_GENERIC_SECRET),
+    ),
+    "hmac_sha512_test.json": (
+        int(CKK_SHA512_HMAC),
+        int(CKM_SHA512_HMAC),
+        int(CKK_GENERIC_SECRET),
+    ),
     # SHA-512 truncated variants (PKCS#11 v3.0)
     "hmac_sha512_224_test.json": (
-        KeyType.SHA512_224_HMAC,
-        Mechanism.SHA512_224_HMAC,
-        KeyType.GENERIC_SECRET,
+        int(CKK_SHA512_224_HMAC),
+        int(CKM_SHA512_224_HMAC),
+        int(CKK_GENERIC_SECRET),
     ),
     "hmac_sha512_256_test.json": (
-        KeyType.SHA512_256_HMAC,
-        Mechanism.SHA512_256_HMAC,
-        KeyType.GENERIC_SECRET,
+        int(CKK_SHA512_256_HMAC),
+        int(CKM_SHA512_256_HMAC),
+        int(CKK_GENERIC_SECRET),
     ),
     # SHA-3 HMAC (PKCS#11 v3.0)
     "hmac_sha3_224_test.json": (
-        KeyType.SHA3_224_HMAC,
-        Mechanism.SHA3_224_HMAC,
-        KeyType.GENERIC_SECRET,
+        int(CKK_SHA3_224_HMAC),
+        int(CKM_SHA3_224_HMAC),
+        int(CKK_GENERIC_SECRET),
     ),
     "hmac_sha3_256_test.json": (
-        KeyType.SHA3_256_HMAC,
-        Mechanism.SHA3_256_HMAC,
-        KeyType.GENERIC_SECRET,
+        int(CKK_SHA3_256_HMAC),
+        int(CKM_SHA3_256_HMAC),
+        int(CKK_GENERIC_SECRET),
     ),
     "hmac_sha3_384_test.json": (
-        KeyType.SHA3_384_HMAC,
-        Mechanism.SHA3_384_HMAC,
-        KeyType.GENERIC_SECRET,
+        int(CKK_SHA3_384_HMAC),
+        int(CKM_SHA3_384_HMAC),
+        int(CKK_GENERIC_SECRET),
     ),
     "hmac_sha3_512_test.json": (
-        KeyType.SHA3_512_HMAC,
-        Mechanism.SHA3_512_HMAC,
-        KeyType.GENERIC_SECRET,
+        int(CKK_SHA3_512_HMAC),
+        int(CKM_SHA3_512_HMAC),
+        int(CKK_GENERIC_SECRET),
     ),
 }
 
@@ -98,9 +137,10 @@ _ALL_HMAC_VECTORS = _load_hmac_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_HMAC_VECTORS, ids=[v[0] for v in _ALL_HMAC_VECTORS])
 def test_hmac_wycheproof(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """HMAC verification from Wycheproof vectors."""
+    rs = p11_raw_session
     key_bytes = bytes.fromhex(vec["key"])
     msg = bytes.fromhex(vec["msg"])
     tag_expected = bytes.fromhex(vec["tag"])
@@ -109,28 +149,27 @@ def test_hmac_wycheproof(
     mechanism = vec["_mechanism"]
 
     # Check mechanism availability from the module's mechanism list
-    mech_display = _MECH_NAMES.get(mechanism, str(mechanism))
-    slot = p11_module.get_slots(token_present=True)[0]
-    supported = {mech_name(m) for m in slot.get_mechanisms()}
-    if mech_display not in supported:
+    mech_display = _MECH_NAMES.get(mechanism, f"0x{mechanism:08x}")
+    if not rs.has_mechanism(mech_display):
         pytest.skip(f"{mech_display} not supported by module")
 
     # Try typed key, fall back to GENERIC_SECRET
     key = None
     for kt in (vec["_key_type"], vec["_fallback_type"]):
         try:
-            key = p11_session.create_object(
-                {
-                    Attribute.CLASS: ObjectClass.SECRET_KEY,
-                    Attribute.KEY_TYPE: kt,
-                    Attribute.VALUE: key_bytes,
-                    Attribute.SIGN: True,
-                    Attribute.TOKEN: False,
-                    Attribute.SENSITIVE: False,
-                }
+            key = import_secret_key(
+                rs.raw,
+                rs.sh,
+                kt,
+                key_bytes,
+                attrs={
+                    int(CKA_SIGN): True,
+                    int(CKA_TOKEN): False,
+                    int(CKA_SENSITIVE): False,
+                },
             )
             break
-        except p11.exceptions.PKCS11Error:
+        except AssertionError:
             continue
 
     if key is None:
@@ -139,12 +178,14 @@ def test_hmac_wycheproof(
         pytest.xfail(f"Cannot import {len(key_bytes)}-byte HMAC key")
 
     try:
-        mac = key.sign(msg, mechanism=mechanism)
+        mac = sign_single(rs.raw, rs.sh, key, mechanism, msg)
         truncated = mac[:tag_size]
         if result == "valid":
             assert truncated == tag_expected
-    except p11.exceptions.PKCS11Error as exc:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.xfail(f"HMAC failed: {type(exc).__name__}")
+            pytest.xfail(f"HMAC failed: {exc}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, key)

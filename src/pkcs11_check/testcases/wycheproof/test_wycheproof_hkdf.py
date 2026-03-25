@@ -10,11 +10,32 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.pack import mech_hkdf
+from pkcs11_check.raw.recipes import (
+    create_object,
+    derive_key,
+    destroy_quietly,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DERIVE,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKK_GENERIC_SECRET,
+    CKM_HKDF_DERIVE,
+    CKM_SHA256,
+    CKM_SHA384,
+    CKM_SHA512,
+    CKM_SHA_1,
+    CKO_SECRET_KEY,
+)
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v30]
 
@@ -27,11 +48,11 @@ _HKDF_FILES = [
     ("hkdf_sha512_test.json", "SHA-512"),
 ]
 
-_SHA_HASH_MECHS: dict[str, Mechanism] = {
-    "SHA-1": Mechanism.SHA_1,
-    "SHA-256": Mechanism.SHA256,
-    "SHA-384": Mechanism.SHA384,
-    "SHA-512": Mechanism.SHA512,
+_SHA_HASH_MECHS: dict[str, int] = {
+    "SHA-1": int(CKM_SHA_1),
+    "SHA-256": int(CKM_SHA256),
+    "SHA-384": int(CKM_SHA384),
+    "SHA-512": int(CKM_SHA512),
 }
 
 
@@ -57,16 +78,11 @@ def _load_hkdf_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_HKDF_VECTORS = _load_hkdf_vectors()
 
 
-def _has_hkdf(p11_module: Any) -> bool:
-    slot = p11_module.get_slots(token_present=True)[0]
-    names = {mech_name(m) for m in slot.get_mechanisms()}
-    return "HKDF_DERIVE" in names or any("0x0000402a" in n for n in names)
-
-
 @pytest.mark.parametrize("vec_id,vec", _ALL_HKDF_VECTORS, ids=[v[0] for v in _ALL_HKDF_VECTORS])
-def test_hkdf(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_hkdf(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """HKDF key derivation from Wycheproof vectors."""
-    if not _has_hkdf(p11_module):
+    rs = p11_raw_session
+    if not rs.has_mechanism("HKDF_DERIVE"):
         pytest.skip("HKDF_DERIVE not supported")
 
     ikm = bytes.fromhex(vec["ikm"])
@@ -83,41 +99,59 @@ def test_hkdf(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any
 
     # Import IKM as a generic secret key
     try:
-        ikm_key = p11_session.create_object(
+        ikm_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-                Attribute.VALUE: ikm,
-                Attribute.VALUE_LEN: len(ikm),
-                Attribute.DERIVE: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
+                int(CKA_CLASS): int(CKO_SECRET_KEY),
+                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+                int(CKA_VALUE): ikm,
+                int(CKA_VALUE_LEN): len(ikm),
+                int(CKA_DERIVE): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "invalid":
             return
         pytest.skip("Cannot import IKM key for HKDF")
 
     # CK_HKDF_PARAMS: (hash_mechanism, salt, info)
     # Uses extract+expand mode (standard HKDF)
+    hkdf_param = mech_hkdf(
+        CKM_HKDF_DERIVE,
+        hash_mech=hash_mech,
+        extract=True,
+        expand=True,
+        salt=salt if salt else None,
+        info=info if info else None,
+    )
     try:
-        derived = ikm_key.derive_key(
-            KeyType.GENERIC_SECRET,
-            okm_size * 8,  # bits
-            mechanism=Mechanism.HKDF_DERIVE,
-            mechanism_param=(hash_mech, salt, info),
-            template={
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-                Attribute.TOKEN: False,
+        derived = derive_key(
+            rs.raw,
+            rs.sh,
+            ikm_key,
+            CKM_HKDF_DERIVE,
+            attrs={
+                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+                int(CKA_VALUE_LEN): okm_size,
+                int(CKA_SENSITIVE): False,
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_TOKEN): False,
             },
+            mech_param=hkdf_param,
         )
-        okm = derived[Attribute.VALUE]
+        attrs = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])
+        okm = attrs[int(CKA_VALUE)]
+        assert isinstance(okm, bytes)
         if result == "valid":
             assert okm == okm_expected
-    except (p11.exceptions.PKCS11Error, TypeError, NotImplementedError):
+        destroy_quietly(rs.raw, rs.sh, derived)
+    except (AssertionError, TypeError, NotImplementedError):
         if result == "valid":
             pytest.xfail(f"HKDF derive failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, ikm_key)

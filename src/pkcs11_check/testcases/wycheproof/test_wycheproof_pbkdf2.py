@@ -8,26 +8,50 @@ Skips on modules without PBKDF2 support (e.g., SoftHSM2).
 from __future__ import annotations
 
 import json
+from ctypes import byref
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.pack import (
+    PackedMechanism,
+    mech_pbkdf2,
+    template_from_dict,
+)
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    read_attributes,
+)
+from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKK_GENERIC_SECRET,
+    CKM_PKCS5_PBKD2,
+    CKP_PKCS5_PBKD2_HMAC_SHA1,
+    CKP_PKCS5_PBKD2_HMAC_SHA224,
+    CKP_PKCS5_PBKD2_HMAC_SHA256,
+    CKP_PKCS5_PBKD2_HMAC_SHA384,
+    CKP_PKCS5_PBKD2_HMAC_SHA512,
+    CKR_OK,
+)
 
 pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map Wycheproof file suffix to CKP_PKCS5_PBKD2_HMAC_* PRF constant
-# These must match the values in python-pkcs11's _pkcs11.pxd
-_PRF_MAP = {
-    "hmacsha1": 0x00000001,  # CKP_PKCS5_PBKD2_HMAC_SHA1
-    "hmacsha224": 0x00000003,  # CKP_PKCS5_PBKD2_HMAC_SHA224
-    "hmacsha256": 0x00000004,  # CKP_PKCS5_PBKD2_HMAC_SHA256
-    "hmacsha384": 0x00000005,  # CKP_PKCS5_PBKD2_HMAC_SHA384
-    "hmacsha512": 0x00000006,  # CKP_PKCS5_PBKD2_HMAC_SHA512
+_PRF_MAP: dict[str, int] = {
+    "hmacsha1": int(CKP_PKCS5_PBKD2_HMAC_SHA1),
+    "hmacsha224": int(CKP_PKCS5_PBKD2_HMAC_SHA224),
+    "hmacsha256": int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+    "hmacsha384": int(CKP_PKCS5_PBKD2_HMAC_SHA384),
+    "hmacsha512": int(CKP_PKCS5_PBKD2_HMAC_SHA512),
 }
 
 _PBKDF2_FILES = [
@@ -65,14 +89,26 @@ def _load_pbkdf2_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_PBKDF2_VECTORS = _load_pbkdf2_vectors()
 
 
+def _generate_key_with_mech(
+    raw: Any, session: int, mech: PackedMechanism, attrs: dict[int, Any]
+) -> int:
+    """C_GenerateKey with a custom mechanism (for PBKDF2)."""
+    tmpl = template_from_dict(attrs)
+    key = CK_OBJECT_HANDLE(0)
+    rv = raw.C_GenerateKey(session, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
+    expect_rv(int(rv), CKR_OK)
+    return int(key.value)
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_PBKDF2_VECTORS, ids=[v[0] for v in _ALL_PBKDF2_VECTORS])
-def test_pbkdf2(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_pbkdf2(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """PBKDF2 key derivation from Wycheproof vectors.
 
     Derives a key using CKM_PKCS5_PBKD2 and compares the extracted
     key material against the expected derived key (dk).
     """
-    if not has_mechanism(p11_module, "PKCS5_PBKD2"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("PKCS5_PBKD2"):
         pytest.skip("PKCS5_PBKD2 not supported")
 
     password = bytes.fromhex(vec["password"])
@@ -83,34 +119,38 @@ def test_pbkdf2(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, A
     result = vec["result"]
     prf = vec["_prf"]
 
-    # CKM_PKCS5_PBKD2 is a key generation mechanism (not derivation).
-    # The password is passed in the mechanism params, not as a base key.
-    pbkdf2_params = {
-        "password": password,
-        "salt": salt,
-        "iterations": iterations,
-        "prf": prf,
-    }
+    # Build PBKDF2 mechanism params
+    pbkdf2_param = mech_pbkdf2(
+        CKM_PKCS5_PBKD2,
+        salt=salt,
+        iterations=iterations,
+        prf=prf,
+        password=password,
+    )
 
     try:
-        derived = p11_session.generate_key(
-            KeyType.GENERIC_SECRET,
-            dk_len * 8,  # bits
-            mechanism=Mechanism.PKCS5_PBKD2,
-            mechanism_param=pbkdf2_params,
-            template={
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-                Attribute.TOKEN: False,
+        derived = _generate_key_with_mech(
+            rs.raw,
+            rs.sh,
+            pbkdf2_param,
+            {
+                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+                int(CKA_VALUE_LEN): dk_len,
+                int(CKA_SENSITIVE): False,
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_TOKEN): False,
             },
         )
-        dk_actual = derived[Attribute.VALUE]
+        attrs = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])
+        dk_actual = attrs[int(CKA_VALUE)]
+        assert isinstance(dk_actual, bytes)
         if result == "valid":
             assert dk_actual == dk_expected, (
                 f"PBKDF2 output mismatch for {vec_id}: "
                 f"got {dk_actual.hex()[:20]}... expected {dk_expected.hex()[:20]}..."
             )
-    except p11.exceptions.PKCS11Error:
+        destroy_quietly(rs.raw, rs.sh, derived)
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"PBKDF2 generate_key failed for valid vector {vec_id}")
         # acceptable: reject is fine
