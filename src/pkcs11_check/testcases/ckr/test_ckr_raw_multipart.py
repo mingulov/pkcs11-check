@@ -30,7 +30,7 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
         import ctypes, os
         from pkcs11_check.raw.api import RawPKCS11
         from pkcs11_check.raw.types_std import (
-            CKR_OK, CKR_OPERATION_NOT_INITIALIZED,
+            CK_NOTIFY, CKR_OK, CKR_OPERATION_NOT_INITIALIZED,
             CKR_OPERATION_ACTIVE, CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_BUFFER_TOO_SMALL, CKR_DATA_LEN_RANGE,
             CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION,
@@ -47,10 +47,10 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
         slots = (ctypes.c_ulong * slot_count.value)()
         raw.C_GetSlotList(1, slots, ctypes.byref(slot_count))
 
-        # Open session
+        # Open session (use CK_NOTIFY() to create null function pointer)
         session = ctypes.c_ulong(0)
         rv = raw.C_OpenSession(slots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                               None, None, ctypes.byref(session))
+                               None, CK_NOTIFY(), ctypes.byref(session))
         assert rv == CKR_OK, f"OpenSession failed: 0x{{rv:08x}}"
         sh = session.value
 
@@ -61,15 +61,18 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
             pin_buf = (ctypes.c_ubyte * len(pin_bytes))(*pin_bytes)
             raw.C_Login(sh, 1, pin_buf, len(pin_bytes))
 
-{textwrap.indent(textwrap.dedent(test_code), '        ')}
+{textwrap.indent(textwrap.dedent(test_code), "        ")}
 
         raw.C_CloseSession(sh)
         raw.C_Finalize(None)
     """)
     import os
+
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
         env=os.environ.copy(),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()

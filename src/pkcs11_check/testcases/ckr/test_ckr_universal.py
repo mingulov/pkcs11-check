@@ -87,17 +87,22 @@ class TestUniversalRealTriggers:
         import ctypes
 
         from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_SESSION_HANDLE_INVALID
+        from pkcs11_check.raw.types_std import (
+            CKR_ARGUMENTS_BAD,
+            CKR_SESSION_HANDLE_INVALID,
+            CK_SESSION_INFO,
+        )
+
         raw = RawPKCS11(p11_module.lib._raw_funclist_ptr)
-        # Provide a real buffer to avoid ARGUMENTS_BAD on NULL
-        buf = (ctypes.c_ubyte * 64)()
-        rv = raw.C_GetSessionInfo(0xDEADBEEF, ctypes.cast(buf, ctypes.c_void_p))
+        session_info = CK_SESSION_INFO()
+        rv = raw.C_GetSessionInfo(0xDEADBEEF, ctypes.byref(session_info))
         # SESSION_HANDLE_INVALID or ARGUMENTS_BAD - both prove invalid handle is detected
         assert rv in (CKR_SESSION_HANDLE_INVALID, CKR_ARGUMENTS_BAD), f"Got 0x{rv:08x}"
 
     def test_cryptoki_not_initialized_via_subprocess(self, p11_config: Any) -> None:
         """CKR_CRYPTOKI_NOT_INITIALIZED - call after C_Finalize."""
         import os
+
         script = textwrap.dedent(f"""\
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.types_std import CKR_CRYPTOKI_NOT_INITIALIZED
@@ -114,7 +119,9 @@ class TestUniversalRealTriggers:
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
             env=os.environ.copy(),
         )
         assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
@@ -124,6 +131,7 @@ class TestUniversalRealTriggers:
         """CKR_DEVICE_REMOVED - triggered via fault-proxy."""
         import os
         from pathlib import Path
+
         proxy = Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so"
         if not proxy.exists():
             pytest.skip("fault-proxy not built")
@@ -149,7 +157,9 @@ class TestUniversalRealTriggers:
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
             env=os.environ.copy(),
         )
         assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
