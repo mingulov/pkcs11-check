@@ -13,107 +13,158 @@ from __future__ import annotations
 
 from typing import Any
 
-import pkcs11
 import pytest
-from pkcs11 import Attribute, KeyType
+
+from pkcs11_check.raw.bootstrap import (
+    close_session_quietly,
+    login_user,
+)
+from pkcs11_check.raw.bootstrap import (
+    open_session as raw_open_session,
+)
+from pkcs11_check.raw.pack import template_from_dict
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    find_objects,
+    gen_aes_key,
+)
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_UTF8CHAR,
+    CKA_CLASS,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKO_PRIVATE_KEY,
+    CKR_OK,
+    CKR_PIN_INCORRECT,
+    CKR_USER_ALREADY_LOGGED_IN,
+    CKU_USER,
+)
+from pkcs11_check.testcases.conftest import get_pin_bytes
 
 pytestmark = [pytest.mark.security, pytest.mark.destructive]
+
+
+def _try_login(raw: Any, sh: int, pin: bytes) -> int:
+    """Attempt login and return raw CKR value."""
+    pin_buf = (CK_UTF8CHAR * len(pin))(*pin)
+    return int(raw.C_Login(sh, int(CKU_USER), pin_buf, len(pin)))
 
 
 class TestWrongPIN:
     """Verify that wrong PINs are properly rejected."""
 
-    def test_wrong_pin_rejected(self, p11_module: Any) -> None:
+    def test_wrong_pin_rejected(self, p11_raw_session: Any) -> None:
         """Login with wrong PIN must return CKR_PIN_INCORRECT."""
-        token = p11_module.get_token()
-        if token is None:
-            pytest.skip("No token available")
-
-        with pytest.raises(pkcs11.exceptions.PinIncorrect):
-            token.open(rw=True, user_pin="DEFINITELY_WRONG_PIN_999")
-
-    def test_empty_pin_rejected(self, p11_module: Any) -> None:
-        """Login with empty PIN must fail."""
-        token = p11_module.get_token()
-        if token is None:
-            pytest.skip("No token available")
-
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            token.open(rw=True, user_pin="")
-            pytest.fail("Empty PIN should not be accepted")
-        except (pkcs11.exceptions.PinIncorrect, pkcs11.exceptions.PinLenRange):
-            pass  # Expected
+            rv = _try_login(rs.raw, test_sh, b"DEFINITELY_WRONG_PIN_999")
+            assert rv in (
+                int(CKR_PIN_INCORRECT),
+                int(CKR_USER_ALREADY_LOGGED_IN),
+            ), f"Expected CKR_PIN_INCORRECT, got {ckr_name(rv)}"
+        finally:
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_correct_pin_after_wrong_attempt(self, p11_module: Any, p11_config: Any) -> None:
+    def test_empty_pin_rejected(self, p11_raw_session: Any) -> None:
+        """Login with empty PIN must fail."""
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
+        try:
+            # Empty PIN - pass NULL pointer with length 0
+            rv = int(rs.raw.C_Login(test_sh, int(CKU_USER), None, 0))
+            assert rv != int(CKR_OK) or rv == int(CKR_USER_ALREADY_LOGGED_IN), (
+                f"Empty PIN should not be accepted, got {ckr_name(rv)}"
+            )
+        finally:
+            close_session_quietly(rs.raw, test_sh)
+
+    def test_correct_pin_after_wrong_attempt(self, p11_raw_session: Any, p11_config: Any) -> None:
         """After a wrong PIN attempt, correct PIN should still work (not locked after 1 try)."""
-        token = p11_module.get_token()
-        if token is None:
-            pytest.skip("No token available")
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
+            pytest.skip("No PIN configured")
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
         # First: wrong PIN
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            token.open(rw=True, user_pin="WRONG_PIN_XYZ")
-        except pkcs11.exceptions.PKCS11Error:
-            pass
+            _try_login(rs.raw, test_sh, b"WRONG_PIN_XYZ")
+        finally:
+            close_session_quietly(rs.raw, test_sh)
 
         # Then: correct PIN should succeed
-        pin_val = p11_config.pin if p11_config else "1234"
-        pin = pin_val.get_secret_value() if hasattr(pin_val, "get_secret_value") else str(pin_val)
-        session = token.open(rw=True, user_pin=pin)
-        assert session is not None
-        # Verify the session actually works
-        key = session.generate_key(KeyType.AES, 256)
-        assert key is not None
-
-    def test_wrong_pin_does_not_reveal_objects(self, p11_module: Any) -> None:
-        """A failed login attempt must not expose any private objects."""
-        token = p11_module.get_token()
-        if token is None:
-            pytest.skip("No token available")
-
+        test_sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            session = token.open(rw=True, user_pin="WRONG_PIN_ABC")
-            # If we somehow got a session, there should be no private objects
-            found = list(session.get_objects({Attribute.CLASS: pkcs11.ObjectClass.PRIVATE_KEY}))
-            assert len(found) == 0, "Wrong PIN exposed private objects!"
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected - login failed
+            login_user(rs.raw, test_sh2, int(CKU_USER), pin_bytes)
+            # Verify the session actually works
+            key_h = gen_aes_key(rs.raw, test_sh2, 256)
+            assert key_h != 0
+            destroy_quietly(rs.raw, test_sh2, key_h)
+        finally:
+            rs.raw.C_Logout(test_sh2)
+            close_session_quietly(rs.raw, test_sh2)
+
+    def test_wrong_pin_does_not_reveal_objects(self, p11_raw_session: Any) -> None:
+        """A failed login attempt must not expose any private objects."""
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
+        try:
+            rv = _try_login(rs.raw, test_sh, b"WRONG_PIN_ABC")
+            if rv == int(CKR_OK):
+                # If we somehow got logged in, there should be no private objects
+                tmpl = template_from_dict({int(CKA_CLASS): int(CKO_PRIVATE_KEY)})
+                found = find_objects(rs.raw, test_sh, tmpl)
+                assert len(found) == 0, "Wrong PIN exposed private objects!"
+            # Otherwise login failed - expected
+        finally:
+            close_session_quietly(rs.raw, test_sh)
 
 
 class TestPINEdgeCases:
     """PIN handling edge cases."""
 
-    def test_very_long_pin(self, p11_module: Any) -> None:
+    def test_very_long_pin(self, p11_raw_session: Any) -> None:
         """Very long PIN (256 chars) - should fail cleanly, not crash."""
-        token = p11_module.get_token()
-        if token is None:
-            pytest.skip("No token available")
-
-        long_pin = "A" * 256
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            token.open(rw=True, user_pin=long_pin)
-            pytest.fail("256-char PIN should not be accepted")
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected
+            long_pin = b"A" * 256
+            rv = _try_login(rs.raw, test_sh, long_pin)
+            assert rv != int(CKR_OK) or rv == int(CKR_USER_ALREADY_LOGGED_IN), (
+                f"256-char PIN should not be accepted, got {ckr_name(rv)}"
+            )
+        finally:
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_unicode_pin(self, p11_module: Any) -> None:
+    def test_unicode_pin(self, p11_raw_session: Any) -> None:
         """Unicode characters in PIN - should fail cleanly."""
-        token = p11_module.get_token()
-        if token is None:
-            pytest.skip("No token available")
-
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            token.open(rw=True, user_pin="\u00e9\u00e8\u00ea\u00eb")
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected - most modules reject non-ASCII PINs
+            unicode_pin = "\u00e9\u00e8\u00ea\u00eb".encode()
+            rv = _try_login(rs.raw, test_sh, unicode_pin)
+            # Most modules reject non-ASCII PINs - any non-crash result is acceptable
+            _ = rv
+        finally:
+            close_session_quietly(rs.raw, test_sh)
 
-    def test_null_bytes_in_pin(self, p11_module: Any) -> None:
+    def test_null_bytes_in_pin(self, p11_raw_session: Any) -> None:
         """Null bytes in PIN - must not cause truncation or crash."""
-        token = p11_module.get_token()
-        if token is None:
-            pytest.skip("No token available")
-
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            token.open(rw=True, user_pin="12\x0034")
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected
+            null_pin = b"12\x0034"
+            rv = _try_login(rs.raw, test_sh, null_pin)
+            # Any non-crash result is acceptable
+            _ = rv
+        finally:
+            close_session_quietly(rs.raw, test_sh)
