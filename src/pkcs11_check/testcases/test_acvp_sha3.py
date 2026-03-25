@@ -11,10 +11,14 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Mechanism
-from pkcs11.exceptions import PKCS11Error
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import digest_single
+from pkcs11_check.raw.types_std import (
+    CKM_SHA3_224,
+    CKM_SHA3_256,
+    CKM_SHA3_384,
+    CKM_SHA3_512,
+)
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
@@ -25,12 +29,12 @@ if not ACVP_AVAILABLE:
         allow_module_level=True,
     )
 
-# ACVP algorithm name -> (Mechanism enum, mechanism name string)
-_ALG_TO_MECH: dict[str, tuple[Mechanism, str]] = {
-    "SHA3-224-2.0": (Mechanism.SHA3_224, "SHA3_224"),
-    "SHA3-256-2.0": (Mechanism.SHA3_256, "SHA3_256"),
-    "SHA3-384-2.0": (Mechanism.SHA3_384, "SHA3_384"),
-    "SHA3-512-2.0": (Mechanism.SHA3_512, "SHA3_512"),
+# ACVP algorithm name -> (CKM mechanism int, mechanism name string)
+_ALG_TO_MECH: dict[str, tuple[int, str]] = {
+    "SHA3-224-2.0": (int(CKM_SHA3_224), "SHA3_224"),
+    "SHA3-256-2.0": (int(CKM_SHA3_256), "SHA3_256"),
+    "SHA3-384-2.0": (int(CKM_SHA3_384), "SHA3_384"),
+    "SHA3-512-2.0": (int(CKM_SHA3_512), "SHA3_512"),
 }
 
 
@@ -45,7 +49,7 @@ def _load_sha3_vectors() -> list[tuple[str, dict[str, Any]]]:
     '<algorithm>-tc<tcId>' for parametrize.
     """
     result = []
-    for alg_name in _ALG_TO_MECH.keys():
+    for alg_name in _ALG_TO_MECH:
         vecs = load_acvp_vectors(alg_name)
         vec_count = 0
         for vec in vecs:
@@ -86,12 +90,13 @@ _SHA3_VECTORS = _load_sha3_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _SHA3_VECTORS, ids=[v[0] for v in _SHA3_VECTORS])
 def test_acvp_sha3(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """SHA-3 digest from NIST ACVP vectors.
 
     Compares PKCS#11 digest output against official NIST ACVP expected results.
     """
+    rs = p11_raw_session
     alg_name: str = vec["alg_name"]
     msg: bytes = vec["msg"]
     expected_md: bytes = vec["expected_md"]
@@ -99,19 +104,15 @@ def test_acvp_sha3(
     if alg_name not in _ALG_TO_MECH:
         pytest.skip(f"Unknown algorithm: {alg_name}")
 
-    mech, mech_name_str = _ALG_TO_MECH[alg_name]
+    mech_int, mech_name_str = _ALG_TO_MECH[alg_name]
 
     # Check mechanism availability
-    if not has_mechanism(p11_module, mech_name_str):
+    if not rs.has_mechanism(mech_name_str):
         pytest.skip(f"{mech_name_str} not supported")
 
-    # Some test vectors have len=0 (empty message) which modules handle
-    # identically to msg being empty. Skip only if msg is empty but test
-    # expects non-empty output (which shouldn't happen in valid ACVP data).
-
     try:
-        digest = p11_session.digest(msg, mechanism=mech)
-    except PKCS11Error as e:
+        digest = digest_single(rs.raw, rs.sh, mech_int, msg)
+    except AssertionError as e:
         # Unexpected error from the module
         pytest.fail(f"SHA-3 digest failed for {vec_id}: {e}")
 

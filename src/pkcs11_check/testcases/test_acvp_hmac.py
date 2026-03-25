@@ -11,10 +11,29 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import KeySizeRange, PKCS11Error
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    import_secret_key,
+    sign_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKK_SHA3_256_HMAC,
+    CKK_SHA3_384_HMAC,
+    CKK_SHA3_512_HMAC,
+    CKK_SHA256_HMAC,
+    CKK_SHA384_HMAC,
+    CKK_SHA512_HMAC,
+    CKM_SHA3_256_HMAC,
+    CKM_SHA3_384_HMAC,
+    CKM_SHA3_512_HMAC,
+    CKM_SHA256_HMAC,
+    CKM_SHA384_HMAC,
+    CKM_SHA512_HMAC,
+)
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
@@ -25,14 +44,20 @@ if not ACVP_AVAILABLE:
         allow_module_level=True,
     )
 
-# ACVP algorithm name -> (KeyType, Mechanism, display name)
-_ALG_MAP = {
-    "HMAC-SHA2-256-2.0": (KeyType.SHA256_HMAC, Mechanism.SHA256_HMAC, "SHA256_HMAC"),
-    "HMAC-SHA2-384-2.0": (KeyType.SHA384_HMAC, Mechanism.SHA384_HMAC, "SHA384_HMAC"),
-    "HMAC-SHA2-512-2.0": (KeyType.SHA512_HMAC, Mechanism.SHA512_HMAC, "SHA512_HMAC"),
-    "HMAC-SHA3-256-2.0": (KeyType.SHA3_256_HMAC, Mechanism.SHA3_256_HMAC, "SHA3_256_HMAC"),
-    "HMAC-SHA3-384-2.0": (KeyType.SHA3_384_HMAC, Mechanism.SHA3_384_HMAC, "SHA3_384_HMAC"),
-    "HMAC-SHA3-512-2.0": (KeyType.SHA3_512_HMAC, Mechanism.SHA3_512_HMAC, "SHA3_512_HMAC"),
+# ACVP algorithm name -> (CKK key type, CKM mechanism, display name)
+_ALG_MAP: dict[str, tuple[int, int, str]] = {
+    "HMAC-SHA2-256-2.0": (int(CKK_SHA256_HMAC), int(CKM_SHA256_HMAC), "SHA256_HMAC"),
+    "HMAC-SHA2-384-2.0": (int(CKK_SHA384_HMAC), int(CKM_SHA384_HMAC), "SHA384_HMAC"),
+    "HMAC-SHA2-512-2.0": (int(CKK_SHA512_HMAC), int(CKM_SHA512_HMAC), "SHA512_HMAC"),
+    "HMAC-SHA3-256-2.0": (
+        int(CKK_SHA3_256_HMAC), int(CKM_SHA3_256_HMAC), "SHA3_256_HMAC",
+    ),
+    "HMAC-SHA3-384-2.0": (
+        int(CKK_SHA3_384_HMAC), int(CKM_SHA3_384_HMAC), "SHA3_384_HMAC",
+    ),
+    "HMAC-SHA3-512-2.0": (
+        int(CKK_SHA3_512_HMAC), int(CKM_SHA3_512_HMAC), "SHA3_512_HMAC",
+    ),
 }
 
 
@@ -80,38 +105,43 @@ _ALL_HMAC_VECTORS = _load_hmac_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_HMAC_VECTORS, ids=[v[0] for v in _ALL_HMAC_VECTORS])
 def test_acvp_hmac(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """HMAC generation from NIST ACVP vectors.
 
     Tests that the PKCS#11 module can correctly compute HMAC MACs using
     standard SHA-2 and SHA-3 algorithms with truncated output (macLen in bits).
     """
-    if not has_mechanism(p11_module, vec["mech_display"]):
+    rs = p11_raw_session
+    if not rs.has_mechanism(vec["mech_display"]):
         pytest.skip(f"{vec['mech_display']} not supported by module")
 
-    key = None
+    key = 0
     try:
         try:
-            key = p11_session.create_object(
-                {
-                    Attribute.CLASS: ObjectClass.SECRET_KEY,
-                    Attribute.KEY_TYPE: vec["key_type"],
-                    Attribute.VALUE: vec["key"],
-                    Attribute.SIGN: True,
-                    Attribute.TOKEN: False,
-                    Attribute.SENSITIVE: False,
-                }
+            key = import_secret_key(
+                rs.raw,
+                rs.sh,
+                vec["key_type"],
+                vec["key"],
+                attrs={
+                    int(CKA_SIGN): True,
+                    int(CKA_TOKEN): False,
+                    int(CKA_SENSITIVE): False,
+                },
             )
-        except (PKCS11Error, KeySizeRange) as e:
+        except AssertionError as e:
             pytest.skip(f"Cannot import {len(vec['key'])}-byte HMAC key: {e}")
 
         # Compute HMAC
         try:
-            mac = key.sign(vec["msg"], mechanism=vec["mechanism"])
-        except KeySizeRange:
-            # Module rejects this key size for HMAC with this mechanism
-            pytest.skip(f"Key size out of range for {vec['mech_display']}")
+            mac = sign_single(rs.raw, rs.sh, key, vec["mechanism"], vec["msg"])
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            if "CKR_KEY_SIZE_RANGE" in exc_msg:
+                # Module rejects this key size for HMAC with this mechanism
+                pytest.skip(f"Key size out of range for {vec['mech_display']}")
+            raise
 
         # Compare truncated to expected (macLen is in bits)
         mac_len_bytes = vec["mac_len_bits"] // 8
@@ -123,5 +153,5 @@ def test_acvp_hmac(
             f"got {truncated.hex()}, expected {expected.hex()}"
         )
     finally:
-        if key is not None:
-            key.destroy()
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)

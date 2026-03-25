@@ -10,13 +10,41 @@ from __future__ import annotations
 
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.constants import SlhDsaParameterSet
-from pkcs11.exceptions import DataInvalid, PKCS11Error, SignatureLenRange
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_PARAMETER_SET,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VERIFY,
+    CKK_SLH_DSA,
+    CKM_SLH_DSA,
+    CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
+    CKP_SLH_DSA_SHA2_128F,
+    CKP_SLH_DSA_SHA2_128S,
+    CKP_SLH_DSA_SHA2_192F,
+    CKP_SLH_DSA_SHA2_192S,
+    CKP_SLH_DSA_SHA2_256F,
+    CKP_SLH_DSA_SHA2_256S,
+    CKP_SLH_DSA_SHAKE_128F,
+    CKP_SLH_DSA_SHAKE_128S,
+    CKP_SLH_DSA_SHAKE_192F,
+    CKP_SLH_DSA_SHAKE_192S,
+    CKP_SLH_DSA_SHAKE_256F,
+    CKP_SLH_DSA_SHAKE_256S,
+)
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
 pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.acvp, pytest.mark.requires_v32]
@@ -27,20 +55,20 @@ if not ACVP_AVAILABLE:
         allow_module_level=True,
     )
 
-# ACVP parameter set name -> PKCS#11 SlhDsaParameterSet enum
-_PARAM_SET_MAP: dict[str, SlhDsaParameterSet] = {
-    "SLH-DSA-SHA2-128s": SlhDsaParameterSet.SHA2_128S,
-    "SLH-DSA-SHA2-128f": SlhDsaParameterSet.SHA2_128F,
-    "SLH-DSA-SHAKE-128s": SlhDsaParameterSet.SHAKE_128S,
-    "SLH-DSA-SHAKE-128f": SlhDsaParameterSet.SHAKE_128F,
-    "SLH-DSA-SHA2-192s": SlhDsaParameterSet.SHA2_192S,
-    "SLH-DSA-SHA2-192f": SlhDsaParameterSet.SHA2_192F,
-    "SLH-DSA-SHAKE-192s": SlhDsaParameterSet.SHAKE_192S,
-    "SLH-DSA-SHAKE-192f": SlhDsaParameterSet.SHAKE_192F,
-    "SLH-DSA-SHA2-256s": SlhDsaParameterSet.SHA2_256S,
-    "SLH-DSA-SHA2-256f": SlhDsaParameterSet.SHA2_256F,
-    "SLH-DSA-SHAKE-256s": SlhDsaParameterSet.SHAKE_256S,
-    "SLH-DSA-SHAKE-256f": SlhDsaParameterSet.SHAKE_256F,
+# ACVP parameter set name -> PKCS#11 CKP parameter set int
+_PARAM_SET_MAP: dict[str, int] = {
+    "SLH-DSA-SHA2-128s": int(CKP_SLH_DSA_SHA2_128S),
+    "SLH-DSA-SHA2-128f": int(CKP_SLH_DSA_SHA2_128F),
+    "SLH-DSA-SHAKE-128s": int(CKP_SLH_DSA_SHAKE_128S),
+    "SLH-DSA-SHAKE-128f": int(CKP_SLH_DSA_SHAKE_128F),
+    "SLH-DSA-SHA2-192s": int(CKP_SLH_DSA_SHA2_192S),
+    "SLH-DSA-SHA2-192f": int(CKP_SLH_DSA_SHA2_192F),
+    "SLH-DSA-SHAKE-192s": int(CKP_SLH_DSA_SHAKE_192S),
+    "SLH-DSA-SHAKE-192f": int(CKP_SLH_DSA_SHAKE_192F),
+    "SLH-DSA-SHA2-256s": int(CKP_SLH_DSA_SHA2_256S),
+    "SLH-DSA-SHA2-256f": int(CKP_SLH_DSA_SHA2_256F),
+    "SLH-DSA-SHAKE-256s": int(CKP_SLH_DSA_SHAKE_256S),
+    "SLH-DSA-SHAKE-256f": int(CKP_SLH_DSA_SHAKE_256F),
 }
 
 
@@ -63,6 +91,7 @@ def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
             continue
         merged: dict[str, Any] = {
             "param_set": param_set,
+            "param_name": param_name,
             "pk": bytes.fromhex(pk),
             "msg": bytes.fromhex(msg),
             "sig": bytes.fromhex(sig),
@@ -91,6 +120,7 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
             continue
         merged = {
             "param_set": param_set,
+            "param_name": param_name,
             "sk": bytes.fromhex(sk),
             "msg": bytes.fromhex(msg),
             "tc_id": inp.get("tcId", 0),
@@ -106,42 +136,54 @@ _SIGGEN_VECTORS = _load_siggen_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _SIGVER_VECTORS, ids=[v[0] for v in _SIGVER_VECTORS])
 def test_slhdsa_sigver(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """SLH-DSA signature verification from NIST ACVP vectors."""
-    if not has_mechanism(p11_module, "SLH_DSA"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("SLH_DSA"):
         pytest.skip("SLH_DSA not supported")
 
-    param_set: SlhDsaParameterSet = vec["param_set"]
+    param_set: int = vec["param_set"]
 
-    pub_key = None
+    pub_key = 0
     try:
         try:
-            pub_key = p11_session.create_object(
+            pub_key = create_object(
+                rs.raw,
+                rs.sh,
                 {
-                    Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                    Attribute.KEY_TYPE: KeyType.SLH_DSA,
-                    Attribute.VALUE: vec["pk"],
-                    Attribute.PARAMETER_SET: int(param_set),
-                    Attribute.TOKEN: False,
-                    Attribute.VERIFY: True,
-                }
+                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_SLH_DSA),
+                    int(CKA_VALUE): vec["pk"],
+                    int(CKA_PARAMETER_SET): param_set,
+                    int(CKA_TOKEN): False,
+                    int(CKA_VERIFY): True,
+                },
             )
-        except PKCS11Error as e:
-            pytest.skip(f"Cannot import SLH-DSA public key ({param_set.name}): {e}")
+        except AssertionError as e:
+            pytest.skip(
+                f"Cannot import SLH-DSA public key ({vec['param_name']}): {e}"
+            )
 
         try:
-            pub_key.verify(vec["msg"], vec["sig"], mechanism=Mechanism.SLH_DSA)
-            verified = True
-        except p11.exceptions.SignatureInvalid:
-            verified = False
-        except (DataInvalid, SignatureLenRange):
-            # Some modules return CKR_DATA_INVALID or CKR_SIGNATURE_LEN_RANGE
-            # instead of CKR_SIGNATURE_INVALID for corrupt signatures.
-            verified = False
-        except PKCS11Error as e:
-            # Unexpected error from the module - record as xfail
-            pytest.xfail(f"SLH-DSA verify raised unexpected error for {vec_id}: {e}")
+            verified = verify_single(
+                rs.raw, rs.sh, pub_key, CKM_SLH_DSA, vec["msg"], vec["sig"]
+            )
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            if any(
+                name in exc_msg
+                for name in (
+                    "CKR_SIGNATURE_INVALID", "CKR_SIGNATURE_LEN_RANGE",
+                    "CKR_DATA_INVALID",
+                )
+            ):
+                verified = False
+            else:
+                # Unexpected error from the module - record as xfail
+                pytest.xfail(
+                    f"SLH-DSA verify raised unexpected error for {vec_id}: {exc_msg}"
+                )
 
         expected = vec["expected_pass"]
         if not expected and verified:
@@ -153,13 +195,13 @@ def test_slhdsa_sigver(
                 f"{vec_id}: rejected VALID SLH-DSA signature - known Kryoptic issue"
             )
     finally:
-        if pub_key is not None:
-            pub_key.destroy()
+        if pub_key:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
 
 
 @pytest.mark.parametrize("vec_id,vec", _SIGGEN_VECTORS, ids=[v[0] for v in _SIGGEN_VECTORS])
 def test_slhdsa_siggen(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """SLH-DSA signature generation from NIST ACVP message vectors.
 
@@ -168,31 +210,36 @@ def test_slhdsa_siggen(
     result.  Exact signature comparison is skipped because most PKCS#11
     implementations use randomized SLH-DSA.
     """
-    if not has_mechanism(p11_module, "SLH_DSA"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("SLH_DSA"):
         pytest.skip("SLH_DSA not supported")
 
-    param_set: SlhDsaParameterSet = vec["param_set"]
+    param_set: int = vec["param_set"]
 
-    priv_key = None
+    priv_key = 0
     try:
         try:
-            priv_key = p11_session.create_object(
+            priv_key = create_object(
+                rs.raw,
+                rs.sh,
                 {
-                    Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-                    Attribute.KEY_TYPE: KeyType.SLH_DSA,
-                    Attribute.VALUE: vec["sk"],
-                    Attribute.PARAMETER_SET: int(param_set),
-                    Attribute.TOKEN: False,
-                    Attribute.SENSITIVE: False,
-                    Attribute.EXTRACTABLE: True,
-                    Attribute.SIGN: True,
-                }
+                    int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_SLH_DSA),
+                    int(CKA_VALUE): vec["sk"],
+                    int(CKA_PARAMETER_SET): param_set,
+                    int(CKA_TOKEN): False,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_EXTRACTABLE): True,
+                    int(CKA_SIGN): True,
+                },
             )
-        except PKCS11Error as e:
-            pytest.skip(f"Cannot import SLH-DSA private key ({param_set.name}): {e}")
+        except AssertionError as e:
+            pytest.skip(
+                f"Cannot import SLH-DSA private key ({vec['param_name']}): {e}"
+            )
 
-        sig = priv_key.sign(vec["msg"], mechanism=Mechanism.SLH_DSA)
+        sig = sign_single(rs.raw, rs.sh, priv_key, CKM_SLH_DSA, vec["msg"])
         assert len(sig) > 0, f"SLH-DSA sign returned empty signature for {vec_id}"
     finally:
-        if priv_key is not None:
-            priv_key.destroy()
+        if priv_key:
+            destroy_quietly(rs.raw, rs.sh, priv_key)

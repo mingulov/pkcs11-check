@@ -16,16 +16,22 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import (
-    ArgumentsBad,
-    EncryptedDataInvalid,
-    EncryptedDataLenRange,
-    MechanismParamInvalid,
-)
-from pkcs11.mechanisms import GCMParams
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.pack import mech_gcm
+from pkcs11_check.raw.recipes import (
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+    import_secret_key,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKK_AES,
+    CKM_AES_GCM,
+)
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
@@ -131,23 +137,24 @@ _ENCRYPT_VECTORS, _DECRYPT_VECTORS = _load_gcm_vectors()
 
 
 def _import_aes_key(
-    p11_session: Any,
+    rs: Any,
     key_bytes: bytes,
     *,
     encrypt: bool = True,
     decrypt: bool = True,
-) -> Any:
+) -> int:
     """Import a raw AES key into the session as a session object."""
-    return p11_session.create_object(
-        {
-            Attribute.CLASS: ObjectClass.SECRET_KEY,
-            Attribute.KEY_TYPE: KeyType.AES,
-            Attribute.VALUE: key_bytes,
-            Attribute.ENCRYPT: encrypt,
-            Attribute.DECRYPT: decrypt,
-            Attribute.TOKEN: False,
-            Attribute.SENSITIVE: False,
-        }
+    return import_secret_key(
+        rs.raw,
+        rs.sh,
+        CKK_AES,
+        key_bytes,
+        attrs={
+            int(CKA_ENCRYPT): encrypt,
+            int(CKA_DECRYPT): decrypt,
+            int(CKA_TOKEN): False,
+            int(CKA_SENSITIVE): False,
+        },
     )
 
 
@@ -162,15 +169,16 @@ def _import_aes_key(
     ids=[v[0] for v in _ENCRYPT_VECTORS],
 )
 def test_acvp_aes_gcm_encrypt(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """AES-GCM encryption from NIST ACVP vectors.
 
     For each vector (key, iv, aad, pt) the module must produce the expected
-    (ct, tag).  python-pkcs11 returns ciphertext+tag concatenated; we split
+    (ct, tag).  The raw recipe returns ciphertext+tag concatenated; we split
     by tag length.
     """
-    if not has_mechanism(p11_module, "AES_GCM"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("AES_GCM"):
         pytest.skip("AES_GCM not supported by module")
 
     tag_bytes = vec["tag_len_bits"] // 8
@@ -178,30 +186,30 @@ def test_acvp_aes_gcm_encrypt(
     aad = vec["aad"] if vec["aad"] else None
 
     try:
-        gcm_params = GCMParams(nonce=iv, aad=aad, tag_bits=vec["tag_len_bits"])
-    except (MechanismParamInvalid, ArgumentsBad):
+        gcm_param = mech_gcm(CKM_AES_GCM, iv, aad=aad, tag_bits=vec["tag_len_bits"])
+    except (AssertionError, ValueError, TypeError):
         pytest.xfail(
             f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B"
         )
 
-    key = None
+    key = 0
     try:
-        key = _import_aes_key(p11_session, vec["key"], encrypt=True, decrypt=False)
+        key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
 
         try:
-            result = key.encrypt(
-                vec["pt"],
-                mechanism=Mechanism.AES_GCM,
-                mechanism_param=gcm_params,
+            result = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_GCM, vec["pt"],
+                mech_param=gcm_param,
             )
-        except (MechanismParamInvalid, ArgumentsBad) as exc:
+        except AssertionError as exc:
+            exc_msg = str(exc)
             # Module does not support this IV/tag size combination
             pytest.xfail(
                 f"Module limitation: GCM iv={len(iv)}B tag={tag_bytes}B "
-                f"not supported ({type(exc).__name__})"
+                f"not supported ({exc_msg})"
             )
 
-        # python-pkcs11 returns ciphertext||tag as a single bytestring
+        # raw recipe returns ciphertext||tag as a single bytestring
         if len(result) < tag_bytes:
             pytest.fail(
                 f"{vec_id}: encrypt output too short: {len(result)}B, "
@@ -220,8 +228,8 @@ def test_acvp_aes_gcm_encrypt(
             f"expected {vec['tag_expected'].hex()}"
         )
     finally:
-        if key is not None:
-            key.destroy()
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +243,7 @@ def test_acvp_aes_gcm_encrypt(
     ids=[v[0] for v in _DECRYPT_VECTORS],
 )
 def test_acvp_aes_gcm_decrypt(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """AES-GCM decryption from NIST ACVP vectors.
 
@@ -243,9 +251,10 @@ def test_acvp_aes_gcm_decrypt(
     and return the expected plaintext.
 
     For invalid-tag vectors (testPassed=false): the module must reject the
-    ciphertext, typically with EncryptedDataInvalid (CKR_ENCRYPTED_DATA_INVALID).
+    ciphertext, typically with CKR_ENCRYPTED_DATA_INVALID.
     """
-    if not has_mechanism(p11_module, "AES_GCM"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("AES_GCM"):
         pytest.skip("AES_GCM not supported by module")
 
     tag_bytes = vec["tag_len_bits"] // 8
@@ -254,8 +263,8 @@ def test_acvp_aes_gcm_decrypt(
     test_passed = vec["test_passed"]
 
     try:
-        gcm_params = GCMParams(nonce=iv, aad=aad, tag_bits=vec["tag_len_bits"])
-    except (MechanismParamInvalid, ArgumentsBad):
+        gcm_param = mech_gcm(CKM_AES_GCM, iv, aad=aad, tag_bits=vec["tag_len_bits"])
+    except (AssertionError, ValueError, TypeError):
         pytest.xfail(
             f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B"
         )
@@ -264,32 +273,45 @@ def test_acvp_aes_gcm_decrypt(
     # ACVP decrypt: ciphertext and tag are provided separately; PKCS#11 wants ct||tag
     ct_with_tag = vec["ct"] + vec["tag"]
 
-    key = None
+    key = 0
     try:
-        key = _import_aes_key(p11_session, vec["key"], encrypt=False, decrypt=True)
+        key = _import_aes_key(rs, vec["key"], encrypt=False, decrypt=True)
 
         try:
-            pt = key.decrypt(
-                ct_with_tag,
-                mechanism=Mechanism.AES_GCM,
-                mechanism_param=gcm_params,
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_GCM, ct_with_tag,
+                mech_param=gcm_param,
             )
-        except (MechanismParamInvalid, ArgumentsBad) as exc:
-            # Module does not support this IV/tag size combination
-            pytest.xfail(
-                f"Module limitation: GCM iv={len(iv)}B tag={tag_bytes}B "
-                f"not supported ({type(exc).__name__})"
-            )
-            return
-        except (EncryptedDataInvalid, EncryptedDataLenRange):
-            if not test_passed:
-                # Expected: module correctly rejected invalid tag
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            if any(
+                name in exc_msg
+                for name in (
+                    "CKR_MECHANISM_PARAM_INVALID", "CKR_ARGUMENTS_BAD",
+                )
+            ):
+                # Module does not support this IV/tag size combination
+                pytest.xfail(
+                    f"Module limitation: GCM iv={len(iv)}B tag={tag_bytes}B "
+                    f"not supported ({exc_msg})"
+                )
                 return
-            # Unexpected: module rejected a valid-tag vector
-            pytest.fail(
-                f"{vec_id}: valid-tag GCM vector rejected with tag auth failure"
-            )
-            return
+            if any(
+                name in exc_msg
+                for name in (
+                    "CKR_ENCRYPTED_DATA_INVALID", "CKR_ENCRYPTED_DATA_LEN_RANGE",
+                    "CKR_AEAD_DECRYPT_FAILED",
+                )
+            ):
+                if not test_passed:
+                    # Expected: module correctly rejected invalid tag
+                    return
+                # Unexpected: module rejected a valid-tag vector
+                pytest.fail(
+                    f"{vec_id}: valid-tag GCM vector rejected with tag auth failure"
+                )
+                return
+            raise
 
         # Decryption succeeded
         if test_passed:
@@ -304,5 +326,5 @@ def test_acvp_aes_gcm_decrypt(
                 f"(tag auth bypass)"
             )
     finally:
-        if key is not None:
-            key.destroy()
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)

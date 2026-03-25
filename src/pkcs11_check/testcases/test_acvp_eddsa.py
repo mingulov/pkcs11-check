@@ -18,19 +18,30 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import (
-    DataInvalid,
-    DeviceError,
-    FunctionFailed,
-    MechanismParamInvalid,
-    SignatureInvalid,
-    SignatureLenRange,
-)
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EC_PARAMS,
+    CKA_EC_POINT,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VERIFY,
+    CKK_EC_EDWARDS,
+    CKM_EDDSA,
+    CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
+)
 from pkcs11_check.testcases.data import ACVP_DIR
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
@@ -221,7 +232,7 @@ _SIGGEN_VECTORS = _load_eddsa_siggen_vectors()
     ids=[v[0] for v in _SIGVER_VECTORS],
 )
 def test_acvp_eddsa_sigver(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """EdDSA (Ed25519/Ed448) signature verification from NIST ACVP SigVer vectors.
 
@@ -232,51 +243,53 @@ def test_acvp_eddsa_sigver(
     For invalid vectors accepted by the module: pytest.fail (security concern).
     For valid vectors rejected by the module: pytest.xfail (module issue).
     """
-    if not has_mechanism(p11_module, "EDDSA"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported by module")
 
-    pub_key = None
+    pub_key = 0
     try:
         try:
-            pub_key = p11_session.create_object(
+            pub_key = create_object(
+                rs.raw,
+                rs.sh,
                 {
-                    Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                    Attribute.KEY_TYPE: KeyType.EC_EDWARDS,
-                    Attribute.EC_PARAMS: vec["ec_params"],
-                    Attribute.EC_POINT: vec["ec_point"],
-                    Attribute.TOKEN: False,
-                    Attribute.VERIFY: True,
-                }
+                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_EC_EDWARDS),
+                    int(CKA_EC_PARAMS): vec["ec_params"],
+                    int(CKA_EC_POINT): vec["ec_point"],
+                    int(CKA_TOKEN): False,
+                    int(CKA_VERIFY): True,
+                },
             )
-        except p11.exceptions.PKCS11Error as e:
+        except AssertionError as e:
             pytest.skip(f"Cannot import EdDSA public key for {vec['curve']}: {e}")
 
         try:
-            pub_key.verify(vec["msg"], vec["sig"], mechanism=Mechanism.EDDSA)
-            verified = True
-        except SignatureInvalid:
-            verified = False
-        except (DataInvalid, SignatureLenRange):
-            # Some modules return CKR_DATA_INVALID or CKR_SIGNATURE_LEN_RANGE
-            # for corrupt/malformed signatures instead of CKR_SIGNATURE_INVALID.
-            verified = False
-        except FunctionFailed:
-            # Some modules return CKR_FUNCTION_FAILED for completely invalid
-            # signature bytes (e.g., truncated or zero signatures).
-            verified = False
-        except DeviceError:
-            # Kryoptic returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID
-            # for all verify failures (documented in docs/module-issues.md).
-            # Treat as rejection - correct for invalid vectors.
-            verified = False
-        except MechanismParamInvalid:
-            # Some modules (e.g., Kryoptic for Ed448) require explicit mechanism
-            # parameters (CK_EDDSA_PARAMS) for CKM_EDDSA.  Plain parameterless
-            # EDDSA is not supported for this curve - skip the vector.
-            pytest.skip(
-                f"{vec_id}: module requires mechanism params for {vec['curve']} "
-                f"(CKR_MECHANISM_PARAM_INVALID) - skipping"
+            verified = verify_single(
+                rs.raw, rs.sh, pub_key, CKM_EDDSA, vec["msg"], vec["sig"]
             )
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            if any(
+                name in exc_msg
+                for name in (
+                    "CKR_SIGNATURE_INVALID", "CKR_SIGNATURE_LEN_RANGE",
+                    "CKR_DATA_INVALID", "CKR_FUNCTION_FAILED",
+                    "CKR_DEVICE_ERROR",
+                )
+            ):
+                verified = False
+            elif "CKR_MECHANISM_PARAM_INVALID" in exc_msg:
+                # Some modules (e.g., Kryoptic for Ed448) require explicit mechanism
+                # parameters (CK_EDDSA_PARAMS) for CKM_EDDSA.  Plain parameterless
+                # EDDSA is not supported for this curve - skip the vector.
+                pytest.skip(
+                    f"{vec_id}: module requires mechanism params for {vec['curve']} "
+                    f"(CKR_MECHANISM_PARAM_INVALID) - skipping"
+                )
+            else:
+                raise
 
         expected_pass: bool = vec["expected_pass"]
 
@@ -293,8 +306,8 @@ def test_acvp_eddsa_sigver(
             )
 
     finally:
-        if pub_key is not None:
-            pub_key.destroy()
+        if pub_key:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
 
 
 @pytest.mark.parametrize(
@@ -303,7 +316,7 @@ def test_acvp_eddsa_sigver(
     ids=[v[0] for v in _SIGGEN_VECTORS],
 )
 def test_acvp_eddsa_siggen(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """Ed25519 signature generation from NIST ACVP SigGen vectors.
 
@@ -317,30 +330,33 @@ def test_acvp_eddsa_siggen(
     Mismatch xfails - the module may use a different serialization or the
     private key import format may differ from what the module expects.
     """
-    if not has_mechanism(p11_module, "EDDSA"):
+    rs = p11_raw_session
+    if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported by module")
 
-    priv_key = None
+    priv_key = 0
     try:
         try:
-            priv_key = p11_session.create_object(
+            priv_key = create_object(
+                rs.raw,
+                rs.sh,
                 {
-                    Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-                    Attribute.KEY_TYPE: KeyType.EC_EDWARDS,
-                    Attribute.EC_PARAMS: vec["ec_params"],
-                    Attribute.VALUE: vec["d"],
-                    Attribute.TOKEN: False,
-                    Attribute.SENSITIVE: False,
-                    Attribute.EXTRACTABLE: True,
-                    Attribute.SIGN: True,
-                }
+                    int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_EC_EDWARDS),
+                    int(CKA_EC_PARAMS): vec["ec_params"],
+                    int(CKA_VALUE): vec["d"],
+                    int(CKA_TOKEN): False,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_EXTRACTABLE): True,
+                    int(CKA_SIGN): True,
+                },
             )
-        except p11.exceptions.PKCS11Error as e:
+        except AssertionError as e:
             pytest.skip(f"Cannot import Ed25519 private key for {vec_id}: {e}")
 
         try:
-            sig = priv_key.sign(vec["msg"], mechanism=Mechanism.EDDSA)
-        except p11.exceptions.PKCS11Error as e:
+            sig = sign_single(rs.raw, rs.sh, priv_key, CKM_EDDSA, vec["msg"])
+        except AssertionError as e:
             pytest.xfail(f"{vec_id}: Ed25519 sign raised unexpected error: {e}")
 
         expected_sig: bytes = vec["expected_sig"]
@@ -353,5 +369,5 @@ def test_acvp_eddsa_siggen(
             )
 
     finally:
-        if priv_key is not None:
-            priv_key.destroy()
+        if priv_key:
+            destroy_quietly(rs.raw, rs.sh, priv_key)
