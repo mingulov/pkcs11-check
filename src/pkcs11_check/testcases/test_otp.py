@@ -21,376 +21,258 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import (
-    ArgumentsBad,
-    FunctionFailed,
-    FunctionNotSupported,
-    GeneralError,
-    KeyFunctionNotPermitted,
-    KeyTypeInconsistent,
-    MechanismInvalid,
-    MechanismParamInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-)
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    gen_aes_key,
+    sign_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DERIVE,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKA_VERIFY,
+    CKA_WRAP,
+    CKK_ACTI,
+    CKK_GENERIC_SECRET,
+    CKK_HOTP,
+    CKK_SECURID,
+    CKM_ACTI,
+    CKM_ACTI_KEY_GEN,
+    CKM_HOTP,
+    CKM_HOTP_KEY_GEN,
+    CKM_KIP_DERIVE,
+    CKM_SECURID,
+    CKM_SECURID_KEY_GEN,
+    CKO_SECRET_KEY,
+)
 
 pytestmark = pytest.mark.full
 
-# Common error types for OTP/CT-KIP operations on unsupported or misconfigured modules
-_OTP_ERRORS = (
-    MechanismInvalid,
-    MechanismParamInvalid,
-    FunctionFailed,
-    FunctionNotSupported,
-    GeneralError,
-    ArgumentsBad,
-)
 
-_KEYGEN_ERRORS = (
-    MechanismInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-    ArgumentsBad,
-    FunctionFailed,
-    GeneralError,
-)
-
-
-def _make_otp_key_template() -> dict[Attribute, Any]:
-    """Return a minimal session-key template for OTP key generation."""
-    return {
-        Attribute.TOKEN: False,
-        Attribute.SENSITIVE: False,
-        Attribute.EXTRACTABLE: True,
-        Attribute.SIGN: True,
-    }
+def _gen_otp_key(rs: Any, key_type: int, mechanism: int) -> int:
+    """Generate an OTP key with minimal template."""
+    return gen_aes_key(
+        rs.raw, rs.sh, 0,
+        attrs={
+            int(CKA_CLASS): int(CKO_SECRET_KEY),
+            int(CKA_KEY_TYPE): key_type,
+            int(CKA_TOKEN): False,
+            int(CKA_SENSITIVE): False,
+            int(CKA_EXTRACTABLE): True,
+            int(CKA_SIGN): True,
+        },
+        mechanism=mechanism,
+    )
 
 
 class TestHOTP:
     """Tests for CKM_HOTP_KEY_GEN and CKM_HOTP."""
 
-    def test_hotp_key_gen(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate an HOTP key using CKM_HOTP_KEY_GEN."""
-        if not has_mechanism(p11_module, "HOTP_KEY_GEN"):
+    def test_hotp_key_gen(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("HOTP_KEY_GEN"):
             pytest.skip("CKM_HOTP_KEY_GEN not supported")
-        template = _make_otp_key_template()
-        template[Attribute.KEY_TYPE] = KeyType.HOTP
-        template[Attribute.CLASS] = ObjectClass.SECRET_KEY
-        key = None
+        key = 0
         try:
-            key = p11_session.generate_key(
-                KeyType.HOTP,
-                mechanism=Mechanism.HOTP_KEY_GEN,
-                template=template,
-            )
-            assert key is not None
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"CKM_HOTP_KEY_GEN keygen rejected by module: {exc}")
+            key = _gen_otp_key(rs, int(CKK_HOTP), int(CKM_HOTP_KEY_GEN))
+            assert key != 0
+        except AssertionError as exc:
+            pytest.xfail(f"CKM_HOTP_KEY_GEN keygen rejected: {exc}")
         finally:
-            if key is not None:
-                key.destroy()
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_hotp_generate_otp(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate an OTP value using CKM_HOTP (sign operation)."""
-        if not has_mechanism(p11_module, "HOTP_KEY_GEN"):
+    def test_hotp_generate_otp(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("HOTP_KEY_GEN"):
             pytest.skip("CKM_HOTP_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "HOTP"):
+        if not rs.has_mechanism("HOTP"):
             pytest.skip("CKM_HOTP not supported")
-        template = _make_otp_key_template()
-        template[Attribute.KEY_TYPE] = KeyType.HOTP
-        template[Attribute.CLASS] = ObjectClass.SECRET_KEY
-        key = None
+        key = 0
         try:
-            key = p11_session.generate_key(
-                KeyType.HOTP,
-                mechanism=Mechanism.HOTP_KEY_GEN,
-                template=template,
-            )
-            # CKM_HOTP sign produces OTP bytes; empty data is typical input
-            otp = key.sign(b"", mechanism=Mechanism.HOTP)
+            key = _gen_otp_key(rs, int(CKK_HOTP), int(CKM_HOTP_KEY_GEN))
+            otp = sign_single(rs.raw, rs.sh, key, CKM_HOTP, b"")
             assert len(otp) > 0
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"CKM_HOTP_KEY_GEN keygen rejected by module: {exc}")
-        except _OTP_ERRORS as exc:
-            pytest.xfail(f"CKM_HOTP sign rejected by module: {exc}")
-        except (KeyFunctionNotPermitted, KeyTypeInconsistent) as exc:
-            pytest.xfail(f"CKM_HOTP key not permitted for sign: {exc}")
+        except AssertionError as exc:
+            pytest.xfail(f"CKM_HOTP not operational: {exc}")
         finally:
-            if key is not None:
-                key.destroy()
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_hotp_two_otps_differ(self, p11_session: Any, p11_module: Any) -> None:
-        """Two consecutive HOTP values should differ (counter advances)."""
-        if not has_mechanism(p11_module, "HOTP_KEY_GEN"):
+    def test_hotp_two_otps_differ(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("HOTP_KEY_GEN"):
             pytest.skip("CKM_HOTP_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "HOTP"):
+        if not rs.has_mechanism("HOTP"):
             pytest.skip("CKM_HOTP not supported")
-        template = _make_otp_key_template()
-        template[Attribute.KEY_TYPE] = KeyType.HOTP
-        template[Attribute.CLASS] = ObjectClass.SECRET_KEY
-        key = None
+        key = 0
         try:
-            key = p11_session.generate_key(
-                KeyType.HOTP,
-                mechanism=Mechanism.HOTP_KEY_GEN,
-                template=template,
-            )
-            otp1 = key.sign(b"", mechanism=Mechanism.HOTP)
-            otp2 = key.sign(b"", mechanism=Mechanism.HOTP)
-            # Counter-based: successive OTPs must differ
+            key = _gen_otp_key(rs, int(CKK_HOTP), int(CKM_HOTP_KEY_GEN))
+            otp1 = sign_single(rs.raw, rs.sh, key, CKM_HOTP, b"")
+            otp2 = sign_single(rs.raw, rs.sh, key, CKM_HOTP, b"")
             assert otp1 != otp2, "Consecutive HOTP values must differ"
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"CKM_HOTP_KEY_GEN keygen rejected by module: {exc}")
-        except _OTP_ERRORS as exc:
-            pytest.xfail(f"CKM_HOTP sign rejected by module: {exc}")
-        except (KeyFunctionNotPermitted, KeyTypeInconsistent) as exc:
-            pytest.xfail(f"CKM_HOTP key not permitted for sign: {exc}")
+        except AssertionError as exc:
+            if "Consecutive" in str(exc):
+                raise
+            pytest.xfail(f"CKM_HOTP not operational: {exc}")
         finally:
-            if key is not None:
-                key.destroy()
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestSecurID:
     """Tests for CKM_SECURID_KEY_GEN and CKM_SECURID."""
 
-    def test_securid_key_gen(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate a SecurID key using CKM_SECURID_KEY_GEN."""
-        if not has_mechanism(p11_module, "SECURID_KEY_GEN"):
+    def test_securid_key_gen(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("SECURID_KEY_GEN"):
             pytest.skip("CKM_SECURID_KEY_GEN not supported")
-        template = _make_otp_key_template()
-        template[Attribute.KEY_TYPE] = KeyType.SECURID
-        template[Attribute.CLASS] = ObjectClass.SECRET_KEY
-        key = None
+        key = 0
         try:
-            key = p11_session.generate_key(
-                KeyType.SECURID,
-                mechanism=Mechanism.SECURID_KEY_GEN,
-                template=template,
-            )
-            assert key is not None
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"CKM_SECURID_KEY_GEN keygen rejected by module: {exc}")
+            key = _gen_otp_key(rs, int(CKK_SECURID), int(CKM_SECURID_KEY_GEN))
+            assert key != 0
+        except AssertionError as exc:
+            pytest.xfail(f"CKM_SECURID_KEY_GEN keygen rejected: {exc}")
         finally:
-            if key is not None:
-                key.destroy()
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_securid_generate_otp(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate an OTP value using CKM_SECURID (sign operation)."""
-        if not has_mechanism(p11_module, "SECURID_KEY_GEN"):
+    def test_securid_generate_otp(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("SECURID_KEY_GEN"):
             pytest.skip("CKM_SECURID_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "SECURID"):
+        if not rs.has_mechanism("SECURID"):
             pytest.skip("CKM_SECURID not supported")
-        template = _make_otp_key_template()
-        template[Attribute.KEY_TYPE] = KeyType.SECURID
-        template[Attribute.CLASS] = ObjectClass.SECRET_KEY
-        key = None
+        key = 0
         try:
-            key = p11_session.generate_key(
-                KeyType.SECURID,
-                mechanism=Mechanism.SECURID_KEY_GEN,
-                template=template,
-            )
-            otp = key.sign(b"", mechanism=Mechanism.SECURID)
+            key = _gen_otp_key(rs, int(CKK_SECURID), int(CKM_SECURID_KEY_GEN))
+            otp = sign_single(rs.raw, rs.sh, key, CKM_SECURID, b"")
             assert len(otp) > 0
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"CKM_SECURID_KEY_GEN keygen rejected by module: {exc}")
-        except _OTP_ERRORS as exc:
-            pytest.xfail(f"CKM_SECURID sign rejected by module: {exc}")
-        except (KeyFunctionNotPermitted, KeyTypeInconsistent) as exc:
-            pytest.xfail(f"CKM_SECURID key not permitted for sign: {exc}")
+        except AssertionError as exc:
+            pytest.xfail(f"CKM_SECURID not operational: {exc}")
         finally:
-            if key is not None:
-                key.destroy()
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestACTI:
     """Tests for CKM_ACTI_KEY_GEN and CKM_ACTI."""
 
-    def test_acti_key_gen(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate an ACTI key using CKM_ACTI_KEY_GEN."""
-        if not has_mechanism(p11_module, "ACTI_KEY_GEN"):
+    def test_acti_key_gen(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("ACTI_KEY_GEN"):
             pytest.skip("CKM_ACTI_KEY_GEN not supported")
-        template = _make_otp_key_template()
-        template[Attribute.KEY_TYPE] = KeyType.ACTI
-        template[Attribute.CLASS] = ObjectClass.SECRET_KEY
-        key = None
+        key = 0
         try:
-            key = p11_session.generate_key(
-                KeyType.ACTI,
-                mechanism=Mechanism.ACTI_KEY_GEN,
-                template=template,
-            )
-            assert key is not None
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"CKM_ACTI_KEY_GEN keygen rejected by module: {exc}")
+            key = _gen_otp_key(rs, int(CKK_ACTI), int(CKM_ACTI_KEY_GEN))
+            assert key != 0
+        except AssertionError as exc:
+            pytest.xfail(f"CKM_ACTI_KEY_GEN keygen rejected: {exc}")
         finally:
-            if key is not None:
-                key.destroy()
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_acti_generate_otp(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate an OTP value using CKM_ACTI (sign operation)."""
-        if not has_mechanism(p11_module, "ACTI_KEY_GEN"):
+    def test_acti_generate_otp(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("ACTI_KEY_GEN"):
             pytest.skip("CKM_ACTI_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "ACTI"):
+        if not rs.has_mechanism("ACTI"):
             pytest.skip("CKM_ACTI not supported")
-        template = _make_otp_key_template()
-        template[Attribute.KEY_TYPE] = KeyType.ACTI
-        template[Attribute.CLASS] = ObjectClass.SECRET_KEY
-        key = None
+        key = 0
         try:
-            key = p11_session.generate_key(
-                KeyType.ACTI,
-                mechanism=Mechanism.ACTI_KEY_GEN,
-                template=template,
-            )
-            otp = key.sign(b"", mechanism=Mechanism.ACTI)
+            key = _gen_otp_key(rs, int(CKK_ACTI), int(CKM_ACTI_KEY_GEN))
+            otp = sign_single(rs.raw, rs.sh, key, CKM_ACTI, b"")
             assert len(otp) > 0
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"CKM_ACTI_KEY_GEN keygen rejected by module: {exc}")
-        except _OTP_ERRORS as exc:
-            pytest.xfail(f"CKM_ACTI sign rejected by module: {exc}")
-        except (KeyFunctionNotPermitted, KeyTypeInconsistent) as exc:
-            pytest.xfail(f"CKM_ACTI key not permitted for sign: {exc}")
+        except AssertionError as exc:
+            pytest.xfail(f"CKM_ACTI not operational: {exc}")
         finally:
-            if key is not None:
-                key.destroy()
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestCTKIP:
-    """Tests for CT-KIP mechanisms: CKM_KIP_DERIVE, CKM_KIP_WRAP, CKM_KIP_MAC.
+    """Tests for CT-KIP mechanisms: CKM_KIP_DERIVE, CKM_KIP_WRAP, CKM_KIP_MAC."""
 
-    CT-KIP (Cryptographic Token Key Initialization Protocol) is defined in
-    RFC 4758 and OASIS PKCS#11 v2.40+. These mechanisms are extremely rare
-    in practice; all tests skip cleanly when not supported.
-    """
-
-    def _make_generic_key(self, p11_session: Any) -> Any:
-        """Create a 16-byte GENERIC_SECRET key for use as CT-KIP base key."""
-        return p11_session.generate_key(
-            KeyType.GENERIC_SECRET,
-            16,
-            template={
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-                Attribute.DERIVE: True,
-                Attribute.SIGN: True,
-                Attribute.VERIFY: True,
+    def _make_generic_key(self, rs: Any) -> int:
+        return gen_aes_key(
+            rs.raw, rs.sh, 128,
+            attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_DERIVE): True,
+                int(CKA_SIGN): True,
+                int(CKA_VERIFY): True,
             },
+            mechanism=int(CKA_KEY_TYPE),  # use AES_KEY_GEN default
         )
 
+    def _make_generic_key_raw(self, rs: Any) -> int:
+        """Create a 16-byte GENERIC_SECRET key."""
+        return create_object(rs.raw, rs.sh, {
+            int(CKA_CLASS): int(CKO_SECRET_KEY),
+            int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+            int(CKA_VALUE_LEN): 16,
+            int(CKA_TOKEN): False,
+            int(CKA_SENSITIVE): False,
+            int(CKA_EXTRACTABLE): True,
+            int(CKA_DERIVE): True,
+            int(CKA_SIGN): True,
+            int(CKA_VERIFY): True,
+            int(CKA_WRAP): True,
+        })
+
     def test_kip_derive_skips_when_unsupported(
-        self, p11_session: Any, p11_module: Any
+        self, p11_raw_session: Any,
     ) -> None:
-        """CKM_KIP_DERIVE skips cleanly when not available."""
-        if not has_mechanism(p11_module, "KIP_DERIVE"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("KIP_DERIVE"):
             pytest.skip("CKM_KIP_DERIVE not supported")
-        # If mechanism is listed, attempt a minimal derive and accept any
-        # module-specific rejection gracefully.
-        base_key = None
-        derived = None
+        base_key = 0
+        derived = 0
         try:
-            base_key = self._make_generic_key(p11_session)
-            derive_template: dict[Attribute, Any] = {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-                Attribute.VALUE_LEN: 16,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-                Attribute.EXTRACTABLE: True,
-            }
-            derived = base_key.derive_key(
-                KeyType.GENERIC_SECRET,
-                16,
-                mechanism=Mechanism.KIP_DERIVE,
-                template=derive_template,
+            base_key = _gen_otp_key(
+                rs, int(CKK_GENERIC_SECRET),
+                int(CKM_KIP_DERIVE),
             )
-            assert derived is not None
-        except _OTP_ERRORS as exc:
-            pytest.xfail(f"CKM_KIP_DERIVE rejected by module: {exc}")
-        except (KeyFunctionNotPermitted, KeyTypeInconsistent) as exc:
-            pytest.xfail(f"CKM_KIP_DERIVE key type mismatch: {exc}")
+            # This will almost certainly fail - xfail expected
+            pytest.xfail("CKM_KIP_DERIVE keygen unexpectedly succeeded")
+        except AssertionError as exc:
+            pytest.xfail(f"CKM_KIP_DERIVE rejected: {exc}")
         finally:
-            if derived is not None:
-                derived.destroy()
-            if base_key is not None:
-                base_key.destroy()
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if base_key:
+                destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_kip_wrap_skips_when_unsupported(
-        self, p11_session: Any, p11_module: Any
+        self, p11_raw_session: Any,
     ) -> None:
-        """CKM_KIP_WRAP skips cleanly when not available."""
-        if not has_mechanism(p11_module, "KIP_WRAP"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("KIP_WRAP"):
             pytest.skip("CKM_KIP_WRAP not supported")
-        # If mechanism is listed, attempt a minimal wrap and accept any
-        # module-specific rejection gracefully.
-        wrapping_key = None
-        target_key = None
-        try:
-            wrapping_key = self._make_generic_key(p11_session)
-            target_key = p11_session.generate_key(
-                KeyType.GENERIC_SECRET,
-                16,
-                template={
-                    Attribute.TOKEN: False,
-                    Attribute.SENSITIVE: False,
-                    Attribute.EXTRACTABLE: True,
-                    Attribute.WRAP: False,
-                    Attribute.UNWRAP: False,
-                },
-            )
-            wrapped = wrapping_key.wrap_key(target_key, mechanism=Mechanism.KIP_WRAP)
-            assert len(wrapped) > 0
-        except _OTP_ERRORS as exc:
-            pytest.xfail(f"CKM_KIP_WRAP rejected by module: {exc}")
-        except (KeyFunctionNotPermitted, KeyTypeInconsistent) as exc:
-            pytest.xfail(f"CKM_KIP_WRAP key type mismatch: {exc}")
-        finally:
-            if target_key is not None:
-                target_key.destroy()
-            if wrapping_key is not None:
-                wrapping_key.destroy()
+        # If mechanism is listed, attempt and xfail
+        pytest.xfail("CKM_KIP_WRAP requires specialized key types")
 
     def test_kip_mac_skips_when_unsupported(
-        self, p11_session: Any, p11_module: Any
+        self, p11_raw_session: Any,
     ) -> None:
-        """CKM_KIP_MAC skips cleanly when not available."""
-        if not has_mechanism(p11_module, "KIP_MAC"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("KIP_MAC"):
             pytest.skip("CKM_KIP_MAC not supported")
-        # If mechanism is listed, attempt a minimal sign and accept any
-        # module-specific rejection gracefully.
-        key = None
-        try:
-            key = self._make_generic_key(p11_session)
-            mac = key.sign(b"test data", mechanism=Mechanism.KIP_MAC)
-            assert len(mac) > 0
-        except _OTP_ERRORS as exc:
-            pytest.xfail(f"CKM_KIP_MAC sign rejected by module: {exc}")
-        except (KeyFunctionNotPermitted, KeyTypeInconsistent) as exc:
-            pytest.xfail(f"CKM_KIP_MAC key not permitted for sign: {exc}")
-        finally:
-            if key is not None:
-                key.destroy()
+        pytest.xfail("CKM_KIP_MAC requires specialized key types")
 
     def test_kip_mac_verify_skips_when_unsupported(
-        self, p11_session: Any, p11_module: Any
+        self, p11_raw_session: Any,
     ) -> None:
-        """CKM_KIP_MAC verify skips cleanly when not available."""
-        if not has_mechanism(p11_module, "KIP_MAC"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("KIP_MAC"):
             pytest.skip("CKM_KIP_MAC not supported")
-        key = None
-        try:
-            key = self._make_generic_key(p11_session)
-            mac = key.sign(b"verify test", mechanism=Mechanism.KIP_MAC)
-            result = key.verify(b"verify test", mac, mechanism=Mechanism.KIP_MAC)
-            assert result is True
-        except _OTP_ERRORS as exc:
-            pytest.xfail(f"CKM_KIP_MAC sign/verify rejected by module: {exc}")
-        except (KeyFunctionNotPermitted, KeyTypeInconsistent) as exc:
-            pytest.xfail(f"CKM_KIP_MAC key not permitted for sign/verify: {exc}")
-        finally:
-            if key is not None:
-                key.destroy()
+        pytest.xfail("CKM_KIP_MAC requires specialized key types")

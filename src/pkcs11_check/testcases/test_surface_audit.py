@@ -7,46 +7,78 @@ Catches debug mechanisms, backdoors, and incomplete decommissioning.
 
 from __future__ import annotations
 
+from ctypes import byref
 from typing import Any
 
-import pkcs11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    digest_single,
+    encrypt_single,
+    gen_aes_key,
+    gen_rsa_keypair,
+    generate_random,
+    get_mechanism_list,
+)
+from pkcs11_check.raw.types_std import (
+    CK_MECHANISM_INFO,
+    CKM_AES_ECB,
+    CKM_AES_KEY_GEN,
+    CKM_SHA224,
+    CKM_SHA256,
+    CKM_SHA384,
+    CKM_SHA512,
+    CKM_SHA_1,
+    CKR_OK,
+)
 
 pytestmark = pytest.mark.surface_audit
+
+
+def _mech_name(mech_val: int) -> str:
+    """Return mechanism name for a numeric value."""
+    name = MECHANISM_NAMES.get(mech_val, "")
+    if name.startswith("CKM_"):
+        return name[4:]
+    return name or f"0x{mech_val:08x}"
 
 
 class TestHiddenMechanisms:
     """Probe for mechanisms that work but aren't advertised."""
 
-    def test_all_advertised_mechanisms_have_info(self, p11_module: Any) -> None:
+    def test_all_advertised_mechanisms_have_info(
+        self, p11_raw_session: Any,
+    ) -> None:
         """Every mechanism in C_GetMechanismList should return valid info."""
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechanisms = slot.get_mechanisms()
+        rs = p11_raw_session
+        mechanisms = get_mechanism_list(rs.raw, rs.slot_id)
         for mech in mechanisms:
-            info = slot.get_mechanism_info(mech)
-            assert info is not None, f"Mechanism {mech_name(mech)} has no info"
+            info = CK_MECHANISM_INFO()
+            rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mech, byref(info))
+            assert rv == int(CKR_OK), (
+                f"Mechanism {_mech_name(mech)} has no info"
+            )
 
-    def test_mechanism_count_reasonable(self, p11_module: Any) -> None:
+    def test_mechanism_count_reasonable(self, p11_raw_session: Any) -> None:
         """Module should report a reasonable number of mechanisms."""
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechanisms = slot.get_mechanisms()
-        # Should have at least basic mechanisms
+        rs = p11_raw_session
+        mechanisms = get_mechanism_list(rs.raw, rs.slot_id)
         assert len(mechanisms) >= 5, "Module reports too few mechanisms"
-        # Should not report an unreasonable number
-        assert len(mechanisms) < 1000, "Module reports suspiciously many mechanisms"
+        assert len(mechanisms) < 1000, "Module reports suspiciously many"
 
-    def test_deprecated_mechanisms_flagged(self, p11_module: Any) -> None:
+    def test_deprecated_mechanisms_flagged(
+        self, p11_raw_session: Any,
+    ) -> None:
         """If deprecated mechanisms (DES, MD2) are available, flag them."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechanisms = slot.get_mechanisms()
-        mech_names = {mech_name(m) for m in mechanisms}
+        rs = p11_raw_session
+        mechanisms = get_mechanism_list(rs.raw, rs.slot_id)
+        mech_names = {_mech_name(m) for m in mechanisms}
 
-        deprecated = {"_DES_ECB", "_DES_CBC", "_DES_KEY_GEN", "_MD5", "MD2"}
+        deprecated = {"DES_ECB", "DES_CBC", "DES_KEY_GEN", "MD5", "MD2"}
         found_deprecated = mech_names & deprecated
         if found_deprecated:
             for mech in found_deprecated:
@@ -60,256 +92,317 @@ class TestHiddenMechanisms:
 class TestSlotConsistency:
     """Verify slot and token info consistency."""
 
-    def test_all_slots_have_info(self, p11_module: Any) -> None:
+    def test_all_slots_have_info(self, p11_raw_session: Any) -> None:
         """Every slot should return valid slot info."""
-        slots = p11_module.get_slots()
+        from pkcs11_check.raw.bootstrap import get_slot_ids
+        from pkcs11_check.raw.types_std import CK_SLOT_INFO
+
+        rs = p11_raw_session
+        slots = get_slot_ids(rs.raw, token_present=False)
         assert len(slots) > 0
-        for slot in slots:
-            assert slot is not None
+        for slot_id in slots:
+            info = CK_SLOT_INFO()
+            rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
+            assert rv == int(CKR_OK)
 
-    def test_token_present_slots_have_token(self, p11_module: Any) -> None:
+    def test_token_present_slots_have_token(
+        self, p11_raw_session: Any,
+    ) -> None:
         """Slots with token_present=True should have readable tokens."""
-        slots = p11_module.get_slots(token_present=True)
-        for slot in slots:
-            token = slot.get_token()
-            assert token is not None
-            assert hasattr(token, "label")
+        from pkcs11_check.raw.bootstrap import get_slot_ids
+        from pkcs11_check.raw.types_std import CK_TOKEN_INFO
 
-    def test_token_has_valid_label(self, p11_module: Any) -> None:
+        rs = p11_raw_session
+        slots = get_slot_ids(rs.raw, token_present=True)
+        for slot_id in slots:
+            info = CK_TOKEN_INFO()
+            rv = rs.raw.C_GetTokenInfo(slot_id, byref(info))
+            assert rv == int(CKR_OK)
+
+    def test_token_has_valid_label(self, p11_raw_session: Any) -> None:
         """Token label should be a non-empty string."""
-        slots = p11_module.get_slots(token_present=True)
-        for slot in slots:
-            token = slot.get_token()
-            # Label may be padded with spaces but should exist
-            assert token.label is not None
+        from pkcs11_check.raw.types_std import CK_TOKEN_INFO
+
+        rs = p11_raw_session
+        info = CK_TOKEN_INFO()
+        rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
+        assert rv == int(CKR_OK)
+        label = bytes(info.label).decode("utf-8", errors="replace").strip()
+        assert label is not None
 
 
 class TestFunctionRobustness:
     """Verify that all common operations fail gracefully, never crash."""
 
-    def test_random_with_zero_bits(self, p11_session: Any) -> None:
-        """C_GenerateRandom with 0 bits - should return empty or error, never crash."""
+    def test_random_with_zero_bits(self, p11_raw_session: Any) -> None:
+        """C_GenerateRandom with 0 - should return empty or error."""
+        rs = p11_raw_session
         try:
-            data = p11_session.generate_random(0)
+            data = generate_random(rs.raw, rs.sh, 0)
             assert len(data) == 0
-        except (pkcs11.exceptions.PKCS11Error, ValueError):
-            pass  # Acceptable - binding or module rejects zero-length
+        except (AssertionError, ValueError):
+            pass
 
-    def test_digest_all_hash_mechanisms(self, p11_session: Any) -> None:
-        """Try digest with all available hash mechanisms - none should crash."""
+    def test_digest_all_hash_mechanisms(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """Try digest with all available hash mechanisms."""
+        rs = p11_raw_session
         test_data = b"surface audit test data"
-        hash_mechs = [
-            Mechanism.SHA_1,
-            Mechanism.SHA256,
-            Mechanism.SHA384,
-            Mechanism.SHA512,
-            Mechanism.SHA224,
-        ]
+        hash_mechs = [CKM_SHA_1, CKM_SHA256, CKM_SHA384, CKM_SHA512, CKM_SHA224]
         for mech in hash_mechs:
             try:
-                result = p11_session.digest(test_data, mechanism=mech)
+                result = digest_single(rs.raw, rs.sh, mech, test_data)
                 assert len(result) > 0
-            except pkcs11.exceptions.PKCS11Error:
-                pass  # Mechanism not supported - OK
+            except AssertionError:
+                pass
 
-    def test_generate_key_all_aes_sizes(self, p11_session: Any) -> None:
-        """Generate AES keys at all standard sizes - none should crash."""
+    def test_generate_key_all_aes_sizes(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """Generate AES keys at all standard sizes."""
+        rs = p11_raw_session
         for size in [128, 192, 256]:
             try:
-                key = p11_session.generate_key(KeyType.AES, size)
-                assert key is not None
-                key.destroy()
-            except pkcs11.exceptions.PKCS11Error:
-                pass  # Size not supported - OK
+                key = gen_aes_key(rs.raw, rs.sh, size)
+                assert key != 0
+                destroy_quietly(rs.raw, rs.sh, key)
+            except AssertionError:
+                pass
 
-    def test_generate_rsa_various_sizes(self, p11_session: Any) -> None:
-        """Generate RSA keys at various sizes - none should crash."""
+    def test_generate_rsa_various_sizes(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """Generate RSA keys at various sizes."""
+        rs = p11_raw_session
         for size in [1024, 2048, 3072, 4096]:
             try:
-                pub, priv = p11_session.generate_keypair(KeyType.RSA, size)
-                assert pub is not None
-                pub.destroy()
-                priv.destroy()
-            except pkcs11.exceptions.PKCS11Error:
-                pass  # Size not supported - OK
+                pub, priv = gen_rsa_keypair(rs.raw, rs.sh, size)
+                assert pub != 0
+                destroy_quietly(rs.raw, rs.sh, pub)
+                destroy_quietly(rs.raw, rs.sh, priv)
+            except AssertionError:
+                pass
 
-    def test_find_with_invalid_class(self, p11_session: Any) -> None:
-        """Search with invalid object class - should return empty, not crash."""
-        # Use a valid but unlikely class
+    def test_find_with_domain_parameters_class(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """Search with domain params class - should return empty or work."""
+        from pkcs11_check.raw.pack import template_from_dict
+        from pkcs11_check.raw.recipes import find_objects
+        from pkcs11_check.raw.types_std import CKA_CLASS, CKO_DOMAIN_PARAMETERS
+
+        rs = p11_raw_session
         try:
-            found = list(p11_session.get_objects({Attribute.CLASS: ObjectClass.DOMAIN_PARAMETERS}))
+            found = find_objects(
+                rs.raw, rs.sh,
+                template_from_dict(
+                    {int(CKA_CLASS): int(CKO_DOMAIN_PARAMETERS)}
+                ),
+            )
             assert isinstance(found, list)
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Also OK
+        except AssertionError:
+            pass
 
 
 class TestMechanismFlagsConsistency:
     """Verify mechanism flags match actual capabilities."""
 
-    def test_aes_encrypt_flag_matches_capability(self, p11_session: Any, p11_module: Any) -> None:
-        """If AES_ECB has CKF_ENCRYPT, encryption should work."""
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechanisms = slot.get_mechanisms()
-
-        aes_ecb = [m for m in mechanisms if m == Mechanism.AES_ECB]
-        if not aes_ecb:
+    def test_aes_encrypt_flag_matches_capability(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """If AES_ECB is in mechanism list, encryption should work."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_ECB"):
             pytest.skip("AES_ECB not supported")
 
-        # Verify mechanism info is readable (doesn't crash)
-        slot.get_mechanism_info(aes_ecb[0])
-        # If we can encrypt (which our other tests prove), the capability exists
+        info = CK_MECHANISM_INFO()
+        rs.raw.C_GetMechanismInfo(
+            rs.slot_id, int(CKM_AES_ECB), byref(info),
+        )
 
-        key = p11_session.generate_key(KeyType.AES, 256)
-        ct = key.encrypt(b"0123456789abcdef", mechanism=Mechanism.AES_ECB)
-        assert len(ct) > 0
-        key.destroy()
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            ct = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_ECB, b"0123456789abcdef",
+            )
+            assert len(ct) > 0
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_key_size_range_respected(self, p11_session: Any, p11_module: Any) -> None:
+    def test_key_size_range_respected(
+        self, p11_raw_session: Any,
+    ) -> None:
         """Key generation within reported min/max range should succeed."""
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechanisms = slot.get_mechanisms()
-
-        aes_keygen = [m for m in mechanisms if mech_name(m) == "AES_KEY_GEN"]
-        if not aes_keygen:
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES_KEY_GEN not supported")
 
-        info = slot.get_mechanism_info(aes_keygen[0])
-        # Generate at minimum and maximum reported sizes
-        if info.min_key_length > 0:
-            key = p11_session.generate_key(KeyType.AES, info.min_key_length * 8)
-            assert key is not None
-            key.destroy()
+        info = CK_MECHANISM_INFO()
+        rv = rs.raw.C_GetMechanismInfo(
+            rs.slot_id, int(CKM_AES_KEY_GEN), byref(info),
+        )
+        if rv != int(CKR_OK):
+            pytest.skip("Cannot get AES_KEY_GEN mechanism info")
 
-        if info.max_key_length >= 32:
-            key = p11_session.generate_key(KeyType.AES, min(info.max_key_length * 8, 256))
-            assert key is not None
-            key.destroy()
+        if info.ulMinKeySize > 0:
+            key = gen_aes_key(rs.raw, rs.sh, int(info.ulMinKeySize) * 8)
+            assert key != 0
+            destroy_quietly(rs.raw, rs.sh, key)
+
+        if info.ulMaxKeySize >= 32:
+            bits = min(int(info.ulMaxKeySize) * 8, 256)
+            key = gen_aes_key(rs.raw, rs.sh, bits)
+            assert key != 0
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestMechanismLimitProbing:
-    """Probe beyond advertised mechanism limits.
+    """Probe beyond advertised mechanism limits."""
 
-    Tests whether modules properly reject operations outside their
-    advertised min/max key sizes. A module that accepts oversized keys
-    may have undocumented capabilities or weak enforcement.
-    """
-
-    def test_aes_oversize_key(self, p11_session: Any, p11_module: Any) -> None:
-        """Try AES key sizes beyond standard 256-bit - should be rejected."""
+    def test_aes_oversize_key(self, p11_raw_session: Any) -> None:
+        """Try AES key sizes beyond standard 256-bit."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechs = slot.get_mechanisms()
-        aes_keygen = [m for m in mechs if mech_name(m) == "AES_KEY_GEN"]
-        if not aes_keygen:
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES_KEY_GEN not supported")
 
-        info = slot.get_mechanism_info(aes_keygen[0])
-        oversize = (info.max_key_length + 8) * 8  # Beyond max, in bits
+        info = CK_MECHANISM_INFO()
+        rv = rs.raw.C_GetMechanismInfo(
+            rs.slot_id, int(CKM_AES_KEY_GEN), byref(info),
+        )
+        if rv != int(CKR_OK):
+            pytest.skip("Cannot get AES_KEY_GEN info")
 
+        oversize = (int(info.ulMaxKeySize) + 8) * 8
         try:
-            key = p11_session.generate_key(KeyType.AES, oversize)
+            key = gen_aes_key(rs.raw, rs.sh, oversize)
             note(
-                f"Module accepted AES key beyond max ({oversize} bits, "
-                f"max={info.max_key_length * 8})",
+                f"Module accepted AES key beyond max ({oversize} bits)",
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 CK_MECHANISM_INFO.ulMaxKeySize",
             )
-            key.destroy()
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected - properly enforced
+            destroy_quietly(rs.raw, rs.sh, key)
+        except AssertionError:
+            pass
 
-    def test_rsa_undersize_key(self, p11_session: Any, p11_module: Any) -> None:
-        """Try RSA key smaller than min - should be rejected."""
+    def test_rsa_undersize_key(self, p11_raw_session: Any) -> None:
+        """Try RSA key smaller than min."""
         from pkcs11_check.compliance import ComplianceLevel, note
+        from pkcs11_check.raw.types_std import CKM_RSA_PKCS_KEY_PAIR_GEN
 
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechs = slot.get_mechanisms()
-        rsa_keygen = [m for m in mechs if mech_name(m) == "RSA_PKCS_KEY_PAIR_GEN"]
-        if not rsa_keygen:
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
 
-        info = slot.get_mechanism_info(rsa_keygen[0])
-        if info.min_key_length == 0:
+        info = CK_MECHANISM_INFO()
+        rv = rs.raw.C_GetMechanismInfo(
+            rs.slot_id, int(CKM_RSA_PKCS_KEY_PAIR_GEN), byref(info),
+        )
+        if rv != int(CKR_OK):
+            pytest.skip("Cannot get RSA key info")
+
+        if int(info.ulMinKeySize) == 0:
             pytest.skip("No minimum key length reported")
 
-        undersize = max(info.min_key_length - 256, 512)  # Below min but still a valid size
-        if undersize >= info.min_key_length:
+        undersize = max(int(info.ulMinKeySize) - 256, 512)
+        if undersize >= int(info.ulMinKeySize):
             pytest.skip("Cannot test below minimum (already at 512)")
 
         try:
-            pub, priv = p11_session.generate_keypair(KeyType.RSA, undersize)
+            pub, priv = gen_rsa_keypair(rs.raw, rs.sh, undersize)
             note(
-                f"Module accepted RSA key below min ({undersize} bits, min={info.min_key_length})",
+                f"Module accepted RSA key below min ({undersize} bits)",
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 CK_MECHANISM_INFO.ulMinKeySize",
             )
-            pub.destroy()
-            priv.destroy()
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+        except AssertionError:
+            pass
 
-    def test_aes_non_standard_sizes(self, p11_session: Any) -> None:
-        """Try non-standard AES key sizes (64, 160, 384, 512, 768 bits)."""
+    def test_aes_non_standard_sizes(self, p11_raw_session: Any) -> None:
+        """Try non-standard AES key sizes."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
+        rs = p11_raw_session
         for size in [64, 160, 384, 512, 768]:
             try:
-                key = p11_session.generate_key(KeyType.AES, size)
+                key = gen_aes_key(rs.raw, rs.sh, size)
                 note(
                     f"Module accepted non-standard AES-{size}",
                     ComplianceLevel.NOT_RECOMMENDED,
-                    reference="FIPS 197 - AES key sizes are 128, 192, 256 only",
+                    reference="FIPS 197",
                 )
-                key.destroy()
-            except pkcs11.exceptions.PKCS11Error:
-                pass  # Expected
+                destroy_quietly(rs.raw, rs.sh, key)
+            except AssertionError:
+                pass
 
-    def test_hmac_short_key(self, p11_session: Any) -> None:
-        """Try HMAC with a very short key (1 byte) - should fail or warn."""
+    def test_hmac_short_key(self, p11_raw_session: Any) -> None:
+        """Try HMAC with a very short key (1 byte)."""
         from pkcs11_check.compliance import ComplianceLevel, note
+        from pkcs11_check.raw.recipes import create_object, sign_single
+        from pkcs11_check.raw.types_std import (
+            CKA_CLASS,
+            CKA_KEY_TYPE,
+            CKA_SENSITIVE,
+            CKA_SIGN,
+            CKA_TOKEN,
+            CKA_VALUE,
+            CKK_GENERIC_SECRET,
+            CKM_SHA256_HMAC,
+            CKO_SECRET_KEY,
+        )
 
+        rs = p11_raw_session
         try:
-            key = p11_session.create_object(
-                {
-                    Attribute.CLASS: ObjectClass.SECRET_KEY,
-                    Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-                    Attribute.VALUE: b"\x42",
-                    Attribute.SIGN: True,
-                    Attribute.TOKEN: False,
-                    Attribute.SENSITIVE: False,
-                }
+            key = create_object(rs.raw, rs.sh, {
+                int(CKA_CLASS): int(CKO_SECRET_KEY),
+                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+                int(CKA_VALUE): b"\x42",
+                int(CKA_SIGN): True,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+            })
+            mac = sign_single(
+                rs.raw, rs.sh, key, CKM_SHA256_HMAC, b"test",
             )
-            mac = key.sign(b"test", mechanism=Mechanism.SHA256_HMAC)
             note(
-                f"Module accepted 1-byte HMAC key (MAC length: {len(mac)})",
+                f"Module accepted 1-byte HMAC key (len: {len(mac)})",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="RFC 2104 - HMAC key should be at least hash output length",
+                reference="RFC 2104",
             )
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected - key too short
+            destroy_quietly(rs.raw, rs.sh, key)
+        except AssertionError:
+            pass
 
-    def test_rsa_oversize_key(self, p11_session: Any, p11_module: Any) -> None:
-        """Try RSA key larger than max - should be rejected or very slow."""
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechs = slot.get_mechanisms()
-        rsa_keygen = [m for m in mechs if mech_name(m) == "RSA_PKCS_KEY_PAIR_GEN"]
-        if not rsa_keygen:
+    def test_rsa_oversize_key(self, p11_raw_session: Any) -> None:
+        """Try RSA key larger than max."""
+        from pkcs11_check.raw.types_std import CKM_RSA_PKCS_KEY_PAIR_GEN
+
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
 
-        info = slot.get_mechanism_info(rsa_keygen[0])
-        oversize = info.max_key_length + 1024  # Beyond max
+        info = CK_MECHANISM_INFO()
+        rv = rs.raw.C_GetMechanismInfo(
+            rs.slot_id, int(CKM_RSA_PKCS_KEY_PAIR_GEN), byref(info),
+        )
+        if rv != int(CKR_OK):
+            pytest.skip("Cannot get RSA info")
 
+        oversize = int(info.ulMaxKeySize) + 1024
         try:
-            pub, priv = p11_session.generate_keypair(KeyType.RSA, oversize)
+            pub, priv = gen_rsa_keypair(rs.raw, rs.sh, oversize)
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                f"Module accepted RSA-{oversize} beyond max ({info.max_key_length})",
+                f"Module accepted RSA-{oversize} beyond max",
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 CK_MECHANISM_INFO.ulMaxKeySize",
             )
-            pub.destroy()
-            priv.destroy()
-        except pkcs11.exceptions.PKCS11Error:
-            pass  # Expected
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+        except AssertionError:
+            pass

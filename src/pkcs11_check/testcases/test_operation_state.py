@@ -21,12 +21,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11.exceptions import (
-    FunctionNotSupported,
-    OperationNotInitialized,
-    SavedStateInvalid,
-    StateUnsaveable,
-)
 
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
@@ -143,46 +137,76 @@ def _run_state_script(
 class TestGetOperationStateAPI:
     """Verify C_GetOperationState / C_SetOperationState are present and respond correctly."""
 
-    def test_api_exists(self, p11_session: Any) -> None:
-        """Session object exposes get_operation_state() and set_operation_state()."""
-        assert hasattr(p11_session, "get_operation_state") and callable(
-            p11_session.get_operation_state
-        ), "Session must have a callable get_operation_state() method"
-        assert hasattr(p11_session, "set_operation_state") and callable(
-            p11_session.set_operation_state
-        ), "Session must have a callable set_operation_state() method"
+    def test_api_exists(self, p11_raw_session: Any) -> None:
+        """Raw session exposes C_GetOperationState and C_SetOperationState."""
+        rs = p11_raw_session
+        assert hasattr(rs.raw, "C_GetOperationState")
+        assert hasattr(rs.raw, "C_SetOperationState")
 
-    def test_no_active_operation(self, p11_session: Any) -> None:
-        """get_operation_state() with no active operation returns bytes or raises a known CKR.
+    def test_no_active_operation(self, p11_raw_session: Any) -> None:
+        """C_GetOperationState with no active operation returns known CKR.
 
-        Spec Sec.5.6.5: if no digest, encrypt, or sign operation is active the
-        token must return CKR_OPERATION_NOT_INITIALIZED.  Some modules also
-        return CKR_STATE_UNSAVEABLE or CKR_FUNCTION_NOT_SUPPORTED.
+        Spec Sec.5.6.5: if no operation is active the token must return
+        CKR_OPERATION_NOT_INITIALIZED. Some modules also return
+        CKR_STATE_UNSAVEABLE or CKR_FUNCTION_NOT_SUPPORTED.
         """
-        try:
-            state = p11_session.get_operation_state()
-            # A module that returns empty bytes with no active op is not spec-
-            # conformant, but we accept it to avoid false failures.
-            assert isinstance(state, bytes)
-        except (OperationNotInitialized, StateUnsaveable, FunctionNotSupported):
-            pass  # All valid per spec
+        import ctypes
 
-    def test_garbage_state_raises_saved_state_invalid(self, p11_session: Any) -> None:
-        """set_operation_state() with garbage data -> CKR_SAVED_STATE_INVALID.
+        from pkcs11_check.raw.rv import ckr_name
+        from pkcs11_check.raw.types_std import (
+            CKR_FUNCTION_NOT_SUPPORTED,
+            CKR_OPERATION_NOT_INITIALIZED,
+            CKR_STATE_UNSAVEABLE,
+        )
+        from pkcs11_check.raw.types_std import (
+            CKR_OK as _CKR_OK,
+        )
 
-        Spec Sec.5.6.6: the token must return CKR_SAVED_STATE_INVALID if the
-        supplied state blob is unrecognisable.
+        rs = p11_raw_session
+        state_len = ctypes.c_ulong(0)
+        rv = rs.raw.C_GetOperationState(rs.sh, None, ctypes.byref(state_len))
+        acceptable = {
+            int(_CKR_OK), int(CKR_OPERATION_NOT_INITIALIZED),
+            int(CKR_STATE_UNSAVEABLE), int(CKR_FUNCTION_NOT_SUPPORTED),
+        }
+        assert rv in acceptable, (
+            f"C_GetOperationState returned unexpected {ckr_name(rv)}"
+        )
+
+    def test_garbage_state_raises_saved_state_invalid(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """C_SetOperationState with garbage -> CKR_SAVED_STATE_INVALID.
+
+        Spec Sec.5.6.6: the token must return CKR_SAVED_STATE_INVALID if
+        the supplied state blob is unrecognisable.
         """
+        import ctypes
+
+        from pkcs11_check.raw.rv import ckr_name
+        from pkcs11_check.raw.types_std import (
+            CKR_FUNCTION_NOT_SUPPORTED,
+            CKR_OPERATION_NOT_INITIALIZED,
+            CKR_SAVED_STATE_INVALID,
+            CKR_STATE_UNSAVEABLE,
+        )
+
+        rs = p11_raw_session
         garbage = b"\xde\xad\xbe\xef" * 16
-        try:
-            p11_session.set_operation_state(garbage)
-            pytest.fail("set_operation_state() with garbage data must raise SavedStateInvalid")
-        except SavedStateInvalid:
-            pass  # Correct per spec Sec.5.6.6
-        except (FunctionNotSupported, StateUnsaveable):
+        buf = (ctypes.c_ubyte * len(garbage))(*garbage)
+        rv = rs.raw.C_SetOperationState(rs.sh, buf, len(garbage), 0, 0)
+        if rv in (
+            int(CKR_FUNCTION_NOT_SUPPORTED), int(CKR_STATE_UNSAVEABLE),
+        ):
             pytest.skip("Module does not support C_SetOperationState")
-        except OperationNotInitialized:
-            pass  # Module requires an active session operation - acceptable
+        acceptable = {
+            int(CKR_SAVED_STATE_INVALID),
+            int(CKR_OPERATION_NOT_INITIALIZED),
+        }
+        assert rv in acceptable, (
+            f"C_SetOperationState with garbage: expected "
+            f"CKR_SAVED_STATE_INVALID, got {ckr_name(rv)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +530,9 @@ class TestEncryptStateRoundTrip:
             kg_mech = mech_simple(CKM_AES_KEY_GEN)
 
             hKey = CK_OBJECT_HANDLE(0)
-            rv = C_GenerateKey(hSession, kg_mech.byref(), _template_ptr(attrs), attrs.count, byref(hKey))
+            rv = C_GenerateKey(
+                hSession, kg_mech.byref(), _template_ptr(attrs), attrs.count, byref(hKey)
+            )
             if rv in (CKR_FUNCTION_NOT_SUPPORTED,):
                 print(f"SKIP:GenerateKeyUnsupported:0x{rv:08x}")
                 sys.exit(0)
