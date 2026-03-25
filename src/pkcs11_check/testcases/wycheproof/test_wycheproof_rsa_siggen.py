@@ -16,33 +16,58 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from cryptography.hazmat.primitives.serialization import load_der_private_key
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    sign_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_COEFFICIENT,
+    CKA_EXPONENT_1,
+    CKA_EXPONENT_2,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_MODULUS,
+    CKA_PRIME_1,
+    CKA_PRIME_2,
+    CKA_PRIVATE_EXPONENT,
+    CKA_PUBLIC_EXPONENT,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKK_RSA,
+    CKM_SHA1_RSA_PKCS,
+    CKM_SHA224_RSA_PKCS,
+    CKM_SHA256_RSA_PKCS,
+    CKM_SHA384_RSA_PKCS,
+    CKM_SHA512_RSA_PKCS,
+    CKO_PRIVATE_KEY,
+)
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
 
 # Hash algorithm names -> PKCS#11 mechanisms
-_SHA_TO_MECH: dict[str, Mechanism] = {
-    "SHA-1": Mechanism.SHA1_RSA_PKCS,
-    "SHA-224": Mechanism.SHA224_RSA_PKCS,
-    "SHA-256": Mechanism.SHA256_RSA_PKCS,
-    "SHA-384": Mechanism.SHA384_RSA_PKCS,
-    "SHA-512": Mechanism.SHA512_RSA_PKCS,
+_SHA_TO_MECH: dict[str, int] = {
+    "SHA-1": int(CKM_SHA1_RSA_PKCS),
+    "SHA-224": int(CKM_SHA224_RSA_PKCS),
+    "SHA-256": int(CKM_SHA256_RSA_PKCS),
+    "SHA-384": int(CKM_SHA384_RSA_PKCS),
+    "SHA-512": int(CKM_SHA512_RSA_PKCS),
 }
 
 # Mechanism display names for availability checking
-_MECH_DISPLAY: dict[Mechanism, str] = {
-    Mechanism.SHA1_RSA_PKCS: "SHA1_RSA_PKCS",
-    Mechanism.SHA224_RSA_PKCS: "SHA224_RSA_PKCS",
-    Mechanism.SHA256_RSA_PKCS: "SHA256_RSA_PKCS",
-    Mechanism.SHA384_RSA_PKCS: "SHA384_RSA_PKCS",
-    Mechanism.SHA512_RSA_PKCS: "SHA512_RSA_PKCS",
+_MECH_DISPLAY: dict[int, str] = {
+    int(CKM_SHA1_RSA_PKCS): "SHA1_RSA_PKCS",
+    int(CKM_SHA224_RSA_PKCS): "SHA224_RSA_PKCS",
+    int(CKM_SHA256_RSA_PKCS): "SHA256_RSA_PKCS",
+    int(CKM_SHA384_RSA_PKCS): "SHA384_RSA_PKCS",
+    int(CKM_SHA512_RSA_PKCS): "SHA512_RSA_PKCS",
 }
 
 # Only test key sizes >=2048; 1024 and 1536 are rejected by many modules
@@ -98,18 +123,17 @@ _ALL_SIGGEN_VECTORS = _load_siggen_vectors()
     ids=[v[0] for v in _ALL_SIGGEN_VECTORS],
 )
 def test_rsa_pkcs1_siggen(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """RSA PKCS#1 v1.5 signature generation from Wycheproof vectors."""
-    mechanism: Mechanism = vec["_mechanism"]
+    rs = p11_raw_session
+    mechanism: int = vec["_mechanism"]
     key_size: int = vec["_key_size"]
     sha: str = vec["_sha"]
 
     # Check mechanism availability before importing the key
-    mech_display = _MECH_DISPLAY.get(mechanism, str(mechanism))
-    slot = p11_module.get_slots(token_present=True)[0]
-    supported = {mech_name(m) for m in slot.get_mechanisms()}
-    if mech_display not in supported:
+    mech_display = _MECH_DISPLAY.get(mechanism, f"0x{mechanism:08x}")
+    if not rs.has_mechanism(mech_display):
         pytest.skip(f"{mech_display} not supported by module")
 
     msg = bytes.fromhex(vec["msg"])
@@ -125,32 +149,34 @@ def test_rsa_pkcs1_siggen(
     key_obj = None
     try:
         try:
-            key_obj = p11_session.create_object(
+            key_obj = create_object(
+                rs.raw,
+                rs.sh,
                 {
-                    Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-                    Attribute.KEY_TYPE: KeyType.RSA,
-                    Attribute.TOKEN: False,
-                    Attribute.SENSITIVE: False,
-                    Attribute.EXTRACTABLE: True,
-                    Attribute.SIGN: True,
-                    Attribute.MODULUS: _i2b(pub_nums.n),
-                    Attribute.PUBLIC_EXPONENT: _i2b(pub_nums.e),
-                    Attribute.PRIVATE_EXPONENT: _i2b(nums.d),
-                    Attribute.PRIME_1: _i2b(nums.p),
-                    Attribute.PRIME_2: _i2b(nums.q),
-                    Attribute.EXPONENT_1: _i2b(nums.dmp1),
-                    Attribute.EXPONENT_2: _i2b(nums.dmq1),
-                    Attribute.COEFFICIENT: _i2b(nums.iqmp),
-                }
+                    int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_RSA),
+                    int(CKA_TOKEN): False,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_EXTRACTABLE): True,
+                    int(CKA_SIGN): True,
+                    int(CKA_MODULUS): _i2b(pub_nums.n),
+                    int(CKA_PUBLIC_EXPONENT): _i2b(pub_nums.e),
+                    int(CKA_PRIVATE_EXPONENT): _i2b(nums.d),
+                    int(CKA_PRIME_1): _i2b(nums.p),
+                    int(CKA_PRIME_2): _i2b(nums.q),
+                    int(CKA_EXPONENT_1): _i2b(nums.dmp1),
+                    int(CKA_EXPONENT_2): _i2b(nums.dmq1),
+                    int(CKA_COEFFICIENT): _i2b(nums.iqmp),
+                },
             )
-        except p11.exceptions.PKCS11Error as e:
+        except AssertionError as e:
             pytest.skip(f"Cannot import RSA private key ({key_size}-bit, {sha}): {e}")
 
-        sig = key_obj.sign(msg, mechanism=mechanism)
+        sig = sign_single(rs.raw, rs.sh, key_obj, mechanism, msg)
         assert sig == expected_sig, (
             f"Signature mismatch for {vec_id} ({key_size}-bit {sha}): "
             f"got {sig.hex()[:32]}... expected {expected_sig.hex()[:32]}..."
         )
     finally:
         if key_obj is not None:
-            key_obj.destroy()
+            destroy_quietly(rs.raw, rs.sh, key_obj)

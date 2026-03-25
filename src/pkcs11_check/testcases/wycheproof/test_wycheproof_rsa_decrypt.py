@@ -9,9 +9,31 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
+
+from pkcs11_check.raw.recipes import (
+    create_object,
+    decrypt_single,
+    destroy_quietly,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_COEFFICIENT,
+    CKA_DECRYPT,
+    CKA_EXPONENT_1,
+    CKA_EXPONENT_2,
+    CKA_KEY_TYPE,
+    CKA_MODULUS,
+    CKA_PRIME_1,
+    CKA_PRIME_2,
+    CKA_PRIVATE_EXPONENT,
+    CKA_PUBLIC_EXPONENT,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKK_RSA,
+    CKM_RSA_PKCS,
+    CKO_PRIVATE_KEY,
+)
 
 pytestmark = pytest.mark.wycheproof
 
@@ -48,8 +70,9 @@ _ALL_DECRYPT_VECTORS = _load_decrypt_vectors()
 @pytest.mark.parametrize(
     "vec_id,vec", _ALL_DECRYPT_VECTORS, ids=[v[0] for v in _ALL_DECRYPT_VECTORS]
 )
-def test_rsa_pkcs1_decrypt(p11_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA PKCS#1 v1.5 decryption from Wycheproof vectors."""
+    rs = p11_raw_session
     ct = bytes.fromhex(vec["ct"])
     msg_expected = bytes.fromhex(vec["msg"])
     result = vec["result"]
@@ -71,32 +94,36 @@ def test_rsa_pkcs1_decrypt(p11_session: Any, vec_id: str, vec: dict[str, Any]) -
     coefficient = bytes.fromhex(pk.get("coefficient", ""))
 
     try:
-        priv_key = p11_session.create_object(
+        priv_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-                Attribute.KEY_TYPE: KeyType.RSA,
-                Attribute.MODULUS: modulus,
-                Attribute.PUBLIC_EXPONENT: pub_exponent,
-                Attribute.PRIVATE_EXPONENT: priv_exponent,
-                Attribute.PRIME_1: prime1,
-                Attribute.PRIME_2: prime2,
-                Attribute.EXPONENT_1: exp1,
-                Attribute.EXPONENT_2: exp2,
-                Attribute.COEFFICIENT: coefficient,
-                Attribute.TOKEN: False,
-                Attribute.DECRYPT: True,
-                Attribute.SENSITIVE: False,
-            }
+                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                int(CKA_KEY_TYPE): int(CKK_RSA),
+                int(CKA_MODULUS): modulus,
+                int(CKA_PUBLIC_EXPONENT): pub_exponent,
+                int(CKA_PRIVATE_EXPONENT): priv_exponent,
+                int(CKA_PRIME_1): prime1,
+                int(CKA_PRIME_2): prime2,
+                int(CKA_EXPONENT_1): exp1,
+                int(CKA_EXPONENT_2): exp2,
+                int(CKA_COEFFICIENT): coefficient,
+                int(CKA_TOKEN): False,
+                int(CKA_DECRYPT): True,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         pytest.skip("Cannot import RSA private key")
 
     try:
-        plaintext = priv_key.decrypt(ct, mechanism=Mechanism.RSA_PKCS)
+        plaintext = decrypt_single(rs.raw, rs.sh, priv_key, CKM_RSA_PKCS, ct)
         if result == "valid":
             assert plaintext == msg_expected
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt")
         # acceptable/invalid: reject is fine (padding oracle resistance)
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, priv_key)

@@ -9,65 +9,106 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.mechanisms import MGF
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.pack import mech_pss
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    generate_random,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_KEY_TYPE,
+    CKA_MODULUS,
+    CKA_PUBLIC_EXPONENT,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKG_MGF1_SHA1,
+    CKG_MGF1_SHA3_224,
+    CKG_MGF1_SHA3_256,
+    CKG_MGF1_SHA3_384,
+    CKG_MGF1_SHA3_512,
+    CKG_MGF1_SHA224,
+    CKG_MGF1_SHA256,
+    CKG_MGF1_SHA384,
+    CKG_MGF1_SHA512,
+    CKK_RSA,
+    CKM_RSA_PKCS_PSS,
+    CKM_SHA1_RSA_PKCS_PSS,
+    CKM_SHA3_224,
+    CKM_SHA3_224_RSA_PKCS_PSS,
+    CKM_SHA3_256,
+    CKM_SHA3_256_RSA_PKCS_PSS,
+    CKM_SHA3_384,
+    CKM_SHA3_384_RSA_PKCS_PSS,
+    CKM_SHA3_512,
+    CKM_SHA3_512_RSA_PKCS_PSS,
+    CKM_SHA224,
+    CKM_SHA224_RSA_PKCS_PSS,
+    CKM_SHA256,
+    CKM_SHA256_RSA_PKCS_PSS,
+    CKM_SHA384,
+    CKM_SHA384_RSA_PKCS_PSS,
+    CKM_SHA512,
+    CKM_SHA512_RSA_PKCS_PSS,
+    CKM_SHA_1,
+    CKO_PUBLIC_KEY,
+)
 
 pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map hash names to PKCS#11 mechanisms and hash mechanisms for PSS params
-_SHA_MECHANISMS: dict[str, Mechanism] = {
-    "SHA-1": Mechanism.SHA1_RSA_PKCS_PSS,
-    "SHA-224": Mechanism.SHA224_RSA_PKCS_PSS,
-    "SHA-256": Mechanism.SHA256_RSA_PKCS_PSS,
-    "SHA-384": Mechanism.SHA384_RSA_PKCS_PSS,
-    "SHA-512": Mechanism.SHA512_RSA_PKCS_PSS,
-    "SHA3-224": Mechanism.SHA3_224_RSA_PKCS_PSS,
-    "SHA3-256": Mechanism.SHA3_256_RSA_PKCS_PSS,
-    "SHA3-384": Mechanism.SHA3_384_RSA_PKCS_PSS,
-    "SHA3-512": Mechanism.SHA3_512_RSA_PKCS_PSS,
+_SHA_MECHANISMS: dict[str, int] = {
+    "SHA-1": int(CKM_SHA1_RSA_PKCS_PSS),
+    "SHA-224": int(CKM_SHA224_RSA_PKCS_PSS),
+    "SHA-256": int(CKM_SHA256_RSA_PKCS_PSS),
+    "SHA-384": int(CKM_SHA384_RSA_PKCS_PSS),
+    "SHA-512": int(CKM_SHA512_RSA_PKCS_PSS),
+    "SHA3-224": int(CKM_SHA3_224_RSA_PKCS_PSS),
+    "SHA3-256": int(CKM_SHA3_256_RSA_PKCS_PSS),
+    "SHA3-384": int(CKM_SHA3_384_RSA_PKCS_PSS),
+    "SHA3-512": int(CKM_SHA3_512_RSA_PKCS_PSS),
 }
 
-_SHA_HASH_MECHS: dict[str, Mechanism] = {
-    "SHA-1": Mechanism.SHA_1,
-    "SHA-224": Mechanism.SHA224,
-    "SHA-256": Mechanism.SHA256,
-    "SHA-384": Mechanism.SHA384,
-    "SHA-512": Mechanism.SHA512,
-    "SHA3-224": Mechanism.SHA3_224,
-    "SHA3-256": Mechanism.SHA3_256,
-    "SHA3-384": Mechanism.SHA3_384,
-    "SHA3-512": Mechanism.SHA3_512,
+_SHA_HASH_MECHS: dict[str, int] = {
+    "SHA-1": int(CKM_SHA_1),
+    "SHA-224": int(CKM_SHA224),
+    "SHA-256": int(CKM_SHA256),
+    "SHA-384": int(CKM_SHA384),
+    "SHA-512": int(CKM_SHA512),
+    "SHA3-224": int(CKM_SHA3_224),
+    "SHA3-256": int(CKM_SHA3_256),
+    "SHA3-384": int(CKM_SHA3_384),
+    "SHA3-512": int(CKM_SHA3_512),
 }
 
-_SHA_MGFS: dict[str, MGF] = {
-    "SHA-1": MGF.SHA1,
-    "SHA-224": MGF.SHA224,
-    "SHA-256": MGF.SHA256,
-    "SHA-384": MGF.SHA384,
-    "SHA-512": MGF.SHA512,
-    "SHA3-224": MGF.SHA3_224,
-    "SHA3-256": MGF.SHA3_256,
-    "SHA3-384": MGF.SHA3_384,
-    "SHA3-512": MGF.SHA3_512,
+_SHA_MGFS: dict[str, int] = {
+    "SHA-1": int(CKG_MGF1_SHA1),
+    "SHA-224": int(CKG_MGF1_SHA224),
+    "SHA-256": int(CKG_MGF1_SHA256),
+    "SHA-384": int(CKG_MGF1_SHA384),
+    "SHA-512": int(CKG_MGF1_SHA512),
+    "SHA3-224": int(CKG_MGF1_SHA3_224),
+    "SHA3-256": int(CKG_MGF1_SHA3_256),
+    "SHA3-384": int(CKG_MGF1_SHA3_384),
+    "SHA3-512": int(CKG_MGF1_SHA3_512),
 }
 
 # Mechanism display names for availability checking
-_MECH_DISPLAY: dict[Mechanism, str] = {
-    Mechanism.SHA1_RSA_PKCS_PSS: "SHA1_RSA_PKCS_PSS",
-    Mechanism.SHA224_RSA_PKCS_PSS: "SHA224_RSA_PKCS_PSS",
-    Mechanism.SHA256_RSA_PKCS_PSS: "SHA256_RSA_PKCS_PSS",
-    Mechanism.SHA384_RSA_PKCS_PSS: "SHA384_RSA_PKCS_PSS",
-    Mechanism.SHA512_RSA_PKCS_PSS: "SHA512_RSA_PKCS_PSS",
-    Mechanism.SHA3_224_RSA_PKCS_PSS: "SHA3_224_RSA_PKCS_PSS",
-    Mechanism.SHA3_256_RSA_PKCS_PSS: "SHA3_256_RSA_PKCS_PSS",
-    Mechanism.SHA3_384_RSA_PKCS_PSS: "SHA3_384_RSA_PKCS_PSS",
-    Mechanism.SHA3_512_RSA_PKCS_PSS: "SHA3_512_RSA_PKCS_PSS",
+_MECH_DISPLAY: dict[int, str] = {
+    int(CKM_SHA1_RSA_PKCS_PSS): "SHA1_RSA_PKCS_PSS",
+    int(CKM_SHA224_RSA_PKCS_PSS): "SHA224_RSA_PKCS_PSS",
+    int(CKM_SHA256_RSA_PKCS_PSS): "SHA256_RSA_PKCS_PSS",
+    int(CKM_SHA384_RSA_PKCS_PSS): "SHA384_RSA_PKCS_PSS",
+    int(CKM_SHA512_RSA_PKCS_PSS): "SHA512_RSA_PKCS_PSS",
+    int(CKM_SHA3_224_RSA_PKCS_PSS): "SHA3_224_RSA_PKCS_PSS",
+    int(CKM_SHA3_256_RSA_PKCS_PSS): "SHA3_256_RSA_PKCS_PSS",
+    int(CKM_SHA3_384_RSA_PKCS_PSS): "SHA3_384_RSA_PKCS_PSS",
+    int(CKM_SHA3_512_RSA_PKCS_PSS): "SHA3_512_RSA_PKCS_PSS",
 }
 
 # RSA-PSS vector files - standard and parameterized variants that map to
@@ -93,7 +134,7 @@ def _load_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
             sha = group.get("sha", "")
             mgf_sha = group.get("mgfSha", sha)
             mechanism = (
-                _SHA_MECHANISMS.get(sha) if sha == mgf_sha else Mechanism.RSA_PKCS_PSS
+                _SHA_MECHANISMS.get(sha) if sha == mgf_sha else int(CKM_RSA_PKCS_PSS)
             )
             hash_mech = _SHA_HASH_MECHS.get(sha)
             mgf = _SHA_MGFS.get(mgf_sha)
@@ -118,13 +159,12 @@ _ALL_PSS_VECTORS = _load_pss_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_PSS_VECTORS, ids=[v[0] for v in _ALL_PSS_VECTORS])
-def test_rsa_pss(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-PSS signature verification from Wycheproof vectors."""
+    rs = p11_raw_session
     mechanism = vec["_mechanism"]
     name = _MECH_DISPLAY.get(mechanism, "RSA_PKCS_PSS")
-    slot = p11_module.get_slots(token_present=True)[0]
-    supported = {mech_name(m) for m in slot.get_mechanisms()}
-    if name not in supported:
+    if not rs.has_mechanism(name):
         pytest.skip(f"{name} not supported")
 
     msg = bytes.fromhex(vec["msg"])
@@ -146,28 +186,34 @@ def test_rsa_pss(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, 
     exponent = bytes.fromhex(exp_hex)
 
     try:
-        pub_key = p11_session.create_object(
+        pub_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.RSA,
-                Attribute.MODULUS: modulus,
-                Attribute.PUBLIC_EXPONENT: exponent,
-                Attribute.TOKEN: False,
-                Attribute.VERIFY: True,
-            }
+                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+                int(CKA_KEY_TYPE): int(CKK_RSA),
+                int(CKA_MODULUS): modulus,
+                int(CKA_PUBLIC_EXPONENT): exponent,
+                int(CKA_TOKEN): False,
+                int(CKA_VERIFY): True,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         pytest.skip("Cannot import RSA public key")
 
-    # Build PSS params: (hash_mechanism, mgf, salt_length)
-    pss_params = (hash_mech, mgf, s_len)
+    # Build PSS params
+    pss_param = mech_pss(mechanism, hash_mech=hash_mech, mgf=mgf, salt_len=s_len)
 
     try:
-        pub_key.verify(msg, sig, mechanism=mechanism, mechanism_param=pss_params)
+        verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig, mech_param=pss_param)
         if result == "invalid":
             pass  # Some modules accept edge-case signatures
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"Valid RSA-PSS sig {vec_id} rejected (sLen={s_len})")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub_key)
+
+    generate_random(rs.raw, rs.sh, 64)

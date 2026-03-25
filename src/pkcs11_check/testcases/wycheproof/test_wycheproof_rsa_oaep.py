@@ -10,32 +10,62 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.mechanisms import MGF
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.pack import mech_oaep
+from pkcs11_check.raw.recipes import (
+    create_object,
+    decrypt_single,
+    destroy_quietly,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_COEFFICIENT,
+    CKA_DECRYPT,
+    CKA_EXPONENT_1,
+    CKA_EXPONENT_2,
+    CKA_KEY_TYPE,
+    CKA_MODULUS,
+    CKA_PRIME_1,
+    CKA_PRIME_2,
+    CKA_PRIVATE_EXPONENT,
+    CKA_PUBLIC_EXPONENT,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKG_MGF1_SHA1,
+    CKG_MGF1_SHA224,
+    CKG_MGF1_SHA256,
+    CKG_MGF1_SHA384,
+    CKG_MGF1_SHA512,
+    CKK_RSA,
+    CKM_RSA_PKCS_OAEP,
+    CKM_SHA224,
+    CKM_SHA256,
+    CKM_SHA384,
+    CKM_SHA512,
+    CKM_SHA_1,
+    CKO_PRIVATE_KEY,
+)
 
 pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map Wycheproof sha names to PKCS#11 hash mechanisms and MGFs for OAEP params
-_SHA_HASH_MECHS: dict[str, Mechanism] = {
-    "SHA-1": Mechanism.SHA_1,
-    "SHA-224": Mechanism.SHA224,
-    "SHA-256": Mechanism.SHA256,
-    "SHA-384": Mechanism.SHA384,
-    "SHA-512": Mechanism.SHA512,
+_SHA_HASH_MECHS: dict[str, int] = {
+    "SHA-1": int(CKM_SHA_1),
+    "SHA-224": int(CKM_SHA224),
+    "SHA-256": int(CKM_SHA256),
+    "SHA-384": int(CKM_SHA384),
+    "SHA-512": int(CKM_SHA512),
 }
 
-_SHA_MGFS: dict[str, MGF] = {
-    "SHA-1": MGF.SHA1,
-    "SHA-224": MGF.SHA224,
-    "SHA-256": MGF.SHA256,
-    "SHA-384": MGF.SHA384,
-    "SHA-512": MGF.SHA512,
+_SHA_MGFS: dict[str, int] = {
+    "SHA-1": int(CKG_MGF1_SHA1),
+    "SHA-224": int(CKG_MGF1_SHA224),
+    "SHA-256": int(CKG_MGF1_SHA256),
+    "SHA-384": int(CKG_MGF1_SHA384),
+    "SHA-512": int(CKG_MGF1_SHA512),
 }
 
 # RSA-OAEP files - same hash and mixed hash/MGF combinations
@@ -93,11 +123,10 @@ _ALL_OAEP_VECTORS = _load_oaep_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_OAEP_VECTORS, ids=[v[0] for v in _ALL_OAEP_VECTORS])
-def test_rsa_oaep(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-OAEP decryption from Wycheproof vectors."""
-    slot = p11_module.get_slots(token_present=True)[0]
-    supported = {mech_name(m) for m in slot.get_mechanisms()}
-    if "RSA_PKCS_OAEP" not in supported:
+    rs = p11_raw_session
+    if not rs.has_mechanism("RSA_PKCS_OAEP"):
         pytest.skip("RSA_PKCS_OAEP not supported")
 
     ct = bytes.fromhex(vec["ct"])
@@ -108,16 +137,17 @@ def test_rsa_oaep(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
     mgf_sha = vec["_mgfSha"]
     label = bytes.fromhex(vec.get("label", ""))
 
-    # Build OAEP params: (hashAlg, mgf, source_data)
+    # Build OAEP params
     hash_mech = _SHA_HASH_MECHS.get(sha)
     mgf = _SHA_MGFS.get(mgf_sha)
     if hash_mech is None or mgf is None:
         pytest.skip(f"No OAEP param mapping for sha={sha} mgfSha={mgf_sha}")
 
-    oaep_params: tuple[Mechanism, MGF, bytes | None] = (
-        hash_mech,
-        mgf,
-        label if label else None,
+    oaep_param = mech_oaep(
+        CKM_RSA_PKCS_OAEP,
+        hash_mech=hash_mech,
+        mgf=mgf,
+        source_data=label if label else None,
     )
 
     pk = group.get("privateKey", {})
@@ -137,34 +167,43 @@ def test_rsa_oaep(p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str,
     coefficient = bytes.fromhex(pk.get("coefficient", ""))
 
     try:
-        priv_key = p11_session.create_object(
+        priv_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.PRIVATE_KEY,
-                Attribute.KEY_TYPE: KeyType.RSA,
-                Attribute.MODULUS: modulus,
-                Attribute.PUBLIC_EXPONENT: pub_exponent,
-                Attribute.PRIVATE_EXPONENT: priv_exponent,
-                Attribute.PRIME_1: prime1,
-                Attribute.PRIME_2: prime2,
-                Attribute.EXPONENT_1: exp1,
-                Attribute.EXPONENT_2: exp2,
-                Attribute.COEFFICIENT: coefficient,
-                Attribute.TOKEN: False,
-                Attribute.DECRYPT: True,
-                Attribute.SENSITIVE: False,
-            }
+                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+                int(CKA_KEY_TYPE): int(CKK_RSA),
+                int(CKA_MODULUS): modulus,
+                int(CKA_PUBLIC_EXPONENT): pub_exponent,
+                int(CKA_PRIVATE_EXPONENT): priv_exponent,
+                int(CKA_PRIME_1): prime1,
+                int(CKA_PRIME_2): prime2,
+                int(CKA_EXPONENT_1): exp1,
+                int(CKA_EXPONENT_2): exp2,
+                int(CKA_COEFFICIENT): coefficient,
+                int(CKA_TOKEN): False,
+                int(CKA_DECRYPT): True,
+                int(CKA_SENSITIVE): False,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         pytest.skip("Cannot import RSA private key for OAEP")
 
     try:
-        plaintext = priv_key.decrypt(
-            ct, mechanism=Mechanism.RSA_PKCS_OAEP, mechanism_param=oaep_params
+        plaintext = decrypt_single(
+            rs.raw,
+            rs.sh,
+            priv_key,
+            CKM_RSA_PKCS_OAEP,
+            ct,
+            mech_param=oaep_param,
         )
         if result == "valid":
             assert plaintext == msg_expected
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, priv_key)

@@ -9,39 +9,60 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import mech_name
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    generate_random,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_KEY_TYPE,
+    CKA_MODULUS,
+    CKA_PUBLIC_EXPONENT,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKK_RSA,
+    CKM_SHA3_224_RSA_PKCS,
+    CKM_SHA3_256_RSA_PKCS,
+    CKM_SHA3_384_RSA_PKCS,
+    CKM_SHA3_512_RSA_PKCS,
+    CKM_SHA224_RSA_PKCS,
+    CKM_SHA256_RSA_PKCS,
+    CKM_SHA384_RSA_PKCS,
+    CKM_SHA512_RSA_PKCS,
+    CKO_PUBLIC_KEY,
+)
 
 pytestmark = pytest.mark.wycheproof
 
-# Mechanism display names for availability checking
-_MECH_DISPLAY: dict[Mechanism, str] = {
-    Mechanism.SHA224_RSA_PKCS: "SHA224_RSA_PKCS",
-    Mechanism.SHA256_RSA_PKCS: "SHA256_RSA_PKCS",
-    Mechanism.SHA384_RSA_PKCS: "SHA384_RSA_PKCS",
-    Mechanism.SHA512_RSA_PKCS: "SHA512_RSA_PKCS",
-    Mechanism.SHA3_224_RSA_PKCS: "SHA3_224_RSA_PKCS",
-    Mechanism.SHA3_256_RSA_PKCS: "SHA3_256_RSA_PKCS",
-    Mechanism.SHA3_384_RSA_PKCS: "SHA3_384_RSA_PKCS",
-    Mechanism.SHA3_512_RSA_PKCS: "SHA3_512_RSA_PKCS",
-}
-
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
+# Mechanism display names for availability checking
+_MECH_DISPLAY: dict[int, str] = {
+    int(CKM_SHA224_RSA_PKCS): "SHA224_RSA_PKCS",
+    int(CKM_SHA256_RSA_PKCS): "SHA256_RSA_PKCS",
+    int(CKM_SHA384_RSA_PKCS): "SHA384_RSA_PKCS",
+    int(CKM_SHA512_RSA_PKCS): "SHA512_RSA_PKCS",
+    int(CKM_SHA3_224_RSA_PKCS): "SHA3_224_RSA_PKCS",
+    int(CKM_SHA3_256_RSA_PKCS): "SHA3_256_RSA_PKCS",
+    int(CKM_SHA3_384_RSA_PKCS): "SHA3_384_RSA_PKCS",
+    int(CKM_SHA3_512_RSA_PKCS): "SHA3_512_RSA_PKCS",
+}
+
 # Map hash names to PKCS#11 mechanisms
-_RSA_HASH_MECHANISMS = {
-    "SHA-224": Mechanism.SHA224_RSA_PKCS,
-    "SHA-256": Mechanism.SHA256_RSA_PKCS,
-    "SHA-384": Mechanism.SHA384_RSA_PKCS,
-    "SHA-512": Mechanism.SHA512_RSA_PKCS,
+_RSA_HASH_MECHANISMS: dict[str, int] = {
+    "SHA-224": int(CKM_SHA224_RSA_PKCS),
+    "SHA-256": int(CKM_SHA256_RSA_PKCS),
+    "SHA-384": int(CKM_SHA384_RSA_PKCS),
+    "SHA-512": int(CKM_SHA512_RSA_PKCS),
     # SHA-3 (PKCS#11 v3.0+)
-    "SHA3-224": Mechanism.SHA3_224_RSA_PKCS,
-    "SHA3-256": Mechanism.SHA3_256_RSA_PKCS,
-    "SHA3-384": Mechanism.SHA3_384_RSA_PKCS,
-    "SHA3-512": Mechanism.SHA3_512_RSA_PKCS,
+    "SHA3-224": int(CKM_SHA3_224_RSA_PKCS),
+    "SHA3-256": int(CKM_SHA3_256_RSA_PKCS),
+    "SHA3-384": int(CKM_SHA3_384_RSA_PKCS),
+    "SHA3-512": int(CKM_SHA3_512_RSA_PKCS),
 }
 
 # All RSA signature vector files we want to test
@@ -107,9 +128,10 @@ _ALL_RSA_VECTORS = _load_all_rsa_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_RSA_VECTORS, ids=[v[0] for v in _ALL_RSA_VECTORS])
 def test_rsa_wycheproof(
-    p11_session: Any, p11_module: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """RSA PKCS#1 v1.5 signature verification from Wycheproof vectors."""
+    rs = p11_raw_session
     msg = bytes.fromhex(vec["msg"])
     sig = bytes.fromhex(vec["sig"])
     result = vec["result"]
@@ -117,10 +139,8 @@ def test_rsa_wycheproof(
     group = vec["_group"]
 
     # Check mechanism availability
-    mech_display = _MECH_DISPLAY.get(mechanism, str(mechanism))
-    slot = p11_module.get_slots(token_present=True)[0]
-    supported = {mech_name(m) for m in slot.get_mechanisms()}
-    if mech_display not in supported:
+    mech_display = _MECH_DISPLAY.get(mechanism, f"0x{mechanism:08x}")
+    if not rs.has_mechanism(mech_display):
         pytest.skip(f"{mech_display} not supported by module")
 
     pk = group.get("publicKey", group.get("privateKey", {}))
@@ -133,25 +153,31 @@ def test_rsa_wycheproof(
     exponent = bytes.fromhex(exp_hex)
 
     try:
-        pub_key = p11_session.create_object(
+        pub_key = create_object(
+            rs.raw,
+            rs.sh,
             {
-                Attribute.CLASS: ObjectClass.PUBLIC_KEY,
-                Attribute.KEY_TYPE: KeyType.RSA,
-                Attribute.MODULUS: modulus,
-                Attribute.PUBLIC_EXPONENT: exponent,
-                Attribute.TOKEN: False,
-                Attribute.VERIFY: True,
-            }
+                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+                int(CKA_KEY_TYPE): int(CKK_RSA),
+                int(CKA_MODULUS): modulus,
+                int(CKA_PUBLIC_EXPONENT): exponent,
+                int(CKA_TOKEN): False,
+                int(CKA_VERIFY): True,
+            },
         )
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         pytest.skip("Cannot import RSA public key")
 
     try:
-        pub_key.verify(msg, sig, mechanism=mechanism)
+        verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
         if result == "invalid":
             pass  # Some modules accept edge-case sigs
-    except p11.exceptions.PKCS11Error:
+    except AssertionError:
         if result == "valid":
             pytest.xfail(f"Valid RSA sig {vec_id} rejected")
         # acceptable: reject is fine
         return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub_key)
+
+    generate_random(rs.raw, rs.sh, 64)
