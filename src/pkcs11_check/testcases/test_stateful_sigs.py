@@ -15,20 +15,51 @@ All tests require PKCS#11 v3.2 interface.  Auto-skips on v3.1 and earlier.
 
 from __future__ import annotations
 
+from ctypes import byref
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import (
-    DeviceError,
-    FunctionFailed,
-    MechanismInvalid,
-    SignatureInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-)
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.pack import (
+    attr_array,
+    attr_bool,
+    attr_ulong,
+    mech_simple,
+    template,
+)
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    read_attributes,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CKA_CLASS,
+    CKA_EXTRACTABLE,
+    CKA_HSS_LEVELS,
+    CKA_HSS_LMOTS_TYPES,
+    CKA_HSS_LMS_TYPES,
+    CKA_KEY_TYPE,
+    CKA_PARAMETER_SET,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKK_HSS,
+    CKK_XMSS,
+    CKK_XMSSMT,
+    CKM_HSS,
+    CKM_HSS_KEY_PAIR_GEN,
+    CKM_XMSS,
+    CKM_XMSS_KEY_PAIR_GEN,
+    CKM_XMSSMT,
+    CKM_XMSSMT_KEY_PAIR_GEN,
+    CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
+    CKR_OK,
+)
 
 pytestmark = [pytest.mark.pqc, pytest.mark.requires_v32]
 
@@ -46,100 +77,129 @@ _XMSS_SHA2_10_256 = 0x00000001  # XMSS-SHA2_10_256: height 10
 _XMSSMT_SHA2_20_2_256 = 0x00000001  # XMSSMT-SHA2_20/2_256
 
 # Common keygen errors for stateful sigs - modules may reject templates.
-_KEYGEN_ERRORS = (
-    MechanismInvalid,
-    FunctionFailed,
-    DeviceError,
-    TemplateIncomplete,
-    TemplateInconsistent,
+_KEYGEN_CKR_NAMES = (
+    "CKR_MECHANISM_INVALID", "CKR_FUNCTION_FAILED", "CKR_DEVICE_ERROR",
+    "CKR_TEMPLATE_INCOMPLETE", "CKR_TEMPLATE_INCONSISTENT",
+)
+
+_SIGN_CKR_NAMES = (
+    "CKR_MECHANISM_INVALID", "CKR_FUNCTION_FAILED", "CKR_DEVICE_ERROR",
 )
 
 
-def _skip_if_no(p11_module: Any, mech_name: str) -> None:
-    if not has_mechanism(p11_module, mech_name):
+def _skip_if_no(rs: Any, mech_name: str) -> None:
+    if not rs.has_mechanism(mech_name):
         pytest.skip(f"CKM_{mech_name} not supported by module")
 
 
-def _destroy_pair(pub: Any, priv: Any) -> None:
+def _destroy_pair(rs: Any, pub: int, priv: int) -> None:
     """Destroy a key pair, ignoring errors."""
-    for key in (pub, priv):
-        try:
-            key.destroy()
-        except Exception:
-            pass
+    destroy_quietly(rs.raw, rs.sh, pub)
+    destroy_quietly(rs.raw, rs.sh, priv)
 
 
-def _generate_hss_keypair(session: Any) -> tuple[Any, Any]:
-    """Generate an HSS key pair with the smallest parameter set.
-
-    HSS requires CKA_HSS_LEVELS, CKA_HSS_LMS_TYPES, and CKA_HSS_LMOTS_TYPES
-    on the private key template.  The private key MUST be SENSITIVE=True,
-    EXTRACTABLE=False, COPYABLE=False per the OASIS spec.
-    """
-    pub_tmpl: dict[Any, Any] = {
-        Attribute.VERIFY: True,
-        Attribute.TOKEN: False,
-    }
-    priv_tmpl: dict[Any, Any] = {
-        Attribute.SIGN: True,
-        Attribute.TOKEN: False,
-        Attribute.SENSITIVE: True,
-        Attribute.EXTRACTABLE: False,
-        Attribute.HSS_LEVELS: 1,
-        # Array attributes: one entry per level.
-        Attribute.HSS_LMS_TYPES: [_LMS_SHA256_M32_H5],
-        Attribute.HSS_LMOTS_TYPES: [_LMOTS_SHA256_N32_W8],
-    }
-    return session.generate_keypair(
-        KeyType.HSS,
-        mechanism=Mechanism.HSS_KEY_PAIR_GEN,
-        public_template=pub_tmpl,
-        private_template=priv_tmpl,
+def _generate_hss_keypair(rs: Any) -> tuple[int, int]:
+    """Generate an HSS key pair with the smallest parameter set."""
+    pub_tmpl = template(
+        attr_bool(CKA_VERIFY, True),
+        attr_bool(CKA_TOKEN, False),
     )
+    priv_tmpl = template(
+        attr_bool(CKA_SIGN, True),
+        attr_bool(CKA_TOKEN, False),
+        attr_bool(CKA_SENSITIVE, True),
+        attr_bool(CKA_EXTRACTABLE, False),
+        attr_ulong(CKA_HSS_LEVELS, 1),
+        attr_array(CKA_HSS_LMS_TYPES, [_LMS_SHA256_M32_H5]),
+        attr_array(CKA_HSS_LMOTS_TYPES, [_LMOTS_SHA256_N32_W8]),
+    )
+    mech = mech_simple(CKM_HSS_KEY_PAIR_GEN)
+    pub_h = CK_OBJECT_HANDLE(0)
+    priv_h = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_GenerateKeyPair(
+        rs.sh, mech.byref(),
+        pub_tmpl.ptr, pub_tmpl.count,
+        priv_tmpl.ptr, priv_tmpl.count,
+        byref(pub_h), byref(priv_h),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(pub_h.value), int(priv_h.value)
 
 
-def _generate_xmss_keypair(session: Any) -> tuple[Any, Any]:
+def _generate_xmss_keypair(rs: Any) -> tuple[int, int]:
     """Generate an XMSS key pair with XMSS-SHA2_10_256 (smallest)."""
-    pub_tmpl: dict[Any, Any] = {
-        Attribute.VERIFY: True,
-        Attribute.PARAMETER_SET: _XMSS_SHA2_10_256,
-        Attribute.TOKEN: False,
-    }
-    priv_tmpl: dict[Any, Any] = {
-        Attribute.SIGN: True,
-        Attribute.PARAMETER_SET: _XMSS_SHA2_10_256,
-        Attribute.SENSITIVE: True,
-        Attribute.EXTRACTABLE: False,
-        Attribute.TOKEN: False,
-    }
-    return session.generate_keypair(
-        KeyType.XMSS,
-        mechanism=Mechanism.XMSS_KEY_PAIR_GEN,
-        public_template=pub_tmpl,
-        private_template=priv_tmpl,
+    pub_tmpl = template(
+        attr_bool(CKA_VERIFY, True),
+        attr_ulong(CKA_PARAMETER_SET, _XMSS_SHA2_10_256),
+        attr_bool(CKA_TOKEN, False),
     )
+    priv_tmpl = template(
+        attr_bool(CKA_SIGN, True),
+        attr_ulong(CKA_PARAMETER_SET, _XMSS_SHA2_10_256),
+        attr_bool(CKA_SENSITIVE, True),
+        attr_bool(CKA_EXTRACTABLE, False),
+        attr_bool(CKA_TOKEN, False),
+    )
+    mech = mech_simple(CKM_XMSS_KEY_PAIR_GEN)
+    pub_h = CK_OBJECT_HANDLE(0)
+    priv_h = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_GenerateKeyPair(
+        rs.sh, mech.byref(),
+        pub_tmpl.ptr, pub_tmpl.count,
+        priv_tmpl.ptr, priv_tmpl.count,
+        byref(pub_h), byref(priv_h),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(pub_h.value), int(priv_h.value)
 
 
-def _generate_xmssmt_keypair(session: Any) -> tuple[Any, Any]:
+def _generate_xmssmt_keypair(rs: Any) -> tuple[int, int]:
     """Generate an XMSS^MT key pair with XMSSMT-SHA2_20/2_256 (smallest)."""
-    pub_tmpl: dict[Any, Any] = {
-        Attribute.VERIFY: True,
-        Attribute.PARAMETER_SET: _XMSSMT_SHA2_20_2_256,
-        Attribute.TOKEN: False,
-    }
-    priv_tmpl: dict[Any, Any] = {
-        Attribute.SIGN: True,
-        Attribute.PARAMETER_SET: _XMSSMT_SHA2_20_2_256,
-        Attribute.SENSITIVE: True,
-        Attribute.EXTRACTABLE: False,
-        Attribute.TOKEN: False,
-    }
-    return session.generate_keypair(
-        KeyType.XMSSMT,
-        mechanism=Mechanism.XMSSMT_KEY_PAIR_GEN,
-        public_template=pub_tmpl,
-        private_template=priv_tmpl,
+    pub_tmpl = template(
+        attr_bool(CKA_VERIFY, True),
+        attr_ulong(CKA_PARAMETER_SET, _XMSSMT_SHA2_20_2_256),
+        attr_bool(CKA_TOKEN, False),
     )
+    priv_tmpl = template(
+        attr_bool(CKA_SIGN, True),
+        attr_ulong(CKA_PARAMETER_SET, _XMSSMT_SHA2_20_2_256),
+        attr_bool(CKA_SENSITIVE, True),
+        attr_bool(CKA_EXTRACTABLE, False),
+        attr_bool(CKA_TOKEN, False),
+    )
+    mech = mech_simple(CKM_XMSSMT_KEY_PAIR_GEN)
+    pub_h = CK_OBJECT_HANDLE(0)
+    priv_h = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_GenerateKeyPair(
+        rs.sh, mech.byref(),
+        pub_tmpl.ptr, pub_tmpl.count,
+        priv_tmpl.ptr, priv_tmpl.count,
+        byref(pub_h), byref(priv_h),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(pub_h.value), int(priv_h.value)
+
+
+def _try_keygen(gen_fn: Any, rs: Any, name: str) -> tuple[int, int]:
+    """Try key generation, xfail if module rejects."""
+    try:
+        return gen_fn(rs)
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(n in exc_msg for n in _KEYGEN_CKR_NAMES):
+            pytest.xfail(f"{name} key generation failed: {exc_msg}")
+        raise
+
+
+def _try_sign(rs: Any, priv: int, mech: int, name: str) -> bytes:
+    """Try signing, xfail if module rejects."""
+    try:
+        return sign_single(rs.raw, rs.sh, priv, mech, _MESSAGE)
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(n in exc_msg for n in _SIGN_CKR_NAMES):
+            pytest.xfail(f"{name} sign failed: {exc_msg}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -150,111 +210,105 @@ def _generate_xmssmt_keypair(session: Any) -> tuple[Any, Any]:
 class TestHSSKeyGeneration:
     """CKM_HSS_KEY_PAIR_GEN - HSS key generation (RFC 8554)."""
 
-    def test_mechanism_available(self, p11_module: Any) -> None:
+    def test_mechanism_available(self, p11_raw_session: Any) -> None:
         """Check that CKM_HSS_KEY_PAIR_GEN is advertised by the module."""
-        _skip_if_no(p11_module, "HSS_KEY_PAIR_GEN")
+        _skip_if_no(p11_raw_session, "HSS_KEY_PAIR_GEN")
 
-    def test_keypair_gen(self, p11_session: Any, p11_module: Any) -> None:
+    def test_keypair_gen(self, p11_raw_session: Any) -> None:
         """Generate an HSS key pair."""
-        _skip_if_no(p11_module, "HSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
         try:
-            pub, priv = _generate_hss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"HSS key generation failed: {exc!r}")
-        try:
-            assert pub is not None
-            assert priv is not None
+            assert pub != 0
+            assert priv != 0
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_keypair_key_type(self, p11_session: Any, p11_module: Any) -> None:
+    def test_keypair_key_type(self, p11_raw_session: Any) -> None:
         """HSS keys report CKK_HSS key type."""
-        _skip_if_no(p11_module, "HSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
         try:
-            pub, priv = _generate_hss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"HSS key generation failed: {exc!r}")
-        try:
-            assert pub[Attribute.KEY_TYPE] == KeyType.HSS
-            assert priv[Attribute.KEY_TYPE] == KeyType.HSS
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])
+            assert pub_attrs[int(CKA_KEY_TYPE)] == int(CKK_HSS)
+            assert priv_attrs[int(CKA_KEY_TYPE)] == int(CKK_HSS)
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_keypair_classes(self, p11_session: Any, p11_module: Any) -> None:
+    def test_keypair_classes(self, p11_raw_session: Any) -> None:
         """HSS public key is PUBLIC_KEY, private is PRIVATE_KEY."""
-        _skip_if_no(p11_module, "HSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
         try:
-            pub, priv = _generate_hss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"HSS key generation failed: {exc!r}")
-        try:
-            assert pub[Attribute.CLASS] == ObjectClass.PUBLIC_KEY
-            assert priv[Attribute.CLASS] == ObjectClass.PRIVATE_KEY
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_CLASS)])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_CLASS)])
+            assert pub_attrs[int(CKA_CLASS)] == int(CKO_PUBLIC_KEY)
+            assert priv_attrs[int(CKA_CLASS)] == int(CKO_PRIVATE_KEY)
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_private_key_attributes(self, p11_session: Any, p11_module: Any) -> None:
+    def test_private_key_attributes(self, p11_raw_session: Any) -> None:
         """HSS private key MUST be SENSITIVE, not EXTRACTABLE per spec."""
-        _skip_if_no(p11_module, "HSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
         try:
-            pub, priv = _generate_hss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"HSS key generation failed: {exc!r}")
-        try:
-            assert priv[Attribute.SENSITIVE] is True
-            assert priv[Attribute.EXTRACTABLE] is False
+            priv_attrs = read_attributes(
+                rs.raw, rs.sh, priv, [int(CKA_SENSITIVE), int(CKA_EXTRACTABLE)]
+            )
+            assert priv_attrs[int(CKA_SENSITIVE)] is True
+            assert priv_attrs[int(CKA_EXTRACTABLE)] is False
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
 
 class TestHSSSignVerify:
     """CKM_HSS - HSS sign/verify (RFC 8554)."""
 
-    def test_mechanism_available(self, p11_module: Any) -> None:
+    def test_mechanism_available(self, p11_raw_session: Any) -> None:
         """Check that CKM_HSS is advertised by the module."""
-        _skip_if_no(p11_module, "HSS")
+        _skip_if_no(p11_raw_session, "HSS")
 
-    def test_sign_verify_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
         """HSS sign + verify round-trip (single signature)."""
-        _skip_if_no(p11_module, "HSS")
-        _skip_if_no(p11_module, "HSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "HSS")
+        _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
         try:
-            pub, priv = _generate_hss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"HSS key generation failed: {exc!r}")
-        try:
-            try:
-                sig = priv.sign(_MESSAGE, mechanism=Mechanism.HSS)
-            except (MechanismInvalid, FunctionFailed, DeviceError) as exc:
-                pytest.xfail(f"HSS sign failed: {exc!r}")
+            sig = _try_sign(rs, priv, CKM_HSS, "HSS")
             assert isinstance(sig, bytes) and len(sig) > 0
-            assert pub.verify(_MESSAGE, sig, mechanism=Mechanism.HSS)
+            assert verify_single(rs.raw, rs.sh, pub, CKM_HSS, _MESSAGE, sig) is True
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_tampered_message_fails(self, p11_session: Any, p11_module: Any) -> None:
+    def test_tampered_message_fails(self, p11_raw_session: Any) -> None:
         """Tampered message must fail HSS verification."""
-        _skip_if_no(p11_module, "HSS")
-        _skip_if_no(p11_module, "HSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "HSS")
+        _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
         try:
-            pub, priv = _generate_hss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"HSS key generation failed: {exc!r}")
-        try:
-            try:
-                sig = priv.sign(_MESSAGE, mechanism=Mechanism.HSS)
-            except (MechanismInvalid, FunctionFailed, DeviceError) as exc:
-                pytest.xfail(f"HSS sign failed: {exc!r}")
+            sig = _try_sign(rs, priv, CKM_HSS, "HSS")
             tampered = _MESSAGE[:-1] + bytes([_MESSAGE[-1] ^ 0xFF])
-            try:
-                result = pub.verify(tampered, sig, mechanism=Mechanism.HSS)
-                assert not result, "Tampered message should fail HSS verification"
-            except SignatureInvalid:
+            result = verify_single(rs.raw, rs.sh, pub, CKM_HSS, tampered, sig)
+            assert not result, "Tampered message should fail HSS verification"
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            if "CKR_SIGNATURE_INVALID" in exc_msg:
                 pass  # Correct PKCS#11 behavior
-            except DeviceError:
-                pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
+            elif "CKR_DEVICE_ERROR" in exc_msg:
+                pytest.xfail(
+                    "Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID"
+                )
+            else:
+                raise
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
 
 # ---------------------------------------------------------------------------
@@ -265,111 +319,105 @@ class TestHSSSignVerify:
 class TestXMSSKeyGeneration:
     """CKM_XMSS_KEY_PAIR_GEN - XMSS key generation (RFC 8391)."""
 
-    def test_mechanism_available(self, p11_module: Any) -> None:
+    def test_mechanism_available(self, p11_raw_session: Any) -> None:
         """Check that CKM_XMSS_KEY_PAIR_GEN is advertised by the module."""
-        _skip_if_no(p11_module, "XMSS_KEY_PAIR_GEN")
+        _skip_if_no(p11_raw_session, "XMSS_KEY_PAIR_GEN")
 
-    def test_keypair_gen(self, p11_session: Any, p11_module: Any) -> None:
+    def test_keypair_gen(self, p11_raw_session: Any) -> None:
         """Generate an XMSS key pair."""
-        _skip_if_no(p11_module, "XMSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmss_keypair, rs, "XMSS")
         try:
-            pub, priv = _generate_xmss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS key generation failed: {exc!r}")
-        try:
-            assert pub is not None
-            assert priv is not None
+            assert pub != 0
+            assert priv != 0
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_keypair_key_type(self, p11_session: Any, p11_module: Any) -> None:
+    def test_keypair_key_type(self, p11_raw_session: Any) -> None:
         """XMSS keys report CKK_XMSS key type."""
-        _skip_if_no(p11_module, "XMSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmss_keypair, rs, "XMSS")
         try:
-            pub, priv = _generate_xmss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS key generation failed: {exc!r}")
-        try:
-            assert pub[Attribute.KEY_TYPE] == KeyType.XMSS
-            assert priv[Attribute.KEY_TYPE] == KeyType.XMSS
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])
+            assert pub_attrs[int(CKA_KEY_TYPE)] == int(CKK_XMSS)
+            assert priv_attrs[int(CKA_KEY_TYPE)] == int(CKK_XMSS)
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_keypair_classes(self, p11_session: Any, p11_module: Any) -> None:
+    def test_keypair_classes(self, p11_raw_session: Any) -> None:
         """XMSS public key is PUBLIC_KEY, private is PRIVATE_KEY."""
-        _skip_if_no(p11_module, "XMSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmss_keypair, rs, "XMSS")
         try:
-            pub, priv = _generate_xmss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS key generation failed: {exc!r}")
-        try:
-            assert pub[Attribute.CLASS] == ObjectClass.PUBLIC_KEY
-            assert priv[Attribute.CLASS] == ObjectClass.PRIVATE_KEY
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_CLASS)])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_CLASS)])
+            assert pub_attrs[int(CKA_CLASS)] == int(CKO_PUBLIC_KEY)
+            assert priv_attrs[int(CKA_CLASS)] == int(CKO_PRIVATE_KEY)
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_private_key_attributes(self, p11_session: Any, p11_module: Any) -> None:
+    def test_private_key_attributes(self, p11_raw_session: Any) -> None:
         """XMSS private key MUST be SENSITIVE, not EXTRACTABLE per spec."""
-        _skip_if_no(p11_module, "XMSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmss_keypair, rs, "XMSS")
         try:
-            pub, priv = _generate_xmss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS key generation failed: {exc!r}")
-        try:
-            assert priv[Attribute.SENSITIVE] is True
-            assert priv[Attribute.EXTRACTABLE] is False
+            priv_attrs = read_attributes(
+                rs.raw, rs.sh, priv, [int(CKA_SENSITIVE), int(CKA_EXTRACTABLE)]
+            )
+            assert priv_attrs[int(CKA_SENSITIVE)] is True
+            assert priv_attrs[int(CKA_EXTRACTABLE)] is False
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
 
 class TestXMSSSignVerify:
     """CKM_XMSS - XMSS sign/verify (RFC 8391)."""
 
-    def test_mechanism_available(self, p11_module: Any) -> None:
+    def test_mechanism_available(self, p11_raw_session: Any) -> None:
         """Check that CKM_XMSS is advertised by the module."""
-        _skip_if_no(p11_module, "XMSS")
+        _skip_if_no(p11_raw_session, "XMSS")
 
-    def test_sign_verify_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
         """XMSS sign + verify round-trip (single signature)."""
-        _skip_if_no(p11_module, "XMSS")
-        _skip_if_no(p11_module, "XMSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSS")
+        _skip_if_no(rs, "XMSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmss_keypair, rs, "XMSS")
         try:
-            pub, priv = _generate_xmss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS key generation failed: {exc!r}")
-        try:
-            try:
-                sig = priv.sign(_MESSAGE, mechanism=Mechanism.XMSS)
-            except (MechanismInvalid, FunctionFailed, DeviceError) as exc:
-                pytest.xfail(f"XMSS sign failed: {exc!r}")
+            sig = _try_sign(rs, priv, CKM_XMSS, "XMSS")
             assert isinstance(sig, bytes) and len(sig) > 0
-            assert pub.verify(_MESSAGE, sig, mechanism=Mechanism.XMSS)
+            assert verify_single(rs.raw, rs.sh, pub, CKM_XMSS, _MESSAGE, sig) is True
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_tampered_message_fails(self, p11_session: Any, p11_module: Any) -> None:
+    def test_tampered_message_fails(self, p11_raw_session: Any) -> None:
         """Tampered message must fail XMSS verification."""
-        _skip_if_no(p11_module, "XMSS")
-        _skip_if_no(p11_module, "XMSS_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSS")
+        _skip_if_no(rs, "XMSS_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmss_keypair, rs, "XMSS")
         try:
-            pub, priv = _generate_xmss_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS key generation failed: {exc!r}")
-        try:
-            try:
-                sig = priv.sign(_MESSAGE, mechanism=Mechanism.XMSS)
-            except (MechanismInvalid, FunctionFailed, DeviceError) as exc:
-                pytest.xfail(f"XMSS sign failed: {exc!r}")
+            sig = _try_sign(rs, priv, CKM_XMSS, "XMSS")
             tampered = _MESSAGE[:-1] + bytes([_MESSAGE[-1] ^ 0xFF])
-            try:
-                result = pub.verify(tampered, sig, mechanism=Mechanism.XMSS)
-                assert not result, "Tampered message should fail XMSS verification"
-            except SignatureInvalid:
+            result = verify_single(rs.raw, rs.sh, pub, CKM_XMSS, tampered, sig)
+            assert not result, "Tampered message should fail XMSS verification"
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            if "CKR_SIGNATURE_INVALID" in exc_msg:
                 pass  # Correct PKCS#11 behavior
-            except DeviceError:
-                pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
+            elif "CKR_DEVICE_ERROR" in exc_msg:
+                pytest.xfail(
+                    "Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID"
+                )
+            else:
+                raise
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
 
 # ---------------------------------------------------------------------------
@@ -380,108 +428,106 @@ class TestXMSSSignVerify:
 class TestXMSSMTKeyGeneration:
     """CKM_XMSSMT_KEY_PAIR_GEN - XMSS^MT key generation (RFC 8391)."""
 
-    def test_mechanism_available(self, p11_module: Any) -> None:
+    def test_mechanism_available(self, p11_raw_session: Any) -> None:
         """Check that CKM_XMSSMT_KEY_PAIR_GEN is advertised by the module."""
-        _skip_if_no(p11_module, "XMSSMT_KEY_PAIR_GEN")
+        _skip_if_no(p11_raw_session, "XMSSMT_KEY_PAIR_GEN")
 
-    def test_keypair_gen(self, p11_session: Any, p11_module: Any) -> None:
+    def test_keypair_gen(self, p11_raw_session: Any) -> None:
         """Generate an XMSS^MT key pair."""
-        _skip_if_no(p11_module, "XMSSMT_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSSMT_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmssmt_keypair, rs, "XMSS^MT")
         try:
-            pub, priv = _generate_xmssmt_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS^MT key generation failed: {exc!r}")
-        try:
-            assert pub is not None
-            assert priv is not None
+            assert pub != 0
+            assert priv != 0
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_keypair_key_type(self, p11_session: Any, p11_module: Any) -> None:
+    def test_keypair_key_type(self, p11_raw_session: Any) -> None:
         """XMSS^MT keys report CKK_XMSSMT key type."""
-        _skip_if_no(p11_module, "XMSSMT_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSSMT_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmssmt_keypair, rs, "XMSS^MT")
         try:
-            pub, priv = _generate_xmssmt_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS^MT key generation failed: {exc!r}")
-        try:
-            assert pub[Attribute.KEY_TYPE] == KeyType.XMSSMT
-            assert priv[Attribute.KEY_TYPE] == KeyType.XMSSMT
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])
+            assert pub_attrs[int(CKA_KEY_TYPE)] == int(CKK_XMSSMT)
+            assert priv_attrs[int(CKA_KEY_TYPE)] == int(CKK_XMSSMT)
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_keypair_classes(self, p11_session: Any, p11_module: Any) -> None:
+    def test_keypair_classes(self, p11_raw_session: Any) -> None:
         """XMSS^MT public key is PUBLIC_KEY, private is PRIVATE_KEY."""
-        _skip_if_no(p11_module, "XMSSMT_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSSMT_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmssmt_keypair, rs, "XMSS^MT")
         try:
-            pub, priv = _generate_xmssmt_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS^MT key generation failed: {exc!r}")
-        try:
-            assert pub[Attribute.CLASS] == ObjectClass.PUBLIC_KEY
-            assert priv[Attribute.CLASS] == ObjectClass.PRIVATE_KEY
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_CLASS)])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_CLASS)])
+            assert pub_attrs[int(CKA_CLASS)] == int(CKO_PUBLIC_KEY)
+            assert priv_attrs[int(CKA_CLASS)] == int(CKO_PRIVATE_KEY)
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_private_key_attributes(self, p11_session: Any, p11_module: Any) -> None:
+    def test_private_key_attributes(self, p11_raw_session: Any) -> None:
         """XMSS^MT private key MUST be SENSITIVE, not EXTRACTABLE per spec."""
-        _skip_if_no(p11_module, "XMSSMT_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSSMT_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmssmt_keypair, rs, "XMSS^MT")
         try:
-            pub, priv = _generate_xmssmt_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS^MT key generation failed: {exc!r}")
-        try:
-            assert priv[Attribute.SENSITIVE] is True
-            assert priv[Attribute.EXTRACTABLE] is False
+            priv_attrs = read_attributes(
+                rs.raw, rs.sh, priv, [int(CKA_SENSITIVE), int(CKA_EXTRACTABLE)]
+            )
+            assert priv_attrs[int(CKA_SENSITIVE)] is True
+            assert priv_attrs[int(CKA_EXTRACTABLE)] is False
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
 
 class TestXMSSMTSignVerify:
     """CKM_XMSSMT - XMSS^MT sign/verify (RFC 8391)."""
 
-    def test_mechanism_available(self, p11_module: Any) -> None:
+    def test_mechanism_available(self, p11_raw_session: Any) -> None:
         """Check that CKM_XMSSMT is advertised by the module."""
-        _skip_if_no(p11_module, "XMSSMT")
+        _skip_if_no(p11_raw_session, "XMSSMT")
 
-    def test_sign_verify_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
         """XMSS^MT sign + verify round-trip (single signature)."""
-        _skip_if_no(p11_module, "XMSSMT")
-        _skip_if_no(p11_module, "XMSSMT_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSSMT")
+        _skip_if_no(rs, "XMSSMT_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmssmt_keypair, rs, "XMSS^MT")
         try:
-            pub, priv = _generate_xmssmt_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS^MT key generation failed: {exc!r}")
-        try:
-            try:
-                sig = priv.sign(_MESSAGE, mechanism=Mechanism.XMSSMT)
-            except (MechanismInvalid, FunctionFailed, DeviceError) as exc:
-                pytest.xfail(f"XMSS^MT sign failed: {exc!r}")
+            sig = _try_sign(rs, priv, CKM_XMSSMT, "XMSS^MT")
             assert isinstance(sig, bytes) and len(sig) > 0
-            assert pub.verify(_MESSAGE, sig, mechanism=Mechanism.XMSSMT)
+            assert verify_single(
+                rs.raw, rs.sh, pub, CKM_XMSSMT, _MESSAGE, sig
+            ) is True
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
 
-    def test_tampered_message_fails(self, p11_session: Any, p11_module: Any) -> None:
+    def test_tampered_message_fails(self, p11_raw_session: Any) -> None:
         """Tampered message must fail XMSS^MT verification."""
-        _skip_if_no(p11_module, "XMSSMT")
-        _skip_if_no(p11_module, "XMSSMT_KEY_PAIR_GEN")
+        rs = p11_raw_session
+        _skip_if_no(rs, "XMSSMT")
+        _skip_if_no(rs, "XMSSMT_KEY_PAIR_GEN")
+        pub, priv = _try_keygen(_generate_xmssmt_keypair, rs, "XMSS^MT")
         try:
-            pub, priv = _generate_xmssmt_keypair(p11_session)
-        except _KEYGEN_ERRORS as exc:
-            pytest.xfail(f"XMSS^MT key generation failed: {exc!r}")
-        try:
-            try:
-                sig = priv.sign(_MESSAGE, mechanism=Mechanism.XMSSMT)
-            except (MechanismInvalid, FunctionFailed, DeviceError) as exc:
-                pytest.xfail(f"XMSS^MT sign failed: {exc!r}")
+            sig = _try_sign(rs, priv, CKM_XMSSMT, "XMSS^MT")
             tampered = _MESSAGE[:-1] + bytes([_MESSAGE[-1] ^ 0xFF])
-            try:
-                result = pub.verify(tampered, sig, mechanism=Mechanism.XMSSMT)
-                assert not result, "Tampered message should fail XMSS^MT verification"
-            except SignatureInvalid:
+            result = verify_single(
+                rs.raw, rs.sh, pub, CKM_XMSSMT, tampered, sig
+            )
+            assert not result, "Tampered message should fail XMSS^MT verification"
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            if "CKR_SIGNATURE_INVALID" in exc_msg:
                 pass  # Correct PKCS#11 behavior
-            except DeviceError:
-                pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
+            elif "CKR_DEVICE_ERROR" in exc_msg:
+                pytest.xfail(
+                    "Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID"
+                )
+            else:
+                raise
         finally:
-            _destroy_pair(pub, priv)
+            _destroy_pair(rs, pub, priv)
