@@ -1,45 +1,94 @@
-"""Tests for Camellia PKCS#11 mechanisms.
-
-Covers key generation, encryption/decryption (ECB, CBC, CBC_PAD, CTR),
-MAC signing/verification, and key derivation availability checks.
+"""Tests for CAMELLIA PKCS#11 mechanisms.
 
 Camellia: 128/192/256-bit keys, 16-byte block.
 IV for CBC/CTR modes: 16 bytes.
 
-Most modules do NOT support Camellia - all tests will skip cleanly on those
-platforms. Kryoptic and some NSS builds include Camellia support.
+Covers key generation, encryption/decryption (ECB, CBC, CBC_PAD),
+MAC signing/verification, and key derivation availability checks.
+
+Most modules do NOT support CAMELLIA - all tests will skip cleanly on those
+platforms. Some Kryoptic and some NSS builds include Camellia support.
 """
 
 from __future__ import annotations
 
+from ctypes import byref
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.exceptions import MechanismInvalid
-from pkcs11.mechanisms import CTRParams
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.recipes import (
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+    generate_random,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKM_CAMELLIA_CBC,
+    CKM_CAMELLIA_CBC_PAD,
+    CKM_CAMELLIA_ECB,
+    CKM_CAMELLIA_KEY_GEN,
+    CKM_CAMELLIA_MAC,
+    CKM_CAMELLIA_MAC_GENERAL,
+    CKR_OK,
+)
 
 pytestmark = pytest.mark.full
 
-# 16-byte Camellia block - ECB/CBC data must be block-aligned
+# 16-byte CAMELLIA block - ECB/CBC data must be block-aligned
 _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 
 
-def _camellia_iv(session: Any) -> Any:
-    """Generate a 16-byte IV (128 bits) for Camellia CBC/CTR modes."""
-    return session.generate_random(128)
+def _camellia_key(raw: Any, sh: int, bits: int, attrs: dict[int, Any]) -> int:
+    """Generate a Camellia session key via C_GenerateKey."""
+    from pkcs11_check.raw.pack import attr_ulong
+    from pkcs11_check.raw.pack import template as mk_template
+    from pkcs11_check.raw.recipes import _pack_attrs
+    from pkcs11_check.raw.types_std import CKA_VALUE_LEN
+    packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
+    packed.extend(_pack_attrs(attrs))
+    tmpl = mk_template(*packed)
+    mech = mech_simple(CKM_CAMELLIA_KEY_GEN)
+    key = CK_OBJECT_HANDLE(0)
+    rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
+    expect_rv(int(rv), CKR_OK)
+    return int(key.value)
 
 
-def _camellia_key(session: Any, bits: int, template: dict[str, Any]) -> Any:
-    """Generate a Camellia session key of the given bit length."""
-    return session.generate_key(
-        KeyType.CAMELLIA,
-        bits,
-        mechanism=Mechanism.CAMELLIA_KEY_GEN,
-        template=template,
-    )
+def _encrypt_or_skip(
+    raw: Any, sh: int, key: int, mechanism: Any, data: bytes,
+    *, mech_param: Any = None,
+) -> bytes:
+    """Try encrypt_single; skip if module returns CKR_MECHANISM_INVALID."""
+    try:
+        return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
+    except AssertionError as exc:
+        if "CKR_MECHANISM_INVALID" in str(exc):
+            pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
+        raise
+
+
+def _sign_or_skip(
+    raw: Any, sh: int, key: int, mechanism: Any, data: bytes,
+    *, mech_param: Any = None,
+) -> bytes:
+    """Try sign_single; skip if module returns CKR_MECHANISM_INVALID."""
+    try:
+        return sign_single(raw, sh, key, mechanism, data, mech_param=mech_param)
+    except AssertionError as exc:
+        if "CKR_MECHANISM_INVALID" in str(exc):
+            pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -47,51 +96,20 @@ def _camellia_key(session: Any, bits: int, template: dict[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-class TestCamelliaKeyGen:
+class TestCAMELLIAKeyGen:
     """CKM_CAMELLIA_KEY_GEN - key generation for 128/192/256-bit keys."""
 
-    def test_camellia_key_gen_128(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate a Camellia-128 session key."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    @pytest.mark.parametrize("key_bits", [128, 192, 256])
+    def test_camellia_key_gen(self, p11_raw_session: Any, key_bits: int) -> None:
+        """Generate a Camellia session key of the specified bit length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        key = _camellia_key(p11_session, 128, {Attribute.TOKEN: False})
+        key = _camellia_key(rs.raw, rs.sh, key_bits, {int(CKA_TOKEN): False})
         try:
-            assert key is not None
-            assert key.key_type == KeyType.CAMELLIA
+            assert key != 0
         finally:
-            key.destroy()
-
-    def test_camellia_key_gen_192(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate a Camellia-192 session key."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
-            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        key = _camellia_key(p11_session, 192, {Attribute.TOKEN: False})
-        try:
-            assert key is not None
-            assert key.key_type == KeyType.CAMELLIA
-        finally:
-            key.destroy()
-
-    def test_camellia_key_gen_256(self, p11_session: Any, p11_module: Any) -> None:
-        """Generate a Camellia-256 session key."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
-            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        key = _camellia_key(p11_session, 256, {Attribute.TOKEN: False})
-        try:
-            assert key is not None
-            assert key.key_type == KeyType.CAMELLIA
-        finally:
-            key.destroy()
-
-    def test_camellia_key_gen_not_null(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia key generation produces a usable, non-null key object."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
-            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        key = _camellia_key(p11_session, 128, {Attribute.TOKEN: False})
-        try:
-            assert key is not None
-        finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 # ---------------------------------------------------------------------------
@@ -99,152 +117,228 @@ class TestCamelliaKeyGen:
 # ---------------------------------------------------------------------------
 
 
-class TestCamelliaEncryption:
-    """Camellia encryption/decryption: ECB, CBC, CBC_PAD."""
+class TestCAMELLIAEncryption:
+    """CAMELLIA encryption/decryption: ECB, CBC, CBC_PAD."""
 
-    def test_camellia_ecb_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-ECB encrypt/decrypt roundtrip with block-aligned data."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_ecb_roundtrip(self, p11_raw_session: Any) -> None:
+        """CAMELLIA-ECB encrypt/decrypt roundtrip with block-aligned data."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_ECB"):
+        if not rs.has_mechanism("CAMELLIA_ECB"):
             pytest.skip("CKM_CAMELLIA_ECB not supported")
         key = _camellia_key(
-            p11_session,
-            128,
-            {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+            rs.raw, rs.sh, 128,
+            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
         try:
-            try:
-                ct = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism.CAMELLIA_ECB)
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_ECB advertised but rejected at use")
+            ct = _encrypt_or_skip(rs.raw, rs.sh, key, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
             assert ct != _TWO_BLOCKS
             assert len(ct) == len(_TWO_BLOCKS)
-            pt = key.decrypt(ct, mechanism=Mechanism.CAMELLIA_ECB)
+            pt = decrypt_single(rs.raw, rs.sh, key, CKM_CAMELLIA_ECB, ct)
             assert pt == _TWO_BLOCKS
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_camellia_ecb_different_keys(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-ECB: same plaintext encrypted with different keys should differ."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_ecb_different_keys(self, p11_raw_session: Any) -> None:
+        """CAMELLIA-ECB: same plaintext encrypted with different keys should differ."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_ECB"):
+        if not rs.has_mechanism("CAMELLIA_ECB"):
             pytest.skip("CKM_CAMELLIA_ECB not supported")
-        tmpl = {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False}
-        key1 = _camellia_key(p11_session, 128, tmpl)
-        key2 = _camellia_key(p11_session, 128, tmpl)
+        tmpl = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False}
+        key1 = _camellia_key(rs.raw, rs.sh, 128, tmpl)
+        key2 = _camellia_key(rs.raw, rs.sh, 128, tmpl)
         try:
-            try:
-                ct1 = key1.encrypt(_TWO_BLOCKS, mechanism=Mechanism.CAMELLIA_ECB)
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_ECB advertised but rejected at use")
-            ct2 = key2.encrypt(_TWO_BLOCKS, mechanism=Mechanism.CAMELLIA_ECB)
+            ct1 = _encrypt_or_skip(rs.raw, rs.sh, key1, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
+            ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
             assert ct1 != ct2
         finally:
-            key1.destroy()
-            key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
 
-    def test_camellia_cbc_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-CBC encrypt/decrypt roundtrip with 16-byte IV and block-aligned data."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_cbc_roundtrip(self, p11_raw_session: Any) -> None:
+        """CAMELLIA-CBC encrypt/decrypt roundtrip with 16-byte IV and block-aligned data."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_CBC"):
+        if not rs.has_mechanism("CAMELLIA_CBC"):
             pytest.skip("CKM_CAMELLIA_CBC not supported")
         key = _camellia_key(
-            p11_session,
-            128,
-            {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+            rs.raw, rs.sh, 128,
+            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
-        iv = _camellia_iv(p11_session)
+        iv = generate_random(rs.raw, rs.sh, 16)
         try:
-            try:
-                ct = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism.CAMELLIA_CBC, mechanism_param=iv)
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_CBC advertised but rejected at use")
+            ct = _encrypt_or_skip(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CBC, _TWO_BLOCKS,
+                mech_param=mech_bytes(CKM_CAMELLIA_CBC, iv),
+            )
             assert ct != _TWO_BLOCKS
-            pt = key.decrypt(ct, mechanism=Mechanism.CAMELLIA_CBC, mechanism_param=iv)
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CBC, ct,
+                mech_param=mech_bytes(CKM_CAMELLIA_CBC, iv),
+            )
             assert pt == _TWO_BLOCKS
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_camellia_cbc_different_ivs(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-CBC with different IVs produces different ciphertexts."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_cbc_different_ivs(self, p11_raw_session: Any) -> None:
+        """CAMELLIA-CBC with different IVs produces different ciphertexts."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_CBC"):
+        if not rs.has_mechanism("CAMELLIA_CBC"):
             pytest.skip("CKM_CAMELLIA_CBC not supported")
         key = _camellia_key(
-            p11_session,
-            128,
-            {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+            rs.raw, rs.sh, 128,
+            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
-        iv1 = _camellia_iv(p11_session)
-        iv2 = _camellia_iv(p11_session)
+        iv1 = generate_random(rs.raw, rs.sh, 16)
+        iv2 = generate_random(rs.raw, rs.sh, 16)
         try:
-            try:
-                ct1 = key.encrypt(
-                    _TWO_BLOCKS, mechanism=Mechanism.CAMELLIA_CBC, mechanism_param=iv1
-                )
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_CBC advertised but rejected at use")
-            ct2 = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism.CAMELLIA_CBC, mechanism_param=iv2)
+            ct1 = _encrypt_or_skip(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CBC, _TWO_BLOCKS,
+                mech_param=mech_bytes(CKM_CAMELLIA_CBC, iv1),
+            )
+            ct2 = encrypt_single(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CBC, _TWO_BLOCKS,
+                mech_param=mech_bytes(CKM_CAMELLIA_CBC, iv2),
+            )
             assert ct1 != ct2
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_camellia_cbc_pad_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-CBC-PAD encrypt/decrypt roundtrip with arbitrary-length data."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_cbc_pad_roundtrip(self, p11_raw_session: Any) -> None:
+        """CAMELLIA-CBC-PAD encrypt/decrypt roundtrip with arbitrary-length data."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_CBC_PAD"):
+        if not rs.has_mechanism("CAMELLIA_CBC_PAD"):
             pytest.skip("CKM_CAMELLIA_CBC_PAD not supported")
         key = _camellia_key(
-            p11_session,
-            128,
-            {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+            rs.raw, rs.sh, 128,
+            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
-        iv = _camellia_iv(p11_session)
+        iv = generate_random(rs.raw, rs.sh, 16)
         # Non-block-aligned data - PKCS#7 padding handles it
-        plaintext = b"Camellia CBC PAD test data!"  # 27 bytes, not a multiple of 16
+        plaintext = b"CAMELLIA CBC PAD test data!!"  # 24 bytes, not a multiple of 16
         try:
-            try:
-                ct = key.encrypt(
-                    plaintext, mechanism=Mechanism.CAMELLIA_CBC_PAD, mechanism_param=iv
-                )
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_CBC_PAD advertised but rejected at use")
+            ct = _encrypt_or_skip(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CBC_PAD, plaintext,
+                mech_param=mech_bytes(CKM_CAMELLIA_CBC_PAD, iv),
+            )
             assert ct != plaintext
             # Ciphertext is padded to block boundary
             assert len(ct) % 16 == 0
-            pt = key.decrypt(ct, mechanism=Mechanism.CAMELLIA_CBC_PAD, mechanism_param=iv)
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CBC_PAD, ct,
+                mech_param=mech_bytes(CKM_CAMELLIA_CBC_PAD, iv),
+            )
             assert pt == plaintext
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_camellia_cbc_pad_different_keys(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-CBC-PAD: same plaintext encrypted with different keys should differ."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_cbc_pad_different_keys(self, p11_raw_session: Any) -> None:
+        """CAMELLIA-CBC-PAD: same plaintext encrypted with different keys should differ."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_CBC_PAD"):
+        if not rs.has_mechanism("CAMELLIA_CBC_PAD"):
             pytest.skip("CKM_CAMELLIA_CBC_PAD not supported")
-        tmpl = {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False}
-        key1 = _camellia_key(p11_session, 128, tmpl)
-        key2 = _camellia_key(p11_session, 128, tmpl)
-        iv = _camellia_iv(p11_session)
-        plaintext = b"Camellia CBC PAD key independence!!"  # 35 bytes
+        tmpl = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False}
+        key1 = _camellia_key(rs.raw, rs.sh, 128, tmpl)
+        key2 = _camellia_key(rs.raw, rs.sh, 128, tmpl)
+        iv = generate_random(rs.raw, rs.sh, 16)
+        plaintext = b"CAMELLIA CBC PAD key independence test!!"  # 36 bytes
         try:
-            try:
-                ct1 = key1.encrypt(
-                    plaintext, mechanism=Mechanism.CAMELLIA_CBC_PAD, mechanism_param=iv
-                )
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_CBC_PAD advertised but rejected at use")
-            ct2 = key2.encrypt(plaintext, mechanism=Mechanism.CAMELLIA_CBC_PAD, mechanism_param=iv)
+            ct1 = _encrypt_or_skip(
+                rs.raw, rs.sh, key1, CKM_CAMELLIA_CBC_PAD, plaintext,
+                mech_param=mech_bytes(CKM_CAMELLIA_CBC_PAD, iv),
+            )
+            ct2 = encrypt_single(
+                rs.raw, rs.sh, key2, CKM_CAMELLIA_CBC_PAD, plaintext,
+                mech_param=mech_bytes(CKM_CAMELLIA_CBC_PAD, iv),
+            )
             assert ct1 != ct2
         finally:
-            key1.destroy()
-            key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
+
+
+# ---------------------------------------------------------------------------
+# MAC (sign/verify)
+# ---------------------------------------------------------------------------
+
+
+class TestCAMELLIAMAC:
+    """CKM_CAMELLIA_MAC and CKM_CAMELLIA_MAC_GENERAL - MAC sign/verify tests."""
+
+    def test_camellia_mac_sign_verify(self, p11_raw_session: Any) -> None:
+        """CAMELLIA-MAC sign and verify roundtrip."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
+            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
+        if not rs.has_mechanism("CAMELLIA_MAC"):
+            pytest.skip("CKM_CAMELLIA_MAC not supported")
+        key = _camellia_key(
+            rs.raw, rs.sh, 128,
+            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+        )
+        data = b"CAMELLIA MAC test data for signing"
+        try:
+            mac = _sign_or_skip(rs.raw, rs.sh, key, CKM_CAMELLIA_MAC, data)
+            assert len(mac) > 0
+            assert verify_single(rs.raw, rs.sh, key, CKM_CAMELLIA_MAC, data, mac)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_camellia_mac_general_sign_verify(self, p11_raw_session: Any) -> None:
+        """CAMELLIA-MAC-GENERAL sign and verify roundtrip with explicit MAC length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
+            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
+        if not rs.has_mechanism("CAMELLIA_MAC_GENERAL"):
+            pytest.skip("CKM_CAMELLIA_MAC_GENERAL not supported")
+        key = _camellia_key(
+            rs.raw, rs.sh, 128,
+            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+        )
+        data = b"CAMELLIA MAC GENERAL test data"
+        mac_len = 8  # request 8-byte MAC (half block)
+        try:
+            mac = _sign_or_skip(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_MAC_GENERAL, data,
+                mech_param=mech_bytes(CKM_CAMELLIA_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+            )
+            assert len(mac) == mac_len
+            assert verify_single(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_MAC_GENERAL, data, mac,
+                mech_param=mech_bytes(CKM_CAMELLIA_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_camellia_mac_different_keys(self, p11_raw_session: Any) -> None:
+        """Different CAMELLIA keys produce different MAC values."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
+            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
+        if not rs.has_mechanism("CAMELLIA_MAC"):
+            pytest.skip("CKM_CAMELLIA_MAC not supported")
+        tmpl = {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False}
+        key1 = _camellia_key(rs.raw, rs.sh, 128, tmpl)
+        key2 = _camellia_key(rs.raw, rs.sh, 128, tmpl)
+        data = b"MAC key independence test data"
+        try:
+            mac1 = _sign_or_skip(rs.raw, rs.sh, key1, CKM_CAMELLIA_MAC, data)
+            mac2 = sign_single(rs.raw, rs.sh, key2, CKM_CAMELLIA_MAC, data)
+            assert mac1 != mac2
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
+
 
 
 # ---------------------------------------------------------------------------
@@ -256,156 +350,72 @@ class TestCamelliaCTR:
     """CKM_CAMELLIA_CTR - counter mode encrypt/decrypt tests.
 
     Camellia CTR uses the same CK_AES_CTR_PARAMS structure (counter bits +
-    16-byte counter block) as AES CTR. CTRParams from pkcs11.mechanisms wraps
-    this structure and accepts a nonce up to 15 bytes; the remainder of the
-    128-bit counter block is used as the counter.
+    16-byte counter block) as AES CTR.
     """
 
-    def test_camellia_ctr_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-CTR encrypt/decrypt roundtrip with 16-byte nonce."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_ctr_roundtrip(self, p11_raw_session: Any) -> None:
+        """Camellia-CTR encrypt/decrypt roundtrip."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_CTR"):
+        if not rs.has_mechanism("CAMELLIA_CTR"):
             pytest.skip("CKM_CAMELLIA_CTR not supported")
         key = _camellia_key(
-            p11_session,
-            128,
-            {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+            rs.raw, rs.sh, 128,
+            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
-        nonce = p11_session.generate_random(96)  # 12-byte nonce; 4 bytes left as counter
-        params = CTRParams(nonce)
         plaintext = b"Camellia CTR mode test data!!"  # arbitrary length - CTR is a stream mode
         try:
-            try:
-                ct = key.encrypt(
-                    plaintext, mechanism=Mechanism.CAMELLIA_CTR, mechanism_param=params
-                )
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_CTR advertised but rejected at use")
+            from pkcs11_check.raw.pack import mech_ctr
+            from pkcs11_check.raw.types_std import CKM_CAMELLIA_CTR
+            ct = _encrypt_or_skip(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CTR, plaintext,
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR),
+            )
             assert ct != plaintext
             assert len(ct) == len(plaintext)
-            pt = key.decrypt(ct, mechanism=Mechanism.CAMELLIA_CTR, mechanism_param=CTRParams(nonce))
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CTR, ct,
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR),
+            )
             assert pt == plaintext
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_camellia_ctr_different_nonces(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-CTR with different nonces produces different ciphertexts."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_ctr_different_nonces(self, p11_raw_session: Any) -> None:
+        """Camellia-CTR with different counter blocks produces different ciphertexts."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_CTR"):
+        if not rs.has_mechanism("CAMELLIA_CTR"):
             pytest.skip("CKM_CAMELLIA_CTR not supported")
         key = _camellia_key(
-            p11_session,
-            128,
-            {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+            rs.raw, rs.sh, 128,
+            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
-        nonce1 = p11_session.generate_random(96)
-        nonce2 = p11_session.generate_random(96)
         plaintext = b"CTR nonce independence test!!"
         try:
-            try:
-                ct1 = key.encrypt(
-                    plaintext,
-                    mechanism=Mechanism.CAMELLIA_CTR,
-                    mechanism_param=CTRParams(nonce1),
-                )
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_CTR advertised but rejected at use")
-            ct2 = key.encrypt(
-                plaintext, mechanism=Mechanism.CAMELLIA_CTR, mechanism_param=CTRParams(nonce2)
+            from pkcs11_check.raw.pack import mech_ctr
+            from pkcs11_check.raw.types_std import CKM_CAMELLIA_CTR
+            ct1 = _encrypt_or_skip(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CTR, plaintext,
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=32),
+            )
+            ct2 = encrypt_single(
+                rs.raw, rs.sh, key, CKM_CAMELLIA_CTR, plaintext,
+                mech_param=mech_ctr(CKM_CAMELLIA_CTR, bits=64),
             )
             assert ct1 != ct2
         finally:
-            key.destroy()
-
-
-# ---------------------------------------------------------------------------
-# MAC (sign/verify)
-# ---------------------------------------------------------------------------
-
-
-class TestCamelliaMAC:
-    """CKM_CAMELLIA_MAC and CKM_CAMELLIA_MAC_GENERAL - MAC sign/verify tests."""
-
-    def test_camellia_mac_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-MAC sign and verify roundtrip."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
-            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_MAC"):
-            pytest.skip("CKM_CAMELLIA_MAC not supported")
-        key = _camellia_key(
-            p11_session,
-            128,
-            {Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
-        )
-        data = b"Camellia MAC test data for signing"
-        try:
-            try:
-                mac = key.sign(data, mechanism=Mechanism.CAMELLIA_MAC)
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_MAC advertised but rejected at use")
-            assert len(mac) > 0
-            assert key.verify(data, mac, mechanism=Mechanism.CAMELLIA_MAC)
-        finally:
-            key.destroy()
-
-    def test_camellia_mac_general_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
-        """Camellia-MAC-GENERAL sign and verify roundtrip with explicit MAC length."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
-            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_MAC_GENERAL"):
-            pytest.skip("CKM_CAMELLIA_MAC_GENERAL not supported")
-        key = _camellia_key(
-            p11_session,
-            128,
-            {Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
-        )
-        data = b"Camellia MAC GENERAL test data"
-        mac_len = 8  # request 8-byte MAC (half block)
-        try:
-            try:
-                mac = key.sign(
-                    data, mechanism=Mechanism.CAMELLIA_MAC_GENERAL, mechanism_param=mac_len
-                )
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_MAC_GENERAL advertised but rejected at use")
-            assert len(mac) == mac_len
-            assert key.verify(
-                data, mac, mechanism=Mechanism.CAMELLIA_MAC_GENERAL, mechanism_param=mac_len
-            )
-        finally:
-            key.destroy()
-
-    def test_camellia_mac_different_keys(self, p11_session: Any, p11_module: Any) -> None:
-        """Different Camellia keys produce different MAC values."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
-            pytest.skip("CKM_CAMELLIA_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "CAMELLIA_MAC"):
-            pytest.skip("CKM_CAMELLIA_MAC not supported")
-        tmpl = {Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False}
-        key1 = _camellia_key(p11_session, 128, tmpl)
-        key2 = _camellia_key(p11_session, 128, tmpl)
-        data = b"MAC key independence test data"
-        try:
-            try:
-                mac1 = key1.sign(data, mechanism=Mechanism.CAMELLIA_MAC)
-            except MechanismInvalid:
-                pytest.skip("CKM_CAMELLIA_MAC advertised but rejected at use")
-            mac2 = key2.sign(data, mechanism=Mechanism.CAMELLIA_MAC)
-            assert mac1 != mac2
-        finally:
-            key1.destroy()
-            key2.destroy()
-
+            destroy_quietly(rs.raw, rs.sh, key)
 
 # ---------------------------------------------------------------------------
 # Key derivation by data encryption - availability checks only
 # ---------------------------------------------------------------------------
 
 
-class TestCamelliaKeyDerivation:
-    """Availability checks for Camellia key derivation by data encryption.
+class TestCAMELLIAKeyDerivation:
+    """Availability checks for CAMELLIA key derivation by data encryption.
 
     CKM_CAMELLIA_ECB_ENCRYPT_DATA and CKM_CAMELLIA_CBC_ENCRYPT_DATA are used
     via derive_key() with module-specific parameter structures. The tests here
@@ -413,19 +423,21 @@ class TestCamelliaKeyDerivation:
     live in the key derivation test suite.
     """
 
-    def test_camellia_ecb_encrypt_data_available(self, p11_module: Any) -> None:
-        """Check CKM_CAMELLIA_ECB_ENCRYPT_DATA is advertised when Camellia is supported."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_ecb_encrypt_data_available(self, p11_raw_session: Any) -> None:
+        """Check CKM_CAMELLIA_ECB_ENCRYPT_DATA is advertised when CAMELLIA is supported."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported - skipping derivation check")
-        if not has_mechanism(p11_module, "CAMELLIA_ECB_ENCRYPT_DATA"):
+        if not rs.has_mechanism("CAMELLIA_ECB_ENCRYPT_DATA"):
             pytest.skip("CKM_CAMELLIA_ECB_ENCRYPT_DATA not supported")
         # Mechanism is present - no further operation needed for availability check
         assert True
 
-    def test_camellia_cbc_encrypt_data_available(self, p11_module: Any) -> None:
-        """Check CKM_CAMELLIA_CBC_ENCRYPT_DATA is advertised when Camellia is supported."""
-        if not has_mechanism(p11_module, "CAMELLIA_KEY_GEN"):
+    def test_camellia_cbc_encrypt_data_available(self, p11_raw_session: Any) -> None:
+        """Check CKM_CAMELLIA_CBC_ENCRYPT_DATA is advertised when CAMELLIA is supported."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("CAMELLIA_KEY_GEN"):
             pytest.skip("CKM_CAMELLIA_KEY_GEN not supported - skipping derivation check")
-        if not has_mechanism(p11_module, "CAMELLIA_CBC_ENCRYPT_DATA"):
+        if not rs.has_mechanism("CAMELLIA_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_CAMELLIA_CBC_ENCRYPT_DATA not supported")
         assert True

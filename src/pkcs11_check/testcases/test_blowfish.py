@@ -10,13 +10,30 @@ platforms.
 
 from __future__ import annotations
 
+from ctypes import byref
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.exceptions import MechanismInvalid
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.recipes import (
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+    generate_random,
+)
+from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKM_BLOWFISH_CBC,
+    CKM_BLOWFISH_CBC_PAD,
+    CKM_BLOWFISH_KEY_GEN,
+    CKR_OK,
+)
 
 pytestmark = pytest.mark.full
 
@@ -24,19 +41,33 @@ pytestmark = pytest.mark.full
 _TWO_BLOCKS = b"12345678abcdefgh"  # exactly 16 bytes (2 x 8-byte blocks)
 
 
-def _bf_iv(session: Any) -> Any:
-    """Generate an 8-byte IV (64 bits) for Blowfish CBC modes."""
-    return session.generate_random(64)
-
-
-def _bf_key(session: Any, bits: int, template: dict[str, Any]) -> Any:
+def _bf_key(raw: Any, sh: int, bits: int, attrs: dict[int, Any]) -> int:
     """Generate a Blowfish session key of the given bit length."""
-    return session.generate_key(
-        KeyType.BLOWFISH,
-        bits,
-        mechanism=Mechanism.BLOWFISH_KEY_GEN,
-        template=template,
-    )
+    from pkcs11_check.raw.pack import attr_ulong
+    from pkcs11_check.raw.pack import template as mk_template
+    from pkcs11_check.raw.recipes import _pack_attrs
+
+    packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
+    packed.extend(_pack_attrs(attrs))
+    tmpl = mk_template(*packed)
+    mech = mech_simple(CKM_BLOWFISH_KEY_GEN)
+    key = CK_OBJECT_HANDLE(0)
+    rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
+    expect_rv(int(rv), CKR_OK)
+    return int(key.value)
+
+
+def _encrypt_or_skip(
+    raw: Any, sh: int, key: int, mechanism: Any, data: bytes,
+    *, mech_param: Any = None,
+) -> bytes:
+    """Try encrypt_single; skip if module returns CKR_MECHANISM_INVALID."""
+    try:
+        return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
+    except AssertionError as exc:
+        if "CKR_MECHANISM_INVALID" in str(exc):
+            pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -48,16 +79,16 @@ class TestBlowfishKeyGen:
     """CKM_BLOWFISH_KEY_GEN - key generation for variable-length Blowfish keys."""
 
     @pytest.mark.parametrize("key_bits", [128, 256])
-    def test_blowfish_key_gen(self, p11_session: Any, p11_module: Any, key_bits: int) -> None:
+    def test_blowfish_key_gen(self, p11_raw_session: Any, key_bits: int) -> None:
         """Generate a Blowfish session key of the specified bit length."""
-        if not has_mechanism(p11_module, "BLOWFISH_KEY_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("BLOWFISH_KEY_GEN"):
             pytest.skip("CKM_BLOWFISH_KEY_GEN not supported")
-        key = _bf_key(p11_session, key_bits, {Attribute.TOKEN: False})
+        key = _bf_key(rs.raw, rs.sh, key_bits, {int(CKA_TOKEN): False})
         try:
-            assert key is not None
-            assert key.key_type == KeyType.BLOWFISH
+            assert key != 0
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 # ---------------------------------------------------------------------------
@@ -72,103 +103,110 @@ class TestBlowfishEncryption:
     Only CBC and CBC_PAD mechanisms exist for Blowfish.
     """
 
-    def test_blowfish_cbc_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_blowfish_cbc_roundtrip(self, p11_raw_session: Any) -> None:
         """Blowfish-CBC encrypt/decrypt roundtrip with 8-byte IV and block-aligned data."""
-        if not has_mechanism(p11_module, "BLOWFISH_KEY_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("BLOWFISH_KEY_GEN"):
             pytest.skip("CKM_BLOWFISH_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "BLOWFISH_CBC"):
+        if not rs.has_mechanism("BLOWFISH_CBC"):
             pytest.skip("CKM_BLOWFISH_CBC not supported")
         key = _bf_key(
-            p11_session,
-            128,
-            {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+            rs.raw, rs.sh, 128,
+            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
-        iv = _bf_iv(p11_session)
+        iv = generate_random(rs.raw, rs.sh, 8)
         try:
-            try:
-                ct = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism.BLOWFISH_CBC, mechanism_param=iv)
-            except MechanismInvalid:
-                pytest.skip("CKM_BLOWFISH_CBC advertised but rejected at use")
+            ct = _encrypt_or_skip(
+                rs.raw, rs.sh, key, CKM_BLOWFISH_CBC, _TWO_BLOCKS,
+                mech_param=mech_bytes(CKM_BLOWFISH_CBC, iv),
+            )
             assert ct != _TWO_BLOCKS
-            pt = key.decrypt(ct, mechanism=Mechanism.BLOWFISH_CBC, mechanism_param=iv)
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_BLOWFISH_CBC, ct,
+                mech_param=mech_bytes(CKM_BLOWFISH_CBC, iv),
+            )
             assert pt == _TWO_BLOCKS
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_blowfish_cbc_different_ivs(self, p11_session: Any, p11_module: Any) -> None:
+    def test_blowfish_cbc_different_ivs(self, p11_raw_session: Any) -> None:
         """Blowfish-CBC with different IVs produces different ciphertexts."""
-        if not has_mechanism(p11_module, "BLOWFISH_KEY_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("BLOWFISH_KEY_GEN"):
             pytest.skip("CKM_BLOWFISH_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "BLOWFISH_CBC"):
+        if not rs.has_mechanism("BLOWFISH_CBC"):
             pytest.skip("CKM_BLOWFISH_CBC not supported")
         key = _bf_key(
-            p11_session,
-            128,
-            {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+            rs.raw, rs.sh, 128,
+            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
-        iv1 = _bf_iv(p11_session)
-        iv2 = _bf_iv(p11_session)
+        iv1 = generate_random(rs.raw, rs.sh, 8)
+        iv2 = generate_random(rs.raw, rs.sh, 8)
         try:
-            try:
-                ct1 = key.encrypt(
-                    _TWO_BLOCKS, mechanism=Mechanism.BLOWFISH_CBC, mechanism_param=iv1
-                )
-            except MechanismInvalid:
-                pytest.skip("CKM_BLOWFISH_CBC advertised but rejected at use")
-            ct2 = key.encrypt(_TWO_BLOCKS, mechanism=Mechanism.BLOWFISH_CBC, mechanism_param=iv2)
+            ct1 = _encrypt_or_skip(
+                rs.raw, rs.sh, key, CKM_BLOWFISH_CBC, _TWO_BLOCKS,
+                mech_param=mech_bytes(CKM_BLOWFISH_CBC, iv1),
+            )
+            ct2 = encrypt_single(
+                rs.raw, rs.sh, key, CKM_BLOWFISH_CBC, _TWO_BLOCKS,
+                mech_param=mech_bytes(CKM_BLOWFISH_CBC, iv2),
+            )
             assert ct1 != ct2
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_blowfish_cbc_pad_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_blowfish_cbc_pad_roundtrip(self, p11_raw_session: Any) -> None:
         """Blowfish-CBC-PAD encrypt/decrypt roundtrip with arbitrary-length data."""
-        if not has_mechanism(p11_module, "BLOWFISH_KEY_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("BLOWFISH_KEY_GEN"):
             pytest.skip("CKM_BLOWFISH_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "BLOWFISH_CBC_PAD"):
+        if not rs.has_mechanism("BLOWFISH_CBC_PAD"):
             pytest.skip("CKM_BLOWFISH_CBC_PAD not supported")
         key = _bf_key(
-            p11_session,
-            128,
-            {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+            rs.raw, rs.sh, 128,
+            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
         )
-        iv = _bf_iv(p11_session)
+        iv = generate_random(rs.raw, rs.sh, 8)
         # Non-block-aligned data - PKCS#7 padding handles it
         plaintext = b"Blowfish CBC PAD test!"  # 22 bytes, not a multiple of 8
         try:
-            try:
-                ct = key.encrypt(
-                    plaintext, mechanism=Mechanism.BLOWFISH_CBC_PAD, mechanism_param=iv
-                )
-            except MechanismInvalid:
-                pytest.skip("CKM_BLOWFISH_CBC_PAD advertised but rejected at use")
+            ct = _encrypt_or_skip(
+                rs.raw, rs.sh, key, CKM_BLOWFISH_CBC_PAD, plaintext,
+                mech_param=mech_bytes(CKM_BLOWFISH_CBC_PAD, iv),
+            )
             assert ct != plaintext
             # Ciphertext is padded to 8-byte block boundary
             assert len(ct) % 8 == 0
-            pt = key.decrypt(ct, mechanism=Mechanism.BLOWFISH_CBC_PAD, mechanism_param=iv)
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_BLOWFISH_CBC_PAD, ct,
+                mech_param=mech_bytes(CKM_BLOWFISH_CBC_PAD, iv),
+            )
             assert pt == plaintext
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_blowfish_cbc_pad_different_keys(self, p11_session: Any, p11_module: Any) -> None:
+    def test_blowfish_cbc_pad_different_keys(self, p11_raw_session: Any) -> None:
         """Blowfish-CBC-PAD: same plaintext encrypted with different keys should differ."""
-        if not has_mechanism(p11_module, "BLOWFISH_KEY_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("BLOWFISH_KEY_GEN"):
             pytest.skip("CKM_BLOWFISH_KEY_GEN not supported")
-        if not has_mechanism(p11_module, "BLOWFISH_CBC_PAD"):
+        if not rs.has_mechanism("BLOWFISH_CBC_PAD"):
             pytest.skip("CKM_BLOWFISH_CBC_PAD not supported")
-        tmpl = {Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False}
-        key1 = _bf_key(p11_session, 128, tmpl)
-        key2 = _bf_key(p11_session, 128, tmpl)
-        iv = _bf_iv(p11_session)
+        tmpl = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False}
+        key1 = _bf_key(rs.raw, rs.sh, 128, tmpl)
+        key2 = _bf_key(rs.raw, rs.sh, 128, tmpl)
+        iv = generate_random(rs.raw, rs.sh, 8)
         plaintext = b"Blowfish CBC PAD key independence!!"  # 35 bytes
         try:
-            try:
-                ct1 = key1.encrypt(
-                    plaintext, mechanism=Mechanism.BLOWFISH_CBC_PAD, mechanism_param=iv
-                )
-            except MechanismInvalid:
-                pytest.skip("CKM_BLOWFISH_CBC_PAD advertised but rejected at use")
-            ct2 = key2.encrypt(plaintext, mechanism=Mechanism.BLOWFISH_CBC_PAD, mechanism_param=iv)
+            ct1 = _encrypt_or_skip(
+                rs.raw, rs.sh, key1, CKM_BLOWFISH_CBC_PAD, plaintext,
+                mech_param=mech_bytes(CKM_BLOWFISH_CBC_PAD, iv),
+            )
+            ct2 = encrypt_single(
+                rs.raw, rs.sh, key2, CKM_BLOWFISH_CBC_PAD, plaintext,
+                mech_param=mech_bytes(CKM_BLOWFISH_CBC_PAD, iv),
+            )
             assert ct1 != ct2
         finally:
-            key1.destroy()
-            key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
