@@ -15,49 +15,64 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.exceptions import (
-    FunctionFailed,
-    GeneralError,
-    MechanismInvalid,
-    MechanismParamInvalid,
-)
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    encrypt_single,
+    gen_aes_key,
+    gen_rsa_keypair,
+    sign_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKM_CMS_SIG,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
+)
 
 pytestmark = pytest.mark.sign
 
-# Errors expected when attempting CMS_SIG without proper params / unsupported by module
-_SIGN_ERRORS = (MechanismInvalid, MechanismParamInvalid, FunctionFailed, GeneralError)
+# CKR codes expected when attempting CMS_SIG without proper params / unsupported
+_SIGN_ERROR_CKRS = frozenset({
+    int(CKR_MECHANISM_INVALID), int(CKR_MECHANISM_PARAM_INVALID),
+    int(CKR_FUNCTION_FAILED), int(CKR_GENERAL_ERROR),
+})
 
 
 class TestCMSSig:
     """CKM_CMS_SIG tests - CMS signature mechanism (sign and sign-recover)."""
 
-    def test_mechanism_availability(self, p11_module: Any) -> None:
+    def test_mechanism_availability(self, p11_raw_session: Any) -> None:
         """Report whether CKM_CMS_SIG is supported; skip if not."""
-        if not has_mechanism(p11_module, "CMS_SIG"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("CMS_SIG"):
             pytest.skip("CKM_CMS_SIG not supported")
 
-    def test_mechanism_info(self, p11_module: Any) -> None:
+    def test_mechanism_info(self, p11_raw_session: Any) -> None:
         """CKM_CMS_SIG mechanism info should report sign/sign-recover flags."""
-        if not has_mechanism(p11_module, "CMS_SIG"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("CMS_SIG"):
             pytest.skip("CKM_CMS_SIG not supported")
 
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechs = slot.get_mechanisms()
-        assert Mechanism.CMS_SIG in mechs
+        from ctypes import byref
 
-        try:
-            info = slot.get_mechanism_info(Mechanism.CMS_SIG)
-            # CMS_SIG is a signing mechanism - should support CKF_SIGN
-            # Key sizes are typically reported as 0 for RSA-based sign-with-cert mechanisms
+        from pkcs11_check.raw.types_std import CK_MECHANISM_INFO
+
+        info = CK_MECHANISM_INFO()
+        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, int(CKM_CMS_SIG), byref(info))
+        if rv == int(CKR_OK):
             assert info is not None
-        except (AttributeError, GeneralError):
-            # Not all bindings expose get_mechanism_info - skip gracefully
-            pass
 
-    def test_cms_sig_requires_rsa_key(self, p11_session: Any, p11_module: Any) -> None:
+    def test_cms_sig_requires_rsa_key(self, p11_raw_session: Any) -> None:
         """CKM_CMS_SIG sign attempt with RSA key and no params is expected to fail cleanly.
 
         CKM_CMS_SIG requires a CK_CMS_SIG_PARAMS structure with:
@@ -67,81 +82,53 @@ class TestCMSSig:
           - pContentType: content type OID string
           - pRequestedAttributes / pRequiredAttributes: CMS attributes
 
-        The python-pkcs11 fork does not provide a Python wrapper class for
-        CK_CMS_SIG_PARAMS, so we cannot construct valid parameters here.
         We verify the mechanism is present and that the module rejects a bare
         invocation without params rather than crashing.
         """
-        if not has_mechanism(p11_module, "CMS_SIG"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("CMS_SIG"):
             pytest.skip("CKM_CMS_SIG not supported")
 
-        # Generate an RSA key pair - the most common key type for CMS signing
-        try:
-            pub, priv = p11_session.generate_keypair(
-                KeyType.RSA,
-                2048,
-                mechanism=Mechanism.RSA_PKCS_KEY_PAIR_GEN,
-                public_template={
-                    Attribute.ENCRYPT: False,
-                    Attribute.VERIFY: True,
-                    Attribute.TOKEN: False,
-                },
-                private_template={
-                    Attribute.DECRYPT: False,
-                    Attribute.SIGN: True,
-                    Attribute.SENSITIVE: True,
-                    Attribute.EXTRACTABLE: False,
-                    Attribute.TOKEN: False,
-                },
-            )
-        except (MechanismInvalid, FunctionFailed) as e:
-            pytest.skip(f"RSA key generation not available: {e}")
-
+        pub, priv = gen_rsa_keypair(
+            rs.raw, rs.sh, 2048,
+            public_attrs={
+                int(CKA_ENCRYPT): False, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+            },
+            private_attrs={
+                int(CKA_DECRYPT): False, int(CKA_SIGN): True,
+                int(CKA_SENSITIVE): True, int(CKA_EXTRACTABLE): False,
+                int(CKA_TOKEN): False,
+            },
+        )
         try:
             # Attempt CMS_SIG sign without params - must fail, not crash.
-            # No Python binding for CK_CMS_SIG_PARAMS exists in the fork,
-            # so mechanism_param=None is the only option.
             try:
-                priv.sign(b"test message", mechanism=Mechanism.CMS_SIG)
-                # If we reach here the module accepted no-param CMS_SIG - unexpected but record it
+                sign_single(rs.raw, rs.sh, priv, CKM_CMS_SIG, b"test message")
+                # If we reach here the module accepted no-param CMS_SIG - unexpected
                 pytest.xfail(
                     "CKM_CMS_SIG sign succeeded without CK_CMS_SIG_PARAMS "
                     "(module is unusually permissive)"
                 )
-            except _SIGN_ERRORS:
+            except AssertionError:
                 # Expected: module rejects missing/invalid params
                 pass
         finally:
-            priv.destroy()
-            pub.destroy()
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, pub)
 
-    def test_cms_sig_not_usable_as_encrypt(self, p11_session: Any, p11_module: Any) -> None:
+    def test_cms_sig_not_usable_as_encrypt(self, p11_raw_session: Any) -> None:
         """CKM_CMS_SIG must not be usable as an encryption mechanism."""
-        if not has_mechanism(p11_module, "CMS_SIG"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("CMS_SIG"):
             pytest.skip("CKM_CMS_SIG not supported")
 
-        # Generate a minimal AES key - if CMS_SIG were mistakenly accepted for
-        # encrypt, it would represent a serious implementation error.
+        key = gen_aes_key(rs.raw, rs.sh, 128)
         try:
-            key = p11_session.generate_key(
-                KeyType.AES,
-                128,
-                mechanism=Mechanism.AES_KEY_GEN,
-                template={
-                    Attribute.ENCRYPT: True,
-                    Attribute.DECRYPT: True,
-                    Attribute.TOKEN: False,
-                },
-            )
-        except (MechanismInvalid, FunctionFailed) as e:
-            pytest.skip(f"AES key generation not available: {e}")
-
-        try:
-            with pytest.raises(_SIGN_ERRORS):
-                key.encrypt(b"data", mechanism=Mechanism.CMS_SIG)
+            with pytest.raises(AssertionError):
+                encrypt_single(rs.raw, rs.sh, key, CKM_CMS_SIG, b"data")
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
     def test_cms_sig_mechanism_value(self) -> None:
         """CKM_CMS_SIG numeric value must be 0x500 per PKCS#11 spec."""
-        assert Mechanism.CMS_SIG == 0x500
+        assert int(CKM_CMS_SIG) == 0x500
