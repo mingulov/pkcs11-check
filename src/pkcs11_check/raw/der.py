@@ -87,7 +87,7 @@ def ecdsa_sig_from_der(der: bytes) -> tuple[int, int]:
     r, offset = _der_decode_integer(der, offset)
     s, offset = _der_decode_integer(der, offset)
     if offset != seq_end:
-        raise ValueError(f"Malformed DER SEQUENCE: content size mismatch")
+        raise ValueError("Malformed DER SEQUENCE: content size mismatch")
     if seq_end != len(der):
         raise ValueError(f"Trailing data after DER SEQUENCE: {len(der) - seq_end} bytes")
     return r, s
@@ -168,10 +168,10 @@ def decode_rsa_public_key_der(der: bytes) -> tuple[bytes, bytes]:
     n, offset = _der_decode_integer(der, offset)
     e, offset = _der_decode_integer(der, offset)
     if offset != seq_end:
-        raise ValueError(f"Malformed DER SEQUENCE: content size mismatch")
+        raise ValueError("Malformed DER SEQUENCE: content size mismatch")
     if seq_end != len(der):
         raise ValueError(f"Trailing data after DER SEQUENCE: {len(der) - seq_end} bytes")
-    # Return as big-endian bytes with no leading zeros (canonical form)
-    n_bytes = n.to_bytes((n.bit_length() + 7) // 8, "big")
-    e_bytes = e.to_bytes((e.bit_length() + 7) // 8, "big")
+    # Return as big-endian bytes, no leading zeros (canonical form)
+    n_bytes = b"\x00" if n == 0 else n.to_bytes((n.bit_length() + 7) // 8, "big")
+    e_bytes = b"\x00" if e == 0 else e.to_bytes((e.bit_length() + 7) // 8, "big")
     return n_bytes, e_bytes

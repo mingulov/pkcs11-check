@@ -7,6 +7,7 @@ PKCS#11 operations. A recipe must be mentally expandable to its raw calls.
 from __future__ import annotations
 
 import ctypes
+import sys
 from ctypes import byref
 from typing import Any
 
@@ -34,8 +35,20 @@ from .types_std import (
     CKM_EC_KEY_PAIR_GEN,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKO_SECRET_KEY,
+    CKR_BUFFER_TOO_SMALL,
     CKR_OK,
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
 )
+
+_VERIFY_FAIL_RVS = (int(CKR_SIGNATURE_INVALID), int(CKR_SIGNATURE_LEN_RANGE))
+
+
+def _resolve_mech(
+    mechanism: CKM, mech_param: PackedMechanism | None,
+) -> PackedMechanism:
+    """Return mech_param if given, otherwise wrap mechanism as mech_simple."""
+    return mech_param if mech_param is not None else mech_simple(mechanism)
 
 
 def _two_call_output(
@@ -237,7 +250,7 @@ def encrypt_single(
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
     """Encrypt data in a single operation. Returns ciphertext."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_EncryptInit(session, mech.byref(), key)
     expect_rv(int(rv), CKR_OK)
     in_buf = (ctypes.c_ubyte * len(plaintext))(*plaintext)
@@ -254,7 +267,7 @@ def sign_single(
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
     """Sign data in a single operation. Returns signature."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_SignInit(session, mech.byref(), key)
     expect_rv(int(rv), CKR_OK)
     in_buf = (ctypes.c_ubyte * len(data))(*data)
@@ -271,7 +284,7 @@ def decrypt_single(
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
     """Decrypt data in a single operation. Returns plaintext."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_DecryptInit(session, mech.byref(), key)
     expect_rv(int(rv), CKR_OK)
     in_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
@@ -295,7 +308,7 @@ def verify_single(
     Returns True if verification succeeds (CKR_OK), False if CKR_SIGNATURE_INVALID
     or CKR_SIGNATURE_LEN_RANGE. Other errors raise AssertionError.
     """
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_VerifyInit(session, mech.byref(), key)
     expect_rv(int(rv), CKR_OK)
 
@@ -305,8 +318,7 @@ def verify_single(
 
     if rv == CKR_OK:
         return True
-    # CKR_SIGNATURE_INVALID = 0xC0, CKR_SIGNATURE_LEN_RANGE = 0xC1
-    if rv in (0x000000C0, 0x000000C1):
+    if rv in _VERIFY_FAIL_RVS:
         return False
     expect_rv(rv, CKR_OK)
     return False  # unreachable
@@ -317,9 +329,11 @@ def digest_single(
     session: int,
     mechanism: CKM,
     data: bytes,
+    *,
+    mech_param: PackedMechanism | None = None,
 ) -> bytes:
     """Digest data in a single operation. Returns digest."""
-    mech = mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_DigestInit(session, mech.byref())
     expect_rv(int(rv), CKR_OK)
     in_buf = (ctypes.c_ubyte * len(data))(*data)
@@ -368,7 +382,8 @@ def read_attributes(
         if size == ctypes.sizeof(CK_BBOOL):
             result[at] = raw_bytes[0] != 0
         elif size == ctypes.sizeof(CK_ULONG):
-            result[at] = int.from_bytes(raw_bytes, byteorder="little")
+            # CK_ULONG is stored in native (platform) byte order
+            result[at] = int.from_bytes(raw_bytes, byteorder=sys.byteorder)
         else:
             result[at] = raw_bytes
     return result
@@ -425,7 +440,7 @@ def wrap_key(
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
     """Wrap a key using C_WrapKey (two-call output pattern). Returns wrapped key."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     out_len = CK_ULONG(0)
     rv = raw.C_WrapKey(
         session, mech.byref(), wrapping_key, target_key, None, byref(out_len),
@@ -450,7 +465,7 @@ def unwrap_key(
     mech_param: PackedMechanism | None = None,
 ) -> int:
     """Unwrap a key using C_UnwrapKey. Returns new key handle."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     packed = _pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     in_buf = (ctypes.c_ubyte * len(wrapped_key))(*wrapped_key)
@@ -475,7 +490,7 @@ def derive_key(
     mech_param: PackedMechanism | None = None,
 ) -> int:
     """Derive a key using C_DeriveKey. Returns new key handle."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     packed = _pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     handle = CK_OBJECT_HANDLE(0)
@@ -540,7 +555,12 @@ def _multipart_output(
     init_args: tuple[Any, ...],
     chunks: list[bytes] | tuple[bytes, ...],
 ) -> bytes:
-    """Shared Init -> Update(chunks) -> Final pattern."""
+    """Shared Init -> Update(chunks) -> Final for encrypt/decrypt.
+
+    Only for operations where Update produces output (C_EncryptUpdate,
+    C_DecryptUpdate). Sign/Digest Update calls do not produce output —
+    use the manual Init+Update+_two_call_output(Final) pattern instead.
+    """
     rv = getattr(raw, init_fn)(session, *init_args)
     expect_rv(int(rv), CKR_OK)
     parts: list[bytes] = []
@@ -580,7 +600,7 @@ def encrypt_multipart(
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
     """Encrypt data in multiple parts. Returns ciphertext."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     return _multipart_output(
         raw, session,
         "C_EncryptInit", "C_EncryptUpdate", "C_EncryptFinal",
@@ -598,7 +618,7 @@ def decrypt_multipart(
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
     """Decrypt data in multiple parts. Returns plaintext."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     return _multipart_output(
         raw, session,
         "C_DecryptInit", "C_DecryptUpdate", "C_DecryptFinal",
@@ -616,7 +636,7 @@ def sign_multipart(
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
     """Sign data in multiple parts. Returns signature."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_SignInit(session, mech.byref(), key)
     expect_rv(int(rv), CKR_OK)
     for chunk in chunks:
@@ -640,7 +660,7 @@ def verify_multipart(
 
     Returns True if valid, False if CKR_SIGNATURE_INVALID/CKR_SIGNATURE_LEN_RANGE.
     """
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_VerifyInit(session, mech.byref(), key)
     expect_rv(int(rv), CKR_OK)
     for chunk in chunks:
@@ -662,9 +682,11 @@ def digest_multipart(
     session: int,
     mechanism: CKM,
     chunks: list[bytes] | tuple[bytes, ...],
+    *,
+    mech_param: PackedMechanism | None = None,
 ) -> bytes:
     """Digest data in multiple parts. Returns digest."""
-    mech = mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_DigestInit(session, mech.byref())
     expect_rv(int(rv), CKR_OK)
     for chunk in chunks:
@@ -732,6 +754,43 @@ def seed_random(raw: RawPKCS11, session: int, seed: bytes) -> None:
 # --- v3.0 Message-based crypto ---
 
 
+def _message_crypto(
+    raw: RawPKCS11,
+    session: int,
+    key: int,
+    mechanism: CKM,
+    data: bytes,
+    init_fn: str,
+    msg_fn: str,
+    *,
+    aad: bytes | None = None,
+    mech_param: PackedMechanism | None = None,
+) -> bytes:
+    """Shared Init + two-call Message pattern for encrypt/decrypt."""
+    mech = _resolve_mech(mechanism, mech_param)
+    rv = getattr(raw, init_fn)(session, mech.byref(), key)
+    expect_rv(int(rv), CKR_OK)
+
+    aad_buf = (ctypes.c_ubyte * len(aad))(*aad) if aad else None
+    aad_len = len(aad) if aad else 0
+    in_buf = (ctypes.c_ubyte * len(data))(*data)
+
+    out_len = CK_ULONG(0)
+    fn = getattr(raw, msg_fn)
+    rv = fn(
+        session, None, 0, aad_buf, aad_len,
+        in_buf, len(data), None, byref(out_len),
+    )
+    expect_rv(int(rv), CKR_OK)
+    out_buf = (ctypes.c_ubyte * out_len.value)()
+    rv = fn(
+        session, None, 0, aad_buf, aad_len,
+        in_buf, len(data), out_buf, byref(out_len),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return bytes(out_buf[: out_len.value])
+
+
 def message_encrypt(
     raw: RawPKCS11,
     session: int,
@@ -742,29 +801,12 @@ def message_encrypt(
     aad: bytes | None = None,
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
-    """Single-message encrypt using C_MessageEncryptInit + C_EncryptMessage."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
-    rv = raw.C_MessageEncryptInit(session, mech.byref(), key)
-    expect_rv(int(rv), CKR_OK)
-
-    aad_buf = (ctypes.c_ubyte * len(aad))(*aad) if aad else None
-    aad_len = len(aad) if aad else 0
-    in_buf = (ctypes.c_ubyte * len(data))(*data)
-
-    # Two-call pattern: query output size first
-    out_len = CK_ULONG(0)
-    rv = raw.C_EncryptMessage(
-        session, None, 0, aad_buf, aad_len,
-        in_buf, len(data), None, byref(out_len),
+    """Single-message encrypt via C_MessageEncryptInit + C_EncryptMessage."""
+    return _message_crypto(
+        raw, session, key, mechanism, data,
+        "C_MessageEncryptInit", "C_EncryptMessage",
+        aad=aad, mech_param=mech_param,
     )
-    expect_rv(int(rv), CKR_OK)
-    out_buf = (ctypes.c_ubyte * out_len.value)()
-    rv = raw.C_EncryptMessage(
-        session, None, 0, aad_buf, aad_len,
-        in_buf, len(data), out_buf, byref(out_len),
-    )
-    expect_rv(int(rv), CKR_OK)
-    return bytes(out_buf[: out_len.value])
 
 
 def message_decrypt(
@@ -777,29 +819,12 @@ def message_decrypt(
     aad: bytes | None = None,
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
-    """Single-message decrypt using C_MessageDecryptInit + C_DecryptMessage."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
-    rv = raw.C_MessageDecryptInit(session, mech.byref(), key)
-    expect_rv(int(rv), CKR_OK)
-
-    aad_buf = (ctypes.c_ubyte * len(aad))(*aad) if aad else None
-    aad_len = len(aad) if aad else 0
-    in_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
-
-    # Two-call pattern: query output size first
-    out_len = CK_ULONG(0)
-    rv = raw.C_DecryptMessage(
-        session, None, 0, aad_buf, aad_len,
-        in_buf, len(ciphertext), None, byref(out_len),
+    """Single-message decrypt via C_MessageDecryptInit + C_DecryptMessage."""
+    return _message_crypto(
+        raw, session, key, mechanism, ciphertext,
+        "C_MessageDecryptInit", "C_DecryptMessage",
+        aad=aad, mech_param=mech_param,
     )
-    expect_rv(int(rv), CKR_OK)
-    out_buf = (ctypes.c_ubyte * out_len.value)()
-    rv = raw.C_DecryptMessage(
-        session, None, 0, aad_buf, aad_len,
-        in_buf, len(ciphertext), out_buf, byref(out_len),
-    )
-    expect_rv(int(rv), CKR_OK)
-    return bytes(out_buf[: out_len.value])
 
 
 # --- v3.2 KEM operations ---
@@ -815,7 +840,7 @@ def encapsulate_key(
     mech_param: PackedMechanism | None = None,
 ) -> tuple[int, bytes]:
     """C_EncapsulateKey — returns (secret_key_handle, ciphertext)."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     packed = _pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
 
@@ -849,7 +874,7 @@ def decapsulate_key(
     mech_param: PackedMechanism | None = None,
 ) -> int:
     """C_DecapsulateKey — returns secret_key_handle."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     packed = _pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     ct_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
@@ -882,7 +907,7 @@ def wrap_key_authenticated(
     wrapped_len is an input size; tag_len_ptr is an output pointer.
     Use NULL/0 for wrapped and NULL/byref for tag on first call to get sizes.
     """
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
 
     # First call: get tag size; wrapped_len is input so pass 0 with NULL wrapped_ptr
     tag_len = CK_ULONG(0)
@@ -890,9 +915,8 @@ def wrap_key_authenticated(
         session, mech.byref(), wrapping_key, target_key,
         None, 0, None, byref(tag_len),
     )
-    # CKR_BUFFER_TOO_SMALL (0x150) is expected when NULL is passed for wrapped_ptr
-    _ckr_buffer_too_small = 0x00000150
-    if int(rv) not in (CKR_OK, _ckr_buffer_too_small):
+    # CKR_BUFFER_TOO_SMALL is expected when NULL is passed for wrapped_ptr
+    if int(rv) not in (CKR_OK, CKR_BUFFER_TOO_SMALL):
         expect_rv(int(rv), CKR_OK)
 
     # For wrapped key size, C_WrapKey uses the same NULL pattern — try with large buffer
@@ -925,7 +949,7 @@ def unwrap_key_authenticated(
     mech_param: PackedMechanism | None = None,
 ) -> int:
     """C_UnwrapKeyAuthenticated — returns key handle."""
-    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    mech = _resolve_mech(mechanism, mech_param)
     packed = _pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     wrapped_buf = (ctypes.c_ubyte * len(wrapped_key))(*wrapped_key)

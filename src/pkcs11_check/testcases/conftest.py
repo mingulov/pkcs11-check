@@ -83,8 +83,9 @@ def extract_ec_point(ec_point_der: Any) -> Any:
     PKCS#11 EC_POINT attribute is DER-encoded: 0x04 <length> <point_bytes>.
     Returns the raw point bytes (starting with 0x04 uncompressed prefix).
     """
-    if ec_point_der[0] == 0x04:
-        if ec_point_der[1] < 128:
-            return ec_point_der[2:]
-        return ec_point_der[3:]
-    return ec_point_der
+    from pkcs11_check.raw.der import decode_ec_point
+
+    data = bytes(ec_point_der)
+    if not data or data[0] != 0x04:
+        return ec_point_der  # not DER-wrapped, return as-is
+    return decode_ec_point(data)
