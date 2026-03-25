@@ -61,10 +61,14 @@ lib.finalize()
 
 def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
     pin_arg = f'"{pin}"' if pin else "None"
-    script = _SCRIPT_TEMPLATE.format(module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code))
+    script = _SCRIPT_TEMPLATE.format(
+        module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code)
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
         env=os.environ.copy(),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
@@ -127,7 +131,8 @@ mech.mechanism = 0x1081  # AES_ECB - not a KEM mechanism
 key = ctypes.c_ulong(0)
 ct = (ctypes.c_ubyte * 2048)()
 ct_len = ctypes.c_ulong(2048)
-rv = raw.C_EncapsulateKey(sh, ctypes.byref(mech), 0, None, 0, ctypes.byref(key), ct, ctypes.byref(ct_len))
+enc_key = ctypes.c_ulong(0)
+rv = raw.C_EncapsulateKey(sh, ctypes.byref(mech), 0, None, 0, ct, ctypes.byref(ct_len), ctypes.byref(enc_key))
 print(f"CKR:0x{rv:08x}")
 assert rv != CKR_OK, f"Should have rejected AES_ECB for Encapsulate"
 print("OK")
@@ -190,9 +195,11 @@ class TestWrapKeyAuthenticatedErrors:
             """\
 mech = CK_MECHANISM()
 mech.mechanism = 0x0250  # SHA256 - not a wrap mechanism
+ct = (ctypes.c_ubyte * 256)()
+ct_len = ctypes.c_ulong(256)
 out = (ctypes.c_ubyte * 256)()
 out_len = ctypes.c_ulong(256)
-rv = raw.C_WrapKeyAuthenticated(sh, ctypes.byref(mech), 0, 0, 0, out, ctypes.byref(out_len))
+rv = raw.C_WrapKeyAuthenticated(sh, ctypes.byref(mech), 0, 0, ct, ct_len, out, ctypes.byref(out_len))
 print(f"CKR:0x{rv:08x}")
 assert rv != CKR_OK, f"Should have rejected SHA256 for WrapAuth"
 print("OK")
