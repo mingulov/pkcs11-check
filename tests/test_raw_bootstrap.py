@@ -5,7 +5,7 @@ import ctypes
 
 def test_get_slot_ids_uses_explicit_token_present_and_two_call_pattern() -> None:
     from pkcs11_check.raw.bootstrap import get_slot_ids
-    from pkcs11_check.raw.core import CKR_OK
+    from pkcs11_check.raw.types_std import CKR_OK
     from pkcs11_check.raw.types_std import CK_SLOT_ID, CK_SLOT_ID_PTR, CK_ULONG_PTR
 
     calls: list[int] = []
@@ -30,7 +30,7 @@ def test_get_slot_ids_uses_explicit_token_present_and_two_call_pattern() -> None
 
 def test_open_session_returns_handle_and_passes_explicit_flags() -> None:
     from pkcs11_check.raw.bootstrap import open_session
-    from pkcs11_check.raw.core import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OK
+    from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OK
     from pkcs11_check.raw.types_std import CK_NOTIFY, CK_SESSION_HANDLE_PTR
 
     seen: list[tuple[int, int, object, object]] = []
@@ -62,7 +62,7 @@ def test_open_session_returns_handle_and_passes_explicit_flags() -> None:
 
 def test_login_user_passes_explicit_user_type_and_pin_bytes() -> None:
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.core import CKR_OK, CKU_CONTEXT_SPECIFIC
+    from pkcs11_check.raw.types_std import CKR_OK, CKU_CONTEXT_SPECIFIC
     from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
 
     seen: list[tuple[int, int, bytes, int]] = []
@@ -81,7 +81,7 @@ def test_login_user_passes_explicit_user_type_and_pin_bytes() -> None:
 
 def test_login_user_accepts_bytearray_pin_input() -> None:
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.core import CKR_OK, CKU_USER
+    from pkcs11_check.raw.types_std import CKR_OK, CKU_USER
     from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
 
     seen: list[bytes] = []
@@ -99,7 +99,7 @@ def test_login_user_accepts_bytearray_pin_input() -> None:
 
 def test_login_user_accepts_memoryview_pin_input() -> None:
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.core import CKR_OK, CKU_USER
+    from pkcs11_check.raw.types_std import CKR_OK, CKU_USER
     from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
 
     seen: list[bytes] = []
@@ -117,7 +117,7 @@ def test_login_user_accepts_memoryview_pin_input() -> None:
 
 def test_login_user_keeps_empty_pin_explicit_instead_of_null() -> None:
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.core import CKR_OK, CKU_USER
+    from pkcs11_check.raw.types_std import CKR_OK, CKU_USER
 
     seen: list[tuple[object, int]] = []
 
@@ -135,7 +135,7 @@ def test_login_user_keeps_empty_pin_explicit_instead_of_null() -> None:
 
 def test_login_user_tolerates_user_already_logged_in_for_setup_flows() -> None:
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.core import CKR_USER_ALREADY_LOGGED_IN, CKU_USER
+    from pkcs11_check.raw.types_std import CKR_USER_ALREADY_LOGGED_IN, CKU_USER
 
     class FakeRaw:
         def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
@@ -148,7 +148,7 @@ def test_login_user_rejects_text_pin_input() -> None:
     import pytest
 
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.core import CKU_USER
+    from pkcs11_check.raw.types_std import CKU_USER
 
     class FakeRaw:
         def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
@@ -162,7 +162,7 @@ def test_login_user_rejects_non_buffer_input() -> None:
     import pytest
 
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.core import CKU_USER
+    from pkcs11_check.raw.types_std import CKU_USER
 
     class FakeRaw:
         def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
@@ -174,7 +174,7 @@ def test_login_user_rejects_non_buffer_input() -> None:
 
 def test_close_session_quietly_is_best_effort_for_teardown() -> None:
     from pkcs11_check.raw.bootstrap import close_session_quietly
-    from pkcs11_check.raw.core import CKR_SESSION_HANDLE_INVALID
+    from pkcs11_check.raw.types_std import CKR_SESSION_HANDLE_INVALID
 
     seen: list[int] = []
 

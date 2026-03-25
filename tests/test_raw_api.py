@@ -31,7 +31,7 @@ def test_raw_api_never_auto_raises() -> None:
 
 def test_from_lib_generic_240_interface_does_not_load_v30_or_v32_tails() -> None:
     from pkcs11_check.raw.api import RawPKCS11
-    from pkcs11_check.raw.core import CKR_FUNCTION_FAILED, CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
+    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED, CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
     from pkcs11_check.raw.types_std import CK_VERSION, CK_VERSION_PTR
 
     class FakeFunctionList(ctypes.Structure):
@@ -82,7 +82,7 @@ def test_from_lib_generic_240_interface_does_not_load_v30_or_v32_tails() -> None
 
 def test_from_lib_generic_30_interface_loads_v30_but_not_v32_tails() -> None:
     from pkcs11_check.raw.api import RawPKCS11
-    from pkcs11_check.raw.core import CKR_FUNCTION_FAILED, CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
+    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED, CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
     from pkcs11_check.raw.types_std import CK_VERSION, CK_VERSION_PTR
 
     class FakeFunctionList(ctypes.Structure):
@@ -133,7 +133,7 @@ def test_from_lib_generic_30_interface_loads_v30_but_not_v32_tails() -> None:
 
 def test_from_lib_loads_v32_when_explicit_32_interface_is_available() -> None:
     from pkcs11_check.raw.api import RawPKCS11
-    from pkcs11_check.raw.core import CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
+    from pkcs11_check.raw.types_std import CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
     from pkcs11_check.raw.types_std import CK_VERSION, CK_VERSION_PTR
 
     class FakeFunctionList(ctypes.Structure):

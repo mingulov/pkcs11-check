@@ -57,7 +57,7 @@ def test_raw_from_module_uses_module_lib() -> None:
 
 def test_cktemplate_builds_array_and_keeps_native_lengths() -> None:
     from pkcs11_check.raw import CK_ATTRIBUTE
-    from pkcs11_check.raw.template import CKTemplate, attr_bool, attr_bytes, attr_ulong
+    from pkcs11_check.raw.pack import CKTemplate, attr_bool, attr_bytes, attr_ulong
 
     template = CKTemplate(
         attr_ulong(0x0000, 4),
@@ -76,7 +76,7 @@ def test_cktemplate_builds_array_and_keeps_native_lengths() -> None:
 
 def test_mech_simple_sets_null_parameter() -> None:
     from pkcs11_check.raw import CK_MECHANISM
-    from pkcs11_check.raw.mechanism import mech_simple
+    from pkcs11_check.raw.pack import mech_simple
 
     mech = mech_simple(0x1080)
 

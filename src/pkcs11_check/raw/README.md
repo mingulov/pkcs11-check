@@ -135,14 +135,6 @@ Recipes call `expect_rv()` and raise on non-OK. For exact CK_RV control, use raw
 - `ec.py`
   EC curve OID encoding helpers.
 
-Compatibility wrappers:
-
-- `core.py`
-- `template.py`
-- `mechanism.py`
-
-These exist for migration compatibility. New code should prefer the primary modules directly.
-
 ## Basic Use
 
 Standalone load from a PKCS#11 module path:
@@ -151,7 +143,7 @@ Standalone load from a PKCS#11 module path:
 from ctypes import byref
 
 from pkcs11_check.raw import RawPKCS11
-from pkcs11_check.raw.core import CK_INFO, CKR_OK
+from pkcs11_check.raw.types_std import CK_INFO, CKR_OK
 
 raw = RawPKCS11.from_lib("/path/to/module.so")
 
