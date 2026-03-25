@@ -131,3 +131,84 @@ def test_generated_standard_function_list_structs_are_real_structures() -> None:
 
     assert fields_32["version"] is types_std.CK_VERSION
     assert fields_32["C_EncapsulateKey"] is types_std.CK_C_EncapsulateKey
+
+
+def test_attr_value_types_covers_common_attrs() -> None:
+    """ATTR_VALUE_TYPES covers at least the common attributes."""
+    from pkcs11_check.raw.metadata_std import ATTR_NAMES, ATTR_VALUE_TYPES
+
+    # Every entry in ATTR_VALUE_TYPES must be a valid CKA constant
+    for attr_id in ATTR_VALUE_TYPES:
+        assert attr_id in ATTR_NAMES, f"Unknown attr {attr_id:#x} in ATTR_VALUE_TYPES"
+
+    # Core attrs must be present
+    from pkcs11_check.raw.types_std import (
+        CKA_CLASS,
+        CKA_DECRYPT,
+        CKA_ENCRYPT,
+        CKA_KEY_TYPE,
+        CKA_LABEL,
+        CKA_MODULUS,
+        CKA_TOKEN,
+        CKA_VALUE,
+        CKA_VALUE_LEN,
+    )
+
+    for attr in (
+        CKA_CLASS, CKA_TOKEN, CKA_LABEL, CKA_KEY_TYPE, CKA_VALUE,
+        CKA_ENCRYPT, CKA_DECRYPT, CKA_MODULUS, CKA_VALUE_LEN,
+    ):
+        assert int(attr) in ATTR_VALUE_TYPES, f"{attr} missing from ATTR_VALUE_TYPES"
+
+
+def test_attr_value_types_valid_type_strings() -> None:
+    """All type values are recognized strings."""
+    from pkcs11_check.raw.metadata_std import ATTR_VALUE_TYPES
+
+    valid = {"bool", "ulong", "bytes", "str", "date", "ulong_array", "template"}
+    for attr_id, vtype in ATTR_VALUE_TYPES.items():
+        assert vtype in valid, f"Attr {attr_id:#x} has unknown type {vtype!r}"
+
+
+def test_attr_value_types_matches_python_pkcs11() -> None:
+    """ATTR_VALUE_TYPES agrees with python-pkcs11 on value type categories."""
+    import pytest
+
+    from pkcs11_check.raw.metadata_std import ATTR_VALUE_TYPES
+
+    try:
+        from pkcs11.attributes import (
+            ATTRIBUTE_TYPES,
+            handle_biginteger,
+            handle_bool,
+            handle_bytes,
+            handle_date,
+            handle_str,
+            handle_ulong,
+        )
+    except ImportError:
+        pytest.skip("python-pkcs11 not available")
+
+    # Map python-pkcs11 handler -> our type string
+    handler_map = {
+        id(handle_bool): "bool",
+        id(handle_ulong): "ulong",
+        id(handle_str): "str",
+        id(handle_bytes): "bytes",
+        id(handle_biginteger): "bytes",  # big integer stored as bytes
+        id(handle_date): "date",
+    }
+
+    mismatches = []
+    for attr, handler in ATTRIBUTE_TYPES.items():
+        attr_id = int(attr)
+        if attr_id not in ATTR_VALUE_TYPES:
+            continue  # We may not cover all python-pkcs11 attrs
+        expected = handler_map.get(id(handler))
+        if expected is None:
+            continue  # Enum handlers, array handlers -- skip
+        actual = ATTR_VALUE_TYPES[attr_id]
+        if actual != expected:
+            mismatches.append(f"CKA {attr_id:#x}: ours={actual}, fork={expected}")
+
+    assert not mismatches, "Type mismatches:\n" + "\n".join(mismatches)
