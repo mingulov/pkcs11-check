@@ -10,159 +10,299 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.pack import mech_oaep
+from pkcs11_check.raw.recipes import (
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+    gen_aes_key,
+    gen_rsa_keypair,
+    read_attributes,
+    unwrap_key,
+)
+from pkcs11_check.raw.recipes import (
+    wrap_key as wrap_key_recipe,
+)
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKA_UNWRAP,
+    CKA_VALUE,
+    CKA_WRAP,
+    CKG_MGF1_SHA1,
+    CKK_AES,
+    CKM_AES_ECB,
+    CKM_RSA_PKCS,
+    CKM_RSA_PKCS_OAEP,
+    CKM_SHA_1,
+    CKO_SECRET_KEY,
+    CKR_KEY_NOT_WRAPPABLE,
+    CKR_OK,
+)
 
 pytestmark = pytest.mark.keymgmt
 
 
-def _make_rsa_pair(session: Any) -> tuple[Any, Any]:
+def _make_rsa_pair(rs: Any) -> tuple[int, int]:
     """Generate RSA-2048 keypair with default capabilities (includes WRAP/UNWRAP)."""
-    result: tuple[Any, Any] = session.generate_keypair(KeyType.RSA, 2048)
-    return result
+    return gen_rsa_keypair(
+        rs.raw, rs.sh, 2048,
+        public_attrs={
+            int(CKA_WRAP): True,
+            int(CKA_ENCRYPT): True,
+            int(CKA_TOKEN): False,
+        },
+        private_attrs={
+            int(CKA_UNWRAP): True,
+            int(CKA_DECRYPT): True,
+            int(CKA_TOKEN): False,
+        },
+    )
 
 
-def _make_extractable_aes(session: Any, bits: int = 128) -> Any:
+def _make_extractable_aes(rs: Any, bits: int = 128) -> int:
     """Generate an extractable AES key suitable for wrapping."""
-    return session.generate_key(
-        KeyType.AES,
-        bits,
-        template={Attribute.EXTRACTABLE: True, Attribute.SENSITIVE: False},
+    return gen_aes_key(
+        rs.raw, rs.sh, bits,
+        attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
     )
 
 
 class TestRSAPKCSWrap:
     """Test RSA-PKCS (v1.5) key wrapping."""
 
-    def test_wrap_unwrap_aes128(self, p11_session: Any, p11_module: Any) -> None:
+    def test_wrap_unwrap_aes128(self, p11_raw_session: Any) -> None:
         """Wrap AES-128 key with RSA, unwrap, verify key material matches."""
-        if not has_mechanism(p11_module, "RSA_PKCS"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
-        pub, priv = _make_rsa_pair(p11_session)
-        aes_key = _make_extractable_aes(p11_session, 128)
-        original_value = aes_key[Attribute.VALUE]
+        pub, priv = _make_rsa_pair(rs)
+        aes_key = _make_extractable_aes(rs, 128)
+        try:
+            original_value = read_attributes(
+                rs.raw, rs.sh, aes_key, [int(CKA_VALUE)]
+            )[int(CKA_VALUE)]
 
-        wrapped = pub.wrap_key(aes_key, mechanism=Mechanism.RSA_PKCS)
-        assert wrapped != original_value
-        assert len(wrapped) == 256  # 2048-bit RSA -> 256 bytes
+            wrapped = wrap_key_recipe(
+                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+            )
+            assert wrapped != original_value
+            assert len(wrapped) == 256  # 2048-bit RSA -> 256 bytes
 
-        unwrapped = priv.unwrap_key(
-            ObjectClass.SECRET_KEY,
-            KeyType.AES,
-            wrapped,
-            mechanism=Mechanism.RSA_PKCS,
-            template={Attribute.EXTRACTABLE: True, Attribute.SENSITIVE: False},
-        )
-        assert unwrapped[Attribute.VALUE] == original_value
+            unwrapped = unwrap_key(
+                rs.raw, rs.sh, priv, wrapped, CKM_RSA_PKCS,
+                attrs={
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_EXTRACTABLE): True,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_KEY_TYPE): int(CKK_AES),
+                    int(CKA_TOKEN): False,
+                },
+            )
+            try:
+                unwrapped_value = read_attributes(
+                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
+                )[int(CKA_VALUE)]
+                assert unwrapped_value == original_value
+            finally:
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, aes_key)
 
-    def test_wrap_unwrap_aes256(self, p11_session: Any, p11_module: Any) -> None:
+    def test_wrap_unwrap_aes256(self, p11_raw_session: Any) -> None:
         """Wrap AES-256 key - larger key material still fits in RSA-2048."""
-        if not has_mechanism(p11_module, "RSA_PKCS"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
-        pub, priv = _make_rsa_pair(p11_session)
-        aes_key = _make_extractable_aes(p11_session, 256)
-        original_value = aes_key[Attribute.VALUE]
+        pub, priv = _make_rsa_pair(rs)
+        aes_key = _make_extractable_aes(rs, 256)
+        try:
+            original_value = read_attributes(
+                rs.raw, rs.sh, aes_key, [int(CKA_VALUE)]
+            )[int(CKA_VALUE)]
 
-        wrapped = pub.wrap_key(aes_key, mechanism=Mechanism.RSA_PKCS)
-        unwrapped = priv.unwrap_key(
-            ObjectClass.SECRET_KEY,
-            KeyType.AES,
-            wrapped,
-            mechanism=Mechanism.RSA_PKCS,
-            template={Attribute.EXTRACTABLE: True, Attribute.SENSITIVE: False},
-        )
-        assert unwrapped[Attribute.VALUE] == original_value
+            wrapped = wrap_key_recipe(
+                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+            )
+            unwrapped = unwrap_key(
+                rs.raw, rs.sh, priv, wrapped, CKM_RSA_PKCS,
+                attrs={
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_EXTRACTABLE): True,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_KEY_TYPE): int(CKK_AES),
+                    int(CKA_TOKEN): False,
+                },
+            )
+            try:
+                unwrapped_value = read_attributes(
+                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
+                )[int(CKA_VALUE)]
+                assert unwrapped_value == original_value
+            finally:
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, aes_key)
 
-    def test_wrapped_key_is_different_each_time(self, p11_session: Any, p11_module: Any) -> None:
+    def test_wrapped_key_is_different_each_time(self, p11_raw_session: Any) -> None:
         """RSA-PKCS wrapping is randomized - same key wraps differently each time."""
-        if not has_mechanism(p11_module, "RSA_PKCS"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
-        pub, _priv = _make_rsa_pair(p11_session)
-        aes_key = _make_extractable_aes(p11_session)
-
-        wrapped1 = pub.wrap_key(aes_key, mechanism=Mechanism.RSA_PKCS)
-        wrapped2 = pub.wrap_key(aes_key, mechanism=Mechanism.RSA_PKCS)
-        assert wrapped1 != wrapped2  # Randomized padding
+        pub, priv = _make_rsa_pair(rs)
+        aes_key = _make_extractable_aes(rs)
+        try:
+            wrapped1 = wrap_key_recipe(
+                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+            )
+            wrapped2 = wrap_key_recipe(
+                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+            )
+            assert wrapped1 != wrapped2  # Randomized padding
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, aes_key)
 
 
 class TestRSAOAEPWrap:
     """Test RSA-OAEP key wrapping (more secure than PKCS v1.5)."""
 
-    def test_wrap_unwrap_oaep(self, p11_session: Any, p11_module: Any) -> None:
+    def test_wrap_unwrap_oaep(self, p11_raw_session: Any) -> None:
         """Wrap/unwrap AES key with RSA-OAEP."""
-        if not has_mechanism(p11_module, "RSA_PKCS_OAEP"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
 
-        pub, priv = _make_rsa_pair(p11_session)
-        aes_key = _make_extractable_aes(p11_session, 128)
-        original_value = aes_key[Attribute.VALUE]
+        pub, priv = _make_rsa_pair(rs)
+        aes_key = _make_extractable_aes(rs, 128)
+        try:
+            original_value = read_attributes(
+                rs.raw, rs.sh, aes_key, [int(CKA_VALUE)]
+            )[int(CKA_VALUE)]
 
-        wrapped = pub.wrap_key(aes_key, mechanism=Mechanism.RSA_PKCS_OAEP)
-        unwrapped = priv.unwrap_key(
-            ObjectClass.SECRET_KEY,
-            KeyType.AES,
-            wrapped,
-            mechanism=Mechanism.RSA_PKCS_OAEP,
-            template={Attribute.EXTRACTABLE: True, Attribute.SENSITIVE: False},
-        )
-        assert unwrapped[Attribute.VALUE] == original_value
+            oaep = mech_oaep(
+                CKM_RSA_PKCS_OAEP,
+                hash_mech=int(CKM_SHA_1),
+                mgf=int(CKG_MGF1_SHA1),
+            )
+            wrapped = wrap_key_recipe(
+                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS_OAEP,
+                mech_param=oaep,
+            )
+            oaep2 = mech_oaep(
+                CKM_RSA_PKCS_OAEP,
+                hash_mech=int(CKM_SHA_1),
+                mgf=int(CKG_MGF1_SHA1),
+            )
+            unwrapped = unwrap_key(
+                rs.raw, rs.sh, priv, wrapped, CKM_RSA_PKCS_OAEP,
+                attrs={
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_EXTRACTABLE): True,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_KEY_TYPE): int(CKK_AES),
+                    int(CKA_TOKEN): False,
+                },
+                mech_param=oaep2,
+            )
+            try:
+                unwrapped_value = read_attributes(
+                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
+                )[int(CKA_VALUE)]
+                assert unwrapped_value == original_value
+            finally:
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, aes_key)
 
 
 class TestWrappedKeyUsability:
     """Verify unwrapped keys are fully functional."""
 
-    def test_unwrapped_key_encrypts(self, p11_session: Any, p11_module: Any) -> None:
+    def test_unwrapped_key_encrypts(self, p11_raw_session: Any) -> None:
         """An unwrapped AES key can be used for encryption."""
-        if not has_mechanism(p11_module, "RSA_PKCS"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
-        pub, priv = _make_rsa_pair(p11_session)
-        aes_key = p11_session.generate_key(
-            KeyType.AES,
-            128,
-            template={
-                Attribute.EXTRACTABLE: True,
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
+        pub, priv = _make_rsa_pair(rs)
+        aes_key = gen_aes_key(
+            rs.raw, rs.sh, 128,
+            attrs={
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_ENCRYPT): True,
+                int(CKA_DECRYPT): True,
             },
         )
+        try:
+            # Encrypt with original key
+            plaintext = b"wrap-test-data!!" * 2  # 32 bytes
+            ct = encrypt_single(rs.raw, rs.sh, aes_key, CKM_AES_ECB, plaintext)
 
-        # Encrypt with original key
-        plaintext = b"wrap-test-data!!" * 2  # 32 bytes
-        ct = aes_key.encrypt(plaintext, mechanism=Mechanism.AES_ECB)
+            # Wrap -> unwrap -> decrypt with unwrapped key
+            wrapped = wrap_key_recipe(
+                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+            )
+            unwrapped = unwrap_key(
+                rs.raw, rs.sh, priv, wrapped, CKM_RSA_PKCS,
+                attrs={
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_EXTRACTABLE): True,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_ENCRYPT): True,
+                    int(CKA_DECRYPT): True,
+                    int(CKA_KEY_TYPE): int(CKK_AES),
+                    int(CKA_TOKEN): False,
+                },
+            )
+            try:
+                pt = decrypt_single(rs.raw, rs.sh, unwrapped, CKM_AES_ECB, ct)
+                assert pt == plaintext
+            finally:
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, aes_key)
 
-        # Wrap -> unwrap -> decrypt with unwrapped key
-        wrapped = pub.wrap_key(aes_key, mechanism=Mechanism.RSA_PKCS)
-        unwrapped = priv.unwrap_key(
-            ObjectClass.SECRET_KEY,
-            KeyType.AES,
-            wrapped,
-            mechanism=Mechanism.RSA_PKCS,
-            template={
-                Attribute.EXTRACTABLE: True,
-                Attribute.SENSITIVE: False,
-                Attribute.ENCRYPT: True,
-                Attribute.DECRYPT: True,
-            },
-        )
-        pt = unwrapped.decrypt(ct, mechanism=Mechanism.AES_ECB)
-        assert pt == plaintext
-
-    def test_non_extractable_key_cannot_be_wrapped(self, p11_session: Any, p11_module: Any) -> None:
+    def test_non_extractable_key_cannot_be_wrapped(self, p11_raw_session: Any) -> None:
         """EXTRACTABLE=False key must not be wrappable."""
-        if not has_mechanism(p11_module, "RSA_PKCS"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
-        pub, _priv = _make_rsa_pair(p11_session)
-        non_extractable = p11_session.generate_key(
-            KeyType.AES,
-            128,
-            template={Attribute.EXTRACTABLE: False},
+        pub, priv = _make_rsa_pair(rs)
+        non_extractable = gen_aes_key(
+            rs.raw, rs.sh, 128,
+            attrs={int(CKA_EXTRACTABLE): False},
         )
 
-        with pytest.raises(Exception):  # noqa: B017
-            pub.wrap_key(non_extractable, mechanism=Mechanism.RSA_PKCS)
+        try:
+            try:
+                wrap_key_recipe(
+                    rs.raw, rs.sh, pub, non_extractable, CKM_RSA_PKCS,
+                )
+                pytest.fail("Wrapping non-extractable key should have failed")
+            except AssertionError:
+                pass  # Expected: expect_rv raises AssertionError for CKR error
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, non_extractable)
