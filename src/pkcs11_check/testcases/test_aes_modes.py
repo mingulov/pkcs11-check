@@ -6,17 +6,51 @@ AES-MAC-GENERAL, AES-XCBC-MAC, and AES-KEY-WRAP-PKCS7.
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import (
-    DataLenRange, DeviceError, FunctionFailed, MechanismInvalid, MechanismParamInvalid,
-)
-from pkcs11.mechanisms import CTRParams
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.pack import mech_bytes, mech_ctr
+from pkcs11_check.raw.recipes import (
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+    gen_aes_key,
+    generate_random,
+    import_secret_key,
+    read_attributes,
+    sign_single,
+    unwrap_key,
+    verify_single,
+    wrap_key,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_UNWRAP,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKA_VERIFY,
+    CKA_WRAP,
+    CKK_AES,
+    CKM_AES_CFB8,
+    CKM_AES_CFB64,
+    CKM_AES_CFB128,
+    CKM_AES_CTR,
+    CKM_AES_CTS,
+    CKM_AES_KEY_WRAP_PKCS7,
+    CKM_AES_MAC_GENERAL,
+    CKM_AES_OFB,
+    CKM_AES_XCBC_MAC,
+    CKM_AES_XCBC_MAC_96,
+    CKO_SECRET_KEY,
+)
 
 pytestmark = pytest.mark.encrypt
 
@@ -24,140 +58,154 @@ pytestmark = pytest.mark.encrypt
 class TestAESCTR:
     """AES-CTR (Counter mode) encrypt/decrypt tests."""
 
-    def test_aes_ctr_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_ctr_roundtrip(self, p11_raw_session: Any) -> None:
         """AES-CTR encrypt/decrypt roundtrip."""
-        if not has_mechanism(p11_module, "AES_CTR"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CTR"):
             pytest.skip("CKM_AES_CTR not supported")
-        key = p11_session.generate_key(KeyType.AES, 256)
-        # CTRParams takes a nonce up to 15 bytes; counter bits are derived
-        nonce = os.urandom(12)
-        params = CTRParams(nonce)
+        key = gen_aes_key(rs.raw, rs.sh, 256)
         plaintext = b"AES-CTR test data, any length ok"
         try:
-            ct = key.encrypt(plaintext, mechanism=Mechanism.AES_CTR, mechanism_param=params)
+            ct = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CTR, plaintext,
+                mech_param=mech_ctr(CKM_AES_CTR),
+            )
             assert ct != plaintext
             assert len(ct) == len(plaintext)
-            # Must use same nonce for decryption
-            pt = key.decrypt(ct, mechanism=Mechanism.AES_CTR, mechanism_param=CTRParams(nonce))
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CTR, ct,
+                mech_param=mech_ctr(CKM_AES_CTR),
+            )
             assert pt == plaintext
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_aes_ctr_different_keys(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_ctr_different_keys(self, p11_raw_session: Any) -> None:
         """Same plaintext encrypted with different CTR keys should differ."""
-        if not has_mechanism(p11_module, "AES_CTR"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CTR"):
             pytest.skip("CKM_AES_CTR not supported")
-        key1 = p11_session.generate_key(
-            KeyType.AES, 256,
-            template={Attribute.ENCRYPT: True, Attribute.TOKEN: False},
+        key1 = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
         )
-        key2 = p11_session.generate_key(
-            KeyType.AES, 256,
-            template={Attribute.ENCRYPT: True, Attribute.TOKEN: False},
+        key2 = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
         )
-        nonce = os.urandom(12)
-        params = CTRParams(nonce)
         plaintext = b"key independence test data here!!"  # 32 bytes
         try:
-            ct1 = key1.encrypt(plaintext, mechanism=Mechanism.AES_CTR, mechanism_param=params)
-            ct2 = key2.encrypt(
-                plaintext, mechanism=Mechanism.AES_CTR, mechanism_param=CTRParams(nonce)
+            ct1 = encrypt_single(
+                rs.raw, rs.sh, key1, CKM_AES_CTR, plaintext,
+                mech_param=mech_ctr(CKM_AES_CTR),
+            )
+            ct2 = encrypt_single(
+                rs.raw, rs.sh, key2, CKM_AES_CTR, plaintext,
+                mech_param=mech_ctr(CKM_AES_CTR),
             )
             assert ct1 != ct2
-        except (MechanismInvalid, MechanismParamInvalid) as exc:
-            pytest.xfail(f"CKM_AES_CTR not operational: {exc}")
         finally:
-            key1.destroy()
-            key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
 
-    def test_aes_ctr_non_block_aligned(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_ctr_non_block_aligned(self, p11_raw_session: Any) -> None:
         """AES-CTR MUST handle non-block-aligned plaintext (stream cipher).
 
         Per OASIS spec (NIST SP 800-38A): CTR mode encrypts individual bytes
         using the encrypted counter block. Non-block-aligned data is valid.
         Modules that reject it have a bug.
         """
-        if not has_mechanism(p11_module, "AES_CTR"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CTR"):
             pytest.skip("CKM_AES_CTR not supported")
-        key = p11_session.generate_key(
-            KeyType.AES, 256,
-            template={
-                Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False,
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={
+                int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False,
             },
         )
-        nonce = os.urandom(12)
         # 17 bytes - deliberately NOT block-aligned
         plaintext = b"seventeen chars!!"[:17]
         try:
-            ct = key.encrypt(plaintext, mechanism=Mechanism.AES_CTR, mechanism_param=CTRParams(nonce))
-            assert len(ct) == 17, f"CTR output must match input length, got {len(ct)}"
-            pt = key.decrypt(ct, mechanism=Mechanism.AES_CTR, mechanism_param=CTRParams(nonce))
-            assert pt == plaintext
-        except DataLenRange:
-            from pkcs11_check.compliance import ComplianceLevel, note
-            note(
-                "Module rejects non-block-aligned AES-CTR data - violates NIST SP 800-38A",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="NIST SP 800-38A Sec.6.5",
+            ct = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CTR, plaintext,
+                mech_param=mech_ctr(CKM_AES_CTR),
             )
-            pytest.xfail("Module incorrectly requires block-aligned data for AES-CTR")
+            assert len(ct) == 17, f"CTR output must match input length, got {len(ct)}"
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CTR, ct,
+                mech_param=mech_ctr(CKM_AES_CTR),
+            )
+            assert pt == plaintext
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestAESCTS:
     """AES-CTS (CBC with Ciphertext Stealing) encrypt/decrypt tests."""
 
-    def test_aes_cts_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_cts_roundtrip(self, p11_raw_session: Any) -> None:
         """AES-CTS encrypt/decrypt roundtrip with non-block-aligned data."""
-        if not has_mechanism(p11_module, "AES_CTS"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CTS"):
             pytest.skip("CKM_AES_CTS not supported")
-        key = p11_session.generate_key(
-            KeyType.AES, 256,
-            template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={
+                int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False,
+            },
         )
-        iv = p11_session.generate_random(128)
+        iv = generate_random(rs.raw, rs.sh, 16)
         # CTS requires at least one full block; use non-block-aligned length
         plaintext = b"CTS handles non-block-aligned!" + b"\x00" * 3  # 33 bytes
         try:
-            ct = key.encrypt(plaintext, mechanism=Mechanism.AES_CTS, mechanism_param=iv)
+            ct = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CTS, plaintext,
+                mech_param=mech_bytes(CKM_AES_CTS, iv),
+            )
             assert ct != plaintext
-            pt = key.decrypt(ct, mechanism=Mechanism.AES_CTS, mechanism_param=iv)
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CTS, ct,
+                mech_param=mech_bytes(CKM_AES_CTS, iv),
+            )
             assert pt == plaintext
-        except (MechanismInvalid, DeviceError, FunctionFailed) as exc:
-            pytest.xfail(f"CKM_AES_CTS not operational: {exc}")
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_aes_cts_different_keys(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_cts_different_keys(self, p11_raw_session: Any) -> None:
         """Same plaintext encrypted with different CTS keys should differ."""
-        if not has_mechanism(p11_module, "AES_CTS"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CTS"):
             pytest.skip("CKM_AES_CTS not supported")
-        key1 = p11_session.generate_key(
-            KeyType.AES, 256,
-            template={Attribute.ENCRYPT: True, Attribute.TOKEN: False},
+        key1 = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
         )
-        key2 = p11_session.generate_key(
-            KeyType.AES, 256,
-            template={Attribute.ENCRYPT: True, Attribute.TOKEN: False},
+        key2 = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
         )
-        iv = p11_session.generate_random(128)
+        iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"CTS key independence test!!" + b"\x00" * 6  # 32 bytes
         try:
-            ct1 = key1.encrypt(plaintext, mechanism=Mechanism.AES_CTS, mechanism_param=iv)
-            ct2 = key2.encrypt(plaintext, mechanism=Mechanism.AES_CTS, mechanism_param=iv)
+            ct1 = encrypt_single(
+                rs.raw, rs.sh, key1, CKM_AES_CTS, plaintext,
+                mech_param=mech_bytes(CKM_AES_CTS, iv),
+            )
+            ct2 = encrypt_single(
+                rs.raw, rs.sh, key2, CKM_AES_CTS, plaintext,
+                mech_param=mech_bytes(CKM_AES_CTS, iv),
+            )
             assert ct1 != ct2
-        except (MechanismInvalid, DeviceError, FunctionFailed) as exc:
-            pytest.xfail(f"CKM_AES_CTS not operational: {exc}")
         finally:
-            key1.destroy()
-            key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
 
 
 _CFB_MODES = [
-    pytest.param("AES_CFB8", Mechanism.AES_CFB8, id="CFB8"),
-    pytest.param("AES_CFB64", Mechanism.AES_CFB64, id="CFB64"),
-    pytest.param("AES_CFB128", Mechanism.AES_CFB128, id="CFB128"),
+    pytest.param("AES_CFB8", CKM_AES_CFB8, id="CFB8"),
+    pytest.param("AES_CFB64", CKM_AES_CFB64, id="CFB64"),
+    pytest.param("AES_CFB128", CKM_AES_CFB128, id="CFB128"),
 ]
 
 
@@ -166,269 +214,331 @@ class TestAESCFB:
 
     @pytest.mark.parametrize("mech_name_str,mech", _CFB_MODES)
     def test_aes_cfb_roundtrip(
-        self, p11_session: Any, p11_module: Any, mech_name_str: str, mech: Mechanism
+        self, p11_raw_session: Any, mech_name_str: str, mech: Any
     ) -> None:
         """AES-CFB encrypt/decrypt roundtrip."""
-        if not has_mechanism(p11_module, mech_name_str):
+        rs = p11_raw_session
+        if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
-        key = p11_session.generate_key(KeyType.AES, 256)
-        iv = p11_session.generate_random(128)
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"CFB mode test data block!!" + b"\x00" * 6  # 32 bytes
         try:
-            ct = key.encrypt(plaintext, mechanism=mech, mechanism_param=iv)
+            ct = encrypt_single(
+                rs.raw, rs.sh, key, mech, plaintext,
+                mech_param=mech_bytes(mech, iv),
+            )
             assert ct != plaintext
-            pt = key.decrypt(ct, mechanism=mech, mechanism_param=iv)
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, mech, ct,
+                mech_param=mech_bytes(mech, iv),
+            )
             assert pt == plaintext
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
     @pytest.mark.parametrize("mech_name_str,mech", _CFB_MODES)
     def test_aes_cfb_different_keys(
-        self, p11_session: Any, p11_module: Any, mech_name_str: str, mech: Mechanism
+        self, p11_raw_session: Any, mech_name_str: str, mech: Any
     ) -> None:
         """Same plaintext encrypted with different CFB keys should differ."""
-        if not has_mechanism(p11_module, mech_name_str):
+        rs = p11_raw_session
+        if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
-        key1 = p11_session.generate_key(KeyType.AES, 256)
-        key2 = p11_session.generate_key(KeyType.AES, 256)
-        iv = p11_session.generate_random(128)
+        key1 = gen_aes_key(rs.raw, rs.sh, 256)
+        key2 = gen_aes_key(rs.raw, rs.sh, 256)
+        iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"CFB key independence!" + b"\x00" * 11  # 32 bytes
         try:
-            ct1 = key1.encrypt(plaintext, mechanism=mech, mechanism_param=iv)
-            ct2 = key2.encrypt(plaintext, mechanism=mech, mechanism_param=iv)
+            ct1 = encrypt_single(
+                rs.raw, rs.sh, key1, mech, plaintext,
+                mech_param=mech_bytes(mech, iv),
+            )
+            ct2 = encrypt_single(
+                rs.raw, rs.sh, key2, mech, plaintext,
+                mech_param=mech_bytes(mech, iv),
+            )
             assert ct1 != ct2
         finally:
-            key1.destroy()
-            key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
 
 
 class TestAESOFB:
     """AES-OFB (Output Feedback) encrypt/decrypt tests."""
 
-    def test_aes_ofb_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_ofb_roundtrip(self, p11_raw_session: Any) -> None:
         """AES-OFB encrypt/decrypt roundtrip."""
-        if not has_mechanism(p11_module, "AES_OFB"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_OFB"):
             pytest.skip("CKM_AES_OFB not supported")
-        key = p11_session.generate_key(KeyType.AES, 256)
-        iv = p11_session.generate_random(128)
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"OFB mode test data!!" + b"\x00" * 12  # 32 bytes
         try:
-            ct = key.encrypt(plaintext, mechanism=Mechanism.AES_OFB, mechanism_param=iv)
+            ct = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_OFB, plaintext,
+                mech_param=mech_bytes(CKM_AES_OFB, iv),
+            )
             assert ct != plaintext
-            pt = key.decrypt(ct, mechanism=Mechanism.AES_OFB, mechanism_param=iv)
+            pt = decrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_OFB, ct,
+                mech_param=mech_bytes(CKM_AES_OFB, iv),
+            )
             assert pt == plaintext
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_aes_ofb_different_keys(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_ofb_different_keys(self, p11_raw_session: Any) -> None:
         """Same plaintext encrypted with different OFB keys should differ."""
-        if not has_mechanism(p11_module, "AES_OFB"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_OFB"):
             pytest.skip("CKM_AES_OFB not supported")
-        key1 = p11_session.generate_key(KeyType.AES, 256)
-        key2 = p11_session.generate_key(KeyType.AES, 256)
-        iv = p11_session.generate_random(128)
+        key1 = gen_aes_key(rs.raw, rs.sh, 256)
+        key2 = gen_aes_key(rs.raw, rs.sh, 256)
+        iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"OFB key independence!" + b"\x00" * 11  # 32 bytes
         try:
-            ct1 = key1.encrypt(plaintext, mechanism=Mechanism.AES_OFB, mechanism_param=iv)
-            ct2 = key2.encrypt(plaintext, mechanism=Mechanism.AES_OFB, mechanism_param=iv)
+            ct1 = encrypt_single(
+                rs.raw, rs.sh, key1, CKM_AES_OFB, plaintext,
+                mech_param=mech_bytes(CKM_AES_OFB, iv),
+            )
+            ct2 = encrypt_single(
+                rs.raw, rs.sh, key2, CKM_AES_OFB, plaintext,
+                mech_param=mech_bytes(CKM_AES_OFB, iv),
+            )
             assert ct1 != ct2
         finally:
-            key1.destroy()
-            key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
 
 
 class TestAESMACGeneral:
     """AES-MAC-GENERAL (parameterized MAC length) sign/verify tests."""
 
-    def test_aes_mac_general_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_mac_general_sign_verify(self, p11_raw_session: Any) -> None:
         """AES-MAC-GENERAL sign and verify roundtrip."""
-        if not has_mechanism(p11_module, "AES_MAC_GENERAL"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_MAC_GENERAL"):
             pytest.skip("CKM_AES_MAC_GENERAL not supported")
-        key = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
+        key = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={
+                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+            },
         )
         data = b"MAC general test data for signing"
         mac_len = 8  # request 8-byte MAC
         try:
-            mac = key.sign(data, mechanism=Mechanism.AES_MAC_GENERAL, mechanism_param=mac_len)
+            mac = sign_single(
+                rs.raw, rs.sh, key, CKM_AES_MAC_GENERAL, data,
+                mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+            )
             assert len(mac) == mac_len
-            assert key.verify(
-                data, mac, mechanism=Mechanism.AES_MAC_GENERAL, mechanism_param=mac_len
+            assert verify_single(
+                rs.raw, rs.sh, key, CKM_AES_MAC_GENERAL, data, mac,
+                mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_aes_mac_general_different_keys(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_mac_general_different_keys(self, p11_raw_session: Any) -> None:
         """Different keys produce different MACs."""
-        if not has_mechanism(p11_module, "AES_MAC_GENERAL"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_MAC_GENERAL"):
             pytest.skip("CKM_AES_MAC_GENERAL not supported")
-        key1 = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
+        key1 = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={
+                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+            },
         )
-        key2 = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
+        key2 = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={
+                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+            },
         )
         data = b"MAC key independence test"
         mac_len = 8
         try:
-            mac1 = key1.sign(data, mechanism=Mechanism.AES_MAC_GENERAL, mechanism_param=mac_len)
-            mac2 = key2.sign(data, mechanism=Mechanism.AES_MAC_GENERAL, mechanism_param=mac_len)
+            mac1 = sign_single(
+                rs.raw, rs.sh, key1, CKM_AES_MAC_GENERAL, data,
+                mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+            )
+            mac2 = sign_single(
+                rs.raw, rs.sh, key2, CKM_AES_MAC_GENERAL, data,
+                mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
+            )
             assert mac1 != mac2
         finally:
-            key1.destroy()
-            key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
 
 
 class TestAESXCBCMAC:
     """AES-XCBC-MAC and AES-XCBC-MAC-96 sign/verify tests."""
 
-    def test_aes_xcbc_mac_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_xcbc_mac_sign_verify(self, p11_raw_session: Any) -> None:
         """AES-XCBC-MAC sign and verify roundtrip."""
-        if not has_mechanism(p11_module, "AES_XCBC_MAC"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_XCBC_MAC"):
             pytest.skip("CKM_AES_XCBC_MAC not supported")
-        key = p11_session.generate_key(
-            KeyType.AES,
-            128,  # XCBC-MAC is defined for 128-bit keys
-            template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
+        key = gen_aes_key(
+            rs.raw, rs.sh, 128,  # XCBC-MAC is defined for 128-bit keys
+            attrs={
+                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+            },
         )
         data = b"XCBC-MAC test data for signing"
         try:
-            mac = key.sign(data, mechanism=Mechanism.AES_XCBC_MAC)
+            mac = sign_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC, data)
             assert len(mac) > 0
-            assert key.verify(data, mac, mechanism=Mechanism.AES_XCBC_MAC)
+            assert verify_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC, data, mac)
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_aes_xcbc_mac_96_sign_verify(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_xcbc_mac_96_sign_verify(self, p11_raw_session: Any) -> None:
         """AES-XCBC-MAC-96 sign and verify roundtrip (truncated to 12 bytes)."""
-        if not has_mechanism(p11_module, "AES_XCBC_MAC_96"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_XCBC_MAC_96"):
             pytest.skip("CKM_AES_XCBC_MAC_96 not supported")
-        key = p11_session.generate_key(
-            KeyType.AES,
-            128,  # XCBC-MAC-96 is defined for 128-bit keys
-            template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
+        key = gen_aes_key(
+            rs.raw, rs.sh, 128,  # XCBC-MAC-96 is defined for 128-bit keys
+            attrs={
+                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+            },
         )
         data = b"XCBC-MAC-96 test data for signing"
         try:
-            mac = key.sign(data, mechanism=Mechanism.AES_XCBC_MAC_96)
+            mac = sign_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC_96, data)
             assert len(mac) == 12  # truncated to 96 bits
-            assert key.verify(data, mac, mechanism=Mechanism.AES_XCBC_MAC_96)
+            assert verify_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC_96, data, mac)
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_aes_xcbc_mac_different_keys(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_xcbc_mac_different_keys(self, p11_raw_session: Any) -> None:
         """Different keys produce different XCBC-MAC values."""
-        if not has_mechanism(p11_module, "AES_XCBC_MAC"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_XCBC_MAC"):
             pytest.skip("CKM_AES_XCBC_MAC not supported")
-        key1 = p11_session.generate_key(
-            KeyType.AES,
-            128,
-            template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
+        key1 = gen_aes_key(
+            rs.raw, rs.sh, 128,
+            attrs={
+                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+            },
         )
-        key2 = p11_session.generate_key(
-            KeyType.AES,
-            128,
-            template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
+        key2 = gen_aes_key(
+            rs.raw, rs.sh, 128,
+            attrs={
+                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+            },
         )
         data = b"XCBC key independence test"
         try:
-            mac1 = key1.sign(data, mechanism=Mechanism.AES_XCBC_MAC)
-            mac2 = key2.sign(data, mechanism=Mechanism.AES_XCBC_MAC)
+            mac1 = sign_single(rs.raw, rs.sh, key1, CKM_AES_XCBC_MAC, data)
+            mac2 = sign_single(rs.raw, rs.sh, key2, CKM_AES_XCBC_MAC, data)
             assert mac1 != mac2
         finally:
-            key1.destroy()
-            key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
 
 
 class TestAESKeyWrapPKCS7:
     """AES-KEY-WRAP-PKCS7 wrap/unwrap tests."""
 
-    def test_aes_key_wrap_pkcs7_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_aes_key_wrap_pkcs7_roundtrip(self, p11_raw_session: Any) -> None:
         """Wrap and unwrap an AES key with AES-KEY-WRAP-PKCS7, verify material matches."""
-        if not has_mechanism(p11_module, "AES_KEY_WRAP_PKCS7"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP_PKCS7"):
             pytest.skip("CKM_AES_KEY_WRAP_PKCS7 not supported")
 
-        wrap_key = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            template={
-                Attribute.WRAP: True,
-                Attribute.UNWRAP: True,
-                Attribute.EXTRACTABLE: True,
-                Attribute.SENSITIVE: False,
+        wrap_key_h = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={
+                int(CKA_WRAP): True,
+                int(CKA_UNWRAP): True,
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_SENSITIVE): False,
             },
         )
 
         # Create a target key with known material (non-block-aligned size to test PKCS7 padding)
-        key_bytes = os.urandom(24)  # 192-bit key - not a multiple of 8 bytes for wrap block
-        target = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: key_bytes,
-                Attribute.TOKEN: False,
-                Attribute.EXTRACTABLE: True,
-                Attribute.SENSITIVE: False,
-            }
+        import os
+        key_bytes = os.urandom(24)  # 192-bit key
+        target = import_secret_key(
+            rs.raw, rs.sh, CKK_AES, key_bytes,
+            attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_SENSITIVE): False,
+            },
         )
 
         try:
-            wrapped = wrap_key.wrap_key(target, mechanism=Mechanism.AES_KEY_WRAP_PKCS7)
+            wrapped = wrap_key(
+                rs.raw, rs.sh, wrap_key_h, target, CKM_AES_KEY_WRAP_PKCS7,
+            )
             assert wrapped != key_bytes
 
-            unwrapped = wrap_key.unwrap_key(
-                ObjectClass.SECRET_KEY,
-                KeyType.AES,
-                wrapped,
-                mechanism=Mechanism.AES_KEY_WRAP_PKCS7,
-                template={Attribute.EXTRACTABLE: True, Attribute.SENSITIVE: False},
+            unwrapped = unwrap_key(
+                rs.raw, rs.sh, wrap_key_h, wrapped, CKM_AES_KEY_WRAP_PKCS7,
+                attrs={
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_AES),
+                    int(CKA_VALUE_LEN): 24,
+                    int(CKA_EXTRACTABLE): True,
+                    int(CKA_SENSITIVE): False,
+                },
             )
-            assert unwrapped[Attribute.VALUE] == key_bytes
+            try:
+                okm = read_attributes(
+                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
+                )[int(CKA_VALUE)]
+                assert okm == key_bytes
+            finally:
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
-            target.destroy()
-            wrap_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, target)
+            destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
     def test_aes_key_wrap_pkcs7_different_wrapping_keys(
-        self, p11_session: Any, p11_module: Any
+        self, p11_raw_session: Any
     ) -> None:
         """Different wrapping keys produce different wrapped outputs."""
-        if not has_mechanism(p11_module, "AES_KEY_WRAP_PKCS7"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP_PKCS7"):
             pytest.skip("CKM_AES_KEY_WRAP_PKCS7 not supported")
 
-        wrap_key1 = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            template={Attribute.WRAP: True, Attribute.UNWRAP: True},
+        wrap_key1 = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_WRAP): True, int(CKA_UNWRAP): True},
         )
-        wrap_key2 = p11_session.generate_key(
-            KeyType.AES,
-            256,
-            template={Attribute.WRAP: True, Attribute.UNWRAP: True},
+        wrap_key2 = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={int(CKA_WRAP): True, int(CKA_UNWRAP): True},
         )
 
+        import os
         key_bytes = os.urandom(16)
-        target = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.AES,
-                Attribute.VALUE: key_bytes,
-                Attribute.TOKEN: False,
-                Attribute.EXTRACTABLE: True,
-                Attribute.SENSITIVE: False,
-            }
+        target = import_secret_key(
+            rs.raw, rs.sh, CKK_AES, key_bytes,
+            attrs={
+                int(CKA_TOKEN): False,
+                int(CKA_EXTRACTABLE): True,
+                int(CKA_SENSITIVE): False,
+            },
         )
 
         try:
-            wrapped1 = wrap_key1.wrap_key(target, mechanism=Mechanism.AES_KEY_WRAP_PKCS7)
-            wrapped2 = wrap_key2.wrap_key(target, mechanism=Mechanism.AES_KEY_WRAP_PKCS7)
+            wrapped1 = wrap_key(
+                rs.raw, rs.sh, wrap_key1, target, CKM_AES_KEY_WRAP_PKCS7,
+            )
+            wrapped2 = wrap_key(
+                rs.raw, rs.sh, wrap_key2, target, CKM_AES_KEY_WRAP_PKCS7,
+            )
             assert wrapped1 != wrapped2
         finally:
-            target.destroy()
-            wrap_key1.destroy()
-            wrap_key2.destroy()
+            destroy_quietly(rs.raw, rs.sh, target)
+            destroy_quietly(rs.raw, rs.sh, wrap_key1)
+            destroy_quietly(rs.raw, rs.sh, wrap_key2)
