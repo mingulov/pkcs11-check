@@ -4,12 +4,14 @@ from __future__ import annotations
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     copy_object,
+    decapsulate_key,
     decrypt_multipart,
     decrypt_single,
     derive_key,
     destroy_quietly,
     digest_multipart,
     digest_single,
+    encapsulate_key,
     encrypt_multipart,
     encrypt_single,
     find_objects,
@@ -21,6 +23,8 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     init_pin,
     init_token,
+    message_decrypt,
+    message_encrypt,
     quick_session,
     read_attributes,
     restore_operation_state,
@@ -31,9 +35,11 @@ from pkcs11_check.raw.recipes import (
     sign_multipart,
     sign_single,
     unwrap_key,
+    unwrap_key_authenticated,
     verify_multipart,
     verify_single,
     wrap_key,
+    wrap_key_authenticated,
 )
 
 
@@ -190,3 +196,21 @@ class TestRecipeSignatures:
 
     def test_seed_random_callable(self) -> None:
         assert callable(seed_random)
+
+    def test_message_encrypt_callable(self) -> None:
+        assert callable(message_encrypt)
+
+    def test_message_decrypt_callable(self) -> None:
+        assert callable(message_decrypt)
+
+    def test_encapsulate_key_callable(self) -> None:
+        assert callable(encapsulate_key)
+
+    def test_decapsulate_key_callable(self) -> None:
+        assert callable(decapsulate_key)
+
+    def test_wrap_key_authenticated_callable(self) -> None:
+        assert callable(wrap_key_authenticated)
+
+    def test_unwrap_key_authenticated_callable(self) -> None:
+        assert callable(unwrap_key_authenticated)

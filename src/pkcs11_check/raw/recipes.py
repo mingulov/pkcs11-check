@@ -727,3 +727,215 @@ def seed_random(raw: RawPKCS11, session: int, seed: bytes) -> None:
     buf = (ctypes.c_ubyte * len(seed))(*seed)
     rv = raw.C_SeedRandom(session, buf, len(seed))
     expect_rv(int(rv), CKR_OK)
+
+
+# --- v3.0 Message-based crypto ---
+
+
+def message_encrypt(
+    raw: RawPKCS11,
+    session: int,
+    key: int,
+    mechanism: CKM,
+    data: bytes,
+    *,
+    aad: bytes | None = None,
+    mech_param: PackedMechanism | None = None,
+) -> bytes:
+    """Single-message encrypt using C_MessageEncryptInit + C_EncryptMessage."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    rv = raw.C_MessageEncryptInit(session, mech.byref(), key)
+    expect_rv(int(rv), CKR_OK)
+
+    aad_buf = (ctypes.c_ubyte * len(aad))(*aad) if aad else None
+    aad_len = len(aad) if aad else 0
+    in_buf = (ctypes.c_ubyte * len(data))(*data)
+
+    # Two-call pattern: query output size first
+    out_len = CK_ULONG(0)
+    rv = raw.C_EncryptMessage(
+        session, None, 0, aad_buf, aad_len,
+        in_buf, len(data), None, byref(out_len),
+    )
+    expect_rv(int(rv), CKR_OK)
+    out_buf = (ctypes.c_ubyte * out_len.value)()
+    rv = raw.C_EncryptMessage(
+        session, None, 0, aad_buf, aad_len,
+        in_buf, len(data), out_buf, byref(out_len),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return bytes(out_buf[: out_len.value])
+
+
+def message_decrypt(
+    raw: RawPKCS11,
+    session: int,
+    key: int,
+    mechanism: CKM,
+    ciphertext: bytes,
+    *,
+    aad: bytes | None = None,
+    mech_param: PackedMechanism | None = None,
+) -> bytes:
+    """Single-message decrypt using C_MessageDecryptInit + C_DecryptMessage."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    rv = raw.C_MessageDecryptInit(session, mech.byref(), key)
+    expect_rv(int(rv), CKR_OK)
+
+    aad_buf = (ctypes.c_ubyte * len(aad))(*aad) if aad else None
+    aad_len = len(aad) if aad else 0
+    in_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
+
+    # Two-call pattern: query output size first
+    out_len = CK_ULONG(0)
+    rv = raw.C_DecryptMessage(
+        session, None, 0, aad_buf, aad_len,
+        in_buf, len(ciphertext), None, byref(out_len),
+    )
+    expect_rv(int(rv), CKR_OK)
+    out_buf = (ctypes.c_ubyte * out_len.value)()
+    rv = raw.C_DecryptMessage(
+        session, None, 0, aad_buf, aad_len,
+        in_buf, len(ciphertext), out_buf, byref(out_len),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return bytes(out_buf[: out_len.value])
+
+
+# --- v3.2 KEM operations ---
+
+
+def encapsulate_key(
+    raw: RawPKCS11,
+    session: int,
+    pub_key: int,
+    mechanism: CKM,
+    attrs: dict[int, Any] | None = None,
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> tuple[int, bytes]:
+    """C_EncapsulateKey — returns (secret_key_handle, ciphertext)."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    packed = _pack_attrs(attrs)
+    tmpl = template(*packed) if packed else None
+
+    # Two-call pattern for ciphertext output
+    ct_len = CK_ULONG(0)
+    key_handle = CK_OBJECT_HANDLE(0)
+    rv = raw.C_EncapsulateKey(
+        session, mech.byref(), pub_key,
+        tmpl.ptr if tmpl else None, tmpl.count if tmpl else 0,
+        None, byref(ct_len), byref(key_handle),
+    )
+    expect_rv(int(rv), CKR_OK)
+    ct_buf = (ctypes.c_ubyte * ct_len.value)()
+    rv = raw.C_EncapsulateKey(
+        session, mech.byref(), pub_key,
+        tmpl.ptr if tmpl else None, tmpl.count if tmpl else 0,
+        ct_buf, byref(ct_len), byref(key_handle),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(key_handle.value), bytes(ct_buf[: ct_len.value])
+
+
+def decapsulate_key(
+    raw: RawPKCS11,
+    session: int,
+    priv_key: int,
+    mechanism: CKM,
+    ciphertext: bytes,
+    attrs: dict[int, Any] | None = None,
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> int:
+    """C_DecapsulateKey — returns secret_key_handle."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    packed = _pack_attrs(attrs)
+    tmpl = template(*packed) if packed else None
+    ct_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
+    key_handle = CK_OBJECT_HANDLE(0)
+    rv = raw.C_DecapsulateKey(
+        session, mech.byref(), priv_key,
+        tmpl.ptr if tmpl else None, tmpl.count if tmpl else 0,
+        ct_buf, len(ciphertext), byref(key_handle),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(key_handle.value)
+
+
+# --- v3.2 Authenticated wrapping ---
+
+
+def wrap_key_authenticated(
+    raw: RawPKCS11,
+    session: int,
+    wrapping_key: int,
+    target_key: int,
+    mechanism: CKM,
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> tuple[bytes, bytes]:
+    """C_WrapKeyAuthenticated — returns (wrapped_key, tag).
+
+    C_WrapKeyAuthenticated signature: (session, mech_ptr, wrapping_key, target_key,
+    wrapped_ptr, wrapped_len[CK_ULONG], tag_ptr, tag_len_ptr[CK_ULONG_PTR]).
+    wrapped_len is an input size; tag_len_ptr is an output pointer.
+    Use NULL/0 for wrapped and NULL/byref for tag on first call to get sizes.
+    """
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+
+    # First call: get tag size; wrapped_len is input so pass 0 with NULL wrapped_ptr
+    tag_len = CK_ULONG(0)
+    rv = raw.C_WrapKeyAuthenticated(
+        session, mech.byref(), wrapping_key, target_key,
+        None, 0, None, byref(tag_len),
+    )
+    # CKR_BUFFER_TOO_SMALL (0x150) is expected when NULL is passed for wrapped_ptr
+    _ckr_buffer_too_small = 0x00000150
+    if int(rv) not in (CKR_OK, _ckr_buffer_too_small):
+        expect_rv(int(rv), CKR_OK)
+
+    # For wrapped key size, C_WrapKey uses the same NULL pattern — try with large buffer
+    # then retry if needed. Use C_WrapKey size as a heuristic first call.
+    wrapped_len = CK_ULONG(0)
+    rv2 = raw.C_WrapKey(
+        session, mech.byref(), wrapping_key, target_key, None, byref(wrapped_len),
+    )
+    expect_rv(int(rv2), CKR_OK)
+
+    wrapped_buf = (ctypes.c_ubyte * wrapped_len.value)()
+    tag_buf = (ctypes.c_ubyte * tag_len.value)()
+    rv = raw.C_WrapKeyAuthenticated(
+        session, mech.byref(), wrapping_key, target_key,
+        wrapped_buf, wrapped_len.value, tag_buf, byref(tag_len),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return bytes(wrapped_buf[: wrapped_len.value]), bytes(tag_buf[: tag_len.value])
+
+
+def unwrap_key_authenticated(
+    raw: RawPKCS11,
+    session: int,
+    unwrapping_key: int,
+    wrapped_key: bytes,
+    tag: bytes,
+    mechanism: CKM,
+    attrs: dict[int, Any] | None = None,
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> int:
+    """C_UnwrapKeyAuthenticated — returns key handle."""
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    packed = _pack_attrs(attrs)
+    tmpl = template(*packed) if packed else None
+    wrapped_buf = (ctypes.c_ubyte * len(wrapped_key))(*wrapped_key)
+    tag_buf = (ctypes.c_ubyte * len(tag))(*tag)
+    key_handle = CK_OBJECT_HANDLE(0)
+    rv = raw.C_UnwrapKeyAuthenticated(
+        session, mech.byref(), unwrapping_key,
+        wrapped_buf, len(wrapped_key),
+        tmpl.ptr if tmpl else None, tmpl.count if tmpl else 0,
+        tag_buf, len(tag), byref(key_handle),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(key_handle.value)
