@@ -672,3 +672,58 @@ def digest_multipart(
         rv = raw.C_DigestUpdate(session, in_buf, len(chunk))
         expect_rv(int(rv), CKR_OK)
     return _two_call_output(raw, session, "C_DigestFinal")
+
+
+# --- Operation state ---
+
+
+def save_operation_state(raw: RawPKCS11, session: int) -> bytes:
+    """C_GetOperationState — two-call output pattern."""
+    return _two_call_output(raw, session, "C_GetOperationState")
+
+
+def restore_operation_state(
+    raw: RawPKCS11,
+    session: int,
+    state: bytes,
+    encrypt_key: int = 0,
+    auth_key: int = 0,
+) -> None:
+    """C_SetOperationState — restore previously saved operation state."""
+    buf = (ctypes.c_ubyte * len(state))(*state)
+    rv = raw.C_SetOperationState(session, buf, len(state), encrypt_key, auth_key)
+    expect_rv(int(rv), CKR_OK)
+
+
+# --- Token/PIN management ---
+
+
+def init_token(raw: RawPKCS11, slot_id: int, so_pin: bytes, label: str) -> None:
+    """Initialize a token with C_InitToken. Label is padded to 32 bytes with spaces."""
+    label_bytes = label.encode().ljust(32)[:32]
+    label_buf = (ctypes.c_char * 32)(*label_bytes)
+    pin_buf = (ctypes.c_ubyte * len(so_pin))(*so_pin)
+    rv = raw.C_InitToken(slot_id, pin_buf, len(so_pin), label_buf)
+    expect_rv(int(rv), CKR_OK)
+
+
+def init_pin(raw: RawPKCS11, session: int, pin: bytes) -> None:
+    """Set user PIN with C_InitPIN."""
+    pin_buf = (ctypes.c_ubyte * len(pin))(*pin)
+    rv = raw.C_InitPIN(session, pin_buf, len(pin))
+    expect_rv(int(rv), CKR_OK)
+
+
+def set_pin(raw: RawPKCS11, session: int, old_pin: bytes, new_pin: bytes) -> None:
+    """Change PIN with C_SetPIN."""
+    old_buf = (ctypes.c_ubyte * len(old_pin))(*old_pin)
+    new_buf = (ctypes.c_ubyte * len(new_pin))(*new_pin)
+    rv = raw.C_SetPIN(session, old_buf, len(old_pin), new_buf, len(new_pin))
+    expect_rv(int(rv), CKR_OK)
+
+
+def seed_random(raw: RawPKCS11, session: int, seed: bytes) -> None:
+    """Seed the RNG with C_SeedRandom."""
+    buf = (ctypes.c_ubyte * len(seed))(*seed)
+    rv = raw.C_SeedRandom(session, buf, len(seed))
+    expect_rv(int(rv), CKR_OK)

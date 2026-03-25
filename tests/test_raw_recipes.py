@@ -19,9 +19,15 @@ from pkcs11_check.raw.recipes import (
     generate_random,
     get_object_size,
     import_secret_key,
+    init_pin,
+    init_token,
     quick_session,
     read_attributes,
+    restore_operation_state,
+    save_operation_state,
+    seed_random,
     set_attributes,
+    set_pin,
     sign_multipart,
     sign_single,
     unwrap_key,
@@ -166,3 +172,21 @@ class TestRecipeSignatures:
 
     def test_digest_multipart_callable(self) -> None:
         assert callable(digest_multipart)
+
+    def test_save_operation_state_callable(self) -> None:
+        assert callable(save_operation_state)
+
+    def test_restore_operation_state_callable(self) -> None:
+        assert callable(restore_operation_state)
+
+    def test_init_token_callable(self) -> None:
+        assert callable(init_token)
+
+    def test_init_pin_callable(self) -> None:
+        assert callable(init_pin)
+
+    def test_set_pin_callable(self) -> None:
+        assert callable(set_pin)
+
+    def test_seed_random_callable(self) -> None:
+        assert callable(seed_random)
