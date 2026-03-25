@@ -17,18 +17,25 @@ def _der_encode_length(length: int) -> bytes:
 
 def _der_decode_length(data: bytes, offset: int) -> tuple[int, int]:
     """Decode DER length at *offset*. Returns (length, next_offset)."""
+    if offset >= len(data):
+        raise ValueError("Truncated DER: expected length byte")
     first = data[offset]
     if first < 0x80:
         return first, offset + 1
     num_bytes = first & 0x7F
     if num_bytes == 0:
         raise ValueError("Indefinite-length DER is not supported")
-    length = int.from_bytes(data[offset + 1 : offset + 1 + num_bytes], "big")
-    return length, offset + 1 + num_bytes
+    end = offset + 1 + num_bytes
+    if end > len(data):
+        raise ValueError(f"Truncated DER: need {num_bytes} length bytes")
+    length = int.from_bytes(data[offset + 1 : end], "big")
+    return length, end
 
 
 def _der_encode_integer(value: int) -> bytes:
     """Encode integer as DER INTEGER (tag 0x02)."""
+    if value < 0:
+        raise ValueError(f"DER INTEGER encoding requires non-negative value, got {value}")
     if value == 0:
         body = b"\x00"
     else:
@@ -42,12 +49,18 @@ def _der_encode_integer(value: int) -> bytes:
 
 def _der_decode_integer(data: bytes, offset: int) -> tuple[int, int]:
     """Decode DER INTEGER at *offset*. Returns (value, next_offset)."""
+    if offset >= len(data):
+        raise ValueError("Truncated DER: expected INTEGER tag")
     if data[offset] != 0x02:
         raise ValueError(f"Expected DER INTEGER tag 0x02, got 0x{data[offset]:02x}")
     length, offset = _der_decode_length(data, offset + 1)
-    body = data[offset : offset + length]
-    value = int.from_bytes(body, "big")
-    return value, offset + length
+    end = offset + length
+    if end > len(data):
+        raise ValueError(
+            f"Truncated DER INTEGER: need {length} bytes, have {len(data) - offset}"
+        )
+    value = int.from_bytes(data[offset:end], "big")
+    return value, end
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +87,9 @@ def ecdsa_sig_from_der(der: bytes) -> tuple[int, int]:
     r, offset = _der_decode_integer(der, offset)
     s, offset = _der_decode_integer(der, offset)
     if offset != seq_end:
-        raise ValueError(f"Trailing data in DER SEQUENCE: {seq_end - offset} bytes")
+        raise ValueError(f"Malformed DER SEQUENCE: content size mismatch")
+    if seq_end != len(der):
+        raise ValueError(f"Trailing data after DER SEQUENCE: {len(der) - seq_end} bytes")
     return r, s
 
 
@@ -120,6 +135,10 @@ def decode_ec_point(der: bytes) -> bytes:
     if der[0] != 0x04:
         raise ValueError(f"Expected DER OCTET STRING tag 0x04, got 0x{der[0]:02x}")
     length, offset = _der_decode_length(der, 1)
+    if offset + length > len(der):
+        raise ValueError(
+            f"Truncated DER OCTET STRING: need {length} bytes, have {len(der) - offset}"
+        )
     return der[offset : offset + length]
 
 
@@ -144,9 +163,14 @@ def decode_rsa_public_key_der(der: bytes) -> tuple[bytes, bytes]:
         raise ValueError("DER data is empty")
     if der[0] != 0x30:
         raise ValueError(f"Expected DER SEQUENCE tag 0x30, got 0x{der[0]:02x}")
-    _, offset = _der_decode_length(der, 1)
+    seq_len, offset = _der_decode_length(der, 1)
+    seq_end = offset + seq_len
     n, offset = _der_decode_integer(der, offset)
     e, offset = _der_decode_integer(der, offset)
+    if offset != seq_end:
+        raise ValueError(f"Malformed DER SEQUENCE: content size mismatch")
+    if seq_end != len(der):
+        raise ValueError(f"Trailing data after DER SEQUENCE: {len(der) - seq_end} bytes")
     # Return as big-endian bytes with no leading zeros (canonical form)
     n_bytes = n.to_bytes((n.bit_length() + 7) // 8, "big")
     e_bytes = e.to_bytes((e.bit_length() + 7) // 8, "big")

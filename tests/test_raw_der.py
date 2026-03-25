@@ -242,6 +242,11 @@ class TestRsaPublicKeyEncoding:
         with pytest.raises(ValueError, match="SEQUENCE"):
             decode_rsa_public_key_der(b"\x02\x04\x01\x02\x03\x04")
 
+    def test_decode_rejects_trailing_bytes(self) -> None:
+        der = encode_rsa_public_key_der(b"\x01", b"\x03")
+        with pytest.raises(ValueError, match="Trailing"):
+            decode_rsa_public_key_der(der + b"\xff")
+
     def test_high_bit_modulus_gets_zero_padded(self) -> None:
         # Modulus starting with 0x80 — DER INTEGER must prepend 0x00
         modulus = b"\x80" + b"\x01" * 31
@@ -250,3 +255,27 @@ class TestRsaPublicKeyEncoding:
         mod2, exp2 = decode_rsa_public_key_der(der)
         assert int.from_bytes(mod2, "big") == int.from_bytes(modulus, "big")
         assert exp2 == exponent
+
+
+class TestTruncatedInput:
+    """Truncated or malformed DER raises ValueError, not IndexError."""
+
+    def test_ecdsa_truncated_sequence(self) -> None:
+        with pytest.raises(ValueError):
+            ecdsa_sig_from_der(b"\x30\x10\x02\x01")
+
+    def test_ecdsa_truncated_integer_body(self) -> None:
+        with pytest.raises(ValueError, match="Truncated"):
+            ecdsa_sig_from_der(b"\x30\x06\x02\x04\x01\x02")
+
+    def test_ec_point_truncated(self) -> None:
+        with pytest.raises(ValueError, match="Truncated"):
+            decode_ec_point(b"\x04\x20" + b"\x00" * 10)
+
+    def test_rsa_truncated(self) -> None:
+        with pytest.raises(ValueError):
+            decode_rsa_public_key_der(b"\x30\x10\x02\x01\x01")
+
+    def test_negative_integer_rejected(self) -> None:
+        with pytest.raises(ValueError, match="non-negative"):
+            ecdsa_sig_to_der(-1, 1)
