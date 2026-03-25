@@ -45,8 +45,10 @@ def _unique_label(prefix: str = "data") -> str:
 
 
 def _read_str(attrs: dict[int, Any], key: int) -> str:
-    """Decode a bytes attribute to str."""
+    """Read a string attribute (read_attributes returns str for RFC2279 attrs)."""
     v = attrs[key]
+    if isinstance(v, str):
+        return v
     return v.decode("utf-8") if isinstance(v, bytes) else str(v)
 
 

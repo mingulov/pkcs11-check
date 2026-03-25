@@ -309,6 +309,53 @@ def template(*attributes: PackedAttribute) -> TemplateArg:
     return TemplateArg(*attributes)
 
 
+def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
+    """Pack an attribute using ATTR_VALUE_TYPES for spec-correct wire type.
+
+    Uses the generated attribute type table to determine whether to pack as
+    CK_BBOOL, CK_ULONG, UTF-8 string, or raw bytes. Falls back to Python
+    type inference for unknown attributes.
+
+    For deliberate mispacking (fault tests), use attr_bool/attr_ulong/attr_bytes
+    directly.
+    """
+    from .metadata_std import ATTR_VALUE_TYPES
+
+    vtype = ATTR_VALUE_TYPES.get(int(attr_type))
+
+    if vtype == "bool":
+        return attr_bool(attr_type, bool(value))
+    elif vtype == "ulong":
+        return attr_ulong(attr_type, int(value))
+    elif vtype == "str":
+        if isinstance(value, bytes):
+            return attr_bytes(attr_type, value)
+        return attr_bytes(attr_type, str(value).encode("utf-8"))
+    elif vtype is not None:
+        # bytes, date, template, ulong_array, biginteger -> raw bytes
+        if isinstance(value, str):
+            return attr_bytes(attr_type, value.encode("utf-8"))
+        if not isinstance(value, (bytes, bytearray)):
+            return attr_bytes(attr_type, bytes(value))
+        return attr_bytes(attr_type, value)
+
+    # Unknown attribute: fall back to Python type inference
+    if isinstance(value, bool):
+        return attr_bool(attr_type, value)
+    elif isinstance(value, int):
+        return attr_ulong(attr_type, value)
+    elif isinstance(value, str):
+        return attr_bytes(attr_type, value.encode("utf-8"))
+    elif isinstance(value, (bytes, bytearray)):
+        return attr_bytes(attr_type, value)
+    raise TypeError(f"Cannot pack {type(value)} for attr {attr_type:#x}")
+
+
+def template_from_dict(attrs: dict[int, Any]) -> TemplateArg:
+    """Build a template from {CKA_*: value} dict with spec-correct type packing."""
+    return template(*[attr_auto(k, v) for k, v in attrs.items()])
+
+
 def mech_simple(mechanism_type: CKM) -> PackedMechanism:
     pointer_arg = PointerArg.null(origin="mech_simple")
     length_arg = LengthArg.explicit_value(0)
