@@ -24,7 +24,7 @@ Additionally, `RawPKCS11._call()` already returns `int(func(*args))`, making all
 downstream `int(rv)` wrapping redundant. ctypes `.value` accessors on simple types
 (`c_ulong`, `c_ubyte`) also return plain Python `int`.
 
-**~3,770 unnecessary `int()` calls** exist across 173 files.
+**~4,500 unnecessary `int()` calls** exist across 175+ files.
 
 ## Changes
 
@@ -77,10 +77,12 @@ ATTR_VALUE_TYPES: dict[int, str] = {
 - `int(get_function_list(...))` -> `get_function_list(...)`
 - **Keep:** `return int(func(*args))` in `_call()` (line 179)
 
-#### pack.py (~2 removals)
+#### pack.py (~1 removal, 1 kept)
 
 - `ATTR_VALUE_TYPES.get(int(attr_type))` -> `ATTR_VALUE_TYPES.get(attr_type)`
-- `attr_ulong(attr_type, int(value))` -> `attr_ulong(attr_type, value)`
+- **Keep:** `attr_ulong(attr_type, int(value))` in `attr_auto()` -- `value` is `Any`
+  (from `template_from_dict(attrs: dict[int, Any])`), not necessarily a CK_CONSTANT.
+  The `int()` here coerces arbitrary values for `ctypes.c_ulong()`, which is intentional.
 
 #### inspect.py (~2 removals)
 
@@ -91,7 +93,7 @@ ATTR_VALUE_TYPES: dict[int, str] = {
 
 `__getnewargs__` uses `int(self)` for serialization protocol -- keep as-is.
 
-### 2. Remove `int()` in testcases/ (~3,600 removals)
+### 2. Remove `int()` in testcases/ and other source files (~4,200 removals)
 
 Same mechanical patterns as raw/:
 
@@ -109,8 +111,13 @@ Same mechanical patterns as raw/:
 - `int.from_bytes(...)` -- unrelated
 - `int()` inside subprocess script strings -- different context, needs manual review
 
-**Includes:** `_error_tuples.py`, all `conftest.py` files, `ckr/` subdirectory,
-`wycheproof/`, `x509/`.
+**Includes:**
+- `testcases/`: `_error_tuples.py`, all `conftest.py` files, `ckr/` subdirectory,
+  `wycheproof/`, `x509/`
+- `fixtures.py` (~2 occurrences: `int(CKF_*)`, `int(CKU_USER)`)
+- `raw_fixtures.py` (~8 occurrences: `int(slot)`, `int(flags)`, `int(CKU_USER)`,
+  `int(raw.C_GetMechanismList(...))`, `int(count.value)`, `int(mechs[i])`)
+- `cli/test_cmd.py`, `cli/info_cmd.py` (~2 occurrences)
 
 ### 3. Split pack.py mechanism packers
 
@@ -127,8 +134,12 @@ building blocks, not mechanism-specific parameter struct builders.
 **Import structure:**
 - `pack_mechanisms.py` imports from `pack.py`: `PointerArg`, `LengthArg`,
   `PackedMechanism`, `_mech_struct`, `_pack_bytes`
-- `__init__.py` re-exports from both -- no API change for consumers
-- All existing import paths continue to work
+- `pack.py` re-exports all public names from `pack_mechanisms.py` at the bottom
+  (e.g., `from .pack_mechanisms import mech_gcm, mech_pss, ...`). This is required
+  because 30+ files import directly from `pkcs11_check.raw.pack`, not from
+  `pkcs11_check.raw`. The re-exports in `pack.py` ensure all existing import paths
+  continue to work without modification.
+- `__init__.py` also re-exports from both for `from pkcs11_check.raw import mech_gcm`
 
 ### 4. Tighten close_session_quietly exception handling
 
@@ -169,8 +180,11 @@ failures would mask the original test result.
    `bash local-builds/test.sh softhsm2`
 3. **After pack.py split:** `uv run python -m pytest tests/` then
    `bash local-builds/test.sh softhsm2 -m smoke`
-4. **Type check:** `uv run mypy src/` after each layer
-5. **Lint:** `uv run ruff check src/ tests/` after each layer
+4. **v3.0+ verification:** `bash local-builds/test.sh kryoptic -m smoke` --
+   Kryoptic exercises v3.0+ interface paths (C_GetInterface, version negotiation)
+   that SoftHSM2 does not, validating the api.py int() removals
+5. **Type check:** `uv run mypy src/` after each layer
+6. **Lint:** `uv run ruff check src/ tests/` after each layer
 
 ## Out of Scope
 
