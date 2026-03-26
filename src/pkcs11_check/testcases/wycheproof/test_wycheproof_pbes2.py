@@ -47,11 +47,11 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 pytestmark = pytest.mark.wycheproof
 
 _PRF_MAP: dict[str, int] = {
-    "hmacsha1": int(CKP_PKCS5_PBKD2_HMAC_SHA1),
-    "hmacsha224": int(CKP_PKCS5_PBKD2_HMAC_SHA224),
-    "hmacsha256": int(CKP_PKCS5_PBKD2_HMAC_SHA256),
-    "hmacsha384": int(CKP_PKCS5_PBKD2_HMAC_SHA384),
-    "hmacsha512": int(CKP_PKCS5_PBKD2_HMAC_SHA512),
+    "hmacsha1": CKP_PKCS5_PBKD2_HMAC_SHA1,
+    "hmacsha224": CKP_PKCS5_PBKD2_HMAC_SHA224,
+    "hmacsha256": CKP_PKCS5_PBKD2_HMAC_SHA256,
+    "hmacsha384": CKP_PKCS5_PBKD2_HMAC_SHA384,
+    "hmacsha512": CKP_PKCS5_PBKD2_HMAC_SHA512,
 }
 
 _PBES2_FILES = [
@@ -102,14 +102,12 @@ def _generate_key_with_mech(
     tmpl = template_from_dict(attrs)
     key = CK_OBJECT_HANDLE(0)
     rv = raw.C_GenerateKey(session, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
-    expect_rv(int(rv), CKR_OK)
-    return int(key.value)
+    expect_rv(rv, CKR_OK)
+    return key.value
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_PBES2_VECTORS, ids=[v[0] for v in _ALL_PBES2_VECTORS])
-def test_pbes2_decrypt(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """PBES2 decrypt from Wycheproof vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("PKCS5_PBKD2"):
@@ -138,12 +136,12 @@ def test_pbes2_decrypt(
             rs.sh,
             pbkdf2_param,
             {
-                int(CKA_KEY_TYPE): int(CKK_AES),
-                int(CKA_VALUE_LEN): vec["_key_bits"] // 8,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
-                int(CKA_DECRYPT): True,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_VALUE_LEN: vec["_key_bits"] // 8,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+                CKA_DECRYPT: True,
             },
         )
     except AssertionError as exc:

@@ -49,10 +49,10 @@ _HKDF_FILES = [
 ]
 
 _SHA_HASH_MECHS: dict[str, int] = {
-    "SHA-1": int(CKM_SHA_1),
-    "SHA-256": int(CKM_SHA256),
-    "SHA-384": int(CKM_SHA384),
-    "SHA-512": int(CKM_SHA512),
+    "SHA-1": CKM_SHA_1,
+    "SHA-256": CKM_SHA256,
+    "SHA-384": CKM_SHA384,
+    "SHA-512": CKM_SHA512,
 }
 
 
@@ -103,13 +103,13 @@ def test_hkdf(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_VALUE): ikm,
-                int(CKA_VALUE_LEN): len(ikm),
-                int(CKA_DERIVE): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE: ikm,
+                CKA_VALUE_LEN: len(ikm),
+                CKA_DERIVE: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except AssertionError:
@@ -134,16 +134,16 @@ def test_hkdf(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             ikm_key,
             CKM_HKDF_DERIVE,
             attrs={
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_VALUE_LEN): okm_size,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: okm_size,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             },
             mech_param=hkdf_param,
         )
-        attrs = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])
-        okm = attrs[int(CKA_VALUE)]
+        attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+        okm = attrs[CKA_VALUE]
         assert isinstance(okm, bytes)
         if result == "valid":
             assert okm == okm_expected

@@ -139,13 +139,13 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-                int(CKA_KEY_TYPE): int(CKK_EC),
-                int(CKA_EC_PARAMS): oid,
-                int(CKA_VALUE): private_scalar,
-                int(CKA_DERIVE): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_CLASS: CKO_PRIVATE_KEY,
+                CKA_KEY_TYPE: CKK_EC,
+                CKA_EC_PARAMS: oid,
+                CKA_VALUE: private_scalar,
+                CKA_DERIVE: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except AssertionError:
@@ -156,7 +156,7 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     # Derive shared secret
     # ECDH1_DERIVE params: (kdf, shared_data, public_data)
     # KDF.NULL means raw ECDH (no KDF applied to output)
-    ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=int(CKD_NULL), public_data=public_point)
+    ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=public_point)
     try:
         derived_key = derive_key(
             rs.raw,
@@ -164,17 +164,17 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             priv_key,
             CKM_ECDH1_DERIVE,
             attrs={
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_VALUE_LEN): key_bits // 8,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: key_bits // 8,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             },
             mech_param=ecdh_param,
         )
         # Extract the derived key value
-        attrs = read_attributes(rs.raw, rs.sh, derived_key, [int(CKA_VALUE)])
-        shared = attrs[int(CKA_VALUE)]
+        attrs = read_attributes(rs.raw, rs.sh, derived_key, [CKA_VALUE])
+        shared = attrs[CKA_VALUE]
         assert isinstance(shared, bytes)
         if result == "valid":
             assert shared == shared_expected, f"ECDH shared secret mismatch for {vec_id}"

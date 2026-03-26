@@ -53,19 +53,19 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map Wycheproof sha names to PKCS#11 hash mechanisms and MGFs for OAEP params
 _SHA_HASH_MECHS: dict[str, int] = {
-    "SHA-1": int(CKM_SHA_1),
-    "SHA-224": int(CKM_SHA224),
-    "SHA-256": int(CKM_SHA256),
-    "SHA-384": int(CKM_SHA384),
-    "SHA-512": int(CKM_SHA512),
+    "SHA-1": CKM_SHA_1,
+    "SHA-224": CKM_SHA224,
+    "SHA-256": CKM_SHA256,
+    "SHA-384": CKM_SHA384,
+    "SHA-512": CKM_SHA512,
 }
 
 _SHA_MGFS: dict[str, int] = {
-    "SHA-1": int(CKG_MGF1_SHA1),
-    "SHA-224": int(CKG_MGF1_SHA224),
-    "SHA-256": int(CKG_MGF1_SHA256),
-    "SHA-384": int(CKG_MGF1_SHA384),
-    "SHA-512": int(CKG_MGF1_SHA512),
+    "SHA-1": CKG_MGF1_SHA1,
+    "SHA-224": CKG_MGF1_SHA224,
+    "SHA-256": CKG_MGF1_SHA256,
+    "SHA-384": CKG_MGF1_SHA384,
+    "SHA-512": CKG_MGF1_SHA512,
 }
 
 # RSA-OAEP files - same hash and mixed hash/MGF combinations
@@ -171,19 +171,19 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-                int(CKA_KEY_TYPE): int(CKK_RSA),
-                int(CKA_MODULUS): modulus,
-                int(CKA_PUBLIC_EXPONENT): pub_exponent,
-                int(CKA_PRIVATE_EXPONENT): priv_exponent,
-                int(CKA_PRIME_1): prime1,
-                int(CKA_PRIME_2): prime2,
-                int(CKA_EXPONENT_1): exp1,
-                int(CKA_EXPONENT_2): exp2,
-                int(CKA_COEFFICIENT): coefficient,
-                int(CKA_TOKEN): False,
-                int(CKA_DECRYPT): True,
-                int(CKA_SENSITIVE): False,
+                CKA_CLASS: CKO_PRIVATE_KEY,
+                CKA_KEY_TYPE: CKK_RSA,
+                CKA_MODULUS: modulus,
+                CKA_PUBLIC_EXPONENT: pub_exponent,
+                CKA_PRIVATE_EXPONENT: priv_exponent,
+                CKA_PRIME_1: prime1,
+                CKA_PRIME_2: prime2,
+                CKA_EXPONENT_1: exp1,
+                CKA_EXPONENT_2: exp2,
+                CKA_COEFFICIENT: coefficient,
+                CKA_TOKEN: False,
+                CKA_DECRYPT: True,
+                CKA_SENSITIVE: False,
             },
         )
     except AssertionError:

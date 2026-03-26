@@ -42,9 +42,9 @@ _MLDSA_FILES = [
 ]
 
 _PARAM_MAP: dict[int, int] = {
-    44: int(CKP_ML_DSA_44),
-    65: int(CKP_ML_DSA_65),
-    87: int(CKP_ML_DSA_87),
+    44: CKP_ML_DSA_44,
+    65: CKP_ML_DSA_65,
+    87: CKP_ML_DSA_87,
 }
 
 
@@ -91,14 +91,14 @@ def test_mldsa_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
     param_set = _PARAM_MAP.get(vec["_param_set"])
 
     attrs: dict[int, Any] = {
-        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-        int(CKA_KEY_TYPE): int(CKK_ML_DSA),
-        int(CKA_VALUE): pk_bytes,
-        int(CKA_TOKEN): False,
-        int(CKA_VERIFY): True,
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: CKK_ML_DSA,
+        CKA_VALUE: pk_bytes,
+        CKA_TOKEN: False,
+        CKA_VERIFY: True,
     }
     if param_set is not None:
-        attrs[int(CKA_PARAMETER_SET)] = param_set
+        attrs[CKA_PARAMETER_SET] = param_set
 
     try:
         pub_key = create_object(rs.raw, rs.sh, attrs)

@@ -54,20 +54,20 @@ pytestmark = pytest.mark.wycheproof
 
 # Hash algorithm names -> PKCS#11 mechanisms
 _SHA_TO_MECH: dict[str, int] = {
-    "SHA-1": int(CKM_SHA1_RSA_PKCS),
-    "SHA-224": int(CKM_SHA224_RSA_PKCS),
-    "SHA-256": int(CKM_SHA256_RSA_PKCS),
-    "SHA-384": int(CKM_SHA384_RSA_PKCS),
-    "SHA-512": int(CKM_SHA512_RSA_PKCS),
+    "SHA-1": CKM_SHA1_RSA_PKCS,
+    "SHA-224": CKM_SHA224_RSA_PKCS,
+    "SHA-256": CKM_SHA256_RSA_PKCS,
+    "SHA-384": CKM_SHA384_RSA_PKCS,
+    "SHA-512": CKM_SHA512_RSA_PKCS,
 }
 
 # Mechanism display names for availability checking
 _MECH_DISPLAY: dict[int, str] = {
-    int(CKM_SHA1_RSA_PKCS): "SHA1_RSA_PKCS",
-    int(CKM_SHA224_RSA_PKCS): "SHA224_RSA_PKCS",
-    int(CKM_SHA256_RSA_PKCS): "SHA256_RSA_PKCS",
-    int(CKM_SHA384_RSA_PKCS): "SHA384_RSA_PKCS",
-    int(CKM_SHA512_RSA_PKCS): "SHA512_RSA_PKCS",
+    CKM_SHA1_RSA_PKCS: "SHA1_RSA_PKCS",
+    CKM_SHA224_RSA_PKCS: "SHA224_RSA_PKCS",
+    CKM_SHA256_RSA_PKCS: "SHA256_RSA_PKCS",
+    CKM_SHA384_RSA_PKCS: "SHA384_RSA_PKCS",
+    CKM_SHA512_RSA_PKCS: "SHA512_RSA_PKCS",
 }
 
 # Only test key sizes >=2048; 1024 and 1536 are rejected by many modules
@@ -122,9 +122,7 @@ _ALL_SIGGEN_VECTORS = _load_siggen_vectors()
     _ALL_SIGGEN_VECTORS,
     ids=[v[0] for v in _ALL_SIGGEN_VECTORS],
 )
-def test_rsa_pkcs1_siggen(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_rsa_pkcs1_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA PKCS#1 v1.5 signature generation from Wycheproof vectors."""
     rs = p11_raw_session
     mechanism: int = vec["_mechanism"]
@@ -153,20 +151,20 @@ def test_rsa_pkcs1_siggen(
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_RSA),
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SIGN): True,
-                    int(CKA_MODULUS): _i2b(pub_nums.n),
-                    int(CKA_PUBLIC_EXPONENT): _i2b(pub_nums.e),
-                    int(CKA_PRIVATE_EXPONENT): _i2b(nums.d),
-                    int(CKA_PRIME_1): _i2b(nums.p),
-                    int(CKA_PRIME_2): _i2b(nums.q),
-                    int(CKA_EXPONENT_1): _i2b(nums.dmp1),
-                    int(CKA_EXPONENT_2): _i2b(nums.dmq1),
-                    int(CKA_COEFFICIENT): _i2b(nums.iqmp),
+                    CKA_CLASS: CKO_PRIVATE_KEY,
+                    CKA_KEY_TYPE: CKK_RSA,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SIGN: True,
+                    CKA_MODULUS: _i2b(pub_nums.n),
+                    CKA_PUBLIC_EXPONENT: _i2b(pub_nums.e),
+                    CKA_PRIVATE_EXPONENT: _i2b(nums.d),
+                    CKA_PRIME_1: _i2b(nums.p),
+                    CKA_PRIME_2: _i2b(nums.q),
+                    CKA_EXPONENT_1: _i2b(nums.dmp1),
+                    CKA_EXPONENT_2: _i2b(nums.dmq1),
+                    CKA_COEFFICIENT: _i2b(nums.iqmp),
                 },
             )
         except AssertionError as e:

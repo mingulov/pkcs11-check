@@ -35,9 +35,9 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc, pytest.mark.requires_v32]
 
 _PARAM_SETS: dict[int, int] = {
-    512: int(CKP_ML_KEM_512),
-    768: int(CKP_ML_KEM_768),
-    1024: int(CKP_ML_KEM_1024),
+    512: CKP_ML_KEM_512,
+    768: CKP_ML_KEM_768,
+    1024: CKP_ML_KEM_1024,
 }
 
 # Only semi_expanded_decaps vectors have dk (decapsulation key) directly.
@@ -87,9 +87,7 @@ _ALL_MLKEM_VECTORS = _load_all_mlkem_vectors()
     _ALL_MLKEM_VECTORS,
     ids=[v[0] for v in _ALL_MLKEM_VECTORS],
 )
-def test_mlkem_decaps(
-    vec_id: str, vec: dict[str, Any], p11_raw_session: Any
-) -> None:
+def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) -> None:
     """ML-KEM decapsulation from Wycheproof vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("ML_KEM"):
@@ -111,12 +109,12 @@ def test_mlkem_decaps(
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-                int(CKA_KEY_TYPE): int(CKK_ML_KEM),
-                int(CKA_VALUE): private_key_bytes,
-                int(CKA_PARAMETER_SET): param_set,
-                int(CKA_DECAPSULATE): True,
-                int(CKA_TOKEN): False,
+                CKA_CLASS: CKO_PRIVATE_KEY,
+                CKA_KEY_TYPE: CKK_ML_KEM,
+                CKA_VALUE: private_key_bytes,
+                CKA_PARAMETER_SET: param_set,
+                CKA_DECAPSULATE: True,
+                CKA_TOKEN: False,
             },
         )
     except (AssertionError, Exception):
@@ -132,7 +130,7 @@ def test_mlkem_decaps(
             CKM_ML_KEM,
             ciphertext,
             attrs={
-                int(CKA_KEY_TYPE): int(CKK_AES),
+                CKA_KEY_TYPE: CKK_AES,
             },
         )
         # ML-KEM implicit rejection: even invalid ciphertexts produce a key

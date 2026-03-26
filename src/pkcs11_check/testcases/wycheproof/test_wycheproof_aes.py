@@ -83,10 +83,10 @@ def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except AssertionError:
@@ -139,10 +139,10 @@ def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except AssertionError:
@@ -156,9 +156,9 @@ def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
             CKK_AES,
             msg,
             attrs={
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except AssertionError:
@@ -211,10 +211,10 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except AssertionError:
@@ -224,12 +224,12 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     # For non-aligned sizes, we use GENERIC_SECRET instead of AES
     key_type = CKK_AES if len(msg) in (16, 24, 32) else CKK_GENERIC_SECRET
     extra_attrs: dict[int, Any] = {
-        int(CKA_EXTRACTABLE): True,
-        int(CKA_TOKEN): False,
-        int(CKA_SENSITIVE): False,
+        CKA_EXTRACTABLE: True,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
     }
     if key_type == CKK_GENERIC_SECRET:
-        extra_attrs[int(CKA_VALUE_LEN)] = len(msg)
+        extra_attrs[CKA_VALUE_LEN] = len(msg)
     try:
         target_key = import_secret_key(
             rs.raw,
@@ -292,10 +292,10 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except AssertionError:
@@ -360,10 +360,10 @@ def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except AssertionError:
@@ -421,10 +421,10 @@ def test_aes_xts(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             CKK_AES_XTS,
             key_bytes,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except (AssertionError, AttributeError):

@@ -63,52 +63,52 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map hash names to PKCS#11 mechanisms and hash mechanisms for PSS params
 _SHA_MECHANISMS: dict[str, int] = {
-    "SHA-1": int(CKM_SHA1_RSA_PKCS_PSS),
-    "SHA-224": int(CKM_SHA224_RSA_PKCS_PSS),
-    "SHA-256": int(CKM_SHA256_RSA_PKCS_PSS),
-    "SHA-384": int(CKM_SHA384_RSA_PKCS_PSS),
-    "SHA-512": int(CKM_SHA512_RSA_PKCS_PSS),
-    "SHA3-224": int(CKM_SHA3_224_RSA_PKCS_PSS),
-    "SHA3-256": int(CKM_SHA3_256_RSA_PKCS_PSS),
-    "SHA3-384": int(CKM_SHA3_384_RSA_PKCS_PSS),
-    "SHA3-512": int(CKM_SHA3_512_RSA_PKCS_PSS),
+    "SHA-1": CKM_SHA1_RSA_PKCS_PSS,
+    "SHA-224": CKM_SHA224_RSA_PKCS_PSS,
+    "SHA-256": CKM_SHA256_RSA_PKCS_PSS,
+    "SHA-384": CKM_SHA384_RSA_PKCS_PSS,
+    "SHA-512": CKM_SHA512_RSA_PKCS_PSS,
+    "SHA3-224": CKM_SHA3_224_RSA_PKCS_PSS,
+    "SHA3-256": CKM_SHA3_256_RSA_PKCS_PSS,
+    "SHA3-384": CKM_SHA3_384_RSA_PKCS_PSS,
+    "SHA3-512": CKM_SHA3_512_RSA_PKCS_PSS,
 }
 
 _SHA_HASH_MECHS: dict[str, int] = {
-    "SHA-1": int(CKM_SHA_1),
-    "SHA-224": int(CKM_SHA224),
-    "SHA-256": int(CKM_SHA256),
-    "SHA-384": int(CKM_SHA384),
-    "SHA-512": int(CKM_SHA512),
-    "SHA3-224": int(CKM_SHA3_224),
-    "SHA3-256": int(CKM_SHA3_256),
-    "SHA3-384": int(CKM_SHA3_384),
-    "SHA3-512": int(CKM_SHA3_512),
+    "SHA-1": CKM_SHA_1,
+    "SHA-224": CKM_SHA224,
+    "SHA-256": CKM_SHA256,
+    "SHA-384": CKM_SHA384,
+    "SHA-512": CKM_SHA512,
+    "SHA3-224": CKM_SHA3_224,
+    "SHA3-256": CKM_SHA3_256,
+    "SHA3-384": CKM_SHA3_384,
+    "SHA3-512": CKM_SHA3_512,
 }
 
 _SHA_MGFS: dict[str, int] = {
-    "SHA-1": int(CKG_MGF1_SHA1),
-    "SHA-224": int(CKG_MGF1_SHA224),
-    "SHA-256": int(CKG_MGF1_SHA256),
-    "SHA-384": int(CKG_MGF1_SHA384),
-    "SHA-512": int(CKG_MGF1_SHA512),
-    "SHA3-224": int(CKG_MGF1_SHA3_224),
-    "SHA3-256": int(CKG_MGF1_SHA3_256),
-    "SHA3-384": int(CKG_MGF1_SHA3_384),
-    "SHA3-512": int(CKG_MGF1_SHA3_512),
+    "SHA-1": CKG_MGF1_SHA1,
+    "SHA-224": CKG_MGF1_SHA224,
+    "SHA-256": CKG_MGF1_SHA256,
+    "SHA-384": CKG_MGF1_SHA384,
+    "SHA-512": CKG_MGF1_SHA512,
+    "SHA3-224": CKG_MGF1_SHA3_224,
+    "SHA3-256": CKG_MGF1_SHA3_256,
+    "SHA3-384": CKG_MGF1_SHA3_384,
+    "SHA3-512": CKG_MGF1_SHA3_512,
 }
 
 # Mechanism display names for availability checking
 _MECH_DISPLAY: dict[int, str] = {
-    int(CKM_SHA1_RSA_PKCS_PSS): "SHA1_RSA_PKCS_PSS",
-    int(CKM_SHA224_RSA_PKCS_PSS): "SHA224_RSA_PKCS_PSS",
-    int(CKM_SHA256_RSA_PKCS_PSS): "SHA256_RSA_PKCS_PSS",
-    int(CKM_SHA384_RSA_PKCS_PSS): "SHA384_RSA_PKCS_PSS",
-    int(CKM_SHA512_RSA_PKCS_PSS): "SHA512_RSA_PKCS_PSS",
-    int(CKM_SHA3_224_RSA_PKCS_PSS): "SHA3_224_RSA_PKCS_PSS",
-    int(CKM_SHA3_256_RSA_PKCS_PSS): "SHA3_256_RSA_PKCS_PSS",
-    int(CKM_SHA3_384_RSA_PKCS_PSS): "SHA3_384_RSA_PKCS_PSS",
-    int(CKM_SHA3_512_RSA_PKCS_PSS): "SHA3_512_RSA_PKCS_PSS",
+    CKM_SHA1_RSA_PKCS_PSS: "SHA1_RSA_PKCS_PSS",
+    CKM_SHA224_RSA_PKCS_PSS: "SHA224_RSA_PKCS_PSS",
+    CKM_SHA256_RSA_PKCS_PSS: "SHA256_RSA_PKCS_PSS",
+    CKM_SHA384_RSA_PKCS_PSS: "SHA384_RSA_PKCS_PSS",
+    CKM_SHA512_RSA_PKCS_PSS: "SHA512_RSA_PKCS_PSS",
+    CKM_SHA3_224_RSA_PKCS_PSS: "SHA3_224_RSA_PKCS_PSS",
+    CKM_SHA3_256_RSA_PKCS_PSS: "SHA3_256_RSA_PKCS_PSS",
+    CKM_SHA3_384_RSA_PKCS_PSS: "SHA3_384_RSA_PKCS_PSS",
+    CKM_SHA3_512_RSA_PKCS_PSS: "SHA3_512_RSA_PKCS_PSS",
 }
 
 # RSA-PSS vector files - standard and parameterized variants that map to
@@ -116,8 +116,7 @@ _MECH_DISPLAY: dict[int, str] = {
 _PSS_FILES = sorted(
     f.name
     for f in WYCHEPROOF_DIR.glob("rsa_pss_*_test.json")
-    if f.exists()
-    and "shake" not in f.name
+    if f.exists() and "shake" not in f.name
 )
 
 
@@ -133,9 +132,7 @@ def _load_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
         for group in data["testGroups"]:
             sha = group.get("sha", "")
             mgf_sha = group.get("mgfSha", sha)
-            mechanism = (
-                _SHA_MECHANISMS.get(sha) if sha == mgf_sha else int(CKM_RSA_PKCS_PSS)
-            )
+            mechanism = _SHA_MECHANISMS.get(sha) if sha == mgf_sha else CKM_RSA_PKCS_PSS
             hash_mech = _SHA_HASH_MECHS.get(sha)
             mgf = _SHA_MGFS.get(mgf_sha)
             if mechanism is None or hash_mech is None or mgf is None:
@@ -190,12 +187,12 @@ def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                int(CKA_KEY_TYPE): int(CKK_RSA),
-                int(CKA_MODULUS): modulus,
-                int(CKA_PUBLIC_EXPONENT): exponent,
-                int(CKA_TOKEN): False,
-                int(CKA_VERIFY): True,
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_RSA,
+                CKA_MODULUS: modulus,
+                CKA_PUBLIC_EXPONENT: exponent,
+                CKA_TOKEN: False,
+                CKA_VERIFY: True,
             },
         )
     except AssertionError:

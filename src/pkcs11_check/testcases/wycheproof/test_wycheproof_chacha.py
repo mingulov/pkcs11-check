@@ -57,9 +57,7 @@ _CHACHA_VECTORS = _load_chacha_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _CHACHA_VECTORS, ids=[v[0] for v in _CHACHA_VECTORS])
-def test_chacha20_poly1305(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ChaCha20-Poly1305 AEAD from Wycheproof vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("CHACHA20_POLY1305"):
@@ -78,13 +76,13 @@ def test_chacha20_poly1305(
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_CHACHA20),
-                int(CKA_VALUE): key_bytes,
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_CHACHA20,
+                CKA_VALUE: key_bytes,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except (AssertionError, AttributeError):

@@ -42,27 +42,27 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Mechanism display names for availability checking
 _MECH_DISPLAY: dict[int, str] = {
-    int(CKM_SHA224_RSA_PKCS): "SHA224_RSA_PKCS",
-    int(CKM_SHA256_RSA_PKCS): "SHA256_RSA_PKCS",
-    int(CKM_SHA384_RSA_PKCS): "SHA384_RSA_PKCS",
-    int(CKM_SHA512_RSA_PKCS): "SHA512_RSA_PKCS",
-    int(CKM_SHA3_224_RSA_PKCS): "SHA3_224_RSA_PKCS",
-    int(CKM_SHA3_256_RSA_PKCS): "SHA3_256_RSA_PKCS",
-    int(CKM_SHA3_384_RSA_PKCS): "SHA3_384_RSA_PKCS",
-    int(CKM_SHA3_512_RSA_PKCS): "SHA3_512_RSA_PKCS",
+    CKM_SHA224_RSA_PKCS: "SHA224_RSA_PKCS",
+    CKM_SHA256_RSA_PKCS: "SHA256_RSA_PKCS",
+    CKM_SHA384_RSA_PKCS: "SHA384_RSA_PKCS",
+    CKM_SHA512_RSA_PKCS: "SHA512_RSA_PKCS",
+    CKM_SHA3_224_RSA_PKCS: "SHA3_224_RSA_PKCS",
+    CKM_SHA3_256_RSA_PKCS: "SHA3_256_RSA_PKCS",
+    CKM_SHA3_384_RSA_PKCS: "SHA3_384_RSA_PKCS",
+    CKM_SHA3_512_RSA_PKCS: "SHA3_512_RSA_PKCS",
 }
 
 # Map hash names to PKCS#11 mechanisms
 _RSA_HASH_MECHANISMS: dict[str, int] = {
-    "SHA-224": int(CKM_SHA224_RSA_PKCS),
-    "SHA-256": int(CKM_SHA256_RSA_PKCS),
-    "SHA-384": int(CKM_SHA384_RSA_PKCS),
-    "SHA-512": int(CKM_SHA512_RSA_PKCS),
+    "SHA-224": CKM_SHA224_RSA_PKCS,
+    "SHA-256": CKM_SHA256_RSA_PKCS,
+    "SHA-384": CKM_SHA384_RSA_PKCS,
+    "SHA-512": CKM_SHA512_RSA_PKCS,
     # SHA-3 (PKCS#11 v3.0+)
-    "SHA3-224": int(CKM_SHA3_224_RSA_PKCS),
-    "SHA3-256": int(CKM_SHA3_256_RSA_PKCS),
-    "SHA3-384": int(CKM_SHA3_384_RSA_PKCS),
-    "SHA3-512": int(CKM_SHA3_512_RSA_PKCS),
+    "SHA3-224": CKM_SHA3_224_RSA_PKCS,
+    "SHA3-256": CKM_SHA3_256_RSA_PKCS,
+    "SHA3-384": CKM_SHA3_384_RSA_PKCS,
+    "SHA3-512": CKM_SHA3_512_RSA_PKCS,
 }
 
 # All RSA signature vector files we want to test
@@ -127,9 +127,7 @@ _ALL_RSA_VECTORS = _load_all_rsa_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_RSA_VECTORS, ids=[v[0] for v in _ALL_RSA_VECTORS])
-def test_rsa_wycheproof(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA PKCS#1 v1.5 signature verification from Wycheproof vectors."""
     rs = p11_raw_session
     msg = bytes.fromhex(vec["msg"])
@@ -157,12 +155,12 @@ def test_rsa_wycheproof(
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                int(CKA_KEY_TYPE): int(CKK_RSA),
-                int(CKA_MODULUS): modulus,
-                int(CKA_PUBLIC_EXPONENT): exponent,
-                int(CKA_TOKEN): False,
-                int(CKA_VERIFY): True,
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_RSA,
+                CKA_MODULUS: modulus,
+                CKA_PUBLIC_EXPONENT: exponent,
+                CKA_TOKEN: False,
+                CKA_VERIFY: True,
             },
         )
     except AssertionError:

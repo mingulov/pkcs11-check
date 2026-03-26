@@ -55,17 +55,17 @@ def _vid(v: dict[str, Any]) -> str:
 
 
 _PARAM_MAP: dict[int, int] = {
-    int(CKP_ML_DSA_44): int(CKP_ML_DSA_44),
-    int(CKP_ML_DSA_65): int(CKP_ML_DSA_65),
-    int(CKP_ML_DSA_87): int(CKP_ML_DSA_87),
+    CKP_ML_DSA_44: CKP_ML_DSA_44,
+    CKP_ML_DSA_65: CKP_ML_DSA_65,
+    CKP_ML_DSA_87: CKP_ML_DSA_87,
 }
 
 # Only noseed vectors have raw private keys suitable for CKA_VALUE import.
 # seed vectors use PKCS8-encoded keys which PKCS#11 can't import directly.
 _MLDSA_SIGN_FILES = [
-    ("mldsa_44_sign_noseed_test.json", int(CKP_ML_DSA_44)),
-    ("mldsa_65_sign_noseed_test.json", int(CKP_ML_DSA_65)),
-    ("mldsa_87_sign_noseed_test.json", int(CKP_ML_DSA_87)),
+    ("mldsa_44_sign_noseed_test.json", CKP_ML_DSA_44),
+    ("mldsa_65_sign_noseed_test.json", CKP_ML_DSA_65),
+    ("mldsa_87_sign_noseed_test.json", CKP_ML_DSA_87),
 ]
 
 
@@ -83,9 +83,7 @@ _ALL_SIGN_VECTORS = _load_sign_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_SIGN_VECTORS, ids=[v[0] for v in _ALL_SIGN_VECTORS])
-def test_mldsa_sign(
-    vec_id: str, vec: dict[str, Any], p11_raw_session: Any
-) -> None:
+def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) -> None:
     """ML-DSA signing from Wycheproof vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("ML_DSA"):
@@ -107,12 +105,12 @@ def test_mldsa_sign(
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-                int(CKA_KEY_TYPE): int(CKK_ML_DSA),
-                int(CKA_VALUE): private_key_bytes,
-                int(CKA_PARAMETER_SET): vec["_parameter_set"],
-                int(CKA_SIGN): True,
-                int(CKA_TOKEN): False,
+                CKA_CLASS: CKO_PRIVATE_KEY,
+                CKA_KEY_TYPE: CKK_ML_DSA,
+                CKA_VALUE: private_key_bytes,
+                CKA_PARAMETER_SET: vec["_parameter_set"],
+                CKA_SIGN: True,
+                CKA_TOKEN: False,
             },
         )
     except AssertionError as exc:

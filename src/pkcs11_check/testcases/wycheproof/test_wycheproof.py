@@ -90,10 +90,10 @@ class TestAESGCMWycheproof:
                 CKK_AES,
                 key_bytes,
                 attrs={
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_DECRYPT): True,
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
                 },
             )
         except AssertionError:
@@ -118,7 +118,10 @@ class TestAESGCMWycheproof:
 
         try:
             gcm_param = mech_gcm(
-                CKM_AES_GCM, iv, aad=aad if aad else None, tag_bits=tag_bits,
+                CKM_AES_GCM,
+                iv,
+                aad=aad if aad else None,
+                tag_bits=tag_bits,
             )
         except (AssertionError, ValueError, TypeError):
             # Binding rejects non-standard IV/tag sizes
@@ -146,10 +149,13 @@ class TestAESGCMWycheproof:
             exc_msg = str(exc)
             if result == "valid":
                 iv_len = len(iv)
-                if any(
-                    name in exc_msg
-                    for name in ("CKR_ENCRYPTED_DATA_INVALID", "CKR_ENCRYPTED_DATA_LEN_RANGE")
-                ) and iv_len <= 128:
+                if (
+                    any(
+                        name in exc_msg
+                        for name in ("CKR_ENCRYPTED_DATA_INVALID", "CKR_ENCRYPTED_DATA_LEN_RANGE")
+                    )
+                    and iv_len <= 128
+                ):
                     pytest.fail(f"Valid GCM vector tc{vec['tcId']} rejected: {exc_msg}")
                 else:
                     # Module limitation (e.g. non-12-byte IV not supported)
@@ -208,10 +214,10 @@ class TestHMACSHA256Wycheproof:
                     key_type,
                     key_bytes,
                     attrs={
-                        int(CKA_SIGN): True,
-                        int(CKA_VERIFY): True,
-                        int(CKA_TOKEN): False,
-                        int(CKA_SENSITIVE): False,
+                        CKA_SIGN: True,
+                        CKA_VERIFY: True,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
                     },
                 )
                 break
@@ -288,12 +294,12 @@ class TestECDSAP256Wycheproof:
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC),
-                    int(CKA_EC_PARAMS): encode_named_curve_parameters("secp256r1"),
-                    int(CKA_EC_POINT): ec_point_der,
-                    int(CKA_TOKEN): False,
-                    int(CKA_VERIFY): True,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_EC,
+                    CKA_EC_PARAMS: encode_named_curve_parameters("secp256r1"),
+                    CKA_EC_POINT: ec_point_der,
+                    CKA_TOKEN: False,
+                    CKA_VERIFY: True,
                 },
             )
         except AssertionError:
@@ -353,10 +359,10 @@ class TestAESCBCPKCS5Wycheproof:
                 CKK_AES,
                 key_bytes,
                 attrs={
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_DECRYPT): True,
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
                 },
             )
         except AssertionError:
@@ -427,12 +433,12 @@ class TestECDSAP384Wycheproof:
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC),
-                    int(CKA_EC_PARAMS): encode_named_curve_parameters("secp384r1"),
-                    int(CKA_EC_POINT): ec_point_der,
-                    int(CKA_TOKEN): False,
-                    int(CKA_VERIFY): True,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_EC,
+                    CKA_EC_PARAMS: encode_named_curve_parameters("secp384r1"),
+                    CKA_EC_POINT: ec_point_der,
+                    CKA_TOKEN: False,
+                    CKA_VERIFY: True,
                 },
             )
         except AssertionError:
@@ -496,12 +502,12 @@ class TestRSASigWycheproof:
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_RSA),
-                    int(CKA_MODULUS): modulus,
-                    int(CKA_PUBLIC_EXPONENT): exponent,
-                    int(CKA_TOKEN): False,
-                    int(CKA_VERIFY): True,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_RSA,
+                    CKA_MODULUS: modulus,
+                    CKA_PUBLIC_EXPONENT: exponent,
+                    CKA_TOKEN: False,
+                    CKA_VERIFY: True,
                 },
             )
         except AssertionError:

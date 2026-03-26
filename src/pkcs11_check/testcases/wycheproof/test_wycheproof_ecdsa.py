@@ -172,9 +172,7 @@ _ALL_ECDSA = _load_ecdsa_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_ECDSA, ids=[v[0] for v in _ALL_ECDSA])
-def test_ecdsa_wycheproof(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ECDSA signature verification from Wycheproof vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("ECDSA"):
@@ -212,12 +210,12 @@ def test_ecdsa_wycheproof(
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                int(CKA_KEY_TYPE): int(CKK_EC),
-                int(CKA_EC_PARAMS): ec_params,
-                int(CKA_EC_POINT): ec_point_der,
-                int(CKA_TOKEN): False,
-                int(CKA_VERIFY): True,
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_EC,
+                CKA_EC_PARAMS: ec_params,
+                CKA_EC_POINT: ec_point_der,
+                CKA_TOKEN: False,
+                CKA_VERIFY: True,
             },
         )
     except AssertionError as exc:

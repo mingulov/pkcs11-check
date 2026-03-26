@@ -107,13 +107,13 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-                int(CKA_KEY_TYPE): int(CKK_EC_MONTGOMERY),
-                int(CKA_EC_PARAMS): oid,
-                int(CKA_VALUE): private_bytes,
-                int(CKA_DERIVE): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_CLASS: CKO_PRIVATE_KEY,
+                CKA_KEY_TYPE: CKK_EC_MONTGOMERY,
+                CKA_EC_PARAMS: oid,
+                CKA_VALUE: private_bytes,
+                CKA_DERIVE: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
     except (AssertionError, AttributeError):
@@ -122,7 +122,7 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         pytest.skip("Cannot import Montgomery private key")
 
     # Derive shared secret
-    ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=int(CKD_NULL), public_data=public_bytes)
+    ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=public_bytes)
     try:
         derived = derive_key(
             rs.raw,
@@ -130,16 +130,16 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             priv_key,
             CKM_ECDH1_DERIVE,
             attrs={
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_VALUE_LEN): key_size,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: key_size,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             },
             mech_param=ecdh_param,
         )
-        attrs = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])
-        shared = attrs[int(CKA_VALUE)]
+        attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+        shared = attrs[CKA_VALUE]
         assert isinstance(shared, bytes)
         if result == "valid":
             assert shared == shared_expected

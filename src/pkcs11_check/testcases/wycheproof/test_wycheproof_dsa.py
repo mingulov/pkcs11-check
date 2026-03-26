@@ -37,14 +37,14 @@ pytestmark = pytest.mark.wycheproof
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 _SHA_MECHANISMS: dict[str, int] = {
-    "SHA-224": int(CKM_DSA_SHA224),
-    "SHA-256": int(CKM_DSA_SHA256),
+    "SHA-224": CKM_DSA_SHA224,
+    "SHA-256": CKM_DSA_SHA256,
 }
 
 # Mechanism display names for availability checking
 _MECH_DISPLAY: dict[int, str] = {
-    int(CKM_DSA_SHA224): "DSA_SHA224",
-    int(CKM_DSA_SHA256): "DSA_SHA256",
+    CKM_DSA_SHA224: "DSA_SHA224",
+    CKM_DSA_SHA256: "DSA_SHA256",
 }
 
 _DSA_FILES = [
@@ -118,14 +118,14 @@ def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                int(CKA_KEY_TYPE): int(CKK_DSA),
-                int(CKA_PRIME): prime,
-                int(CKA_SUBPRIME): subprime,
-                int(CKA_BASE): base,
-                int(CKA_VALUE): value,
-                int(CKA_TOKEN): False,
-                int(CKA_VERIFY): True,
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_DSA,
+                CKA_PRIME: prime,
+                CKA_SUBPRIME: subprime,
+                CKA_BASE: base,
+                CKA_VALUE: value,
+                CKA_TOKEN: False,
+                CKA_VERIFY: True,
             },
         )
     except AssertionError:

@@ -47,11 +47,11 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
 # Map Wycheproof file suffix to CKP_PKCS5_PBKD2_HMAC_* PRF constant
 _PRF_MAP: dict[str, int] = {
-    "hmacsha1": int(CKP_PKCS5_PBKD2_HMAC_SHA1),
-    "hmacsha224": int(CKP_PKCS5_PBKD2_HMAC_SHA224),
-    "hmacsha256": int(CKP_PKCS5_PBKD2_HMAC_SHA256),
-    "hmacsha384": int(CKP_PKCS5_PBKD2_HMAC_SHA384),
-    "hmacsha512": int(CKP_PKCS5_PBKD2_HMAC_SHA512),
+    "hmacsha1": CKP_PKCS5_PBKD2_HMAC_SHA1,
+    "hmacsha224": CKP_PKCS5_PBKD2_HMAC_SHA224,
+    "hmacsha256": CKP_PKCS5_PBKD2_HMAC_SHA256,
+    "hmacsha384": CKP_PKCS5_PBKD2_HMAC_SHA384,
+    "hmacsha512": CKP_PKCS5_PBKD2_HMAC_SHA512,
 }
 
 _PBKDF2_FILES = [
@@ -96,8 +96,8 @@ def _generate_key_with_mech(
     tmpl = template_from_dict(attrs)
     key = CK_OBJECT_HANDLE(0)
     rv = raw.C_GenerateKey(session, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
-    expect_rv(int(rv), CKR_OK)
-    return int(key.value)
+    expect_rv(rv, CKR_OK)
+    return key.value
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_PBKDF2_VECTORS, ids=[v[0] for v in _ALL_PBKDF2_VECTORS])
@@ -134,15 +134,15 @@ def test_pbkdf2(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             rs.sh,
             pbkdf2_param,
             {
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_VALUE_LEN): dk_len,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: dk_len,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             },
         )
-        attrs = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])
-        dk_actual = attrs[int(CKA_VALUE)]
+        attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+        dk_actual = attrs[CKA_VALUE]
         assert isinstance(dk_actual, bytes)
         if result == "valid":
             assert dk_actual == dk_expected, (

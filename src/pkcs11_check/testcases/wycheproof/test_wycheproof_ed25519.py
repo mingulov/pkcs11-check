@@ -49,9 +49,7 @@ _ED25519_VECTORS = _load_ed25519_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ED25519_VECTORS, ids=[v[0] for v in _ED25519_VECTORS])
-def test_ed25519_wycheproof(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_ed25519_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Ed25519 signature verification from Wycheproof vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("EDDSA"):
@@ -80,12 +78,12 @@ def test_ed25519_wycheproof(
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                int(CKA_KEY_TYPE): int(CKK_EC_EDWARDS),
-                int(CKA_EC_PARAMS): ed25519_oid,
-                int(CKA_EC_POINT): ec_point,
-                int(CKA_TOKEN): False,
-                int(CKA_VERIFY): True,
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_EC_EDWARDS,
+                CKA_EC_PARAMS: ed25519_oid,
+                CKA_EC_POINT: ec_point,
+                CKA_TOKEN: False,
+                CKA_VERIFY: True,
             },
         )
     except AssertionError:
@@ -127,9 +125,7 @@ _ED448_VECTORS = _load_ed448_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ED448_VECTORS, ids=[v[0] for v in _ED448_VECTORS])
-def test_ed448_wycheproof(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_ed448_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Ed448 signature verification from Wycheproof vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("EDDSA"):
@@ -156,12 +152,12 @@ def test_ed448_wycheproof(
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                int(CKA_KEY_TYPE): int(CKK_EC_EDWARDS),
-                int(CKA_EC_PARAMS): ed448_oid,
-                int(CKA_EC_POINT): ec_point,
-                int(CKA_TOKEN): False,
-                int(CKA_VERIFY): True,
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_EC_EDWARDS,
+                CKA_EC_PARAMS: ed448_oid,
+                CKA_EC_POINT: ec_point,
+                CKA_TOKEN: False,
+                CKA_VERIFY: True,
             },
         )
     except AssertionError:
