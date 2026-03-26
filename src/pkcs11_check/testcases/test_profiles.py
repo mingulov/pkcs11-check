@@ -10,83 +10,114 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, ObjectClass
-from pkcs11.constants import ProfileID
+
+from pkcs11_check.raw.pack import template_from_dict
+from pkcs11_check.raw.recipes import find_objects, read_attributes
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_PROFILE_ID,
+    CKO_PROFILE,
+    CKP_BASELINE_PROVIDER,
+    CKP_EXTENDED_PROVIDER,
+    CKP_VENDOR_DEFINED,
+)
 
 pytestmark = pytest.mark.requires_v30
+
+# Known standard profile IDs
+_KNOWN_PROFILE_IDS = {
+    int(CKP_BASELINE_PROVIDER),
+    int(CKP_EXTENDED_PROVIDER),
+    # Authentication Token and Public Certificates Token profiles
+    0x00000003,  # CKP_AUTHENTICATION_TOKEN
+    0x00000004,  # CKP_PUBLIC_CERTIFICATES_TOKEN
+}
 
 
 class TestProfileObjects:
     """Tests for CKO_PROFILE object enumeration (PKCS#11 v3.0+)."""
 
-    def test_profile_object_enumeration(self, p11_session: Any) -> None:
-        """Enumerate CKO_PROFILE objects without error."""
+    def _get_profiles(self, rs: Any) -> list[int]:
+        """Enumerate CKO_PROFILE objects."""
         try:
-            profiles = list(
-                p11_session.get_objects({Attribute.CLASS: ObjectClass.PROFILE})
+            return find_objects(
+                rs.raw, rs.sh,
+                template_from_dict({int(CKA_CLASS): int(CKO_PROFILE)}),
             )
-        except Exception:
+        except (AssertionError, Exception):
             pytest.xfail("Module does not support CKO_PROFILE enumeration")
-        # Not all v3.0 modules expose profile objects - treat empty list as acceptable
+            return []
+
+    def test_profile_object_enumeration(self, p11_raw_session: Any) -> None:
+        """Enumerate CKO_PROFILE objects without error."""
+        profiles = self._get_profiles(p11_raw_session)
         assert isinstance(profiles, list)
 
-    def test_profile_objects_have_profile_id(self, p11_session: Any) -> None:
-        """Each CKO_PROFILE object has a readable CKA_PROFILE_ID attribute."""
-        try:
-            profiles = list(
-                p11_session.get_objects({Attribute.CLASS: ObjectClass.PROFILE})
-            )
-        except Exception:
-            pytest.xfail("Module does not support CKO_PROFILE enumeration")
+    def test_profile_objects_have_profile_id(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """Each CKO_PROFILE object has a readable CKA_PROFILE_ID."""
+        rs = p11_raw_session
+        profiles = self._get_profiles(rs)
         if not profiles:
             pytest.skip("No CKO_PROFILE objects present")
         for prof in profiles:
             try:
-                pid = prof[Attribute.PROFILE_ID]
-                assert isinstance(pid, int), f"Expected int PROFILE_ID, got {type(pid)}"
-            except Exception:
-                pytest.xfail("Cannot read CKA_PROFILE_ID from profile object")
+                attrs = read_attributes(
+                    rs.raw, rs.sh, prof, [CKA_PROFILE_ID],
+                )
+                pid = attrs[int(CKA_PROFILE_ID)]
+                assert pid is not None
+            except (AssertionError, KeyError):
+                pytest.xfail("Cannot read CKA_PROFILE_ID")
 
-    def test_known_profile_ids(self, p11_session: Any) -> None:
-        """Profile IDs are known PKCS#11 profile values or vendor-defined."""
-        try:
-            profiles = list(
-                p11_session.get_objects({Attribute.CLASS: ObjectClass.PROFILE})
-            )
-        except Exception:
-            pytest.xfail("Module does not support CKO_PROFILE enumeration")
+    def test_known_profile_ids(self, p11_raw_session: Any) -> None:
+        """Profile IDs are known PKCS#11 values or vendor-defined."""
+        rs = p11_raw_session
+        profiles = self._get_profiles(rs)
         if not profiles:
             pytest.skip("No CKO_PROFILE objects present")
-        known = {int(p) for p in ProfileID}
         for prof in profiles:
             try:
-                pid = int(prof[Attribute.PROFILE_ID])
-            except Exception:
+                attrs = read_attributes(
+                    rs.raw, rs.sh, prof, [CKA_PROFILE_ID],
+                )
+                raw_val = attrs[int(CKA_PROFILE_ID)]
+                if isinstance(raw_val, bytes):
+                    pid = int.from_bytes(raw_val, "little")
+                else:
+                    pid = int(raw_val)
+            except (AssertionError, KeyError):
                 continue
-            if pid < ProfileID.VENDOR_DEFINED:
-                assert pid in known, (
+            if pid < int(CKP_VENDOR_DEFINED):
+                assert pid in _KNOWN_PROFILE_IDS, (
                     f"Unknown non-vendor profile ID 0x{pid:08X}"
                 )
 
-    def test_baseline_or_extended_profile_present(self, p11_session: Any) -> None:
-        """Module advertises Baseline or Extended Provider profile (recommended)."""
-        try:
-            profiles = list(
-                p11_session.get_objects({Attribute.CLASS: ObjectClass.PROFILE})
-            )
-        except Exception:
-            pytest.xfail("Module does not support CKO_PROFILE enumeration")
+    def test_baseline_or_extended_profile_present(
+        self, p11_raw_session: Any,
+    ) -> None:
+        """Module advertises Baseline or Extended Provider profile."""
+        rs = p11_raw_session
+        profiles = self._get_profiles(rs)
         if not profiles:
             pytest.skip("No CKO_PROFILE objects present")
-        pids = set()
+        pids: set[int] = set()
         for prof in profiles:
             try:
-                pids.add(int(prof[Attribute.PROFILE_ID]))
-            except Exception:
+                attrs = read_attributes(
+                    rs.raw, rs.sh, prof, [CKA_PROFILE_ID],
+                )
+                raw_val = attrs[int(CKA_PROFILE_ID)]
+                if isinstance(raw_val, bytes):
+                    pids.add(int.from_bytes(raw_val, "little"))
+                else:
+                    pids.add(int(raw_val))
+            except (AssertionError, KeyError):
                 pass
-        standard = {ProfileID.BASELINE_PROVIDER, ProfileID.EXTENDED_PROVIDER}
-        if not pids & {int(p) for p in standard}:
+        standard = {int(CKP_BASELINE_PROVIDER), int(CKP_EXTENDED_PROVIDER)}
+        if not pids & standard:
             pytest.xfail(
-                "Module does not advertise Baseline or Extended Provider profile - "
-                f"profiles present: {[hex(p) for p in sorted(pids)]}"
+                "Module does not advertise Baseline or Extended Provider "
+                f"profile - profiles present: {[hex(p) for p in sorted(pids)]}"
             )

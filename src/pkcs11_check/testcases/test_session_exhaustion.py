@@ -8,66 +8,82 @@ from __future__ import annotations
 
 from typing import Any
 
-import pkcs11 as p11
 import pytest
-from pkcs11.exceptions import PKCS11Error, SessionCount
+
+from pkcs11_check.raw.bootstrap import (
+    close_session_quietly,
+    login_user,
+)
+from pkcs11_check.raw.bootstrap import (
+    open_session as raw_open_session,
+)
+from pkcs11_check.raw.recipes import gen_aes_key
+from pkcs11_check.raw.types_std import (
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKU_USER,
+)
 
 pytestmark = pytest.mark.security
-
-
-def _open_with_login(token: Any, rw: bool, pin_str: str) -> Any:
-    """Open a session, handling UserAlreadyLoggedIn gracefully."""
-    try:
-        return token.open(rw=rw, user_pin=pin_str)
-    except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
-        session = token.open(rw=rw)
-        try:
-            session.login(p11.UserType.USER, pin_str)
-        except (p11.exceptions.UserAlreadyLoggedIn, p11.exceptions.UserTypeInvalid):
-            pass
-        return session
 
 
 class TestSessionExhaustion:
     """Test behavior when opening many sessions."""
 
-    def test_open_many_sessions(self, p11_module: Any, p11_config: Any) -> None:
+    def test_open_many_sessions(
+        self, p11_raw_session: Any, p11_config: Any,
+    ) -> None:
         """Open sessions until limit or 100, verify all work, close all."""
-        token = p11_module.get_token()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
+        rs = p11_raw_session
+        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
-        sessions = []
-        s0 = _open_with_login(token, rw=True, pin_str=pin_str)
+        sessions: list[int] = []
+        # Open first session with login
+        s0 = raw_open_session(rs.raw, rs.slot_id, flags)
         sessions.append(s0)
+        if pin is not None:
+            login_user(
+                rs.raw, s0, int(CKU_USER), pin.encode("utf-8"),
+            )
 
         try:
             for _ in range(99):
-                s = token.open(rw=True)  # Don't re-login
-                sessions.append(s)
-        except (SessionCount, PKCS11Error):
+                try:
+                    sh = raw_open_session(rs.raw, rs.slot_id, flags)
+                    sessions.append(sh)
+                except AssertionError:
+                    break  # CKR_SESSION_COUNT or similar
+        finally:
             pass
 
         for s in sessions:
-            try:
-                s.close()
-            except PKCS11Error:
-                pass
+            close_session_quietly(rs.raw, s)
 
         # After closing, should be able to open a new session
-        recovery = _open_with_login(token, rw=True, pin_str=pin_str)
+        recovery = raw_open_session(rs.raw, rs.slot_id, flags)
+        if pin is not None:
+            login_user(
+                rs.raw, recovery, int(CKU_USER), pin.encode("utf-8"),
+            )
         try:
-            key = recovery.generate_key(p11.KeyType.AES, 128)
-            assert key is not None
+            key = gen_aes_key(rs.raw, recovery, 128)
+            assert key != 0
         finally:
-            recovery.close()
+            close_session_quietly(rs.raw, recovery)
 
-    def test_session_close_frees_resources(self, p11_module: Any, p11_config: Any) -> None:
+    def test_session_close_frees_resources(
+        self, p11_raw_session: Any, p11_config: Any,
+    ) -> None:
         """Opening and closing sessions in a loop doesn't leak."""
-        token = p11_module.get_token()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
+        rs = p11_raw_session
+        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
 
         for _ in range(50):
-            session = _open_with_login(token, rw=True, pin_str=pin_str)
-            session.close()
+            sh = raw_open_session(rs.raw, rs.slot_id, flags)
+            if pin is not None:
+                login_user(
+                    rs.raw, sh, int(CKU_USER), pin.encode("utf-8"),
+                )
+            close_session_quietly(rs.raw, sh)
