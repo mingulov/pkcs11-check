@@ -32,7 +32,6 @@ from .types_std import (
     CK_SSL3_KEY_MAT_OUT,
     CK_SSL3_KEY_MAT_PARAMS,
     CK_SSL3_MASTER_KEY_DERIVE_PARAMS,
-    CK_SSL3_RANDOM_DATA,
     CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS,
     CK_TLS12_KEY_MAT_PARAMS,
     CK_TLS12_MASTER_KEY_DERIVE_PARAMS,
@@ -46,7 +45,6 @@ from .types_std import (
     CK_WTLS_KEY_MAT_PARAMS,
     CK_WTLS_MASTER_KEY_DERIVE_PARAMS,
     CK_WTLS_PRF_PARAMS,
-    CK_WTLS_RANDOM_DATA,
     CKM,
     CKZ_DATA_SPECIFIED,
     CKZ_SALT_SPECIFIED,
@@ -264,21 +262,19 @@ def mech_string_data(mechanism_type: CKM, data: bytes) -> PackedMechanism:
 # ---------------------------------------------------------------------------
 
 
-def _fill_ssl3_random(
-    random_data: CK_SSL3_RANDOM_DATA,
+def _fill_random_data(
+    random_info: Any,
     client_random: bytes,
     server_random: bytes,
     keepalive: list[Any],
 ) -> None:
-    """Populate a CK_SSL3_RANDOM_DATA struct with client/server randoms."""
-    random_data.pClientRandom, random_data.ulClientRandomLen = _pack_bytes(
-        client_random,
-        keepalive,
-    )
-    random_data.pServerRandom, random_data.ulServerRandomLen = _pack_bytes(
-        server_random,
-        keepalive,
-    )
+    """Fill pClientRandom/pServerRandom on SSL3 or WTLS random structs."""
+    cr_ptr, cr_len = _pack_bytes(client_random, keepalive)
+    sr_ptr, sr_len = _pack_bytes(server_random, keepalive)
+    random_info.pClientRandom = cr_ptr
+    random_info.ulClientRandomLen = cr_len
+    random_info.pServerRandom = sr_ptr
+    random_info.ulServerRandomLen = sr_len
 
 
 def mech_ssl3_master_key_derive(
@@ -299,7 +295,7 @@ def mech_ssl3_master_key_derive(
     """
     ka: list[Any] = []
     params = CK_SSL3_MASTER_KEY_DERIVE_PARAMS()
-    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+    _fill_random_data(params.RandomInfo, client_random, server_random, ka)
     if with_version:
         ver = CK_VERSION(0, 0)
         ka.append(ver)
@@ -331,7 +327,7 @@ def mech_ssl3_key_mat(
     params.ulKeySizeInBits = key_size_bits
     params.ulIVSizeInBits = iv_size_bits
     params.bIsExport = CK_BBOOL(1 if is_export else 0)
-    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+    _fill_random_data(params.RandomInfo, client_random, server_random, ka)
 
     # Allocate output struct
     key_mat_out = CK_SSL3_KEY_MAT_OUT()
@@ -368,7 +364,7 @@ def mech_tls12_master_key_derive(
     """
     ka: list[Any] = []
     params = CK_TLS12_MASTER_KEY_DERIVE_PARAMS()
-    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+    _fill_random_data(params.RandomInfo, client_random, server_random, ka)
     if with_version:
         ver = CK_VERSION(0, 0)
         ka.append(ver)
@@ -400,7 +396,7 @@ def mech_tls12_key_mat(
     params.ulKeySizeInBits = key_size_bits
     params.ulIVSizeInBits = iv_size_bits
     params.bIsExport = CK_BBOOL(1 if is_export else 0)
-    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+    _fill_random_data(params.RandomInfo, client_random, server_random, ka)
 
     key_mat_out = CK_SSL3_KEY_MAT_OUT()
     iv_bytes = iv_size_bits // 8 if iv_size_bits else 0
@@ -494,7 +490,7 @@ def mech_tls_kdf(
     params = CK_TLS_KDF_PARAMS()
     params.prfMechanism = prf_mechanism
     params.pLabel, params.ulLabelLength = _pack_bytes(label, ka)
-    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+    _fill_random_data(params.RandomInfo, client_random, server_random, ka)
     params.pContextData, params.ulContextDataLength = _pack_bytes(context_data, ka)
     return _mech_struct(mechanism_type, params, "mech_tls_kdf", ka)
 
@@ -517,23 +513,6 @@ def mech_tls_mac(
     return _mech_struct(mechanism_type, params, "mech_tls_mac")
 
 
-def _fill_wtls_random(
-    random_data: CK_WTLS_RANDOM_DATA,
-    client_random: bytes,
-    server_random: bytes,
-    keepalive: list[Any],
-) -> None:
-    """Populate a CK_WTLS_RANDOM_DATA struct with client/server randoms."""
-    random_data.pClientRandom, random_data.ulClientRandomLen = _pack_bytes(
-        client_random,
-        keepalive,
-    )
-    random_data.pServerRandom, random_data.ulServerRandomLen = _pack_bytes(
-        server_random,
-        keepalive,
-    )
-
-
 def mech_wtls_master_key_derive(
     mechanism_type: CKM,
     digest_mechanism: int,
@@ -549,7 +528,7 @@ def mech_wtls_master_key_derive(
     ka: list[Any] = []
     params = CK_WTLS_MASTER_KEY_DERIVE_PARAMS()
     params.DigestMechanism = digest_mechanism
-    _fill_wtls_random(params.RandomInfo, client_random, server_random, ka)
+    _fill_random_data(params.RandomInfo, client_random, server_random, ka)
     if with_version:
         ver = CK_VERSION(0, 0)
         ka.append(ver)
@@ -584,7 +563,7 @@ def mech_wtls_key_mat(
     params.ulIVSizeInBits = iv_size_bits
     params.ulSequenceNumber = sequence_number
     params.bIsExport = CK_BBOOL(1 if is_export else 0)
-    _fill_wtls_random(params.RandomInfo, client_random, server_random, ka)
+    _fill_random_data(params.RandomInfo, client_random, server_random, ka)
 
     key_mat_out = CK_WTLS_KEY_MAT_OUT()
     iv_bytes = iv_size_bits // 8 if iv_size_bits else 0

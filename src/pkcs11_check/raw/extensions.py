@@ -329,49 +329,28 @@ def _lookup_vendor_helper(
     return helpers.get(symbol)
 
 
-def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | None:
-    """Return a registered extension packer by namespace or by unique global match."""
+def _lookup_helper(category: str, value: int | str, *, namespace: str | None = None) -> Any | None:
+    """Look up a vendor-registered helper (packer or inspector) by mechanism."""
     if namespace is not None:
         vendor = _vendor_or_none(namespace)
         if vendor is None:
             return None
-        return _lookup_vendor_helper(vendor, "packers", value)
-    if isinstance(value, int):
-        matching_vendors = [
-            (vendor_name, helper)
-            for vendor_name, vendor in _EXTENSIONS.items()
-            if (helper := _lookup_vendor_helper(vendor, "packers", value)) is not None
-        ]
-        if len(matching_vendors) != 1:
-            return None
-        return matching_vendors[0][1]
-    matches = [
+        return _lookup_vendor_helper(vendor, category, value)
+    matches: list[tuple[str, Any]] = [
         (vendor_name, helper)
         for vendor_name, vendor in _EXTENSIONS.items()
-        if (helper := _lookup_vendor_helper(vendor, "packers", value)) is not None
+        if (helper := _lookup_vendor_helper(vendor, category, value)) is not None
     ]
+    if isinstance(value, int) and len(matches) != 1:
+        return None
     return _lookup_single_namespace(matches)
+
+
+def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | None:
+    """Look up a mechanism parameter packer function."""
+    return _lookup_helper("packers", value, namespace=namespace)
 
 
 def lookup_inspector(value: int | str, *, namespace: str | None = None) -> Any | None:
-    """Return a registered extension inspector by namespace or by unique global match."""
-    if namespace is not None:
-        vendor = _vendor_or_none(namespace)
-        if vendor is None:
-            return None
-        return _lookup_vendor_helper(vendor, "inspectors", value)
-    if isinstance(value, int):
-        matching_vendors = [
-            (vendor_name, helper)
-            for vendor_name, vendor in _EXTENSIONS.items()
-            if (helper := _lookup_vendor_helper(vendor, "inspectors", value)) is not None
-        ]
-        if len(matching_vendors) != 1:
-            return None
-        return matching_vendors[0][1]
-    matches = [
-        (vendor_name, helper)
-        for vendor_name, vendor in _EXTENSIONS.items()
-        if (helper := _lookup_vendor_helper(vendor, "inspectors", value)) is not None
-    ]
-    return _lookup_single_namespace(matches)
+    """Look up a mechanism parameter inspector function."""
+    return _lookup_helper("inspectors", value, namespace=namespace)

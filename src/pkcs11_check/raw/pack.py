@@ -152,6 +152,13 @@ class TemplateArg:
         return tuple(self._attributes)
 
 
+def template_ptr_count(tmpl: TemplateArg | None) -> tuple[Any, int]:
+    """Return (ptr, count) for an optional template, (None, 0) if None."""
+    if tmpl is None:
+        return None, 0
+    return tmpl.ptr, tmpl.count
+
+
 def explicit_length(size: int) -> LengthArg:
     return LengthArg.explicit_value(size)
 
