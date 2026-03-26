@@ -38,7 +38,9 @@ def ckr_is_ok(rv: int) -> bool:
 def ckr_in(rv: int, *acceptable: int) -> bool:
     return rv in acceptable
 ```
-Zero imports anywhere. Remove both functions.
+Zero production imports. However, 4 meta-tests in `tests/test_raw.py` (lines 66-88)
+test these functions (`test_ckr_is_ok_*`, `test_ckr_in_*`). Remove both functions
+AND the 4 meta-tests.
 
 #### B3. Collapse ckr_name / rv_name
 
@@ -55,8 +57,8 @@ def ckr_name(rv: int) -> str:
 `expect_rv` (same file). Rename `rv_name` to `ckr_name` as the single implementation,
 remove the alias. Update `expect_rv` to call `ckr_name` directly.
 
-Also add `rv_name = ckr_name` as a deprecated alias for any external code that
-might use it (the `__init__.py` re-exports `rv_name`). Update `__init__.py` accordingly.
+No deprecated alias needed -- `rv_name` is NOT re-exported in `__init__.py` and has
+zero external consumers.
 
 #### B4. Remove dead _lookup_unique in extensions.py
 
@@ -74,7 +76,7 @@ Same pattern as `close_session_quietly` which was already fixed. Narrow to:
 except (AttributeError, OSError, ctypes.ArgumentError):
     pass
 ```
-Add `import ctypes` at top of recipes.py if not already present.
+`recipes.py` already has `import ctypes` at line 9, so no new import needed.
 
 ### C. API hygiene
 
@@ -159,9 +161,8 @@ Replace all 7 sites in recipes.py.
 #### D5. Redesign _two_call_output to accept callable
 
 Current `_two_call_output(raw, session, call_fn, *args)` uses string-based function
-lookup and hardcodes session as first arg. This prevents use with `C_WrapKey`,
-`C_EncapsulateKey`, `C_WrapKeyAuthenticated` which have extra args between session
-and the output buffer.
+lookup and hardcodes session as first arg. This prevents use with `C_WrapKey`
+which has extra args between session and the output buffer.
 
 Change signature to:
 ```python
@@ -173,16 +174,20 @@ def _two_call_output(
 ```
 Where `*args` are ALL arguments before the output buffer pair (including session).
 The function appends `(None, byref(out_len))` for the size probe and
-`(out_buf, byref(out_len))` for the actual call. This makes it work for any
-PKCS#11 function that follows the two-call pattern.
+`(out_buf, byref(out_len))` for the actual call.
 
 Update `encrypt_single`, `decrypt_single`, `sign_single`, `digest_single` to use
-the new signature, and refactor `wrap_key` and `encapsulate_key` to use it too.
+the new signature. Also refactor `wrap_key` to use it.
+
+**Cannot use for:** `C_EncapsulateKey` (has `CK_OBJECT_HANDLE_PTR` trailing after
+the buffer pair) and `C_WrapKeyAuthenticated` (has input-length semantics and two
+output buffers). These keep their inline implementations.
 
 #### D6. Subprocess session preamble helper
 
-10 test files construct subprocess scripts with identical boilerplate (load module,
-initialize, open session, login). 9 of them use `RawPKCS11.from_lib()`.
+Multiple test files construct subprocess scripts with shared boilerplate (load module,
+initialize, open session, login). The preambles differ in slot discovery strategy,
+version checks, and extra setup -- so a rigid shared helper would not fit all.
 
 Create `src/pkcs11_check/testcases/_subprocess_preamble.py`:
 ```python
@@ -191,6 +196,7 @@ def subprocess_session_preamble(
     slot_id: int | None = None,
     pin: str | None = None,
     extra_imports: str = "",
+    slot_label: str | None = None,
 ) -> str:
     """Return Python code string that sets up a PKCS#11 session.
 
@@ -207,15 +213,30 @@ This generates a script string with:
 - Standard imports (RawPKCS11, open_session, login_user, get_slot_ids, etc.)
 - `raw = RawPKCS11.from_lib(module_path)`
 - `raw.C_Initialize(None)` with CKR_OK / ALREADY_INITIALIZED check
-- Slot discovery via `get_slot_ids()`
+- Slot discovery via `get_slot_ids()` (optional label filter via `slot_label`)
 - `sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)`
 - Optional `login_user(raw, sh, CKU_USER, pin.encode())` if pin given
 - `cleanup()` function for `C_CloseSession` + `C_Finalize`
 
-**Special case:** `test_v30_session.py` does manual v3.0 interface negotiation and
-cannot use this helper. It only needs the CK_NOTIFY fix (Group A).
+**Applicable files** (compatible preamble pattern using `from_lib()` + standard
+bootstrap helpers):
+- `ckr/test_ckr_raw_args_bad.py`
+- `ckr/test_ckr_raw_attrs.py`
+- `ckr/test_ckr_raw_buffer.py`
+- `test_cve_regression.py` (RSA encrypt/decrypt subprocess)
+- `test_remaining_gaps.py` (via `_run_config_script`)
 
-Update the 9 applicable test files to use the preamble helper.
+**Not applicable** (special preambles):
+- `test_v30_session.py` -- manual v3.0 interface negotiation (just needs CK_NOTIFY fix)
+- `ckr/test_ckr_v30_raw.py`, `ckr/test_ckr_v32_raw.py` -- version-gated preambles
+- `ckr/test_ckr_raw_state.py` -- key generation in preamble
+- `ckr/test_ckr_raw_multipart.py` -- manual ctypes, not bootstrap helpers
+- `test_subprocess_safety.py` -- 4 different specialized scripts
+- `test_sign_recover.py`, `test_dual_function.py`, `test_operation_state.py` --
+  template-based scripts with class-level preamble strings
+- `test_protocol_edge_cases.py` -- minimal inline scripts
+
+Update the ~5 applicable test files to use the preamble helper.
 
 ### E. Style / cleanup
 
@@ -243,12 +264,19 @@ Add module-level note that callers should import mechanism packers from
 
 #### F1. Clean up __init__.py constant re-exports
 
-Only 1 test file imports constants from `pkcs11_check.raw` directly. Remove
-individual CKR_*, CKA_*, CKF_*, etc. constant re-exports from `__init__.py`.
-Keep module re-exports (`types_std`, `metadata_std`, `recipes`, `pack`, etc.)
-and class/function re-exports (`RawPKCS11`, `get_slot_ids`, etc.).
+Multiple files import constants from `pkcs11_check.raw` directly:
+- 5 testcase files: `test_tls12.py`, `test_sign_recover.py`, `test_dual_function.py`,
+  `test_remaining_gaps.py`, `test_operation_state.py`
+- 2 core files: `raw_fixtures.py` (imports `RawPKCS11` and `metadata_std`)
+- 5 meta-test files in `tests/`
 
-Update the 1 test file (`test_tls12.py`) to import from `types_std` instead.
+Remove individual CKR_*, CKA_*, CKF_*, CKM_*, CKK_*, CKO_*, CKU_* constant
+re-exports from `__init__.py`. Keep module re-exports (`types_std`, `metadata_std`,
+`recipes`, `pack`, etc.) and class/function re-exports (`RawPKCS11`, `get_slot_ids`,
+`close_session_quietly`, etc.) and struct re-exports (`CK_ATTRIBUTE`, `CK_MECHANISM`).
+
+Update the 5 testcase files and 5 meta-test files to import constants from
+`pkcs11_check.raw.types_std` instead of `pkcs11_check.raw`.
 
 #### F2. DER sequence decoding deduplication
 
@@ -266,8 +294,10 @@ Both functions become thin wrappers.
 def explicit_length(size: int) -> LengthArg:
     return pack_explicit_length(size)
 ```
-This is a one-line re-export via alias. Change the import to use the real name directly
-and remove the wrapper. Update callers if any.
+This is a one-line re-export via alias. The 2 internal callers within `faults.py`
+(`zero_length()` at line 73, `_fault_from_storage()` at line 86) should call
+`LengthArg.explicit_value(size)` directly. Remove the wrapper and the
+`pack_explicit_length` import alias.
 
 ## Verification Plan
 
@@ -284,6 +314,6 @@ and remove the wrapper. Update callers if any.
 4. E (style) -- standalone
 5. D1-D4 (small DRY) -- standalone
 6. D5 (_two_call_output redesign) -- needs careful testing
-7. D6 (subprocess preamble) -- touches 9 test files
+7. D6 (subprocess preamble) -- touches ~5 test files
 8. F (structural) -- standalone
 9. Final verification
