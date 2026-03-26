@@ -44,29 +44,18 @@ def p11_interface_version(p11_module: P11Module) -> str:
     return p11_module.interface_version
 
 
-@pytest.fixture
-def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[Any, None, None]:
-    """Open PKCS#11 session with login. Yields RawSession, closes after test.
+def _open_raw_session(
+    p11_module: P11Module,
+    p11_config: P11TestConfig,
+) -> tuple[RawPKCS11, int, int, bool]:
+    """Open a raw PKCS#11 session and optionally login.
 
-    After the test, we attempt to logout so the next test can login fresh.
-    This avoids UserAlreadyLoggedIn / UserTypeInvalid cascading failures.
-
-    NOTE: This fixture now returns a RawSession (raw bootstrap-based), not a
-    python-pkcs11 Session. Test files that used the fork session API need to
-    be updated to use the raw API directly (see p11_raw_session for the
-    already-migrated path; this fixture now aliases it for the common case).
+    Returns (raw, session_handle, slot_id, logged_in).
+    Caller is responsible for logout and close.
     """
-    from pkcs11_check.raw.bootstrap import (
-        close_session_quietly,
-        get_slot_ids,
-        login_user,
-    )
+    from pkcs11_check.raw.bootstrap import get_slot_ids, login_user
     from pkcs11_check.raw.bootstrap import open_session as raw_open_session
-    from pkcs11_check.raw.types_std import (
-        CKF_RW_SESSION,
-        CKF_SERIAL_SESSION,
-        CKU_USER,
-    )
+    from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKU_USER
 
     raw = p11_module.raw
     slots = get_slot_ids(raw)
@@ -82,20 +71,33 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
         login_user(raw, sh, int(CKU_USER), pin.encode("utf-8"))
         logged_in = True
 
+    return raw, sh, slot_id, logged_in
+
+
+@pytest.fixture
+def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[Any, None, None]:
+    """Open PKCS#11 session with login. Yields RawSession, closes after test.
+
+    After the test, we attempt to logout so the next test can login fresh.
+    This avoids UserAlreadyLoggedIn / UserTypeInvalid cascading failures.
+    """
+    from pkcs11_check.raw.bootstrap import close_session_quietly
+
+    raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
     try:
         yield RawSession(raw, sh, slot_id)
     finally:
         if logged_in:
-            raw.C_Logout(sh)
+            raw.C_Logout(sh)  # type: ignore[attr-defined]
         close_session_quietly(raw, sh)
 
 
 @dataclass
 class RawSession:
-    """Raw PKCS#11 session for migrated tests.
+    """Raw PKCS#11 session.
 
-    Mechanism list is cached lazily on first access -- raw package stays
-    stateless, caching is fixture-owned and dies with the session.
+    Exposes raw, sh (session handle), slot_id, and convenience wrappers
+    for common operations. Mechanism list is cached lazily on first access.
     """
 
     raw: RawPKCS11
@@ -125,13 +127,33 @@ class RawSession:
         """Check if a mechanism is supported by name (prefix-optional)."""
         return name in self.mechanisms
 
+    def generate_random(self, bits: int) -> bytes:
+        """Generate random bytes via C_GenerateRandom.
+
+        Args:
+            bits: Number of bits to generate. Must be a multiple of 8.
+
+        Returns:
+            bytes of length bits // 8.
+        """
+        from pkcs11_check.raw.recipes import generate_random as _generate_random
+
+        length = bits // 8
+        return _generate_random(self.raw, self.sh, length)
+
+    def seed_random(self, seed: bytes) -> None:
+        """Seed the RNG via C_SeedRandom."""
+        from pkcs11_check.raw.recipes import seed_random as _seed_random
+
+        _seed_random(self.raw, self.sh, seed)
+
 
 @pytest.fixture
 def p11_raw_session(
     p11_module: P11Module,
     p11_config: P11TestConfig,
 ) -> Generator[RawSession, None, None]:
-    """Open a raw PKCS#11 session bridged from the loaded module.
+    """Open a raw PKCS#11 session.
 
     Yields RawSession with raw, session_handle, slot_id, and cached
     mechanism discovery. Handles login/logout.
@@ -140,35 +162,12 @@ def p11_raw_session(
     because PKCS#11 login is per-token, and login_user() accepts
     CKR_USER_ALREADY_LOGGED_IN.
     """
-    from pkcs11_check.raw.bootstrap import (
-        close_session_quietly,
-        get_slot_ids,
-        login_user,
-    )
-    from pkcs11_check.raw.bootstrap import (
-        open_session as raw_open_session,
-    )
-    from pkcs11_check.raw.types_std import (
-        CKF_RW_SESSION,
-        CKF_SERIAL_SESSION,
-        CKU_USER,
-    )
+    from pkcs11_check.raw.bootstrap import close_session_quietly
 
-    raw = p11_module.raw
-    slots = get_slot_ids(raw)
-    slot_idx = p11_config.slot if p11_config.slot is not None else 0
-    slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
-
-    flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
-    sh = raw_open_session(raw, slot_id, flags)
-
-    pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-    if pin is not None:
-        login_user(raw, sh, int(CKU_USER), pin.encode("utf-8"))
-
+    raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
     try:
         yield RawSession(raw, sh, slot_id)
     finally:
-        if pin is not None:
-            raw.C_Logout(sh)  # returns CKR int, never raises
+        if logged_in:
+            raw.C_Logout(sh)  # type: ignore[attr-defined]
         close_session_quietly(raw, sh)
