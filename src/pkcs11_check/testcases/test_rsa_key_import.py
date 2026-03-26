@@ -72,12 +72,12 @@ def _export_rsa_components(
 def _pub_key_template(comp: dict[str, bytes]) -> dict[int, Any]:
     """Build an RSA public key import template."""
     return {
-        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-        int(CKA_KEY_TYPE): int(CKK_RSA),
-        int(CKA_MODULUS): comp["modulus"],
-        int(CKA_PUBLIC_EXPONENT): comp["public_exponent"],
-        int(CKA_VERIFY): True,
-        int(CKA_TOKEN): False,
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: CKK_RSA,
+        CKA_MODULUS: comp["modulus"],
+        CKA_PUBLIC_EXPONENT: comp["public_exponent"],
+        CKA_VERIFY: True,
+        CKA_TOKEN: False,
     }
 
 
@@ -93,8 +93,8 @@ class TestRSAPublicKeyImport:
         imported = create_object(rs.raw, rs.sh, _pub_key_template(comp))
         try:
             assert imported != 0
-            attrs = read_attributes(rs.raw, rs.sh, imported, [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_RSA)
+            attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] == CKK_RSA
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)
 
@@ -129,23 +129,23 @@ class TestRSAPrivateKeyImport:
     ) -> dict[int, Any]:
         """Build an RSA private key import template with CRT components."""
         tmpl: dict[int, Any] = {
-            int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-            int(CKA_KEY_TYPE): int(CKK_RSA),
-            int(CKA_MODULUS): comp["modulus"],
-            int(CKA_PUBLIC_EXPONENT): comp["public_exponent"],
-            int(CKA_PRIVATE_EXPONENT): comp["private_exponent"],
-            int(CKA_PRIME_1): comp["prime_1"],
-            int(CKA_PRIME_2): comp["prime_2"],
-            int(CKA_EXPONENT_1): comp["exponent_1"],
-            int(CKA_EXPONENT_2): comp["exponent_2"],
-            int(CKA_COEFFICIENT): comp["coefficient"],
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
+            CKA_CLASS: CKO_PRIVATE_KEY,
+            CKA_KEY_TYPE: CKK_RSA,
+            CKA_MODULUS: comp["modulus"],
+            CKA_PUBLIC_EXPONENT: comp["public_exponent"],
+            CKA_PRIVATE_EXPONENT: comp["private_exponent"],
+            CKA_PRIME_1: comp["prime_1"],
+            CKA_PRIME_2: comp["prime_2"],
+            CKA_EXPONENT_1: comp["exponent_1"],
+            CKA_EXPONENT_2: comp["exponent_2"],
+            CKA_COEFFICIENT: comp["coefficient"],
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
         }
         if sign:
-            tmpl[int(CKA_SIGN)] = True
+            tmpl[CKA_SIGN] = True
         if decrypt:
-            tmpl[int(CKA_DECRYPT)] = True
+            tmpl[CKA_DECRYPT] = True
         return tmpl
 
     def test_import_rsa_private_key(self, p11_raw_session: Any) -> None:
@@ -161,8 +161,8 @@ class TestRSAPrivateKeyImport:
         )
         try:
             assert imported != 0
-            attrs = read_attributes(rs.raw, rs.sh, imported, [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_RSA)
+            attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] == CKK_RSA
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)
 
@@ -192,7 +192,7 @@ class TestRSAPrivateKeyImport:
 
         imported = create_object(rs.raw, rs.sh, _pub_key_template(comp))
         try:
-            attrs = read_attributes(rs.raw, rs.sh, imported, [int(CKA_LOCAL)])
-            assert attrs[int(CKA_LOCAL)] is False
+            attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_LOCAL])
+            assert attrs[CKA_LOCAL] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)

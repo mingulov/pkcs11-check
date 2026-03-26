@@ -35,15 +35,17 @@ class TestSensitiveKeyValue:
         """Reading CKA_VALUE on a SENSITIVE=True AES key must fail."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_SENSITIVE): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_SENSITIVE: True},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_SENSITIVE)])
-            assert attrs[int(CKA_SENSITIVE)] is True
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            assert attrs[CKA_SENSITIVE] is True
 
             try:
-                read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
+                read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
                 pytest.fail("Module allowed reading CKA_VALUE on sensitive key")
             except AssertionError as e:
                 msg = str(e)
@@ -57,12 +59,14 @@ class TestSensitiveKeyValue:
         """CKA_VALUE is readable when SENSITIVE=False."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
-            value = attrs[int(CKA_VALUE)]
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            value = attrs[CKA_VALUE]
             assert isinstance(value, bytes)
             assert len(value) == 32  # 256 bits = 32 bytes
         finally:
@@ -72,15 +76,17 @@ class TestSensitiveKeyValue:
         """Reading CKA_PRIVATE_EXPONENT on a sensitive RSA private key must fail."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            private_attrs={int(CKA_SENSITIVE): True},
+            rs.raw,
+            rs.sh,
+            2048,
+            private_attrs={CKA_SENSITIVE: True},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_SENSITIVE)])
-            assert attrs[int(CKA_SENSITIVE)] is True
+            attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE])
+            assert attrs[CKA_SENSITIVE] is True
 
             try:
-                read_attributes(rs.raw, rs.sh, priv, [int(CKA_PRIVATE_EXPONENT)])
+                read_attributes(rs.raw, rs.sh, priv, [CKA_PRIVATE_EXPONENT])
                 pytest.fail("Module allowed reading CKA_PRIVATE_EXPONENT on sensitive key")
             except AssertionError as e:
                 msg = str(e)
@@ -106,8 +112,8 @@ class TestExtractableEnforcement:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             try:
-                attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_EXTRACTABLE)])
-                extractable = attrs[int(CKA_EXTRACTABLE)]
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
+                extractable = attrs[CKA_EXTRACTABLE]
             except AssertionError as e:
                 if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
                     pytest.skip("Module does not support CKA_EXTRACTABLE attribute")
@@ -136,14 +142,16 @@ class TestExtractableEnforcement:
         """AES key with EXTRACTABLE=True allows VALUE read (when also not sensitive)."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_EXTRACTABLE)])
-            assert attrs[int(CKA_EXTRACTABLE)] is True
-            val_attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
-            assert len(val_attrs[int(CKA_VALUE)]) == 32
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
+            assert attrs[CKA_EXTRACTABLE] is True
+            val_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            assert len(val_attrs[CKA_VALUE]) == 32
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -154,20 +162,20 @@ class TestSensitiveFlag:
     def test_sensitive_flag_is_true_when_requested(self, p11_raw_session: Any) -> None:
         """AES key with SENSITIVE=True has SENSITIVE=True."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_SENSITIVE): True})
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_SENSITIVE)])
-            assert attrs[int(CKA_SENSITIVE)] is True
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            assert attrs[CKA_SENSITIVE] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_sensitive_flag_settable_at_creation(self, p11_raw_session: Any) -> None:
         """SENSITIVE=False can be set at creation time."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_SENSITIVE): False})
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: False})
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_SENSITIVE)])
-            assert attrs[int(CKA_SENSITIVE)] is False
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            assert attrs[CKA_SENSITIVE] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -175,20 +183,24 @@ class TestSensitiveFlag:
         """CKA_ALWAYS_SENSITIVE is readable and consistent."""
         rs = p11_raw_session
         key_sensitive = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_SENSITIVE): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_SENSITIVE: True},
         )
         key_not_sensitive = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_SENSITIVE): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_SENSITIVE: False},
         )
         try:
             # ALWAYS_SENSITIVE should be True for keys that were always sensitive
-            a1 = read_attributes(rs.raw, rs.sh, key_sensitive, [int(CKA_ALWAYS_SENSITIVE)])
-            assert a1[int(CKA_ALWAYS_SENSITIVE)] is True
+            a1 = read_attributes(rs.raw, rs.sh, key_sensitive, [CKA_ALWAYS_SENSITIVE])
+            assert a1[CKA_ALWAYS_SENSITIVE] is True
             # ALWAYS_SENSITIVE should be False for keys that started non-sensitive
-            a2 = read_attributes(rs.raw, rs.sh, key_not_sensitive, [int(CKA_ALWAYS_SENSITIVE)])
-            assert a2[int(CKA_ALWAYS_SENSITIVE)] is False
+            a2 = read_attributes(rs.raw, rs.sh, key_not_sensitive, [CKA_ALWAYS_SENSITIVE])
+            assert a2[CKA_ALWAYS_SENSITIVE] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key_sensitive)
             destroy_quietly(rs.raw, rs.sh, key_not_sensitive)

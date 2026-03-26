@@ -52,9 +52,9 @@ class TestROSessionOperations:
         """Digest works in R/O session (no key needed)."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         if pin_bytes is not None:
-            login_user(rs.raw, ro_sh, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, ro_sh, CKU_USER, pin_bytes)
         try:
             digest = digest_single(rs.raw, ro_sh, CKM_SHA256, b"RO session digest test")
             assert len(digest) == 32
@@ -65,12 +65,12 @@ class TestROSessionOperations:
         """Finding objects works in R/O session."""
         rs = p11_raw_session
         # Create a key in R/W session first
-        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={int(CKA_LABEL): "ro-find-test"})
+        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: "ro-find-test"})
 
         try:
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
-                tmpl = template_from_dict({int(CKA_LABEL): "ro-find-test"})
+                tmpl = template_from_dict({CKA_LABEL: "ro-find-test"})
                 found = find_objects(rs.raw, ro_sh, tmpl)
                 # Session objects may or may not be visible in other sessions
                 # but the search operation should work
@@ -89,13 +89,13 @@ class TestROSessionOperations:
 
         try:
             # Verify in R/O session using the same token-level login
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
                 # Find the public key
                 tmpl = template_from_dict(
                     {
-                        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_RSA),
+                        CKA_CLASS: CKO_PUBLIC_KEY,
+                        CKA_KEY_TYPE: CKK_RSA,
                     }
                 )
                 keys = find_objects(rs.raw, ro_sh, tmpl)
@@ -116,16 +116,16 @@ class TestSessionObjectLifecycle:
         """Non-TOKEN object disappears after session closes."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Session 1: create session object
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, s1, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, s1, CKU_USER, pin_bytes)
         label = "session-lifecycle-test"
-        gen_aes_key(rs.raw, s1, 128, attrs={int(CKA_LABEL): label})
+        gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: label})
         # Verify it exists in this session
-        tmpl = template_from_dict({int(CKA_LABEL): label})
+        tmpl = template_from_dict({CKA_LABEL: label})
         found = find_objects(rs.raw, s1, tmpl)
         assert len(found) >= 1
         close_session_quietly(rs.raw, s1)
@@ -133,7 +133,7 @@ class TestSessionObjectLifecycle:
         # Session 2: the session object should be gone
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, s2, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, s2, CKU_USER, pin_bytes)
         try:
             found = find_objects(rs.raw, s2, tmpl)
             assert len(found) == 0, "Session object survived session close"
@@ -144,22 +144,22 @@ class TestSessionObjectLifecycle:
         """TOKEN=True object persists after session closes."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         label = "token-lifecycle-test"
 
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, s1, int(CKU_USER), pin_bytes)
-        gen_aes_key(rs.raw, s1, 128, attrs={int(CKA_LABEL): label, int(CKA_TOKEN): True})
+            login_user(rs.raw, s1, CKU_USER, pin_bytes)
+        gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: label, CKA_TOKEN: True})
         close_session_quietly(rs.raw, s1)
 
         # Session 2: token object should still exist
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, s2, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, s2, CKU_USER, pin_bytes)
         try:
-            tmpl = template_from_dict({int(CKA_LABEL): label})
+            tmpl = template_from_dict({CKA_LABEL: label})
             found = find_objects(rs.raw, s2, tmpl)
             assert len(found) >= 1, "Token object disappeared after session close"
             # Cleanup

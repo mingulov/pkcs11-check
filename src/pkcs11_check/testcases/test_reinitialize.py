@@ -44,16 +44,16 @@ class TestReinitialize:
         # Load and initialize
         raw = RawPKCS11.from_lib(str(module_path))
         rv = raw.C_Initialize(None)
-        assert rv in (int(CKR_OK), int(CKR_CRYPTOKI_ALREADY_INITIALIZED))
+        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
 
         try:
             slots = get_slot_ids(raw)
             slot_idx = p11_config.slot if p11_config.slot is not None else 0
             slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
-            flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+            flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
             sh = raw_open_session(raw, slot_id, flags)
             if pin_bytes is not None:
-                login_user(raw, sh, int(CKU_USER), pin_bytes)
+                login_user(raw, sh, CKU_USER, pin_bytes)
             key = gen_aes_key(raw, sh, 128)
             assert key != 0
             destroy_quietly(raw, sh, key)
@@ -63,13 +63,13 @@ class TestReinitialize:
 
         # Re-initialize
         rv = raw.C_Initialize(None)
-        expect_rv(int(rv), CKR_OK)
+        expect_rv(rv, CKR_OK)
         try:
             slots = get_slot_ids(raw)
             slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
             sh = raw_open_session(raw, slot_id, flags)
             if pin_bytes is not None:
-                login_user(raw, sh, int(CKU_USER), pin_bytes)
+                login_user(raw, sh, CKU_USER, pin_bytes)
             key = gen_aes_key(raw, sh, 128)
             assert key != 0
             destroy_quietly(raw, sh, key)
@@ -86,15 +86,15 @@ class TestReinitialize:
 
         raw = RawPKCS11.from_lib(str(module_path))
         rv = raw.C_Initialize(None)
-        assert rv in (int(CKR_OK), int(CKR_CRYPTOKI_ALREADY_INITIALIZED))
+        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
 
         slots = get_slot_ids(raw)
         slot_idx = p11_config.slot if p11_config.slot is not None else 0
         slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         sh = raw_open_session(raw, slot_id, flags)
         if pin_bytes is not None:
-            login_user(raw, sh, int(CKU_USER), pin_bytes)
+            login_user(raw, sh, CKU_USER, pin_bytes)
 
         # Generate a key to prove session works
         key = gen_aes_key(raw, sh, 128)
@@ -105,7 +105,7 @@ class TestReinitialize:
 
         # After finalize, using the old session should fail
         rv = raw.C_Initialize(None)
-        expect_rv(int(rv), CKR_OK)
+        expect_rv(rv, CKR_OK)
         try:
             # Old session handle should be invalid now — any C_ call should fail
             from ctypes import byref
@@ -116,10 +116,10 @@ class TestReinitialize:
             tmpl = template(attr_ulong(CKA_VALUE_LEN, 16))
             mech = mech_simple(CKM_AES_KEY_GEN)
             new_key = CK_OBJECT_HANDLE(0)
-            rv2 = int(raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(new_key)))
+            rv2 = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(new_key))
             # Some modules may reuse the handle — CKR_OK is acceptable
             # CKR_SESSION_HANDLE_INVALID (0xb3) or any non-OK is expected
-            if rv2 == int(CKR_OK):
-                destroy_quietly(raw, sh, int(new_key.value))
+            if rv2 == CKR_OK:
+                destroy_quietly(raw, sh, new_key.value)
         finally:
             raw.C_Finalize(None)

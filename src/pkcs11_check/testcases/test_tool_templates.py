@@ -56,20 +56,22 @@ class TestDefaultToolTemplates:
         """
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
+            rs.raw,
+            rs.sh,
+            2048,
             public_attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_VERIFY): True,
-                int(CKA_WRAP): True,
-                int(CKA_TOKEN): False,
+                CKA_ENCRYPT: True,
+                CKA_VERIFY: True,
+                CKA_WRAP: True,
+                CKA_TOKEN: False,
             },
             private_attrs={
-                int(CKA_DECRYPT): True,
-                int(CKA_SIGN): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_SENSITIVE): True,
-                int(CKA_EXTRACTABLE): False,
-                int(CKA_TOKEN): False,
+                CKA_DECRYPT: True,
+                CKA_SIGN: True,
+                CKA_UNWRAP: True,
+                CKA_SENSITIVE: True,
+                CKA_EXTRACTABLE: False,
+                CKA_TOKEN: False,
             },
         )
         try:
@@ -85,12 +87,14 @@ class TestDefaultToolTemplates:
         """pkcs11-tool AES keygen: encrypt+decrypt+wrap+unwrap."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
             },
         )
         try:
@@ -114,19 +118,21 @@ class TestConcurrentFindObjects:
         rs = p11_raw_session
         prefix = f"conc-find-{uuid.uuid4().hex[:6]}"
         for i in range(20):
-            key = gen_aes_key(rs.raw, rs.sh, 128, attrs={int(CKA_LABEL): f"{prefix}-{i}"})
+            key = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: f"{prefix}-{i}"})
             # Search while objects exist
             found = find_objects(
-                rs.raw, rs.sh,
-                template_from_dict({int(CKA_CLASS): int(CKO_SECRET_KEY)}),
+                rs.raw,
+                rs.sh,
+                template_from_dict({CKA_CLASS: CKO_SECRET_KEY}),
             )
             assert len(found) >= 1
             destroy_quietly(rs.raw, rs.sh, key)
 
         # All destroyed
         found = find_objects(
-            rs.raw, rs.sh,
-            template_from_dict({int(CKA_LABEL): f"{prefix}-0"}),
+            rs.raw,
+            rs.sh,
+            template_from_dict({CKA_LABEL: f"{prefix}-0"}),
         )
         assert len(found) == 0
 

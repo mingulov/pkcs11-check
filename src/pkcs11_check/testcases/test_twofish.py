@@ -53,13 +53,18 @@ def _tf_key(raw: Any, sh: int, bits: int, attrs: dict[int, Any]) -> int:
     mech = mech_simple(CKM_TWOFISH_KEY_GEN)
     key = CK_OBJECT_HANDLE(0)
     rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
-    expect_rv(int(rv), CKR_OK)
-    return int(key.value)
+    expect_rv(rv, CKR_OK)
+    return key.value
 
 
 def _encrypt_or_skip(
-    raw: Any, sh: int, key: int, mechanism: Any, data: bytes,
-    *, mech_param: Any = None,
+    raw: Any,
+    sh: int,
+    key: int,
+    mechanism: Any,
+    data: bytes,
+    *,
+    mech_param: Any = None,
 ) -> bytes:
     """Try encrypt_single; skip if module returns CKR_MECHANISM_INVALID."""
     try:
@@ -84,7 +89,7 @@ class TestTwofishKeyGen:
         rs = p11_raw_session
         if not rs.has_mechanism("TWOFISH_KEY_GEN"):
             pytest.skip("CKM_TWOFISH_KEY_GEN not supported")
-        key = _tf_key(rs.raw, rs.sh, key_bits, {int(CKA_TOKEN): False})
+        key = _tf_key(rs.raw, rs.sh, key_bits, {CKA_TOKEN: False})
         try:
             assert key != 0
         finally:
@@ -111,18 +116,28 @@ class TestTwofishEncryption:
         if not rs.has_mechanism("TWOFISH_CBC"):
             pytest.skip("CKM_TWOFISH_CBC not supported")
         key = _tf_key(
-            rs.raw, rs.sh, 128,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            128,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 16)
         try:
             ct = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_TWOFISH_CBC, _TWO_BLOCKS,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_TWOFISH_CBC,
+                _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_TWOFISH_CBC, iv),
             )
             assert ct != _TWO_BLOCKS
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_TWOFISH_CBC, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_TWOFISH_CBC,
+                ct,
                 mech_param=mech_bytes(CKM_TWOFISH_CBC, iv),
             )
             assert pt == _TWO_BLOCKS
@@ -137,18 +152,28 @@ class TestTwofishEncryption:
         if not rs.has_mechanism("TWOFISH_CBC"):
             pytest.skip("CKM_TWOFISH_CBC not supported")
         key = _tf_key(
-            rs.raw, rs.sh, 128,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            128,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv1 = generate_random(rs.raw, rs.sh, 16)
         iv2 = generate_random(rs.raw, rs.sh, 16)
         try:
             ct1 = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_TWOFISH_CBC, _TWO_BLOCKS,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_TWOFISH_CBC,
+                _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_TWOFISH_CBC, iv1),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_TWOFISH_CBC, _TWO_BLOCKS,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_TWOFISH_CBC,
+                _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_TWOFISH_CBC, iv2),
             )
             assert ct1 != ct2
@@ -163,22 +188,32 @@ class TestTwofishEncryption:
         if not rs.has_mechanism("TWOFISH_CBC_PAD"):
             pytest.skip("CKM_TWOFISH_CBC_PAD not supported")
         key = _tf_key(
-            rs.raw, rs.sh, 128,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            128,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 16)
         # Non-block-aligned data - PKCS#7 padding handles it
         plaintext = b"Twofish CBC PAD test!"  # 21 bytes, not a multiple of 16
         try:
             ct = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_TWOFISH_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_TWOFISH_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_TWOFISH_CBC_PAD, iv),
             )
             assert ct != plaintext
             # Ciphertext is padded to 16-byte block boundary
             assert len(ct) % 16 == 0
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_TWOFISH_CBC_PAD, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_TWOFISH_CBC_PAD,
+                ct,
                 mech_param=mech_bytes(CKM_TWOFISH_CBC_PAD, iv),
             )
             assert pt == plaintext
@@ -192,18 +227,26 @@ class TestTwofishEncryption:
             pytest.skip("CKM_TWOFISH_KEY_GEN not supported")
         if not rs.has_mechanism("TWOFISH_CBC_PAD"):
             pytest.skip("CKM_TWOFISH_CBC_PAD not supported")
-        tmpl = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False}
+        tmpl = {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False}
         key1 = _tf_key(rs.raw, rs.sh, 128, tmpl)
         key2 = _tf_key(rs.raw, rs.sh, 128, tmpl)
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"Twofish CBC PAD key independence!!"  # 34 bytes
         try:
             ct1 = _encrypt_or_skip(
-                rs.raw, rs.sh, key1, CKM_TWOFISH_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key1,
+                CKM_TWOFISH_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_TWOFISH_CBC_PAD, iv),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key2, CKM_TWOFISH_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key2,
+                CKM_TWOFISH_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_TWOFISH_CBC_PAD, iv),
             )
             assert ct1 != ct2

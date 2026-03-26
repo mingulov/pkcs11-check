@@ -46,13 +46,13 @@ class TestSOLogin:
     def test_so_login_wrong_pin(self, p11_raw_session: Any) -> None:
         """SO login with wrong PIN must fail."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             wrong_pin = b"WRONG_SO_PIN_XYZ"
             pin_buf = (CK_UTF8CHAR * len(wrong_pin))(*wrong_pin)
-            rv = int(rs.raw.C_Login(test_sh, int(CKU_SO), pin_buf, len(wrong_pin)))
-            assert rv != int(CKR_OK), f"SO login with wrong PIN should fail, got {ckr_name(rv)}"
+            rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(wrong_pin))
+            assert rv != CKR_OK, f"SO login with wrong PIN should fail, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, test_sh)
 
@@ -65,10 +65,8 @@ class TestSOLogin:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = int(rs.raw.C_Login(rs.sh, int(CKU_SO), pin_buf, len(pin_bytes)))
-        assert rv != int(CKR_OK), (
-            f"SO login while user is logged in should fail, got {ckr_name(rv)}"
-        )
+        rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(pin_bytes))
+        assert rv != CKR_OK, f"SO login while user is logged in should fail, got {ckr_name(rv)}"
 
 
 class TestSetPIN:
@@ -80,14 +78,14 @@ class TestSetPIN:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         new_pin = pin_bytes + b"X"
 
         # Open a session and change the PIN
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            login_user(rs.raw, s1, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, s1, CKU_USER, pin_bytes)
             set_pin(rs.raw, s1, pin_bytes, new_pin)
         except (AssertionError, Exception):
             close_session_quietly(rs.raw, s1)
@@ -99,7 +97,7 @@ class TestSetPIN:
         # Login with new PIN should work
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            login_user(rs.raw, s2, int(CKU_USER), new_pin)
+            login_user(rs.raw, s2, CKU_USER, new_pin)
             key_h = gen_aes_key(rs.raw, s2, 256)
             assert key_h != 0
             destroy_quietly(rs.raw, s2, key_h)

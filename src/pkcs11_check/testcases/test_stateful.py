@@ -36,12 +36,8 @@ def test_pkcs11_stateful(p11_raw_session: Any) -> None:
     """Run the stateful state machine test."""
     rs = p11_raw_session
     # Stateful lifecycle: create, use, search, destroy, verify gone
-    key1 = gen_aes_key(
-        rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): "stateful-manual-1"}
-    )
-    key2 = gen_aes_key(
-        rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): "stateful-manual-2"}
-    )
+    key1 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "stateful-manual-1"})
+    key2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "stateful-manual-2"})
 
     try:
         # Both keys should work
@@ -56,13 +52,9 @@ def test_pkcs11_stateful(p11_raw_session: Any) -> None:
         assert pt2 == b"0123456789abcdef"
 
         # Search should only find key2
-        found1 = find_objects(
-            rs.raw, rs.sh, template_from_dict({int(CKA_LABEL): "stateful-manual-1"})
-        )
+        found1 = find_objects(rs.raw, rs.sh, template_from_dict({CKA_LABEL: "stateful-manual-1"}))
         assert len(found1) == 0
-        found2 = find_objects(
-            rs.raw, rs.sh, template_from_dict({int(CKA_LABEL): "stateful-manual-2"})
-        )
+        found2 = find_objects(rs.raw, rs.sh, template_from_dict({CKA_LABEL: "stateful-manual-2"}))
         assert len(found2) == 1
     finally:
         if key1:
@@ -81,8 +73,10 @@ def test_generate_use_destroy_cycle(p11_raw_session: Any) -> None:
         for i in range(5):
             label = f"stateful-cycle-{i}"
             key = gen_aes_key(
-                rs.raw, rs.sh, 256,
-                attrs={int(CKA_LABEL): label, int(CKA_TOKEN): False},
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={CKA_LABEL: label, CKA_TOKEN: False},
             )
             keys.append(key)
             labels.append(label)
@@ -95,8 +89,8 @@ def test_generate_use_destroy_cycle(p11_raw_session: Any) -> None:
 
         # Read attributes should work
         for key in keys:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] is not None
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] is not None
 
         # Destroy half the keys
         for key in keys[:3]:
@@ -132,8 +126,10 @@ def test_object_count_consistency(p11_raw_session: Any) -> None:
     created: list[int] = []
     for i in range(3):
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_LABEL): f"{label_prefix}{i}", int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_LABEL: f"{label_prefix}{i}", CKA_TOKEN: False},
         )
         created.append(key)
 
@@ -141,8 +137,9 @@ def test_object_count_consistency(p11_raw_session: Any) -> None:
         # Find them all
         for i, key in enumerate(created):
             found = find_objects(
-                rs.raw, rs.sh,
-                template_from_dict({int(CKA_LABEL): f"{label_prefix}{i}"}),
+                rs.raw,
+                rs.sh,
+                template_from_dict({CKA_LABEL: f"{label_prefix}{i}"}),
             )
             assert len(found) >= 1, f"Key {label_prefix}{i} not found"
 
@@ -152,16 +149,18 @@ def test_object_count_consistency(p11_raw_session: Any) -> None:
 
         # The destroyed one should not be findable
         found = find_objects(
-            rs.raw, rs.sh,
-            template_from_dict({int(CKA_LABEL): f"{label_prefix}1"}),
+            rs.raw,
+            rs.sh,
+            template_from_dict({CKA_LABEL: f"{label_prefix}1"}),
         )
         assert len(found) == 0, "Destroyed key still found"
 
         # The others should still exist
         for i in [0, 2]:
             found = find_objects(
-                rs.raw, rs.sh,
-                template_from_dict({int(CKA_LABEL): f"{label_prefix}{i}"}),
+                rs.raw,
+                rs.sh,
+                template_from_dict({CKA_LABEL: f"{label_prefix}{i}"}),
             )
             assert len(found) >= 1
     finally:

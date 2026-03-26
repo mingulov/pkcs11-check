@@ -78,12 +78,17 @@ _XMSSMT_SHA2_20_2_256 = 0x00000001  # XMSSMT-SHA2_20/2_256
 
 # Common keygen errors for stateful sigs - modules may reject templates.
 _KEYGEN_CKR_NAMES = (
-    "CKR_MECHANISM_INVALID", "CKR_FUNCTION_FAILED", "CKR_DEVICE_ERROR",
-    "CKR_TEMPLATE_INCOMPLETE", "CKR_TEMPLATE_INCONSISTENT",
+    "CKR_MECHANISM_INVALID",
+    "CKR_FUNCTION_FAILED",
+    "CKR_DEVICE_ERROR",
+    "CKR_TEMPLATE_INCOMPLETE",
+    "CKR_TEMPLATE_INCONSISTENT",
 )
 
 _SIGN_CKR_NAMES = (
-    "CKR_MECHANISM_INVALID", "CKR_FUNCTION_FAILED", "CKR_DEVICE_ERROR",
+    "CKR_MECHANISM_INVALID",
+    "CKR_FUNCTION_FAILED",
+    "CKR_DEVICE_ERROR",
 )
 
 
@@ -117,13 +122,17 @@ def _generate_hss_keypair(rs: Any) -> tuple[int, int]:
     pub_h = CK_OBJECT_HANDLE(0)
     priv_h = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKeyPair(
-        rs.sh, mech.byref(),
-        pub_tmpl.ptr, pub_tmpl.count,
-        priv_tmpl.ptr, priv_tmpl.count,
-        byref(pub_h), byref(priv_h),
+        rs.sh,
+        mech.byref(),
+        pub_tmpl.ptr,
+        pub_tmpl.count,
+        priv_tmpl.ptr,
+        priv_tmpl.count,
+        byref(pub_h),
+        byref(priv_h),
     )
-    expect_rv(int(rv), CKR_OK)
-    return int(pub_h.value), int(priv_h.value)
+    expect_rv(rv, CKR_OK)
+    return pub_h.value, priv_h.value
 
 
 def _generate_xmss_keypair(rs: Any) -> tuple[int, int]:
@@ -144,13 +153,17 @@ def _generate_xmss_keypair(rs: Any) -> tuple[int, int]:
     pub_h = CK_OBJECT_HANDLE(0)
     priv_h = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKeyPair(
-        rs.sh, mech.byref(),
-        pub_tmpl.ptr, pub_tmpl.count,
-        priv_tmpl.ptr, priv_tmpl.count,
-        byref(pub_h), byref(priv_h),
+        rs.sh,
+        mech.byref(),
+        pub_tmpl.ptr,
+        pub_tmpl.count,
+        priv_tmpl.ptr,
+        priv_tmpl.count,
+        byref(pub_h),
+        byref(priv_h),
     )
-    expect_rv(int(rv), CKR_OK)
-    return int(pub_h.value), int(priv_h.value)
+    expect_rv(rv, CKR_OK)
+    return pub_h.value, priv_h.value
 
 
 def _generate_xmssmt_keypair(rs: Any) -> tuple[int, int]:
@@ -171,13 +184,17 @@ def _generate_xmssmt_keypair(rs: Any) -> tuple[int, int]:
     pub_h = CK_OBJECT_HANDLE(0)
     priv_h = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKeyPair(
-        rs.sh, mech.byref(),
-        pub_tmpl.ptr, pub_tmpl.count,
-        priv_tmpl.ptr, priv_tmpl.count,
-        byref(pub_h), byref(priv_h),
+        rs.sh,
+        mech.byref(),
+        pub_tmpl.ptr,
+        pub_tmpl.count,
+        priv_tmpl.ptr,
+        priv_tmpl.count,
+        byref(pub_h),
+        byref(priv_h),
     )
-    expect_rv(int(rv), CKR_OK)
-    return int(pub_h.value), int(priv_h.value)
+    expect_rv(rv, CKR_OK)
+    return pub_h.value, priv_h.value
 
 
 def _try_keygen(gen_fn: Any, rs: Any, name: str) -> tuple[int, int]:
@@ -231,10 +248,10 @@ class TestHSSKeyGeneration:
         _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
         pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
         try:
-            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])
-            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])
-            assert pub_attrs[int(CKA_KEY_TYPE)] == int(CKK_HSS)
-            assert priv_attrs[int(CKA_KEY_TYPE)] == int(CKK_HSS)
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
+            assert pub_attrs[CKA_KEY_TYPE] == CKK_HSS
+            assert priv_attrs[CKA_KEY_TYPE] == CKK_HSS
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -244,10 +261,10 @@ class TestHSSKeyGeneration:
         _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
         pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
         try:
-            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_CLASS)])
-            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_CLASS)])
-            assert pub_attrs[int(CKA_CLASS)] == int(CKO_PUBLIC_KEY)
-            assert priv_attrs[int(CKA_CLASS)] == int(CKO_PRIVATE_KEY)
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])
+            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
+            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -257,11 +274,9 @@ class TestHSSKeyGeneration:
         _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
         pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
         try:
-            priv_attrs = read_attributes(
-                rs.raw, rs.sh, priv, [int(CKA_SENSITIVE), int(CKA_EXTRACTABLE)]
-            )
-            assert priv_attrs[int(CKA_SENSITIVE)] is True
-            assert priv_attrs[int(CKA_EXTRACTABLE)] is False
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE, CKA_EXTRACTABLE])
+            assert priv_attrs[CKA_SENSITIVE] is True
+            assert priv_attrs[CKA_EXTRACTABLE] is False
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -302,9 +317,7 @@ class TestHSSSignVerify:
             if "CKR_SIGNATURE_INVALID" in exc_msg:
                 pass  # Correct PKCS#11 behavior
             elif "CKR_DEVICE_ERROR" in exc_msg:
-                pytest.xfail(
-                    "Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID"
-                )
+                pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
             else:
                 raise
         finally:
@@ -340,10 +353,10 @@ class TestXMSSKeyGeneration:
         _skip_if_no(rs, "XMSS_KEY_PAIR_GEN")
         pub, priv = _try_keygen(_generate_xmss_keypair, rs, "XMSS")
         try:
-            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])
-            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])
-            assert pub_attrs[int(CKA_KEY_TYPE)] == int(CKK_XMSS)
-            assert priv_attrs[int(CKA_KEY_TYPE)] == int(CKK_XMSS)
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
+            assert pub_attrs[CKA_KEY_TYPE] == CKK_XMSS
+            assert priv_attrs[CKA_KEY_TYPE] == CKK_XMSS
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -353,10 +366,10 @@ class TestXMSSKeyGeneration:
         _skip_if_no(rs, "XMSS_KEY_PAIR_GEN")
         pub, priv = _try_keygen(_generate_xmss_keypair, rs, "XMSS")
         try:
-            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_CLASS)])
-            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_CLASS)])
-            assert pub_attrs[int(CKA_CLASS)] == int(CKO_PUBLIC_KEY)
-            assert priv_attrs[int(CKA_CLASS)] == int(CKO_PRIVATE_KEY)
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])
+            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
+            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -366,11 +379,9 @@ class TestXMSSKeyGeneration:
         _skip_if_no(rs, "XMSS_KEY_PAIR_GEN")
         pub, priv = _try_keygen(_generate_xmss_keypair, rs, "XMSS")
         try:
-            priv_attrs = read_attributes(
-                rs.raw, rs.sh, priv, [int(CKA_SENSITIVE), int(CKA_EXTRACTABLE)]
-            )
-            assert priv_attrs[int(CKA_SENSITIVE)] is True
-            assert priv_attrs[int(CKA_EXTRACTABLE)] is False
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE, CKA_EXTRACTABLE])
+            assert priv_attrs[CKA_SENSITIVE] is True
+            assert priv_attrs[CKA_EXTRACTABLE] is False
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -411,9 +422,7 @@ class TestXMSSSignVerify:
             if "CKR_SIGNATURE_INVALID" in exc_msg:
                 pass  # Correct PKCS#11 behavior
             elif "CKR_DEVICE_ERROR" in exc_msg:
-                pytest.xfail(
-                    "Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID"
-                )
+                pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
             else:
                 raise
         finally:
@@ -449,10 +458,10 @@ class TestXMSSMTKeyGeneration:
         _skip_if_no(rs, "XMSSMT_KEY_PAIR_GEN")
         pub, priv = _try_keygen(_generate_xmssmt_keypair, rs, "XMSS^MT")
         try:
-            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])
-            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])
-            assert pub_attrs[int(CKA_KEY_TYPE)] == int(CKK_XMSSMT)
-            assert priv_attrs[int(CKA_KEY_TYPE)] == int(CKK_XMSSMT)
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
+            assert pub_attrs[CKA_KEY_TYPE] == CKK_XMSSMT
+            assert priv_attrs[CKA_KEY_TYPE] == CKK_XMSSMT
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -462,10 +471,10 @@ class TestXMSSMTKeyGeneration:
         _skip_if_no(rs, "XMSSMT_KEY_PAIR_GEN")
         pub, priv = _try_keygen(_generate_xmssmt_keypair, rs, "XMSS^MT")
         try:
-            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_CLASS)])
-            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_CLASS)])
-            assert pub_attrs[int(CKA_CLASS)] == int(CKO_PUBLIC_KEY)
-            assert priv_attrs[int(CKA_CLASS)] == int(CKO_PRIVATE_KEY)
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])
+            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
+            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -475,11 +484,9 @@ class TestXMSSMTKeyGeneration:
         _skip_if_no(rs, "XMSSMT_KEY_PAIR_GEN")
         pub, priv = _try_keygen(_generate_xmssmt_keypair, rs, "XMSS^MT")
         try:
-            priv_attrs = read_attributes(
-                rs.raw, rs.sh, priv, [int(CKA_SENSITIVE), int(CKA_EXTRACTABLE)]
-            )
-            assert priv_attrs[int(CKA_SENSITIVE)] is True
-            assert priv_attrs[int(CKA_EXTRACTABLE)] is False
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE, CKA_EXTRACTABLE])
+            assert priv_attrs[CKA_SENSITIVE] is True
+            assert priv_attrs[CKA_EXTRACTABLE] is False
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -500,9 +507,7 @@ class TestXMSSMTSignVerify:
         try:
             sig = _try_sign(rs, priv, CKM_XMSSMT, "XMSS^MT")
             assert isinstance(sig, bytes) and len(sig) > 0
-            assert verify_single(
-                rs.raw, rs.sh, pub, CKM_XMSSMT, _MESSAGE, sig
-            ) is True
+            assert verify_single(rs.raw, rs.sh, pub, CKM_XMSSMT, _MESSAGE, sig) is True
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -515,18 +520,14 @@ class TestXMSSMTSignVerify:
         try:
             sig = _try_sign(rs, priv, CKM_XMSSMT, "XMSS^MT")
             tampered = _MESSAGE[:-1] + bytes([_MESSAGE[-1] ^ 0xFF])
-            result = verify_single(
-                rs.raw, rs.sh, pub, CKM_XMSSMT, tampered, sig
-            )
+            result = verify_single(rs.raw, rs.sh, pub, CKM_XMSSMT, tampered, sig)
             assert not result, "Tampered message should fail XMSS^MT verification"
         except AssertionError as exc:
             exc_msg = str(exc)
             if "CKR_SIGNATURE_INVALID" in exc_msg:
                 pass  # Correct PKCS#11 behavior
             elif "CKR_DEVICE_ERROR" in exc_msg:
-                pytest.xfail(
-                    "Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID"
-                )
+                pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
             else:
                 raise
         finally:

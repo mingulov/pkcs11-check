@@ -35,12 +35,12 @@ from pkcs11_check.raw.types_std import (
 
 pytestmark = pytest.mark.crossverify
 
-_PUB_ATTRS: dict[int, Any] = {int(CKA_ENCRYPT): True, int(CKA_TOKEN): False}
-_PRIV_ATTRS: dict[int, Any] = {int(CKA_DECRYPT): True, int(CKA_TOKEN): False}
+_PUB_ATTRS: dict[int, Any] = {CKA_ENCRYPT: True, CKA_TOKEN: False}
+_PRIV_ATTRS: dict[int, Any] = {CKA_DECRYPT: True, CKA_TOKEN: False}
 
 
 def _oaep_sha1() -> Any:
-    return mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=int(CKM_SHA_1), mgf=int(CKG_MGF1_SHA1))
+    return mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1)
 
 
 class TestRSAOAEPRoundtrip:
@@ -188,10 +188,10 @@ class TestRSAOAEPCrossVerify:
             rs.raw,
             rs.sh,
             pub_handle,
-            [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)],
+            [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
         )
-        modulus = int.from_bytes(attrs[int(CKA_MODULUS)], "big")  # type: ignore[arg-type]
-        exponent = int.from_bytes(attrs[int(CKA_PUBLIC_EXPONENT)], "big")  # type: ignore[arg-type]
+        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
+        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
         return rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
     def test_encrypt_crypto_decrypt_p11(self, p11_raw_session: Any) -> None:
@@ -217,8 +217,8 @@ class TestRSAOAEPCrossVerify:
                 ),
             )
             oaep = _oaep_sha1()
-            rv = int(rs.raw.C_DecryptInit(rs.sh, oaep.byref(), priv))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_DecryptInit(rs.sh, oaep.byref(), priv)
+            if rv != CKR_OK:
                 pytest.xfail(f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}")
             import ctypes
             from ctypes import byref
@@ -227,12 +227,12 @@ class TestRSAOAEPCrossVerify:
 
             in_buf = (ctypes.c_ubyte * len(ct))(*ct)
             out_len = CK_ULONG(0)
-            rv = int(rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), None, byref(out_len)))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), None, byref(out_len))
+            if rv != CKR_OK:
                 pytest.xfail(f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}")
             out_buf = (ctypes.c_ubyte * out_len.value)()
-            rv = int(rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), out_buf, byref(out_len)))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), out_buf, byref(out_len))
+            if rv != CKR_OK:
                 pytest.xfail(f"OAEP param mismatch between module and cryptography: {ckr_name(rv)}")
             pt = bytes(out_buf[: out_len.value])
             assert pt == plaintext
@@ -268,8 +268,8 @@ class TestRSAOAEPCrossVerify:
                 mech_param=oaep,
             )
             # Decrypt with wrong key — should fail at Init or Decrypt stage
-            rv = int(rs.raw.C_DecryptInit(rs.sh, oaep.byref(), priv2))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_DecryptInit(rs.sh, oaep.byref(), priv2)
+            if rv != CKR_OK:
                 return  # Failed as expected
             import ctypes
             from ctypes import byref
@@ -279,8 +279,8 @@ class TestRSAOAEPCrossVerify:
             in_buf = (ctypes.c_ubyte * len(ct))(*ct)
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
-            rv = int(rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), out_buf, byref(out_len)))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), out_buf, byref(out_len))
+            if rv != CKR_OK:
                 return  # Failed as expected
             pt = bytes(out_buf[: out_len.value])
             if pt == b"wrong key test":

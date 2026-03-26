@@ -49,7 +49,8 @@ class TestHiddenMechanisms:
     """Probe for mechanisms that work but aren't advertised."""
 
     def test_all_advertised_mechanisms_have_info(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Every mechanism in C_GetMechanismList should return valid info."""
         rs = p11_raw_session
@@ -57,9 +58,7 @@ class TestHiddenMechanisms:
         for mech in mechanisms:
             info = CK_MECHANISM_INFO()
             rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mech, byref(info))
-            assert rv == int(CKR_OK), (
-                f"Mechanism {_mech_name(mech)} has no info"
-            )
+            assert rv == CKR_OK, f"Mechanism {_mech_name(mech)} has no info"
 
     def test_mechanism_count_reasonable(self, p11_raw_session: Any) -> None:
         """Module should report a reasonable number of mechanisms."""
@@ -69,7 +68,8 @@ class TestHiddenMechanisms:
         assert len(mechanisms) < 1000, "Module reports suspiciously many"
 
     def test_deprecated_mechanisms_flagged(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """If deprecated mechanisms (DES, MD2) are available, flag them."""
         from pkcs11_check.compliance import ComplianceLevel, note
@@ -103,10 +103,11 @@ class TestSlotConsistency:
         for slot_id in slots:
             info = CK_SLOT_INFO()
             rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            assert rv == int(CKR_OK)
+            assert rv == CKR_OK
 
     def test_token_present_slots_have_token(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Slots with token_present=True should have readable tokens."""
         from pkcs11_check.raw.bootstrap import get_slot_ids
@@ -117,7 +118,7 @@ class TestSlotConsistency:
         for slot_id in slots:
             info = CK_TOKEN_INFO()
             rv = rs.raw.C_GetTokenInfo(slot_id, byref(info))
-            assert rv == int(CKR_OK)
+            assert rv == CKR_OK
 
     def test_token_has_valid_label(self, p11_raw_session: Any) -> None:
         """Token label should be a non-empty string."""
@@ -126,7 +127,7 @@ class TestSlotConsistency:
         rs = p11_raw_session
         info = CK_TOKEN_INFO()
         rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
-        assert rv == int(CKR_OK)
+        assert rv == CKR_OK
         label = bytes(info.label).decode("utf-8", errors="replace").strip()
         assert label is not None
 
@@ -144,7 +145,8 @@ class TestFunctionRobustness:
             pass
 
     def test_digest_all_hash_mechanisms(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Try digest with all available hash mechanisms."""
         rs = p11_raw_session
@@ -158,7 +160,8 @@ class TestFunctionRobustness:
                 pass
 
     def test_generate_key_all_aes_sizes(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Generate AES keys at all standard sizes."""
         rs = p11_raw_session
@@ -171,7 +174,8 @@ class TestFunctionRobustness:
                 pass
 
     def test_generate_rsa_various_sizes(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Generate RSA keys at various sizes."""
         rs = p11_raw_session
@@ -185,7 +189,8 @@ class TestFunctionRobustness:
                 pass
 
     def test_find_with_domain_parameters_class(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Search with domain params class - should return empty or work."""
         from pkcs11_check.raw.pack import template_from_dict
@@ -195,10 +200,9 @@ class TestFunctionRobustness:
         rs = p11_raw_session
         try:
             found = find_objects(
-                rs.raw, rs.sh,
-                template_from_dict(
-                    {int(CKA_CLASS): int(CKO_DOMAIN_PARAMETERS)}
-                ),
+                rs.raw,
+                rs.sh,
+                template_from_dict({CKA_CLASS: CKO_DOMAIN_PARAMETERS}),
             )
             assert isinstance(found, list)
         except AssertionError:
@@ -209,7 +213,8 @@ class TestMechanismFlagsConsistency:
     """Verify mechanism flags match actual capabilities."""
 
     def test_aes_encrypt_flag_matches_capability(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """If AES_ECB is in mechanism list, encryption should work."""
         rs = p11_raw_session
@@ -218,20 +223,27 @@ class TestMechanismFlagsConsistency:
 
         info = CK_MECHANISM_INFO()
         rs.raw.C_GetMechanismInfo(
-            rs.slot_id, int(CKM_AES_ECB), byref(info),
+            rs.slot_id,
+            CKM_AES_ECB,
+            byref(info),
         )
 
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_ECB, b"0123456789abcdef",
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_ECB,
+                b"0123456789abcdef",
             )
             assert len(ct) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_key_size_range_respected(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Key generation within reported min/max range should succeed."""
         rs = p11_raw_session
@@ -240,9 +252,11 @@ class TestMechanismFlagsConsistency:
 
         info = CK_MECHANISM_INFO()
         rv = rs.raw.C_GetMechanismInfo(
-            rs.slot_id, int(CKM_AES_KEY_GEN), byref(info),
+            rs.slot_id,
+            CKM_AES_KEY_GEN,
+            byref(info),
         )
-        if rv != int(CKR_OK):
+        if rv != CKR_OK:
             pytest.skip("Cannot get AES_KEY_GEN mechanism info")
 
         if info.ulMinKeySize > 0:
@@ -270,9 +284,11 @@ class TestMechanismLimitProbing:
 
         info = CK_MECHANISM_INFO()
         rv = rs.raw.C_GetMechanismInfo(
-            rs.slot_id, int(CKM_AES_KEY_GEN), byref(info),
+            rs.slot_id,
+            CKM_AES_KEY_GEN,
+            byref(info),
         )
-        if rv != int(CKR_OK):
+        if rv != CKR_OK:
             pytest.skip("Cannot get AES_KEY_GEN info")
 
         oversize = (int(info.ulMaxKeySize) + 8) * 8
@@ -298,9 +314,11 @@ class TestMechanismLimitProbing:
 
         info = CK_MECHANISM_INFO()
         rv = rs.raw.C_GetMechanismInfo(
-            rs.slot_id, int(CKM_RSA_PKCS_KEY_PAIR_GEN), byref(info),
+            rs.slot_id,
+            CKM_RSA_PKCS_KEY_PAIR_GEN,
+            byref(info),
         )
-        if rv != int(CKR_OK):
+        if rv != CKR_OK:
             pytest.skip("Cannot get RSA key info")
 
         if int(info.ulMinKeySize) == 0:
@@ -357,16 +375,24 @@ class TestMechanismLimitProbing:
 
         rs = p11_raw_session
         try:
-            key = create_object(rs.raw, rs.sh, {
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_VALUE): b"\x42",
-                int(CKA_SIGN): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-            })
+            key = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE: b"\x42",
+                    CKA_SIGN: True,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                },
+            )
             mac = sign_single(
-                rs.raw, rs.sh, key, CKM_SHA256_HMAC, b"test",
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_SHA256_HMAC,
+                b"test",
             )
             note(
                 f"Module accepted 1-byte HMAC key (len: {len(mac)})",
@@ -387,9 +413,11 @@ class TestMechanismLimitProbing:
 
         info = CK_MECHANISM_INFO()
         rv = rs.raw.C_GetMechanismInfo(
-            rs.slot_id, int(CKM_RSA_PKCS_KEY_PAIR_GEN), byref(info),
+            rs.slot_id,
+            CKM_RSA_PKCS_KEY_PAIR_GEN,
+            byref(info),
         )
-        if rv != int(CKR_OK):
+        if rv != CKR_OK:
             pytest.skip("Cannot get RSA info")
 
         oversize = int(info.ulMaxKeySize) + 1024

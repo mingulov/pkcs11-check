@@ -143,16 +143,16 @@ class TestTemplateConstraintAttributes:
             rs.sh,
             256,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_WRAP): True,
-                int(CKA_TOKEN): False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_WRAP: True,
+                CKA_TOKEN: False,
             },
         )
         try:
             try:
-                vals = read_attributes(rs.raw, rs.sh, key, [int(CKA_WRAP_TEMPLATE)])
-                wt = vals[int(CKA_WRAP_TEMPLATE)]
+                vals = read_attributes(rs.raw, rs.sh, key, [CKA_WRAP_TEMPLATE])
+                wt = vals[CKA_WRAP_TEMPLATE]
                 assert wt is not None or wt == b""
             except AssertionError:
                 pytest.skip("Module does not support CKA_WRAP_TEMPLATE")
@@ -169,16 +169,16 @@ class TestTemplateConstraintAttributes:
             rs.sh,
             256,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_TOKEN): False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_UNWRAP: True,
+                CKA_TOKEN: False,
             },
         )
         try:
             try:
-                vals = read_attributes(rs.raw, rs.sh, key, [int(CKA_UNWRAP_TEMPLATE)])
-                ut = vals[int(CKA_UNWRAP_TEMPLATE)]
+                vals = read_attributes(rs.raw, rs.sh, key, [CKA_UNWRAP_TEMPLATE])
+                ut = vals[CKA_UNWRAP_TEMPLATE]
                 assert ut is not None or ut == b""
             except AssertionError:
                 pytest.skip("Module does not support CKA_UNWRAP_TEMPLATE")
@@ -195,15 +195,15 @@ class TestTemplateConstraintAttributes:
             rs.sh,
             256,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DERIVE): True,
-                int(CKA_TOKEN): False,
+                CKA_ENCRYPT: True,
+                CKA_DERIVE: True,
+                CKA_TOKEN: False,
             },
         )
         try:
             try:
-                vals = read_attributes(rs.raw, rs.sh, key, [int(CKA_DERIVE_TEMPLATE)])
-                dt = vals[int(CKA_DERIVE_TEMPLATE)]
+                vals = read_attributes(rs.raw, rs.sh, key, [CKA_DERIVE_TEMPLATE])
+                dt = vals[CKA_DERIVE_TEMPLATE]
                 assert dt is not None or dt == b""
             except AssertionError:
                 pytest.skip("Module does not support CKA_DERIVE_TEMPLATE")
@@ -244,11 +244,11 @@ class TestOtpKeyAttributes:
             tmpl.count,
             byref(key),
         )
-        if int(rv) != int(CKR_OK):
-            pytest.skip(f"HOTP key generation failed: CKR 0x{int(rv):08x}")
-        key_h = int(key.value)
+        if rv != CKR_OK:
+            pytest.skip(f"HOTP key generation failed: CKR 0x{rv:08x}")
+        key_h = key.value
         try:
-            for attr_int in (int(CKA_OTP_FORMAT), int(CKA_OTP_LENGTH)):
+            for attr_int in (CKA_OTP_FORMAT, CKA_OTP_LENGTH):
                 try:
                     vals = read_attributes(rs.raw, rs.sh, key_h, [attr_int])
                     assert vals[attr_int] is not None
@@ -271,12 +271,12 @@ class TestWaitForSlotEvent:
         rs = p11_raw_session
         slot_out = c_ulong(0)
         # flags=1 means CKF_DONT_BLOCK (non-blocking)
-        rv = int(rs.raw.C_WaitForSlotEvent(1, byref(slot_out), None))
-        if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        rv = rs.raw.C_WaitForSlotEvent(1, byref(slot_out), None)
+        if rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.skip("C_WaitForSlotEvent not supported")
-        if rv == int(CKR_OK):
+        if rv == CKR_OK:
             pass  # Got an event — valid
-        elif rv == int(CKR_NO_EVENT):
+        elif rv == CKR_NO_EVENT:
             pass  # Expected — no slot events pending
         else:
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -516,9 +516,9 @@ class TestTier1Stragglers:
             rs.sh,
             256,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
-                int(CKA_TOKEN): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
         )
         try:

@@ -110,14 +110,14 @@ class TestUseAfterDestroy:
         destroy_quietly(rs.raw, rs.sh, key)
         # Second destroy - should not crash (destroy_quietly swallows errors)
         rv = rs.raw.C_DestroyObject(rs.sh, key)
-        assert rv != int(CKR_OK) or rv == int(CKR_OK)  # any result, just no crash
+        assert rv != CKR_OK or rv == CKR_OK  # any result, just no crash
 
     def test_read_attribute_after_destroy(self, p11_raw_session: Any) -> None:
         """Reading attributes of destroyed object must fail cleanly."""
         from pkcs11_check.raw.recipes import read_attributes
 
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): "destroy-attr"})
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "destroy-attr"})
         destroy_quietly(rs.raw, rs.sh, key)
         with pytest.raises(AssertionError):
             read_attributes(rs.raw, rs.sh, key, [CKA_LABEL])
@@ -146,10 +146,10 @@ class TestSessionChurn:
 
         rss_before = _get_rss_mb()
         for _ in range(100):
-            flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+            flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
             sh = raw_open_session(rs.raw, rs.slot_id, flags)
             if pin is not None:
-                login_user(rs.raw, sh, int(CKU_USER), pin.encode("utf-8"))
+                login_user(rs.raw, sh, CKU_USER, pin.encode("utf-8"))
             close_session_quietly(rs.raw, sh)
         rss_after = _get_rss_mb()
         growth = rss_after - rss_before
@@ -164,13 +164,14 @@ class TestBulkOperations:
         rs = p11_raw_session
         keys = []
         for i in range(100):
-            key = gen_aes_key(rs.raw, rs.sh, 128, attrs={int(CKA_LABEL): f"bulk100-{i:03d}"})
+            key = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: f"bulk100-{i:03d}"})
             keys.append(key)
 
         # Verify all exist
         found = find_objects(
-            rs.raw, rs.sh,
-            template_from_dict({int(CKA_CLASS): int(CKO_SECRET_KEY)}),
+            rs.raw,
+            rs.sh,
+            template_from_dict({CKA_CLASS: CKO_SECRET_KEY}),
         )
         assert len(found) >= 100
 
@@ -180,7 +181,8 @@ class TestBulkOperations:
 
         # Verify cleanup
         found = find_objects(
-            rs.raw, rs.sh,
-            template_from_dict({int(CKA_LABEL): "bulk100-000"}),
+            rs.raw,
+            rs.sh,
+            template_from_dict({CKA_LABEL: "bulk100-000"}),
         )
         assert len(found) == 0

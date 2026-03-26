@@ -39,12 +39,12 @@ class TestSetAttributePositive:
     def test_change_label(self, p11_raw_session: Any) -> None:
         """CKA_LABEL can be changed on an existing key."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): "before"})
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "before"})
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_LABEL)])
-            assert attrs[int(CKA_LABEL)] == "before"
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LABEL])
+            assert attrs[CKA_LABEL] == "before"
 
-            set_attributes(rs.raw, rs.sh, key, {int(CKA_LABEL): "after"})
+            set_attributes(rs.raw, rs.sh, key, {CKA_LABEL: "after"})
 
             # Search by new label works
             tmpl = template(attr_bytes(CKA_LABEL, b"after"))
@@ -56,11 +56,11 @@ class TestSetAttributePositive:
     def test_change_id(self, p11_raw_session: Any) -> None:
         """CKA_ID can be changed on an existing key."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_ID): b"\x01\x02"})
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_ID: b"\x01\x02"})
         try:
-            set_attributes(rs.raw, rs.sh, key, {int(CKA_ID): b"\xaa\xbb"})
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_ID)])
-            assert attrs[int(CKA_ID)] == b"\xaa\xbb"
+            set_attributes(rs.raw, rs.sh, key, {CKA_ID: b"\xaa\xbb"})
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_ID])
+            assert attrs[CKA_ID] == b"\xaa\xbb"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -68,13 +68,15 @@ class TestSetAttributePositive:
         """CKA_LABEL can be changed on RSA public and private keys."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_LABEL): "rsa-orig"},
-            private_attrs={int(CKA_LABEL): "rsa-orig"},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_LABEL: "rsa-orig"},
+            private_attrs={CKA_LABEL: "rsa-orig"},
         )
         try:
-            set_attributes(rs.raw, rs.sh, pub, {int(CKA_LABEL): "rsa-pub-new"})
-            set_attributes(rs.raw, rs.sh, priv, {int(CKA_LABEL): "rsa-priv-new"})
+            set_attributes(rs.raw, rs.sh, pub, {CKA_LABEL: "rsa-pub-new"})
+            set_attributes(rs.raw, rs.sh, priv, {CKA_LABEL: "rsa-priv-new"})
 
             tmpl_pub = template(attr_bytes(CKA_LABEL, b"rsa-pub-new"))
             assert len(find_objects(rs.raw, rs.sh, tmpl_pub)) >= 1
@@ -96,7 +98,7 @@ class TestSetAttributeNegative:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             try:
-                set_attributes(rs.raw, rs.sh, key, {int(CKA_CLASS): int(CKO_PUBLIC_KEY)})
+                set_attributes(rs.raw, rs.sh, key, {CKA_CLASS: CKO_PUBLIC_KEY})
                 # If no error, the module silently ignored it - flag it
                 note(
                     "Module accepted C_SetAttributeValue on CKA_CLASS without error",
@@ -116,7 +118,7 @@ class TestSetAttributeNegative:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             try:
-                set_attributes(rs.raw, rs.sh, key, {int(CKA_KEY_TYPE): int(CKK_RSA)})
+                set_attributes(rs.raw, rs.sh, key, {CKA_KEY_TYPE: CKK_RSA})
                 note(
                     "Module accepted C_SetAttributeValue on CKA_KEY_TYPE without error",
                     ComplianceLevel.NOT_RECOMMENDED,
@@ -133,7 +135,7 @@ class TestSetAttributeNegative:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             try:
-                set_attributes(rs.raw, rs.sh, pub, {int(CKA_MODULUS): b"\x00" * 256})
+                set_attributes(rs.raw, rs.sh, pub, {CKA_MODULUS: b"\x00" * 256})
             except AssertionError:
                 pass  # Correct behavior
         finally:
@@ -148,7 +150,7 @@ class TestSetAttributeNegative:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             try:
-                set_attributes(rs.raw, rs.sh, key, {int(CKA_VALUE): b"\x00" * 32})
+                set_attributes(rs.raw, rs.sh, key, {CKA_VALUE: b"\x00" * 32})
                 note(
                     "Module accepted C_SetAttributeValue on CKA_VALUE of sensitive key",
                     ComplianceLevel.NOT_RECOMMENDED,

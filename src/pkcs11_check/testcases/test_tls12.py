@@ -95,14 +95,14 @@ _SERVER_RANDOM = bytes(range(32, 64))
 
 # CKR values for TLS mechanism operations that fail at the module level
 _TLS_ERROR_RVS = {
-    int(CKR_MECHANISM_INVALID),
-    int(CKR_MECHANISM_PARAM_INVALID),
-    int(CKR_FUNCTION_FAILED),
-    int(CKR_GENERAL_ERROR),
-    int(CKR_KEY_FUNCTION_NOT_PERMITTED),
-    int(CKR_ATTRIBUTE_VALUE_INVALID),
-    int(CKR_TEMPLATE_INCONSISTENT),
-    int(CKR_DEVICE_ERROR),
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_DEVICE_ERROR,
 }
 
 
@@ -115,19 +115,20 @@ def _is_known_error(exc: AssertionError, error_rvs: set[int]) -> bool:
 def _create_generic_secret(
     rs: Any,
     data: bytes = _PRE_MASTER_SECRET,
-    **extra: Any,
+    extra: dict[int, Any] | None = None,
 ) -> int:
     """Create a GENERIC_SECRET key object for use as TLS keying material."""
     attrs: dict[int, Any] = {
-        int(CKA_CLASS): int(CKO_SECRET_KEY),
-        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-        int(CKA_VALUE): data,
-        int(CKA_DERIVE): True,
-        int(CKA_TOKEN): False,
-        int(CKA_SENSITIVE): False,
-        int(CKA_EXTRACTABLE): True,
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+        CKA_VALUE: data,
+        CKA_DERIVE: True,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
     }
-    attrs.update(extra)
+    if extra:
+        attrs.update(extra)
     return create_object(rs.raw, rs.sh, attrs)
 
 
@@ -154,9 +155,9 @@ class TestTLS10PreMasterKeyGen:
         ver = CK_VERSION(3, 1)
         mech = mech_bytes(CKM_TLS_PRE_MASTER_KEY_GEN, bytes(ver))
         tmpl = template(
-            attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
             attr_ulong(CKA_VALUE_LEN, 48),
-            attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
             attr_ulong(CKA_SENSITIVE, 0),
             attr_ulong(CKA_EXTRACTABLE, 1),
             attr_ulong(CKA_DERIVE, 1),
@@ -173,18 +174,16 @@ class TestTLS10PreMasterKeyGen:
                 tmpl.count,
                 byref(key),
             )
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             try:
-                value = read_attributes(rs.raw, rs.sh, int(key.value), [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
+                value = read_attributes(rs.raw, rs.sh, key.value, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte pre-master secret, got {len(value)}"
                 # First two bytes must match the requested TLS version
                 assert value[0] == 3, f"Expected major version 3, got {value[0]}"
                 assert value[1] == 1, f"Expected minor version 1, got {value[1]}"
             finally:
-                destroy_quietly(rs.raw, rs.sh, int(key.value))
+                destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if _is_known_error(exc, _TLS_ERROR_RVS):
                 pytest.xfail(f"CKM_TLS_PRE_MASTER_KEY_GEN not operational: {exc}")
@@ -214,18 +213,18 @@ class TestTLS10PreMasterKeyGen:
                 pms,
                 CKM_TLS_MASTER_KEY_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 48,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
             finally:
@@ -272,18 +271,18 @@ class TestTLS10PreMasterKeyGen:
                 pms,
                 CKM_TLS_PRF,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 48,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48
             finally:
@@ -316,7 +315,7 @@ class TestTLS12MasterKeyDerive:
                 CKM_TLS12_MASTER_KEY_DERIVE,
                 _CLIENT_RANDOM,
                 _SERVER_RANDOM,
-                hash_mech=int(CKM_SHA256),
+                hash_mech=CKM_SHA256,
             )
             derived = derive_key(
                 rs.raw,
@@ -324,18 +323,18 @@ class TestTLS12MasterKeyDerive:
                 pms,
                 CKM_TLS12_MASTER_KEY_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 48,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
             finally:
@@ -364,7 +363,7 @@ class TestTLS12MasterKeyDerive:
                 CKM_TLS12_MASTER_KEY_DERIVE_DH,
                 _CLIENT_RANDOM,
                 _SERVER_RANDOM,
-                hash_mech=int(CKM_SHA256),
+                hash_mech=CKM_SHA256,
                 with_version=False,
             )
             derived = derive_key(
@@ -373,18 +372,18 @@ class TestTLS12MasterKeyDerive:
                 dh_pms,
                 CKM_TLS12_MASTER_KEY_DERIVE_DH,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 48,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
             finally:
@@ -417,7 +416,7 @@ class TestTLS12KeyAndMacDerive:
                 CKM_TLS12_KEY_AND_MAC_DERIVE,
                 _CLIENT_RANDOM,
                 _SERVER_RANDOM,
-                hash_mech=int(CKM_SHA256),
+                hash_mech=CKM_SHA256,
                 key_size_bits=128,
             )
             derived = derive_key(
@@ -426,17 +425,17 @@ class TestTLS12KeyAndMacDerive:
                 master_secret,
                 CKM_TLS12_KEY_AND_MAC_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 16
             finally:
@@ -465,7 +464,7 @@ class TestTLS12KeyAndMacDerive:
                 CKM_TLS12_KEY_SAFE_DERIVE,
                 _CLIENT_RANDOM,
                 _SERVER_RANDOM,
-                hash_mech=int(CKM_SHA256),
+                hash_mech=CKM_SHA256,
                 key_size_bits=128,
             )
             derived = derive_key(
@@ -474,17 +473,17 @@ class TestTLS12KeyAndMacDerive:
                 master_secret,
                 CKM_TLS12_KEY_SAFE_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 16
             finally:
@@ -511,9 +510,9 @@ class TestTLS12Mac:
         if not rs.has_mechanism("TLS12_MAC"):
             pytest.skip("CKM_TLS12_MAC not supported")
 
-        mac_key = _create_generic_secret(rs, bytes(range(32)), **{int(CKA_SIGN): True})
+        mac_key = _create_generic_secret(rs, bytes(range(32)), {CKA_SIGN: True})
         try:
-            mech = mech_tls_mac(CKM_TLS12_MAC, int(CKM_SHA256), 32, 1)
+            mech = mech_tls_mac(CKM_TLS12_MAC, CKM_SHA256, 32, 1)
             result = sign_single(
                 rs.raw,
                 rs.sh,
@@ -541,9 +540,9 @@ class TestTLS12Mac:
         if not rs.has_mechanism("TLS_MAC"):
             pytest.skip("CKM_TLS_MAC not supported")
 
-        mac_key = _create_generic_secret(rs, bytes(range(32)), **{int(CKA_SIGN): True})
+        mac_key = _create_generic_secret(rs, bytes(range(32)), {CKA_SIGN: True})
         try:
-            mech = mech_tls_mac(CKM_TLS_MAC, int(CKM_SHA256), 32, 1)
+            mech = mech_tls_mac(CKM_TLS_MAC, CKM_SHA256, 32, 1)
             result = sign_single(
                 rs.raw,
                 rs.sh,
@@ -579,7 +578,7 @@ class TestTLS12KDF:
         try:
             mech = mech_tls_kdf(
                 CKM_TLS12_KDF,
-                prf_mechanism=int(CKM_SHA256),
+                prf_mechanism=CKM_SHA256,
                 label=b"key expansion",
                 client_random=_CLIENT_RANDOM,
                 server_random=_SERVER_RANDOM,
@@ -590,18 +589,18 @@ class TestTLS12KDF:
                 base_key,
                 CKM_TLS12_KDF,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 32,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 32,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 32
             finally:
@@ -628,7 +627,7 @@ class TestTLS12KDF:
         try:
             mech = mech_tls_kdf(
                 CKM_TLS_KDF,
-                prf_mechanism=int(CKM_SHA256),
+                prf_mechanism=CKM_SHA256,
                 label=b"key expansion",
                 client_random=_CLIENT_RANDOM,
                 server_random=_SERVER_RANDOM,
@@ -639,18 +638,18 @@ class TestTLS12KDF:
                 base_key,
                 CKM_TLS_KDF,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 32,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 32,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 32
             finally:
@@ -686,7 +685,7 @@ class TestTLS12Extended:
             session_hash = bytes(range(32))  # simulated SHA-256 handshake hash
             mech = mech_tls12_extended_master_key_derive(
                 CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
-                hash_mech=int(CKM_SHA256),
+                hash_mech=CKM_SHA256,
                 session_hash=session_hash,
             )
             derived = derive_key(
@@ -695,18 +694,18 @@ class TestTLS12Extended:
                 pms,
                 CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 48,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
             finally:
@@ -734,7 +733,7 @@ class TestTLS12Extended:
             session_hash = bytes(range(32))
             mech = mech_tls12_extended_master_key_derive(
                 CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH,
-                hash_mech=int(CKM_SHA256),
+                hash_mech=CKM_SHA256,
                 session_hash=session_hash,
                 with_version=False,
             )
@@ -744,18 +743,18 @@ class TestTLS12Extended:
                 dh_pms,
                 CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 48,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_DERIVE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_DERIVE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
             finally:
@@ -781,16 +780,16 @@ class TestTLS12Extended:
             hash_a = bytes(range(32))
             hash_b = bytes(range(32, 64))
             derive_attrs: dict[int, Any] = {
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_VALUE_LEN): 48,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: 48,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             }
             mech_a = mech_tls12_extended_master_key_derive(
                 CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
-                hash_mech=int(CKM_SHA256),
+                hash_mech=CKM_SHA256,
                 session_hash=hash_a,
             )
             derived_a = derive_key(
@@ -804,7 +803,7 @@ class TestTLS12Extended:
             try:
                 mech_b = mech_tls12_extended_master_key_derive(
                     CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
-                    hash_mech=int(CKM_SHA256),
+                    hash_mech=CKM_SHA256,
                     session_hash=hash_b,
                 )
                 derived_b = derive_key(
@@ -816,12 +815,8 @@ class TestTLS12Extended:
                     mech_param=mech_b,
                 )
                 try:
-                    val_a = read_attributes(rs.raw, rs.sh, derived_a, [int(CKA_VALUE)])[
-                        int(CKA_VALUE)
-                    ]
-                    val_b = read_attributes(rs.raw, rs.sh, derived_b, [int(CKA_VALUE)])[
-                        int(CKA_VALUE)
-                    ]
+                    val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
+                    val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
                     assert val_a != val_b, "Different session hashes must produce different secrets"
                 finally:
                     destroy_quietly(rs.raw, rs.sh, derived_b)
@@ -921,7 +916,7 @@ if rv != CKR_OK:
 # Try C_DeriveKey - should be rejected
 mech = mech_simple(0x000003E0)  # CKM_TLS12_MASTER_KEY_DERIVE
 out_key = CK_OBJECT_HANDLE(0)
-rv = raw.C_DeriveKey(sh, mech.byref(), int(key.value), None, 0, byref(out_key))
+rv = raw.C_DeriveKey(sh, mech.byref(), key.value, None, 0, byref(out_key))
 print(f"CKR:0x{rv:08x}")
 # 0x69 = KEY_FUNCTION_NOT_PERMITTED, 0x70 = MECHANISM_PARAM_INVALID
 if rv == 0x69:
@@ -971,7 +966,7 @@ if rv != CKR_OK:
 
 # Try C_SignInit with CKA_SIGN=False key
 mech = mech_simple(0x000003D8)  # CKM_TLS12_MAC
-rv = raw.C_SignInit(sh, mech.byref(), int(key.value))
+rv = raw.C_SignInit(sh, mech.byref(), key.value)
 print(f"CKR:0x{rv:08x}")
 if rv == 0x69:
     print("OK:KEY_FUNCTION_NOT_PERMITTED")

@@ -86,20 +86,20 @@ def _rsa_keypair(
     mechanism: int | None = None,
 ) -> tuple[int, int]:
     """Generate an RSA keypair with specific capabilities."""
-    pub_attrs: dict[int, Any] = {int(CKA_TOKEN): False}
-    priv_attrs: dict[int, Any] = {int(CKA_TOKEN): False}
+    pub_attrs: dict[int, Any] = {CKA_TOKEN: False}
+    priv_attrs: dict[int, Any] = {CKA_TOKEN: False}
 
     if sign:
-        pub_attrs[int(CKA_VERIFY)] = True
-        priv_attrs[int(CKA_SIGN)] = True
+        pub_attrs[CKA_VERIFY] = True
+        priv_attrs[CKA_SIGN] = True
     if encrypt:
-        pub_attrs[int(CKA_ENCRYPT)] = True
-        priv_attrs[int(CKA_DECRYPT)] = True
+        pub_attrs[CKA_ENCRYPT] = True
+        priv_attrs[CKA_DECRYPT] = True
     if wrap:
-        pub_attrs[int(CKA_WRAP)] = True
-        priv_attrs[int(CKA_UNWRAP)] = True
+        pub_attrs[CKA_WRAP] = True
+        priv_attrs[CKA_UNWRAP] = True
 
-    if mechanism is not None and mechanism != int(CKM_RSA_X9_31_KEY_PAIR_GEN):
+    if mechanism is not None and mechanism != CKM_RSA_X9_31_KEY_PAIR_GEN:
         # Standard RSA keygen
         return gen_rsa_keypair(
             rs.raw,
@@ -114,7 +114,7 @@ def _rsa_keypair(
         pub_packed = [attr_ulong(CKA_MODULUS_BITS, bits)]
         from pkcs11_check.raw.recipes import _pack_attrs  # noqa: PLC2701
 
-        pub_packed.extend(_pack_attrs(pub_attrs, skip={int(CKA_MODULUS_BITS)}))
+        pub_packed.extend(_pack_attrs(pub_attrs, skip={CKA_MODULUS_BITS}))
         priv_packed = _pack_attrs(priv_attrs)
         pub_tmpl = template(*pub_packed)
         priv_tmpl = template(*priv_packed) if priv_packed else template()
@@ -131,8 +131,8 @@ def _rsa_keypair(
             byref(pub_h),
             byref(priv_h),
         )
-        expect_rv(int(rv), CKR_OK)
-        return int(pub_h.value), int(priv_h.value)
+        expect_rv(rv, CKR_OK)
+        return pub_h.value, priv_h.value
 
     return gen_rsa_keypair(
         rs.raw,
@@ -150,9 +150,9 @@ def _make_extractable_aes(rs: Any, bits: int = 128) -> int:
         rs.sh,
         bits,
         attrs={
-            int(CKA_EXTRACTABLE): True,
-            int(CKA_SENSITIVE): False,
-            int(CKA_TOKEN): False,
+            CKA_EXTRACTABLE: True,
+            CKA_SENSITIVE: False,
+            CKA_TOKEN: False,
         },
     )
 
@@ -280,7 +280,7 @@ class TestRSAX931KeyPairGen:
                 rs,
                 sign=True,
                 encrypt=True,
-                mechanism=int(CKM_RSA_X9_31_KEY_PAIR_GEN),
+                mechanism=CKM_RSA_X9_31_KEY_PAIR_GEN,
             )
         except AssertionError as exc:
             pytest.xfail(f"CKM_RSA_X9_31_KEY_PAIR_GEN not functional: {exc}")
@@ -289,8 +289,8 @@ class TestRSAX931KeyPairGen:
             assert pub != 0
             assert priv != 0
             # Verify the key has the expected modulus size
-            attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_MODULUS)])
-            modulus = attrs[int(CKA_MODULUS)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])
+            modulus = attrs[CKA_MODULUS]
             assert isinstance(modulus, bytes)
             assert len(modulus) == 256  # 2048 bits = 256 bytes
         finally:
@@ -309,7 +309,7 @@ class TestRSAX931KeyPairGen:
             pub, priv = _rsa_keypair(
                 rs,
                 sign=True,
-                mechanism=int(CKM_RSA_X9_31_KEY_PAIR_GEN),
+                mechanism=CKM_RSA_X9_31_KEY_PAIR_GEN,
             )
         except AssertionError as exc:
             pytest.xfail(f"CKM_RSA_X9_31_KEY_PAIR_GEN not functional: {exc}")
@@ -336,7 +336,7 @@ class TestRSAX931KeyPairGen:
             pub, priv = _rsa_keypair(
                 rs,
                 encrypt=True,
-                mechanism=int(CKM_RSA_X9_31_KEY_PAIR_GEN),
+                mechanism=CKM_RSA_X9_31_KEY_PAIR_GEN,
             )
         except AssertionError as exc:
             pytest.xfail(f"CKM_RSA_X9_31_KEY_PAIR_GEN not functional: {exc}")
@@ -344,8 +344,8 @@ class TestRSAX931KeyPairGen:
         try:
             oaep = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
-                hash_mech=int(CKM_SHA256),
-                mgf=int(CKG_MGF1_SHA256),
+                hash_mech=CKM_SHA256,
+                mgf=CKG_MGF1_SHA256,
             )
             plaintext = b"encrypt with X9.31 key"
             ct = encrypt_single(
@@ -378,9 +378,9 @@ class TestRSAX931KeyPairGen:
 def _mech_rsa_aes_key_wrap(aes_key_bits: int = 256) -> PackedMechanism:
     """Build CKM_RSA_AES_KEY_WRAP mechanism params."""
     oaep = CK_RSA_PKCS_OAEP_PARAMS()
-    oaep.hashAlg = int(CKM_SHA256)
-    oaep.mgf = int(CKG_MGF1_SHA256)
-    oaep.source = int(CKZ_DATA_SPECIFIED)
+    oaep.hashAlg = CKM_SHA256
+    oaep.mgf = CKG_MGF1_SHA256
+    oaep.source = CKZ_DATA_SPECIFIED
     oaep.pSourceData = None
     oaep.ulSourceDataLen = 0
 
@@ -418,8 +418,8 @@ class TestRSAAESKeyWrap:
         pub, priv = _rsa_keypair(rs, wrap=True)
         aes_key = _make_extractable_aes(rs, 128)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, aes_key, [int(CKA_VALUE)])
-            original_value = attrs[int(CKA_VALUE)]
+            attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
+            original_value = attrs[CKA_VALUE]
             assert isinstance(original_value, bytes)
 
             wrap_param = _mech_rsa_aes_key_wrap(256)
@@ -447,11 +447,11 @@ class TestRSAAESKeyWrap:
                 wrapped,
                 CKM_RSA_AES_KEY_WRAP,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                    CKA_TOKEN: False,
                 },
                 mech_param=unwrap_param,
             )
@@ -460,9 +460,9 @@ class TestRSAAESKeyWrap:
                     rs.raw,
                     rs.sh,
                     unwrapped,
-                    [int(CKA_VALUE)],
+                    [CKA_VALUE],
                 )
-                assert unwrapped_attrs[int(CKA_VALUE)] == original_value
+                assert unwrapped_attrs[CKA_VALUE] == original_value
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -479,8 +479,8 @@ class TestRSAAESKeyWrap:
         pub, priv = _rsa_keypair(rs, wrap=True)
         aes_key = _make_extractable_aes(rs, 256)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, aes_key, [int(CKA_VALUE)])
-            original_value = attrs[int(CKA_VALUE)]
+            attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
+            original_value = attrs[CKA_VALUE]
             assert isinstance(original_value, bytes)
 
             wrap_param = _mech_rsa_aes_key_wrap(256)
@@ -505,11 +505,11 @@ class TestRSAAESKeyWrap:
                 wrapped,
                 CKM_RSA_AES_KEY_WRAP,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                    CKA_TOKEN: False,
                 },
                 mech_param=unwrap_param,
             )
@@ -518,9 +518,9 @@ class TestRSAAESKeyWrap:
                     rs.raw,
                     rs.sh,
                     unwrapped,
-                    [int(CKA_VALUE)],
+                    [CKA_VALUE],
                 )
-                assert unwrapped_attrs[int(CKA_VALUE)] == original_value
+                assert unwrapped_attrs[CKA_VALUE] == original_value
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -537,8 +537,8 @@ class TestRSAAESKeyWrap:
         pub, priv = _rsa_keypair(rs, wrap=True)
         aes_key = _make_extractable_aes(rs, 128)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, aes_key, [int(CKA_VALUE)])
-            original_value = attrs[int(CKA_VALUE)]
+            attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
+            original_value = attrs[CKA_VALUE]
             assert isinstance(original_value, bytes)
 
             wrap_param = _mech_rsa_aes_key_wrap(256)

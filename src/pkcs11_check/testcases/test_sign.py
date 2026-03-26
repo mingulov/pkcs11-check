@@ -87,9 +87,7 @@ class TestRSASignature:
             data = b"original data"
             wrong_data = b"tampered data"
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
-            assert verify_single(
-                rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, wrong_data, sig
-            ) is False
+            assert verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, wrong_data, sig) is False
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -119,16 +117,17 @@ class TestRSASignature:
             data = b"RSA-PSS test data for signing"
             pss = mech_pss(
                 CKM_SHA256_RSA_PKCS_PSS,
-                hash_mech=int(CKM_SHA256),
-                mgf=int(CKG_MGF1_SHA256),
+                hash_mech=CKM_SHA256,
+                mgf=CKG_MGF1_SHA256,
                 salt_len=32,
             )
-            sig = sign_single(
-                rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS_PSS, data, mech_param=pss
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS_PSS, data, mech_param=pss)
+            assert (
+                verify_single(
+                    rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS_PSS, data, sig, mech_param=pss
+                )
+                is True
             )
-            assert verify_single(
-                rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS_PSS, data, sig, mech_param=pss
-            ) is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -235,13 +234,15 @@ class TestHMACSign:
         if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
             pytest.skip("CKM_GENERIC_SECRET_KEY_GEN not supported")
         return gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             mechanism=CKM_GENERIC_SECRET_KEY_GEN,
             attrs={
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
-                int(CKA_TOKEN): False,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
         )
 
@@ -279,10 +280,10 @@ class TestDSASignature:
         dsa_tmpl = template(attr_ulong(CKA_PRIME_BITS, 2048))
         mech = mech_simple(CKM_DSA_PARAMETER_GEN)
         param_obj = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_GenerateKey(
+        rv = rs.raw.C_GenerateKey(
             rs.sh, mech.byref(), dsa_tmpl.ptr, dsa_tmpl.count, byref(param_obj)
-        ))
-        if rv != int(CKR_OK):
+        )
+        if rv != CKR_OK:
             pytest.skip(f"DSA parameter generation not supported: {ckr_name(rv)}")
 
         pub_h = CK_OBJECT_HANDLE(0)
@@ -290,36 +291,40 @@ class TestDSASignature:
         try:
             # Step 2: Extract P, Q, G from domain parameters
             params = read_attributes(
-                rs.raw, rs.sh, int(param_obj.value),
-                [int(CKA_PRIME), int(CKA_SUBPRIME), int(CKA_BASE)],
+                rs.raw,
+                rs.sh,
+                param_obj.value,
+                [CKA_PRIME, CKA_SUBPRIME, CKA_BASE],
             )
 
             # Step 3: Generate keypair with extracted domain parameters
             pub_tmpl = template(
-                attr_bytes(CKA_PRIME, params[int(CKA_PRIME)]),  # type: ignore[arg-type]
-                attr_bytes(CKA_SUBPRIME, params[int(CKA_SUBPRIME)]),  # type: ignore[arg-type]
-                attr_bytes(CKA_BASE, params[int(CKA_BASE)]),  # type: ignore[arg-type]
+                attr_bytes(CKA_PRIME, params[CKA_PRIME]),  # type: ignore[arg-type]
+                attr_bytes(CKA_SUBPRIME, params[CKA_SUBPRIME]),  # type: ignore[arg-type]
+                attr_bytes(CKA_BASE, params[CKA_BASE]),  # type: ignore[arg-type]
             )
             priv_tmpl = template()
             kp_mech = mech_simple(CKM_DSA_KEY_PAIR_GEN)
-            rv = int(rs.raw.C_GenerateKeyPair(
-                rs.sh, kp_mech.byref(),
-                pub_tmpl.ptr, pub_tmpl.count,
-                priv_tmpl.ptr, priv_tmpl.count,
-                byref(pub_h), byref(priv_h),
-            ))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_GenerateKeyPair(
+                rs.sh,
+                kp_mech.byref(),
+                pub_tmpl.ptr,
+                pub_tmpl.count,
+                priv_tmpl.ptr,
+                priv_tmpl.count,
+                byref(pub_h),
+                byref(priv_h),
+            )
+            if rv != CKR_OK:
                 pytest.skip(f"DSA key generation not supported: {ckr_name(rv)}")
 
             # Step 4: Sign and verify
             data = b"DSA test data for signing"
-            sig = sign_single(rs.raw, rs.sh, int(priv_h.value), CKM_DSA_SHA256, data)
-            assert verify_single(
-                rs.raw, rs.sh, int(pub_h.value), CKM_DSA_SHA256, data, sig
-            ) is True
+            sig = sign_single(rs.raw, rs.sh, priv_h.value, CKM_DSA_SHA256, data)
+            assert verify_single(rs.raw, rs.sh, pub_h.value, CKM_DSA_SHA256, data, sig) is True
         finally:
-            destroy_quietly(rs.raw, rs.sh, int(param_obj.value))
+            destroy_quietly(rs.raw, rs.sh, param_obj.value)
             if pub_h.value:
-                destroy_quietly(rs.raw, rs.sh, int(pub_h.value))
+                destroy_quietly(rs.raw, rs.sh, pub_h.value)
             if priv_h.value:
-                destroy_quietly(rs.raw, rs.sh, int(priv_h.value))
+                destroy_quietly(rs.raw, rs.sh, priv_h.value)

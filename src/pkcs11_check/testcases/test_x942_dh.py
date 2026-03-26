@@ -98,14 +98,13 @@ X942_GEN = bytes.fromhex(
     "33E4BF98B3A315B88D924B4C1EB4CF7113"
 )
 
-X942_SUBPRIME = bytes.fromhex(
-    "8CF83642A709A097B447997640129DA299B1A47D1EB3750BA308B0FE64F5FBD3"
-)
+X942_SUBPRIME = bytes.fromhex("8CF83642A709A097B447997640129DA299B1A47D1EB3750BA308B0FE64F5FBD3")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _skip_no_x942_keygen(rs: Any) -> None:
     if not rs.has_mechanism("X9_42_DH_KEY_PAIR_GEN"):
@@ -121,31 +120,35 @@ def _generate_x942_keypair(rs: Any) -> tuple[int, int]:
     """Generate an X9.42 DH keypair using RFC 5114 parameters via raw C_GenerateKeyPair."""
     pub_tmpl = template(
         attr_ulong(CKA_CLASS, 0x00000002),  # CKO_PUBLIC_KEY
-        attr_ulong(CKA_KEY_TYPE, int(CKK_X9_42_DH)),
+        attr_ulong(CKA_KEY_TYPE, CKK_X9_42_DH),
         attr_bytes(CKA_PRIME, X942_PRIME_2048),
         attr_bytes(CKA_BASE, X942_GEN),
         attr_bytes(CKA_SUBPRIME, X942_SUBPRIME),
     )
     priv_tmpl = template(
         attr_ulong(CKA_CLASS, 0x00000003),  # CKO_PRIVATE_KEY
-        attr_ulong(CKA_KEY_TYPE, int(CKK_X9_42_DH)),
+        attr_ulong(CKA_KEY_TYPE, CKK_X9_42_DH),
     )
     mech = mech_simple(CKM_X9_42_DH_KEY_PAIR_GEN)
     pub_h = CK_OBJECT_HANDLE(0)
     priv_h = CK_OBJECT_HANDLE(0)
-    rv = int(rs.raw.C_GenerateKeyPair(
-        rs.sh, mech.byref(),
-        pub_tmpl.ptr, pub_tmpl.count,
-        priv_tmpl.ptr, priv_tmpl.count,
-        byref(pub_h), byref(priv_h),
-    ))
-    assert rv == int(CKR_OK), f"C_GenerateKeyPair failed: {ckr_name(rv)}"
-    return int(pub_h.value), int(priv_h.value)
+    rv = rs.raw.C_GenerateKeyPair(
+        rs.sh,
+        mech.byref(),
+        pub_tmpl.ptr,
+        pub_tmpl.count,
+        priv_tmpl.ptr,
+        priv_tmpl.count,
+        byref(pub_h),
+        byref(priv_h),
+    )
+    assert rv == CKR_OK, f"C_GenerateKeyPair failed: {ckr_name(rv)}"
+    return pub_h.value, priv_h.value
 
 
 def _build_x942_derive_mech(
     public_data: bytes,
-    kdf: int = int(CKD_NULL),
+    kdf: int = CKD_NULL,
 ) -> PackedMechanism:
     """Build CKM_X9_42_DH_DERIVE mechanism with CK_X9_42_DH1_DERIVE_PARAMS."""
     keepalive: list[Any] = []
@@ -175,21 +178,26 @@ def _build_x942_derive_mech(
 
 
 def _x942_derive_aes(
-    rs: Any, priv: int, peer_pub_value: bytes,
+    rs: Any,
+    priv: int,
+    peer_pub_value: bytes,
     extra_attrs: dict[int, Any] | None = None,
 ) -> int:
     """Derive an AES-128 key from X9.42 DH."""
     attrs = {
-        int(CKA_CLASS): int(CKO_SECRET_KEY),
-        int(CKA_KEY_TYPE): int(CKK_AES),
-        int(CKA_SENSITIVE): False,
-        int(CKA_EXTRACTABLE): True,
-        int(CKA_TOKEN): False,
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_AES,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_TOKEN: False,
     }
     if extra_attrs:
         attrs.update(extra_attrs)
     return derive_key(
-        rs.raw, rs.sh, priv, CKM_X9_42_DH_DERIVE,
+        rs.raw,
+        rs.sh,
+        priv,
+        CKM_X9_42_DH_DERIVE,
         attrs=attrs,
         mech_param=_build_x942_derive_mech(peer_pub_value),
     )
@@ -205,9 +213,7 @@ class TestX942DHKeyPairGen:
         try:
             assert pub != 0
             assert priv != 0
-            pub_value = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            pub_value = read_attributes(rs.raw, rs.sh, pub, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(pub_value, bytes)
             assert len(pub_value) > 0
         finally:
@@ -219,14 +225,10 @@ class TestX942DHKeyPairGen:
         _skip_no_x942_keygen(rs)
         pub, priv = _generate_x942_keypair(rs)
         try:
-            pub_kt = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)]
-            )[int(CKA_KEY_TYPE)]
-            priv_kt = read_attributes(
-                rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)]
-            )[int(CKA_KEY_TYPE)]
-            assert pub_kt == int(CKK_X9_42_DH)
-            assert priv_kt == int(CKK_X9_42_DH)
+            pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            assert pub_kt == CKK_X9_42_DH
+            assert priv_kt == CKK_X9_42_DH
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -236,9 +238,7 @@ class TestX942DHKeyPairGen:
         _skip_no_x942_keygen(rs)
         pub, priv = _generate_x942_keypair(rs)
         try:
-            pub_prime = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_PRIME)]
-            )[int(CKA_PRIME)]
+            pub_prime = read_attributes(rs.raw, rs.sh, pub, [CKA_PRIME])[CKA_PRIME]
             assert pub_prime == X942_PRIME_2048
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -249,9 +249,7 @@ class TestX942DHKeyPairGen:
         _skip_no_x942_keygen(rs)
         pub, priv = _generate_x942_keypair(rs)
         try:
-            pub_subprime = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_SUBPRIME)]
-            )[int(CKA_SUBPRIME)]
+            pub_subprime = read_attributes(rs.raw, rs.sh, pub, [CKA_SUBPRIME])[CKA_SUBPRIME]
             assert pub_subprime == X942_SUBPRIME
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -263,8 +261,8 @@ class TestX942DHKeyPairGen:
         pub1, priv1 = _generate_x942_keypair(rs)
         pub2, priv2 = _generate_x942_keypair(rs)
         try:
-            val1 = read_attributes(rs.raw, rs.sh, pub1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            val2 = read_attributes(rs.raw, rs.sh, pub2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            val1 = read_attributes(rs.raw, rs.sh, pub1, [CKA_VALUE])[CKA_VALUE]
+            val2 = read_attributes(rs.raw, rs.sh, pub2, [CKA_VALUE])[CKA_VALUE]
             assert val1 != val2
         finally:
             for h in (pub1, priv1, pub2, priv2):
@@ -284,19 +282,15 @@ class TestX942DHDerive:
         alice_shared = 0
         bob_shared = 0
         try:
-            alice_value = read_attributes(
-                rs.raw, rs.sh, alice_pub, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
-            bob_value = read_attributes(
-                rs.raw, rs.sh, bob_pub, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            alice_value = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])[CKA_VALUE]
+            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
             assert alice_value != bob_value
 
             alice_shared = _x942_derive_aes(rs, alice_priv, bob_value)
             bob_shared = _x942_derive_aes(rs, bob_priv, alice_value)
 
-            va = read_attributes(rs.raw, rs.sh, alice_shared, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            vb = read_attributes(rs.raw, rs.sh, bob_shared, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            va = read_attributes(rs.raw, rs.sh, alice_shared, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, bob_shared, [CKA_VALUE])[CKA_VALUE]
             assert va == vb
         finally:
             for h in (alice_pub, alice_priv, bob_pub, bob_priv):
@@ -316,16 +310,14 @@ class TestX942DHDerive:
         shared_key = 0
         bob_key = 0
         try:
-            bob_value = read_attributes(
-                rs.raw, rs.sh, bob_pub, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
-            alice_value = read_attributes(
-                rs.raw, rs.sh, alice_pub, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
+            alice_value = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])[CKA_VALUE]
 
             shared_key = _x942_derive_aes(
-                rs, alice_priv, bob_value,
-                extra_attrs={int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True},
+                rs,
+                alice_priv,
+                bob_value,
+                extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
             )
 
             plaintext = b"X9.42 DH test!!" + b"\x00"  # 16 bytes for AES-ECB
@@ -333,8 +325,10 @@ class TestX942DHDerive:
             assert ct != plaintext
 
             bob_key = _x942_derive_aes(
-                rs, bob_priv, alice_value,
-                extra_attrs={int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True},
+                rs,
+                bob_priv,
+                alice_value,
+                extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
             )
             pt = decrypt_single(rs.raw, rs.sh, bob_key, CKM_AES_ECB, ct)
             assert pt == plaintext
@@ -358,14 +352,14 @@ class TestX942DHDerive:
         key1 = 0
         key2 = 0
         try:
-            val2 = read_attributes(rs.raw, rs.sh, pub2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            val2 = read_attributes(rs.raw, rs.sh, pub2, [CKA_VALUE])[CKA_VALUE]
             key1 = _x942_derive_aes(rs, priv1, val2)
 
-            val4 = read_attributes(rs.raw, rs.sh, pub4, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            val4 = read_attributes(rs.raw, rs.sh, pub4, [CKA_VALUE])[CKA_VALUE]
             key2 = _x942_derive_aes(rs, priv3, val4)
 
-            v1 = read_attributes(rs.raw, rs.sh, key1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, key2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, key1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, key2, [CKA_VALUE])[CKA_VALUE]
             assert v1 != v2
         finally:
             for h in (_pub1, priv1, pub2, _priv2, _pub3, priv3, pub4, _priv4):

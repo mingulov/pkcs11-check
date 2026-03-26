@@ -48,25 +48,31 @@ class TestMultiSessionConcurrency:
     """
 
     def test_sequential_multi_session(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Open multiple sessions sequentially and operate independently."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Open first session (p11_raw_session already has one)
         # Generate a key in the existing session
         key1 = gen_aes_key(
-            rs.raw, rs.sh, 128,
-            attrs={int(CKA_LABEL): b"multi-s1"},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_LABEL: b"multi-s1"},
         )
 
         # Open second session (already logged in at token level)
         sh2 = open_session(rs.raw, rs.slot_id, flags)
         try:
             key2 = gen_aes_key(
-                rs.raw, sh2, 128,
-                attrs={int(CKA_LABEL): b"multi-s2"},
+                rs.raw,
+                sh2,
+                128,
+                attrs={CKA_LABEL: b"multi-s2"},
             )
             destroy_quietly(rs.raw, sh2, key2)
         finally:
@@ -74,11 +80,13 @@ class TestMultiSessionConcurrency:
         destroy_quietly(rs.raw, rs.sh, key1)
 
     def test_sequential_digest_sessions(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Multiple sessions can each compute independent digests."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         digests = []
         d1 = digest_single(rs.raw, rs.sh, CKM_SHA256, b"session 1 data")
@@ -154,9 +162,17 @@ class TestRapidOperations:
             start = time.monotonic()
             for _ in range(100):
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
-                assert verify_single(
-                    rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig,
-                ) is True
+                assert (
+                    verify_single(
+                        rs.raw,
+                        rs.sh,
+                        pub,
+                        CKM_SHA256_RSA_PKCS,
+                        data,
+                        sig,
+                    )
+                    is True
+                )
             elapsed = time.monotonic() - start
 
             assert elapsed < 60, f"100 RSA sign/verify took {elapsed:.1f}s"
@@ -169,11 +185,13 @@ class TestSessionStress:
     """Test session lifecycle under stress."""
 
     def test_session_open_close_100(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Open and close 100 sessions rapidly."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         for _i in range(100):
             sh = open_session(rs.raw, rs.slot_id, flags)

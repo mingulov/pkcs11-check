@@ -34,7 +34,7 @@ class TestTokenInfo:
     def _get_token_info(self, rs: Any) -> CK_TOKEN_INFO:
         info = CK_TOKEN_INFO()
         rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
-        expect_rv(int(rv), CKR_OK)
+        expect_rv(rv, CKR_OK)
         return info
 
     def test_token_has_label(self, p11_raw_session: Any) -> None:
@@ -97,7 +97,7 @@ class TestTokenFlags:
         rs = p11_raw_session
         info = CK_TOKEN_INFO()
         rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
-        expect_rv(int(rv), CKR_OK)
+        expect_rv(rv, CKR_OK)
         flags = info.flags
         assert flags is not None
 
@@ -106,8 +106,8 @@ class TestTokenFlags:
         rs = p11_raw_session
         info = CK_TOKEN_INFO()
         rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
-        expect_rv(int(rv), CKR_OK)
-        assert info.flags & int(CKF_TOKEN_INITIALIZED), (
+        expect_rv(rv, CKR_OK)
+        assert info.flags & CKF_TOKEN_INITIALIZED, (
             f"CKF_TOKEN_INITIALIZED must be set on initialized token; flags=0x{info.flags:08x}"
         )
 
@@ -116,8 +116,8 @@ class TestTokenFlags:
         rs = p11_raw_session
         info = CK_TOKEN_INFO()
         rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
-        expect_rv(int(rv), CKR_OK)
-        assert info.flags & int(CKF_USER_PIN_INITIALIZED), (
+        expect_rv(rv, CKR_OK)
+        assert info.flags & CKF_USER_PIN_INITIALIZED, (
             f"CKF_USER_PIN_INITIALIZED must be set; flags=0x{info.flags:08x}"
         )
 
@@ -126,9 +126,9 @@ class TestTokenFlags:
         rs = p11_raw_session
         info = CK_TOKEN_INFO()
         rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
-        expect_rv(int(rv), CKR_OK)
-        final_try = bool(info.flags & int(CKF_USER_PIN_FINAL_TRY))
-        locked = bool(info.flags & int(CKF_USER_PIN_LOCKED))
+        expect_rv(rv, CKR_OK)
+        final_try = bool(info.flags & CKF_USER_PIN_FINAL_TRY)
+        locked = bool(info.flags & CKF_USER_PIN_LOCKED)
         assert not (final_try and locked), (
             "CKF_USER_PIN_FINAL_TRY and CKF_USER_PIN_LOCKED cannot both be set simultaneously"
         )
@@ -155,7 +155,7 @@ class TestSlotInfo:
         for slot_id in get_slot_ids(rs.raw, token_present=True):
             info = CK_SLOT_INFO()
             rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
 
     def test_slot_has_token_present_flag(self, p11_raw_session: Any) -> None:
         """Slots from get_slot_ids(token_present=True) must have CKF_TOKEN_PRESENT set."""
@@ -163,8 +163,8 @@ class TestSlotInfo:
         for slot_id in get_slot_ids(rs.raw, token_present=True):
             info = CK_SLOT_INFO()
             rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            expect_rv(int(rv), CKR_OK)
-            assert info.flags & int(CKF_TOKEN_PRESENT), (
+            expect_rv(rv, CKR_OK)
+            assert info.flags & CKF_TOKEN_PRESENT, (
                 f"Slot {slot_id} returned by token_present=True must have "
                 f"CKF_TOKEN_PRESENT; flags=0x{info.flags:08x}"
             )
@@ -175,7 +175,7 @@ class TestSlotInfo:
         for slot_id in get_slot_ids(rs.raw, token_present=True):
             info = CK_SLOT_INFO()
             rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             assert info.hardwareVersion.major >= 0
             assert info.hardwareVersion.minor >= 0
 
@@ -185,7 +185,7 @@ class TestSlotInfo:
         for slot_id in get_slot_ids(rs.raw, token_present=True):
             info = CK_SLOT_INFO()
             rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             assert info.firmwareVersion.major >= 0
             assert info.firmwareVersion.minor >= 0
 
@@ -200,7 +200,7 @@ class TestLibraryInfo:
         rs = p11_raw_session
         info = CK_INFO()
         rv = rs.raw.C_GetInfo(byref(info))
-        expect_rv(int(rv), CKR_OK)
+        expect_rv(rv, CKR_OK)
         major = info.cryptokiVersion.major
         minor = info.cryptokiVersion.minor
         assert (major, minor) >= (2, 40), (

@@ -53,7 +53,11 @@ _SALSA20_NONCE = b"\x00" * 8
 
 
 def _gen_stream_key(
-    raw: Any, sh: int, mechanism: Any, bits: int, attrs: dict[int, Any],
+    raw: Any,
+    sh: int,
+    mechanism: Any,
+    bits: int,
+    attrs: dict[int, Any],
 ) -> int:
     """Generate a stream cipher key via C_GenerateKey."""
     from pkcs11_check.raw.pack import attr_ulong
@@ -66,8 +70,8 @@ def _gen_stream_key(
     mech_p = mech_simple(mechanism)
     key = CK_OBJECT_HANDLE(0)
     rv = raw.C_GenerateKey(sh, mech_p.byref(), tmpl.ptr, tmpl.count, byref(key))
-    expect_rv(int(rv), CKR_OK)
-    return int(key.value)
+    expect_rv(rv, CKR_OK)
+    return key.value
 
 
 class TestSalsa20:
@@ -79,8 +83,11 @@ class TestSalsa20:
         if not rs.has_mechanism("SALSA20_KEY_GEN"):
             pytest.skip("CKM_SALSA20_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_SALSA20_KEY_GEN, 256,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_SALSA20_KEY_GEN,
+            256,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             assert key != 0
@@ -95,21 +102,35 @@ class TestSalsa20:
         if not rs.has_mechanism("SALSA20_KEY_GEN"):
             pytest.skip("CKM_SALSA20_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_SALSA20_KEY_GEN, 256,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_SALSA20_KEY_GEN,
+            256,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             from pkcs11_check.raw.pack import mech_bytes
+
             plaintext = b"Salsa20 test plaintext data!!!!!"
             # Salsa20 params: 8-byte nonce via mech_bytes (module-specific)
             param = mech_bytes(CKM_SALSA20, _SALSA20_NONCE)
             ciphertext = encrypt_single(
-                rs.raw, rs.sh, key, CKM_SALSA20, plaintext, mech_param=param,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_SALSA20,
+                plaintext,
+                mech_param=param,
             )
             assert ciphertext != plaintext
             assert len(ciphertext) == len(plaintext)  # stream cipher: no padding
             recovered = decrypt_single(
-                rs.raw, rs.sh, key, CKM_SALSA20, ciphertext, mech_param=param,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_SALSA20,
+                ciphertext,
+                mech_param=param,
             )
             assert recovered == plaintext
         finally:
@@ -123,20 +144,32 @@ class TestSalsa20:
         if not rs.has_mechanism("SALSA20_KEY_GEN"):
             pytest.skip("CKM_SALSA20_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_SALSA20_KEY_GEN, 256,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_SALSA20_KEY_GEN,
+            256,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             from pkcs11_check.raw.pack import mech_bytes
+
             plaintext = b"nonce differentiation test data!"
             nonce1 = b"\x00" * 8
             nonce2 = b"\x01" * 8
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_SALSA20, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_SALSA20,
+                plaintext,
                 mech_param=mech_bytes(CKM_SALSA20, nonce1),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_SALSA20, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_SALSA20,
+                plaintext,
                 mech_param=mech_bytes(CKM_SALSA20, nonce2),
             )
             assert ct1 != ct2
@@ -153,8 +186,11 @@ class TestPoly1305:
         if not rs.has_mechanism("POLY1305_KEY_GEN"):
             pytest.skip("CKM_POLY1305_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_POLY1305_KEY_GEN, 256,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_POLY1305_KEY_GEN,
+            256,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         try:
             assert key != 0
@@ -169,8 +205,11 @@ class TestPoly1305:
         if not rs.has_mechanism("POLY1305_KEY_GEN"):
             pytest.skip("CKM_POLY1305_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_POLY1305_KEY_GEN, 256,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_POLY1305_KEY_GEN,
+            256,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         try:
             data = b"Poly1305 MAC test message"
@@ -189,8 +228,11 @@ class TestPoly1305:
         if not rs.has_mechanism("POLY1305_KEY_GEN"):
             pytest.skip("CKM_POLY1305_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_POLY1305_KEY_GEN, 256,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_POLY1305_KEY_GEN,
+            256,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         try:
             data = b"original message"
@@ -209,12 +251,18 @@ class TestPoly1305:
         if not rs.has_mechanism("POLY1305_KEY_GEN"):
             pytest.skip("CKM_POLY1305_KEY_GEN not supported")
         key1 = _gen_stream_key(
-            rs.raw, rs.sh, CKM_POLY1305_KEY_GEN, 256,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_POLY1305_KEY_GEN,
+            256,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         key2 = _gen_stream_key(
-            rs.raw, rs.sh, CKM_POLY1305_KEY_GEN, 256,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_POLY1305_KEY_GEN,
+            256,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         try:
             data = b"same message for both keys"
@@ -235,8 +283,11 @@ class TestChaCha20Standalone:
         if not rs.has_mechanism("CHACHA20_KEY_GEN"):
             pytest.skip("CKM_CHACHA20_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_CHACHA20_KEY_GEN, 256,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_CHACHA20_KEY_GEN,
+            256,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             assert key != 0
@@ -251,19 +302,32 @@ class TestChaCha20Standalone:
         if not rs.has_mechanism("CHACHA20_KEY_GEN"):
             pytest.skip("CKM_CHACHA20_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_CHACHA20_KEY_GEN, 256,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_CHACHA20_KEY_GEN,
+            256,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             plaintext = b"ChaCha20 standalone test message"
             param = mech_chacha20(CKM_CHACHA20, _CHACHA20_NONCE)
             ciphertext = encrypt_single(
-                rs.raw, rs.sh, key, CKM_CHACHA20, plaintext, mech_param=param,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_CHACHA20,
+                plaintext,
+                mech_param=param,
             )
             assert ciphertext != plaintext
             assert len(ciphertext) == len(plaintext)  # stream cipher: no padding
             recovered = decrypt_single(
-                rs.raw, rs.sh, key, CKM_CHACHA20, ciphertext, mech_param=param,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_CHACHA20,
+                ciphertext,
+                mech_param=param,
             )
             assert recovered == plaintext
         finally:
@@ -277,19 +341,30 @@ class TestChaCha20Standalone:
         if not rs.has_mechanism("CHACHA20_KEY_GEN"):
             pytest.skip("CKM_CHACHA20_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_CHACHA20_KEY_GEN, 256,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_CHACHA20_KEY_GEN,
+            256,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             plaintext = b"nonce differentiation test data!"
             nonce1 = b"\x00" * 12
             nonce2 = b"\x01" * 12
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_CHACHA20, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_CHACHA20,
+                plaintext,
                 mech_param=mech_chacha20(CKM_CHACHA20, nonce1),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_CHACHA20, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_CHACHA20,
+                plaintext,
                 mech_param=mech_chacha20(CKM_CHACHA20, nonce2),
             )
             assert ct1 != ct2
@@ -297,7 +372,8 @@ class TestChaCha20Standalone:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_chacha20_different_block_counters_differ(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """ChaCha20 with different block counters produces different ciphertext."""
         rs = p11_raw_session
@@ -306,17 +382,28 @@ class TestChaCha20Standalone:
         if not rs.has_mechanism("CHACHA20_KEY_GEN"):
             pytest.skip("CKM_CHACHA20_KEY_GEN not supported")
         key = _gen_stream_key(
-            rs.raw, rs.sh, CKM_CHACHA20_KEY_GEN, 256,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_CHACHA20_KEY_GEN,
+            256,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             plaintext = b"block counter differentiation!  "
             ct0 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_CHACHA20, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_CHACHA20,
+                plaintext,
                 mech_param=mech_chacha20(CKM_CHACHA20, _CHACHA20_NONCE, counter=0),
             )
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_CHACHA20, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_CHACHA20,
+                plaintext,
                 mech_param=mech_chacha20(CKM_CHACHA20, _CHACHA20_NONCE, counter=1),
             )
             assert ct0 != ct1

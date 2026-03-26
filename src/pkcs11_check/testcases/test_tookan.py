@@ -45,14 +45,16 @@ class TestConflictingUsageAttrs:
         rs = p11_raw_session
         try:
             key = gen_aes_key(
-                rs.raw, rs.sh, 256,
+                rs.raw,
+                rs.sh,
+                256,
                 attrs={
-                    int(CKA_WRAP): True,
-                    int(CKA_UNWRAP): True,
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_DECRYPT): True,
-                    int(CKA_EXTRACTABLE): False,
-                    int(CKA_SENSITIVE): True,
+                    CKA_WRAP: True,
+                    CKA_UNWRAP: True,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                    CKA_EXTRACTABLE: False,
+                    CKA_SENSITIVE: True,
                 },
             )
             destroy_quietly(rs.raw, rs.sh, key)
@@ -72,10 +74,12 @@ class TestConflictingUsageAttrs:
         rs = p11_raw_session
         try:
             key = gen_aes_key(
-                rs.raw, rs.sh, 256,
+                rs.raw,
+                rs.sh,
+                256,
                 attrs={
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_UNWRAP): True,
+                    CKA_ENCRYPT: True,
+                    CKA_UNWRAP: True,
                 },
             )
             destroy_quietly(rs.raw, rs.sh, key)
@@ -97,15 +101,17 @@ class TestSensitivePreservation:
     def test_sensitive_preserved_on_copy(self, p11_raw_session: Any) -> None:
         """Copying a SENSITIVE key must keep SENSITIVE=True."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_SENSITIVE): True})
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_SENSITIVE)])
-            assert attrs[int(CKA_SENSITIVE)] is True
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            assert attrs[CKA_SENSITIVE] is True
 
             try:
                 copied = copy_object(
-                    rs.raw, rs.sh, key,
-                    {int(CKA_LABEL): "copy-sensitive"},
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    {CKA_LABEL: "copy-sensitive"},
                 )
             except AssertionError as exc:
                 exc_msg = str(exc)
@@ -113,10 +119,8 @@ class TestSensitivePreservation:
                     return  # Copy not supported - ok
                 raise
             try:
-                copy_attrs = read_attributes(
-                    rs.raw, rs.sh, copied, [int(CKA_SENSITIVE)]
-                )
-                assert copy_attrs[int(CKA_SENSITIVE)] is True, (
+                copy_attrs = read_attributes(rs.raw, rs.sh, copied, [CKA_SENSITIVE])
+                assert copy_attrs[CKA_SENSITIVE] is True, (
                     "SENSITIVE flag lost on copy - Tookan vulnerability"
                 )
             finally:
@@ -135,26 +139,28 @@ class TestSensitivePreservation:
 
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_EXTRACTABLE): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_EXTRACTABLE: False},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_EXTRACTABLE)])
-            assert attrs[int(CKA_EXTRACTABLE)] is False
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
+            assert attrs[CKA_EXTRACTABLE] is False
 
             try:
                 copied = copy_object(
-                    rs.raw, rs.sh, key,
-                    {int(CKA_EXTRACTABLE): True},
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    {CKA_EXTRACTABLE: True},
                 )
             except AssertionError:
                 return  # Correct: reject the escalation attempt
 
             try:
-                copy_attrs = read_attributes(
-                    rs.raw, rs.sh, copied, [int(CKA_EXTRACTABLE)]
-                )
-                if copy_attrs[int(CKA_EXTRACTABLE)] is True:
+                copy_attrs = read_attributes(rs.raw, rs.sh, copied, [CKA_EXTRACTABLE])
+                if copy_attrs[CKA_EXTRACTABLE] is True:
                     note(
                         "Module allows CKA_EXTRACTABLE escalation FALSE->TRUE via "
                         "C_CopyObject (OASIS PKCS#11 spec MUST NOT: may only change "
@@ -162,7 +168,7 @@ class TestSensitivePreservation:
                         ComplianceLevel.CRITICAL,
                         reference="OASIS PKCS#11 spec C_CopyObject section",
                     )
-                assert copy_attrs[int(CKA_EXTRACTABLE)] is False, (
+                assert copy_attrs[CKA_EXTRACTABLE] is False, (
                     "EXTRACTABLE escalated on copy - Tookan vulnerability"
                 )
             finally:
@@ -181,27 +187,31 @@ class TestWrapExtraction:
             pytest.skip("AES_KEY_WRAP not supported")
 
         wrap_key_h = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
 
         target_h = gen_aes_key(
-            rs.raw, rs.sh, 128,
+            rs.raw,
+            rs.sh,
+            128,
             attrs={
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
         try:
-            target_attrs = read_attributes(rs.raw, rs.sh, target_h, [int(CKA_VALUE)])
-            target_value = target_attrs[int(CKA_VALUE)]
+            target_attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_VALUE])
+            target_value = target_attrs[CKA_VALUE]
 
             wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_h, CKM_AES_KEY_WRAP)
 
@@ -218,9 +228,7 @@ class TestWrapExtraction:
             from pkcs11_check.raw.recipes import decrypt_single
 
             try:
-                decrypted = decrypt_single(
-                    rs.raw, rs.sh, wrap_key_h, CKM_AES_ECB, wrapped
-                )
+                decrypted = decrypt_single(rs.raw, rs.sh, wrap_key_h, CKM_AES_ECB, wrapped)
                 if decrypted == target_value:
                     from pkcs11_check.compliance import ComplianceLevel, note
 

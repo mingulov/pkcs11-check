@@ -82,24 +82,24 @@ _PRE_MASTER_SECRET = bytes(range(48))
 
 # CKR values acceptable for operations using placeholder/unsupported params
 _DERIVE_ERROR_RVS = {
-    int(CKR_MECHANISM_INVALID),
-    int(CKR_MECHANISM_PARAM_INVALID),
-    int(CKR_FUNCTION_FAILED),
-    int(CKR_GENERAL_ERROR),
-    int(CKR_ARGUMENTS_BAD),
-    int(CKR_TEMPLATE_INCOMPLETE),
-    int(CKR_TEMPLATE_INCONSISTENT),
-    int(CKR_KEY_TYPE_INCONSISTENT),
-    int(CKR_OBJECT_HANDLE_INVALID),
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_ARGUMENTS_BAD,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_OBJECT_HANDLE_INVALID,
 }
 
 # CKR values acceptable for MAC sign/verify operations
 _MAC_ERROR_RVS = {
-    int(CKR_MECHANISM_INVALID),
-    int(CKR_MECHANISM_PARAM_INVALID),
-    int(CKR_FUNCTION_FAILED),
-    int(CKR_GENERAL_ERROR),
-    int(CKR_ARGUMENTS_BAD),
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_ARGUMENTS_BAD,
 }
 
 
@@ -115,14 +115,14 @@ def _create_generic_secret(rs: Any, value: bytes) -> int:
         rs.raw,
         rs.sh,
         {
-            int(CKA_CLASS): int(CKO_SECRET_KEY),
-            int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-            int(CKA_VALUE): value,
-            int(CKA_DERIVE): True,
-            int(CKA_SIGN): True,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_VALUE: value,
+            CKA_DERIVE: True,
+            CKA_SIGN: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
         },
     )
 
@@ -145,9 +145,9 @@ class TestSSL3PreMasterKeyGen:
         ver = CK_VERSION(3, 0)
         mech = mech_bytes(CKM_SSL3_PRE_MASTER_KEY_GEN, bytes(ver))
         tmpl = template(
-            attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
             attr_ulong(CKA_VALUE_LEN, 48),
-            attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
             attr_ulong(CKA_SENSITIVE, 0),
             attr_ulong(CKA_EXTRACTABLE, 1),
             attr_ulong(CKA_TOKEN, 0),
@@ -162,17 +162,17 @@ class TestSSL3PreMasterKeyGen:
                 tmpl.count,
                 byref(key),
             )
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             try:
-                attrs = read_attributes(rs.raw, rs.sh, int(key.value), [int(CKA_VALUE)])
-                raw_val = attrs[int(CKA_VALUE)]
+                attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_VALUE])
+                raw_val = attrs[CKA_VALUE]
                 assert isinstance(raw_val, bytes)
                 assert len(raw_val) == 48, f"Expected 48 bytes, got {len(raw_val)}"
                 # First two bytes must encode the version (3, 0)
                 assert raw_val[0] == 3, f"Expected major version 3, got {raw_val[0]}"
                 assert raw_val[1] == 0, f"Expected minor version 0, got {raw_val[1]}"
             finally:
-                destroy_quietly(rs.raw, rs.sh, int(key.value))
+                destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if _is_known_error(exc, _DERIVE_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}")
@@ -187,9 +187,9 @@ class TestSSL3PreMasterKeyGen:
         ver = CK_VERSION(3, 0)
         mech = mech_bytes(CKM_SSL3_PRE_MASTER_KEY_GEN, bytes(ver))
         tmpl = template(
-            attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
+            attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
             attr_ulong(CKA_VALUE_LEN, 48),
-            attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
+            attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
             attr_ulong(CKA_SENSITIVE, 0),
             attr_ulong(CKA_EXTRACTABLE, 1),
             attr_ulong(CKA_TOKEN, 0),
@@ -205,7 +205,7 @@ class TestSSL3PreMasterKeyGen:
                 tmpl.count,
                 byref(key1),
             )
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             rv = rs.raw.C_GenerateKey(
                 rs.sh,
                 mech.byref(),
@@ -213,18 +213,14 @@ class TestSSL3PreMasterKeyGen:
                 tmpl.count,
                 byref(key2),
             )
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             try:
-                val1 = read_attributes(rs.raw, rs.sh, int(key1.value), [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
-                val2 = read_attributes(rs.raw, rs.sh, int(key2.value), [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
+                val1 = read_attributes(rs.raw, rs.sh, key1.value, [CKA_VALUE])[CKA_VALUE]
+                val2 = read_attributes(rs.raw, rs.sh, key2.value, [CKA_VALUE])[CKA_VALUE]
                 assert val1 != val2, "Two pre-master key generations produced identical output"
             finally:
-                destroy_quietly(rs.raw, rs.sh, int(key2.value))
-                destroy_quietly(rs.raw, rs.sh, int(key1.value))
+                destroy_quietly(rs.raw, rs.sh, key2.value)
+                destroy_quietly(rs.raw, rs.sh, key1.value)
         except AssertionError as exc:
             if _is_known_error(exc, _DERIVE_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}")
@@ -258,18 +254,18 @@ class TestSSL3MasterKeyDerive:
                 pre_master,
                 CKM_SSL3_MASTER_KEY_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 48,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_TOKEN): False,
-                    int(CKA_DERIVE): True,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                    CKA_DERIVE: True,
                 },
                 mech_param=mech,
             )
             try:
-                raw_val = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(raw_val, bytes)
                 assert len(raw_val) == 48, f"Expected 48 bytes, got {len(raw_val)}"
             finally:
@@ -310,18 +306,18 @@ class TestSSL3MasterKeyDeriveDH:
                 pre_master,
                 CKM_SSL3_MASTER_KEY_DERIVE_DH,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 48,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_TOKEN): False,
-                    int(CKA_DERIVE): True,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 48,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                    CKA_DERIVE: True,
                 },
                 mech_param=mech,
             )
             try:
-                raw_val = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(raw_val, bytes)
                 assert len(raw_val) == 48, f"Expected 48 bytes, got {len(raw_val)}"
             finally:
@@ -362,16 +358,16 @@ class TestSSL3KeyAndMacDerive:
                 master_secret,
                 CKM_SSL3_KEY_AND_MAC_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech,
             )
             try:
-                raw_val = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(raw_val, bytes)
                 assert len(raw_val) == 16, f"Expected 16 bytes, got {len(raw_val)}"
             finally:

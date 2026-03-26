@@ -31,12 +31,14 @@ class TestSessionExhaustion:
     """Test behavior when opening many sessions."""
 
     def test_open_many_sessions(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Open sessions until limit or 100, verify all work, close all."""
         rs = p11_raw_session
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         sessions: list[int] = []
         # Open first session with login
@@ -44,7 +46,10 @@ class TestSessionExhaustion:
         sessions.append(s0)
         if pin is not None:
             login_user(
-                rs.raw, s0, int(CKU_USER), pin.encode("utf-8"),
+                rs.raw,
+                s0,
+                CKU_USER,
+                pin.encode("utf-8"),
             )
 
         try:
@@ -64,7 +69,10 @@ class TestSessionExhaustion:
         recovery = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin is not None:
             login_user(
-                rs.raw, recovery, int(CKU_USER), pin.encode("utf-8"),
+                rs.raw,
+                recovery,
+                CKU_USER,
+                pin.encode("utf-8"),
             )
         try:
             key = gen_aes_key(rs.raw, recovery, 128)
@@ -73,17 +81,22 @@ class TestSessionExhaustion:
             close_session_quietly(rs.raw, recovery)
 
     def test_session_close_frees_resources(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Opening and closing sessions in a loop doesn't leak."""
         rs = p11_raw_session
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         for _ in range(50):
             sh = raw_open_session(rs.raw, rs.slot_id, flags)
             if pin is not None:
                 login_user(
-                    rs.raw, sh, int(CKU_USER), pin.encode("utf-8"),
+                    rs.raw,
+                    sh,
+                    CKU_USER,
+                    pin.encode("utf-8"),
                 )
             close_session_quietly(rs.raw, sh)

@@ -61,15 +61,15 @@ class TestTokenObjectLifecycle:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_LABEL): label, int(CKA_TOKEN): True},
+            attrs={CKA_LABEL: label, CKA_TOKEN: True},
         )
         try:
             assert key_h != 0
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_TOKEN)])
-            assert attrs[int(CKA_TOKEN)] is True
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TOKEN])
+            assert attrs[CKA_TOKEN] is True
 
             # Findable by label
-            tmpl = template_from_dict({int(CKA_LABEL): label})
+            tmpl = template_from_dict({CKA_LABEL: label})
             found = find_objects(rs.raw, rs.sh, tmpl)
             assert len(found) >= 1
         finally:
@@ -81,20 +81,20 @@ class TestTokenObjectLifecycle:
         pin_bytes = get_pin_bytes(p11_config)
         if pin_bytes is None:
             pytest.skip("No PIN configured")
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         label = _unique_label()
 
         # Session 1: create
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
-        login_user(rs.raw, s1, int(CKU_USER), pin_bytes)
-        gen_aes_key(rs.raw, s1, 256, attrs={int(CKA_LABEL): label, int(CKA_TOKEN): True})
+        login_user(rs.raw, s1, CKU_USER, pin_bytes)
+        gen_aes_key(rs.raw, s1, 256, attrs={CKA_LABEL: label, CKA_TOKEN: True})
         close_session_quietly(rs.raw, s1)
 
         # Session 2: find
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
-        login_user(rs.raw, s2, int(CKU_USER), pin_bytes)
+        login_user(rs.raw, s2, CKU_USER, pin_bytes)
         try:
-            tmpl = template_from_dict({int(CKA_LABEL): label})
+            tmpl = template_from_dict({CKA_LABEL: label})
             found = find_objects(rs.raw, s2, tmpl)
             assert len(found) >= 1, f"Token object '{label}' not found in new session"
 
@@ -110,22 +110,22 @@ class TestTokenObjectLifecycle:
         pin_bytes = get_pin_bytes(p11_config)
         if pin_bytes is None:
             pytest.skip("No PIN configured")
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         label = _unique_label()
         plaintext = b"persistent key!!"  # 16 bytes
 
         # Session 1: create + encrypt
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
-        login_user(rs.raw, s1, int(CKU_USER), pin_bytes)
+        login_user(rs.raw, s1, CKU_USER, pin_bytes)
         key1_h = gen_aes_key(
             rs.raw,
             s1,
             256,
             attrs={
-                int(CKA_LABEL): label,
-                int(CKA_TOKEN): True,
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
+                CKA_LABEL: label,
+                CKA_TOKEN: True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
             },
         )
         ct = encrypt_single(rs.raw, s1, key1_h, CKM_AES_ECB, plaintext)
@@ -133,9 +133,9 @@ class TestTokenObjectLifecycle:
 
         # Session 2: find + decrypt
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
-        login_user(rs.raw, s2, int(CKU_USER), pin_bytes)
+        login_user(rs.raw, s2, CKU_USER, pin_bytes)
         try:
-            tmpl = template_from_dict({int(CKA_LABEL): label})
+            tmpl = template_from_dict({CKA_LABEL: label})
             found = find_objects(rs.raw, s2, tmpl)
             assert len(found) >= 1
             key2_h = found[0]
@@ -154,21 +154,21 @@ class TestTokenObjectLifecycle:
         pin_bytes = get_pin_bytes(p11_config)
         if pin_bytes is None:
             pytest.skip("No PIN configured")
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         label = _unique_label()
 
         # Session 1: create session object
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
-        login_user(rs.raw, s1, int(CKU_USER), pin_bytes)
-        gen_aes_key(rs.raw, s1, 256, attrs={int(CKA_LABEL): label})
+        login_user(rs.raw, s1, CKU_USER, pin_bytes)
+        gen_aes_key(rs.raw, s1, 256, attrs={CKA_LABEL: label})
         # Visible in same session
-        tmpl = template_from_dict({int(CKA_LABEL): label})
+        tmpl = template_from_dict({CKA_LABEL: label})
         assert len(find_objects(rs.raw, s1, tmpl)) >= 1
         close_session_quietly(rs.raw, s1)
 
         # Session 2: should NOT be visible
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
-        login_user(rs.raw, s2, int(CKU_USER), pin_bytes)
+        login_user(rs.raw, s2, CKU_USER, pin_bytes)
         try:
             found = find_objects(rs.raw, s2, tmpl)
             assert len(found) == 0, "Session object survived session close"
@@ -183,11 +183,11 @@ class TestTokenObjectLifecycle:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_LABEL): label, int(CKA_TOKEN): True},
+            attrs={CKA_LABEL: label, CKA_TOKEN: True},
         )
         destroy_quietly(rs.raw, rs.sh, key_h)
 
-        tmpl = template_from_dict({int(CKA_LABEL): label})
+        tmpl = template_from_dict({CKA_LABEL: label})
         found = find_objects(rs.raw, rs.sh, tmpl)
         assert len(found) == 0
 
@@ -205,20 +205,20 @@ class TestTokenObjectAttributes:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_LABEL): label_tok, int(CKA_TOKEN): True},
+            attrs={CKA_LABEL: label_tok, CKA_TOKEN: True},
         )
         ses_key_h = gen_aes_key(
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_LABEL): label_ses},
+            attrs={CKA_LABEL: label_ses},
         )
 
         try:
-            tok_attrs = read_attributes(rs.raw, rs.sh, tok_key_h, [int(CKA_TOKEN)])
-            ses_attrs = read_attributes(rs.raw, rs.sh, ses_key_h, [int(CKA_TOKEN)])
-            assert tok_attrs[int(CKA_TOKEN)] is True
-            assert ses_attrs[int(CKA_TOKEN)] is False
+            tok_attrs = read_attributes(rs.raw, rs.sh, tok_key_h, [CKA_TOKEN])
+            ses_attrs = read_attributes(rs.raw, rs.sh, ses_key_h, [CKA_TOKEN])
+            assert tok_attrs[CKA_TOKEN] is True
+            assert ses_attrs[CKA_TOKEN] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, tok_key_h)
             destroy_quietly(rs.raw, rs.sh, ses_key_h)

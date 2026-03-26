@@ -43,7 +43,7 @@ class TestThreadedOperations:
         """Multiple threads computing digests concurrently, each with own session."""
         rs = p11_raw_session
         data_items = [f"thread-digest-{i}".encode() for i in range(20)]
-        flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         def digest_one(data: bytes) -> bytes:
             sh = open_session(rs.raw, rs.slot_id, flags)
@@ -79,7 +79,7 @@ class TestThreadedOperations:
     def test_threaded_keygen_destroy(self, p11_raw_session: Any) -> None:
         """Multiple threads generating and destroying keys concurrently."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         def keygen_destroy(_: int) -> bool:
             sh = open_session(rs.raw, rs.slot_id, flags)
@@ -102,11 +102,13 @@ class TestMultiSessionThreads:
 
     @pytest.mark.thread_safe
     def test_independent_sessions(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Each thread gets its own session and operates independently."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         def thread_work(thread_id: int) -> tuple[int, int, bytes]:
             # Open a new session per thread (reuse token-level login)

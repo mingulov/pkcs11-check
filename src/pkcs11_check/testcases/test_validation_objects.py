@@ -35,30 +35,28 @@ pytestmark = [pytest.mark.requires_v30, pytest.mark.object]
 
 # Known CKV_TYPE values
 _KNOWN_VALIDATION_TYPES = {
-    int(CKV_TYPE_UNSPECIFIED),
-    int(CKV_TYPE_SOFTWARE),
-    int(CKV_TYPE_HARDWARE),
-    int(CKV_TYPE_FIRMWARE),
-    int(CKV_TYPE_HYBRID),
+    CKV_TYPE_UNSPECIFIED,
+    CKV_TYPE_SOFTWARE,
+    CKV_TYPE_HARDWARE,
+    CKV_TYPE_FIRMWARE,
+    CKV_TYPE_HYBRID,
 }
 
 # Known CKV_AUTHORITY_TYPE values
 _KNOWN_AUTHORITY_TYPES = {
-    int(CKV_AUTHORITY_TYPE_UNSPECIFIED),
-    int(CKV_AUTHORITY_TYPE_NIST_CMVP),
-    int(CKV_AUTHORITY_TYPE_COMMON_CRITERIA),
+    CKV_AUTHORITY_TYPE_UNSPECIFIED,
+    CKV_AUTHORITY_TYPE_NIST_CMVP,
+    CKV_AUTHORITY_TYPE_COMMON_CRITERIA,
 }
 
 
 def _find_validation_objects(raw: Any, sh: int) -> list[int]:
     """Find CKO_VALIDATION objects, xfailing on error."""
     try:
-        tmpl = template(attr_ulong(CKA_CLASS, int(CKO_VALIDATION)))
+        tmpl = template(attr_ulong(CKA_CLASS, CKO_VALIDATION))
         return find_objects(raw, sh, tmpl)
     except (AssertionError, Exception) as e:
-        pytest.xfail(
-            f"Module does not support CKO_VALIDATION enumeration: {e}"
-        )
+        pytest.xfail(f"Module does not support CKO_VALIDATION enumeration: {e}")
     return []
 
 
@@ -80,12 +78,10 @@ class TestValidationObjects:
         vendor_base = 0x80000000
         for h in validations:
             try:
-                attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_VALIDATION_TYPE)])
-                vtype = attrs[int(CKA_VALIDATION_TYPE)]
+                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_TYPE])
+                vtype = attrs[CKA_VALIDATION_TYPE]
             except (AssertionError, Exception) as e:
-                pytest.xfail(
-                    f"Cannot read CKA_VALIDATION_TYPE from validation object: {e}"
-                )
+                pytest.xfail(f"Cannot read CKA_VALIDATION_TYPE from validation object: {e}")
             if vtype < vendor_base:
                 assert vtype in _KNOWN_VALIDATION_TYPES, (
                     f"Unknown non-vendor validation type 0x{vtype:08X}"
@@ -99,15 +95,11 @@ class TestValidationObjects:
             pytest.skip("No CKO_VALIDATION objects present")
         for h in validations:
             try:
-                attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_VALIDATION_LEVEL)])
-                level = attrs[int(CKA_VALIDATION_LEVEL)]
-                assert isinstance(level, int), (
-                    f"Expected int VALIDATION_LEVEL, got {type(level)}"
-                )
+                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_LEVEL])
+                level = attrs[CKA_VALIDATION_LEVEL]
+                assert isinstance(level, int), f"Expected int VALIDATION_LEVEL, got {type(level)}"
             except (AssertionError, Exception) as e:
-                pytest.xfail(
-                    f"Cannot read CKA_VALIDATION_LEVEL from validation object: {e}"
-                )
+                pytest.xfail(f"Cannot read CKA_VALIDATION_LEVEL from validation object: {e}")
 
     def test_validation_authority_type_is_known(self, p11_raw_session: Any) -> None:
         """CKA_VALIDATION_AUTHORITY_TYPE is a known authority or vendor."""
@@ -118,17 +110,13 @@ class TestValidationObjects:
         vendor_base = 0x80000000
         for h in validations:
             try:
-                attrs = read_attributes(
-                    rs.raw, rs.sh, h, [int(CKA_VALIDATION_AUTHORITY_TYPE)]
-                )
-                auth = attrs[int(CKA_VALIDATION_AUTHORITY_TYPE)]
+                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_AUTHORITY_TYPE])
+                auth = attrs[CKA_VALIDATION_AUTHORITY_TYPE]
             except (AssertionError, Exception):
                 # Not all modules expose this optional attribute
                 continue
             if auth < vendor_base:
-                assert auth in _KNOWN_AUTHORITY_TYPES, (
-                    f"Unknown authority type 0x{auth:08X}"
-                )
+                assert auth in _KNOWN_AUTHORITY_TYPES, f"Unknown authority type 0x{auth:08X}"
 
     def test_validation_module_id_is_string(self, p11_raw_session: Any) -> None:
         """CKA_VALIDATION_MODULE_ID is a readable UTF-8 string if present."""
@@ -138,8 +126,8 @@ class TestValidationObjects:
             pytest.skip("No CKO_VALIDATION objects present")
         for h in validations:
             try:
-                attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_VALIDATION_MODULE_ID)])
-                mod_id = attrs[int(CKA_VALIDATION_MODULE_ID)]
+                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_MODULE_ID])
+                mod_id = attrs[CKA_VALIDATION_MODULE_ID]
                 assert isinstance(mod_id, (str, bytes)), (
                     f"Expected str/bytes MODULE_ID, got {type(mod_id)}"
                 )
@@ -156,8 +144,10 @@ class TestValidationObjects:
         h = validations[0]
         try:
             set_attributes(
-                rs.raw, rs.sh, h,
-                {int(CKA_VALIDATION_TYPE): int(CKV_TYPE_UNSPECIFIED)},
+                rs.raw,
+                rs.sh,
+                h,
+                {CKA_VALIDATION_TYPE: CKV_TYPE_UNSPECIFIED},
             )
             pytest.fail("Module accepted C_SetAttributeValue on CKO_VALIDATION")
         except AssertionError:

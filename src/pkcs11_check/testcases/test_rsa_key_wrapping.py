@@ -50,16 +50,18 @@ pytestmark = pytest.mark.keymgmt
 def _make_rsa_pair(rs: Any) -> tuple[int, int]:
     """Generate RSA-2048 keypair with default capabilities (includes WRAP/UNWRAP)."""
     return gen_rsa_keypair(
-        rs.raw, rs.sh, 2048,
+        rs.raw,
+        rs.sh,
+        2048,
         public_attrs={
-            int(CKA_WRAP): True,
-            int(CKA_ENCRYPT): True,
-            int(CKA_TOKEN): False,
+            CKA_WRAP: True,
+            CKA_ENCRYPT: True,
+            CKA_TOKEN: False,
         },
         private_attrs={
-            int(CKA_UNWRAP): True,
-            int(CKA_DECRYPT): True,
-            int(CKA_TOKEN): False,
+            CKA_UNWRAP: True,
+            CKA_DECRYPT: True,
+            CKA_TOKEN: False,
         },
     )
 
@@ -67,8 +69,10 @@ def _make_rsa_pair(rs: Any) -> tuple[int, int]:
 def _make_extractable_aes(rs: Any, bits: int = 128) -> int:
     """Generate an extractable AES key suitable for wrapping."""
     return gen_aes_key(
-        rs.raw, rs.sh, bits,
-        attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
+        rs.raw,
+        rs.sh,
+        bits,
+        attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
     )
 
 
@@ -84,30 +88,34 @@ class TestRSAPKCSWrap:
         pub, priv = _make_rsa_pair(rs)
         aes_key = _make_extractable_aes(rs, 128)
         try:
-            original_value = read_attributes(
-                rs.raw, rs.sh, aes_key, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            original_value = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])[CKA_VALUE]
 
             wrapped = wrap_key_recipe(
-                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+                rs.raw,
+                rs.sh,
+                pub,
+                aes_key,
+                CKM_RSA_PKCS,
             )
             assert wrapped != original_value
             assert len(wrapped) == 256  # 2048-bit RSA -> 256 bytes
 
             unwrapped = unwrap_key(
-                rs.raw, rs.sh, priv, wrapped, CKM_RSA_PKCS,
+                rs.raw,
+                rs.sh,
+                priv,
+                wrapped,
+                CKM_RSA_PKCS,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_TOKEN: False,
                 },
             )
             try:
-                unwrapped_value = read_attributes(
-                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
                 assert unwrapped_value == original_value
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
@@ -125,27 +133,31 @@ class TestRSAPKCSWrap:
         pub, priv = _make_rsa_pair(rs)
         aes_key = _make_extractable_aes(rs, 256)
         try:
-            original_value = read_attributes(
-                rs.raw, rs.sh, aes_key, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            original_value = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])[CKA_VALUE]
 
             wrapped = wrap_key_recipe(
-                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+                rs.raw,
+                rs.sh,
+                pub,
+                aes_key,
+                CKM_RSA_PKCS,
             )
             unwrapped = unwrap_key(
-                rs.raw, rs.sh, priv, wrapped, CKM_RSA_PKCS,
+                rs.raw,
+                rs.sh,
+                priv,
+                wrapped,
+                CKM_RSA_PKCS,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_TOKEN: False,
                 },
             )
             try:
-                unwrapped_value = read_attributes(
-                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
                 assert unwrapped_value == original_value
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
@@ -164,10 +176,18 @@ class TestRSAPKCSWrap:
         aes_key = _make_extractable_aes(rs)
         try:
             wrapped1 = wrap_key_recipe(
-                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+                rs.raw,
+                rs.sh,
+                pub,
+                aes_key,
+                CKM_RSA_PKCS,
             )
             wrapped2 = wrap_key_recipe(
-                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+                rs.raw,
+                rs.sh,
+                pub,
+                aes_key,
+                CKM_RSA_PKCS,
             )
             assert wrapped1 != wrapped2  # Randomized padding
         finally:
@@ -188,39 +208,43 @@ class TestRSAOAEPWrap:
         pub, priv = _make_rsa_pair(rs)
         aes_key = _make_extractable_aes(rs, 128)
         try:
-            original_value = read_attributes(
-                rs.raw, rs.sh, aes_key, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            original_value = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])[CKA_VALUE]
 
             oaep = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
-                hash_mech=int(CKM_SHA_1),
-                mgf=int(CKG_MGF1_SHA1),
+                hash_mech=CKM_SHA_1,
+                mgf=CKG_MGF1_SHA1,
             )
             wrapped = wrap_key_recipe(
-                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS_OAEP,
+                rs.raw,
+                rs.sh,
+                pub,
+                aes_key,
+                CKM_RSA_PKCS_OAEP,
                 mech_param=oaep,
             )
             oaep2 = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
-                hash_mech=int(CKM_SHA_1),
-                mgf=int(CKG_MGF1_SHA1),
+                hash_mech=CKM_SHA_1,
+                mgf=CKG_MGF1_SHA1,
             )
             unwrapped = unwrap_key(
-                rs.raw, rs.sh, priv, wrapped, CKM_RSA_PKCS_OAEP,
+                rs.raw,
+                rs.sh,
+                priv,
+                wrapped,
+                CKM_RSA_PKCS_OAEP,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_TOKEN: False,
                 },
                 mech_param=oaep2,
             )
             try:
-                unwrapped_value = read_attributes(
-                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
                 assert unwrapped_value == original_value
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
@@ -241,11 +265,13 @@ class TestWrappedKeyUsability:
 
         pub, priv = _make_rsa_pair(rs)
         aes_key = gen_aes_key(
-            rs.raw, rs.sh, 128,
+            rs.raw,
+            rs.sh,
+            128,
             attrs={
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
+                CKA_EXTRACTABLE: True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
             },
         )
         try:
@@ -255,18 +281,26 @@ class TestWrappedKeyUsability:
 
             # Wrap -> unwrap -> decrypt with unwrapped key
             wrapped = wrap_key_recipe(
-                rs.raw, rs.sh, pub, aes_key, CKM_RSA_PKCS,
+                rs.raw,
+                rs.sh,
+                pub,
+                aes_key,
+                CKM_RSA_PKCS,
             )
             unwrapped = unwrap_key(
-                rs.raw, rs.sh, priv, wrapped, CKM_RSA_PKCS,
+                rs.raw,
+                rs.sh,
+                priv,
+                wrapped,
+                CKM_RSA_PKCS,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_DECRYPT): True,
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_TOKEN: False,
                 },
             )
             try:
@@ -287,14 +321,20 @@ class TestWrappedKeyUsability:
 
         pub, priv = _make_rsa_pair(rs)
         non_extractable = gen_aes_key(
-            rs.raw, rs.sh, 128,
-            attrs={int(CKA_EXTRACTABLE): False},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: False},
         )
 
         try:
             try:
                 wrap_key_recipe(
-                    rs.raw, rs.sh, pub, non_extractable, CKM_RSA_PKCS,
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    non_extractable,
+                    CKM_RSA_PKCS,
                 )
                 pytest.fail("Wrapping non-extractable key should have failed")
             except AssertionError:

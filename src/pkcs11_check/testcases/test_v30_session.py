@@ -65,7 +65,7 @@ def _pin_bytes(p11_config: Any) -> bytes | None:
 def _raw_login(raw: Any, sh: int, user_type: int, pin: bytes) -> int:
     """Call C_Login and return the raw CKR."""
     pin_buf = (CK_UTF8CHAR * len(pin))(*pin)
-    return int(raw.C_Login(sh, user_type, pin_buf, len(pin)))
+    return raw.C_Login(sh, user_type, pin_buf, len(pin))
 
 
 def _raw_login_user(
@@ -79,23 +79,23 @@ def _raw_login_user(
     pin_buf = (CK_UTF8CHAR * len(pin))(*pin)
     user_buf = (CK_UTF8CHAR * len(username))(*username) if username else None
     user_len = len(username) if username else 0
-    return int(raw.C_LoginUser(sh, user_type, pin_buf, len(pin), user_buf, user_len))
+    return raw.C_LoginUser(sh, user_type, pin_buf, len(pin), user_buf, user_len)
 
 
 def _raw_logout(raw: Any, sh: int) -> int:
     """Call C_Logout and return the raw CKR."""
-    return int(raw.C_Logout(sh))
+    return raw.C_Logout(sh)
 
 
 # ---------------------------------------------------------------------------
 # C_LoginUser tests
 # ---------------------------------------------------------------------------
 
-_CONTEXT_OK = {int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN)}
+_CONTEXT_OK = {CKR_OK, CKR_USER_ALREADY_LOGGED_IN}
 _LOGIN_REJECT = {
-    int(CKR_USER_TYPE_INVALID),
-    int(CKR_ARGUMENTS_BAD),
-    int(CKR_PIN_INCORRECT),
+    CKR_USER_TYPE_INVALID,
+    CKR_ARGUMENTS_BAD,
+    CKR_PIN_INCORRECT,
 }
 
 
@@ -134,14 +134,14 @@ class TestCLoginUser:
 
         # p11_raw_session is already logged in as CKU_USER.
         # Exercise C_LoginUser with an empty username.
-        rv = _raw_login_user(rs.raw, rs.sh, int(CKU_USER), pin, b"")
-        if rv == int(CKR_USER_ALREADY_LOGGED_IN):
+        rv = _raw_login_user(rs.raw, rs.sh, CKU_USER, pin, b"")
+        if rv == CKR_USER_ALREADY_LOGGED_IN:
             pass  # Acceptable: we are already logged in as USER.
-        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail(
                 "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
             )
-        elif rv == int(CKR_OK):
+        elif rv == CKR_OK:
             pass  # Accepted.
         else:
             pytest.fail(f"Unexpected CKR from C_LoginUser: {ckr_name(rv)}")
@@ -184,10 +184,10 @@ class TestCLoginUser:
         if "C_LoginUser" not in rs.raw.available_function_names():
             pytest.skip("C_LoginUser not in module function list")
 
-        rv = _raw_login_user(rs.raw, rs.sh, int(CKU_USER), pin, b"user")
-        if rv == int(CKR_OK) or rv == int(CKR_USER_ALREADY_LOGGED_IN):
+        rv = _raw_login_user(rs.raw, rs.sh, CKU_USER, pin, b"user")
+        if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
             pass  # Accepted or already logged in.
-        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail(
                 "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
             )
@@ -237,17 +237,17 @@ class TestContextSpecificLogin:
             pytest.skip("No PIN configured - cannot test context-specific login")
 
         # p11_raw_session is already logged in as CKU_USER.
-        rv = _raw_login(rs.raw, rs.sh, int(CKU_CONTEXT_SPECIFIC), pin)
-        if rv == int(CKR_OK):
+        rv = _raw_login(rs.raw, rs.sh, CKU_CONTEXT_SPECIFIC, pin)
+        if rv == CKR_OK:
             pytest.xfail(
                 "Module accepted CKU_CONTEXT_SPECIFIC login without an active "
                 "operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
             )
-        elif rv == int(CKR_OPERATION_NOT_INITIALIZED):
+        elif rv == CKR_OPERATION_NOT_INITIALIZED:
             pass  # Correct per spec.
-        elif rv == int(CKR_USER_NOT_LOGGED_IN):
+        elif rv == CKR_USER_NOT_LOGGED_IN:
             pass  # Acceptable: module checks login state before operation state.
-        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail(
                 "Module does not support CKU_CONTEXT_SPECIFIC login (CKR_FUNCTION_NOT_SUPPORTED)"
             )
@@ -269,14 +269,14 @@ class TestContextSpecificLogin:
         if pin is None:
             pytest.skip("No PIN configured")
 
-        rv = _raw_login(rs.raw, rs.sh, int(CKU_CONTEXT_SPECIFIC), pin)
-        if rv == int(CKR_OK):
+        rv = _raw_login(rs.raw, rs.sh, CKU_CONTEXT_SPECIFIC, pin)
+        if rv == CKR_OK:
             pytest.xfail("Module accepted CKU_CONTEXT_SPECIFIC without active operation")
-        elif rv == int(CKR_OPERATION_NOT_INITIALIZED):
+        elif rv == CKR_OPERATION_NOT_INITIALIZED:
             pass  # Correct.
-        elif rv == int(CKR_USER_NOT_LOGGED_IN):
+        elif rv == CKR_USER_NOT_LOGGED_IN:
             pass  # Acceptable.
-        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail("Module does not implement CKU_CONTEXT_SPECIFIC login")
         else:
             pytest.fail(f"Unexpected CKR: {ckr_name(rv)}")
@@ -306,20 +306,20 @@ class TestContextSpecificLogin:
         rv = _raw_login_user(
             rs.raw,
             rs.sh,
-            int(CKU_CONTEXT_SPECIFIC),
+            CKU_CONTEXT_SPECIFIC,
             pin,
             b"",
         )
-        if rv == int(CKR_OK):
+        if rv == CKR_OK:
             pytest.xfail(
                 "Module accepted CKU_CONTEXT_SPECIFIC via C_LoginUser without "
                 "an active operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
             )
-        elif rv == int(CKR_OPERATION_NOT_INITIALIZED):
+        elif rv == CKR_OPERATION_NOT_INITIALIZED:
             pass  # Correct per spec.
-        elif rv == int(CKR_USER_NOT_LOGGED_IN):
+        elif rv == CKR_USER_NOT_LOGGED_IN:
             pass  # Acceptable.
-        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail("Module does not implement C_LoginUser")
         else:
             pytest.fail(f"Unexpected CKR: {ckr_name(rv)}")
@@ -346,13 +346,11 @@ class TestLoginLogoutCycle:
             pytest.skip("No PIN configured")
 
         # Open a fresh session for this test.
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            rv = _raw_login(rs.raw, sh2, int(CKU_USER), pin)
-            assert rv in (int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN)), (
-                f"C_Login failed: {ckr_name(rv)}"
-            )
+            rv = _raw_login(rs.raw, sh2, CKU_USER, pin)
+            assert rv in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN), f"C_Login failed: {ckr_name(rv)}"
 
             # Verify the session is functional after login.
             key = gen_aes_key(rs.raw, sh2, 128)
@@ -360,9 +358,7 @@ class TestLoginLogoutCycle:
             destroy_quietly(rs.raw, sh2, key)
 
             rv = _raw_logout(rs.raw, sh2)
-            assert rv in (int(CKR_OK), int(CKR_USER_NOT_LOGGED_IN)), (
-                f"C_Logout failed: {ckr_name(rv)}"
-            )
+            assert rv in (CKR_OK, CKR_USER_NOT_LOGGED_IN), f"C_Logout failed: {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, sh2)
 
@@ -379,25 +375,23 @@ class TestLoginLogoutCycle:
         if "C_LoginUser" not in rs.raw.available_function_names():
             pytest.xfail("Module does not implement C_LoginUser (not in function list)")
 
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         logged_in = False
         try:
-            rv = _raw_login_user(rs.raw, sh2, int(CKU_USER), pin, b"")
-            if rv == int(CKR_OK):
+            rv = _raw_login_user(rs.raw, sh2, CKU_USER, pin, b"")
+            if rv == CKR_OK:
                 logged_in = True
-            elif rv == int(CKR_USER_ALREADY_LOGGED_IN):
+            elif rv == CKR_USER_ALREADY_LOGGED_IN:
                 logged_in = True
-            elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+            elif rv == CKR_FUNCTION_NOT_SUPPORTED:
                 pytest.xfail("Module does not implement C_LoginUser (CKR_FUNCTION_NOT_SUPPORTED)")
             else:
                 pytest.fail(f"C_LoginUser failed: {ckr_name(rv)}")
 
             if logged_in:
                 rv = _raw_logout(rs.raw, sh2)
-                assert rv in (int(CKR_OK), int(CKR_USER_NOT_LOGGED_IN)), (
-                    f"C_Logout failed: {ckr_name(rv)}"
-                )
+                assert rv in (CKR_OK, CKR_USER_NOT_LOGGED_IN), f"C_Logout failed: {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, sh2)
 
@@ -417,26 +411,26 @@ class TestLoginLogoutCycle:
         if "C_LoginUser" not in rs.raw.available_function_names():
             pytest.xfail("Module does not implement C_LoginUser (not in function list)")
 
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             # First login.
-            rv = _raw_login(rs.raw, sh2, int(CKU_USER), pin)
-            assert rv in (int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN)), (
+            rv = _raw_login(rs.raw, sh2, CKU_USER, pin)
+            assert rv in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN), (
                 f"First C_Login failed: {ckr_name(rv)}"
             )
 
             # Second login via C_LoginUser must be rejected.
-            rv2 = _raw_login_user(rs.raw, sh2, int(CKU_USER), pin, b"")
-            if rv2 == int(CKR_USER_ALREADY_LOGGED_IN):
+            rv2 = _raw_login_user(rs.raw, sh2, CKU_USER, pin, b"")
+            if rv2 == CKR_USER_ALREADY_LOGGED_IN:
                 pass  # Correct per spec.
-            elif rv2 == int(CKR_OK):
+            elif rv2 == CKR_OK:
                 pytest.xfail(
                     "Module accepted a second C_LoginUser login without "
                     "intervening logout - spec requires "
                     "CKR_USER_ALREADY_LOGGED_IN"
                 )
-            elif rv2 == int(CKR_FUNCTION_NOT_SUPPORTED):
+            elif rv2 == CKR_FUNCTION_NOT_SUPPORTED:
                 pytest.xfail("Module does not implement C_LoginUser (CKR_FUNCTION_NOT_SUPPORTED)")
             else:
                 pytest.fail(f"Unexpected CKR from second C_LoginUser: {ckr_name(rv2)}")
@@ -475,8 +469,8 @@ class TestSessionCancel:
             pytest.skip(
                 "C_SessionCancel not in module function list - not available on this module"
             )
-        rv = int(rs.raw.C_SessionCancel(rs.sh, 0))
-        if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        rv = rs.raw.C_SessionCancel(rs.sh, 0)
+        if rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail(
                 "Module exposes v3.0 interface but C_SessionCancel returns "
                 "CKR_FUNCTION_NOT_SUPPORTED"
@@ -494,8 +488,8 @@ class TestSessionCancel:
             pytest.skip(
                 "C_SessionCancel not in module function list - not available on this module"
             )
-        rv = int(rs.raw.C_SessionCancel(rs.sh, 0))
-        if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        rv = rs.raw.C_SessionCancel(rs.sh, 0)
+        if rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail(
                 "Module exposes v3.0 interface but C_SessionCancel returns "
                 "CKR_FUNCTION_NOT_SUPPORTED"
@@ -517,8 +511,8 @@ class TestSessionCancel:
             pytest.skip(
                 "C_SessionCancel not in module function list - not available on this module"
             )
-        rv = int(rs.raw.C_SessionCancel(rs.sh, 0))
-        if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        rv = rs.raw.C_SessionCancel(rs.sh, 0)
+        if rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail(
                 "Module exposes v3.0 interface but C_SessionCancel returns "
                 "CKR_FUNCTION_NOT_SUPPORTED"

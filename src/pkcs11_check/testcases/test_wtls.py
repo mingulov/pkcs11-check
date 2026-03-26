@@ -61,10 +61,10 @@ pytestmark = pytest.mark.keymgmt
 
 # Common CKR values for WTLS operations
 _WTLS_ERROR_RVS = {
-    int(CKR_MECHANISM_INVALID),
-    int(CKR_MECHANISM_PARAM_INVALID),
-    int(CKR_FUNCTION_FAILED),
-    int(CKR_GENERAL_ERROR),
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
 }
 
 # WTLS client/server random values (16 bytes each)
@@ -85,14 +85,14 @@ def _create_generic_secret(rs: Any, size: int = 48) -> int:
         rs.raw,
         rs.sh,
         {
-            int(CKA_CLASS): int(CKO_SECRET_KEY),
-            int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-            int(CKA_VALUE): value[:size],
-            int(CKA_VALUE_LEN): size,
-            int(CKA_DERIVE): True,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_VALUE: value[:size],
+            CKA_VALUE_LEN: size,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
         },
     )
 
@@ -119,9 +119,9 @@ class TestWTLSPreMasterKeyGen:
 
             mech = mech_simple(CKM_WTLS_PRE_MASTER_KEY_GEN)
             tmpl = template(
-                attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
+                attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
                 attr_ulong(CKA_VALUE_LEN, 20),
-                attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_ulong(CKA_DERIVE, 1),
                 attr_ulong(CKA_SENSITIVE, 0),
                 attr_ulong(CKA_EXTRACTABLE, 1),
@@ -135,13 +135,13 @@ class TestWTLSPreMasterKeyGen:
                 tmpl.count,
                 byref(key),
             )
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             try:
-                assert int(key.value) != 0
-                attrs = read_attributes(rs.raw, rs.sh, int(key.value), [int(CKA_KEY_TYPE)])
-                assert attrs[int(CKA_KEY_TYPE)] == int(CKK_GENERIC_SECRET)
+                assert key.value != 0
+                attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_KEY_TYPE])
+                assert attrs[CKA_KEY_TYPE] == CKK_GENERIC_SECRET
             finally:
-                destroy_quietly(rs.raw, rs.sh, int(key.value))
+                destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if _is_known_error(exc, _WTLS_ERROR_RVS):
                 pytest.xfail(f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}")
@@ -161,9 +161,9 @@ class TestWTLSPreMasterKeyGen:
 
             mech = mech_simple(CKM_WTLS_PRE_MASTER_KEY_GEN)
             tmpl = template(
-                attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
+                attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
                 attr_ulong(CKA_VALUE_LEN, 20),
-                attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_ulong(CKA_DERIVE, 1),
                 attr_ulong(CKA_SENSITIVE, 0),
                 attr_ulong(CKA_EXTRACTABLE, 1),
@@ -177,15 +177,13 @@ class TestWTLSPreMasterKeyGen:
                 tmpl.count,
                 byref(key),
             )
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             try:
-                value = read_attributes(rs.raw, rs.sh, int(key.value), [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
+                value = read_attributes(rs.raw, rs.sh, key.value, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert value != bytes(len(value)), "Pre-master key must not be all zeros"
             finally:
-                destroy_quietly(rs.raw, rs.sh, int(key.value))
+                destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if _is_known_error(exc, _WTLS_ERROR_RVS):
                 pytest.xfail(f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}")
@@ -205,9 +203,9 @@ class TestWTLSPreMasterKeyGen:
 
             mech = mech_simple(CKM_WTLS_PRE_MASTER_KEY_GEN)
             tmpl = template(
-                attr_ulong(CKA_KEY_TYPE, int(CKK_GENERIC_SECRET)),
+                attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
                 attr_ulong(CKA_VALUE_LEN, 20),
-                attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_ulong(CKA_DERIVE, 1),
                 attr_ulong(CKA_SENSITIVE, 0),
                 attr_ulong(CKA_EXTRACTABLE, 1),
@@ -222,7 +220,7 @@ class TestWTLSPreMasterKeyGen:
                 tmpl.count,
                 byref(key1),
             )
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             rv = rs.raw.C_GenerateKey(
                 rs.sh,
                 mech.byref(),
@@ -230,18 +228,14 @@ class TestWTLSPreMasterKeyGen:
                 tmpl.count,
                 byref(key2),
             )
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             try:
-                val1 = read_attributes(rs.raw, rs.sh, int(key1.value), [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
-                val2 = read_attributes(rs.raw, rs.sh, int(key2.value), [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
+                val1 = read_attributes(rs.raw, rs.sh, key1.value, [CKA_VALUE])[CKA_VALUE]
+                val2 = read_attributes(rs.raw, rs.sh, key2.value, [CKA_VALUE])[CKA_VALUE]
                 assert val1 != val2, "Two independently generated pre-master keys must differ"
             finally:
-                destroy_quietly(rs.raw, rs.sh, int(key2.value))
-                destroy_quietly(rs.raw, rs.sh, int(key1.value))
+                destroy_quietly(rs.raw, rs.sh, key2.value)
+                destroy_quietly(rs.raw, rs.sh, key1.value)
         except AssertionError as exc:
             if _is_known_error(exc, _WTLS_ERROR_RVS):
                 pytest.xfail(f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}")
@@ -266,7 +260,7 @@ class TestWTLSMasterKeyDerive:
         try:
             mech = mech_wtls_master_key_derive(
                 CKM_WTLS_MASTER_KEY_DERIVE,
-                digest_mechanism=int(CKM_SHA256),
+                digest_mechanism=CKM_SHA256,
                 client_random=_CLIENT_RANDOM,
                 server_random=_SERVER_RANDOM,
             )
@@ -277,11 +271,11 @@ class TestWTLSMasterKeyDerive:
                     pms,
                     CKM_WTLS_MASTER_KEY_DERIVE,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=mech,
                 )
@@ -315,7 +309,7 @@ class TestWTLSMasterKeyDeriveDHECC:
         try:
             mech = mech_wtls_master_key_derive(
                 CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC,
-                digest_mechanism=int(CKM_SHA256),
+                digest_mechanism=CKM_SHA256,
                 client_random=_CLIENT_RANDOM,
                 server_random=_SERVER_RANDOM,
                 with_version=False,
@@ -327,11 +321,11 @@ class TestWTLSMasterKeyDeriveDHECC:
                     pms,
                     CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=mech,
                 )
@@ -370,7 +364,7 @@ class TestWTLSKeyAndMacDerive:
         try:
             mech = mech_wtls_key_mat(
                 CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
-                digest_mechanism=int(CKM_SHA256),
+                digest_mechanism=CKM_SHA256,
                 client_random=_CLIENT_RANDOM,
                 server_random=_SERVER_RANDOM,
             )
@@ -381,11 +375,11 @@ class TestWTLSKeyAndMacDerive:
                     master,
                     CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=mech,
                 )
@@ -410,7 +404,7 @@ class TestWTLSKeyAndMacDerive:
         try:
             mech = mech_wtls_key_mat(
                 CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
-                digest_mechanism=int(CKM_SHA256),
+                digest_mechanism=CKM_SHA256,
                 client_random=_CLIENT_RANDOM,
                 server_random=_SERVER_RANDOM,
             )
@@ -421,11 +415,11 @@ class TestWTLSKeyAndMacDerive:
                     master,
                     CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=mech,
                 )
@@ -455,7 +449,7 @@ class TestWTLSKeyAndMacDerive:
             try:
                 srv_mech = mech_wtls_key_mat(
                     CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
-                    digest_mechanism=int(CKM_SHA256),
+                    digest_mechanism=CKM_SHA256,
                     client_random=_CLIENT_RANDOM,
                     server_random=_SERVER_RANDOM,
                 )
@@ -465,17 +459,17 @@ class TestWTLSKeyAndMacDerive:
                     master,
                     CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=srv_mech,
                 )
                 cli_mech = mech_wtls_key_mat(
                     CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
-                    digest_mechanism=int(CKM_SHA256),
+                    digest_mechanism=CKM_SHA256,
                     client_random=_CLIENT_RANDOM,
                     server_random=_SERVER_RANDOM,
                 )
@@ -485,20 +479,16 @@ class TestWTLSKeyAndMacDerive:
                     master,
                     CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=cli_mech,
                 )
-                srv_val = read_attributes(rs.raw, rs.sh, server_derived, [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
-                cli_val = read_attributes(rs.raw, rs.sh, client_derived, [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
+                srv_val = read_attributes(rs.raw, rs.sh, server_derived, [CKA_VALUE])[CKA_VALUE]
+                cli_val = read_attributes(rs.raw, rs.sh, client_derived, [CKA_VALUE])[CKA_VALUE]
                 assert srv_val != cli_val, (
                     "Server and client key derivation must produce different keys"
                 )
@@ -533,7 +523,7 @@ class TestWTLSPRF:
         try:
             mech = mech_wtls_prf(
                 CKM_WTLS_PRF,
-                digest_mechanism=int(CKM_SHA256),
+                digest_mechanism=CKM_SHA256,
                 seed=bytes(range(32)),
                 label=b"key expansion",
                 output_len=16,
@@ -545,20 +535,18 @@ class TestWTLSPRF:
                     secret,
                     CKM_WTLS_PRF,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                        int(CKA_VALUE_LEN): 16,
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 16,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=mech,
                 )
                 try:
                     assert derived != 0
-                    value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[
-                        int(CKA_VALUE)
-                    ]
+                    value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                     assert isinstance(value, bytes)
                     assert len(value) == 16, f"Expected 16 bytes, got {len(value)}"
                 finally:
@@ -583,7 +571,7 @@ class TestWTLSPRF:
             try:
                 mech1 = mech_wtls_prf(
                     CKM_WTLS_PRF,
-                    digest_mechanism=int(CKM_SHA256),
+                    digest_mechanism=CKM_SHA256,
                     seed=bytes(range(32)),
                     label=b"key expansion",
                     output_len=16,
@@ -594,18 +582,18 @@ class TestWTLSPRF:
                     secret,
                     CKM_WTLS_PRF,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                        int(CKA_VALUE_LEN): 16,
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 16,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=mech1,
                 )
                 mech2 = mech_wtls_prf(
                     CKM_WTLS_PRF,
-                    digest_mechanism=int(CKM_SHA256),
+                    digest_mechanism=CKM_SHA256,
                     seed=bytes(range(32)),
                     label=b"key expansion",
                     output_len=16,
@@ -616,17 +604,17 @@ class TestWTLSPRF:
                     secret,
                     CKM_WTLS_PRF,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                        int(CKA_VALUE_LEN): 16,
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 16,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=mech2,
                 )
-                val1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                val2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                val1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
+                val2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
                 assert val1 == val2, "CKM_WTLS_PRF must be deterministic for identical inputs"
             except AssertionError as exc:
                 if _is_known_error(exc, _WTLS_ERROR_RVS):

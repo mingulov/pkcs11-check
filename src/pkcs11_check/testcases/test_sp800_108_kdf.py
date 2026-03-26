@@ -67,29 +67,32 @@ _LABEL = b"SP800-108 test label"
 _CONTEXT = b"SP800-108 test context"
 
 _DERIVE_ATTRS = {
-    int(CKA_CLASS): int(CKO_SECRET_KEY),
-    int(CKA_SENSITIVE): False,
-    int(CKA_EXTRACTABLE): True,
-    int(CKA_TOKEN): False,
+    CKA_CLASS: CKO_SECRET_KEY,
+    CKA_SENSITIVE: False,
+    CKA_EXTRACTABLE: True,
+    CKA_TOKEN: False,
 }
 
 # Common derivation error RVs
 _DERIVE_ERROR_RVS = {
-    int(c) for c in (
-        CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID,
-        CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR,
-    )
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
 }
 
 
 def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
     """Create a GENERIC_SECRET base key suitable for derivation."""
     return import_secret_key(
-        rs.raw, rs.sh, CKK_GENERIC_SECRET, key_bytes,
+        rs.raw,
+        rs.sh,
+        CKK_GENERIC_SECRET,
+        key_bytes,
         attrs={
-            int(CKA_DERIVE): True,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
         },
     )
 
@@ -97,6 +100,7 @@ def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
 # ---------------------------------------------------------------------------
 # ctypes builders for SP800-108 mechanism parameters
 # ---------------------------------------------------------------------------
+
 
 def _make_prf_data_param(
     ptype: int,
@@ -130,7 +134,7 @@ def _counter_format(bits: int = 32) -> CK_SP800_108_COUNTER_FORMAT:
 
 
 def _dkm_length_format(
-    method: int = int(CK_SP800_108_DKM_LENGTH_SUM_OF_KEYS),
+    method: int = CK_SP800_108_DKM_LENGTH_SUM_OF_KEYS,
     bits: int = 32,
 ) -> CK_SP800_108_DKM_LENGTH_FORMAT:
     dlf = CK_SP800_108_DKM_LENGTH_FORMAT()
@@ -149,24 +153,24 @@ def _build_counter_kdf_mech(
 
     # Build data params array
     cf = _counter_format()
-    p_iter, ka1 = _make_prf_data_param(int(CK_SP800_108_ITERATION_VARIABLE), struct=cf)
+    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE, struct=cf)
     keepalive.extend(ka1)
 
-    p_label, ka2 = _make_prf_data_param(int(CK_SP800_108_BYTE_ARRAY), data=label)
+    p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
     keepalive.extend(ka2)
 
-    p_ctx, ka3 = _make_prf_data_param(int(CK_SP800_108_BYTE_ARRAY), data=context)
+    p_ctx, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
     keepalive.extend(ka3)
 
     dlf = _dkm_length_format()
-    p_dkm, ka4 = _make_prf_data_param(int(CK_SP800_108_DKM_LENGTH), struct=dlf)
+    p_dkm, ka4 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
     keepalive.extend(ka4)
 
     data_params = (CK_PRF_DATA_PARAM * 4)(p_iter, p_label, p_ctx, p_dkm)
     keepalive.append(data_params)
 
     params = CK_SP800_108_KDF_PARAMS()
-    params.prfType = int(CKM_SHA256_HMAC)
+    params.prfType = CKM_SHA256_HMAC
     params.ulNumberOfDataParams = 4
     params.pDataParams = ctypes.cast(data_params, CK_VOID_PTR)
     params.ulAdditionalDerivedKeys = 0
@@ -197,24 +201,24 @@ def _build_feedback_kdf_mech(
     keepalive: list[Any] = []
 
     cf = _counter_format()
-    p_iter, ka1 = _make_prf_data_param(int(CK_SP800_108_ITERATION_VARIABLE), struct=cf)
+    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE, struct=cf)
     keepalive.extend(ka1)
 
-    p_label, ka2 = _make_prf_data_param(int(CK_SP800_108_BYTE_ARRAY), data=label)
+    p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
     keepalive.extend(ka2)
 
-    p_ctx, ka3 = _make_prf_data_param(int(CK_SP800_108_BYTE_ARRAY), data=context)
+    p_ctx, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
     keepalive.extend(ka3)
 
     dlf = _dkm_length_format()
-    p_dkm, ka4 = _make_prf_data_param(int(CK_SP800_108_DKM_LENGTH), struct=dlf)
+    p_dkm, ka4 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
     keepalive.extend(ka4)
 
     data_params = (CK_PRF_DATA_PARAM * 4)(p_iter, p_label, p_ctx, p_dkm)
     keepalive.append(data_params)
 
     params = CK_SP800_108_FEEDBACK_KDF_PARAMS()
-    params.prfType = int(CKM_SHA256_HMAC)
+    params.prfType = CKM_SHA256_HMAC
     params.ulNumberOfDataParams = 4
     params.pDataParams = ctypes.cast(data_params, CK_VOID_PTR)
     if iv:
@@ -252,24 +256,24 @@ def _build_double_pipeline_kdf_mech(
     keepalive: list[Any] = []
 
     cf = _counter_format()
-    p_iter, ka1 = _make_prf_data_param(int(CK_SP800_108_ITERATION_VARIABLE), struct=cf)
+    p_iter, ka1 = _make_prf_data_param(CK_SP800_108_ITERATION_VARIABLE, struct=cf)
     keepalive.extend(ka1)
 
-    p_label, ka2 = _make_prf_data_param(int(CK_SP800_108_BYTE_ARRAY), data=label)
+    p_label, ka2 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=label)
     keepalive.extend(ka2)
 
-    p_ctx, ka3 = _make_prf_data_param(int(CK_SP800_108_BYTE_ARRAY), data=context)
+    p_ctx, ka3 = _make_prf_data_param(CK_SP800_108_BYTE_ARRAY, data=context)
     keepalive.extend(ka3)
 
     dlf = _dkm_length_format()
-    p_dkm, ka4 = _make_prf_data_param(int(CK_SP800_108_DKM_LENGTH), struct=dlf)
+    p_dkm, ka4 = _make_prf_data_param(CK_SP800_108_DKM_LENGTH, struct=dlf)
     keepalive.extend(ka4)
 
     data_params = (CK_PRF_DATA_PARAM * 4)(p_iter, p_label, p_ctx, p_dkm)
     keepalive.append(data_params)
 
     params = CK_SP800_108_KDF_PARAMS()
-    params.prfType = int(CKM_SHA256_HMAC)
+    params.prfType = CKM_SHA256_HMAC
     params.ulNumberOfDataParams = 4
     params.pDataParams = ctypes.cast(data_params, CK_VOID_PTR)
     params.ulAdditionalDerivedKeys = 0
@@ -296,15 +300,20 @@ def _build_double_pipeline_kdf_mech(
 
 
 def _sp800_derive(
-    rs: Any, base_key: int, mech_type: Any,
+    rs: Any,
+    base_key: int,
+    mech_type: Any,
     key_bits: int,
     mech_param: PackedMechanism,
 ) -> int:
     """Derive a key using an SP800-108 mechanism."""
     attrs = dict(_DERIVE_ATTRS)
-    attrs[int(CKA_KEY_TYPE)] = int(CKK_AES)
+    attrs[CKA_KEY_TYPE] = CKK_AES
     return derive_key(
-        rs.raw, rs.sh, base_key, mech_type,
+        rs.raw,
+        rs.sh,
+        base_key,
+        mech_type,
         attrs=attrs,
         mech_param=mech_param,
     )
@@ -330,14 +339,10 @@ class TestSP800108CounterKDF:
         try:
             mp = _build_counter_kdf_mech()
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 128, mp)
-            val = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16, f"Expected 16 bytes, got {len(val)}"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(
-                f"CKM_SP800_108_COUNTER_KDF derivation not operational: {exc}"
-            )
+            pytest.xfail(f"CKM_SP800_108_COUNTER_KDF derivation not operational: {exc}")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -354,14 +359,10 @@ class TestSP800108CounterKDF:
         try:
             mp = _build_counter_kdf_mech()
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 256, mp)
-            val = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32, f"Expected 32 bytes, got {len(val)}"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(
-                f"CKM_SP800_108_COUNTER_KDF 256-bit derivation not operational: {exc}"
-            )
+            pytest.xfail(f"CKM_SP800_108_COUNTER_KDF 256-bit derivation not operational: {exc}")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -378,20 +379,24 @@ class TestSP800108CounterKDF:
         d2 = 0
         try:
             d1 = _sp800_derive(
-                rs, base_key, CKM_SP800_108_COUNTER_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_COUNTER_KDF,
+                128,
                 _build_counter_kdf_mech(),
             )
             d2 = _sp800_derive(
-                rs, base_key, CKM_SP800_108_COUNTER_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_COUNTER_KDF,
+                128,
                 _build_counter_kdf_mech(),
             )
-            v1 = read_attributes(rs.raw, rs.sh, d1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, d2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "Deterministic KDF produced different outputs"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(
-                f"CKM_SP800_108_COUNTER_KDF derivation not operational: {exc}"
-            )
+            pytest.xfail(f"CKM_SP800_108_COUNTER_KDF derivation not operational: {exc}")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if d1:
@@ -400,7 +405,8 @@ class TestSP800108CounterKDF:
                 destroy_quietly(rs.raw, rs.sh, d2)
 
     def test_different_label_produces_different_key(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Different labels must produce different derived keys."""
         rs = p11_raw_session
@@ -412,20 +418,24 @@ class TestSP800108CounterKDF:
         db = 0
         try:
             da = _sp800_derive(
-                rs, base_key, CKM_SP800_108_COUNTER_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_COUNTER_KDF,
+                128,
                 _build_counter_kdf_mech(label=b"label-A"),
             )
             db = _sp800_derive(
-                rs, base_key, CKM_SP800_108_COUNTER_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_COUNTER_KDF,
+                128,
                 _build_counter_kdf_mech(label=b"label-B"),
             )
-            va = read_attributes(rs.raw, rs.sh, da, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            vb = read_attributes(rs.raw, rs.sh, db, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            va = read_attributes(rs.raw, rs.sh, da, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, db, [CKA_VALUE])[CKA_VALUE]
             assert va != vb, "Different labels produced same derived key"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(
-                f"CKM_SP800_108_COUNTER_KDF derivation not operational: {exc}"
-            )
+            pytest.xfail(f"CKM_SP800_108_COUNTER_KDF derivation not operational: {exc}")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if da:
@@ -449,10 +459,13 @@ class TestSP800108FeedbackKDF:
         derived = 0
         try:
             derived = _sp800_derive(
-                rs, base_key, CKM_SP800_108_FEEDBACK_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_FEEDBACK_KDF,
+                128,
                 _build_feedback_kdf_mech(),
             )
-            val = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_SP800_108_FEEDBACK_KDF not operational: {exc}")
@@ -470,10 +483,13 @@ class TestSP800108FeedbackKDF:
         try:
             iv = bytes(range(32))
             derived = _sp800_derive(
-                rs, base_key, CKM_SP800_108_FEEDBACK_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_FEEDBACK_KDF,
+                128,
                 _build_feedback_kdf_mech(iv=iv),
             )
-            val = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_SP800_108_FEEDBACK_KDF with IV not operational: {exc}")
@@ -491,15 +507,21 @@ class TestSP800108FeedbackKDF:
         d2 = 0
         try:
             d1 = _sp800_derive(
-                rs, base_key, CKM_SP800_108_FEEDBACK_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_FEEDBACK_KDF,
+                128,
                 _build_feedback_kdf_mech(iv=b""),
             )
             d2 = _sp800_derive(
-                rs, base_key, CKM_SP800_108_FEEDBACK_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_FEEDBACK_KDF,
+                128,
                 _build_feedback_kdf_mech(iv=b"\xff" * 32),
             )
-            v1 = read_attributes(rs.raw, rs.sh, d1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, d2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 != v2, "Different IVs produced same derived key"
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_SP800_108_FEEDBACK_KDF not operational: {exc}")
@@ -519,15 +541,21 @@ class TestSP800108FeedbackKDF:
         d2 = 0
         try:
             d1 = _sp800_derive(
-                rs, base_key, CKM_SP800_108_FEEDBACK_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_FEEDBACK_KDF,
+                128,
                 _build_feedback_kdf_mech(),
             )
             d2 = _sp800_derive(
-                rs, base_key, CKM_SP800_108_FEEDBACK_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_FEEDBACK_KDF,
+                128,
                 _build_feedback_kdf_mech(),
             )
-            v1 = read_attributes(rs.raw, rs.sh, d1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, d2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "Deterministic KDF produced different outputs"
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_SP800_108_FEEDBACK_KDF not operational: {exc}")
@@ -554,10 +582,13 @@ class TestSP800108DoublePipelineKDF:
         derived = 0
         try:
             derived = _sp800_derive(
-                rs, base_key, CKM_SP800_108_DOUBLE_PIPELINE_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_DOUBLE_PIPELINE_KDF,
+                128,
                 _build_double_pipeline_kdf_mech(),
             )
-            val = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational: {exc}")
@@ -574,10 +605,13 @@ class TestSP800108DoublePipelineKDF:
         derived = 0
         try:
             derived = _sp800_derive(
-                rs, base_key, CKM_SP800_108_DOUBLE_PIPELINE_KDF, 256,
+                rs,
+                base_key,
+                CKM_SP800_108_DOUBLE_PIPELINE_KDF,
+                256,
                 _build_double_pipeline_kdf_mech(),
             )
-            val = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_SP800_108_DOUBLE_PIPELINE_KDF 256 not operational: {exc}")
@@ -595,15 +629,21 @@ class TestSP800108DoublePipelineKDF:
         d2 = 0
         try:
             d1 = _sp800_derive(
-                rs, base_key, CKM_SP800_108_DOUBLE_PIPELINE_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_DOUBLE_PIPELINE_KDF,
+                128,
                 _build_double_pipeline_kdf_mech(),
             )
             d2 = _sp800_derive(
-                rs, base_key, CKM_SP800_108_DOUBLE_PIPELINE_KDF, 128,
+                rs,
+                base_key,
+                CKM_SP800_108_DOUBLE_PIPELINE_KDF,
+                128,
                 _build_double_pipeline_kdf_mech(),
             )
-            v1 = read_attributes(rs.raw, rs.sh, d1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, d2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "Deterministic KDF produced different outputs"
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational: {exc}")

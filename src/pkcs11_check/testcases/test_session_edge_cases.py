@@ -55,19 +55,19 @@ class TestStaleSessionHandles:
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
 
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, test_sh, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
 
         # Close the session
         close_session_quietly(rs.raw, test_sh)
 
         # Try to use the closed session -- must fail, not crash
-        rv = int(rs.raw.C_FindObjectsInit(test_sh, None, 0))
+        rv = rs.raw.C_FindObjectsInit(test_sh, None, 0)
         assert rv in (
-            int(CKR_SESSION_HANDLE_INVALID),
-            int(CKR_SESSION_CLOSED),
+            CKR_SESSION_HANDLE_INVALID,
+            CKR_SESSION_CLOSED,
         ), f"Expected CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED, got {ckr_name(rv)}"
 
     def test_generate_key_after_close(self, p11_raw_session: Any, p11_config: Any) -> None:
@@ -75,10 +75,10 @@ class TestStaleSessionHandles:
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
 
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, test_sh, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
 
         # Close the session
         close_session_quietly(rs.raw, test_sh)
@@ -89,10 +89,10 @@ class TestStaleSessionHandles:
         tmpl = template(attr_ulong(CKA_VALUE_LEN, 16))
         mech = mech_simple(CKM_AES_KEY_GEN)
         key_h = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_GenerateKey(test_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h)))
+        rv = rs.raw.C_GenerateKey(test_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
         assert rv in (
-            int(CKR_SESSION_HANDLE_INVALID),
-            int(CKR_SESSION_CLOSED),
+            CKR_SESSION_HANDLE_INVALID,
+            CKR_SESSION_CLOSED,
         ), f"Expected CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED, got {ckr_name(rv)}"
 
 
@@ -103,12 +103,12 @@ class TestCloseAllSessions:
         """Open multiple sessions, close all, verify no crash."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         sessions = []
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, s1, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, s1, CKU_USER, pin_bytes)
         sessions.append(s1)
 
         # Open more sessions
@@ -120,17 +120,17 @@ class TestCloseAllSessions:
         gen_aes_key(rs.raw, s1, 128)
 
         # Close all sessions at once
-        rv = int(rs.raw.C_CloseAllSessions(rs.slot_id))
+        rv = rs.raw.C_CloseAllSessions(rs.slot_id)
         # CKR_OK is expected; some modules may not support it
-        assert rv == int(CKR_OK) or rv != 0  # must not crash
+        assert rv == CKR_OK or rv != 0  # must not crash
 
         # Verify we can open a new session after closing all
         s_new = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, s_new, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, s_new, CKU_USER, pin_bytes)
         try:
             # Session object (not TOKEN) should be gone
-            tmpl = template_from_dict({int(CKA_LABEL): "close-all-test"})
+            tmpl = template_from_dict({CKA_LABEL: "close-all-test"})
             found = find_objects(rs.raw, s_new, tmpl)
             assert len(found) == 0, "Session key survived CloseAllSessions"
         finally:
@@ -149,29 +149,29 @@ class TestSoftHSM2IssueRegressions:
             rs.sh,
             256,
             attrs={
-                int(CKA_WRAP): True,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_WRAP: True,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
         target = gen_aes_key(
             rs.raw,
             rs.sh,
             128,
-            attrs={int(CKA_EXTRACTABLE): True},
+            attrs={CKA_EXTRACTABLE: True},
         )
 
         try:
             # Try wrapping with SHA-256 (not a wrapping mechanism)
             mech = mech_simple(CKM_SHA256)
             out_len = CK_ULONG(0)
-            rv = int(rs.raw.C_WrapKey(rs.sh, mech.byref(), key, target, None, byref(out_len)))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), key, target, None, byref(out_len))
+            if rv == CKR_OK:
                 pytest.fail("Wrap with SHA-256 should have failed")
             # CKR_MECHANISM_INVALID or CKR_KEY_NOT_WRAPPABLE are correct
             # Other errors are module quirks - document but don't fail
             if rv not in (
-                int(CKR_MECHANISM_INVALID),
+                CKR_MECHANISM_INVALID,
                 0x00000069,  # CKR_KEY_NOT_WRAPPABLE
             ):
                 from pkcs11_check.compliance import ComplianceLevel, note

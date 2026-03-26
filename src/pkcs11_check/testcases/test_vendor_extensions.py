@@ -34,12 +34,10 @@ class TestVendorMechanisms:
         assert len(mechs) > 0, "Module reports zero mechanisms"
 
         # Count standard vs vendor mechanisms
-        _vendor_count = sum(1 for m in mechs if m >= int(CKM_VENDOR_DEFINED))  # noqa: F841
-        standard_mechs = [m for m in mechs if m < int(CKM_VENDOR_DEFINED)]
+        _vendor_count = sum(1 for m in mechs if m >= CKM_VENDOR_DEFINED)  # noqa: F841
+        standard_mechs = [m for m in mechs if m < CKM_VENDOR_DEFINED]
 
-        assert len(standard_mechs) > 5, (
-            f"Only {len(standard_mechs)} standard mechanisms"
-        )
+        assert len(standard_mechs) > 5, f"Only {len(standard_mechs)} standard mechanisms"
 
     def test_aes_mechanism_present(self, p11_raw_session: Any) -> None:
         """AES mechanisms should be present on any modern module."""
@@ -47,7 +45,9 @@ class TestVendorMechanisms:
         mechs = set(get_mechanism_list(rs.raw, rs.slot_id))
 
         aes_mechs = [
-            int(CKM_AES_KEY_GEN), int(CKM_AES_ECB), int(CKM_AES_CBC),
+            CKM_AES_KEY_GEN,
+            CKM_AES_ECB,
+            CKM_AES_CBC,
         ]
         found = [m for m in aes_mechs if m in mechs]
         assert len(found) > 0, "No AES mechanisms found"
@@ -61,7 +61,7 @@ class TestVendorMechanisms:
             info = CK_MECHANISM_INFO()
             rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mech, byref(info))
             # Any response is OK - just verify no crash
-            assert rv == int(CKR_OK) or rv != int(CKR_OK)
+            assert rv == CKR_OK or rv != CKR_OK
 
 
 class TestFIPSMode:
@@ -74,4 +74,4 @@ class TestFIPSMode:
         rs = p11_raw_session
         info = CK_TOKEN_INFO()
         rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
-        assert rv == int(CKR_OK)
+        assert rv == CKR_OK

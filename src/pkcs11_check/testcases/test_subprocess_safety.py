@@ -19,7 +19,9 @@ import pytest
 pytestmark = [pytest.mark.security, pytest.mark.stress]
 
 
-def _run_script(script: str, env: dict[str, str] | None = None, timeout: int = 30) -> tuple[int, str]:
+def _run_script(
+    script: str, env: dict[str, str] | None = None, timeout: int = 30
+) -> tuple[int, str]:
     """Run a Python script in a subprocess. Returns (exit_code, output)."""
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],

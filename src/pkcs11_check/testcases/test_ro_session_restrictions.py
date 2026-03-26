@@ -81,20 +81,20 @@ pytestmark = pytest.mark.access
 
 # RO restriction errors
 _RO_ERROR_RVS = (
-    int(CKR_SESSION_READ_ONLY),
-    int(CKR_ACTION_PROHIBITED),
-    int(CKR_SESSION_READ_ONLY_EXISTS),
+    CKR_SESSION_READ_ONLY,
+    CKR_ACTION_PROHIBITED,
+    CKR_SESSION_READ_ONLY_EXISTS,
 )
 
 # Broader set including unsupported
 _RO_OR_UNSUPPORTED_RVS = (
-    int(CKR_SESSION_READ_ONLY),
-    int(CKR_ACTION_PROHIBITED),
-    int(CKR_SESSION_READ_ONLY_EXISTS),
-    int(CKR_TOKEN_WRITE_PROTECTED),
-    int(CKR_ATTRIBUTE_READ_ONLY),
-    int(CKR_FUNCTION_NOT_SUPPORTED),
-    int(CKR_MECHANISM_INVALID),
+    CKR_SESSION_READ_ONLY,
+    CKR_ACTION_PROHIBITED,
+    CKR_SESSION_READ_ONLY_EXISTS,
+    CKR_TOKEN_WRITE_PROTECTED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
 )
 
 
@@ -103,8 +103,8 @@ def _login_ro(raw: Any, sh: int, pin_bytes: bytes | None) -> None:
     if pin_bytes is None:
         return
     pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-    rv = int(raw.C_Login(sh, int(CKU_USER), pin_buf, len(pin_bytes)))
-    if rv not in (int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_TYPE_INVALID)):
+    rv = raw.C_Login(sh, CKU_USER, pin_buf, len(pin_bytes))
+    if rv not in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID):
         expect_rv(rv, CKR_OK)
 
 
@@ -115,23 +115,23 @@ class TestROTokenObjectCreation:
         """C_CreateObject with CKA_TOKEN=True in RO session must fail."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             from pkcs11_check.raw.pack import template_from_dict as _tfd
 
             tmpl = _tfd(
                 {
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_VALUE): os.urandom(16),
-                    int(CKA_TOKEN): True,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE: os.urandom(16),
+                    CKA_TOKEN: True,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
                 }
             )
             obj_h = CK_OBJECT_HANDLE(0)
-            rv = int(rs.raw.C_CreateObject(ro_sh, tmpl.ptr, tmpl.count, byref(obj_h)))
+            rv = rs.raw.C_CreateObject(ro_sh, tmpl.ptr, tmpl.count, byref(obj_h))
             assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, ro_sh)
@@ -142,7 +142,7 @@ class TestROTokenObjectCreation:
         """generate_key with TOKEN=True in RO session must fail."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
@@ -153,7 +153,7 @@ class TestROTokenObjectCreation:
             )
             mech = mech_simple(CKM_AES_KEY_GEN)
             key_h = CK_OBJECT_HANDLE(0)
-            rv = int(rs.raw.C_GenerateKey(ro_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h)))
+            rv = rs.raw.C_GenerateKey(ro_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
             assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, ro_sh)
@@ -164,7 +164,7 @@ class TestROTokenObjectCreation:
         """generate_keypair with TOKEN=True in RO session must fail."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
@@ -178,17 +178,15 @@ class TestROTokenObjectCreation:
             mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
             pub_h = CK_OBJECT_HANDLE(0)
             priv_h = CK_OBJECT_HANDLE(0)
-            rv = int(
-                rs.raw.C_GenerateKeyPair(
-                    ro_sh,
-                    mech.byref(),
-                    pub_tmpl.ptr,
-                    pub_tmpl.count,
-                    priv_tmpl.ptr,
-                    priv_tmpl.count,
-                    byref(pub_h),
-                    byref(priv_h),
-                )
+            rv = rs.raw.C_GenerateKeyPair(
+                ro_sh,
+                mech.byref(),
+                pub_tmpl.ptr,
+                pub_tmpl.count,
+                priv_tmpl.ptr,
+                priv_tmpl.count,
+                byref(pub_h),
+                byref(priv_h),
             )
             assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
         finally:
@@ -204,7 +202,7 @@ class TestROSessionObjectsAllowed:
         """C_CreateObject with CKA_TOKEN=False in RO session succeeds."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             obj_h = import_secret_key(
@@ -213,9 +211,9 @@ class TestROSessionObjectsAllowed:
                 CKK_AES,
                 os.urandom(16),
                 attrs={
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
                 },
             )
             assert obj_h != 0
@@ -229,10 +227,10 @@ class TestROSessionObjectsAllowed:
         """generate_key with TOKEN=False in RO session succeeds."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
-            key_h = gen_aes_key(rs.raw, ro_sh, 128, attrs={int(CKA_LABEL): "ro-genkey-session"})
+            key_h = gen_aes_key(rs.raw, ro_sh, 128, attrs={CKA_LABEL: "ro-genkey-session"})
             assert key_h != 0
             destroy_quietly(rs.raw, ro_sh, key_h)
         finally:
@@ -244,7 +242,7 @@ class TestROSessionObjectsAllowed:
         """generate_keypair with store=False in RO session succeeds."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             pub_h, priv_h = gen_rsa_keypair(rs.raw, ro_sh, 2048)
@@ -263,14 +261,14 @@ class TestROTokenObjectMutation:
         """C_DestroyObject of token object in RO session must fail."""
         rs = p11_raw_session
         label = "ro-destroy-test"
-        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label})
+        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_TOKEN: True, CKA_LABEL: label})
         try:
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
-                tmpl = template_from_dict({int(CKA_LABEL): label})
+                tmpl = template_from_dict({CKA_LABEL: label})
                 found = find_objects(rs.raw, ro_sh, tmpl)
                 assert len(found) >= 1, "Token object not found in RO session"
-                rv = int(rs.raw.C_DestroyObject(ro_sh, found[0]))
+                rv = rs.raw.C_DestroyObject(ro_sh, found[0])
                 assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
             finally:
                 close_session_quietly(rs.raw, ro_sh)
@@ -286,20 +284,20 @@ class TestROTokenObjectMutation:
             rs.sh,
             128,
             attrs={
-                int(CKA_TOKEN): True,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
-                int(CKA_LABEL): label,
+                CKA_TOKEN: True,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+                CKA_LABEL: label,
             },
         )
         try:
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
-                tmpl = template_from_dict({int(CKA_LABEL): label})
+                tmpl = template_from_dict({CKA_LABEL: label})
                 found = find_objects(rs.raw, ro_sh, tmpl)
                 assert len(found) >= 1, "Token object not found in RO session"
                 try:
-                    set_attributes(rs.raw, ro_sh, found[0], {int(CKA_LABEL): "ro-setattr-changed"})
+                    set_attributes(rs.raw, ro_sh, found[0], {CKA_LABEL: "ro-setattr-changed"})
                     # Should not succeed
                     assert False, "C_SetAttributeValue succeeded on token object in RO session"
                 except AssertionError as e:
@@ -322,16 +320,16 @@ class TestROTokenObjectMutation:
             rs.sh,
             128,
             attrs={
-                int(CKA_TOKEN): True,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
-                int(CKA_LABEL): label,
+                CKA_TOKEN: True,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+                CKA_LABEL: label,
             },
         )
         try:
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
-                tmpl = template_from_dict({int(CKA_LABEL): label})
+                tmpl = template_from_dict({CKA_LABEL: label})
                 found = find_objects(rs.raw, ro_sh, tmpl)
                 assert len(found) >= 1, "Token object not found in RO session"
                 try:
@@ -339,7 +337,7 @@ class TestROTokenObjectMutation:
                         rs.raw,
                         ro_sh,
                         found[0],
-                        {int(CKA_LABEL): "ro-copy-result", int(CKA_TOKEN): True},
+                        {CKA_LABEL: "ro-copy-result", CKA_TOKEN: True},
                     )
                     assert False, "C_CopyObject succeeded on token object in RO session"
                 except AssertionError as e:
@@ -359,7 +357,7 @@ class TestROCryptoOperations:
         """SHA-256 digest works in RO session."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             digest = digest_single(rs.raw, ro_sh, CKM_SHA256, b"RO session restriction test data")
@@ -373,7 +371,7 @@ class TestROCryptoOperations:
         if not rs.has_mechanism("AES_CBC_PAD"):
             pytest.skip("CKM_AES_CBC_PAD not supported")
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             key_h = gen_aes_key(
@@ -381,9 +379,9 @@ class TestROCryptoOperations:
                 ro_sh,
                 256,
                 attrs={
-                    int(CKA_TOKEN): False,
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_DECRYPT): True,
+                    CKA_TOKEN: False,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
                 },
             )
             iv = os.urandom(16)
@@ -415,7 +413,7 @@ class TestROCryptoOperations:
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             from pkcs11_check.raw.types_std import CKM_GENERIC_SECRET_KEY_GEN
@@ -425,11 +423,11 @@ class TestROCryptoOperations:
                 ro_sh,
                 256,
                 attrs={
-                    int(CKA_TOKEN): False,
-                    int(CKA_SIGN): True,
-                    int(CKA_VERIFY): True,
+                    CKA_TOKEN: False,
+                    CKA_SIGN: True,
+                    CKA_VERIFY: True,
                 },
-                mechanism=int(CKM_GENERIC_SECRET_KEY_GEN),
+                mechanism=CKM_GENERIC_SECRET_KEY_GEN,
             )
             data = b"RO session HMAC test"
             sig = sign_single(rs.raw, ro_sh, key_h, CKM_SHA256_HMAC, data)
@@ -448,18 +446,18 @@ class TestROCryptoOperations:
             rs.raw,
             rs.sh,
             2048,
-            public_attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label},
-            private_attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label},
+            public_attrs={CKA_TOKEN: True, CKA_LABEL: label},
+            private_attrs={CKA_TOKEN: True, CKA_LABEL: label},
         )
         data = b"verify in read-only session"
         sig = sign_single(rs.raw, rs.sh, priv_h, CKM_SHA256_RSA_PKCS, data)
         try:
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
                 tmpl = template_from_dict(
                     {
-                        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                        int(CKA_LABEL): label,
+                        CKA_CLASS: CKO_PUBLIC_KEY,
+                        CKA_LABEL: label,
                     }
                 )
                 found = find_objects(rs.raw, ro_sh, tmpl)
@@ -482,23 +480,23 @@ class TestROExactCKR:
         """Primary expected CKR is CKR_SESSION_READ_ONLY."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             from pkcs11_check.raw.pack import template_from_dict as _tfd
 
             tmpl = _tfd(
                 {
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_VALUE): os.urandom(16),
-                    int(CKA_TOKEN): True,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE: os.urandom(16),
+                    CKA_TOKEN: True,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
                 }
             )
             obj_h = CK_OBJECT_HANDLE(0)
-            rv = int(rs.raw.C_CreateObject(ro_sh, tmpl.ptr, tmpl.count, byref(obj_h)))
+            rv = rs.raw.C_CreateObject(ro_sh, tmpl.ptr, tmpl.count, byref(obj_h))
             assert rv in _RO_ERROR_RVS, f"Unexpected CKR: {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, ro_sh)
@@ -507,14 +505,14 @@ class TestROExactCKR:
         """Destroy of token object in RO returns CKR_SESSION_READ_ONLY."""
         rs = p11_raw_session
         label = "ro-ckr-destroy-test"
-        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label})
+        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_TOKEN: True, CKA_LABEL: label})
         try:
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
-                tmpl = template_from_dict({int(CKA_LABEL): label})
+                tmpl = template_from_dict({CKA_LABEL: label})
                 found = find_objects(rs.raw, ro_sh, tmpl)
                 assert len(found) >= 1, "Token object not found in RO session"
-                rv = int(rs.raw.C_DestroyObject(ro_sh, found[0]))
+                rv = rs.raw.C_DestroyObject(ro_sh, found[0])
                 assert rv in _RO_ERROR_RVS, f"Unexpected CKR: {ckr_name(rv)}"
             finally:
                 close_session_quietly(rs.raw, ro_sh)
@@ -527,7 +525,7 @@ class TestROExactCKR:
         """Key generation with TOKEN=True in RO returns CKR_SESSION_READ_ONLY."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
             from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
@@ -538,7 +536,7 @@ class TestROExactCKR:
             )
             mech = mech_simple(CKM_AES_KEY_GEN)
             key_h = CK_OBJECT_HANDLE(0)
-            rv = int(rs.raw.C_GenerateKey(ro_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h)))
+            rv = rs.raw.C_GenerateKey(ro_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
             assert rv in _RO_ERROR_RVS, f"Unexpected CKR: {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, ro_sh)
@@ -559,12 +557,12 @@ class TestROWrapUnwrapRestrictions:
             rs.sh,
             256,
             attrs={
-                int(CKA_TOKEN): True,
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
-                int(CKA_LABEL): "ro-unwrap-wrapkey",
+                CKA_TOKEN: True,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+                CKA_LABEL: "ro-unwrap-wrapkey",
             },
         )
         target_h = import_secret_key(
@@ -573,9 +571,9 @@ class TestROWrapUnwrapRestrictions:
             CKK_AES,
             os.urandom(16),
             attrs={
-                int(CKA_TOKEN): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_TOKEN: False,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
         try:
@@ -586,9 +584,9 @@ class TestROWrapUnwrapRestrictions:
             assert len(wrapped) > 0
 
             # Open RO session, find wrapping key, try unwrap with TOKEN=True
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
-                tmpl = template_from_dict({int(CKA_LABEL): "ro-unwrap-wrapkey"})
+                tmpl = template_from_dict({CKA_LABEL: "ro-unwrap-wrapkey"})
                 found = find_objects(rs.raw, ro_sh, tmpl)
                 assert len(found) >= 1, "Wrapping key not found in RO session"
                 try:
@@ -599,9 +597,9 @@ class TestROWrapUnwrapRestrictions:
                         wrapped,
                         CKM_AES_ECB,
                         attrs={
-                            int(CKA_TOKEN): True,
-                            int(CKA_SENSITIVE): False,
-                            int(CKA_EXTRACTABLE): True,
+                            CKA_TOKEN: True,
+                            CKA_SENSITIVE: False,
+                            CKA_EXTRACTABLE: True,
                         },
                     )
                     assert False, "Unwrap to TOKEN=True succeeded in RO session"
@@ -626,12 +624,12 @@ class TestROWrapUnwrapRestrictions:
             rs.sh,
             256,
             attrs={
-                int(CKA_TOKEN): True,
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
-                int(CKA_LABEL): "ro-unwrap-session-wrapkey",
+                CKA_TOKEN: True,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+                CKA_LABEL: "ro-unwrap-session-wrapkey",
             },
         )
         key_bytes = os.urandom(16)
@@ -641,9 +639,9 @@ class TestROWrapUnwrapRestrictions:
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_TOKEN): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_TOKEN: False,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
         try:
@@ -652,9 +650,9 @@ class TestROWrapUnwrapRestrictions:
             except AssertionError:
                 pytest.skip("Module does not support wrap/unwrap")
 
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
-                tmpl = template_from_dict({int(CKA_LABEL): "ro-unwrap-session-wrapkey"})
+                tmpl = template_from_dict({CKA_LABEL: "ro-unwrap-session-wrapkey"})
                 found = find_objects(rs.raw, ro_sh, tmpl)
                 assert len(found) >= 1, "Wrapping key not found in RO session"
                 try:
@@ -665,9 +663,9 @@ class TestROWrapUnwrapRestrictions:
                         wrapped,
                         CKM_AES_ECB,
                         attrs={
-                            int(CKA_TOKEN): False,
-                            int(CKA_SENSITIVE): False,
-                            int(CKA_EXTRACTABLE): True,
+                            CKA_TOKEN: False,
+                            CKA_SENSITIVE: False,
+                            CKA_EXTRACTABLE: True,
                         },
                     )
                     assert unwrapped_h != 0
