@@ -13,9 +13,6 @@ from .pack import (
     TemplateArg,
     _exact_byte_storage,
 )
-from .pack import (
-    explicit_length as pack_explicit_length,
-)
 from .types_std import CK_ATTRIBUTE, CK_ULONG
 
 
@@ -63,14 +60,9 @@ def null_pointer() -> PointerArg:
     return PointerArg.null(origin="null_pointer")
 
 
-def explicit_length(size: int) -> LengthArg:
-    """Return an explicit raw length override."""
-    return pack_explicit_length(size)
-
-
 def zero_length() -> LengthArg:
     """Return an explicit zero-length argument."""
-    return explicit_length(0)
+    return LengthArg.explicit_value(0)
 
 
 def _fault_from_storage(
@@ -83,7 +75,7 @@ def _fault_from_storage(
 ) -> SizedFaultArg:
     return SizedFaultArg(
         pointer_arg=PointerArg.to_storage(storage, origin=origin, native_length=native_length),
-        length_arg=explicit_length(length),
+        length_arg=LengthArg.explicit_value(length),
         note=note,
     )
 

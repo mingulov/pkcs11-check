@@ -62,6 +62,28 @@ def _der_decode_integer(data: bytes, offset: int) -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
+# Internal DER SEQUENCE helper
+# ---------------------------------------------------------------------------
+
+
+def _decode_der_sequence_integers(data: bytes, count: int) -> tuple[int, ...]:
+    """Decode a DER SEQUENCE of ``count`` INTEGERs, return as tuple of ints."""
+    if not data or data[0] != 0x30:
+        raise ValueError("Expected SEQUENCE tag 0x30")
+    seq_len, offset = _der_decode_length(data, 1)
+    seq_end = offset + seq_len
+    values: list[int] = []
+    for _ in range(count):
+        val, offset = _der_decode_integer(data, offset)
+        values.append(val)
+    if offset != seq_end:
+        raise ValueError(f"Trailing data in SEQUENCE: {offset} != {seq_end}")
+    if offset != len(data):
+        raise ValueError(f"Trailing data after SEQUENCE: {len(data) - offset} bytes")
+    return tuple(values)
+
+
+# ---------------------------------------------------------------------------
 # Step 3.1: ECDSA signature format conversion
 # ---------------------------------------------------------------------------
 
@@ -75,19 +97,8 @@ def ecdsa_sig_to_der(r: int, s: int) -> bytes:
 
 
 def ecdsa_sig_from_der(der: bytes) -> tuple[int, int]:
-    """Decode DER ECDSA signature to (r, s) integers."""
-    if not der:
-        raise ValueError("DER data is empty")
-    if der[0] != 0x30:
-        raise ValueError(f"Expected DER SEQUENCE tag 0x30, got 0x{der[0]:02x}")
-    seq_len, offset = _der_decode_length(der, 1)
-    seq_end = offset + seq_len
-    r, offset = _der_decode_integer(der, offset)
-    s, offset = _der_decode_integer(der, offset)
-    if offset != seq_end:
-        raise ValueError("Malformed DER SEQUENCE: content size mismatch")
-    if seq_end != len(der):
-        raise ValueError(f"Trailing data after DER SEQUENCE: {len(der) - seq_end} bytes")
+    """Decode a DER-encoded ECDSA signature into (r, s) integers."""
+    r, s = _decode_der_sequence_integers(der, 2)
     return r, s
 
 
@@ -156,20 +167,8 @@ def encode_rsa_public_key_der(modulus: bytes, exponent: bytes) -> bytes:
 
 
 def decode_rsa_public_key_der(der: bytes) -> tuple[bytes, bytes]:
-    """Decode PKCS#1 DER to (modulus, exponent) bytes."""
-    if not der:
-        raise ValueError("DER data is empty")
-    if der[0] != 0x30:
-        raise ValueError(f"Expected DER SEQUENCE tag 0x30, got 0x{der[0]:02x}")
-    seq_len, offset = _der_decode_length(der, 1)
-    seq_end = offset + seq_len
-    n, offset = _der_decode_integer(der, offset)
-    e, offset = _der_decode_integer(der, offset)
-    if offset != seq_end:
-        raise ValueError("Malformed DER SEQUENCE: content size mismatch")
-    if seq_end != len(der):
-        raise ValueError(f"Trailing data after DER SEQUENCE: {len(der) - seq_end} bytes")
-    # Return as big-endian bytes, no leading zeros (canonical form)
-    n_bytes = b"\x00" if n == 0 else n.to_bytes((n.bit_length() + 7) // 8, "big")
-    e_bytes = b"\x00" if e == 0 else e.to_bytes((e.bit_length() + 7) // 8, "big")
+    """Decode a DER-encoded RSA public key (PKCS#1) into (modulus, exponent) bytes."""
+    n_int, e_int = _decode_der_sequence_integers(der, 2)
+    n_bytes = n_int.to_bytes((n_int.bit_length() + 7) // 8, "big")
+    e_bytes = e_int.to_bytes((e_int.bit_length() + 7) // 8, "big")
     return n_bytes, e_bytes

@@ -834,8 +834,8 @@ _NEG_ATTR_SCRIPT = """\
 import ctypes, sys
 from ctypes import byref, cast
 
-from pkcs11_check.raw import CKR_OK
 from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.types_std import CKR_OK
 from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
 from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template
 from pkcs11_check.raw.types_std import (  # noqa: E501

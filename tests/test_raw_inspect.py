@@ -15,10 +15,12 @@ def test_inspect_mechanism_shows_symbol_and_length() -> None:
 
 def test_inspect_mechanism_surfaces_pointer_kind_and_length_mode() -> None:
     from pkcs11_check.raw.inspect import render_mechanism
-    from pkcs11_check.raw.pack import explicit_length, mech_bytes
+    from pkcs11_check.raw.pack import LengthArg, mech_bytes
     from pkcs11_check.raw.types_std import CKM_AES_GCM
 
-    text = render_mechanism(mech_bytes(CKM_AES_GCM, b"\x01\x02\x03\x04", length=explicit_length(2)))
+    text = render_mechanism(
+        mech_bytes(CKM_AES_GCM, b"\x01\x02\x03\x04", length=LengthArg.explicit_value(2))
+    )
     assert "kind=bytes" in text
     assert "len=2 explicit" in text
     assert "preview=01020304" in text

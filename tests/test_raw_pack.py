@@ -26,9 +26,9 @@ from pkcs11_check.raw.types_std import (
 
 
 def test_pack_template_keeps_pointer_and_length_separate() -> None:
-    from pkcs11_check.raw.pack import attr_ulong, explicit_length
+    from pkcs11_check.raw.pack import LengthArg, attr_ulong
 
-    attr = attr_ulong(0x00000161, 32, length=explicit_length(1))
+    attr = attr_ulong(0x00000161, 32, length=LengthArg.explicit_value(1))
     assert attr.attribute.ulValueLen == 1
 
 
@@ -41,9 +41,9 @@ def test_pack_nested_templates_are_supported() -> None:
 
 
 def test_pack_retains_pointer_and_length_provenance_metadata() -> None:
-    from pkcs11_check.raw.pack import attr_bytes, explicit_length
+    from pkcs11_check.raw.pack import LengthArg, attr_bytes
 
-    attr = attr_bytes(0x00000011, b"abcd", length=explicit_length(2))
+    attr = attr_bytes(0x00000011, b"abcd", length=LengthArg.explicit_value(2))
 
     assert attr.pointer_arg.kind == "bytes"
     assert attr.pointer_arg.origin == "attr_bytes"

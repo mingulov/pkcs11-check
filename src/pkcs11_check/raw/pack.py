@@ -159,10 +159,6 @@ def template_ptr_count(tmpl: TemplateArg | None) -> tuple[Any, int]:
     return tmpl.ptr, tmpl.count
 
 
-def explicit_length(size: int) -> LengthArg:
-    return LengthArg.explicit_value(size)
-
-
 def _exact_byte_storage(data: bytes) -> Any:
     return ctypes.create_string_buffer(data, len(data))
 

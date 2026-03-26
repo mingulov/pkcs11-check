@@ -8,8 +8,9 @@ import pytest
 
 
 def test_raw_package_exports_core_symbols() -> None:
-    from pkcs11_check.raw import CK_ATTRIBUTE, CK_MECHANISM, CKR_OK, RawPKCS11
+    from pkcs11_check.raw import CK_ATTRIBUTE, CK_MECHANISM, RawPKCS11
     from pkcs11_check.raw.api import RawPKCS11 as ApiRawPKCS11
+    from pkcs11_check.raw.types_std import CKR_OK
 
     assert RawPKCS11 is not None
     assert RawPKCS11 is ApiRawPKCS11
