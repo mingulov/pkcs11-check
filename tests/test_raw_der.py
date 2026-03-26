@@ -116,8 +116,8 @@ class TestP1363Conversion:
         assert int.from_bytes(s_bytes, "big") == s
 
     def test_p384_key_size(self) -> None:
-        r_bytes = b"\xAB" * 48
-        s_bytes = b"\xCD" * 48
+        r_bytes = b"\xab" * 48
+        s_bytes = b"\xcd" * 48
         p1363 = r_bytes + s_bytes
         der = ecdsa_sig_p1363_to_der(p1363)
         recovered = ecdsa_sig_der_to_p1363(der, key_size=48)
@@ -175,8 +175,8 @@ class TestEcPointEncoding:
         assert y_recovered == self.Y
 
     def test_decode_p384(self) -> None:
-        x = int.from_bytes(b"\xAB" * 48, "big")
-        y = int.from_bytes(b"\xCD" * 48, "big")
+        x = int.from_bytes(b"\xab" * 48, "big")
+        y = int.from_bytes(b"\xcd" * 48, "big")
         der = encode_ec_point(x, y, key_size=48)
         point = decode_ec_point(der)
         assert len(point) == 1 + 2 * 48

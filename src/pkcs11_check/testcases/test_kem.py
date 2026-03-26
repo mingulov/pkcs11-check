@@ -13,10 +13,10 @@ import pytest
 
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.recipes import (
-    gen_keypair,
     decapsulate_key,
     destroy_quietly,
     encapsulate_key,
+    gen_keypair,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (

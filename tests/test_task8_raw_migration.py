@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (
     ROOT / "src/pkcs11_check/testcases/test_sign_recover.py",

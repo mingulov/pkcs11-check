@@ -12,8 +12,8 @@ import pytest
 
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.recipes import (
-    gen_keypair,
     destroy_quietly,
+    gen_keypair,
     read_attributes,
     sign_single,
     verify_single,

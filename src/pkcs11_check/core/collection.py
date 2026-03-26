@@ -100,9 +100,7 @@ def collect_pytest_item_metadata(
 
         if completed.returncode not in {0, 5}:
             details = (
-                completed.stderr.strip()
-                or completed.stdout.strip()
-                or "unknown collection error"
+                completed.stderr.strip() or completed.stdout.strip() or "unknown collection error"
             )
             msg = f"pytest metadata collection failed: {details}"
             raise ValueError(msg)

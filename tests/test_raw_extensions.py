@@ -108,8 +108,12 @@ def test_extension_numeric_helper_collision_requires_namespace() -> None:
     inspector_a = lambda value: "a"
     inspector_b = lambda value: "b"
 
-    register_extension(namespace="ibm", packers={0x80010003: packer_a}, inspectors={0x80010003: inspector_a})
-    register_extension(namespace="acme", packers={0x80010003: packer_b}, inspectors={0x80010003: inspector_b})
+    register_extension(
+        namespace="ibm", packers={0x80010003: packer_a}, inspectors={0x80010003: inspector_a}
+    )
+    register_extension(
+        namespace="acme", packers={0x80010003: packer_b}, inspectors={0x80010003: inspector_b}
+    )
 
     assert lookup_packer(0x80010003) is None
     assert lookup_inspector(0x80010003) is None
@@ -149,7 +153,9 @@ def test_extension_register_rejects_standard_mechanism_name_as_vendor_alias() ->
 
     from pkcs11_check.raw.extensions import register_extension
 
-    with pytest.raises(ValueError, match="standard mechanism names are not allowed in vendor extensions"):
+    with pytest.raises(
+        ValueError, match="standard mechanism names are not allowed in vendor extensions"
+    ):
         register_extension(
             namespace="ibm",
             mechanisms={0x80010005: "CKM_AES_KEY_GEN"},

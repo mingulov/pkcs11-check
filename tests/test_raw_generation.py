@@ -28,7 +28,7 @@ def test_generator_writes_explicit_outputs(tmp_path: Path) -> None:
     from scripts.generate_raw_standard import generate_raw_standard
 
     header = tmp_path / "pkcs11.h"
-    header.write_text("#include \"pkcs11t.h\"\n#include \"pkcs11f.h\"\n")
+    header.write_text('#include "pkcs11t.h"\n#include "pkcs11f.h"\n')
     (tmp_path / "pkcs11t.h").write_text("typedef int dummy_t;\n")
     (tmp_path / "pkcs11f.h").write_text("typedef int dummy_f;\n")
 
@@ -156,8 +156,15 @@ def test_attr_value_types_covers_common_attrs() -> None:
     )
 
     for attr in (
-        CKA_CLASS, CKA_TOKEN, CKA_LABEL, CKA_KEY_TYPE, CKA_VALUE,
-        CKA_ENCRYPT, CKA_DECRYPT, CKA_MODULUS, CKA_VALUE_LEN,
+        CKA_CLASS,
+        CKA_TOKEN,
+        CKA_LABEL,
+        CKA_KEY_TYPE,
+        CKA_VALUE,
+        CKA_ENCRYPT,
+        CKA_DECRYPT,
+        CKA_MODULUS,
+        CKA_VALUE_LEN,
     ):
         assert int(attr) in ATTR_VALUE_TYPES, f"{attr} missing from ATTR_VALUE_TYPES"
 

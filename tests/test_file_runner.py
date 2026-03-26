@@ -1007,10 +1007,15 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
             if arg == "--report-log" and i + 1 < len(cmd):
                 jsonl_path = Path(cmd[i + 1])
                 jsonl_path.write_text(
-                    json.dumps({
-                        "nodeid": "test_a.py::test_ok", "when": "call",
-                        "outcome": "passed", "duration": 0.1,
-                    }) + "\n"
+                    json.dumps(
+                        {
+                            "nodeid": "test_a.py::test_ok",
+                            "when": "call",
+                            "outcome": "passed",
+                            "duration": 0.1,
+                        }
+                    )
+                    + "\n"
                 )
                 break
         return (0, "", "")
@@ -1062,15 +1067,23 @@ def test_run_isolated_pytest_units_keeps_output_for_xfailed_unit(
             if arg == "--report-log" and i + 1 < len(cmd):
                 jsonl_path = Path(cmd[i + 1])
                 lines = [
-                    json.dumps({
-                        "nodeid": "test_a.py::test_ok", "when": "call",
-                        "outcome": "passed", "duration": 0.1,
-                    }),
-                    json.dumps({
-                        "nodeid": "test_a.py::test_xf", "when": "call",
-                        "outcome": "skipped", "duration": 0.05,
-                        "wasxfail": "known bug",
-                    }),
+                    json.dumps(
+                        {
+                            "nodeid": "test_a.py::test_ok",
+                            "when": "call",
+                            "outcome": "passed",
+                            "duration": 0.1,
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "nodeid": "test_a.py::test_xf",
+                            "when": "call",
+                            "outcome": "skipped",
+                            "duration": 0.05,
+                            "wasxfail": "known bug",
+                        }
+                    ),
                 ]
                 jsonl_path.write_text("\n".join(lines) + "\n")
                 break
@@ -1148,15 +1161,23 @@ def test_write_isolated_json_report_unified_format(tmp_path: Path) -> None:
     per_unit_details = {
         "test_a.py": {
             "counts": {
-                "passed": 3, "failed": 0, "skipped": 1,
-                "xfailed": 0, "xpassed": 0, "error": 0,
+                "passed": 3,
+                "failed": 0,
+                "skipped": 1,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
             },
             "tests": [],
         },
         "test_b.py": {
             "counts": {
-                "passed": 1, "failed": 1, "skipped": 0,
-                "xfailed": 1, "xpassed": 0, "error": 0,
+                "passed": 1,
+                "failed": 1,
+                "skipped": 0,
+                "xfailed": 1,
+                "xpassed": 0,
+                "error": 0,
             },
             "tests": [
                 {
@@ -1176,7 +1197,8 @@ def test_write_isolated_json_report_unified_format(tmp_path: Path) -> None:
     }
     report_path = tmp_path / "results.json"
     write_isolated_json_report(
-        report_path, state,
+        report_path,
+        state,
         per_unit_details=per_unit_details,
     )
 
@@ -1217,15 +1239,23 @@ def test_write_isolated_json_report_groups_test_units_by_file(tmp_path: Path) ->
     per_unit_details = {
         "test_a.py::test_one": {
             "counts": {
-                "passed": 1, "failed": 0, "skipped": 0,
-                "xfailed": 0, "xpassed": 0, "error": 0,
+                "passed": 1,
+                "failed": 0,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
             },
             "tests": [],
         },
         "test_a.py::test_two": {
             "counts": {
-                "passed": 0, "failed": 1, "skipped": 0,
-                "xfailed": 0, "xpassed": 0, "error": 0,
+                "passed": 0,
+                "failed": 1,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
             },
             "tests": [
                 {
@@ -1238,15 +1268,20 @@ def test_write_isolated_json_report_groups_test_units_by_file(tmp_path: Path) ->
         },
         "test_b.py::test_only": {
             "counts": {
-                "passed": 1, "failed": 0, "skipped": 0,
-                "xfailed": 0, "xpassed": 0, "error": 0,
+                "passed": 1,
+                "failed": 0,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
             },
             "tests": [],
         },
     }
     report_path = tmp_path / "results.json"
     write_isolated_json_report(
-        report_path, state,
+        report_path,
+        state,
         per_unit_details=per_unit_details,
     )
 
@@ -1306,7 +1341,6 @@ def _jsonl_line(
 def test_read_jsonl_results_maps_outcomes(tmp_path: Path) -> None:
     """All 6 outcome mappings are correctly applied."""
 
-
     lines = [
         # 1. passed (no wasxfail) -> passed
         _jsonl_line(nodeid="t::a", outcome="passed"),
@@ -1315,13 +1349,13 @@ def test_read_jsonl_results_maps_outcomes(tmp_path: Path) -> None:
         # 3. failed (no wasxfail) -> failed
         _jsonl_line(nodeid="t::c", outcome="failed", longrepr="assert False"),
         # 4. failed + wasxfail (strict xfail) -> failed
-        _jsonl_line(nodeid="t::d", outcome="failed", wasxfail="strict xfail",
-                    longrepr="strict xfail"),
+        _jsonl_line(
+            nodeid="t::d", outcome="failed", wasxfail="strict xfail", longrepr="strict xfail"
+        ),
         # 5. skipped (no wasxfail) -> skipped
         _jsonl_line(nodeid="t::e", outcome="skipped", longrepr="reason"),
         # 6. skipped + wasxfail -> xfailed
-        _jsonl_line(nodeid="t::f", outcome="skipped", wasxfail="known bug",
-                    longrepr="known bug"),
+        _jsonl_line(nodeid="t::f", outcome="skipped", wasxfail="known bug", longrepr="known bug"),
     ]
     p = tmp_path / "report.jsonl"
     p.write_text("\n".join(lines) + "\n")
@@ -1338,11 +1372,11 @@ def test_read_jsonl_results_maps_outcomes(tmp_path: Path) -> None:
     # Check non-passing entries are present
     nodeids_in_tests = {t["nodeid"] for t in result["tests"]}
     assert "t::a" not in nodeids_in_tests  # passed is excluded
-    assert "t::b" in nodeids_in_tests      # xpassed included
-    assert "t::c" in nodeids_in_tests      # failed included
-    assert "t::d" in nodeids_in_tests      # failed (strict xfail) included
+    assert "t::b" in nodeids_in_tests  # xpassed included
+    assert "t::c" in nodeids_in_tests  # failed included
+    assert "t::d" in nodeids_in_tests  # failed (strict xfail) included
     assert "t::e" not in nodeids_in_tests  # skipped excluded
-    assert "t::f" in nodeids_in_tests      # xfailed included
+    assert "t::f" in nodeids_in_tests  # xfailed included
 
     # Verify mapped outcome values
     by_nodeid = {t["nodeid"]: t for t in result["tests"]}
@@ -1354,7 +1388,6 @@ def test_read_jsonl_results_maps_outcomes(tmp_path: Path) -> None:
 
 def test_read_jsonl_results_flattens_longrepr(tmp_path: Path) -> None:
     """Dict longrepr is flattened; string kept; None/absent handled."""
-
 
     dict_longrepr: dict[str, Any] = {
         "reprcrash": {"message": "AssertionError: bad", "path": "test.py", "lineno": 42},
@@ -1398,10 +1431,13 @@ def test_read_jsonl_results_flattens_longrepr(tmp_path: Path) -> None:
 def test_read_jsonl_results_handles_setup_skip(tmp_path: Path) -> None:
     """A test skipped during setup (no call phase) is counted as skipped."""
 
-
     lines = [
-        _jsonl_line(nodeid="t::skip_in_fixture", when="setup",
-                    outcome="skipped", longrepr="fixture skip reason"),
+        _jsonl_line(
+            nodeid="t::skip_in_fixture",
+            when="setup",
+            outcome="skipped",
+            longrepr="fixture skip reason",
+        ),
         # No when=call line follows for this test
     ]
     p = tmp_path / "report.jsonl"
@@ -1415,7 +1451,6 @@ def test_read_jsonl_results_handles_setup_skip(tmp_path: Path) -> None:
 
 def test_read_jsonl_results_handles_collect_error(tmp_path: Path) -> None:
     """CollectReport with outcome=error is recorded as an error."""
-
 
     lines = [
         _jsonl_line(
@@ -1439,14 +1474,12 @@ def test_read_jsonl_results_handles_collect_error(tmp_path: Path) -> None:
 def test_read_jsonl_results_returns_none_for_missing(tmp_path: Path) -> None:
     """Missing file returns None."""
 
-
     result = _read_jsonl_results(tmp_path / "does_not_exist.jsonl")
     assert result is None
 
 
 def test_read_jsonl_results_skips_truncated_lines(tmp_path: Path) -> None:
     """Truncated/invalid JSON lines are skipped without error."""
-
 
     lines = [
         _jsonl_line(nodeid="t::good", outcome="passed"),
@@ -1714,11 +1747,13 @@ def test_write_report_jsonl_streaming_concat(tmp_path: Path) -> None:
 def test_collection_args_strips_report_log(tmp_path: Path) -> None:
     """_collection_args strips --report-log and --report-log=path from args."""
     args = [
-        "--p11-module", "/usr/lib/softhsm2.so",
+        "--p11-module",
+        "/usr/lib/softhsm2.so",
         "--report-log=/tmp/bar.jsonl",
         "-v",
         "--tb=short",
-        "--p11-pin", "1234",
+        "--p11-pin",
+        "1234",
     ]
     result = _collection_args(args)
 

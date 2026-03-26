@@ -31,8 +31,14 @@ def test_raw_api_never_auto_raises() -> None:
 
 def test_from_lib_generic_240_interface_does_not_load_v30_or_v32_tails() -> None:
     from pkcs11_check.raw.api import RawPKCS11
-    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED, CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
-    from pkcs11_check.raw.types_std import CK_VERSION, CK_VERSION_PTR
+    from pkcs11_check.raw.types_std import (
+        CK_INTERFACE,
+        CK_INTERFACE_PTR,
+        CK_VERSION,
+        CK_VERSION_PTR,
+        CKR_FUNCTION_FAILED,
+        CKR_OK,
+    )
 
     class FakeFunctionList(ctypes.Structure):
         _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
@@ -51,7 +57,9 @@ def test_from_lib_generic_240_interface_does_not_load_v30_or_v32_tails() -> None
             self.interface_ptr = ctypes.pointer(self.interface)
             self.calls: list[tuple[int | None, int | None]] = []
 
-        def __call__(self, _name: object, version: object, interface_out: object, _flags: object) -> int:
+        def __call__(
+            self, _name: object, version: object, interface_out: object, _flags: object
+        ) -> int:
             if version is not None:
                 requested = ctypes.cast(version, CK_VERSION_PTR).contents
                 self.calls.append((int(requested.major), int(requested.minor)))
@@ -74,7 +82,9 @@ def test_from_lib_generic_240_interface_does_not_load_v30_or_v32_tails() -> None
         RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so")
 
     assert fake_get_interface.calls == [(3, 2), (None, None)]
-    function_list_ptr = ctypes.cast(ctypes.pointer(fake_get_interface.function_list), ctypes.c_void_p).value
+    function_list_ptr = ctypes.cast(
+        ctypes.pointer(fake_get_interface.function_list), ctypes.c_void_p
+    ).value
     raw._load_from_ptr.assert_called_once_with(function_list_ptr)
     raw._load_v30_from_ptr.assert_not_called()
     raw._load_v32_from_ptr.assert_not_called()
@@ -82,8 +92,14 @@ def test_from_lib_generic_240_interface_does_not_load_v30_or_v32_tails() -> None
 
 def test_from_lib_generic_30_interface_loads_v30_but_not_v32_tails() -> None:
     from pkcs11_check.raw.api import RawPKCS11
-    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED, CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
-    from pkcs11_check.raw.types_std import CK_VERSION, CK_VERSION_PTR
+    from pkcs11_check.raw.types_std import (
+        CK_INTERFACE,
+        CK_INTERFACE_PTR,
+        CK_VERSION,
+        CK_VERSION_PTR,
+        CKR_FUNCTION_FAILED,
+        CKR_OK,
+    )
 
     class FakeFunctionList(ctypes.Structure):
         _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
@@ -102,7 +118,9 @@ def test_from_lib_generic_30_interface_loads_v30_but_not_v32_tails() -> None:
             self.interface_ptr = ctypes.pointer(self.interface)
             self.calls: list[tuple[int | None, int | None]] = []
 
-        def __call__(self, _name: object, version: object, interface_out: object, _flags: object) -> int:
+        def __call__(
+            self, _name: object, version: object, interface_out: object, _flags: object
+        ) -> int:
             if version is not None:
                 requested = ctypes.cast(version, CK_VERSION_PTR).contents
                 self.calls.append((int(requested.major), int(requested.minor)))
@@ -125,7 +143,9 @@ def test_from_lib_generic_30_interface_loads_v30_but_not_v32_tails() -> None:
         RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so")
 
     assert fake_get_interface.calls == [(3, 2), (None, None)]
-    function_list_ptr = ctypes.cast(ctypes.pointer(fake_get_interface.function_list), ctypes.c_void_p).value
+    function_list_ptr = ctypes.cast(
+        ctypes.pointer(fake_get_interface.function_list), ctypes.c_void_p
+    ).value
     raw._load_from_ptr.assert_called_once_with(function_list_ptr)
     raw._load_v30_from_ptr.assert_called_once_with(function_list_ptr)
     raw._load_v32_from_ptr.assert_not_called()
@@ -133,8 +153,13 @@ def test_from_lib_generic_30_interface_loads_v30_but_not_v32_tails() -> None:
 
 def test_from_lib_loads_v32_when_explicit_32_interface_is_available() -> None:
     from pkcs11_check.raw.api import RawPKCS11
-    from pkcs11_check.raw.types_std import CKR_OK, CK_INTERFACE, CK_INTERFACE_PTR
-    from pkcs11_check.raw.types_std import CK_VERSION, CK_VERSION_PTR
+    from pkcs11_check.raw.types_std import (
+        CK_INTERFACE,
+        CK_INTERFACE_PTR,
+        CK_VERSION,
+        CK_VERSION_PTR,
+        CKR_OK,
+    )
 
     class FakeFunctionList(ctypes.Structure):
         _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
@@ -153,7 +178,9 @@ def test_from_lib_loads_v32_when_explicit_32_interface_is_available() -> None:
             self.interface_ptr = ctypes.pointer(self.interface)
             self.calls: list[tuple[int | None, int | None]] = []
 
-        def __call__(self, _name: object, version: object, interface_out: object, _flags: object) -> int:
+        def __call__(
+            self, _name: object, version: object, interface_out: object, _flags: object
+        ) -> int:
             requested = ctypes.cast(version, CK_VERSION_PTR).contents
             self.calls.append((int(requested.major), int(requested.minor)))
             ctypes.cast(interface_out, ctypes.POINTER(CK_INTERFACE_PTR))[0] = self.interface_ptr
@@ -172,7 +199,9 @@ def test_from_lib_loads_v32_when_explicit_32_interface_is_available() -> None:
         RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so")
 
     assert fake_get_interface.calls == [(3, 2)]
-    function_list_ptr = ctypes.cast(ctypes.pointer(fake_get_interface.function_list), ctypes.c_void_p).value
+    function_list_ptr = ctypes.cast(
+        ctypes.pointer(fake_get_interface.function_list), ctypes.c_void_p
+    ).value
     raw._load_from_ptr.assert_called_once_with(function_list_ptr)
     raw._load_v30_from_ptr.assert_called_once_with(function_list_ptr)
     raw._load_v32_from_ptr.assert_called_once_with(function_list_ptr)

@@ -5,8 +5,6 @@ from __future__ import annotations
 import copy
 import ctypes
 
-import pytest
-
 
 class TestCKConstantBase:
     """Core CK_CONSTANT int-subclass behavior."""

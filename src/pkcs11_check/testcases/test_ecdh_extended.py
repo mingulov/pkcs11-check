@@ -23,10 +23,10 @@ from pkcs11_check.raw.pack import (
     mech_ecdh,
 )
 from pkcs11_check.raw.recipes import (
-    gen_keypair,
     derive_key,
     destroy_quietly,
     gen_ec_keypair,
+    gen_keypair,
     read_attributes,
     sign_single,
     verify_single,

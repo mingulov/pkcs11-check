@@ -239,11 +239,7 @@ def _nodeids_for_unit(unit: str, items: list[CollectedPytestItem]) -> list[str]:
             if normalize_policy_file_key(item.file_path) == file_key
             and (item.nodeid == prefix or item.nodeid.startswith(prefix + "["))
         ]
-    return [
-        item.nodeid
-        for item in items
-        if normalize_policy_file_key(item.file_path) == file_key
-    ]
+    return [item.nodeid for item in items if normalize_policy_file_key(item.file_path) == file_key]
 
 
 def discover_auto_isolation_units(
@@ -377,10 +373,7 @@ def _group_results_by_file(
     """
     has_test_level = any("::" in r.target for r in results)
     if not has_test_level:
-        return [
-            (r.target, [r], details.get(r.target, {}))
-            for r in results
-        ]
+        return [(r.target, [r], details.get(r.target, {})) for r in results]
 
     groups: dict[str, list[FileRunResult]] = {}
     order: list[str] = []
@@ -395,8 +388,12 @@ def _group_results_by_file(
     for file_target in order:
         file_results = groups[file_target]
         merged_counts: dict[str, int] = {
-            "passed": 0, "failed": 0, "skipped": 0,
-            "xfailed": 0, "xpassed": 0, "error": 0,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "xpassed": 0,
+            "error": 0,
         }
         merged_tests: list[dict[str, Any]] = []
         for r in file_results:
@@ -404,9 +401,7 @@ def _group_results_by_file(
             for key in merged_counts:
                 merged_counts[key] += detail.get("counts", {}).get(key, 0)
             merged_tests.extend(detail.get("tests", []))
-        out.append(
-            (file_target, file_results, {"counts": merged_counts, "tests": merged_tests})
-        )
+        out.append((file_target, file_results, {"counts": merged_counts, "tests": merged_tests}))
     return out
 
 
@@ -421,17 +416,19 @@ def write_isolated_json_report(
     details = per_unit_details or {}
 
     summary: dict[str, int] = {
-        "passed": 0, "failed": 0, "skipped": 0,
-        "xfailed": 0, "xpassed": 0, "error": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+        "error": 0,
     }
 
     grouped = _group_results_by_file(state.results, details)
     units_out: list[dict[str, Any]] = []
 
     for file_target, file_results, merged_detail in grouped:
-        has_failure = any(
-            r.status in {"failed", "crashed", "timeout"} for r in file_results
-        )
+        has_failure = any(r.status in {"failed", "crashed", "timeout"} for r in file_results)
         duration = sum(r.duration_s for r in file_results)
         stdout_parts = [r.stdout for r in file_results if r.stdout]
         stderr_parts = [r.stderr for r in file_results if r.stderr]
@@ -439,9 +436,7 @@ def write_isolated_json_report(
         unit: dict[str, Any] = {
             "target": file_target,
             "status": "failed" if has_failure else file_results[0].status,
-            "returncode": max(abs(r.returncode) for r in file_results)
-            if has_failure
-            else 0,
+            "returncode": max(abs(r.returncode) for r in file_results) if has_failure else 0,
             "duration_s": round(duration, 3),
         }
         if stdout_parts:
@@ -592,7 +587,8 @@ def write_isolated_report(
     """Write the requested aggregated report format for an isolated run."""
     if config.output_format == "json":
         write_isolated_json_report(
-            config.output_path, state,
+            config.output_path,
+            state,
             per_unit_details=per_unit_details,
         )
         return
@@ -662,23 +658,38 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
         file_part = nodeid.split("::")[0]
         if file_part not in file_counts:
             file_counts[file_part] = {
-                "passed": 0, "failed": 0, "skipped": 0,
-                "xfailed": 0, "xpassed": 0, "error": 0,
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
             }
         outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
         file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
 
     summary: dict[str, int] = {
-        "passed": 0, "failed": 0, "skipped": 0,
-        "xfailed": 0, "xpassed": 0, "error": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+        "error": 0,
     }
     units: list[dict[str, Any]] = []
 
     for target in sorted(set(list(by_file.keys()) + list(file_counts.keys()))):
-        counts = file_counts.get(target, {
-            "passed": 0, "failed": 0, "skipped": 0,
-            "xfailed": 0, "xpassed": 0, "error": 0,
-        })
+        counts = file_counts.get(
+            target,
+            {
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+                "error": 0,
+            },
+        )
         for key in summary:
             summary[key] += counts.get(key, 0)
         has_failure = counts.get("failed", 0) > 0 or counts.get("error", 0) > 0
@@ -1053,8 +1064,12 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
         return None
 
     counts: dict[str, int] = {
-        "passed": 0, "failed": 0, "skipped": 0,
-        "xfailed": 0, "xpassed": 0, "error": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+        "error": 0,
     }
     non_passing: list[dict[str, Any]] = []
     skip_reasons: dict[str, int] = {}
@@ -1363,8 +1378,6 @@ def _insert_escalated_units(
     return additions
 
 
-
-
 def _escalate_current_file(
     *,
     unit: str,
@@ -1512,7 +1525,8 @@ def run_isolated_pytest_units(
         console.print("[green]Nothing to do[/green] - all isolated units already completed.")
         if report_config is not None:
             write_isolated_report(
-                report_config, state,
+                report_config,
+                state,
                 per_unit_details={},
             )
         return 0
@@ -1542,20 +1556,23 @@ def run_isolated_pytest_units(
                 os.close(unit_jsonl_fd)
                 unit_jsonl_path = Path(unit_jsonl_raw)
                 cmd = [
-                    sys.executable, "-m", "pytest", unit, *pytest_args,
-                    "--report-log", str(unit_jsonl_path),
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    unit,
+                    *pytest_args,
+                    "--report-log",
+                    str(unit_jsonl_path),
                 ]
             else:
                 cmd = [sys.executable, "-m", "pytest", unit, *pytest_args]
 
             try:
                 try:
-                    returncode, captured_stdout, captured_stderr = (
-                        _run_subprocess_tee(
-                            cmd,
-                            env=env,
-                            timeout=_unit_timeout_seconds(timeout, unit_granularity),
-                        )
+                    returncode, captured_stdout, captured_stderr = _run_subprocess_tee(
+                        cmd,
+                        env=env,
+                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
                     )
                     status = _status_from_returncode(returncode)
                 except subprocess.TimeoutExpired:
@@ -1604,9 +1621,7 @@ def run_isolated_pytest_units(
                             save_run_state(state_file, state)
                             pending_units.extend(escalated_units)
                             exit_code = 1
-                            console.print(
-                                f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)"
-                            )
+                            console.print(f"[red]TIMEOUT[/red] {unit} ({duration_s:.1f}s)")
                             index += 1
                             continue
 
@@ -1658,12 +1673,9 @@ def run_isolated_pytest_units(
                 # Keep output for non-passing units AND for units that
                 # contain xfailed/xpassed/error tests (useful for debugging
                 # even when the overall unit status is "passed").
-                has_notable_tests = (
-                    detail is not None
-                    and any(
-                        detail["counts"].get(k, 0) > 0
-                        for k in ("failed", "xfailed", "xpassed", "error")
-                    )
+                has_notable_tests = detail is not None and any(
+                    detail["counts"].get(k, 0) > 0
+                    for k in ("failed", "xfailed", "xpassed", "error")
                 )
                 keep_output = status not in ("passed",) or has_notable_tests
                 result = FileRunResult(
@@ -1680,9 +1692,7 @@ def run_isolated_pytest_units(
                     per_unit_details[unit] = detail
 
                 if status in {"passed", "empty"}:
-                    console.print(
-                        f"[green]{status.upper()}[/green] {unit} ({duration_s:.1f}s)"
-                    )
+                    console.print(f"[green]{status.upper()}[/green] {unit} ({duration_s:.1f}s)")
                     index += 1
                     continue
 
@@ -1717,12 +1727,8 @@ def run_isolated_pytest_units(
                             while True:
                                 # - read JSONL for completed + culprit --
                                 if iter_jsonl_path is not None:
-                                    culprit, completed = (
-                                        _identify_crash_culprit(iter_jsonl_path)
-                                    )
-                                    iter_detail = _read_jsonl_results(
-                                        iter_jsonl_path
-                                    )
+                                    culprit, completed = _identify_crash_culprit(iter_jsonl_path)
+                                    iter_detail = _read_jsonl_results(iter_jsonl_path)
                                 else:
                                     culprit, completed = None, []
                                     iter_detail = None
@@ -1735,46 +1741,40 @@ def run_isolated_pytest_units(
                                         accumulated_detail = iter_detail
                                     else:
                                         for k in accumulated_detail["counts"]:
-                                            accumulated_detail["counts"][k] += (
-                                                iter_detail["counts"].get(k, 0)
-                                            )
-                                        accumulated_detail["tests"].extend(
-                                            iter_detail["tests"]
-                                        )
+                                            accumulated_detail["counts"][k] += iter_detail[
+                                                "counts"
+                                            ].get(k, 0)
+                                        accumulated_detail["tests"].extend(iter_detail["tests"])
                                         # Merge skip_reasons
                                         for reason, cnt in iter_detail.get(
                                             "skip_reasons", {}
                                         ).items():
-                                            accumulated_detail.setdefault(
-                                                "skip_reasons", {}
-                                            )[reason] = (
-                                                accumulated_detail.get(
-                                                    "skip_reasons", {}
-                                                ).get(reason, 0)
+                                            accumulated_detail.setdefault("skip_reasons", {})[
+                                                reason
+                                            ] = (
+                                                accumulated_detail.get("skip_reasons", {}).get(
+                                                    reason, 0
+                                                )
                                                 + cnt
                                             )
 
                                 if culprit:
                                     # Confirm crash by running culprit alone
                                     console.print(
-                                        f"[yellow]Confirming crash culprit:"
-                                        f"[/yellow] {culprit}"
+                                        f"[yellow]Confirming crash culprit:[/yellow] {culprit}"
                                     )
-                                    confirm_rc, confirm_out, confirm_err = (
-                                        _run_subprocess_tee(
-                                            [
-                                                sys.executable, "-m", "pytest",
-                                                culprit, *pytest_args,
-                                            ],
-                                            env=env,
-                                            timeout=_unit_timeout_seconds(
-                                                timeout, "test"
-                                            ),
-                                        )
+                                    confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
+                                        [
+                                            sys.executable,
+                                            "-m",
+                                            "pytest",
+                                            culprit,
+                                            *pytest_args,
+                                        ],
+                                        env=env,
+                                        timeout=_unit_timeout_seconds(timeout, "test"),
                                     )
-                                    confirm_status = _status_from_returncode(
-                                        confirm_rc
-                                    )
+                                    confirm_status = _status_from_returncode(confirm_rc)
                                     # Record culprit as a standalone result
                                     culprit_outcome = (
                                         "crashed"
@@ -1787,8 +1787,7 @@ def run_isolated_pytest_units(
                                     }
                                     if confirm_status == "crashed":
                                         culprit_entry["longrepr"] = (
-                                            confirm_err.strip()
-                                            or confirm_out.strip()
+                                            confirm_err.strip() or confirm_out.strip()
                                         )
                                     if confirm_out.strip():
                                         culprit_entry["stdout"] = confirm_out
@@ -1797,21 +1796,20 @@ def run_isolated_pytest_units(
                                     if accumulated_detail is None:
                                         accumulated_detail = {
                                             "counts": {
-                                                "passed": 0, "failed": 0,
-                                                "skipped": 0, "xfailed": 0,
-                                                "xpassed": 0, "error": 0,
+                                                "passed": 0,
+                                                "failed": 0,
+                                                "skipped": 0,
+                                                "xfailed": 0,
+                                                "xpassed": 0,
+                                                "error": 0,
                                             },
                                             "tests": [],
                                         }
-                                    accumulated_detail["tests"].append(
-                                        culprit_entry
-                                    )
+                                    accumulated_detail["tests"].append(culprit_entry)
                                     if confirm_status == "crashed":
-                                        accumulated_detail["counts"][
-                                            "error"
-                                        ] = accumulated_detail["counts"].get(
-                                            "error", 0
-                                        ) + 1
+                                        accumulated_detail["counts"]["error"] = (
+                                            accumulated_detail["counts"].get("error", 0) + 1
+                                        )
                                     deselect_set.add(culprit)
                                     crash_count += 1
 
@@ -1832,37 +1830,33 @@ def run_isolated_pytest_units(
                                 # - retry with deselect via file --
                                 # Write deselected nodeids to a temp file
                                 # instead of --deselect args (avoids ARG_MAX).
-                                deselect_fd, deselect_raw = (
-                                    tempfile.mkstemp(
-                                        prefix="pkcs11-check-deselect-",
-                                        suffix=".txt",
-                                    )
+                                deselect_fd, deselect_raw = tempfile.mkstemp(
+                                    prefix="pkcs11-check-deselect-",
+                                    suffix=".txt",
                                 )
                                 os.close(deselect_fd)
                                 deselect_path = Path(deselect_raw)
-                                deselect_path.write_text(
-                                    "\n".join(sorted(deselect_set)) + "\n"
-                                )
+                                deselect_path.write_text("\n".join(sorted(deselect_set)) + "\n")
                                 retry_temp_files.append(deselect_path)
 
-                                retry_jsonl_fd, retry_jsonl_raw = (
-                                    tempfile.mkstemp(
-                                        prefix="pkcs11-check-retry-",
-                                        suffix=".jsonl",
-                                    )
+                                retry_jsonl_fd, retry_jsonl_raw = tempfile.mkstemp(
+                                    prefix="pkcs11-check-retry-",
+                                    suffix=".jsonl",
                                 )
                                 os.close(retry_jsonl_fd)
                                 retry_jsonl_path = Path(retry_jsonl_raw)
                                 retry_temp_files.append(retry_jsonl_path)
 
                                 retry_env = dict(env)
-                                retry_env["PKCS11_CHECK_DESELECT_FILE"] = str(
-                                    deselect_path
-                                )
+                                retry_env["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
                                 retry_cmd = [
-                                    sys.executable, "-m", "pytest",
-                                    unit, *pytest_args,
-                                    "--report-log", str(retry_jsonl_path),
+                                    sys.executable,
+                                    "-m",
+                                    "pytest",
+                                    unit,
+                                    *pytest_args,
+                                    "--report-log",
+                                    str(retry_jsonl_path),
                                 ]
                                 console.print(
                                     f"[yellow]Adaptive isolation:[/yellow] "
@@ -1871,18 +1865,12 @@ def run_isolated_pytest_units(
                                 )
                                 retry_start = time.monotonic()
                                 try:
-                                    retry_rc, retry_out, retry_err = (
-                                        _run_subprocess_tee(
-                                            retry_cmd,
-                                            env=retry_env,
-                                            timeout=_unit_timeout_seconds(
-                                                timeout, unit_granularity
-                                            ),
-                                        )
+                                    retry_rc, retry_out, retry_err = _run_subprocess_tee(
+                                        retry_cmd,
+                                        env=retry_env,
+                                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
                                     )
-                                    retry_status = _status_from_returncode(
-                                        retry_rc
-                                    )
+                                    retry_status = _status_from_returncode(retry_rc)
                                 except subprocess.TimeoutExpired:
                                     retry_status = "timeout"
                                     retry_rc = 124
@@ -1892,34 +1880,28 @@ def run_isolated_pytest_units(
 
                                 if retry_status not in ("crashed", "timeout"):
                                     # Retry succeeded - merge final results
-                                    final_detail = _read_jsonl_results(
-                                        retry_jsonl_path
-                                    )
+                                    final_detail = _read_jsonl_results(retry_jsonl_path)
                                     if final_detail is not None:
                                         if accumulated_detail is None:
                                             accumulated_detail = final_detail
                                         else:
-                                            for k in accumulated_detail[
-                                                "counts"
-                                            ]:
-                                                accumulated_detail["counts"][
-                                                    k
-                                                ] += final_detail[
+                                            for k in accumulated_detail["counts"]:
+                                                accumulated_detail["counts"][k] += final_detail[
                                                     "counts"
                                                 ].get(k, 0)
-                                            accumulated_detail[
-                                                "tests"
-                                            ].extend(final_detail["tests"])
+                                            accumulated_detail["tests"].extend(
+                                                final_detail["tests"]
+                                            )
 
                                     keep = retry_status != "passed" or (
                                         accumulated_detail is not None
                                         and any(
-                                            accumulated_detail["counts"].get(
-                                                k, 0
-                                            ) > 0
+                                            accumulated_detail["counts"].get(k, 0) > 0
                                             for k in (
-                                                "failed", "xfailed",
-                                                "xpassed", "error",
+                                                "failed",
+                                                "xfailed",
+                                                "xpassed",
+                                                "error",
                                             )
                                         )
                                     )
@@ -1927,22 +1909,14 @@ def run_isolated_pytest_units(
                                         target=unit,
                                         status=retry_status,
                                         returncode=retry_rc,
-                                        duration_s=(
-                                            duration_s + total_retry_dur
-                                        ),
-                                        stdout=(
-                                            retry_out if keep else ""
-                                        ),
-                                        stderr=(
-                                            retry_err if keep else ""
-                                        ),
+                                        duration_s=(duration_s + total_retry_dur),
+                                        stdout=(retry_out if keep else ""),
+                                        stderr=(retry_err if keep else ""),
                                     )
                                     _record_result(state, result)
                                     save_run_state(state_file, state)
                                     if accumulated_detail is not None:
-                                        per_unit_details[unit] = (
-                                            accumulated_detail
-                                        )
+                                        per_unit_details[unit] = accumulated_detail
                                     console.print(
                                         f"[green]RETRY OK[/green] {unit} "
                                         f"({total_retry_dur:.1f}s, "
@@ -1955,8 +1929,7 @@ def run_isolated_pytest_units(
 
                                 # Retry also crashed - loop with new JSONL
                                 console.print(
-                                    f"[red]RETRY CRASHED[/red] {unit} "
-                                    f"(iteration {crash_count + 1})"
+                                    f"[red]RETRY CRASHED[/red] {unit} (iteration {crash_count + 1})"
                                 )
                                 iter_jsonl_path = retry_jsonl_path
                                 # Continue the while loop
@@ -1964,13 +1937,10 @@ def run_isolated_pytest_units(
                         finally:
                             # Accumulate JSONL files for report.jsonl artifact
                             all_iter_jsonls = (
-                                ([crash_jsonl_path] if crash_jsonl_path else [])
-                                + retry_temp_files
-                            )
+                                [crash_jsonl_path] if crash_jsonl_path else []
+                            ) + retry_temp_files
                             if report_config is not None and report_config.jsonl_path is not None:
-                                jsonl_paths.extend(
-                                    p for p in all_iter_jsonls if p.exists()
-                                )
+                                jsonl_paths.extend(p for p in all_iter_jsonls if p.exists())
                             else:
                                 for tmp in all_iter_jsonls:
                                     tmp.unlink(missing_ok=True)
@@ -2005,9 +1975,7 @@ def run_isolated_pytest_units(
                             save_run_state(state_file, state)
                             pending_units.extend(escalated_units)
                             exit_code = 1
-                            console.print(
-                                f"[red]CRASHED[/red] {unit} ({duration_s:.1f}s)"
-                            )
+                            console.print(f"[red]CRASHED[/red] {unit} ({duration_s:.1f}s)")
                             index += 1
                             continue
 
@@ -2032,9 +2000,7 @@ def run_isolated_pytest_units(
                         save_run_state(state_file, state)
 
                 exit_code = 1
-                console.print(
-                    f"[red]{status.upper()}[/red] {unit} ({duration_s:.1f}s)"
-                )
+                console.print(f"[red]{status.upper()}[/red] {unit} ({duration_s:.1f}s)")
                 if stop_on_failure:
                     console.print(
                         f"[yellow]Stopped[/yellow] at {unit}. Resume with "
@@ -2048,7 +2014,8 @@ def run_isolated_pytest_units(
     finally:
         if report_config is not None:
             write_isolated_report(
-                report_config, state,
+                report_config,
+                state,
                 per_unit_details=per_unit_details,
             )
             if report_config.jsonl_path is not None:

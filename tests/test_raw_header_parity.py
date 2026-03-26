@@ -20,7 +20,10 @@ def _extract_names(text: str, pattern: str) -> set[str]:
 
 
 def _extract_constants(text: str) -> set[str]:
-    return _extract_names(text, r"^(CK[A-Z0-9_]+)\s*=", )
+    return _extract_names(
+        text,
+        r"^(CK[A-Z0-9_]+)\s*=",
+    )
 
 
 def _extract_classes(text: str) -> set[str]:
@@ -78,4 +81,6 @@ class TestTypedConstants:
         # Match lines like "CKA_TOKEN = 0x00000001" (plain int, no class wrapper)
         plain_pattern = re.compile(r"^(CK[A-Z_]+)\s*=\s*0x[0-9a-fA-F]+$", re.MULTILINE)
         plain_ints = plain_pattern.findall(text)
-        assert not plain_ints, f"Plain int constants found (should use typed classes): {plain_ints[:10]}"
+        assert not plain_ints, (
+            f"Plain int constants found (should use typed classes): {plain_ints[:10]}"
+        )
