@@ -20,13 +20,11 @@ RUN find /usr/lib64 /usr/lib -name "libsoftokn3.so" 2>/dev/null | head -1 > /tmp
 ENV PKCS11_CHECK_SLOT=1
 
 WORKDIR /app
-# Install deps first (cached unless pyproject.toml/uv.lock/python-pkcs11 change)
+# Install deps first (cached unless pyproject.toml/uv.lock change)
 COPY pyproject.toml uv.lock README.md ./
-COPY python-pkcs11/ python-pkcs11/
 COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
 COPY third_party/ third_party/
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTHON_PKCS11=0.0
-RUN uv python pin 3.12 && uv sync --frozen --reinstall-package python-pkcs11
+RUN uv python pin 3.12 && uv sync --frozen
 
 # Copy test code (changes frequently, does not invalidate deps cache)
 COPY . .
