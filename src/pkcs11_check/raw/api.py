@@ -169,7 +169,7 @@ class RawPKCS11:
         self._load_from_ptr(base_ptr)
 
     @classmethod
-    def from_lib(cls, lib_path: str) -> "RawPKCS11":
+    def from_lib(cls, lib_path: str) -> RawPKCS11:
         return cls(lib_path=lib_path)
 
     def _call(self, name: str, *args: Any) -> int:

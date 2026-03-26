@@ -36,7 +36,7 @@ class TestResourceExhaustion:
         rs = p11_raw_session
         keys: list[int] = []
         try:
-            for i in range(200):
+            for _ in range(200):
                 keys.append(gen_aes_key(rs.raw, rs.sh, 128))
         except AssertionError:
             pass  # CKR_DEVICE_MEMORY or similar - graceful
