@@ -100,7 +100,7 @@ key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
 # EncryptInit with NULL mechanism
-rv = raw.C_EncryptInit(sh, null_pointer().pointer, int(key.value))
+rv = raw.C_EncryptInit(sh, null_pointer().pointer, key.value)
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
@@ -123,7 +123,7 @@ mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
-rv = raw.C_DecryptInit(sh, null_pointer().pointer, int(key.value))
+rv = raw.C_DecryptInit(sh, null_pointer().pointer, key.value)
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")

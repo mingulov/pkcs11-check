@@ -100,7 +100,7 @@ assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
 # Try EncryptInit with CKA_ENCRYPT=False key
 mech = mech_simple(CKM_AES_ECB)  # AES_ECB
-rv = raw.C_EncryptInit(sh, mech.byref(), int(key.value))
+rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
 print(f"CKR:0x{rv:08x}")
 assert rv == CKR_KEY_FUNCTION_NOT_PERMITTED, f"Expected NOT_PERMITTED, got 0x{rv:08x}"
 print("OK")
@@ -128,7 +128,7 @@ rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, b
 assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
 mech = mech_simple(CKM_SHA256_HMAC)  # sign mech to test CKA_SIGN=False
-rv = raw.C_SignInit(sh, mech.byref(), int(key.value))
+rv = raw.C_SignInit(sh, mech.byref(), key.value)
 print(f"CKR:0x{rv:08x}")
 # KEY_FUNCTION_NOT_PERMITTED or MECHANISM_INVALID (if module doesn't support CMAC)
 # KEY_FUNCTION_NOT_PERMITTED, MECHANISM_INVALID, or KEY_TYPE_INCONSISTENT
@@ -157,7 +157,7 @@ rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, b
 assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
 mech = mech_simple(CKM_AES_ECB)  # AES_ECB
-rv = raw.C_DecryptInit(sh, mech.byref(), int(key.value))
+rv = raw.C_DecryptInit(sh, mech.byref(), key.value)
 print(f"CKR:0x{rv:08x}")
 assert rv == CKR_KEY_FUNCTION_NOT_PERMITTED, f"Expected NOT_PERMITTED, got 0x{rv:08x}"
 print("OK")

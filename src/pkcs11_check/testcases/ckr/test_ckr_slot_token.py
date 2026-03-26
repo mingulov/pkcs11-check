@@ -33,11 +33,9 @@ class TestGetMechanismInfoErrors:
         """Query info for non-existent mechanism -> CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
         info = CK_MECHANISM_INFO()
-        rv = int(rs.raw.C_GetMechanismInfo(rs.slot_id, 0xDEADBEEF, byref(info)))
-        assert rv != int(CKR_OK), "Should have rejected non-existent mechanism"
-        assert rv == int(CKR_MECHANISM_INVALID), (
-            f"Expected CKR_MECHANISM_INVALID, got {ckr_name(rv)}"
-        )
+        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, 0xDEADBEEF, byref(info))
+        assert rv != CKR_OK, "Should have rejected non-existent mechanism"
+        assert rv == CKR_MECHANISM_INVALID, f"Expected CKR_MECHANISM_INVALID, got {ckr_name(rv)}"
 
 
 class TestWaitForSlotEventErrors:
@@ -48,10 +46,10 @@ class TestWaitForSlotEventErrors:
         rs = p11_raw_session
         slot_id = CK_ULONG(0)
         # flags=0 means non-blocking (CKF_DONT_BLOCK not needed for non-blocking)
-        rv = int(rs.raw.C_WaitForSlotEvent(0, byref(slot_id), None))
+        rv = rs.raw.C_WaitForSlotEvent(0, byref(slot_id), None)
         acceptable = (
-            int(CKR_OK),  # Event returned - possible on some setups
-            int(CKR_NO_EVENT),  # Expected for software tokens
-            int(CKR_FUNCTION_NOT_SUPPORTED),  # SoftHSM2 doesn't implement this
+            CKR_OK,  # Event returned - possible on some setups
+            CKR_NO_EVENT,  # Expected for software tokens
+            CKR_FUNCTION_NOT_SUPPORTED,  # SoftHSM2 doesn't implement this
         )
         assert rv in acceptable, f"Unexpected CKR {ckr_name(rv)} from C_WaitForSlotEvent"

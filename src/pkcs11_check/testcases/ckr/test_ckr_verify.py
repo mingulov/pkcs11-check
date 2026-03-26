@@ -40,8 +40,8 @@ class TestVerifyInitErrors:
         pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected AES_ECB as verify mechanism")
             assert_ckr(CKR_VERIFY["init_mechanism_invalid"], rv, ckr_strict)
         finally:
@@ -55,8 +55,8 @@ class TestVerifyInitErrors:
         try:
             exp = CKR_VERIFY["init_key_type_inconsistent"]
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
-            rv = int(rs.raw.C_VerifyInit(rs.sh, mech.byref(), key))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
                 if not exp.allow_success:
                     pytest.fail("Should have rejected AES key with RSA verify mechanism")
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -78,8 +78,8 @@ class TestVerifyInitErrors:
         destroy_quietly(rs.raw, rs.sh, _priv)
         rs.raw.C_DestroyObject(rs.sh, pub)
         mech = mech_simple(CKM_SHA256_RSA_PKCS)
-        rv = int(rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub))
-        if rv != int(CKR_OK):
+        rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
+        if rv != CKR_OK:
             assert_ckr(CKR_VERIFY["init_key_handle_invalid"], rv, ckr_strict)
 
 
@@ -99,24 +99,22 @@ class TestVerifyErrors:
             tampered[-1] ^= 0xFF
 
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
-            rv = int(rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
+            if rv != CKR_OK:
                 pytest.skip(f"C_VerifyInit failed: {ckr_name(rv)}")
 
             data_buf = (ctypes.c_ubyte * len(data))(*data)
             sig_buf = (ctypes.c_ubyte * len(tampered))(*tampered)
-            rv = int(
-                rs.raw.C_Verify(
-                    rs.sh,
-                    data_buf,
-                    len(data),
-                    sig_buf,
-                    len(tampered),
-                )
+            rv = rs.raw.C_Verify(
+                rs.sh,
+                data_buf,
+                len(data),
+                sig_buf,
+                len(tampered),
             )
-            if rv == int(CKR_DEVICE_ERROR):
+            if rv == CKR_DEVICE_ERROR:
                 pytest.xfail("Kryoptic bug: returns CKR_DEVICE_ERROR for verify failure")
-            if rv == int(CKR_OK):
+            if rv == CKR_OK:
                 pytest.fail("Tampered signature verified as valid!")
             assert_ckr(CKR_VERIFY["signature_invalid"], rv, ckr_strict)
         finally:
@@ -132,17 +130,17 @@ class TestVerifyErrors:
             data = b"CKR compliance test data"
 
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
-            rv = int(rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
+            if rv != CKR_OK:
                 pytest.skip(f"C_VerifyInit failed: {ckr_name(rv)}")
 
             # RSA-2048 signature should be 256 bytes, provide 128
             data_buf = (ctypes.c_ubyte * len(data))(*data)
             sig_buf = (ctypes.c_ubyte * 128)(*([0] * 128))
-            rv = int(rs.raw.C_Verify(rs.sh, data_buf, len(data), sig_buf, 128))
-            if rv == int(CKR_DEVICE_ERROR):
+            rv = rs.raw.C_Verify(rs.sh, data_buf, len(data), sig_buf, 128)
+            if rv == CKR_DEVICE_ERROR:
                 pytest.xfail("Kryoptic bug: returns CKR_DEVICE_ERROR for verify failure")
-            if rv == int(CKR_OK):
+            if rv == CKR_OK:
                 if not exp.allow_success:
                     pytest.fail("Should have rejected 128-byte signature for RSA-2048")
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -152,7 +150,7 @@ class TestVerifyErrors:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference=exp.spec_ref,
                 )
-            elif rv in (int(CKR_SIGNATURE_INVALID), int(CKR_SIGNATURE_LEN_RANGE)):
+            elif rv in (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE):
                 assert_ckr(exp, rv, ckr_strict)
             else:
                 assert_ckr(exp, rv, ckr_strict)

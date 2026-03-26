@@ -30,9 +30,9 @@ class TestInitializeErrors:
             raw = RawPKCS11.from_lib("{module}")
             rv1 = raw.C_Initialize(None)
             rv2 = raw.C_Initialize(None)
-            if rv2 == int(CKR_OK):
+            if rv2 == CKR_OK:
                 print("CKR:already_init_accepted")
-            elif rv2 == int(CKR_CRYPTOKI_ALREADY_INITIALIZED):
+            elif rv2 == CKR_CRYPTOKI_ALREADY_INITIALIZED:
                 print("CKR:CRYPTOKI_ALREADY_INITIALIZED")
             else:
                 print(f"CKR:0x{{rv2:08x}}")
@@ -60,9 +60,9 @@ class TestInitializeErrors:
             raw.C_Finalize(None)
             # Now try finalize again - should get NOT_INITIALIZED
             rv = raw.C_Finalize(None)
-            if rv == int(CKR_OK):
+            if rv == CKR_OK:
                 print("CKR:finalize_accepted")
-            elif rv == int(CKR_CRYPTOKI_NOT_INITIALIZED):
+            elif rv == CKR_CRYPTOKI_NOT_INITIALIZED:
                 print("CKR:CRYPTOKI_NOT_INITIALIZED")
             else:
                 print(f"CKR:0x{{rv:08x}}")
@@ -89,10 +89,10 @@ class TestInitializeErrors:
             try:
                 count = CK_ULONG(0)
                 rv = raw.C_GetInterfaceList(None, byref(count))
-                if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+                if rv == CKR_FUNCTION_NOT_SUPPORTED:
                     print("CKR:FUNCTION_NOT_SUPPORTED")
-                elif rv == int(CKR_OK):
-                    print(f"CKR:OK:{{int(count.value)}}_interfaces")
+                elif rv == CKR_OK:
+                    print(f"CKR:OK:{{count.value}}_interfaces")
                 else:
                     print(f"CKR:0x{{rv:08x}}")
             except AttributeError:

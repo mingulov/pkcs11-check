@@ -27,11 +27,11 @@ class TestSeedRandomErrors:
         """C_SeedRandom - should accept or return RANDOM_SEED_NOT_SUPPORTED."""
         rs = p11_raw_session
         seed = (ctypes.c_ubyte * 32)(*([0x42] * 32))
-        rv = int(rs.raw.C_SeedRandom(rs.sh, seed, 32))
+        rv = rs.raw.C_SeedRandom(rs.sh, seed, 32)
         assert rv in (
-            int(CKR_OK),
-            int(CKR_RANDOM_SEED_NOT_SUPPORTED),
-            int(CKR_FUNCTION_NOT_SUPPORTED),
+            CKR_OK,
+            CKR_RANDOM_SEED_NOT_SUPPORTED,
+            CKR_FUNCTION_NOT_SUPPORTED,
         ), f"Unexpected CKR 0x{rv:08x} from C_SeedRandom"
 
 
@@ -42,16 +42,16 @@ class TestGenerateRandomErrors:
         """C_GenerateRandom(0) - should return empty or error."""
         rs = p11_raw_session
         buf = (ctypes.c_ubyte * 1)()  # minimal buffer
-        rv = int(rs.raw.C_GenerateRandom(rs.sh, buf, CK_ULONG(0)))
+        rv = rs.raw.C_GenerateRandom(rs.sh, buf, CK_ULONG(0))
         # Module may accept zero-length or reject - both acceptable
-        assert rv == int(CKR_OK) or rv != 0
+        assert rv == CKR_OK or rv != 0
 
     def test_generate_random_large(self, p11_raw_session: Any) -> None:
         """C_GenerateRandom(1MB) - large request."""
         rs = p11_raw_session
         size = 1024 * 1024
         buf = (ctypes.c_ubyte * size)()
-        rv = int(rs.raw.C_GenerateRandom(rs.sh, buf, CK_ULONG(size)))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_GenerateRandom(rs.sh, buf, CK_ULONG(size))
+        if rv == CKR_OK:
             assert len(bytes(buf)) == size
         # Some modules have size limits - non-OK is acceptable

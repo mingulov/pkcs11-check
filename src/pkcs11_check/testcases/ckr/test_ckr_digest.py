@@ -28,8 +28,8 @@ class TestDigestInitErrors:
         """Using encrypt mechanism for digest -> CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
         mech = mech_simple(CKM_AES_ECB)
-        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
+        if rv == CKR_OK:
             pytest.fail("Should have rejected AES_ECB as digest mechanism")
         assert_ckr(CKR_DIGEST["init_mechanism_invalid"], rv, ckr_strict)
 
@@ -37,8 +37,8 @@ class TestDigestInitErrors:
         """Using RSA encrypt mechanism for digest -> CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
         mech = mech_simple(CKM_RSA_PKCS)
-        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
+        if rv == CKR_OK:
             pytest.fail("Should have rejected RSA_PKCS as digest mechanism")
         assert_ckr(CKR_DIGEST["init_encrypt_mechanism"], rv, ckr_strict)
 
@@ -51,12 +51,10 @@ class TestDigestInitErrors:
         rs = p11_raw_session
         exp = CKR_DIGEST["init_mechanism_param_invalid"]
         # Build SHA-256 mechanism with a bogus 16-byte parameter
-        import ctypes
-
 
         mech = mech_bytes(CKM_SHA256, b"\x00" * 16)
-        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
+        if rv == CKR_OK:
             # Some modules/wrappers ignore unknown params for hash mechanisms
             pass
         else:

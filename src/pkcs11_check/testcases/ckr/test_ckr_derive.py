@@ -5,7 +5,6 @@ Source: PKCS#11 v3.1 Sec.5.14.5.
 
 from __future__ import annotations
 
-import ctypes
 from ctypes import byref
 from typing import Any
 
@@ -41,24 +40,22 @@ class TestDeriveKeyErrors:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_DERIVE): True},
+            attrs={CKA_DERIVE: True},
         )
         try:
             mech = mech_simple(CKM_SHA256)
             tmpl = template(attr_ulong(CKA_VALUE_LEN, 16))
             derived = CK_OBJECT_HANDLE(0)
-            rv = int(
-                rs.raw.C_DeriveKey(
-                    rs.sh,
-                    mech.byref(),
-                    key,
-                    tmpl.ptr,
-                    tmpl.count,
-                    byref(derived),
-                )
+            rv = rs.raw.C_DeriveKey(
+                rs.sh,
+                mech.byref(),
+                key,
+                tmpl.ptr,
+                tmpl.count,
+                byref(derived),
             )
-            if rv == int(CKR_OK):
-                destroy_quietly(rs.raw, rs.sh, int(derived.value))
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, derived.value)
                 pytest.fail("Should have rejected SHA256 as derive mechanism")
             assert_ckr(CKR_DERIVE["mechanism_invalid"], rv, ckr_strict)
         finally:
@@ -80,18 +77,16 @@ class TestDeriveKeyErrors:
             mech = mech_bytes(CKM_ECDH1_DERIVE, b"\x00" * 65)
             tmpl = template(attr_ulong(CKA_VALUE_LEN, 16))
             derived = CK_OBJECT_HANDLE(0)
-            rv = int(
-                rs.raw.C_DeriveKey(
-                    rs.sh,
-                    mech.byref(),
-                    priv,
-                    tmpl.ptr,
-                    tmpl.count,
-                    byref(derived),
-                )
+            rv = rs.raw.C_DeriveKey(
+                rs.sh,
+                mech.byref(),
+                priv,
+                tmpl.ptr,
+                tmpl.count,
+                byref(derived),
             )
-            if rv == int(CKR_OK):
-                destroy_quietly(rs.raw, rs.sh, int(derived.value))
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, derived.value)
                 pytest.fail("Should have rejected RSA key with ECDH derive")
             assert_ckr(CKR_DERIVE["key_type_inconsistent"], rv, ckr_strict)
         finally:

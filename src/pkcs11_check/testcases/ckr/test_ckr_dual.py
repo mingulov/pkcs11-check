@@ -104,10 +104,10 @@ class TestOperationStateSubprocess:
             raw = RawPKCS11.from_lib("{module}")
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
             pin = {pin_arg}
             if pin is not None:
-                login_user(raw, sh, int(CKU_USER), pin.encode())
+                login_user(raw, sh, CKU_USER, pin.encode())
             key = gen_aes_key(raw, sh, 256)
             ct = encrypt_single(raw, sh, key, CKM_AES_ECB, b"\\x00" * 16)
             print(f"OK:encrypt_works:{{len(ct)}}")
@@ -145,10 +145,10 @@ class TestOperationStateSubprocess:
             raw = RawPKCS11.from_lib("{module}")
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
             pin = {pin_arg}
             if pin is not None:
-                login_user(raw, sh, int(CKU_USER), pin.encode())
+                login_user(raw, sh, CKU_USER, pin.encode())
             d1 = digest_single(raw, sh, CKM_SHA256, b"test1")
             d2 = digest_single(raw, sh, CKM_SHA256, b"test2")
             print(f"OK:both_digests_work:{{len(d1)}}:{{len(d2)}}")

@@ -44,12 +44,12 @@ class TestErrorPriority:
         rs.raw.C_DestroyObject(rs.sh, key)
         # Both conditions: handle is invalid AND SHA256 is wrong for encrypt
         mech = mech_simple(CKM_SHA256)
-        rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+        if rv == CKR_OK:
             pass  # Wrapper may not detect destroyed handle
-        elif rv in (int(CKR_OBJECT_HANDLE_INVALID), int(CKR_KEY_HANDLE_INVALID)):
+        elif rv in (CKR_OBJECT_HANDLE_INVALID, CKR_KEY_HANDLE_INVALID):
             pass  # Correct: handle error has priority
-        elif rv == int(CKR_MECHANISM_INVALID):
+        elif rv == CKR_MECHANISM_INVALID:
             # Module checked mechanism first - lower priority but acceptable
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -70,14 +70,14 @@ class TestErrorPriority:
         pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected RSA key with AES-ECB")
             assert (
                 rv
                 in (
-                    int(CKR_KEY_TYPE_INCONSISTENT),
-                    int(CKR_MECHANISM_INVALID),
+                    CKR_KEY_TYPE_INCONSISTENT,
+                    CKR_MECHANISM_INVALID,
                 )
                 or rv != 0
             ), f"Unexpected CKR {ckr_name(rv)}"
@@ -95,14 +95,14 @@ class TestErrorPriority:
         key = gen_aes_key(rs.raw, rs.sh, 128)
         try:
             mech = mech_simple(CKM_RSA_PKCS)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected AES key with RSA mechanism")
             assert (
                 rv
                 in (
-                    int(CKR_MECHANISM_INVALID),
-                    int(CKR_KEY_TYPE_INCONSISTENT),
+                    CKR_MECHANISM_INVALID,
+                    CKR_KEY_TYPE_INCONSISTENT,
                 )
                 or rv != 0
             ), f"Unexpected CKR {ckr_name(rv)}"

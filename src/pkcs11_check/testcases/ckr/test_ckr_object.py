@@ -57,9 +57,9 @@ class TestCreateObjectErrors:
             attr_bool(CKA_TOKEN, False),
         )
         handle = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(handle.value))
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
             pytest.fail("Should have rejected template without CKA_CLASS")
         assert rv in TEMPLATE_ERRORS, f"Unexpected CKR {ckr_name(rv)}"
 
@@ -71,9 +71,9 @@ class TestCreateObjectErrors:
             attr_bool(CKA_TOKEN, False),
         )
         handle = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(handle.value))
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
             pytest.fail("Should have rejected invalid CKA_CLASS value")
         assert rv in TEMPLATE_ERRORS, f"Unexpected CKR {ckr_name(rv)}"
 
@@ -81,16 +81,16 @@ class TestCreateObjectErrors:
         """DATA object with KEY_TYPE -> reject or ignore."""
         rs = p11_raw_session
         tmpl = template(
-            attr_ulong(CKA_CLASS, int(CKO_DATA)),
-            attr_ulong(CKA_KEY_TYPE, int(CKK_AES)),
+            attr_ulong(CKA_CLASS, CKO_DATA),
+            attr_ulong(CKA_KEY_TYPE, CKK_AES),
             attr_bytes(CKA_VALUE, b"conflict"),
             attr_bool(CKA_TOKEN, False),
         )
         handle = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
             # Some modules ignore KEY_TYPE on DATA - acceptable
-            destroy_quietly(rs.raw, rs.sh, int(handle.value))
+            destroy_quietly(rs.raw, rs.sh, handle.value)
         else:
             assert rv in TEMPLATE_ERRORS, f"Unexpected CKR {ckr_name(rv)}"
 
@@ -104,13 +104,13 @@ class TestGetAttributeErrors:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             tmpl = (CK_ATTRIBUTE * 1)()
-            tmpl[0].type = int(CKA_VALUE)
+            tmpl[0].type = CKA_VALUE
             tmpl[0].pValue = None
             tmpl[0].ulValueLen = 0
-            rv = int(rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1))
+            rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
             assert rv in (
-                int(CKR_ATTRIBUTE_SENSITIVE),
-                int(CKR_ATTRIBUTE_TYPE_INVALID),
+                CKR_ATTRIBUTE_SENSITIVE,
+                CKR_ATTRIBUTE_TYPE_INVALID,
             ), f"Expected CKR_ATTRIBUTE_SENSITIVE, got {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -121,7 +121,7 @@ class TestGetAttributeErrors:
         key = gen_aes_key(rs.raw, rs.sh, 128)
         rs.raw.C_DestroyObject(rs.sh, key)
         tmpl = (CK_ATTRIBUTE * 1)()
-        tmpl[0].type = int(CKA_LABEL)
+        tmpl[0].type = CKA_LABEL
         tmpl[0].pValue = None
         tmpl[0].ulValueLen = 0
         rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
@@ -139,17 +139,17 @@ class TestSetAttributeErrors:
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_LABEL): "readonly-test",
-                int(CKA_VALUE): b"test",
-                int(CKA_TOKEN): False,
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: "readonly-test",
+                CKA_VALUE: b"test",
+                CKA_TOKEN: False,
             },
         )
         try:
             # Try to change CKA_CLASS (read-only)
-            tmpl = template(attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)))
-            rv = int(rs.raw.C_SetAttributeValue(rs.sh, handle, tmpl.ptr, tmpl.count))
-            if rv == int(CKR_OK):
+            tmpl = template(attr_ulong(CKA_CLASS, CKO_SECRET_KEY))
+            rv = rs.raw.C_SetAttributeValue(rs.sh, handle, tmpl.ptr, tmpl.count)
+            if rv == CKR_OK:
                 # Kryoptic silently accepts - compliance deviation
                 from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -173,17 +173,15 @@ class TestCopyObjectErrors:
         rs.raw.C_DestroyObject(rs.sh, key)
         tmpl = template(attr_bytes(CKA_LABEL, b"ckr-copy-result"))
         new_handle = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_CopyObject(
-                rs.sh,
-                key,
-                tmpl.ptr,
-                tmpl.count,
-                byref(new_handle),
-            )
+        rv = rs.raw.C_CopyObject(
+            rs.sh,
+            key,
+            tmpl.ptr,
+            tmpl.count,
+            byref(new_handle),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(new_handle.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, new_handle.value)
             # Some modules don't detect invalid handle
 
 
@@ -194,12 +192,12 @@ class TestFindObjectsErrors:
         """FindObjects with template matching nothing -> returns empty list."""
         rs = p11_raw_session
         tmpl = template(attr_bytes(CKA_LABEL, b"nonexistent_ckr_label_xyz"))
-        rv = int(rs.raw.C_FindObjectsInit(rs.sh, tmpl.ptr, tmpl.count))
-        assert rv == int(CKR_OK), f"C_FindObjectsInit failed: {ckr_name(rv)}"
+        rv = rs.raw.C_FindObjectsInit(rs.sh, tmpl.ptr, tmpl.count)
+        assert rv == CKR_OK, f"C_FindObjectsInit failed: {ckr_name(rv)}"
         handles = (CK_OBJECT_HANDLE * 10)()
         count = CK_ULONG(0)
-        rv = int(rs.raw.C_FindObjects(rs.sh, handles, 10, byref(count)))
-        assert rv == int(CKR_OK)
+        rv = rs.raw.C_FindObjects(rs.sh, handles, 10, byref(count))
+        assert rv == CKR_OK
         rs.raw.C_FindObjectsFinal(rs.sh)
         assert count.value == 0  # Empty is valid - not an error
 
@@ -210,20 +208,20 @@ class TestFindObjectsErrors:
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_LABEL): "ckr-find-test",
-                int(CKA_VALUE): b"test",
-                int(CKA_TOKEN): False,
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: "ckr-find-test",
+                CKA_VALUE: b"test",
+                CKA_TOKEN: False,
             },
         )
         try:
             search = template(attr_bytes(CKA_LABEL, b"ckr-find-test"))
-            rv = int(rs.raw.C_FindObjectsInit(rs.sh, search.ptr, search.count))
-            assert rv == int(CKR_OK)
+            rv = rs.raw.C_FindObjectsInit(rs.sh, search.ptr, search.count)
+            assert rv == CKR_OK
             handles = (CK_OBJECT_HANDLE * 10)()
             count = CK_ULONG(0)
-            rv = int(rs.raw.C_FindObjects(rs.sh, handles, 10, byref(count)))
-            assert rv == int(CKR_OK)
+            rv = rs.raw.C_FindObjects(rs.sh, handles, 10, byref(count))
+            assert rv == CKR_OK
             rs.raw.C_FindObjectsFinal(rs.sh)
             assert count.value >= 1
         finally:
@@ -237,8 +235,8 @@ class TestDestroyObjectErrors:
         """Double destroy -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 128)
-        rv = int(rs.raw.C_DestroyObject(rs.sh, key))
-        assert rv == int(CKR_OK), f"First destroy failed: {ckr_name(rv)}"
-        rv = int(rs.raw.C_DestroyObject(rs.sh, key))
+        rv = rs.raw.C_DestroyObject(rs.sh, key)
+        assert rv == CKR_OK, f"First destroy failed: {ckr_name(rv)}"
+        rv = rs.raw.C_DestroyObject(rs.sh, key)
         # Some modules silently accept double destroy
         # Correct per spec is CKR_OBJECT_HANDLE_INVALID

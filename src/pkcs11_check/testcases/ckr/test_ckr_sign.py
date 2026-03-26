@@ -35,8 +35,8 @@ class TestSignInitErrors:
         _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected AES_ECB as signing mechanism")
             assert_ckr(CKR_SIGN["init_mechanism_invalid"], rv, ckr_strict)
         finally:
@@ -49,8 +49,8 @@ class TestSignInitErrors:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
-            rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), key))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
                 # SoftHSM2 accepts mismatched key type at Init - compliance deviation
                 from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -73,8 +73,8 @@ class TestSignInitErrors:
         try:
             # RSA-PSS needs CK_RSA_PKCS_PSS_PARAMS - provide 3 garbage bytes
             mech = mech_bytes(CKM_SHA256_RSA_PKCS_PSS, b"\x00" * 3)
-            rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected garbage PSS params")
             assert_ckr(CKR_SIGN["init_mechanism_param_invalid"], rv, ckr_strict)
         finally:
@@ -88,8 +88,8 @@ class TestSignInitErrors:
         destroy_quietly(rs.raw, rs.sh, _pub)
         rs.raw.C_DestroyObject(rs.sh, priv)
         mech = mech_simple(CKM_SHA256_RSA_PKCS)
-        rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv))
-        if rv != int(CKR_OK):
+        rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
+        if rv != CKR_OK:
             assert_ckr(CKR_SIGN["init_key_handle_invalid"], rv, ckr_strict)
 
 
@@ -105,14 +105,14 @@ class TestSignDataErrors:
         _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_RSA_PKCS)
-            rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
+            if rv != CKR_OK:
                 pytest.skip(f"C_SignInit failed: 0x{rv:08x}")
             data = (ctypes.c_ubyte * 246)(*([0x42] * 246))
             sig_len = CK_ULONG(256)
             sig_buf = (ctypes.c_ubyte * 256)()
-            rv = int(rs.raw.C_Sign(rs.sh, data, 246, sig_buf, byref(sig_len)))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_Sign(rs.sh, data, 246, sig_buf, byref(sig_len))
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected 246-byte data for raw RSA-PKCS sign")
             assert_ckr(CKR_SIGN["data_len_range"], rv, ckr_strict)
         finally:

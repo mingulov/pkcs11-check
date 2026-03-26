@@ -46,29 +46,27 @@ class TestWrapKeyErrors:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_WRAP): True},
+            attrs={CKA_WRAP: True},
         )
         target = gen_aes_key(
             rs.raw,
             rs.sh,
             128,
-            attrs={int(CKA_EXTRACTABLE): False, int(CKA_SENSITIVE): True},
+            attrs={CKA_EXTRACTABLE: False, CKA_SENSITIVE: True},
         )
         try:
             mech = mech_simple(CKM_AES_KEY_WRAP)
             wrapped_len = CK_ULONG(256)
             wrapped_buf = (ctypes.c_ubyte * 256)()
-            rv = int(
-                rs.raw.C_WrapKey(
-                    rs.sh,
-                    mech.byref(),
-                    wrap_key,
-                    target,
-                    wrapped_buf,
-                    byref(wrapped_len),
-                )
+            rv = rs.raw.C_WrapKey(
+                rs.sh,
+                mech.byref(),
+                wrap_key,
+                target,
+                wrapped_buf,
+                byref(wrapped_len),
             )
-            if rv == int(CKR_OK):
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected wrapping non-extractable key")
             # CKR_KEY_UNEXTRACTABLE or CKR_KEY_NOT_WRAPPABLE - both acceptable
         finally:
@@ -82,29 +80,27 @@ class TestWrapKeyErrors:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_WRAP): True},
+            attrs={CKA_WRAP: True},
         )
         target = gen_aes_key(
             rs.raw,
             rs.sh,
             128,
-            attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
             mech = mech_simple(CKM_SHA256)  # Wrong: hash mechanism
             wrapped_len = CK_ULONG(256)
             wrapped_buf = (ctypes.c_ubyte * 256)()
-            rv = int(
-                rs.raw.C_WrapKey(
-                    rs.sh,
-                    mech.byref(),
-                    wrap_key,
-                    target,
-                    wrapped_buf,
-                    byref(wrapped_len),
-                )
+            rv = rs.raw.C_WrapKey(
+                rs.sh,
+                mech.byref(),
+                wrap_key,
+                target,
+                wrapped_buf,
+                byref(wrapped_len),
             )
-            if rv == int(CKR_OK):
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected SHA256 as wrap mechanism")
             # CKR_MECHANISM_INVALID or related
         finally:
@@ -125,32 +121,30 @@ class TestUnwrapKeyErrors:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_UNWRAP): True, int(CKA_WRAP): True},
+            attrs={CKA_UNWRAP: True, CKA_WRAP: True},
         )
         try:
             mech = mech_simple(CKM_AES_KEY_WRAP)
             # Garbage wrapped data (24 bytes for AES-KW)
             garbage = (ctypes.c_ubyte * 24)(*([0xFF] * 24))
             tmpl = template(
-                attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
-                attr_ulong(CKA_KEY_TYPE, int(CKK_AES)),
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_AES),
                 attr_ulong(CKA_VALUE_LEN, 16),
             )
             new_key = CK_OBJECT_HANDLE(0)
-            rv = int(
-                rs.raw.C_UnwrapKey(
-                    rs.sh,
-                    mech.byref(),
-                    unwrap_key,
-                    garbage,
-                    24,
-                    tmpl.ptr,
-                    tmpl.count,
-                    byref(new_key),
-                )
+            rv = rs.raw.C_UnwrapKey(
+                rs.sh,
+                mech.byref(),
+                unwrap_key,
+                garbage,
+                24,
+                tmpl.ptr,
+                tmpl.count,
+                byref(new_key),
             )
-            if rv == int(CKR_OK):
-                destroy_quietly(rs.raw, rs.sh, int(new_key.value))
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, new_key.value)
                 pytest.fail("Should have rejected garbage wrapped key data")
             # CKR_WRAPPED_KEY_INVALID or CKR_WRAPPED_KEY_LEN_RANGE
         finally:

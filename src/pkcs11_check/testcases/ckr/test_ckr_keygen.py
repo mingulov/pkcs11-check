@@ -47,17 +47,15 @@ class TestGenerateKeyErrors:
         mech = mech_simple(CKM_SHA256)
         tmpl = template(attr_ulong(CKA_VALUE_LEN, 32))
         key = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKey(
-                rs.sh,
-                mech.byref(),
-                tmpl.ptr,
-                tmpl.count,
-                byref(key),
-            )
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(key.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, key.value)
             pytest.fail("Should have rejected SHA256 as key generation mechanism")
         assert_ckr(CKR_KEYGEN["genkey_mechanism_invalid"], rv, ckr_strict)
 
@@ -68,17 +66,15 @@ class TestGenerateKeyErrors:
         mech = mech_simple(CKM_AES_KEY_GEN)
         tmpl = template(attr_ulong(CKA_VALUE_LEN, 0))
         key = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKey(
-                rs.sh,
-                mech.byref(),
-                tmpl.ptr,
-                tmpl.count,
-                byref(key),
-            )
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(key.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, key.value)
             if not exp.allow_success:
                 pytest.fail("Should have rejected AES key size 0")
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -99,17 +95,15 @@ class TestGenerateKeyErrors:
         # AES CKA_VALUE_LEN is in bytes; 100 bits ~= 12.5 bytes, use 13
         tmpl = template(attr_ulong(CKA_VALUE_LEN, 13))
         key = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKey(
-                rs.sh,
-                mech.byref(),
-                tmpl.ptr,
-                tmpl.count,
-                byref(key),
-            )
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(key.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, key.value)
             if not exp.allow_success:
                 pytest.fail("Should have rejected AES key size 13 bytes (non-standard)")
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -138,17 +132,15 @@ class TestGenerateKeyErrors:
             attr_bool(CKA_PRIVATE, True),
         )
         key = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKey(
-                rs.sh,
-                mech.byref(),
-                tmpl.ptr,
-                tmpl.count,
-                byref(key),
-            )
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(key.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, key.value)
             # Some modules accept this - it's a spec grey area
         else:
             assert_ckr(exp, rv, ckr_strict)
@@ -165,21 +157,19 @@ class TestGenerateKeyPairErrors:
         priv_tmpl = template()
         pub = CK_OBJECT_HANDLE(0)
         priv = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKeyPair(
-                rs.sh,
-                mech.byref(),
-                pub_tmpl.ptr,
-                pub_tmpl.count,
-                priv_tmpl.ptr,
-                priv_tmpl.count,
-                byref(pub),
-                byref(priv),
-            )
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(pub.value))
-            destroy_quietly(rs.raw, rs.sh, int(priv.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
             pytest.fail("Should have rejected RSA key size 0")
         assert_ckr(CKR_KEYGEN["genkeypair_bad_size"], rv, ckr_strict)
 
@@ -191,21 +181,19 @@ class TestGenerateKeyPairErrors:
         priv_tmpl = template()
         pub = CK_OBJECT_HANDLE(0)
         priv = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKeyPair(
-                rs.sh,
-                mech.byref(),
-                pub_tmpl.ptr,
-                pub_tmpl.count,
-                priv_tmpl.ptr,
-                priv_tmpl.count,
-                byref(pub),
-                byref(priv),
-            )
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(pub.value))
-            destroy_quietly(rs.raw, rs.sh, int(priv.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
             pytest.fail("Should have rejected RSA key size 64")
         assert_ckr(CKR_KEYGEN["genkeypair_bad_size"], rv, ckr_strict)
 
@@ -217,21 +205,19 @@ class TestGenerateKeyPairErrors:
         priv_tmpl = template()
         pub = CK_OBJECT_HANDLE(0)
         priv = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKeyPair(
-                rs.sh,
-                mech.byref(),
-                pub_tmpl.ptr,
-                pub_tmpl.count,
-                priv_tmpl.ptr,
-                priv_tmpl.count,
-                byref(pub),
-                byref(priv),
-            )
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(pub.value))
-            destroy_quietly(rs.raw, rs.sh, int(priv.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
             pytest.fail("Should have rejected AES_ECB for RSA keypair generation")
         assert_ckr(CKR_KEYGEN["genkeypair_mechanism_invalid"], rv, ckr_strict)
 
@@ -247,21 +233,19 @@ class TestGenerateKeyPairErrors:
         priv_tmpl = template()
         pub = CK_OBJECT_HANDLE(0)
         priv = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKeyPair(
-                rs.sh,
-                mech.byref(),
-                pub_tmpl.ptr,
-                pub_tmpl.count,
-                priv_tmpl.ptr,
-                priv_tmpl.count,
-                byref(pub),
-                byref(priv),
-            )
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(pub.value))
-            destroy_quietly(rs.raw, rs.sh, int(priv.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
             pytest.fail("Should have rejected bogus EC curve OID")
         assert_ckr(CKR_KEYGEN["genkeypair_curve_not_supported"], rv, ckr_strict)
 
@@ -275,17 +259,15 @@ class TestGenerateKeyPairErrors:
             attr_bool(0xFFFFFFFF, True),  # Bogus attribute type
         )
         key = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKey(
-                rs.sh,
-                mech.byref(),
-                tmpl.ptr,
-                tmpl.count,
-                byref(key),
-            )
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(key.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, key.value)
             if not exp.allow_success:
                 pytest.fail("Should have rejected bogus attribute type")
         else:
@@ -303,20 +285,18 @@ class TestGenerateKeyPairErrors:
         priv_tmpl = template()
         pub = CK_OBJECT_HANDLE(0)
         priv = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKeyPair(
-                rs.sh,
-                mech.byref(),
-                pub_tmpl.ptr,
-                pub_tmpl.count,
-                priv_tmpl.ptr,
-                priv_tmpl.count,
-                byref(pub),
-                byref(priv),
-            )
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(pub.value))
-            destroy_quietly(rs.raw, rs.sh, int(priv.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
             pytest.fail("Should have rejected malformed EC params")
         assert_ckr(CKR_KEYGEN["genkeypair_domain_params_invalid"], rv, ckr_strict)

@@ -14,15 +14,6 @@ import subprocess
 import sys
 import textwrap
 
-from pkcs11_check.raw.types_std import (
-    CKF_RW_SESSION,
-    CKF_SERIAL_SESSION,
-    CKR_ARGUMENTS_BAD,
-    CKR_CRYPTOKI_ALREADY_INITIALIZED,
-    CKR_CRYPTOKI_NOT_INITIALIZED,
-    CKR_OK,
-)
-
 
 def run_null_test(
     module_path: str,
@@ -122,13 +113,14 @@ def run_null_test(
             exit(1)
 
         # Run the actual test
-{textwrap.indent(textwrap.dedent(test_code), '        ')}
+{textwrap.indent(textwrap.dedent(test_code), "        ")}
 
         # Cleanup
         call_func("C_Finalize", c_void_p(None))
     """)
 
     import os
+
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,

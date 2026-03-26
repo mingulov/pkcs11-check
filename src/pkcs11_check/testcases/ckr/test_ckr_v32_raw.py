@@ -47,10 +47,10 @@ if "C_VerifySignatureInit" not in raw._funcs:
 
 # Open session
 slots = get_slot_ids(raw, token_present=True)
-sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION))
+sh = open_session(raw, slots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 pin = {pin_arg}
 if pin:
-    login_user(raw, sh, int(CKU_USER), pin.encode())
+    login_user(raw, sh, CKU_USER, pin.encode())
 
 {test_code}
 

@@ -55,23 +55,23 @@ class TestFaultInjection:
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
             pin = {pin_arg}
             if pin is not None:
-                login_user(raw, sh, int(CKU_USER), pin.encode())
+                login_user(raw, sh, CKU_USER, pin.encode())
             key = gen_aes_key(raw, sh, 256)
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(raw.C_EncryptInit(sh, mech.byref(), key))
-            if rv != int(CKR_OK):
+            rv = raw.C_EncryptInit(sh, mech.byref(), key)
+            if rv != CKR_OK:
                 print(f"FAIL:init_error:0x{{rv:08x}}")
             else:
                 data = (ctypes.c_ubyte * 16)(*([0] * 16))
                 out_len = CK_ULONG(32)
                 out_buf = (ctypes.c_ubyte * 32)()
-                rv = int(raw.C_Encrypt(sh, data, 16, out_buf, byref(out_len)))
-                if rv == int(CKR_DEVICE_REMOVED):
+                rv = raw.C_Encrypt(sh, data, 16, out_buf, byref(out_len))
+                if rv == CKR_DEVICE_REMOVED:
                     print("OK:DEVICE_REMOVED")
-                elif rv == int(CKR_OK):
+                elif rv == CKR_OK:
                     print("FAIL:no_error")
                 else:
                     print(f"OTHER:0x{{rv:08x}}")
@@ -111,23 +111,23 @@ class TestFaultInjection:
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
             pin = {pin_arg}
             if pin is not None:
-                login_user(raw, sh, int(CKU_USER), pin.encode())
+                login_user(raw, sh, CKU_USER, pin.encode())
             _pub, priv = gen_rsa_keypair(raw, sh, 2048)
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
-            rv = int(raw.C_SignInit(sh, mech.byref(), priv))
-            if rv != int(CKR_OK):
+            rv = raw.C_SignInit(sh, mech.byref(), priv)
+            if rv != CKR_OK:
                 print(f"FAIL:sign_init_error:0x{{rv:08x}}")
             else:
                 data = (ctypes.c_ubyte * 4)(*b"test")
                 sig_len = CK_ULONG(256)
                 sig_buf = (ctypes.c_ubyte * 256)()
-                rv = int(raw.C_Sign(sh, data, 4, sig_buf, byref(sig_len)))
-                if rv == int(CKR_DEVICE_ERROR):
+                rv = raw.C_Sign(sh, data, 4, sig_buf, byref(sig_len))
+                if rv == CKR_DEVICE_ERROR:
                     print("OK:DEVICE_ERROR")
-                elif rv == int(CKR_OK):
+                elif rv == CKR_OK:
                     print("FAIL:no_error")
                 else:
                     print(f"OTHER:0x{{rv:08x}}")
@@ -167,17 +167,17 @@ class TestFaultInjection:
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
             pin = {pin_arg}
             if pin is not None:
-                login_user(raw, sh, int(CKU_USER), pin.encode())
+                login_user(raw, sh, CKU_USER, pin.encode())
             mech = mech_simple(CKM_AES_KEY_GEN)
             tmpl = template(attr_ulong(CKA_VALUE_LEN, 32))
             key = CK_OBJECT_HANDLE(0)
-            rv = int(raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key)))
-            if rv == int(CKR_DEVICE_MEMORY):
+            rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
+            if rv == CKR_DEVICE_MEMORY:
                 print("OK:DEVICE_MEMORY")
-            elif rv == int(CKR_OK):
+            elif rv == CKR_OK:
                 print("FAIL:no_error")
             else:
                 print(f"OTHER:0x{{rv:08x}}")
@@ -242,10 +242,10 @@ class TestFaultProxyBasic:
             raw = RawPKCS11.from_lib("{_PROXY_PATH}")
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
             pin = {pin_arg}
             if pin is not None:
-                login_user(raw, sh, int(CKU_USER), pin.encode())
+                login_user(raw, sh, CKU_USER, pin.encode())
             key = gen_aes_key(raw, sh, 256)
             ct = encrypt_single(raw, sh, key, CKM_AES_ECB, b"\\x00" * 16)
             pt = decrypt_single(raw, sh, key, CKM_AES_ECB, ct)

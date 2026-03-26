@@ -112,17 +112,17 @@ from pkcs11_check.testcases._error_tuples import (
 # ---------------------------------------------------------------------------
 
 # Any function may return these (spec Sec.5.1.1)
-_UNIVERSAL = (int(CKR_GENERAL_ERROR), int(CKR_HOST_MEMORY), int(CKR_FUNCTION_FAILED))
+_UNIVERSAL = (CKR_GENERAL_ERROR, CKR_HOST_MEMORY, CKR_FUNCTION_FAILED)
 
 # Session-using functions additionally (spec Sec.5.1.2)
 _SESSION_UNIVERSAL = (
-    int(CKR_SESSION_HANDLE_INVALID),
-    int(CKR_DEVICE_REMOVED),
-    int(CKR_SESSION_CLOSED),
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_DEVICE_REMOVED,
+    CKR_SESSION_CLOSED,
 )
 
 # Token-using functions additionally (spec Sec.5.1.3)
-_TOKEN_UNIVERSAL = (int(CKR_DEVICE_MEMORY), int(CKR_DEVICE_ERROR), int(CKR_TOKEN_NOT_PRESENT))
+_TOKEN_UNIVERSAL = (CKR_DEVICE_MEMORY, CKR_DEVICE_ERROR, CKR_TOKEN_NOT_PRESENT)
 
 
 def full_compat(base_tuple: tuple[int, ...], uses_session: bool = True) -> tuple[int, ...]:

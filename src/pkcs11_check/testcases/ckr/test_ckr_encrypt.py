@@ -48,8 +48,8 @@ class TestEncryptInitErrors:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_SHA256)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected SHA256 as encryption mechanism")
             assert_ckr(CKR_ENCRYPT["init_mechanism_invalid"], rv, ckr_strict)
         finally:
@@ -62,13 +62,13 @@ class TestEncryptInitErrors:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_ENCRYPT): False, int(CKA_SIGN): True},
+            attrs={CKA_ENCRYPT: False, CKA_SIGN: True},
         )
         try:
             exp = CKR_ENCRYPT["init_key_function_not_permitted"]
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
                 if not exp.allow_success:
                     pytest.fail("Should have rejected key without CKA_ENCRYPT")
             else:
@@ -82,8 +82,8 @@ class TestEncryptInitErrors:
         pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected RSA key with AES mechanism")
             assert_ckr(CKR_ENCRYPT["init_key_type_inconsistent"], rv, ckr_strict)
         finally:
@@ -99,8 +99,8 @@ class TestEncryptInitErrors:
         try:
             # AES-CBC needs 16-byte IV, provide 8 bytes
             mech = mech_bytes(CKM_AES_CBC, b"\x00" * 8)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected 8-byte IV for AES-CBC")
             assert_ckr(CKR_ENCRYPT["init_mechanism_param_invalid"], rv, ckr_strict)
         finally:
@@ -117,14 +117,14 @@ class TestEncryptDataErrors:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv != CKR_OK:
                 pytest.skip(f"C_EncryptInit failed: {ckr_name(rv)}")
             data = (ctypes.c_ubyte * size)(*([0xAA] * size))
             out_len = CK_ULONG(size + 16)
             out_buf = (ctypes.c_ubyte * (size + 16))()
-            rv = int(rs.raw.C_Encrypt(rs.sh, data, size, out_buf, byref(out_len)))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_Encrypt(rs.sh, data, size, out_buf, byref(out_len))
+            if rv == CKR_OK:
                 pytest.fail(f"Should have rejected {size}-byte ECB data")
             assert_ckr(CKR_ENCRYPT["data_len_range"], rv, ckr_strict)
         finally:
@@ -137,13 +137,13 @@ class TestEncryptDataErrors:
         try:
             exp = CKR_ENCRYPT["data_empty"]
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv != CKR_OK:
                 pytest.skip(f"C_EncryptInit failed: {ckr_name(rv)}")
             out_len = CK_ULONG(16)
             out_buf = (ctypes.c_ubyte * 16)()
-            rv = int(rs.raw.C_Encrypt(rs.sh, None, 0, out_buf, byref(out_len)))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_Encrypt(rs.sh, None, 0, out_buf, byref(out_len))
+            if rv == CKR_OK:
                 # Some modules accept empty -> empty (spec doesn't forbid it)
                 assert out_len.value == 0
             else:
@@ -157,15 +157,15 @@ class TestEncryptDataErrors:
         pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_RSA_PKCS)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
+            if rv != CKR_OK:
                 pytest.skip(f"C_EncryptInit failed: {ckr_name(rv)}")
             # Max data for RSA-2048 PKCS#1 v1.5 = 245 bytes (256 - 11)
             data = (ctypes.c_ubyte * 246)(*([0x42] * 246))
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
-            rv = int(rs.raw.C_Encrypt(rs.sh, data, 246, out_buf, byref(out_len)))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_Encrypt(rs.sh, data, 246, out_buf, byref(out_len))
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected 246 bytes for RSA-2048 PKCS")
             assert_ckr(CKR_ENCRYPT["data_too_long_rsa"], rv, ckr_strict)
         finally:
@@ -181,14 +181,14 @@ class TestEncryptDataErrors:
         try:
             exp = CKR_ENCRYPT["data_invalid_cbc_padding"]
             mech = mech_bytes(CKM_AES_CBC_PAD, b"\x00" * 16)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv != CKR_OK:
                 pytest.skip(f"C_EncryptInit failed: {ckr_name(rv)}")
             data = (ctypes.c_ubyte * 15)(*([0xAA] * 15))
             out_len = CK_ULONG(32)
             out_buf = (ctypes.c_ubyte * 32)()
-            rv = int(rs.raw.C_Encrypt(rs.sh, data, 15, out_buf, byref(out_len)))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_Encrypt(rs.sh, data, 15, out_buf, byref(out_len))
+            if rv == CKR_OK:
                 assert out_len.value == 16  # Padded to one block
             else:
                 assert_ckr(exp, rv, ckr_strict)
@@ -217,17 +217,17 @@ class TestEncryptDataErrors:
         mech = mech_simple(CKM_DES3_KEY_GEN)
         t = tmpl_fn()  # empty template, module uses defaults
         des_key = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_GenerateKey(rs.sh, mech.byref(), t.ptr, t.count, byref(des_key)))
-        if rv != int(CKR_OK):
+        rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), t.ptr, t.count, byref(des_key))
+        if rv != CKR_OK:
             pytest.skip(f"DES3 keygen failed: {ckr_name(rv)}")
         try:
             mech_ecb = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech_ecb.byref(), int(des_key.value)))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech_ecb.byref(), des_key.value)
+            if rv == CKR_OK:
                 pytest.fail("Should have rejected DES3 key with AES mechanism")
-            if rv in (int(CKR_KEY_TYPE_INCONSISTENT), int(CKR_KEY_SIZE_RANGE)):
+            if rv in (CKR_KEY_TYPE_INCONSISTENT, CKR_KEY_SIZE_RANGE):
                 pass  # Both are correct per spec
             else:
                 assert_ckr(CKR_ENCRYPT["init_key_size_range"], rv, ckr_strict)
         finally:
-            destroy_quietly(rs.raw, rs.sh, int(des_key.value))
+            destroy_quietly(rs.raw, rs.sh, des_key.value)

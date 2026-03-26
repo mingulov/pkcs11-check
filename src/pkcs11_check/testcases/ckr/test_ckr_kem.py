@@ -46,12 +46,12 @@ def _generate_ml_kem_keypair(raw: Any, sh: int) -> tuple[int, int]:
     mech = mech_simple(CKM_ML_KEM_KEY_PAIR_GEN)
     pub_tmpl = template(
         attr_bool(CKA_ENCAPSULATE, True),
-        attr_ulong(CKA_PARAMETER_SET, int(CKP_ML_KEM_768)),
+        attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
         attr_bool(CKA_TOKEN, False),
     )
     priv_tmpl = template(
         attr_bool(CKA_DECAPSULATE, True),
-        attr_ulong(CKA_PARAMETER_SET, int(CKP_ML_KEM_768)),
+        attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
         attr_bool(CKA_TOKEN, False),
         attr_bool(CKA_SENSITIVE, False),
         attr_bool(CKA_EXTRACTABLE, False),
@@ -70,8 +70,8 @@ def _generate_ml_kem_keypair(raw: Any, sh: int) -> tuple[int, int]:
         byref(pub),
         byref(priv),
     )
-    expect_rv(int(rv), CKR_OK)
-    return int(pub.value), int(priv.value)
+    expect_rv(rv, CKR_OK)
+    return pub.value, priv.value
 
 
 class TestEncapsulateKeyErrors:
@@ -85,24 +85,23 @@ class TestEncapsulateKeyErrors:
         pub, _priv = _generate_ml_kem_keypair(rs.raw, rs.sh)
         try:
             mech = mech_simple(CKM_AES_ECB)  # Wrong: not a KEM mechanism
-            # C_EncapsulateKey: session, mech, pubkey, ct, ct_len, tmpl, count, secret
+            # C_EncapsulateKey(session, mech, key, pTemplate, ulCount, pCiphertext,
+            #                  pulCiphertextLen, phSecret)
             ct_len = CK_ULONG(0)
             secret = CK_OBJECT_HANDLE(0)
             secret_tmpl = template()
-            rv = int(
-                rs.raw.C_EncapsulateKey(
-                    rs.sh,
-                    mech.byref(),
-                    pub,
-                    None,
-                    byref(ct_len),
-                    secret_tmpl.ptr,
-                    secret_tmpl.count,
-                    byref(secret),
-                )
+            rv = rs.raw.C_EncapsulateKey(
+                rs.sh,
+                mech.byref(),
+                pub,
+                secret_tmpl.ptr,
+                secret_tmpl.count,
+                None,
+                byref(ct_len),
+                byref(secret),
             )
-            if rv == int(CKR_OK):
-                destroy_quietly(rs.raw, rs.sh, int(secret.value))
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, secret.value)
                 pytest.fail("Should have rejected AES_ECB as encapsulate mechanism")
             assert_ckr(CKR_KEM["encap_mechanism_invalid"], rv, ckr_strict)
         finally:
@@ -122,20 +121,18 @@ class TestEncapsulateKeyErrors:
             ct_len = CK_ULONG(0)
             secret = CK_OBJECT_HANDLE(0)
             secret_tmpl = template()
-            rv = int(
-                rs.raw.C_EncapsulateKey(
-                    rs.sh,
-                    mech.byref(),
-                    pub,
-                    None,
-                    byref(ct_len),
-                    secret_tmpl.ptr,
-                    secret_tmpl.count,
-                    byref(secret),
-                )
+            rv = rs.raw.C_EncapsulateKey(
+                rs.sh,
+                mech.byref(),
+                pub,
+                secret_tmpl.ptr,
+                secret_tmpl.count,
+                None,
+                byref(ct_len),
+                byref(secret),
             )
-            if rv == int(CKR_OK):
-                destroy_quietly(rs.raw, rs.sh, int(secret.value))
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, secret.value)
                 pytest.fail("Should have rejected RSA key with ML-KEM mechanism")
             assert_ckr(CKR_KEM["encap_key_type_inconsistent"], rv, ckr_strict)
         finally:
@@ -157,20 +154,18 @@ class TestDecapsulateKeyErrors:
             ct_buf = (ctypes.c_ubyte * 1088)(*([0] * 1088))  # ML-KEM-768 ct size
             secret = CK_OBJECT_HANDLE(0)
             secret_tmpl = template()
-            rv = int(
-                rs.raw.C_DecapsulateKey(
-                    rs.sh,
-                    mech.byref(),
-                    priv,
-                    ct_buf,
-                    1088,
-                    secret_tmpl.ptr,
-                    secret_tmpl.count,
-                    byref(secret),
-                )
+            rv = rs.raw.C_DecapsulateKey(
+                rs.sh,
+                mech.byref(),
+                priv,
+                secret_tmpl.ptr,
+                secret_tmpl.count,
+                ct_buf,
+                1088,
+                byref(secret),
             )
-            if rv == int(CKR_OK):
-                destroy_quietly(rs.raw, rs.sh, int(secret.value))
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, secret.value)
                 pytest.fail("Should have rejected AES_ECB as decapsulate mechanism")
             assert_ckr(CKR_KEM["decap_mechanism_invalid"], rv, ckr_strict)
         finally:
@@ -190,20 +185,18 @@ class TestDecapsulateKeyErrors:
             ct_buf = (ctypes.c_ubyte * 1088)(*([0xFF] * 1088))
             secret = CK_OBJECT_HANDLE(0)
             secret_tmpl = template()
-            rv = int(
-                rs.raw.C_DecapsulateKey(
-                    rs.sh,
-                    mech.byref(),
-                    priv,
-                    ct_buf,
-                    1088,
-                    secret_tmpl.ptr,
-                    secret_tmpl.count,
-                    byref(secret),
-                )
+            rv = rs.raw.C_DecapsulateKey(
+                rs.sh,
+                mech.byref(),
+                priv,
+                secret_tmpl.ptr,
+                secret_tmpl.count,
+                ct_buf,
+                1088,
+                byref(secret),
             )
-            if rv == int(CKR_OK):
-                destroy_quietly(rs.raw, rs.sh, int(secret.value))
+            if rv == CKR_OK:
+                destroy_quietly(rs.raw, rs.sh, secret.value)
                 # ML-KEM implicit rejection: may produce a key (spec allows this)
                 if not exp.allow_success:
                     pytest.fail("Should have rejected garbage ciphertext")

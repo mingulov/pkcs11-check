@@ -30,13 +30,13 @@ class TestGetOperationStateErrors:
         """GetOperationState with no active op -> OPERATION_NOT_INITIALIZED."""
         rs = p11_raw_session
         state_len = CK_ULONG(0)
-        rv = int(rs.raw.C_GetOperationState(rs.sh, None, byref(state_len)))
+        rv = rs.raw.C_GetOperationState(rs.sh, None, byref(state_len))
         # Correct: no active operation to save, or function not supported
         acceptable = (
-            int(CKR_OK),
-            int(CKR_OPERATION_NOT_INITIALIZED),
-            int(CKR_STATE_UNSAVEABLE),
-            int(CKR_FUNCTION_NOT_SUPPORTED),
+            CKR_OK,
+            CKR_OPERATION_NOT_INITIALIZED,
+            CKR_STATE_UNSAVEABLE,
+            CKR_FUNCTION_NOT_SUPPORTED,
         )
         assert rv in acceptable, f"Unexpected CKR 0x{rv:08x} from C_GetOperationState"
 
@@ -48,12 +48,12 @@ class TestSetOperationStateErrors:
         """SetOperationState with garbage data -> CKR_SAVED_STATE_INVALID."""
         rs = p11_raw_session
         garbage = (ctypes.c_ubyte * 64)(*([0xDE, 0xAD, 0xBE, 0xEF] * 16))
-        rv = int(rs.raw.C_SetOperationState(rs.sh, garbage, 64, 0, 0))
-        assert rv != int(CKR_OK), "Should have rejected garbage operation state"
+        rv = rs.raw.C_SetOperationState(rs.sh, garbage, 64, 0, 0)
+        assert rv != CKR_OK, "Should have rejected garbage operation state"
         acceptable = (
-            int(CKR_SAVED_STATE_INVALID),
-            int(CKR_OPERATION_NOT_INITIALIZED),
-            int(CKR_FUNCTION_NOT_SUPPORTED),
+            CKR_SAVED_STATE_INVALID,
+            CKR_OPERATION_NOT_INITIALIZED,
+            CKR_FUNCTION_NOT_SUPPORTED,
         )
         # Any non-OK error is acceptable; spec-mandated is CKR_SAVED_STATE_INVALID
         assert rv in acceptable or rv != 0, f"Unexpected CKR 0x{rv:08x} from C_SetOperationState"

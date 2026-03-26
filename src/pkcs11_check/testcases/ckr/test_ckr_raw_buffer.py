@@ -115,7 +115,7 @@ assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 
 # EncryptInit
 mech = mech_simple(CKM_AES_ECB)
-rv = raw.C_EncryptInit(sh, mech.byref(), int(key.value))
+rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
 assert rv == CKR_OK
 
 # Encrypt with 1-byte output buffer
@@ -165,7 +165,7 @@ if rv != CKR_OK:
 else:
     # SignInit with SHA256_RSA_PKCS
     sign_mech = mech_simple(CKM_SHA256_RSA_PKCS)
-    rv = raw.C_SignInit(sh, sign_mech.byref(), int(priv.value))
+    rv = raw.C_SignInit(sh, sign_mech.byref(), priv.value)
     if rv != CKR_OK:
         print(f"CKR:0x{rv:08x}:signinit_failed")
         print("OK")

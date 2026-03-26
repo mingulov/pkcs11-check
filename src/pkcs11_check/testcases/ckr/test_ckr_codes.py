@@ -46,15 +46,15 @@ class TestCKRPinErrors:
         # Open a new session for this test
         from pkcs11_check.raw.bootstrap import close_session_quietly, open_session
 
-        sh = open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+        sh = open_session(rs.raw, rs.slot_id, (CKF_SERIAL_SESSION | CKF_RW_SESSION))
         try:
             wrong_pin = b"WRONG_PIN_XYZ_999"
             pin_buf = (ctypes.c_ubyte * len(wrong_pin))(*wrong_pin)
-            rv = int(rs.raw.C_Login(sh, int(CKU_USER), pin_buf, len(wrong_pin)))
+            rv = rs.raw.C_Login(sh, CKU_USER, pin_buf, len(wrong_pin))
             # May get PIN_INCORRECT or USER_ALREADY_LOGGED_IN (if token-level login)
-            if rv == int(CKR_USER_ALREADY_LOGGED_IN) or rv == int(CKR_USER_TYPE_INVALID):
+            if rv == CKR_USER_ALREADY_LOGGED_IN or rv == CKR_USER_TYPE_INVALID:
                 pytest.skip("Token-level login prevents testing wrong PIN")
-            assert rv == int(CKR_PIN_INCORRECT), f"Expected CKR_PIN_INCORRECT, got {ckr_name(rv)}"
+            assert rv == CKR_PIN_INCORRECT, f"Expected CKR_PIN_INCORRECT, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, sh)
 
@@ -69,8 +69,8 @@ class TestCKRMechanismErrors:
         try:
             # Use SHA256 (digest mech) for encrypt - should fail
             mech = mech_simple(CKM_SHA256)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            assert rv != int(CKR_OK), "Using SHA256 as encryption mechanism should fail"
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            assert rv != CKR_OK, "Using SHA256 as encryption mechanism should fail"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -84,14 +84,14 @@ class TestCKRDataErrors:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv != CKR_OK:
                 pytest.skip(f"C_EncryptInit failed: {ckr_name(rv)}")
             data = (ctypes.c_ubyte * 15)(*([0] * 15))
             out_len = CK_ULONG(32)
             out_buf = (ctypes.c_ubyte * 32)()
-            rv = int(rs.raw.C_Encrypt(rs.sh, data, 15, out_buf, byref(out_len)))
-            assert rv != int(CKR_OK), "15-byte AES-ECB encrypt should fail"
+            rv = rs.raw.C_Encrypt(rs.sh, data, 15, out_buf, byref(out_len))
+            assert rv != CKR_OK, "15-byte AES-ECB encrypt should fail"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -106,13 +106,13 @@ class TestCKRAttributeErrors:
         try:
             # Try to read CKA_VALUE (sensitive by default)
             tmpl = (CK_ATTRIBUTE * 1)()
-            tmpl[0].type = int(CKA_VALUE)
+            tmpl[0].type = CKA_VALUE
             tmpl[0].pValue = None
             tmpl[0].ulValueLen = 0
-            rv = int(rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1))
+            rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
             assert rv in (
-                int(CKR_ATTRIBUTE_SENSITIVE),
-                int(CKR_ATTRIBUTE_TYPE_INVALID),
+                CKR_ATTRIBUTE_SENSITIVE,
+                CKR_ATTRIBUTE_TYPE_INVALID,
             ), f"Expected CKR_ATTRIBUTE_SENSITIVE, got {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -126,9 +126,9 @@ class TestCKRAttributeErrors:
             tmpl[0].type = 0xFFFFFFFF
             tmpl[0].pValue = None
             tmpl[0].ulValueLen = 0
-            rv = int(rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1))
+            rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
             # Module should reject nonsense attribute type
-            assert rv != int(CKR_OK) or tmpl[0].ulValueLen == 0xFFFFFFFF
+            assert rv != CKR_OK or tmpl[0].ulValueLen == 0xFFFFFFFF
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -142,10 +142,10 @@ class TestCKRSessionErrors:
         # Already logged in via fixture; try to login again
         pin = b"1234"  # default test PIN
         pin_buf = (ctypes.c_ubyte * len(pin))(*pin)
-        rv = int(rs.raw.C_Login(rs.sh, int(CKU_USER), pin_buf, len(pin)))
+        rv = rs.raw.C_Login(rs.sh, CKU_USER, pin_buf, len(pin))
         assert rv in (
-            int(CKR_USER_ALREADY_LOGGED_IN),
-            int(CKR_USER_TYPE_INVALID),
+            CKR_USER_ALREADY_LOGGED_IN,
+            CKR_USER_TYPE_INVALID,
         ), f"Expected CKR_USER_ALREADY_LOGGED_IN, got {ckr_name(rv)}"
 
 
@@ -162,7 +162,7 @@ class TestCKRObjectErrors:
         rs.raw.C_DestroyObject(rs.sh, key)
         # Try to read attribute on destroyed object
         tmpl = (CK_ATTRIBUTE * 1)()
-        tmpl[0].type = int(CKA_LABEL)
+        tmpl[0].type = CKA_LABEL
         tmpl[0].pValue = None
         tmpl[0].ulValueLen = 0
         rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)

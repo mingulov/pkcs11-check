@@ -86,11 +86,11 @@ class TestCKRTemplateCompliance:
             attr_bool(CKA_TOKEN, False),
         )
         handle = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(handle.value))
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
             pytest.fail("Should have raised for missing CKA_CLASS")
-        _check_ckr("C_CreateObject(missing CLASS)", int(CKR_TEMPLATE_INCOMPLETE), rv)
+        _check_ckr("C_CreateObject(missing CLASS)", CKR_TEMPLATE_INCOMPLETE, rv)
 
     def test_invalid_class_returns_attribute_value_invalid(self, p11_raw_session: Any) -> None:
         """CKA_CLASS=0xDEADBEEF -> CKR_ATTRIBUTE_VALUE_INVALID (spec)."""
@@ -100,11 +100,11 @@ class TestCKRTemplateCompliance:
             attr_bool(CKA_TOKEN, False),
         )
         handle = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(handle.value))
+        rv = rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, handle.value)
             pytest.fail("Should have raised for invalid CLASS")
-        _check_ckr("C_CreateObject(bad CLASS)", int(CKR_ATTRIBUTE_VALUE_INVALID), rv)
+        _check_ckr("C_CreateObject(bad CLASS)", CKR_ATTRIBUTE_VALUE_INVALID, rv)
 
     def test_rsa_zero_size_returns_attribute_value_invalid(self, p11_raw_session: Any) -> None:
         """RSA key size 0 -> CKR_ATTRIBUTE_VALUE_INVALID (spec)."""
@@ -114,23 +114,21 @@ class TestCKRTemplateCompliance:
         priv_tmpl = template()
         pub = CK_OBJECT_HANDLE(0)
         priv = CK_OBJECT_HANDLE(0)
-        rv = int(
-            rs.raw.C_GenerateKeyPair(
-                rs.sh,
-                mech.byref(),
-                pub_tmpl.ptr,
-                pub_tmpl.count,
-                priv_tmpl.ptr,
-                priv_tmpl.count,
-                byref(pub),
-                byref(priv),
-            )
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub),
+            byref(priv),
         )
-        if rv == int(CKR_OK):
-            destroy_quietly(rs.raw, rs.sh, int(pub.value))
-            destroy_quietly(rs.raw, rs.sh, int(priv.value))
+        if rv == CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, pub.value)
+            destroy_quietly(rs.raw, rs.sh, priv.value)
             pytest.fail("Should have raised for RSA size 0")
-        _check_ckr("C_GenerateKeyPair(RSA, 0)", int(CKR_ATTRIBUTE_VALUE_INVALID), rv)
+        _check_ckr("C_GenerateKeyPair(RSA, 0)", CKR_ATTRIBUTE_VALUE_INVALID, rv)
 
 
 class TestCKRMechanismCompliance:
@@ -142,10 +140,10 @@ class TestCKRMechanismCompliance:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_SHA256)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
                 pytest.fail("SHA-256 encrypt should fail")
-            _check_ckr("C_EncryptInit(SHA256)", int(CKR_MECHANISM_INVALID), rv)
+            _check_ckr("C_EncryptInit(SHA256)", CKR_MECHANISM_INVALID, rv)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -155,16 +153,16 @@ class TestCKRMechanismCompliance:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv != CKR_OK:
                 pytest.skip(f"C_EncryptInit failed: {ckr_name(rv)}")
             data = (ctypes.c_ubyte * 15)(*([0] * 15))
             out_len = CK_ULONG(32)
             out_buf = (ctypes.c_ubyte * 32)()
-            rv = int(rs.raw.C_Encrypt(rs.sh, data, 15, out_buf, byref(out_len)))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_Encrypt(rs.sh, data, 15, out_buf, byref(out_len))
+            if rv == CKR_OK:
                 pytest.fail("Non-aligned ECB should fail")
-            _check_ckr("C_Encrypt(AES_ECB, 15 bytes)", int(CKR_DATA_LEN_RANGE), rv)
+            _check_ckr("C_Encrypt(AES_ECB, 15 bytes)", CKR_DATA_LEN_RANGE, rv)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -178,15 +176,15 @@ class TestCKRAttributeCompliance:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             tmpl = (CK_ATTRIBUTE * 1)()
-            tmpl[0].type = int(CKA_VALUE)
+            tmpl[0].type = CKA_VALUE
             tmpl[0].pValue = None
             tmpl[0].ulValueLen = 0
-            rv = int(rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
+            if rv == CKR_OK:
                 pytest.fail("Should have raised for sensitive value")
             _check_ckr(
                 "C_GetAttributeValue(SENSITIVE, VALUE)",
-                int(CKR_ATTRIBUTE_SENSITIVE),
+                CKR_ATTRIBUTE_SENSITIVE,
                 rv,
             )
         finally:
@@ -202,16 +200,16 @@ class TestCKRObjectCompliance:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         rs.raw.C_DestroyObject(rs.sh, key)
         tmpl = (CK_ATTRIBUTE * 1)()
-        tmpl[0].type = int(CKA_LABEL)
+        tmpl[0].type = CKA_LABEL
         tmpl[0].pValue = None
         tmpl[0].ulValueLen = 0
-        rv = int(rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
+        if rv == CKR_OK:
             pass  # Some modules don't detect - that's a deviation but not crash
         else:
             _check_ckr(
                 "C_GetAttributeValue(destroyed)",
-                int(CKR_OBJECT_HANDLE_INVALID),
+                CKR_OBJECT_HANDLE_INVALID,
                 rv,
             )
 
@@ -232,26 +230,24 @@ class TestCKRVerifyCompliance:
             tampered[-1] ^= 0xFF
 
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
-            rv = int(rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
+            if rv != CKR_OK:
                 pytest.skip(f"C_VerifyInit failed: {ckr_name(rv)}")
 
             data_buf = (ctypes.c_ubyte * len(data))(*data)
             sig_buf = (ctypes.c_ubyte * len(tampered))(*tampered)
-            rv = int(
-                rs.raw.C_Verify(
-                    rs.sh,
-                    data_buf,
-                    len(data),
-                    sig_buf,
-                    len(tampered),
-                )
+            rv = rs.raw.C_Verify(
+                rs.sh,
+                data_buf,
+                len(data),
+                sig_buf,
+                len(tampered),
             )
-            if rv == int(CKR_DEVICE_ERROR):
+            if rv == CKR_DEVICE_ERROR:
                 pytest.xfail("Kryoptic bug: returns CKR_DEVICE_ERROR for verify failure")
-            if rv == int(CKR_OK):
+            if rv == CKR_OK:
                 pytest.fail("Tampered signature verified as valid!")
-            _check_ckr("C_Verify(tampered)", int(CKR_SIGNATURE_INVALID), rv)
+            _check_ckr("C_Verify(tampered)", CKR_SIGNATURE_INVALID, rv)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

@@ -42,41 +42,41 @@ class TestUniversalInfrastructure:
 
     def test_universal_codes_in_tuple(self) -> None:
         """All 3 universal codes present in _UNIVERSAL."""
-        assert int(CKR_GENERAL_ERROR) in _UNIVERSAL
-        assert int(CKR_HOST_MEMORY) in _UNIVERSAL
-        assert int(CKR_FUNCTION_FAILED) in _UNIVERSAL
+        assert CKR_GENERAL_ERROR in _UNIVERSAL
+        assert CKR_HOST_MEMORY in _UNIVERSAL
+        assert CKR_FUNCTION_FAILED in _UNIVERSAL
 
     def test_session_universal_in_tuple(self) -> None:
         """Session-universal codes present."""
-        assert int(CKR_SESSION_HANDLE_INVALID) in _SESSION_UNIVERSAL
-        assert int(CKR_DEVICE_REMOVED) in _SESSION_UNIVERSAL
-        assert int(CKR_SESSION_CLOSED) in _SESSION_UNIVERSAL
+        assert CKR_SESSION_HANDLE_INVALID in _SESSION_UNIVERSAL
+        assert CKR_DEVICE_REMOVED in _SESSION_UNIVERSAL
+        assert CKR_SESSION_CLOSED in _SESSION_UNIVERSAL
 
     def test_token_universal_in_tuple(self) -> None:
         """Token-universal codes present."""
-        assert int(CKR_DEVICE_MEMORY) in _TOKEN_UNIVERSAL
-        assert int(CKR_DEVICE_ERROR) in _TOKEN_UNIVERSAL
-        assert int(CKR_TOKEN_NOT_PRESENT) in _TOKEN_UNIVERSAL
+        assert CKR_DEVICE_MEMORY in _TOKEN_UNIVERSAL
+        assert CKR_DEVICE_ERROR in _TOKEN_UNIVERSAL
+        assert CKR_TOKEN_NOT_PRESENT in _TOKEN_UNIVERSAL
 
     def test_full_compat_includes_all(self) -> None:
         """full_compat() with empty base includes all 9 universal codes."""
         result = full_compat(())
-        assert int(CKR_GENERAL_ERROR) in result
-        assert int(CKR_HOST_MEMORY) in result
-        assert int(CKR_FUNCTION_FAILED) in result
-        assert int(CKR_SESSION_HANDLE_INVALID) in result
-        assert int(CKR_DEVICE_REMOVED) in result
-        assert int(CKR_SESSION_CLOSED) in result
-        assert int(CKR_DEVICE_MEMORY) in result
-        assert int(CKR_DEVICE_ERROR) in result
-        assert int(CKR_TOKEN_NOT_PRESENT) in result
+        assert CKR_GENERAL_ERROR in result
+        assert CKR_HOST_MEMORY in result
+        assert CKR_FUNCTION_FAILED in result
+        assert CKR_SESSION_HANDLE_INVALID in result
+        assert CKR_DEVICE_REMOVED in result
+        assert CKR_SESSION_CLOSED in result
+        assert CKR_DEVICE_MEMORY in result
+        assert CKR_DEVICE_ERROR in result
+        assert CKR_TOKEN_NOT_PRESENT in result
 
     def test_full_compat_no_session(self) -> None:
         """full_compat() without session doesn't include session/token codes."""
         result = full_compat((), uses_session=False)
-        assert int(CKR_GENERAL_ERROR) in result
-        assert int(CKR_SESSION_HANDLE_INVALID) not in result
-        assert int(CKR_DEVICE_MEMORY) not in result
+        assert CKR_GENERAL_ERROR in result
+        assert CKR_SESSION_HANDLE_INVALID not in result
+        assert CKR_DEVICE_MEMORY not in result
 
 
 class TestUniversalRealTriggers:
@@ -93,11 +93,11 @@ class TestUniversalRealTriggers:
 
         rs = p11_raw_session
         session_info = CK_SESSION_INFO()
-        rv = int(rs.raw.C_GetSessionInfo(0xDEADBEEF, ctypes.byref(session_info)))
+        rv = rs.raw.C_GetSessionInfo(0xDEADBEEF, ctypes.byref(session_info))
         # SESSION_HANDLE_INVALID or ARGUMENTS_BAD - both prove invalid handle is detected
         assert rv in (
-            int(CKR_SESSION_HANDLE_INVALID),
-            int(CKR_ARGUMENTS_BAD),
+            CKR_SESSION_HANDLE_INVALID,
+            CKR_ARGUMENTS_BAD,
         ), f"Got 0x{rv:08x}"
 
     def test_cryptoki_not_initialized_via_subprocess(self, p11_config: Any) -> None:
@@ -150,12 +150,12 @@ class TestUniversalRealTriggers:
             raw = RawPKCS11.from_lib("{proxy}")
             raw.C_Initialize(None)
             slots = get_slot_ids(raw)
-            sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+            sh = open_session(raw, slots[0], (CKF_SERIAL_SESSION | CKF_RW_SESSION))
             buf = (ctypes.c_ubyte * 32)()
-            rv = int(raw.C_GenerateRandom(sh, buf, 32))
-            if rv == int(CKR_DEVICE_REMOVED):
+            rv = raw.C_GenerateRandom(sh, buf, 32)
+            if rv == CKR_DEVICE_REMOVED:
                 print("OK:DEVICE_REMOVED")
-            elif rv == int(CKR_OK):
+            elif rv == CKR_OK:
                 print("FAIL")
             else:
                 print(f"OTHER:0x{{rv:08x}}")
