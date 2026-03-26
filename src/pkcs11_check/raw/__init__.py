@@ -5,7 +5,6 @@ from __future__ import annotations
 from . import der, extensions, metadata_std, pack, recipes, rv, types_std
 from .api import RawPKCS11
 from .bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
-from .bridge import raw_from_lib, raw_from_module
 from .types_std import (
     CKA,
     CKA_CLASS,
@@ -61,9 +60,6 @@ from .types_std import (
     CKV,
     CKZ,
 )
-
-from_lib = raw_from_lib
-from_module = raw_from_module
 
 __all__ = [
     "CK_ATTRIBUTE",
@@ -126,10 +122,6 @@ __all__ = [
     "metadata_std",
     "types_std",
     "open_session",
-    "from_lib",
-    "from_module",
-    "raw_from_lib",
-    "raw_from_module",
     "der",
     "extensions",
     "pack",

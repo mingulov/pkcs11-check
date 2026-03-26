@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import ctypes
-from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
@@ -18,41 +16,6 @@ def test_raw_package_exports_core_symbols() -> None:
     assert CK_MECHANISM is not None
     assert CK_ATTRIBUTE is not None
     assert CKR_OK == 0
-
-
-def test_raw_from_lib_uses_all_available_funclists() -> None:
-    from pkcs11_check.raw import RawPKCS11
-    from pkcs11_check.raw.bridge import raw_from_lib
-
-    lib = SimpleNamespace(
-        _raw_funclist_ptr=101,
-        _raw_funclist3_ptr=202,
-        _raw_funclist32_ptr=303,
-    )
-
-    with patch.object(RawPKCS11, "__init__", return_value=None) as init_mock:
-        raw = raw_from_lib(lib)
-
-    assert isinstance(raw, RawPKCS11)
-    init_mock.assert_called_once_with(101, funclist3_ptr=202, funclist32_ptr=303)
-
-
-def test_raw_from_module_uses_module_lib() -> None:
-    from pkcs11_check.raw import RawPKCS11
-    from pkcs11_check.raw.bridge import raw_from_module
-
-    lib = SimpleNamespace(
-        _raw_funclist_ptr=11,
-        _raw_funclist3_ptr=22,
-        _raw_funclist32_ptr=33,
-    )
-    module = SimpleNamespace(lib=lib)
-
-    with patch.object(RawPKCS11, "__init__", return_value=None) as init_mock:
-        raw = raw_from_module(module)
-
-    assert isinstance(raw, RawPKCS11)
-    init_mock.assert_called_once_with(11, funclist3_ptr=22, funclist32_ptr=33)
 
 
 def test_cktemplate_builds_array_and_keeps_native_lengths() -> None:
