@@ -544,7 +544,7 @@ class TestSessionCancel:
             from ctypes import c_ulong, c_ubyte, c_void_p, byref, pointer, POINTER
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.types_std import (
-                CK_MECHANISM, CKR_OK, CKR_FUNCTION_NOT_SUPPORTED,
+                CK_MECHANISM, CK_NOTIFY, CKR_OK, CKR_FUNCTION_NOT_SUPPORTED,
                 CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER, CKM_SHA256,
             )
 
@@ -577,7 +577,7 @@ class TestSessionCancel:
             session_handle = c_ulong(0)
             rv = raw.C_OpenSession(
                 {actual_slot_id}, CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                None, None, byref(session_handle),
+                None, CK_NOTIFY(), byref(session_handle),
             )
             assert rv == CKR_OK, f"C_OpenSession: 0x{{rv:08x}}"
             hSession = session_handle.value
