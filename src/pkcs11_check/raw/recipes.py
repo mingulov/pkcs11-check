@@ -256,7 +256,7 @@ def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> None:
     """Destroy an object, silently ignoring any errors."""
     try:
         raw.C_DestroyObject(session, handle)
-    except Exception:
+    except (AttributeError, OSError, ctypes.ArgumentError):
         pass
 
 

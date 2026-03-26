@@ -9,29 +9,14 @@ from .types_std import CKR
 _RV_NAMES = dict(metadata_std.RV_NAMES)
 
 
-def rv_name(rv: int) -> str:
-    """Return a symbolic name for a CK_RV integer when known."""
-    return lookup_symbol_name("rvs", rv) or _RV_NAMES.get(rv, f"0x{rv:08x}")
-
-
 def ckr_name(rv: int) -> str:
     """Return a symbolic CKR_* name for a CK_RV integer when known."""
-    return rv_name(rv)
-
-
-def ckr_is_ok(rv: int) -> bool:
-    """Return True if rv is CKR_OK (0)."""
-    return rv == 0
-
-
-def ckr_in(rv: int, *acceptable: int) -> bool:
-    """Return True if rv is one of the acceptable values."""
-    return rv in acceptable
+    return lookup_symbol_name("rvs", rv) or _RV_NAMES.get(rv, f"0x{rv:08x}")
 
 
 def expect_rv(rv: int, *allowed: CKR) -> int:
     """Return rv if allowed, otherwise raise an AssertionError."""
     if rv in allowed:
         return rv
-    allowed_names = ", ".join(rv_name(value) for value in allowed)
-    raise AssertionError(f"Unexpected CK_RV {rv_name(rv)}; expected one of: {allowed_names}")
+    allowed_names = ", ".join(ckr_name(value) for value in allowed)
+    raise AssertionError(f"Unexpected CK_RV {ckr_name(rv)}; expected one of: {allowed_names}")

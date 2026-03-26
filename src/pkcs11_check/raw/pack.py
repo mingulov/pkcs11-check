@@ -151,10 +151,6 @@ class TemplateArg:
         return tuple(self._attributes)
 
 
-MechanismArg = PackedMechanism
-CKTemplate = TemplateArg
-
-
 def explicit_length(size: int) -> LengthArg:
     return LengthArg.explicit_value(size)
 

@@ -100,7 +100,9 @@ def _validate_helper_numeric_keys(keys: Mapping[int | str, Any] | None) -> None:
         if not isinstance(key, (int, str)):
             raise ValueError(f"helper keys must be int or str, got {type(key).__name__}")
         if isinstance(key, int) and key in _STANDARD_TABLES["mechanisms"]:
-            raise ValueError(f"standard mechanism ids are not allowed in extension helpers: 0x{key:08x}")
+            raise ValueError(
+                f"standard mechanism ids are not allowed in extension helpers: 0x{key:08x}"
+            )
 
 
 def _validate_name_mapping(
@@ -120,8 +122,12 @@ def _validate_name_mapping(
             raise ValueError("standard mechanism names are not allowed in vendor extensions")
         if key in _STANDARD_TABLES[category]:
             if category == "mechanisms":
-                raise ValueError(f"standard mechanism ids are not allowed in vendor extensions: 0x{key:08x}")
-            raise ValueError(f"standard symbol ids are not allowed in vendor extensions: 0x{key:08x}")
+                raise ValueError(
+                    f"standard mechanism ids are not allowed in vendor extensions: 0x{key:08x}"
+                )
+            raise ValueError(
+                f"standard symbol ids are not allowed in vendor extensions: 0x{key:08x}"
+            )
     if category != "mechanisms":
         return
     vendor = _vendor_or_none(namespace)
@@ -138,7 +144,9 @@ def _validate_name_mapping(
         raise ValueError("duplicate mechanism name in namespace")
 
 
-def _validate_namespace_mapping_update(existing: Mapping[Any, Any], new_values: Mapping[Any, Any] | None) -> None:
+def _validate_namespace_mapping_update(
+    existing: Mapping[Any, Any], new_values: Mapping[Any, Any] | None
+) -> None:
     if not new_values:
         return
     for key, value in new_values.items():
@@ -167,7 +175,11 @@ def _validate_helper_alias_consistency(
             mechanism_id = key
         elif isinstance(key, str):
             mechanism_id = next(
-                (candidate_id for candidate_id, candidate_name in mechanism_names.items() if candidate_name == key),
+                (
+                    candidate_id
+                    for candidate_id, candidate_name in mechanism_names.items()
+                    if candidate_name == key
+                ),
                 None,
             )
             if mechanism_id is None:
@@ -186,7 +198,9 @@ def _validate_helper_alias_consistency(
     for mechanism_id, helper in resolved.items():
         mechanism_name = mechanism_names.get(mechanism_id)
         existing_numeric = existing_helpers.get(mechanism_id)
-        existing_symbolic = existing_helpers.get(mechanism_name) if mechanism_name is not None else None
+        existing_symbolic = (
+            existing_helpers.get(mechanism_name) if mechanism_name is not None else None
+        )
         for existing in (existing_numeric, existing_symbolic):
             if existing is not None and existing != helper:
                 raise ValueError("existing namespace entry differs")
@@ -244,15 +258,6 @@ def register_extension(
         vendor.inspectors.update(inspectors)
 
 
-def _lookup_unique(values: list[Any]) -> Any | None:
-    if not values:
-        return None
-    first = values[0]
-    if all(value == first for value in values[1:]):
-        return first
-    return None
-
-
 def _lookup_single_namespace(matches: list[tuple[str, Any]]) -> Any | None:
     if len(matches) != 1:
         return None
@@ -306,7 +311,11 @@ def _lookup_vendor_helper(
         if direct is not None:
             return direct
         mechanism_id = next(
-            (candidate_id for candidate_id, candidate_name in vendor.names["mechanisms"].items() if candidate_name == value),
+            (
+                candidate_id
+                for candidate_id, candidate_name in vendor.names["mechanisms"].items()
+                if candidate_name == value
+            ),
             None,
         )
         if mechanism_id is None:
