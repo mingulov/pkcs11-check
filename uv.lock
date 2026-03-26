@@ -478,6 +478,7 @@ name = "pkcs11-check"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "asn1crypto" },
     { name = "cryptography" },
     { name = "psutil" },
     { name = "pydantic-settings", extra = ["toml"] },
@@ -485,7 +486,6 @@ dependencies = [
     { name = "pytest-reportlog" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
-    { name = "python-pkcs11" },
     { name = "rich" },
     { name = "typer" },
 ]
@@ -506,6 +506,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asn1crypto", specifier = ">=1.5" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "psutil", specifier = ">=5.9" },
@@ -515,7 +516,6 @@ requires-dist = [
     { name = "pytest-reportlog", specifier = ">=1.0.0" },
     { name = "pytest-timeout", specifier = ">=2.3" },
     { name = "pytest-xdist", specifier = ">=3.5" },
-    { name = "python-pkcs11", editable = "python-pkcs11" },
     { name = "rich", specifier = ">=13.0" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "typer", specifier = ">=0.15" },
@@ -811,61 +811,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
-]
-
-[[package]]
-name = "python-pkcs11"
-source = { editable = "python-pkcs11" }
-dependencies = [
-    { name = "asn1crypto" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "asn1crypto", specifier = ">=1.5.1" }]
-
-[package.metadata.requires-dev]
-coverage = [
-    { name = "coverage", specifier = ">=7.9.1" },
-    { name = "cryptography", specifier = ">=44.0.0" },
-    { name = "cython" },
-    { name = "parameterized", specifier = ">=0.9.0" },
-    { name = "pytest", specifier = ">=8.3.4" },
-    { name = "pytest-cov", specifier = ">=4.0,<6.3" },
-]
-dev = [
-    { name = "cryptography", specifier = ">=44.0.0" },
-    { name = "cython" },
-    { name = "parameterized", specifier = ">=0.9.0" },
-    { name = "pytest", specifier = ">=8.3.4" },
-    { name = "ruff", specifier = ">=0.8.3" },
-    { name = "setuptools", specifier = ">=80.8" },
-    { name = "setuptools-scm", specifier = ">=8.3.1" },
-    { name = "sphinx", specifier = ">=7.4.7" },
-    { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
-    { name = "ty", specifier = ">=0.0.5" },
-]
-docs = [
-    { name = "sphinx", specifier = ">=7.4.7" },
-    { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
-]
-docs-build = [
-    { name = "python-pkcs11" },
-    { name = "sphinx", specifier = ">=7.4.7" },
-    { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
-]
-lint = [
-    { name = "ruff", specifier = ">=0.8.3" },
-    { name = "ty", specifier = ">=0.0.5" },
-]
-release = [
-    { name = "cython" },
-    { name = "setuptools", specifier = ">=80.8" },
-    { name = "setuptools-scm", specifier = ">=8.3.1" },
-]
-testing = [
-    { name = "cryptography", specifier = ">=44.0.0" },
-    { name = "parameterized", specifier = ">=0.9.0" },
-    { name = "pytest", specifier = ">=8.3.4" },
 ]
 
 [[package]]
