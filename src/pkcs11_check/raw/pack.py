@@ -23,8 +23,24 @@ from .types_std import (
     CK_RSA_PKCS_OAEP_PARAMS,
     CK_RSA_PKCS_PSS_PARAMS,
     CK_SALSA20_CHACHA20_POLY1305_PARAMS,
+    CK_SSL3_KEY_MAT_OUT,
+    CK_SSL3_KEY_MAT_PARAMS,
+    CK_SSL3_MASTER_KEY_DERIVE_PARAMS,
+    CK_SSL3_RANDOM_DATA,
+    CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS,
+    CK_TLS12_KEY_MAT_PARAMS,
+    CK_TLS12_MASTER_KEY_DERIVE_PARAMS,
+    CK_TLS_KDF_PARAMS,
+    CK_TLS_MAC_PARAMS,
+    CK_TLS_PRF_PARAMS,
     CK_ULONG,
+    CK_VERSION,
     CK_VOID_PTR,
+    CK_WTLS_KEY_MAT_OUT,
+    CK_WTLS_KEY_MAT_PARAMS,
+    CK_WTLS_MASTER_KEY_DERIVE_PARAMS,
+    CK_WTLS_PRF_PARAMS,
+    CK_WTLS_RANDOM_DATA,
     CKA,
     CKM,
     CKZ_DATA_SPECIFIED,
@@ -680,3 +696,364 @@ def mech_string_data(mechanism_type: CKM, data: bytes) -> PackedMechanism:
     params = CK_KEY_DERIVATION_STRING_DATA()
     params.pData, params.ulLen = _pack_bytes(data, ka)
     return _mech_struct(mechanism_type, params, "mech_string_data", ka)
+
+
+# ---------------------------------------------------------------------------
+# SSL3 / TLS / WTLS mechanism packers
+# ---------------------------------------------------------------------------
+
+
+def _fill_ssl3_random(
+    random_data: CK_SSL3_RANDOM_DATA,
+    client_random: bytes,
+    server_random: bytes,
+    keepalive: list[Any],
+) -> None:
+    """Populate a CK_SSL3_RANDOM_DATA struct with client/server randoms."""
+    random_data.pClientRandom, random_data.ulClientRandomLen = _pack_bytes(
+        client_random, keepalive,
+    )
+    random_data.pServerRandom, random_data.ulServerRandomLen = _pack_bytes(
+        server_random, keepalive,
+    )
+
+
+def mech_ssl3_master_key_derive(
+    mechanism_type: CKM,
+    client_random: bytes,
+    server_random: bytes,
+    *,
+    with_version: bool = True,
+) -> PackedMechanism:
+    """Pack CK_SSL3_MASTER_KEY_DERIVE_PARAMS.
+
+    Used for CKM_SSL3_MASTER_KEY_DERIVE, CKM_SSL3_MASTER_KEY_DERIVE_DH,
+    CKM_TLS_MASTER_KEY_DERIVE, and CKM_TLS_MASTER_KEY_DERIVE_DH.
+
+    When *with_version* is True (default), pVersion points to a CK_VERSION
+    struct that the module will fill in.  Set False for DH variants where
+    the version field is unused (pVersion=NULL).
+    """
+    ka: list[Any] = []
+    params = CK_SSL3_MASTER_KEY_DERIVE_PARAMS()
+    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+    if with_version:
+        ver = CK_VERSION(0, 0)
+        ka.append(ver)
+        params.pVersion = ctypes.cast(ctypes.pointer(ver), CK_VOID_PTR)
+    else:
+        params.pVersion = None
+    return _mech_struct(mechanism_type, params, "mech_ssl3_master_key_derive", ka)
+
+
+def mech_ssl3_key_mat(
+    mechanism_type: CKM,
+    client_random: bytes,
+    server_random: bytes,
+    *,
+    mac_size_bits: int = 0,
+    key_size_bits: int = 128,
+    iv_size_bits: int = 128,
+    is_export: bool = False,
+) -> PackedMechanism:
+    """Pack CK_SSL3_KEY_MAT_PARAMS.
+
+    Used for CKM_SSL3_KEY_AND_MAC_DERIVE and CKM_TLS_KEY_AND_MAC_DERIVE.
+    Returns a PackedMechanism whose .params.pReturnedKeyMaterial points to a
+    CK_SSL3_KEY_MAT_OUT struct (accessible as pm.params._key_mat_out_ref).
+    """
+    ka: list[Any] = []
+    params = CK_SSL3_KEY_MAT_PARAMS()
+    params.ulMacSizeInBits = mac_size_bits
+    params.ulKeySizeInBits = key_size_bits
+    params.ulIVSizeInBits = iv_size_bits
+    params.bIsExport = CK_BBOOL(1 if is_export else 0)
+    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+
+    # Allocate output struct
+    key_mat_out = CK_SSL3_KEY_MAT_OUT()
+    iv_bytes = iv_size_bits // 8 if iv_size_bits else 0
+    if iv_bytes:
+        iv_client = (ctypes.c_ubyte * iv_bytes)()
+        iv_server = (ctypes.c_ubyte * iv_bytes)()
+        key_mat_out.pIVClient = ctypes.cast(iv_client, CK_VOID_PTR)
+        key_mat_out.pIVServer = ctypes.cast(iv_server, CK_VOID_PTR)
+        ka.extend([iv_client, iv_server])
+    ka.append(key_mat_out)
+    params.pReturnedKeyMaterial = ctypes.cast(
+        ctypes.pointer(key_mat_out), CK_VOID_PTR,
+    )
+    result = _mech_struct(mechanism_type, params, "mech_ssl3_key_mat", ka)
+    # Stash for callers to read output key handles
+    result._key_mat_out_ref = key_mat_out  # type: ignore[attr-defined]
+    return result
+
+
+def mech_tls12_master_key_derive(
+    mechanism_type: CKM,
+    client_random: bytes,
+    server_random: bytes,
+    hash_mech: int,
+    *,
+    with_version: bool = True,
+) -> PackedMechanism:
+    """Pack CK_TLS12_MASTER_KEY_DERIVE_PARAMS.
+
+    Used for CKM_TLS12_MASTER_KEY_DERIVE and CKM_TLS12_MASTER_KEY_DERIVE_DH.
+    *hash_mech* is the PRF hash mechanism (e.g. CKM_SHA256).
+    """
+    ka: list[Any] = []
+    params = CK_TLS12_MASTER_KEY_DERIVE_PARAMS()
+    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+    if with_version:
+        ver = CK_VERSION(0, 0)
+        ka.append(ver)
+        params.pVersion = ctypes.cast(ctypes.pointer(ver), CK_VOID_PTR)
+    else:
+        params.pVersion = None
+    params.prfHashMechanism = hash_mech
+    return _mech_struct(mechanism_type, params, "mech_tls12_master_key_derive", ka)
+
+
+def mech_tls12_key_mat(
+    mechanism_type: CKM,
+    client_random: bytes,
+    server_random: bytes,
+    hash_mech: int,
+    *,
+    mac_size_bits: int = 0,
+    key_size_bits: int = 128,
+    iv_size_bits: int = 128,
+    is_export: bool = False,
+) -> PackedMechanism:
+    """Pack CK_TLS12_KEY_MAT_PARAMS.
+
+    Used for CKM_TLS12_KEY_AND_MAC_DERIVE and CKM_TLS12_KEY_SAFE_DERIVE.
+    """
+    ka: list[Any] = []
+    params = CK_TLS12_KEY_MAT_PARAMS()
+    params.ulMacSizeInBits = mac_size_bits
+    params.ulKeySizeInBits = key_size_bits
+    params.ulIVSizeInBits = iv_size_bits
+    params.bIsExport = CK_BBOOL(1 if is_export else 0)
+    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+
+    key_mat_out = CK_SSL3_KEY_MAT_OUT()
+    iv_bytes = iv_size_bits // 8 if iv_size_bits else 0
+    if iv_bytes:
+        iv_client = (ctypes.c_ubyte * iv_bytes)()
+        iv_server = (ctypes.c_ubyte * iv_bytes)()
+        key_mat_out.pIVClient = ctypes.cast(iv_client, CK_VOID_PTR)
+        key_mat_out.pIVServer = ctypes.cast(iv_server, CK_VOID_PTR)
+        ka.extend([iv_client, iv_server])
+    ka.append(key_mat_out)
+    params.pReturnedKeyMaterial = ctypes.cast(
+        ctypes.pointer(key_mat_out), CK_VOID_PTR,
+    )
+    params.prfHashMechanism = hash_mech
+    result = _mech_struct(mechanism_type, params, "mech_tls12_key_mat", ka)
+    result._key_mat_out_ref = key_mat_out  # type: ignore[attr-defined]
+    return result
+
+
+def mech_tls12_extended_master_key_derive(
+    mechanism_type: CKM,
+    hash_mech: int,
+    session_hash: bytes,
+    *,
+    with_version: bool = True,
+) -> PackedMechanism:
+    """Pack CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS.
+
+    Used for CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE and the DH variant.
+    """
+    ka: list[Any] = []
+    params = CK_TLS12_EXTENDED_MASTER_KEY_DERIVE_PARAMS()
+    params.prfHashMechanism = hash_mech
+    params.pSessionHash, params.ulSessionHashLen = _pack_bytes(session_hash, ka)
+    if with_version:
+        ver = CK_VERSION(0, 0)
+        ka.append(ver)
+        params.pVersion = ctypes.cast(ctypes.pointer(ver), CK_VOID_PTR)
+    else:
+        params.pVersion = None
+    return _mech_struct(
+        mechanism_type, params, "mech_tls12_extended_master_key_derive", ka,
+    )
+
+
+def mech_tls_prf(
+    mechanism_type: CKM,
+    seed: bytes,
+    label: bytes,
+    output_len: int,
+) -> PackedMechanism:
+    """Pack CK_TLS_PRF_PARAMS.
+
+    Used for CKM_TLS_PRF. Allocates an output buffer of *output_len* bytes
+    and a CK_ULONG for pulOutputLen.
+    """
+    ka: list[Any] = []
+    params = CK_TLS_PRF_PARAMS()
+    params.pSeed, params.ulSeedLen = _pack_bytes(seed, ka)
+    params.pLabel, params.ulLabelLen = _pack_bytes(label, ka)
+    out_buf = (ctypes.c_ubyte * output_len)()
+    ka.append(out_buf)
+    params.pOutput = ctypes.cast(out_buf, CK_VOID_PTR)
+    out_len = CK_ULONG(output_len)
+    ka.append(out_len)
+    params.pulOutputLen = ctypes.cast(ctypes.pointer(out_len), CK_VOID_PTR)
+    result = _mech_struct(mechanism_type, params, "mech_tls_prf", ka)
+    result._output_buf = out_buf  # type: ignore[attr-defined]
+    result._output_len = out_len  # type: ignore[attr-defined]
+    return result
+
+
+def mech_tls_kdf(
+    mechanism_type: CKM,
+    prf_mechanism: int,
+    label: bytes,
+    client_random: bytes,
+    server_random: bytes,
+    *,
+    context_data: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_TLS_KDF_PARAMS.
+
+    Used for CKM_TLS12_KDF and CKM_TLS_KDF.
+    """
+    ka: list[Any] = []
+    params = CK_TLS_KDF_PARAMS()
+    params.prfMechanism = prf_mechanism
+    params.pLabel, params.ulLabelLength = _pack_bytes(label, ka)
+    _fill_ssl3_random(params.RandomInfo, client_random, server_random, ka)
+    params.pContextData, params.ulContextDataLength = _pack_bytes(context_data, ka)
+    return _mech_struct(mechanism_type, params, "mech_tls_kdf", ka)
+
+
+def mech_tls_mac(
+    mechanism_type: CKM,
+    prf_hash_mechanism: int,
+    mac_length: int,
+    server_or_client: int,
+) -> PackedMechanism:
+    """Pack CK_TLS_MAC_PARAMS.
+
+    Used for CKM_TLS12_MAC and CKM_TLS_MAC.
+    *server_or_client*: 1=server, 2=client.
+    """
+    params = CK_TLS_MAC_PARAMS()
+    params.prfHashMechanism = prf_hash_mechanism
+    params.ulMacLength = mac_length
+    params.ulServerOrClient = server_or_client
+    return _mech_struct(mechanism_type, params, "mech_tls_mac")
+
+
+def _fill_wtls_random(
+    random_data: CK_WTLS_RANDOM_DATA,
+    client_random: bytes,
+    server_random: bytes,
+    keepalive: list[Any],
+) -> None:
+    """Populate a CK_WTLS_RANDOM_DATA struct with client/server randoms."""
+    random_data.pClientRandom, random_data.ulClientRandomLen = _pack_bytes(
+        client_random, keepalive,
+    )
+    random_data.pServerRandom, random_data.ulServerRandomLen = _pack_bytes(
+        server_random, keepalive,
+    )
+
+
+def mech_wtls_master_key_derive(
+    mechanism_type: CKM,
+    digest_mechanism: int,
+    client_random: bytes,
+    server_random: bytes,
+    *,
+    with_version: bool = True,
+) -> PackedMechanism:
+    """Pack CK_WTLS_MASTER_KEY_DERIVE_PARAMS.
+
+    Used for CKM_WTLS_MASTER_KEY_DERIVE and CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC.
+    """
+    ka: list[Any] = []
+    params = CK_WTLS_MASTER_KEY_DERIVE_PARAMS()
+    params.DigestMechanism = digest_mechanism
+    _fill_wtls_random(params.RandomInfo, client_random, server_random, ka)
+    if with_version:
+        ver = CK_VERSION(0, 0)
+        ka.append(ver)
+        params.pVersion = ctypes.cast(ctypes.pointer(ver), CK_VOID_PTR)
+    else:
+        params.pVersion = None
+    return _mech_struct(mechanism_type, params, "mech_wtls_master_key_derive", ka)
+
+
+def mech_wtls_key_mat(
+    mechanism_type: CKM,
+    digest_mechanism: int,
+    client_random: bytes,
+    server_random: bytes,
+    *,
+    mac_size_bits: int = 0,
+    key_size_bits: int = 128,
+    iv_size_bits: int = 0,
+    sequence_number: int = 0,
+    is_export: bool = False,
+) -> PackedMechanism:
+    """Pack CK_WTLS_KEY_MAT_PARAMS.
+
+    Used for CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE and
+    CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE.
+    """
+    ka: list[Any] = []
+    params = CK_WTLS_KEY_MAT_PARAMS()
+    params.DigestMechanism = digest_mechanism
+    params.ulMacSizeInBits = mac_size_bits
+    params.ulKeySizeInBits = key_size_bits
+    params.ulIVSizeInBits = iv_size_bits
+    params.ulSequenceNumber = sequence_number
+    params.bIsExport = CK_BBOOL(1 if is_export else 0)
+    _fill_wtls_random(params.RandomInfo, client_random, server_random, ka)
+
+    key_mat_out = CK_WTLS_KEY_MAT_OUT()
+    iv_bytes = iv_size_bits // 8 if iv_size_bits else 0
+    if iv_bytes:
+        iv_buf = (ctypes.c_ubyte * iv_bytes)()
+        key_mat_out.pIV = ctypes.cast(iv_buf, CK_VOID_PTR)
+        ka.append(iv_buf)
+    ka.append(key_mat_out)
+    params.pReturnedKeyMaterial = ctypes.cast(
+        ctypes.pointer(key_mat_out), CK_VOID_PTR,
+    )
+    result = _mech_struct(mechanism_type, params, "mech_wtls_key_mat", ka)
+    result._key_mat_out_ref = key_mat_out  # type: ignore[attr-defined]
+    return result
+
+
+def mech_wtls_prf(
+    mechanism_type: CKM,
+    digest_mechanism: int,
+    seed: bytes,
+    label: bytes,
+    output_len: int,
+) -> PackedMechanism:
+    """Pack CK_WTLS_PRF_PARAMS.
+
+    Used for CKM_WTLS_PRF.
+    """
+    ka: list[Any] = []
+    params = CK_WTLS_PRF_PARAMS()
+    params.DigestMechanism = digest_mechanism
+    params.pSeed, params.ulSeedLen = _pack_bytes(seed, ka)
+    params.pLabel, params.ulLabelLen = _pack_bytes(label, ka)
+    out_buf = (ctypes.c_ubyte * output_len)()
+    ka.append(out_buf)
+    params.pOutput = ctypes.cast(out_buf, CK_VOID_PTR)
+    out_len = CK_ULONG(output_len)
+    ka.append(out_len)
+    params.pulOutputLen = ctypes.cast(ctypes.pointer(out_len), CK_VOID_PTR)
+    result = _mech_struct(mechanism_type, params, "mech_wtls_prf", ka)
+    result._output_buf = out_buf  # type: ignore[attr-defined]
+    result._output_len = out_len  # type: ignore[attr-defined]
+    return result
