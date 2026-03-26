@@ -59,9 +59,11 @@ class TestRSAPaddingOracle:
         """
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
 
         try:
@@ -90,32 +92,36 @@ class TestRSAPaddingOracle:
         """RSA-OAEP: all invalid ciphertexts must return same error."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
 
         try:
             oaep = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
-                hash_mech=int(CKM_SHA_1),
-                mgf=int(CKG_MGF1_SHA1),
+                hash_mech=CKM_SHA_1,
+                mgf=CKG_MGF1_SHA1,
             )
             error_types: set[str] = set()
             for _ in range(10):
                 bad_ct = generate_random(rs.raw, rs.sh, 256)
                 try:
                     decrypt_single(
-                        rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, bad_ct,
+                        rs.raw,
+                        rs.sh,
+                        priv,
+                        CKM_RSA_PKCS_OAEP,
+                        bad_ct,
                         mech_param=oaep,
                     )
                 except AssertionError as exc:
                     error_types.add(_extract_ckr(exc))
 
             if len(error_types) > 1:
-                pytest.xfail(
-                    f"SECURITY: RSA-OAEP returns different error codes: {error_types}"
-                )
+                pytest.xfail(f"SECURITY: RSA-OAEP returns different error codes: {error_types}")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -139,7 +145,11 @@ class TestAESPaddingOracle:
 
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
 
@@ -151,7 +161,11 @@ class TestAESPaddingOracle:
             ct_bad_pad[-1] ^= 0xFF
             try:
                 decrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_CBC_PAD, bytes(ct_bad_pad),
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CBC_PAD,
+                    bytes(ct_bad_pad),
                     mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
                 )
             except AssertionError as exc:
@@ -162,17 +176,17 @@ class TestAESPaddingOracle:
             ct_bad_mid[len(ct) // 2] ^= 0xFF
             try:
                 decrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_CBC_PAD, bytes(ct_bad_mid),
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CBC_PAD,
+                    bytes(ct_bad_mid),
                     mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
                 )
             except AssertionError as exc:
                 error_middle_byte = _extract_ckr(exc)
 
-            if (
-                error_last_byte
-                and error_middle_byte
-                and error_last_byte != error_middle_byte
-            ):
+            if error_last_byte and error_middle_byte and error_last_byte != error_middle_byte:
                 pytest.xfail(
                     f"SECURITY: AES-CBC padding oracle - last byte error "
                     f"({error_last_byte}) differs from middle byte ({error_middle_byte})"
@@ -196,16 +210,16 @@ class TestTimingBasic:
         """
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
 
         try:
             # Valid ciphertext
-            valid_ct = encrypt_single(
-                rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"timing test"
-            )
+            valid_ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"timing test")
 
             # Time valid decryptions
             valid_times = []
@@ -237,7 +251,7 @@ class TestTimingBasic:
                 if ratio > 3.0:
                     pytest.xfail(
                         f"TIMING: RSA decrypt timing ratio {ratio:.1f}x "
-                        f"(valid={valid_avg*1000:.2f}ms, invalid={invalid_avg*1000:.2f}ms)"
+                        f"(valid={valid_avg * 1000:.2f}ms, invalid={invalid_avg * 1000:.2f}ms)"
                     )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

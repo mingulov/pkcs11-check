@@ -53,11 +53,14 @@ pytestmark = pytest.mark.keymgmt
 # Acceptable error RVs for derive operations on non-conforming modules
 # ---------------------------------------------------------------------------
 _DERIVE_ERROR_RVS = {
-    int(c) for c in (
-        CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID,
-        CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR, CKR_KEY_SIZE_RANGE,
-        CKR_TEMPLATE_INCOMPLETE, CKR_TEMPLATE_INCONSISTENT, CKR_ARGUMENTS_BAD,
-    )
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ARGUMENTS_BAD,
 }
 
 # ---------------------------------------------------------------------------
@@ -65,41 +68,49 @@ _DERIVE_ERROR_RVS = {
 # ---------------------------------------------------------------------------
 
 _DERIVE_ATTRS = {
-    int(CKA_SENSITIVE): False,
-    int(CKA_EXTRACTABLE): True,
-    int(CKA_TOKEN): False,
+    CKA_SENSITIVE: False,
+    CKA_EXTRACTABLE: True,
+    CKA_TOKEN: False,
 }
 
 
 def _import_generic_secret(rs: Any, value: bytes) -> int:
     """Import ``value`` as a GENERIC_SECRET key with DERIVE=True."""
     return import_secret_key(
-        rs.raw, rs.sh, CKK_GENERIC_SECRET, value,
+        rs.raw,
+        rs.sh,
+        CKK_GENERIC_SECRET,
+        value,
         attrs={
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
-            int(CKA_DERIVE): True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+            CKA_DERIVE: True,
         },
     )
 
 
 def _derive_generic_secret(
-    rs: Any, base: int, mechanism: Any,
+    rs: Any,
+    base: int,
+    mechanism: Any,
     key_len_bits: int,
     *,
     mech_param: Any = None,
 ) -> int:
     """Derive a GENERIC_SECRET key with standard attributes."""
     attrs = {
-        int(CKA_CLASS): int(CKO_SECRET_KEY),
-        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-        int(CKA_SENSITIVE): False,
-        int(CKA_EXTRACTABLE): True,
-        int(CKA_TOKEN): False,
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_TOKEN: False,
     }
     return derive_key(
-        rs.raw, rs.sh, base, mechanism,
+        rs.raw,
+        rs.sh,
+        base,
+        mechanism,
         attrs=attrs,
         mech_param=mech_param,
     )
@@ -107,9 +118,7 @@ def _derive_generic_secret(
 
 def _ulong_bytes(value: int) -> bytes:
     """Serialize a CK_ULONG to raw bytes (native byte order)."""
-    return bytes(ctypes.string_at(
-        ctypes.addressof(CK_ULONG(value)), ctypes.sizeof(CK_ULONG)
-    ))
+    return bytes(ctypes.string_at(ctypes.addressof(CK_ULONG(value)), ctypes.sizeof(CK_ULONG)))
 
 
 # ---------------------------------------------------------------------------
@@ -137,13 +146,13 @@ class TestConcatenateBaseAndKey:
             # CK_OBJECT_HANDLE is a single CK_ULONG - pass as raw bytes
             param_bytes = _ulong_bytes(second)
             derived = _derive_generic_secret(
-                rs, base, CKM_CONCATENATE_BASE_AND_KEY,
+                rs,
+                base,
+                CKM_CONCATENATE_BASE_AND_KEY,
                 len(expected) * 8,
                 mech_param=mech_bytes(CKM_CONCATENATE_BASE_AND_KEY, param_bytes),
             )
-            derived_value = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
@@ -170,13 +179,13 @@ class TestConcatenateBaseAndKey:
         try:
             param_bytes = _ulong_bytes(second)
             derived = _derive_generic_secret(
-                rs, base, CKM_CONCATENATE_BASE_AND_KEY,
+                rs,
+                base,
+                CKM_CONCATENATE_BASE_AND_KEY,
                 32 * 8,
                 mech_param=mech_bytes(CKM_CONCATENATE_BASE_AND_KEY, param_bytes),
             )
-            val = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_CONCATENATE_BASE_AND_KEY derive failed: {exc}")
@@ -209,13 +218,13 @@ class TestConcatenateBaseAndData:
         derived = 0
         try:
             derived = _derive_generic_secret(
-                rs, base, CKM_CONCATENATE_BASE_AND_DATA,
+                rs,
+                base,
+                CKM_CONCATENATE_BASE_AND_DATA,
                 len(expected) * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, data_bytes),
             )
-            derived_value = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
@@ -227,7 +236,8 @@ class TestConcatenateBaseAndData:
             destroy_quietly(rs.raw, rs.sh, base)
 
     def test_different_data_produces_different_derived_key(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Different data bytes yield different derived keys from the same base."""
         rs = p11_raw_session
@@ -243,21 +253,21 @@ class TestConcatenateBaseAndData:
         derived_b = 0
         try:
             derived_a = _derive_generic_secret(
-                rs, base, CKM_CONCATENATE_BASE_AND_DATA,
+                rs,
+                base,
+                CKM_CONCATENATE_BASE_AND_DATA,
                 32 * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, data_a),
             )
             derived_b = _derive_generic_secret(
-                rs, base, CKM_CONCATENATE_BASE_AND_DATA,
+                rs,
+                base,
+                CKM_CONCATENATE_BASE_AND_DATA,
                 32 * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, data_b),
             )
-            val_a = read_attributes(
-                rs.raw, rs.sh, derived_a, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
-            val_b = read_attributes(
-                rs.raw, rs.sh, derived_b, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
+            val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
             assert val_a != val_b
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_CONCATENATE_BASE_AND_DATA derive failed: {exc}")
@@ -290,13 +300,13 @@ class TestConcatenateDataAndBase:
         derived = 0
         try:
             derived = _derive_generic_secret(
-                rs, base, CKM_CONCATENATE_DATA_AND_BASE,
+                rs,
+                base,
+                CKM_CONCATENATE_DATA_AND_BASE,
                 len(expected) * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_DATA_AND_BASE, data_bytes),
             )
-            derived_value = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
@@ -323,21 +333,21 @@ class TestConcatenateDataAndBase:
         derived_db = 0
         try:
             derived_bd = _derive_generic_secret(
-                rs, base, CKM_CONCATENATE_BASE_AND_DATA,
+                rs,
+                base,
+                CKM_CONCATENATE_BASE_AND_DATA,
                 32 * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, data_bytes),
             )
             derived_db = _derive_generic_secret(
-                rs, base, CKM_CONCATENATE_DATA_AND_BASE,
+                rs,
+                base,
+                CKM_CONCATENATE_DATA_AND_BASE,
                 32 * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_DATA_AND_BASE, data_bytes),
             )
-            val_bd = read_attributes(
-                rs.raw, rs.sh, derived_bd, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
-            val_db = read_attributes(
-                rs.raw, rs.sh, derived_db, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val_bd = read_attributes(rs.raw, rs.sh, derived_bd, [CKA_VALUE])[CKA_VALUE]
+            val_db = read_attributes(rs.raw, rs.sh, derived_db, [CKA_VALUE])[CKA_VALUE]
             assert val_bd != val_db
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CONCATENATE ordering test failed: {exc}")
@@ -370,13 +380,13 @@ class TestXorBaseAndData:
         derived = 0
         try:
             derived = _derive_generic_secret(
-                rs, base, CKM_XOR_BASE_AND_DATA,
+                rs,
+                base,
+                CKM_XOR_BASE_AND_DATA,
                 len(base_bytes) * 8,
                 mech_param=mech_string_data(CKM_XOR_BASE_AND_DATA, data_bytes),
             )
-            derived_value = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
@@ -400,13 +410,13 @@ class TestXorBaseAndData:
         derived = 0
         try:
             derived = _derive_generic_secret(
-                rs, base, CKM_XOR_BASE_AND_DATA,
+                rs,
+                base,
+                CKM_XOR_BASE_AND_DATA,
                 len(base_bytes) * 8,
                 mech_param=mech_string_data(CKM_XOR_BASE_AND_DATA, data_bytes),
             )
-            val = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert val == base_bytes
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_XOR_BASE_AND_DATA derive failed: {exc}")
@@ -429,13 +439,13 @@ class TestXorBaseAndData:
         derived = 0
         try:
             derived = _derive_generic_secret(
-                rs, base, CKM_XOR_BASE_AND_DATA,
+                rs,
+                base,
+                CKM_XOR_BASE_AND_DATA,
                 len(base_bytes) * 8,
                 mech_param=mech_string_data(CKM_XOR_BASE_AND_DATA, data_bytes),
             )
-            val = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert val == expected
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_XOR_BASE_AND_DATA derive failed: {exc}")
@@ -466,13 +476,13 @@ class TestExtractKeyFromKey:
         derived = 0
         try:
             derived = _derive_generic_secret(
-                rs, base, CKM_EXTRACT_KEY_FROM_KEY,
+                rs,
+                base,
+                CKM_EXTRACT_KEY_FROM_KEY,
                 128,
                 mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(0)),
             )
-            derived_value = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
@@ -496,13 +506,13 @@ class TestExtractKeyFromKey:
         derived = 0
         try:
             derived = _derive_generic_secret(
-                rs, base, CKM_EXTRACT_KEY_FROM_KEY,
+                rs,
+                base,
+                CKM_EXTRACT_KEY_FROM_KEY,
                 128,
                 mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(128)),
             )
-            derived_value = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
@@ -514,7 +524,8 @@ class TestExtractKeyFromKey:
             destroy_quietly(rs.raw, rs.sh, base)
 
     def test_extract_different_offsets_yield_different_keys(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Different bit offsets yield different extracted key values."""
         rs = p11_raw_session
@@ -528,21 +539,21 @@ class TestExtractKeyFromKey:
         derived_b = 0
         try:
             derived_a = _derive_generic_secret(
-                rs, base, CKM_EXTRACT_KEY_FROM_KEY,
+                rs,
+                base,
+                CKM_EXTRACT_KEY_FROM_KEY,
                 128,
                 mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(0)),
             )
             derived_b = _derive_generic_secret(
-                rs, base, CKM_EXTRACT_KEY_FROM_KEY,
+                rs,
+                base,
+                CKM_EXTRACT_KEY_FROM_KEY,
                 128,
                 mech_param=mech_bytes(CKM_EXTRACT_KEY_FROM_KEY, _ulong_bytes(128)),
             )
-            val_a = read_attributes(
-                rs.raw, rs.sh, derived_a, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
-            val_b = read_attributes(
-                rs.raw, rs.sh, derived_b, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
+            val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
             assert val_a != val_b
         except (AssertionError, Exception) as exc:
             pytest.xfail(f"CKM_EXTRACT_KEY_FROM_KEY derive failed: {exc}")

@@ -56,7 +56,10 @@ pytestmark = pytest.mark.multipart
 def _import_aes_key(rs: Any, key_bytes: bytes) -> int:
     """Import AES key bytes via raw API."""
     return import_secret_key(
-        rs.raw, rs.sh, CKK_AES, key_bytes,
+        rs.raw,
+        rs.sh,
+        CKK_AES,
+        key_bytes,
         attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
     )
 
@@ -105,11 +108,19 @@ class TestMultipartEncrypt:
         data = b"\x42" * 4096
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC, data,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC,
+                data,
                 mech_param=mech_bytes(CKM_AES_CBC, iv),
             )
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC,
+                ct,
                 mech_param=mech_bytes(CKM_AES_CBC, iv),
             )
             assert pt == data
@@ -162,14 +173,18 @@ class TestMultipartSign:
         key_bytes = bytes(range(32))
         data = b"\x77" * 65536
 
-        p11_key = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_SECRET_KEY),
-            int(CKA_KEY_TYPE): int(CKK_SHA256_HMAC),
-            int(CKA_VALUE): key_bytes,
-            int(CKA_SIGN): True,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
-        })
+        p11_key = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_SHA256_HMAC,
+                CKA_VALUE: key_bytes,
+                CKA_SIGN: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+            },
+        )
         try:
             p11_mac = sign_single(rs.raw, rs.sh, p11_key, CKM_SHA256_HMAC, data)
             expected = hmac_mod.new(key_bytes, data, hashlib.sha256).digest()

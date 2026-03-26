@@ -34,7 +34,7 @@ class TestMechanismInfo:
         for mech in mechanisms:
             info = CK_MECHANISM_INFO()
             rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mech, byref(info))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             assert info.ulMinKeySize >= 0
             assert info.ulMaxKeySize >= info.ulMinKeySize
             break
@@ -45,17 +45,17 @@ class TestMechanismInfo:
         for mech in get_mechanism_list(rs.raw, rs.slot_id):
             info = CK_MECHANISM_INFO()
             rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mech, byref(info))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
 
     def test_aes_key_sizes(self, p11_raw_session: Any) -> None:
         """AES mechanism reports correct key size range."""
         rs = p11_raw_session
         mechanisms = get_mechanism_list(rs.raw, rs.slot_id)
-        if int(CKM_AES_CBC) not in mechanisms:
+        if CKM_AES_CBC not in mechanisms:
             pytest.skip("AES_CBC not supported")
         info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, int(CKM_AES_CBC), byref(info))
-        expect_rv(int(rv), CKR_OK)
+        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, CKM_AES_CBC, byref(info))
+        expect_rv(rv, CKR_OK)
         assert info.ulMinKeySize <= 16  # 128 bits = 16 bytes
         assert info.ulMaxKeySize >= 32  # 256 bits = 32 bytes
 
@@ -63,11 +63,11 @@ class TestMechanismInfo:
         """RSA mechanism reports reasonable key size range."""
         rs = p11_raw_session
         mechanisms = get_mechanism_list(rs.raw, rs.slot_id)
-        if int(CKM_RSA_PKCS) not in mechanisms:
+        if CKM_RSA_PKCS not in mechanisms:
             pytest.skip("RSA_PKCS not supported")
         info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, int(CKM_RSA_PKCS), byref(info))
-        expect_rv(int(rv), CKR_OK)
+        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, CKM_RSA_PKCS, byref(info))
+        expect_rv(rv, CKR_OK)
         assert info.ulMinKeySize <= 2048
         assert info.ulMaxKeySize >= 2048
 

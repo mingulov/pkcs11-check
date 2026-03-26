@@ -53,7 +53,7 @@ def _skip_if_no(rs: Any, mech_name: str) -> None:
 
 def _generate_ml_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[int, int]:
     # Default to ML-DSA-65 (NIST security category 3)
-    effective_param = param_set if param_set is not None else int(CKP_ML_DSA_65)
+    effective_param = param_set if param_set is not None else CKP_ML_DSA_65
     return _gen_keypair(
         rs.raw,
         rs.sh,
@@ -61,20 +61,20 @@ def _generate_ml_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[int
         pub_base=[attr_ulong(CKA_PARAMETER_SET, effective_param)],
         priv_base=[],
         public_attrs={
-            int(CKA_VERIFY): True,
-            int(CKA_TOKEN): False,
+            CKA_VERIFY: True,
+            CKA_TOKEN: False,
         },
         private_attrs={
-            int(CKA_SIGN): True,
-            int(CKA_TOKEN): False,
+            CKA_SIGN: True,
+            CKA_TOKEN: False,
         },
-        pub_skip={int(CKA_PARAMETER_SET)},
+        pub_skip={CKA_PARAMETER_SET},
     )
 
 
 def _generate_slh_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[int, int]:
     # Default to SLH-DSA-SHA2-128s (small signatures, security category 1)
-    effective_param = param_set if param_set is not None else int(CKP_SLH_DSA_SHA2_128S)
+    effective_param = param_set if param_set is not None else CKP_SLH_DSA_SHA2_128S
     return _gen_keypair(
         rs.raw,
         rs.sh,
@@ -82,14 +82,14 @@ def _generate_slh_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[in
         pub_base=[attr_ulong(CKA_PARAMETER_SET, effective_param)],
         priv_base=[],
         public_attrs={
-            int(CKA_VERIFY): True,
-            int(CKA_TOKEN): False,
+            CKA_VERIFY: True,
+            CKA_TOKEN: False,
         },
         private_attrs={
-            int(CKA_SIGN): True,
-            int(CKA_TOKEN): False,
+            CKA_SIGN: True,
+            CKA_TOKEN: False,
         },
-        pub_skip={int(CKA_PARAMETER_SET)},
+        pub_skip={CKA_PARAMETER_SET},
     )
 
 
@@ -118,10 +118,10 @@ class TestMLDSAKeyGeneration:
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
-            pub_cls = read_attributes(rs.raw, rs.sh, pub, [int(CKA_CLASS)])[int(CKA_CLASS)]
-            priv_cls = read_attributes(rs.raw, rs.sh, priv, [int(CKA_CLASS)])[int(CKA_CLASS)]
-            assert pub_cls == int(CKO_PUBLIC_KEY)
-            assert priv_cls == int(CKO_PRIVATE_KEY)
+            pub_cls = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])[CKA_CLASS]
+            priv_cls = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])[CKA_CLASS]
+            assert pub_cls == CKO_PUBLIC_KEY
+            assert priv_cls == CKO_PRIVATE_KEY
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -132,17 +132,17 @@ class TestMLDSAKeyGeneration:
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
-            pub_kt = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-            priv_kt = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-            assert pub_kt == int(CKK_ML_DSA)
-            assert priv_kt == int(CKK_ML_DSA)
+            pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            assert pub_kt == CKK_ML_DSA
+            assert priv_kt == CKK_ML_DSA
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
     @pytest.mark.parametrize(
         "param_set",
-        [int(CKP_ML_DSA_44), int(CKP_ML_DSA_65), int(CKP_ML_DSA_87)],
+        [CKP_ML_DSA_44, CKP_ML_DSA_65, CKP_ML_DSA_87],
         ids=["ML_DSA_44", "ML_DSA_65", "ML_DSA_87"],
     )
     def test_ml_dsa_keypair_parameter_set(self, p11_raw_session: Any, param_set: int) -> None:
@@ -261,17 +261,17 @@ class TestSLHDSAKeyGeneration:
             pytest.xfail("SLH-DSA key generation failed")
             raise  # unreachable
         try:
-            pub_kt = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-            priv_kt = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-            assert pub_kt == int(CKK_SLH_DSA)
-            assert priv_kt == int(CKK_SLH_DSA)
+            pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            assert pub_kt == CKK_SLH_DSA
+            assert priv_kt == CKK_SLH_DSA
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
     @pytest.mark.parametrize(
         "param_set",
-        [int(CKP_SLH_DSA_SHA2_128S), int(CKP_SLH_DSA_SHA2_128F), int(CKP_SLH_DSA_SHA2_256F)],
+        [CKP_SLH_DSA_SHA2_128S, CKP_SLH_DSA_SHA2_128F, CKP_SLH_DSA_SHA2_256F],
         ids=["SHA2_128S", "SHA2_128F", "SHA2_256F"],
     )
     def test_slh_dsa_keypair_parameter_set(self, p11_raw_session: Any, param_set: int) -> None:

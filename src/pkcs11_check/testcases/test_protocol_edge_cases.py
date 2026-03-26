@@ -50,12 +50,18 @@ class TestResourceExhaustion:
         objs: list[int] = []
         try:
             for i in range(100):
-                objs.append(create_object(rs.raw, rs.sh, {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): f"exhaust-{i}",
-                    int(CKA_VALUE): b"x" * 1024,
-                    int(CKA_TOKEN): False,
-                }))
+                objs.append(
+                    create_object(
+                        rs.raw,
+                        rs.sh,
+                        {
+                            CKA_CLASS: CKO_DATA,
+                            CKA_LABEL: f"exhaust-{i}",
+                            CKA_VALUE: b"x" * 1024,
+                            CKA_TOKEN: False,
+                        },
+                    )
+                )
         except AssertionError:
             pass  # Graceful limit
         for o in objs:
@@ -84,9 +90,9 @@ class TestSpecAmbiguousCalls:
         raw = RawPKCS11.from_lib("{module}")
         raw.C_Initialize(None)
         rv = raw.C_Initialize(None)
-        if rv == int(CKR_OK):
+        if rv == CKR_OK:
             print("OK: second init succeeded")
-        elif rv == int(CKR_CRYPTOKI_ALREADY_INITIALIZED):
+        elif rv == CKR_CRYPTOKI_ALREADY_INITIALIZED:
             print("OK: CKR_CRYPTOKI_ALREADY_INITIALIZED")
         else:
             print(f"OK: 0x{{rv:08x}}")
@@ -94,15 +100,16 @@ class TestSpecAmbiguousCalls:
         """
         result = subprocess.run(
             [sys.executable, "-c", textwrap.dedent(script)],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
-        assert result.returncode == 0, (
-            f"Double init crashed: {result.stderr}"
-        )
+        assert result.returncode == 0, f"Double init crashed: {result.stderr}"
         assert "OK:" in result.stdout
 
     def test_get_function_list_always_works(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """C_GetFunctionList should always work."""
         from pkcs11_check.raw.bootstrap import get_slot_ids
@@ -125,7 +132,9 @@ class TestV240V32AttributeMix:
     """v2.40 + v3.2 attribute mix (task 7.14)."""
 
     def test_v32_attrs_on_v240_module(
-        self, p11_raw_session: Any, p11_interface_version: str,
+        self,
+        p11_raw_session: Any,
+        p11_interface_version: str,
     ) -> None:
         """v3.2-only attributes on v2.40 module - must reject, not crash."""
         if p11_interface_version not in ("2.40",):
@@ -135,21 +144,26 @@ class TestV240V32AttributeMix:
         # Try creating key with a v3.2-only attribute
         try:
             gen_rsa_keypair(
-                rs.raw, rs.sh, 2048,
-                public_attrs={int(CKA_TOKEN): False},
+                rs.raw,
+                rs.sh,
+                2048,
+                public_attrs={CKA_TOKEN: False},
             )
         except (AssertionError, TypeError, AttributeError):
             pass
 
     def test_encapsulate_attr_on_non_pqc(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """CKA_ENCAPSULATE on non-PQC key - must reject, not crash."""
         rs = p11_raw_session
         try:
             gen_aes_key(
-                rs.raw, rs.sh, 256,
-                attrs={int(CKA_ENCAPSULATE): True},
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={CKA_ENCAPSULATE: True},
             )
         except (AssertionError, TypeError, AttributeError):
             pass

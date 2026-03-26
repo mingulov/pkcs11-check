@@ -59,14 +59,16 @@ pytestmark = pytest.mark.full
 def _gen_otp_key(rs: Any, key_type: int, mechanism: int) -> int:
     """Generate an OTP key with minimal template."""
     return gen_aes_key(
-        rs.raw, rs.sh, 0,
+        rs.raw,
+        rs.sh,
+        0,
         attrs={
-            int(CKA_CLASS): int(CKO_SECRET_KEY),
-            int(CKA_KEY_TYPE): key_type,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
-            int(CKA_SIGN): True,
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: key_type,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+            CKA_SIGN: True,
         },
         mechanism=mechanism,
     )
@@ -81,7 +83,7 @@ class TestHOTP:
             pytest.skip("CKM_HOTP_KEY_GEN not supported")
         key = 0
         try:
-            key = _gen_otp_key(rs, int(CKK_HOTP), int(CKM_HOTP_KEY_GEN))
+            key = _gen_otp_key(rs, CKK_HOTP, CKM_HOTP_KEY_GEN)
             assert key != 0
         except AssertionError as exc:
             pytest.xfail(f"CKM_HOTP_KEY_GEN keygen rejected: {exc}")
@@ -97,7 +99,7 @@ class TestHOTP:
             pytest.skip("CKM_HOTP not supported")
         key = 0
         try:
-            key = _gen_otp_key(rs, int(CKK_HOTP), int(CKM_HOTP_KEY_GEN))
+            key = _gen_otp_key(rs, CKK_HOTP, CKM_HOTP_KEY_GEN)
             otp = sign_single(rs.raw, rs.sh, key, CKM_HOTP, b"")
             assert len(otp) > 0
         except AssertionError as exc:
@@ -114,7 +116,7 @@ class TestHOTP:
             pytest.skip("CKM_HOTP not supported")
         key = 0
         try:
-            key = _gen_otp_key(rs, int(CKK_HOTP), int(CKM_HOTP_KEY_GEN))
+            key = _gen_otp_key(rs, CKK_HOTP, CKM_HOTP_KEY_GEN)
             otp1 = sign_single(rs.raw, rs.sh, key, CKM_HOTP, b"")
             otp2 = sign_single(rs.raw, rs.sh, key, CKM_HOTP, b"")
             assert otp1 != otp2, "Consecutive HOTP values must differ"
@@ -136,7 +138,7 @@ class TestSecurID:
             pytest.skip("CKM_SECURID_KEY_GEN not supported")
         key = 0
         try:
-            key = _gen_otp_key(rs, int(CKK_SECURID), int(CKM_SECURID_KEY_GEN))
+            key = _gen_otp_key(rs, CKK_SECURID, CKM_SECURID_KEY_GEN)
             assert key != 0
         except AssertionError as exc:
             pytest.xfail(f"CKM_SECURID_KEY_GEN keygen rejected: {exc}")
@@ -152,7 +154,7 @@ class TestSecurID:
             pytest.skip("CKM_SECURID not supported")
         key = 0
         try:
-            key = _gen_otp_key(rs, int(CKK_SECURID), int(CKM_SECURID_KEY_GEN))
+            key = _gen_otp_key(rs, CKK_SECURID, CKM_SECURID_KEY_GEN)
             otp = sign_single(rs.raw, rs.sh, key, CKM_SECURID, b"")
             assert len(otp) > 0
         except AssertionError as exc:
@@ -171,7 +173,7 @@ class TestACTI:
             pytest.skip("CKM_ACTI_KEY_GEN not supported")
         key = 0
         try:
-            key = _gen_otp_key(rs, int(CKK_ACTI), int(CKM_ACTI_KEY_GEN))
+            key = _gen_otp_key(rs, CKK_ACTI, CKM_ACTI_KEY_GEN)
             assert key != 0
         except AssertionError as exc:
             pytest.xfail(f"CKM_ACTI_KEY_GEN keygen rejected: {exc}")
@@ -187,7 +189,7 @@ class TestACTI:
             pytest.skip("CKM_ACTI not supported")
         key = 0
         try:
-            key = _gen_otp_key(rs, int(CKK_ACTI), int(CKM_ACTI_KEY_GEN))
+            key = _gen_otp_key(rs, CKK_ACTI, CKM_ACTI_KEY_GEN)
             otp = sign_single(rs.raw, rs.sh, key, CKM_ACTI, b"")
             assert len(otp) > 0
         except AssertionError as exc:
@@ -202,35 +204,42 @@ class TestCTKIP:
 
     def _make_generic_key(self, rs: Any) -> int:
         return gen_aes_key(
-            rs.raw, rs.sh, 128,
+            rs.raw,
+            rs.sh,
+            128,
             attrs={
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_DERIVE): True,
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_DERIVE: True,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
             },
-            mechanism=int(CKA_KEY_TYPE),  # use AES_KEY_GEN default
+            mechanism=CKA_KEY_TYPE,  # use AES_KEY_GEN default
         )
 
     def _make_generic_key_raw(self, rs: Any) -> int:
         """Create a 16-byte GENERIC_SECRET key."""
-        return create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_SECRET_KEY),
-            int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-            int(CKA_VALUE_LEN): 16,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
-            int(CKA_DERIVE): True,
-            int(CKA_SIGN): True,
-            int(CKA_VERIFY): True,
-            int(CKA_WRAP): True,
-        })
+        return create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: 16,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_DERIVE: True,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_WRAP: True,
+            },
+        )
 
     def test_kip_derive_skips_when_unsupported(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KIP_DERIVE"):
@@ -239,8 +248,9 @@ class TestCTKIP:
         derived = 0
         try:
             base_key = _gen_otp_key(
-                rs, int(CKK_GENERIC_SECRET),
-                int(CKM_KIP_DERIVE),
+                rs,
+                CKK_GENERIC_SECRET,
+                CKM_KIP_DERIVE,
             )
             # This will almost certainly fail - xfail expected
             pytest.xfail("CKM_KIP_DERIVE keygen unexpectedly succeeded")
@@ -253,7 +263,8 @@ class TestCTKIP:
                 destroy_quietly(rs.raw, rs.sh, base_key)
 
     def test_kip_wrap_skips_when_unsupported(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KIP_WRAP"):
@@ -262,7 +273,8 @@ class TestCTKIP:
         pytest.xfail("CKM_KIP_WRAP requires specialized key types")
 
     def test_kip_mac_skips_when_unsupported(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KIP_MAC"):
@@ -270,7 +282,8 @@ class TestCTKIP:
         pytest.xfail("CKM_KIP_MAC requires specialized key types")
 
     def test_kip_mac_verify_skips_when_unsupported(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("KIP_MAC"):

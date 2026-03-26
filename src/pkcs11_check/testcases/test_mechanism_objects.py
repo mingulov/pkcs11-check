@@ -35,7 +35,7 @@ class TestMechanismObjects:
         """Enumerate CKO_MECHANISM objects without error."""
         rs = p11_raw_session
         try:
-            tmpl = template_from_dict({int(CKA_CLASS): int(CKO_MECHANISM)})
+            tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
             mechs = find_objects(rs.raw, rs.sh, tmpl)
         except AssertionError as e:
             pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
@@ -45,7 +45,7 @@ class TestMechanismObjects:
         """Each CKO_MECHANISM object has a readable CKA_MECHANISM_TYPE."""
         rs = p11_raw_session
         try:
-            tmpl = template_from_dict({int(CKA_CLASS): int(CKO_MECHANISM)})
+            tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
             mechs = find_objects(rs.raw, rs.sh, tmpl)
         except AssertionError as e:
             pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
@@ -53,8 +53,8 @@ class TestMechanismObjects:
             pytest.skip("No CKO_MECHANISM objects present")
         for obj_h in mechs:
             try:
-                attrs = read_attributes(rs.raw, rs.sh, obj_h, [int(CKA_MECHANISM_TYPE)])
-                mtype = attrs[int(CKA_MECHANISM_TYPE)]
+                attrs = read_attributes(rs.raw, rs.sh, obj_h, [CKA_MECHANISM_TYPE])
+                mtype = attrs[CKA_MECHANISM_TYPE]
                 assert isinstance(mtype, int), f"Expected int MECHANISM_TYPE, got {type(mtype)}"
             except AssertionError as e:
                 pytest.xfail(f"Cannot read CKA_MECHANISM_TYPE from mechanism object: {e}")
@@ -65,7 +65,7 @@ class TestMechanismObjects:
 
         rs = p11_raw_session
         try:
-            tmpl = template_from_dict({int(CKA_CLASS): int(CKO_MECHANISM)})
+            tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
             mechs = find_objects(rs.raw, rs.sh, tmpl)
         except AssertionError as e:
             pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
@@ -75,8 +75,8 @@ class TestMechanismObjects:
         vendor_base = 0x80000000
         for obj_h in mechs:
             try:
-                attrs = read_attributes(rs.raw, rs.sh, obj_h, [int(CKA_MECHANISM_TYPE)])
-                mtype = attrs[int(CKA_MECHANISM_TYPE)]
+                attrs = read_attributes(rs.raw, rs.sh, obj_h, [CKA_MECHANISM_TYPE])
+                mtype = attrs[CKA_MECHANISM_TYPE]
             except AssertionError:
                 continue
             if isinstance(mtype, int) and mtype < vendor_base and mtype not in known:
@@ -92,7 +92,7 @@ class TestMechanismObjects:
         """CKO_MECHANISM objects reject C_SetAttributeValue."""
         rs = p11_raw_session
         try:
-            tmpl = template_from_dict({int(CKA_CLASS): int(CKO_MECHANISM)})
+            tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
             mechs = find_objects(rs.raw, rs.sh, tmpl)
         except AssertionError as e:
             pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
@@ -101,7 +101,7 @@ class TestMechanismObjects:
         obj_h = mechs[0]
         # Attempt to modify CKA_MECHANISM_TYPE - should be rejected
         try:
-            set_attributes(rs.raw, rs.sh, obj_h, {int(CKA_MECHANISM_TYPE): int(CKM_AES_KEY_GEN)})
+            set_attributes(rs.raw, rs.sh, obj_h, {CKA_MECHANISM_TYPE: CKM_AES_KEY_GEN})
             # If we get here, module silently accepted the write
             from pkcs11_check.compliance import ComplianceLevel, note
 

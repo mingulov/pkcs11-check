@@ -46,8 +46,10 @@ class TestSearchByID:
         rs = p11_raw_session
         key_id = _unique_id()
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_ID): key_id, int(CKA_LABEL): "id-search"},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_ID: key_id, CKA_LABEL: "id-search"},
         )
         try:
             tmpl = template(attr_bytes(CKA_ID, key_id))
@@ -67,11 +69,11 @@ class TestSearchByID:
         """Combined CKA_ID + CKA_CLASS search."""
         rs = p11_raw_session
         key_id = _unique_id()
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_ID): key_id})
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_ID: key_id})
         try:
             tmpl = template(
                 attr_bytes(CKA_ID, key_id),
-                attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
             )
             found = find_objects(rs.raw, rs.sh, tmpl)
             assert len(found) >= 1
@@ -87,14 +89,16 @@ class TestKeypairIDLinkage:
         rs = p11_raw_session
         key_id = _unique_id()
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ID): key_id},
-            private_attrs={int(CKA_ID): key_id},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ID: key_id},
+            private_attrs={CKA_ID: key_id},
         )
         try:
-            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_ID)])
-            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_ID)])
-            assert pub_attrs[int(CKA_ID)] == priv_attrs[int(CKA_ID)] == key_id
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ID])
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ID])
+            assert pub_attrs[CKA_ID] == priv_attrs[CKA_ID] == key_id
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -104,15 +108,17 @@ class TestKeypairIDLinkage:
         rs = p11_raw_session
         key_id = _unique_id()
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ID): key_id},
-            private_attrs={int(CKA_ID): key_id},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ID: key_id},
+            private_attrs={CKA_ID: key_id},
         )
         try:
             # Find public key
             tmpl_pub = template(
                 attr_bytes(CKA_ID, key_id),
-                attr_ulong(CKA_CLASS, int(CKO_PUBLIC_KEY)),
+                attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
             )
             pubs = find_objects(rs.raw, rs.sh, tmpl_pub)
             assert len(pubs) >= 1
@@ -120,7 +126,7 @@ class TestKeypairIDLinkage:
             # Find private key
             tmpl_priv = template(
                 attr_bytes(CKA_ID, key_id),
-                attr_ulong(CKA_CLASS, int(CKO_PRIVATE_KEY)),
+                attr_ulong(CKA_CLASS, CKO_PRIVATE_KEY),
             )
             privs = find_objects(rs.raw, rs.sh, tmpl_priv)
             assert len(privs) >= 1
@@ -133,9 +139,11 @@ class TestKeypairIDLinkage:
         rs = p11_raw_session
         key_id = _unique_id()
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ID): key_id},
-            private_attrs={int(CKA_ID): key_id},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ID: key_id},
+            private_attrs={CKA_ID: key_id},
         )
         try:
             tmpl = template(attr_bytes(CKA_ID, key_id))
@@ -153,13 +161,13 @@ class TestMultiAttributeSearch:
         """Search by label + key type."""
         rs = p11_raw_session
         label = f"multi-{uuid.uuid4().hex[:8]}"
-        k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={int(CKA_LABEL): label})
-        k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): label})
+        k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
+        k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
         try:
             tmpl = template(
                 attr_bytes(CKA_LABEL, label.encode("utf-8")),
-                attr_ulong(CKA_CLASS, int(CKO_SECRET_KEY)),
-                attr_ulong(CKA_KEY_TYPE, int(CKK_AES)),
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_AES),
             )
             found = find_objects(rs.raw, rs.sh, tmpl)
             assert len(found) >= 2
@@ -171,12 +179,12 @@ class TestMultiAttributeSearch:
         """Multi-attribute search excludes non-matching objects."""
         rs = p11_raw_session
         label = f"filter-{uuid.uuid4().hex[:8]}"
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): label})
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
         try:
             # Search for non-existent combination
             tmpl = template(
                 attr_bytes(CKA_LABEL, label.encode("utf-8")),
-                attr_ulong(CKA_CLASS, int(CKO_PUBLIC_KEY)),
+                attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
             )
             found = find_objects(rs.raw, rs.sh, tmpl)
             assert len(found) == 0  # AES key is SECRET_KEY, not PUBLIC_KEY

@@ -50,23 +50,23 @@ def _ulabel(prefix: str = "vis") -> str:
 
 def _open_rw_session(raw: Any, slot_id: int, pin_bytes: bytes | None) -> int:
     """Open an RW session, optionally logging in."""
-    flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+    flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
     sh = raw_open_session(raw, slot_id, flags)
     if pin_bytes:
-        login_user(raw, sh, int(CKU_USER), pin_bytes)
+        login_user(raw, sh, CKU_USER, pin_bytes)
     return sh
 
 
 def _open_ro_session(raw: Any, slot_id: int) -> int:
     """Open a read-only session without login."""
-    flags = int(CKF_SERIAL_SESSION)
+    flags = CKF_SERIAL_SESSION
     return raw_open_session(raw, slot_id, flags)
 
 
 def _find_data_by_label(raw: Any, sh: int, label: str) -> list[int]:
     """Find CKO_DATA objects matching a label."""
     tmpl = template(
-        attr_ulong(CKA_CLASS, int(CKO_DATA)),
+        attr_ulong(CKA_CLASS, CKO_DATA),
         attr_bytes(CKA_LABEL, label.encode("utf-8")),
     )
     return find_objects(raw, sh, tmpl)
@@ -79,30 +79,33 @@ def _find_by_label(raw: Any, sh: int, label: str) -> list[int]:
 
 
 def _create_data_obj(
-    raw: Any, sh: int, label: str, value: bytes,
-    *, token: bool = False, private: bool | None = None,
+    raw: Any,
+    sh: int,
+    label: str,
+    value: bytes,
+    *,
+    token: bool = False,
+    private: bool | None = None,
     modifiable: bool | None = None,
 ) -> int:
     """Create a CKO_DATA object."""
     attrs: dict[int, Any] = {
-        int(CKA_CLASS): int(CKO_DATA),
-        int(CKA_LABEL): label,
-        int(CKA_VALUE): value,
-        int(CKA_TOKEN): token,
+        CKA_CLASS: CKO_DATA,
+        CKA_LABEL: label,
+        CKA_VALUE: value,
+        CKA_TOKEN: token,
     }
     if private is not None:
-        attrs[int(CKA_PRIVATE)] = private
+        attrs[CKA_PRIVATE] = private
     if modifiable is not None:
-        attrs[int(CKA_MODIFIABLE)] = modifiable
+        attrs[CKA_MODIFIABLE] = modifiable
     return create_object(raw, sh, attrs)
 
 
 class TestSessionObjectLifecycle:
     """Verify session objects disappear when session closes."""
 
-    def test_session_object_gone_after_close(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_session_object_gone_after_close(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Session object not visible in new session after original closes."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
@@ -111,7 +114,7 @@ class TestSessionObjectLifecycle:
         # Create session object in session 1, then close it
         sh1 = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
-            gen_aes_key(rs.raw, sh1, 256, attrs={int(CKA_TOKEN): False, int(CKA_LABEL): label})
+            gen_aes_key(rs.raw, sh1, 256, attrs={CKA_TOKEN: False, CKA_LABEL: label})
         finally:
             close_session_quietly(rs.raw, sh1)
 
@@ -148,7 +151,7 @@ class TestSessionObjectLifecycle:
         """Session object is findable within the same session."""
         rs = p11_raw_session
         label = _ulabel("sess-alive")
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_TOKEN): False, int(CKA_LABEL): label})
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False, CKA_LABEL: label})
         try:
             found = _find_by_label(rs.raw, rs.sh, label)
             assert len(found) >= 1
@@ -170,7 +173,7 @@ class TestTokenObjectPersistence:
         # Session 1: create token object
         sh1 = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
-            gen_aes_key(rs.raw, sh1, 256, attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label})
+            gen_aes_key(rs.raw, sh1, 256, attrs={CKA_TOKEN: True, CKA_LABEL: label})
         finally:
             close_session_quietly(rs.raw, sh1)
 
@@ -203,16 +206,14 @@ class TestTokenObjectPersistence:
         try:
             found = _find_data_by_label(rs.raw, sh2, label)
             assert len(found) >= 1, "Token data object did not persist"
-            attrs = read_attributes(rs.raw, sh2, found[0], [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == b"persistent-value"
+            attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
+            assert attrs[CKA_VALUE] == b"persistent-value"
         finally:
             for fh in _find_data_by_label(rs.raw, sh2, label):
                 destroy_quietly(rs.raw, sh2, fh)
             close_session_quietly(rs.raw, sh2)
 
-    def test_token_object_value_preserved(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_token_object_value_preserved(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Token object attribute values are preserved across sessions."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
@@ -229,9 +230,9 @@ class TestTokenObjectPersistence:
         try:
             found = _find_data_by_label(rs.raw, sh2, label)
             assert len(found) >= 1
-            attrs = read_attributes(rs.raw, sh2, found[0], [int(CKA_LABEL), int(CKA_VALUE)])
-            assert attrs[int(CKA_LABEL)] == label
-            assert attrs[int(CKA_VALUE)] == payload
+            attrs = read_attributes(rs.raw, sh2, found[0], [CKA_LABEL, CKA_VALUE])
+            assert attrs[CKA_LABEL] == label
+            assert attrs[CKA_VALUE] == payload
         finally:
             for fh in _find_data_by_label(rs.raw, sh2, label):
                 destroy_quietly(rs.raw, sh2, fh)
@@ -304,8 +305,8 @@ class TestPrivateVisibility:
                         reference="PKCS#11 spec: public objects visible in public sessions",
                     )
                 else:
-                    attrs = read_attributes(rs.raw, sh_pub, found[0], [int(CKA_VALUE)])
-                    assert attrs[int(CKA_VALUE)] == b"public-data"
+                    attrs = read_attributes(rs.raw, sh_pub, found[0], [CKA_VALUE])
+                    assert attrs[CKA_VALUE] == b"public-data"
             finally:
                 close_session_quietly(rs.raw, sh_pub)
         finally:
@@ -332,8 +333,8 @@ class TestPrivateVisibility:
         try:
             found = _find_data_by_label(rs.raw, sh2, label)
             assert len(found) >= 1, "Private object not visible after login"
-            attrs = read_attributes(rs.raw, sh2, found[0], [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == b"secret-stuff"
+            attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
+            assert attrs[CKA_VALUE] == b"secret-stuff"
         finally:
             for fh in _find_data_by_label(rs.raw, sh2, label):
                 destroy_quietly(rs.raw, sh2, fh)
@@ -355,10 +356,15 @@ class TestCrossSessionModification:
         sh_a = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
             h = _create_data_obj(
-                rs.raw, sh_a, label, b"original", token=True, modifiable=True,
+                rs.raw,
+                sh_a,
+                label,
+                b"original",
+                token=True,
+                modifiable=True,
             )
             try:
-                set_attributes(rs.raw, sh_a, h, {int(CKA_LABEL): new_label})
+                set_attributes(rs.raw, sh_a, h, {CKA_LABEL: new_label})
 
                 sh_b = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
                 try:
@@ -375,9 +381,7 @@ class TestCrossSessionModification:
         finally:
             close_session_quietly(rs.raw, sh_a)
 
-    def test_modify_value_cross_session(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_modify_value_cross_session(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Modify CKA_VALUE in session A, verify in session B.
 
         PKCS#11 spec permits C_SetAttributeValue on CKA_VALUE for CKO_DATA
@@ -393,11 +397,17 @@ class TestCrossSessionModification:
         sh_a = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
             h = _create_data_obj(
-                rs.raw, sh_a, label, b"before", token=True, modifiable=True, private=False,
+                rs.raw,
+                sh_a,
+                label,
+                b"before",
+                token=True,
+                modifiable=True,
+                private=False,
             )
             try:
                 try:
-                    set_attributes(rs.raw, sh_a, h, {int(CKA_VALUE): b"after"})
+                    set_attributes(rs.raw, sh_a, h, {CKA_VALUE: b"after"})
                 except AssertionError as e:
                     err_msg = str(e)
                     if (
@@ -412,19 +422,15 @@ class TestCrossSessionModification:
                             "PKCS#11 spec does not mandate mutability of CKA_VALUE post-creation",
                             ComplianceLevel.VENDOR,
                         )
-                        pytest.xfail(
-                            "Module treats CKA_VALUE as read-only after object creation"
-                        )
+                        pytest.xfail("Module treats CKA_VALUE as read-only after object creation")
                     raise
 
                 sh_b = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
                 try:
                     found = _find_data_by_label(rs.raw, sh_b, label)
                     assert len(found) >= 1
-                    attrs = read_attributes(rs.raw, sh_b, found[0], [int(CKA_VALUE)])
-                    assert attrs[int(CKA_VALUE)] == b"after", (
-                        "Modified value not reflected in session B"
-                    )
+                    attrs = read_attributes(rs.raw, sh_b, found[0], [CKA_VALUE])
+                    assert attrs[CKA_VALUE] == b"after", "Modified value not reflected in session B"
                 finally:
                     close_session_quietly(rs.raw, sh_b)
             finally:
@@ -437,9 +443,7 @@ class TestCrossSessionModification:
 class TestCrossSessionDestruction:
     """Destruction in one session reflected in another."""
 
-    def test_destroy_in_a_gone_in_b(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_destroy_in_a_gone_in_b(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Token object destroyed in session A is gone from session B search."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
@@ -527,9 +531,7 @@ class TestTokenPrivateInteraction:
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
-    def test_public_token_obj_persists(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_public_token_obj_persists(self, p11_raw_session: Any, p11_config: Any) -> None:
         """TOKEN=True, PRIVATE=False object persists and is publicly visible."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
@@ -538,7 +540,12 @@ class TestTokenPrivateInteraction:
         sh1 = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
             _create_data_obj(
-                rs.raw, sh1, label, b"pub-token-data", token=True, private=False,
+                rs.raw,
+                sh1,
+                label,
+                b"pub-token-data",
+                token=True,
+                private=False,
             )
         finally:
             close_session_quietly(rs.raw, sh1)
@@ -563,7 +570,12 @@ class TestTokenPrivateInteraction:
         sh1 = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
             _create_data_obj(
-                rs.raw, sh1, label, b"priv-token-data", token=True, private=True,
+                rs.raw,
+                sh1,
+                label,
+                b"priv-token-data",
+                token=True,
+                private=True,
             )
         finally:
             close_session_quietly(rs.raw, sh1)
@@ -572,8 +584,8 @@ class TestTokenPrivateInteraction:
         try:
             found = _find_data_by_label(rs.raw, sh2, label)
             assert len(found) >= 1, "Private token object not found after login in new session"
-            attrs = read_attributes(rs.raw, sh2, found[0], [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == b"priv-token-data"
+            attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
+            assert attrs[CKA_VALUE] == b"priv-token-data"
         finally:
             for fh in _find_data_by_label(rs.raw, sh2, label):
                 destroy_quietly(rs.raw, sh2, fh)
@@ -611,8 +623,8 @@ class TestSessionObjectCrossVisibility:
                             ComplianceLevel.VENDOR,
                         )
                     else:
-                        attrs = read_attributes(rs.raw, sh_b, found[0], [int(CKA_VALUE)])
-                        assert attrs[int(CKA_VALUE)] == b"cross-visible"
+                        attrs = read_attributes(rs.raw, sh_b, found[0], [CKA_VALUE])
+                        assert attrs[CKA_VALUE] == b"cross-visible"
                 finally:
                     close_session_quietly(rs.raw, sh_b)
             finally:
@@ -651,9 +663,7 @@ class TestSessionObjectCrossVisibility:
 class TestTokenObjectImmediateVisibility:
     """Token objects visible immediately in new sessions (no caching)."""
 
-    def test_token_object_visible_immediately(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_token_object_visible_immediately(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Newly created token object visible immediately in another session."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
@@ -675,9 +685,7 @@ class TestTokenObjectImmediateVisibility:
         finally:
             close_session_quietly(rs.raw, sh_a)
 
-    def test_token_key_usable_immediately(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_token_key_usable_immediately(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Token key created in A is usable for crypto in B immediately."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
@@ -685,17 +693,22 @@ class TestTokenObjectImmediateVisibility:
 
         sh_a = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
-            key = gen_aes_key(rs.raw, sh_a, 256, attrs={
-                int(CKA_TOKEN): True,
-                int(CKA_LABEL): label,
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-            })
+            key = gen_aes_key(
+                rs.raw,
+                sh_a,
+                256,
+                attrs={
+                    CKA_TOKEN: True,
+                    CKA_LABEL: label,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                },
+            )
             try:
                 sh_b = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
                 try:
                     tmpl = template(
-                        attr_ulong(CKA_KEY_TYPE, int(CKK_AES)),
+                        attr_ulong(CKA_KEY_TYPE, CKK_AES),
                         attr_bytes(CKA_LABEL, label.encode("utf-8")),
                     )
                     found = find_objects(rs.raw, sh_b, tmpl)
@@ -722,7 +735,11 @@ class TestTokenObjectImmediateVisibility:
         try:
             for lbl in labels:
                 h = _create_data_obj(
-                    rs.raw, sh_a, lbl, lbl.encode(), token=True,
+                    rs.raw,
+                    sh_a,
+                    lbl,
+                    lbl.encode(),
+                    token=True,
                 )
                 handles.append(h)
 

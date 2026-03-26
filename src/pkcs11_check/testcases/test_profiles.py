@@ -26,8 +26,8 @@ pytestmark = pytest.mark.requires_v30
 
 # Known standard profile IDs
 _KNOWN_PROFILE_IDS = {
-    int(CKP_BASELINE_PROVIDER),
-    int(CKP_EXTENDED_PROVIDER),
+    CKP_BASELINE_PROVIDER,
+    CKP_EXTENDED_PROVIDER,
     # Authentication Token and Public Certificates Token profiles
     0x00000003,  # CKP_AUTHENTICATION_TOKEN
     0x00000004,  # CKP_PUBLIC_CERTIFICATES_TOKEN
@@ -41,8 +41,9 @@ class TestProfileObjects:
         """Enumerate CKO_PROFILE objects."""
         try:
             return find_objects(
-                rs.raw, rs.sh,
-                template_from_dict({int(CKA_CLASS): int(CKO_PROFILE)}),
+                rs.raw,
+                rs.sh,
+                template_from_dict({CKA_CLASS: CKO_PROFILE}),
             )
         except (AssertionError, Exception):
             pytest.xfail("Module does not support CKO_PROFILE enumeration")
@@ -54,7 +55,8 @@ class TestProfileObjects:
         assert isinstance(profiles, list)
 
     def test_profile_objects_have_profile_id(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Each CKO_PROFILE object has a readable CKA_PROFILE_ID."""
         rs = p11_raw_session
@@ -64,9 +66,12 @@ class TestProfileObjects:
         for prof in profiles:
             try:
                 attrs = read_attributes(
-                    rs.raw, rs.sh, prof, [CKA_PROFILE_ID],
+                    rs.raw,
+                    rs.sh,
+                    prof,
+                    [CKA_PROFILE_ID],
                 )
-                pid = attrs[int(CKA_PROFILE_ID)]
+                pid = attrs[CKA_PROFILE_ID]
                 assert pid is not None
             except (AssertionError, KeyError):
                 pytest.xfail("Cannot read CKA_PROFILE_ID")
@@ -80,22 +85,24 @@ class TestProfileObjects:
         for prof in profiles:
             try:
                 attrs = read_attributes(
-                    rs.raw, rs.sh, prof, [CKA_PROFILE_ID],
+                    rs.raw,
+                    rs.sh,
+                    prof,
+                    [CKA_PROFILE_ID],
                 )
-                raw_val = attrs[int(CKA_PROFILE_ID)]
+                raw_val = attrs[CKA_PROFILE_ID]
                 if isinstance(raw_val, bytes):
                     pid = int.from_bytes(raw_val, "little")
                 else:
                     pid = int(raw_val)
             except (AssertionError, KeyError):
                 continue
-            if pid < int(CKP_VENDOR_DEFINED):
-                assert pid in _KNOWN_PROFILE_IDS, (
-                    f"Unknown non-vendor profile ID 0x{pid:08X}"
-                )
+            if pid < CKP_VENDOR_DEFINED:
+                assert pid in _KNOWN_PROFILE_IDS, f"Unknown non-vendor profile ID 0x{pid:08X}"
 
     def test_baseline_or_extended_profile_present(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Module advertises Baseline or Extended Provider profile."""
         rs = p11_raw_session
@@ -106,16 +113,19 @@ class TestProfileObjects:
         for prof in profiles:
             try:
                 attrs = read_attributes(
-                    rs.raw, rs.sh, prof, [CKA_PROFILE_ID],
+                    rs.raw,
+                    rs.sh,
+                    prof,
+                    [CKA_PROFILE_ID],
                 )
-                raw_val = attrs[int(CKA_PROFILE_ID)]
+                raw_val = attrs[CKA_PROFILE_ID]
                 if isinstance(raw_val, bytes):
                     pids.add(int.from_bytes(raw_val, "little"))
                 else:
                     pids.add(int(raw_val))
             except (AssertionError, KeyError):
                 pass
-        standard = {int(CKP_BASELINE_PROVIDER), int(CKP_EXTENDED_PROVIDER)}
+        standard = {CKP_BASELINE_PROVIDER, CKP_EXTENDED_PROVIDER}
         if not pids & standard:
             pytest.xfail(
                 "Module does not advertise Baseline or Extended Provider "

@@ -59,8 +59,8 @@ class TestAESParameterFuzz:
 
         try:
             mech = mech_bytes(CKM_AES_CBC, bad_param)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h)
+            if rv == CKR_OK:
                 out_len = CK_ULONG(0)
                 rs.raw.C_Encrypt(rs.sh, data_buf, 16, None, byref(out_len))
             # Any non-crash result is acceptable
@@ -75,13 +75,13 @@ class TestAESParameterFuzz:
 
         try:
             mech = mech_bytes(CKM_AES_ECB, b"\xff" * 16)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h)
+            if rv == CKR_OK:
                 # Some modules silently ignore extra params
                 out_len = CK_ULONG(256)
                 out_buf = (ctypes.c_ubyte * 256)()
-                rv2 = int(rs.raw.C_Encrypt(rs.sh, data_buf, 16, out_buf, byref(out_len)))
-                if rv2 == int(CKR_OK):
+                rv2 = rs.raw.C_Encrypt(rs.sh, data_buf, 16, out_buf, byref(out_len))
+                if rv2 == CKR_OK:
                     assert out_len.value == 16
             # Any non-crash result is acceptable
         finally:
@@ -101,12 +101,12 @@ class TestDigestParameterFuzz:
         rs = p11_raw_session
         data_buf = (ctypes.c_ubyte * 9)(*b"test data")
         mech = mech_bytes(CKM_SHA256, bad_param)
-        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
+        if rv == CKR_OK:
             out_len = CK_ULONG(64)
             out_buf = (ctypes.c_ubyte * 64)()
-            rv2 = int(rs.raw.C_Digest(rs.sh, data_buf, 9, out_buf, byref(out_len)))
-            if rv2 == int(CKR_OK):
+            rv2 = rs.raw.C_Digest(rs.sh, data_buf, 9, out_buf, byref(out_len))
+            if rv2 == CKR_OK:
                 assert out_len.value == 32  # If it works, still correct output
         # Any non-crash result is acceptable
 
@@ -122,12 +122,12 @@ class TestSignParameterFuzz:
 
         try:
             mech = mech_bytes(CKM_SHA256_RSA_PKCS, os.urandom(32))
-            rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv_h))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv_h)
+            if rv == CKR_OK:
                 out_len = CK_ULONG(512)
                 out_buf = (ctypes.c_ubyte * 512)()
-                rv2 = int(rs.raw.C_Sign(rs.sh, data_buf, 14, out_buf, byref(out_len)))
-                if rv2 == int(CKR_OK):
+                rv2 = rs.raw.C_Sign(rs.sh, data_buf, 14, out_buf, byref(out_len))
+                if rv2 == CKR_OK:
                     assert out_len.value == 256
             # Any non-crash result is acceptable
         finally:
@@ -156,12 +156,12 @@ class TestKeyGenParameterFuzz:
         mech = mech_bytes(CKM_AES_KEY_GEN, bad_param)
         tmpl = template(attr_ulong(CKA_VALUE_LEN, 32))
         key_h = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h)))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
+        if rv == CKR_OK:
             # If it works, key should still be valid
-            attrs = read_attributes(rs.raw, rs.sh, int(key_h.value), [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] is not None
-            destroy_quietly(rs.raw, rs.sh, int(key_h.value))
+            attrs = read_attributes(rs.raw, rs.sh, key_h.value, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] is not None
+            destroy_quietly(rs.raw, rs.sh, key_h.value)
         # Any non-crash result is acceptable
 
 
@@ -174,11 +174,11 @@ class TestEncryptDataFuzz:
         key_h = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h)
+            if rv == CKR_OK:
                 out_len = CK_ULONG(256)
                 out_buf = (ctypes.c_ubyte * 256)()
-                rv2 = int(rs.raw.C_Encrypt(rs.sh, None, 0, out_buf, byref(out_len)))
+                rv2 = rs.raw.C_Encrypt(rs.sh, None, 0, out_buf, byref(out_len))
                 # Any non-crash result is acceptable
                 _ = rv2
         finally:
@@ -190,12 +190,12 @@ class TestEncryptDataFuzz:
         key_h = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h)
+            if rv == CKR_OK:
                 data_buf = (ctypes.c_ubyte * 15)(*b"\x00" * 15)  # 15, not 16
                 out_len = CK_ULONG(256)
                 out_buf = (ctypes.c_ubyte * 256)()
-                rv2 = int(rs.raw.C_Encrypt(rs.sh, data_buf, 15, out_buf, byref(out_len)))
-                assert rv2 != int(CKR_OK), f"Non-aligned AES-ECB should fail, got {ckr_name(rv2)}"
+                rv2 = rs.raw.C_Encrypt(rs.sh, data_buf, 15, out_buf, byref(out_len))
+                assert rv2 != CKR_OK, f"Non-aligned AES-ECB should fail, got {ckr_name(rv2)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)

@@ -52,10 +52,10 @@ pytestmark = pytest.mark.keymgmt
 
 # Acceptable CKR codes for PBE operations
 _PBE_ERROR_RVS = {
-    int(c) for c in (
-        CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID,
-        CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR,
-    )
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
 }
 
 # Test password and salt
@@ -67,6 +67,7 @@ _ITERATIONS = 1024
 # ---------------------------------------------------------------------------
 # CK_PBE_PARAMS builder
 # ---------------------------------------------------------------------------
+
 
 def _build_pbe_mech(
     mech_type: int,
@@ -110,8 +111,13 @@ def _build_pbe_mech(
 
 
 def _pbe_gen_key(
-    rs: Any, mech_type: int, key_type: int, key_bits: int,
-    password: bytes, salt: bytes, iterations: int,
+    rs: Any,
+    mech_type: int,
+    key_type: int,
+    key_bits: int,
+    password: bytes,
+    salt: bytes,
+    iterations: int,
     iv_len: int = 8,
     extra_attrs: dict[int, Any] | None = None,
 ) -> int | None:
@@ -136,20 +142,21 @@ def _pbe_gen_key(
 
     pm, _ka = _build_pbe_mech(mech_type, password, salt, iterations, iv_len)
     key_h = CK_OBJECT_HANDLE(0)
-    rv = int(rs.raw.C_GenerateKey(
-        rs.sh, pm.byref(), tmpl.ptr, tmpl.count, byref(key_h)
-    ))
-    if rv != int(CKR_OK):
+    rv = rs.raw.C_GenerateKey(rs.sh, pm.byref(), tmpl.ptr, tmpl.count, byref(key_h))
+    if rv != CKR_OK:
         if rv in _PBE_ERROR_RVS:
             return None
         return None  # still return None, test will xfail
-    return int(key_h.value)
+    return key_h.value
 
 
 def _pbkdf2_gen_key(
     rs: Any,
-    key_type: int, key_bits: int,
-    password: bytes, salt: bytes, iterations: int,
+    key_type: int,
+    key_bits: int,
+    password: bytes,
+    salt: bytes,
+    iterations: int,
     prf: int,
     extra_attrs: dict[int, Any] | None = None,
 ) -> int | None:
@@ -180,12 +187,10 @@ def _pbkdf2_gen_key(
     )
 
     key_h = CK_OBJECT_HANDLE(0)
-    rv = int(rs.raw.C_GenerateKey(
-        rs.sh, mp.byref(), tmpl.ptr, tmpl.count, byref(key_h)
-    ))
-    if rv != int(CKR_OK):
+    rv = rs.raw.C_GenerateKey(rs.sh, mp.byref(), tmpl.ptr, tmpl.count, byref(key_h))
+    if rv != CKR_OK:
         return None
-    return int(key_h.value)
+    return key_h.value
 
 
 class TestPBESHA1DES3:
@@ -200,14 +205,19 @@ class TestPBESHA1DES3:
         if not rs.has_mechanism("PBE_SHA1_DES3_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not supported")
         handle = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES3_EDE_CBC), int(CKK_DES3), 192,
-            _PASSWORD, _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES3_EDE_CBC,
+            CKK_DES3,
+            192,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
         )
         if handle is None:
             pytest.xfail("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
-            attrs = read_attributes(rs.raw, rs.sh, handle, [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_DES3)
+            attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] == CKK_DES3
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -216,18 +226,28 @@ class TestPBESHA1DES3:
         if not rs.has_mechanism("PBE_SHA1_DES3_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not supported")
         h1 = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES3_EDE_CBC), int(CKK_DES3), 192,
-            _PASSWORD, _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES3_EDE_CBC,
+            CKK_DES3,
+            192,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
         )
         h2 = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES3_EDE_CBC), int(CKK_DES3), 192,
-            _PASSWORD, _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES3_EDE_CBC,
+            CKK_DES3,
+            192,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
         )
         if h1 is None or h2 is None:
             pytest.xfail("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
-            v1 = read_attributes(rs.raw, rs.sh, h1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, h2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "PBE_SHA1_DES3_EDE_CBC must be deterministic"
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
@@ -238,18 +258,28 @@ class TestPBESHA1DES3:
         if not rs.has_mechanism("PBE_SHA1_DES3_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not supported")
         ha = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES3_EDE_CBC), int(CKK_DES3), 192,
-            _PASSWORD, b"\x00" * 8, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES3_EDE_CBC,
+            CKK_DES3,
+            192,
+            _PASSWORD,
+            b"\x00" * 8,
+            _ITERATIONS,
         )
         hb = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES3_EDE_CBC), int(CKK_DES3), 192,
-            _PASSWORD, b"\xff" * 8, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES3_EDE_CBC,
+            CKK_DES3,
+            192,
+            _PASSWORD,
+            b"\xff" * 8,
+            _ITERATIONS,
         )
         if ha is None or hb is None:
             pytest.xfail("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            vb = read_attributes(rs.raw, rs.sh, hb, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
             assert va != vb, "Different salts must produce different keys"
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
@@ -260,18 +290,28 @@ class TestPBESHA1DES3:
         if not rs.has_mechanism("PBE_SHA1_DES3_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not supported")
         ha = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES3_EDE_CBC), int(CKK_DES3), 192,
-            b"PasswordAlpha", _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES3_EDE_CBC,
+            CKK_DES3,
+            192,
+            b"PasswordAlpha",
+            _SALT,
+            _ITERATIONS,
         )
         hb = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES3_EDE_CBC), int(CKK_DES3), 192,
-            b"PasswordBravo", _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES3_EDE_CBC,
+            CKK_DES3,
+            192,
+            b"PasswordBravo",
+            _SALT,
+            _ITERATIONS,
         )
         if ha is None or hb is None:
             pytest.xfail("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            vb = read_attributes(rs.raw, rs.sh, hb, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
             assert va != vb, "Different passwords must produce different keys"
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
@@ -290,14 +330,19 @@ class TestPBESHA1DES2:
         if not rs.has_mechanism("PBE_SHA1_DES2_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not supported")
         handle = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES2_EDE_CBC), int(CKK_DES2), 128,
-            _PASSWORD, _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES2_EDE_CBC,
+            CKK_DES2,
+            128,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
         )
         if handle is None:
             pytest.xfail("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
         try:
-            attrs = read_attributes(rs.raw, rs.sh, handle, [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_DES2)
+            attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] == CKK_DES2
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -306,18 +351,28 @@ class TestPBESHA1DES2:
         if not rs.has_mechanism("PBE_SHA1_DES2_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not supported")
         h1 = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES2_EDE_CBC), int(CKK_DES2), 128,
-            _PASSWORD, _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES2_EDE_CBC,
+            CKK_DES2,
+            128,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
         )
         h2 = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES2_EDE_CBC), int(CKK_DES2), 128,
-            _PASSWORD, _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES2_EDE_CBC,
+            CKK_DES2,
+            128,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
         )
         if h1 is None or h2 is None:
             pytest.xfail("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
         try:
-            v1 = read_attributes(rs.raw, rs.sh, h1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, h2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "PBE_SHA1_DES2_EDE_CBC must be deterministic"
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
@@ -328,18 +383,28 @@ class TestPBESHA1DES2:
         if not rs.has_mechanism("PBE_SHA1_DES2_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not supported")
         ha = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES2_EDE_CBC), int(CKK_DES2), 128,
-            b"PasswordAlpha", _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES2_EDE_CBC,
+            CKK_DES2,
+            128,
+            b"PasswordAlpha",
+            _SALT,
+            _ITERATIONS,
         )
         hb = _pbe_gen_key(
-            rs, int(CKM_PBE_SHA1_DES2_EDE_CBC), int(CKK_DES2), 128,
-            b"PasswordBravo", _SALT, _ITERATIONS,
+            rs,
+            CKM_PBE_SHA1_DES2_EDE_CBC,
+            CKK_DES2,
+            128,
+            b"PasswordBravo",
+            _SALT,
+            _ITERATIONS,
         )
         if ha is None or hb is None:
             pytest.xfail("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            vb = read_attributes(rs.raw, rs.sh, hb, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
             assert va != vb
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
@@ -358,15 +423,21 @@ class TestPBASHA1:
         if not rs.has_mechanism("PBA_SHA1_WITH_SHA1_HMAC"):
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not supported")
         handle = _pbe_gen_key(
-            rs, int(CKM_PBA_SHA1_WITH_SHA1_HMAC), int(CKK_SHA_1_HMAC), 160,
-            _PASSWORD, _SALT, _ITERATIONS, iv_len=20,
-            extra_attrs={int(CKA_SIGN): True, int(CKA_VERIFY): True},
+            rs,
+            CKM_PBA_SHA1_WITH_SHA1_HMAC,
+            CKK_SHA_1_HMAC,
+            160,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            iv_len=20,
+            extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )
         if handle is None:
             pytest.xfail("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
-            attrs = read_attributes(rs.raw, rs.sh, handle, [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_SHA_1_HMAC)
+            attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] == CKK_SHA_1_HMAC
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -375,20 +446,32 @@ class TestPBASHA1:
         if not rs.has_mechanism("PBA_SHA1_WITH_SHA1_HMAC"):
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not supported")
         h1 = _pbe_gen_key(
-            rs, int(CKM_PBA_SHA1_WITH_SHA1_HMAC), int(CKK_SHA_1_HMAC), 160,
-            _PASSWORD, _SALT, _ITERATIONS, iv_len=20,
-            extra_attrs={int(CKA_SIGN): True, int(CKA_VERIFY): True},
+            rs,
+            CKM_PBA_SHA1_WITH_SHA1_HMAC,
+            CKK_SHA_1_HMAC,
+            160,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            iv_len=20,
+            extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )
         h2 = _pbe_gen_key(
-            rs, int(CKM_PBA_SHA1_WITH_SHA1_HMAC), int(CKK_SHA_1_HMAC), 160,
-            _PASSWORD, _SALT, _ITERATIONS, iv_len=20,
-            extra_attrs={int(CKA_SIGN): True, int(CKA_VERIFY): True},
+            rs,
+            CKM_PBA_SHA1_WITH_SHA1_HMAC,
+            CKK_SHA_1_HMAC,
+            160,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            iv_len=20,
+            extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )
         if h1 is None or h2 is None:
             pytest.xfail("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
-            v1 = read_attributes(rs.raw, rs.sh, h1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, h2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
@@ -399,20 +482,32 @@ class TestPBASHA1:
         if not rs.has_mechanism("PBA_SHA1_WITH_SHA1_HMAC"):
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not supported")
         ha = _pbe_gen_key(
-            rs, int(CKM_PBA_SHA1_WITH_SHA1_HMAC), int(CKK_SHA_1_HMAC), 160,
-            _PASSWORD, b"\x00" * 8, _ITERATIONS, iv_len=20,
-            extra_attrs={int(CKA_SIGN): True, int(CKA_VERIFY): True},
+            rs,
+            CKM_PBA_SHA1_WITH_SHA1_HMAC,
+            CKK_SHA_1_HMAC,
+            160,
+            _PASSWORD,
+            b"\x00" * 8,
+            _ITERATIONS,
+            iv_len=20,
+            extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )
         hb = _pbe_gen_key(
-            rs, int(CKM_PBA_SHA1_WITH_SHA1_HMAC), int(CKK_SHA_1_HMAC), 160,
-            _PASSWORD, b"\xff" * 8, _ITERATIONS, iv_len=20,
-            extra_attrs={int(CKA_SIGN): True, int(CKA_VERIFY): True},
+            rs,
+            CKM_PBA_SHA1_WITH_SHA1_HMAC,
+            CKK_SHA_1_HMAC,
+            160,
+            _PASSWORD,
+            b"\xff" * 8,
+            _ITERATIONS,
+            iv_len=20,
+            extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )
         if ha is None or hb is None:
             pytest.xfail("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            vb = read_attributes(rs.raw, rs.sh, hb, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
             assert va != vb
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
@@ -431,13 +526,18 @@ class TestPKCS5PBKD2:
         if not rs.has_mechanism("PKCS5_PBKD2"):
             pytest.skip("CKM_PKCS5_PBKD2 not supported")
         handle = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 256,
-            _PASSWORD, _SALT, _ITERATIONS, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            rs,
+            CKK_GENERIC_SECRET,
+            256,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if handle is None:
             pytest.xfail("CKM_PKCS5_PBKD2 (HMAC-SHA256) not operational")
         try:
-            val = read_attributes(rs.raw, rs.sh, handle, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32
             assert val != bytes(32), "Derived key must not be all zeros"
         finally:
@@ -448,13 +548,18 @@ class TestPKCS5PBKD2:
         if not rs.has_mechanism("PKCS5_PBKD2"):
             pytest.skip("CKM_PKCS5_PBKD2 not supported")
         handle = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 160,
-            _PASSWORD, _SALT, _ITERATIONS, int(CKP_PKCS5_PBKD2_HMAC_SHA1),
+            rs,
+            CKK_GENERIC_SECRET,
+            160,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            CKP_PKCS5_PBKD2_HMAC_SHA1,
         )
         if handle is None:
             pytest.xfail("CKM_PKCS5_PBKD2 (HMAC-SHA1) not operational")
         try:
-            val = read_attributes(rs.raw, rs.sh, handle, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            val = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 20
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
@@ -464,18 +569,28 @@ class TestPKCS5PBKD2:
         if not rs.has_mechanism("PKCS5_PBKD2"):
             pytest.skip("CKM_PKCS5_PBKD2 not supported")
         h1 = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 256,
-            _PASSWORD, _SALT, _ITERATIONS, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            rs,
+            CKK_GENERIC_SECRET,
+            256,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         h2 = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 256,
-            _PASSWORD, _SALT, _ITERATIONS, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            rs,
+            CKK_GENERIC_SECRET,
+            256,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if h1 is None or h2 is None:
             pytest.xfail("CKM_PKCS5_PBKD2 not operational")
         try:
-            v1 = read_attributes(rs.raw, rs.sh, h1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, h2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "PBKDF2 must be deterministic"
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
@@ -486,18 +601,28 @@ class TestPKCS5PBKD2:
         if not rs.has_mechanism("PKCS5_PBKD2"):
             pytest.skip("CKM_PKCS5_PBKD2 not supported")
         ha = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 256,
-            _PASSWORD, b"\x00" * 16, _ITERATIONS, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            rs,
+            CKK_GENERIC_SECRET,
+            256,
+            _PASSWORD,
+            b"\x00" * 16,
+            _ITERATIONS,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         hb = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 256,
-            _PASSWORD, b"\xff" * 16, _ITERATIONS, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            rs,
+            CKK_GENERIC_SECRET,
+            256,
+            _PASSWORD,
+            b"\xff" * 16,
+            _ITERATIONS,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if ha is None or hb is None:
             pytest.xfail("CKM_PKCS5_PBKD2 not operational")
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            vb = read_attributes(rs.raw, rs.sh, hb, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
             assert va != vb
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
@@ -508,18 +633,28 @@ class TestPKCS5PBKD2:
         if not rs.has_mechanism("PKCS5_PBKD2"):
             pytest.skip("CKM_PKCS5_PBKD2 not supported")
         ha = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 256,
-            b"PasswordAlpha", _SALT, _ITERATIONS, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            rs,
+            CKK_GENERIC_SECRET,
+            256,
+            b"PasswordAlpha",
+            _SALT,
+            _ITERATIONS,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         hb = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 256,
-            b"PasswordBravo", _SALT, _ITERATIONS, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            rs,
+            CKK_GENERIC_SECRET,
+            256,
+            b"PasswordBravo",
+            _SALT,
+            _ITERATIONS,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if ha is None or hb is None:
             pytest.xfail("CKM_PKCS5_PBKD2 not operational")
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            vb = read_attributes(rs.raw, rs.sh, hb, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
             assert va != vb
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
@@ -530,18 +665,28 @@ class TestPKCS5PBKD2:
         if not rs.has_mechanism("PKCS5_PBKD2"):
             pytest.skip("CKM_PKCS5_PBKD2 not supported")
         ha = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 256,
-            _PASSWORD, _SALT, 1000, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            rs,
+            CKK_GENERIC_SECRET,
+            256,
+            _PASSWORD,
+            _SALT,
+            1000,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         hb = _pbkdf2_gen_key(
-            rs, int(CKK_GENERIC_SECRET), 256,
-            _PASSWORD, _SALT, 2000, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
+            rs,
+            CKK_GENERIC_SECRET,
+            256,
+            _PASSWORD,
+            _SALT,
+            2000,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if ha is None or hb is None:
             pytest.xfail("CKM_PKCS5_PBKD2 not operational")
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            vb = read_attributes(rs.raw, rs.sh, hb, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
             assert va != vb
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
@@ -552,17 +697,20 @@ class TestPKCS5PBKD2:
         if not rs.has_mechanism("PKCS5_PBKD2"):
             pytest.skip("CKM_PKCS5_PBKD2 not supported")
         handle = _pbkdf2_gen_key(
-            rs, int(CKK_AES), 256,
-            _PASSWORD, _SALT, _ITERATIONS, int(CKP_PKCS5_PBKD2_HMAC_SHA256),
-            extra_attrs={int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True},
+            rs,
+            CKK_AES,
+            256,
+            _PASSWORD,
+            _SALT,
+            _ITERATIONS,
+            CKP_PKCS5_PBKD2_HMAC_SHA256,
+            extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
         if handle is None:
             pytest.xfail("CKM_PKCS5_PBKD2 AES key derivation not operational")
         try:
-            attrs = read_attributes(
-                rs.raw, rs.sh, handle, [int(CKA_KEY_TYPE), int(CKA_VALUE)]
-            )
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_AES)
-            assert len(attrs[int(CKA_VALUE)]) == 32
+            attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE, CKA_VALUE])
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
+            assert len(attrs[CKA_VALUE]) == 32
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)

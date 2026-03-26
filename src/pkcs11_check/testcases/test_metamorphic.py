@@ -80,11 +80,19 @@ class TestRoundTripInvariants:
             iv = generate_random(rs.raw, rs.sh, 16)
             plaintext = b"cbc roundtrip!!!"  # 16 bytes
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                ct,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             assert pt == plaintext
@@ -98,9 +106,7 @@ class TestRoundTripInvariants:
         try:
             data = b"sign-verify roundtrip"
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
-            assert verify_single(
-                rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig
-            ) is True
+            assert verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig) is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -110,12 +116,8 @@ class TestRoundTripInvariants:
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            sig = sign_single(
-                rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"original data"
-            )
-            result = verify_single(
-                rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, b"tampered data", sig
-            )
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"original data")
+            result = verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, b"tampered data", sig)
             assert result is False
         except AssertionError:
             pass  # Expected - signature invalid
@@ -130,37 +132,44 @@ class TestRoundTripInvariants:
             pytest.skip("AES_KEY_WRAP not supported")
 
         wrapping_key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
             },
         )
         key_bytes = bytes(range(16))
         original = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
             attrs={
-                int(CKA_TOKEN): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_TOKEN: False,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
         try:
             wrapped = wrap_key(rs.raw, rs.sh, wrapping_key, original, CKM_AES_KEY_WRAP)
             unwrapped = unwrap_key(
-                rs.raw, rs.sh, wrapping_key, wrapped, CKM_AES_KEY_WRAP,
+                rs.raw,
+                rs.sh,
+                wrapping_key,
+                wrapped,
+                CKM_AES_KEY_WRAP,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
                 },
             )
             try:
-                unwrapped_attrs = read_attributes(
-                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
-                )
-                assert unwrapped_attrs[int(CKA_VALUE)] == key_bytes
+                unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
+                assert unwrapped_attrs[CKA_VALUE] == key_bytes
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -216,8 +225,10 @@ class TestCopyEquivalence:
         try:
             try:
                 copy = copy_object(
-                    rs.raw, rs.sh, original,
-                    {int(CKA_LABEL): "copy-equiv"},
+                    rs.raw,
+                    rs.sh,
+                    original,
+                    {CKA_LABEL: "copy-equiv"},
                 )
             except AssertionError as exc:
                 if "CKR_FUNCTION_NOT_SUPPORTED" in str(exc):
@@ -226,12 +237,8 @@ class TestCopyEquivalence:
 
             try:
                 plaintext = b"copy equivalence"
-                ct_orig = encrypt_single(
-                    rs.raw, rs.sh, original, CKM_AES_ECB, plaintext
-                )
-                ct_copy = encrypt_single(
-                    rs.raw, rs.sh, copy, CKM_AES_ECB, plaintext
-                )
+                ct_orig = encrypt_single(rs.raw, rs.sh, original, CKM_AES_ECB, plaintext)
+                ct_copy = encrypt_single(rs.raw, rs.sh, copy, CKM_AES_ECB, plaintext)
                 assert ct_orig == ct_copy
             finally:
                 destroy_quietly(rs.raw, rs.sh, copy)
@@ -245,8 +252,10 @@ class TestCopyEquivalence:
         try:
             try:
                 copy = copy_object(
-                    rs.raw, rs.sh, original,
-                    {int(CKA_LABEL): "copy-decrypt"},
+                    rs.raw,
+                    rs.sh,
+                    original,
+                    {CKA_LABEL: "copy-decrypt"},
                 )
             except AssertionError as exc:
                 if "CKR_FUNCTION_NOT_SUPPORTED" in str(exc):
@@ -255,12 +264,8 @@ class TestCopyEquivalence:
 
             try:
                 plaintext = b"cross-decrypt!!!"
-                ct = encrypt_single(
-                    rs.raw, rs.sh, original, CKM_AES_ECB, plaintext
-                )
-                pt = decrypt_single(
-                    rs.raw, rs.sh, copy, CKM_AES_ECB, ct
-                )
+                ct = encrypt_single(rs.raw, rs.sh, original, CKM_AES_ECB, plaintext)
+                pt = decrypt_single(rs.raw, rs.sh, copy, CKM_AES_ECB, ct)
                 assert pt == plaintext
             finally:
                 destroy_quietly(rs.raw, rs.sh, copy)

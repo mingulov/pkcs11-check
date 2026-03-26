@@ -28,7 +28,7 @@ from pkcs11_check.raw.types_std import (
 
 pytestmark = pytest.mark.keymgmt
 
-CK_UNAVAILABLE = int(CK_UNAVAILABLE_INFORMATION)
+CK_UNAVAILABLE = CK_UNAVAILABLE_INFORMATION
 
 
 def _safe_get_size(raw: Any, sh: int, handle: int) -> int | None:
@@ -75,9 +75,7 @@ class TestObjectSize:
             destroy_quietly(rs.raw, rs.sh, aes_key)
 
         if aes_size is None:
-            pytest.skip(
-                "C_GetObjectSize not supported (returns 0 or CK_UNAVAILABLE_INFORMATION)"
-            )
+            pytest.skip("C_GetObjectSize not supported (returns 0 or CK_UNAVAILABLE_INFORMATION)")
 
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
@@ -98,18 +96,26 @@ class TestObjectSize:
     def test_data_object_size_scales(self, p11_raw_session: Any) -> None:
         """Larger CKO_DATA objects should report larger sizes."""
         rs = p11_raw_session
-        small = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): "size-small",
-            int(CKA_VALUE): b"x" * 100,
-            int(CKA_TOKEN): False,
-        })
-        large = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): "size-large",
-            int(CKA_VALUE): b"x" * 10000,
-            int(CKA_TOKEN): False,
-        })
+        small = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: "size-small",
+                CKA_VALUE: b"x" * 100,
+                CKA_TOKEN: False,
+            },
+        )
+        large = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: "size-large",
+                CKA_VALUE: b"x" * 10000,
+                CKA_TOKEN: False,
+            },
+        )
         try:
             small_size = _safe_get_size(rs.raw, rs.sh, small)
             large_size = _safe_get_size(rs.raw, rs.sh, large)

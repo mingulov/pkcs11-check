@@ -42,9 +42,11 @@ class TestECDSANonceReuse:
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(
-            rs.raw, rs.sh, curve_oid,
-            public_attrs={int(CKA_VERIFY): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_SIGN): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
         )
 
         try:
@@ -77,9 +79,11 @@ class TestECDSANonceReuse:
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(
-            rs.raw, rs.sh, curve_oid,
-            public_attrs={int(CKA_VERIFY): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_SIGN): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
         )
 
         try:
@@ -112,9 +116,11 @@ class TestECDSADeterminism:
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(
-            rs.raw, rs.sh, curve_oid,
-            public_attrs={int(CKA_VERIFY): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_SIGN): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
         )
 
         try:
@@ -145,9 +151,11 @@ class TestECDSANonceBias:
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(
-            rs.raw, rs.sh, curve_oid,
-            public_attrs={int(CKA_VERIFY): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_SIGN): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
         )
 
         try:

@@ -166,15 +166,16 @@ class TestGetOperationStateAPI:
         state_len = ctypes.c_ulong(0)
         rv = rs.raw.C_GetOperationState(rs.sh, None, ctypes.byref(state_len))
         acceptable = {
-            int(_CKR_OK), int(CKR_OPERATION_NOT_INITIALIZED),
-            int(CKR_STATE_UNSAVEABLE), int(CKR_FUNCTION_NOT_SUPPORTED),
+            _CKR_OK,
+            CKR_OPERATION_NOT_INITIALIZED,
+            CKR_STATE_UNSAVEABLE,
+            CKR_FUNCTION_NOT_SUPPORTED,
         }
-        assert rv in acceptable, (
-            f"C_GetOperationState returned unexpected {ckr_name(rv)}"
-        )
+        assert rv in acceptable, f"C_GetOperationState returned unexpected {ckr_name(rv)}"
 
     def test_garbage_state_raises_saved_state_invalid(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """C_SetOperationState with garbage -> CKR_SAVED_STATE_INVALID.
 
@@ -196,12 +197,13 @@ class TestGetOperationStateAPI:
         buf = (ctypes.c_ubyte * len(garbage))(*garbage)
         rv = rs.raw.C_SetOperationState(rs.sh, buf, len(garbage), 0, 0)
         if rv in (
-            int(CKR_FUNCTION_NOT_SUPPORTED), int(CKR_STATE_UNSAVEABLE),
+            CKR_FUNCTION_NOT_SUPPORTED,
+            CKR_STATE_UNSAVEABLE,
         ):
             pytest.skip("Module does not support C_SetOperationState")
         acceptable = {
-            int(CKR_SAVED_STATE_INVALID),
-            int(CKR_OPERATION_NOT_INITIALIZED),
+            CKR_SAVED_STATE_INVALID,
+            CKR_OPERATION_NOT_INITIALIZED,
         }
         assert rv in acceptable, (
             f"C_SetOperationState with garbage: expected "

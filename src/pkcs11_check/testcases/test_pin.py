@@ -48,7 +48,7 @@ pytestmark = [pytest.mark.security, pytest.mark.destructive]
 def _try_login(raw: Any, sh: int, pin: bytes) -> int:
     """Attempt login and return raw CKR value."""
     pin_buf = (CK_UTF8CHAR * len(pin))(*pin)
-    return int(raw.C_Login(sh, int(CKU_USER), pin_buf, len(pin)))
+    return raw.C_Login(sh, CKU_USER, pin_buf, len(pin))
 
 
 class TestWrongPIN:
@@ -57,13 +57,13 @@ class TestWrongPIN:
     def test_wrong_pin_rejected(self, p11_raw_session: Any) -> None:
         """Login with wrong PIN must return CKR_PIN_INCORRECT."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             rv = _try_login(rs.raw, test_sh, b"DEFINITELY_WRONG_PIN_999")
             assert rv in (
-                int(CKR_PIN_INCORRECT),
-                int(CKR_USER_ALREADY_LOGGED_IN),
+                CKR_PIN_INCORRECT,
+                CKR_USER_ALREADY_LOGGED_IN,
             ), f"Expected CKR_PIN_INCORRECT, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, test_sh)
@@ -71,12 +71,12 @@ class TestWrongPIN:
     def test_empty_pin_rejected(self, p11_raw_session: Any) -> None:
         """Login with empty PIN must fail."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             # Empty PIN - pass NULL pointer with length 0
-            rv = int(rs.raw.C_Login(test_sh, int(CKU_USER), None, 0))
-            assert rv != int(CKR_OK) or rv == int(CKR_USER_ALREADY_LOGGED_IN), (
+            rv = rs.raw.C_Login(test_sh, CKU_USER, None, 0)
+            assert rv != CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN, (
                 f"Empty PIN should not be accepted, got {ckr_name(rv)}"
             )
         finally:
@@ -88,7 +88,7 @@ class TestWrongPIN:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # First: wrong PIN
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
@@ -100,7 +100,7 @@ class TestWrongPIN:
         # Then: correct PIN should succeed
         test_sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            login_user(rs.raw, test_sh2, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, test_sh2, CKU_USER, pin_bytes)
             # Verify the session actually works
             key_h = gen_aes_key(rs.raw, test_sh2, 256)
             assert key_h != 0
@@ -112,13 +112,13 @@ class TestWrongPIN:
     def test_wrong_pin_does_not_reveal_objects(self, p11_raw_session: Any) -> None:
         """A failed login attempt must not expose any private objects."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             rv = _try_login(rs.raw, test_sh, b"WRONG_PIN_ABC")
-            if rv == int(CKR_OK):
+            if rv == CKR_OK:
                 # If we somehow got logged in, there should be no private objects
-                tmpl = template_from_dict({int(CKA_CLASS): int(CKO_PRIVATE_KEY)})
+                tmpl = template_from_dict({CKA_CLASS: CKO_PRIVATE_KEY})
                 found = find_objects(rs.raw, test_sh, tmpl)
                 assert len(found) == 0, "Wrong PIN exposed private objects!"
             # Otherwise login failed - expected
@@ -132,12 +132,12 @@ class TestPINEdgeCases:
     def test_very_long_pin(self, p11_raw_session: Any) -> None:
         """Very long PIN (256 chars) - should fail cleanly, not crash."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             long_pin = b"A" * 256
             rv = _try_login(rs.raw, test_sh, long_pin)
-            assert rv != int(CKR_OK) or rv == int(CKR_USER_ALREADY_LOGGED_IN), (
+            assert rv != CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN, (
                 f"256-char PIN should not be accepted, got {ckr_name(rv)}"
             )
         finally:
@@ -146,7 +146,7 @@ class TestPINEdgeCases:
     def test_unicode_pin(self, p11_raw_session: Any) -> None:
         """Unicode characters in PIN - should fail cleanly."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             unicode_pin = "\u00e9\u00e8\u00ea\u00eb".encode()
@@ -159,7 +159,7 @@ class TestPINEdgeCases:
     def test_null_bytes_in_pin(self, p11_raw_session: Any) -> None:
         """Null bytes in PIN - must not cause truncation or crash."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             null_pin = b"12\x0034"

@@ -49,15 +49,19 @@ class TestLargeDataObjects:
         label = _unique_label()
         big_data = b"\xab" * (1024 * 1024)  # 1MB
 
-        obj = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): big_data,
-            int(CKA_TOKEN): False,
-        })
+        obj = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: big_data,
+                CKA_TOKEN: False,
+            },
+        )
         try:
             attrs = read_attributes(rs.raw, rs.sh, obj, [CKA_VALUE])
-            stored = attrs[int(CKA_VALUE)]
+            stored = attrs[CKA_VALUE]
             assert stored == big_data
             assert len(stored) == 1024 * 1024
         finally:
@@ -69,15 +73,19 @@ class TestLargeDataObjects:
         label = _unique_label()
         data = bytes(range(256)) * 400  # 102,400 bytes
 
-        obj = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): data,
-            int(CKA_TOKEN): False,
-        })
+        obj = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: data,
+                CKA_TOKEN: False,
+            },
+        )
         try:
             attrs = read_attributes(rs.raw, rs.sh, obj, [CKA_VALUE])
-            assert attrs[int(CKA_VALUE)] == data
+            assert attrs[CKA_VALUE] == data
         finally:
             destroy_quietly(rs.raw, rs.sh, obj)
 
@@ -122,11 +130,19 @@ class TestLargeEncryption:
         data = b"\x99" * (1024 * 1024)  # 1MB
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC, data,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC,
+                data,
                 mech_param=mech_bytes(CKM_AES_CBC, iv),
             )
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC,
+                ct,
                 mech_param=mech_bytes(CKM_AES_CBC, iv),
             )
             assert pt == data
