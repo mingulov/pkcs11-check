@@ -44,9 +44,7 @@ def test_limbo_identity_closeness(
         pytest.skip("Module does not support X.509 certificates")
 
     rs = p11_raw_session
-    cases_with_keys = [
-        tc for tc in all_limbo_cases if tc.get("peer_certificate_key")
-    ]
+    cases_with_keys = [tc for tc in all_limbo_cases if tc.get("peer_certificate_key")]
     if not cases_with_keys:
         pytest.skip("No testcases with private keys found in Limbo dataset")
 
@@ -61,13 +59,14 @@ def test_limbo_identity_closeness(
         try:
             # 1. Import Certificate
             cert_h = import_cert_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 cert_der,
                 interface_version=p11_interface_version,
                 extra_attrs={
-                    int(CKA_ID): cid,
-                    int(CKA_LABEL): f"Cert {tc['id']}",
-                    int(CKA_TOKEN): False,
+                    CKA_ID: cid,
+                    CKA_LABEL: f"Cert {tc['id']}",
+                    CKA_TOKEN: False,
                 },
             )
 
@@ -76,19 +75,19 @@ def test_limbo_identity_closeness(
             is_rsa = "RSA" in key_pem
 
             key_attrs: dict[int, Any] = {
-                int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-                int(CKA_VALUE): key_der,
-                int(CKA_ID): cid,
-                int(CKA_LABEL): f"Key {tc['id']}",
-                int(CKA_TOKEN): False,
-                int(CKA_SIGN): True,
-                int(CKA_EXTRACTABLE): False,
-                int(CKA_SENSITIVE): True,
+                CKA_CLASS: CKO_PRIVATE_KEY,
+                CKA_VALUE: key_der,
+                CKA_ID: cid,
+                CKA_LABEL: f"Key {tc['id']}",
+                CKA_TOKEN: False,
+                CKA_SIGN: True,
+                CKA_EXTRACTABLE: False,
+                CKA_SENSITIVE: True,
             }
             if is_rsa:
-                key_attrs[int(CKA_KEY_TYPE)] = int(CKK_RSA)
+                key_attrs[CKA_KEY_TYPE] = CKK_RSA
             else:
-                key_attrs[int(CKA_KEY_TYPE)] = int(CKK_EC)
+                key_attrs[CKA_KEY_TYPE] = CKK_EC
 
             try:
                 key_h = create_object(rs.raw, rs.sh, key_attrs)

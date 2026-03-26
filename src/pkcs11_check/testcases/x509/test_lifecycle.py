@@ -40,21 +40,15 @@ pytestmark = [pytest.mark.cert, pytest.mark.object]
 def sample_cert_der() -> bytes:
     """Generate a simple DER cert for lifecycle testing."""
     key = rsa.generate_private_key(65537, 2048)
-    subject = issuer = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, "Lifecycle Test")]
-    )
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Lifecycle Test")])
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
         .issuer_name(issuer)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(
-            datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
-        )
-        .not_valid_after(
-            datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1)
-        )
+        .not_valid_before(datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1))
+        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1))
         .sign(key, hashes.SHA256())
     )
     return cert.public_bytes(serialization.Encoding.DER)
@@ -74,21 +68,19 @@ class TestCertificateLifecycle:
         label = f"token-cert-{uuid.uuid4().hex[:8]}"
         try:
             h = import_cert_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 sample_cert_der,
                 interface_version=p11_interface_version,
-                extra_attrs={int(CKA_LABEL): label, int(CKA_TOKEN): True},
+                extra_attrs={CKA_LABEL: label, CKA_TOKEN: True},
             )
             try:
-                attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_TOKEN)])
-                assert attrs[int(CKA_TOKEN)] is True
+                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TOKEN])
+                assert attrs[CKA_TOKEN] is True
             finally:
                 destroy_quietly(rs.raw, rs.sh, h)
         except (AssertionError, Exception):
-            pytest.skip(
-                "Module does not support session-level token object "
-                "creation for certs"
-            )
+            pytest.skip("Module does not support session-level token object creation for certs")
 
     def test_cert_modifiability(
         self,
@@ -103,13 +95,14 @@ class TestCertificateLifecycle:
 
         try:
             h = import_cert_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 sample_cert_der,
                 interface_version=p11_interface_version,
                 extra_attrs={
-                    int(CKA_LABEL): label_orig,
-                    int(CKA_MODIFIABLE): False,
-                    int(CKA_TOKEN): False,
+                    CKA_LABEL: label_orig,
+                    CKA_MODIFIABLE: False,
+                    CKA_TOKEN: False,
                 },
             )
         except (AssertionError, Exception):
@@ -119,17 +112,15 @@ class TestCertificateLifecycle:
         try:
             try:
                 set_attributes(
-                    rs.raw, rs.sh, h,
-                    {int(CKA_LABEL): label_new},
+                    rs.raw,
+                    rs.sh,
+                    h,
+                    {CKA_LABEL: label_new},
                 )
                 # If it succeeded, verify it actually CHANGED
-                attrs = read_attributes(
-                    rs.raw, rs.sh, h, [int(CKA_LABEL)]
-                )
-                if attrs[int(CKA_LABEL)] == label_new:
-                    pytest.fail(
-                        "Successfully modified label on non-modifiable cert"
-                    )
+                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
+                if attrs[CKA_LABEL] == label_new:
+                    pytest.fail("Successfully modified label on non-modifiable cert")
             except AssertionError:
                 pass  # Expected
         finally:
@@ -146,14 +137,15 @@ class TestCertificateLifecycle:
         cid = b"cert-voter-id-123"
         try:
             h = import_cert_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 sample_cert_der,
                 interface_version=p11_interface_version,
-                extra_attrs={int(CKA_ID): cid, int(CKA_TOKEN): False},
+                extra_attrs={CKA_ID: cid, CKA_TOKEN: False},
             )
             try:
-                attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_ID)])
-                assert attrs[int(CKA_ID)] == cid
+                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ID])
+                assert attrs[CKA_ID] == cid
             finally:
                 destroy_quietly(rs.raw, rs.sh, h)
         except (AssertionError, Exception):

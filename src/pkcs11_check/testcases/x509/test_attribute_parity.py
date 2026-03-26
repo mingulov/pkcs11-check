@@ -39,23 +39,25 @@ def test_limbo_attribute_parity(
 
         try:
             h = import_cert_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 der,
                 interface_version=p11_interface_version,
                 extra_attrs={
-                    int(CKA_LABEL): tc["id"],
-                    int(CKA_TOKEN): False,
+                    CKA_LABEL: tc["id"],
+                    CKA_TOKEN: False,
                 },
             )
 
             parity = verify_attribute_parity(
-                rs.raw, rs.sh, h, der,
+                rs.raw,
+                rs.sh,
+                h,
+                der,
                 interface_version=p11_interface_version,
             )
 
-            for attr, (matches, p11_val, expected_val, required) in (
-                parity.items()
-            ):
+            for attr, (matches, p11_val, expected_val, required) in parity.items():
                 if matches is False:
                     errors.append(
                         f"TC {tc['id']} - {attr} mismatch:\n"
@@ -63,17 +65,12 @@ def test_limbo_attribute_parity(
                         f"  Expected: {expected_val}"
                     )
                 elif matches is None and required:
-                    errors.append(
-                        f"TC {tc['id']} - {attr} NOT EXTRACTED "
-                        f"(Mandatory per OASIS)"
-                    )
+                    errors.append(f"TC {tc['id']} - {attr} NOT EXTRACTED (Mandatory per OASIS)")
 
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
             if tc["expected_result"] == "SUCCESS":
-                errors.append(
-                    f"TC {tc['id']} - Failed to import valid cert: {e}"
-                )
+                errors.append(f"TC {tc['id']} - Failed to import valid cert: {e}")
             continue
         except Exception as e:
             errors.append(f"TC {tc['id']} - Unexpected exception: {e}")

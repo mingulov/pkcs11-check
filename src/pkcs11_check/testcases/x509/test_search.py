@@ -45,9 +45,7 @@ _searchable_testcases = _get_searchable_testcases()
 class TestCertificateSearchExtended:
     """Verify module's ability to search certificates by derived attributes."""
 
-    @pytest.mark.parametrize(
-        "tc", _searchable_testcases, ids=lambda tc: tc["id"]
-    )
+    @pytest.mark.parametrize("tc", _searchable_testcases, ids=lambda tc: tc["id"])
     def test_search_by_attributes_extracted(
         self,
         tc: dict[str, Any],
@@ -64,12 +62,13 @@ class TestCertificateSearchExtended:
         label = f"search-test-attr-{tc['id']}"
         try:
             h = import_cert_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 der,
                 interface_version=p11_interface_version,
                 extra_attrs={
-                    int(CKA_LABEL): label,
-                    int(CKA_TOKEN): False,
+                    CKA_LABEL: label,
+                    CKA_TOKEN: False,
                 },
             )
         except (AssertionError, Exception):
@@ -80,27 +79,25 @@ class TestCertificateSearchExtended:
             # Probe for extractable attributes
             subject = issuer = serial = None
             try:
-                a = read_attributes(rs.raw, rs.sh, h, [int(CKA_SUBJECT)])
-                subject = a[int(CKA_SUBJECT)]
+                a = read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT])
+                subject = a[CKA_SUBJECT]
             except (AssertionError, Exception):
                 pass
             try:
-                a = read_attributes(rs.raw, rs.sh, h, [int(CKA_ISSUER)])
-                issuer = a[int(CKA_ISSUER)]
+                a = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
+                issuer = a[CKA_ISSUER]
             except (AssertionError, Exception):
                 pass
             try:
-                a = read_attributes(
-                    rs.raw, rs.sh, h, [int(CKA_SERIAL_NUMBER)]
-                )
-                serial = a[int(CKA_SERIAL_NUMBER)]
+                a = read_attributes(rs.raw, rs.sh, h, [CKA_SERIAL_NUMBER])
+                serial = a[CKA_SERIAL_NUMBER]
             except (AssertionError, Exception):
                 pass
 
             # Search by subject
             if subject:
                 tmpl = template(
-                    attr_ulong(CKA_CLASS, int(CKO_CERTIFICATE)),
+                    attr_ulong(CKA_CLASS, CKO_CERTIFICATE),
                     attr_bytes(CKA_SUBJECT, subject),
                 )
                 found = find_objects(rs.raw, rs.sh, tmpl)
@@ -109,7 +106,7 @@ class TestCertificateSearchExtended:
             # Search by issuer
             if issuer:
                 tmpl = template(
-                    attr_ulong(CKA_CLASS, int(CKO_CERTIFICATE)),
+                    attr_ulong(CKA_CLASS, CKO_CERTIFICATE),
                     attr_bytes(CKA_ISSUER, issuer),
                 )
                 found = find_objects(rs.raw, rs.sh, tmpl)
@@ -118,7 +115,7 @@ class TestCertificateSearchExtended:
             # Search by serial
             if serial:
                 tmpl = template(
-                    attr_ulong(CKA_CLASS, int(CKO_CERTIFICATE)),
+                    attr_ulong(CKA_CLASS, CKO_CERTIFICATE),
                     attr_bytes(CKA_SERIAL_NUMBER, serial),
                 )
                 found = find_objects(rs.raw, rs.sh, tmpl)
@@ -127,7 +124,7 @@ class TestCertificateSearchExtended:
             # Combined: Subject + Serial
             if subject and serial:
                 tmpl = template(
-                    attr_ulong(CKA_CLASS, int(CKO_CERTIFICATE)),
+                    attr_ulong(CKA_CLASS, CKO_CERTIFICATE),
                     attr_bytes(CKA_SUBJECT, subject),
                     attr_bytes(CKA_SERIAL_NUMBER, serial),
                 )

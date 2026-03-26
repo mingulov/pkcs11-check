@@ -34,7 +34,8 @@ _all_cases = load_limbo_testcases()
 
 
 def _build_testcase_sample(
-    cases: list[dict[str, Any]], bettertls_limit: int = 50,
+    cases: list[dict[str, Any]],
+    bettertls_limit: int = 50,
 ) -> list[dict[str, Any]]:
     """Return all offline non-bettertls cases + a bettertls sample."""
     structured: list[dict[str, Any]] = []
@@ -56,10 +57,7 @@ def _build_testcase_sample(
     half = bettertls_limit // 2
     step_s = max(1, len(bettertls_success) // half) if bettertls_success else 1
     step_f = max(1, len(bettertls_failure) // half) if bettertls_failure else 1
-    bt_sample = (
-        bettertls_success[::step_s][:half]
-        + bettertls_failure[::step_f][:half]
-    )
+    bt_sample = bettertls_success[::step_s][:half] + bettertls_failure[::step_f][:half]
     return structured + bt_sample
 
 
@@ -67,7 +65,8 @@ _testcases = _build_testcase_sample(_all_cases)
 
 
 def _build_failure_sample(
-    cases: list[dict[str, Any]], bettertls_limit: int = 30,
+    cases: list[dict[str, Any]],
+    bettertls_limit: int = 30,
 ) -> list[dict[str, Any]]:
     structured_failures: list[dict[str, Any]] = []
     bettertls_failures: list[dict[str, Any]] = []
@@ -93,9 +92,7 @@ _failure_sample = _build_failure_sample(_all_cases)
 class TestLimboCertImport:
     """Tests for importing certificates from x509-limbo."""
 
-    @pytest.mark.parametrize(
-        "tc", _testcases, ids=lambda tc: tc["id"]
-    )
+    @pytest.mark.parametrize("tc", _testcases, ids=lambda tc: tc["id"])
     def test_import_peer_cert(
         self,
         tc: dict[str, Any],
@@ -111,16 +108,17 @@ class TestLimboCertImport:
         h = None
         try:
             h, needed_attrs = import_cert_raw(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 der,
                 extra_attrs={
-                    int(CKA_LABEL): tc["id"],
-                    int(CKA_TOKEN): False,
+                    CKA_LABEL: tc["id"],
+                    CKA_TOKEN: False,
                 },
             )
             # Sanity: label round-trips
-            attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_LABEL)])
-            label = attrs[int(CKA_LABEL)]
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
+            label = attrs[CKA_LABEL]
             if label != "Pkcs11Interop":
                 assert label == tc["id"]
 
@@ -146,10 +144,7 @@ class TestLimboCertImport:
                         ComplianceLevel.VENDOR,
                     )
                 else:
-                    pytest.fail(
-                        f"Module rejected valid Limbo cert {tc['id']} "
-                        f"on raw import: {msg}"
-                    )
+                    pytest.fail(f"Module rejected valid Limbo cert {tc['id']} on raw import: {msg}")
             else:
                 raise
         finally:
@@ -179,26 +174,25 @@ class TestLimboCertImport:
             try:
                 try:
                     h, _ = import_cert_raw(
-                        rs.raw, rs.sh,
+                        rs.raw,
+                        rs.sh,
                         der,
                         extra_attrs={
-                            int(CKA_LABEL): label,
-                            int(CKA_TOKEN): False,
-                            int(CKA_TRUSTED): True,
+                            CKA_LABEL: label,
+                            CKA_TOKEN: False,
+                            CKA_TRUSTED: True,
                         },
                     )
                 except AssertionError as e:
                     msg = str(e)
-                    if (
-                        "CKR_ATTRIBUTE_TYPE_INVALID" in msg
-                        or "CKR_ATTRIBUTE_READ_ONLY" in msg
-                    ):
+                    if "CKR_ATTRIBUTE_TYPE_INVALID" in msg or "CKR_ATTRIBUTE_READ_ONLY" in msg:
                         h, _ = import_cert_raw(
-                            rs.raw, rs.sh,
+                            rs.raw,
+                            rs.sh,
                             der,
                             extra_attrs={
-                                int(CKA_LABEL): label,
-                                int(CKA_TOKEN): False,
+                                CKA_LABEL: label,
+                                CKA_TOKEN: False,
                             },
                         )
                     else:
@@ -212,8 +206,7 @@ class TestLimboCertImport:
                     or "CKR_FUNCTION_FAILED" in msg
                 ):
                     note(
-                        f"Module rejected trusted CA cert {label} "
-                        f"({msg.split(';')[0]})",
+                        f"Module rejected trusted CA cert {label} ({msg.split(';')[0]})",
                         ComplianceLevel.VENDOR,
                     )
                 else:
@@ -223,9 +216,7 @@ class TestLimboCertImport:
                     destroy_quietly(rs.raw, rs.sh, h)
 
 
-@pytest.mark.parametrize(
-    "tc", _failure_sample, ids=lambda tc: tc["id"]
-)
+@pytest.mark.parametrize("tc", _failure_sample, ids=lambda tc: tc["id"])
 def test_import_limbo_failure_cert_raw(
     tc: dict[str, Any],
     p11_raw_session: Any,
@@ -240,11 +231,12 @@ def test_import_limbo_failure_cert_raw(
     h = None
     try:
         h, needed_attrs = import_cert_raw(
-            rs.raw, rs.sh,
+            rs.raw,
+            rs.sh,
             der,
             extra_attrs={
-                int(CKA_LABEL): tc["id"],
-                int(CKA_TOKEN): False,
+                CKA_LABEL: tc["id"],
+                CKA_TOKEN: False,
             },
         )
         if needed_attrs:
@@ -254,8 +246,8 @@ def test_import_limbo_failure_cert_raw(
                 ComplianceLevel.VENDOR,
             )
         # Cert stored - verify VALUE round-trips
-        attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_VALUE)])
-        stored_value = attrs[int(CKA_VALUE)]
+        attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
+        stored_value = attrs[CKA_VALUE]
         if stored_value != der:
             pytest.fail(
                 f"{tc['id']}: module stored modified cert bytes - "
@@ -265,10 +257,7 @@ def test_import_limbo_failure_cert_raw(
 
     except AssertionError as e:
         msg = str(e)
-        if (
-            "CKR_TEMPLATE_INCONSISTENT" in msg
-            or "CKR_ATTRIBUTE_VALUE_INVALID" in msg
-        ):
+        if "CKR_TEMPLATE_INCONSISTENT" in msg or "CKR_ATTRIBUTE_VALUE_INVALID" in msg:
             note(
                 f"[FAILURE cert] Module rejected {tc['id']} "
                 f"({msg.split(';')[0]}) - validates on import",
@@ -276,8 +265,7 @@ def test_import_limbo_failure_cert_raw(
             )
         elif "CKR_FUNCTION_FAILED" in msg:
             note(
-                f"[FAILURE cert] Module returned CKR_FUNCTION_FAILED "
-                f"for {tc['id']}",
+                f"[FAILURE cert] Module returned CKR_FUNCTION_FAILED for {tc['id']}",
                 ComplianceLevel.VENDOR,
             )
         else:

@@ -55,9 +55,7 @@ _selected_testcases = _get_selected_testcases()
 class TestCertificateAttributes:
     """Verify extraction of standard PKCS#11 certificate attributes."""
 
-    @pytest.mark.parametrize(
-        "tc", _selected_testcases, ids=lambda tc: tc["id"]
-    )
+    @pytest.mark.parametrize("tc", _selected_testcases, ids=lambda tc: tc["id"])
     def test_verify_attributes(
         self,
         tc: dict[str, Any],
@@ -75,46 +73,40 @@ class TestCertificateAttributes:
 
         try:
             h = import_cert_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 der,
                 interface_version=p11_interface_version,
                 extra_attrs={
-                    int(CKA_LABEL): label,
-                    int(CKA_TOKEN): False,
+                    CKA_LABEL: label,
+                    CKA_TOKEN: False,
                 },
             )
         except (AssertionError, Exception):
             if tc["expected_result"] == "SUCCESS":
-                pytest.fail(
-                    f"Module rejected certificate that Limbo considers "
-                    f"valid: {tc['id']}"
-                )
-            pytest.skip(
-                f"Module rejected certificate {tc['id']} as expected"
-            )
+                pytest.fail(f"Module rejected certificate that Limbo considers valid: {tc['id']}")
+            pytest.skip(f"Module rejected certificate {tc['id']} as expected")
             return
 
         try:
             # CKA_VALUE SHOULD match original DER
-            attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_VALUE)])
-            val = attrs[int(CKA_VALUE)]
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
+            val = attrs[CKA_VALUE]
             if val != b"Hello world!":
                 assert val == der
 
             # CKA_CERTIFICATE_TYPE MUST be X_509
             try:
-                ct = read_attributes(
-                    rs.raw, rs.sh, h, [int(CKA_CERTIFICATE_TYPE)]
-                )
-                assert ct[int(CKA_CERTIFICATE_TYPE)] == int(CKC_X_509)
+                ct = read_attributes(rs.raw, rs.sh, h, [CKA_CERTIFICATE_TYPE])
+                assert ct[CKA_CERTIFICATE_TYPE] == CKC_X_509
             except (AssertionError, Exception):
                 pass
 
             # Check extraction of other fields
             for attr_id in [
-                int(CKA_SUBJECT),
-                int(CKA_ISSUER),
-                int(CKA_SERIAL_NUMBER),
+                CKA_SUBJECT,
+                CKA_ISSUER,
+                CKA_SERIAL_NUMBER,
             ]:
                 try:
                     a = read_attributes(rs.raw, rs.sh, h, [attr_id])
@@ -125,8 +117,7 @@ class TestCertificateAttributes:
                         )
 
                         note(
-                            f"Module returned empty attr 0x{attr_id:X} "
-                            f"for {tc['id']}",
+                            f"Module returned empty attr 0x{attr_id:X} for {tc['id']}",
                             ComplianceLevel.WARNING,
                         )
                 except (AssertionError, Exception):
@@ -157,19 +148,18 @@ class TestCertificateAttributes:
 
         try:
             h = import_cert_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 der,
                 interface_version=p11_interface_version,
                 extra_attrs={
-                    int(CKA_LABEL): "trusted-test-fail",
-                    int(CKA_TRUSTED): True,
+                    CKA_LABEL: "trusted-test-fail",
+                    CKA_TRUSTED: True,
                 },
             )
             try:
-                attrs = read_attributes(
-                    rs.raw, rs.sh, h, [int(CKA_TRUSTED)]
-                )
-                if attrs[int(CKA_TRUSTED)]:
+                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TRUSTED])
+                if attrs[CKA_TRUSTED]:
                     from pkcs11_check.compliance import (
                         ComplianceLevel,
                         note,

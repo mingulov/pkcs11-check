@@ -47,11 +47,15 @@ def test_exhaustive_cert_import_no_crash(
     """Import every unique cert from Limbo - must not crash module."""
     rs = p11_raw_session
     try:
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_CERTIFICATE),
-            int(CKA_CERTIFICATE_TYPE): int(CKC_X_509),
-            int(CKA_VALUE): der_bytes,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_CERTIFICATE,
+                CKA_CERTIFICATE_TYPE: CKC_X_509,
+                CKA_VALUE: der_bytes,
+            },
+        )
         destroy_quietly(rs.raw, rs.sh, h)
     except (AssertionError, Exception):
         pass  # Rejection is fine, as long as it doesn't crash
@@ -73,10 +77,14 @@ def test_exhaustive_crl_import_no_crash(
     try:
         # Use a generic class value for CRL
         crl_class = 0x00000004
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): crl_class,
-            int(CKA_VALUE): der_bytes,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: crl_class,
+                CKA_VALUE: der_bytes,
+            },
+        )
         destroy_quietly(rs.raw, rs.sh, h)
     except (AssertionError, Exception):
         pass  # Rejection or "not supported" is fine
