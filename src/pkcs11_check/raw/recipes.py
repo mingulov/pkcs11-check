@@ -95,7 +95,7 @@ def quick_session(
     return sh
 
 
-def _pack_attrs(
+def pack_attrs(
     attrs: dict[int, Any] | None,
     *,
     skip: set[int] | None = None,
@@ -125,7 +125,7 @@ def gen_aes_key(
 ) -> int:
     """Generate an AES key with explicit attributes."""
     packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
-    packed.extend(_pack_attrs(attrs, skip={CKA_VALUE_LEN}))
+    packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
     tmpl = template(*packed)
     mech = mech_simple(mechanism)
     key = CK_OBJECT_HANDLE(0)
@@ -135,7 +135,7 @@ def gen_aes_key(
     return key.value
 
 
-def _gen_keypair(
+def gen_keypair(
     raw: RawPKCS11,
     session: int,
     mechanism: int,
@@ -146,8 +146,8 @@ def _gen_keypair(
     pub_skip: set[int] | None = None,
 ) -> tuple[int, int]:
     """Shared keypair generation logic."""
-    pub_packed = pub_base + _pack_attrs(public_attrs, skip=pub_skip)
-    priv_packed = priv_base + _pack_attrs(private_attrs)
+    pub_packed = pub_base + pack_attrs(public_attrs, skip=pub_skip)
+    priv_packed = priv_base + pack_attrs(private_attrs)
     pub_tmpl = template(*pub_packed)
     priv_tmpl = template(*priv_packed)
     mech = mech_simple(mechanism)
@@ -176,7 +176,7 @@ def gen_rsa_keypair(
     private_attrs: dict[CKA, Any] | None = None,
 ) -> tuple[int, int]:
     """Generate an RSA key pair. Returns (pub_handle, priv_handle)."""
-    return _gen_keypair(
+    return gen_keypair(
         raw,
         session,
         CKM_RSA_PKCS_KEY_PAIR_GEN,
@@ -196,7 +196,7 @@ def gen_ec_keypair(
     private_attrs: dict[CKA, Any] | None = None,
 ) -> tuple[int, int]:
     """Generate an EC key pair. Returns (pub_handle, priv_handle)."""
-    return _gen_keypair(
+    return gen_keypair(
         raw,
         session,
         CKM_EC_KEY_PAIR_GEN,
@@ -222,7 +222,7 @@ def import_secret_key(
         attr_ulong(CKA_KEY_TYPE, key_type),
         attr_bytes(CKA_VALUE, value),
     ]
-    packed.extend(_pack_attrs(attrs, skip=base))
+    packed.extend(pack_attrs(attrs, skip=base))
 
     tmpl = template(*packed)
     handle = CK_OBJECT_HANDLE(0)
@@ -244,7 +244,7 @@ def create_object(
     str values auto-encode to UTF-8. For secret key import, prefer
     import_secret_key() which handles CKA_CLASS/CKA_KEY_TYPE/CKA_VALUE.
     """
-    packed = _pack_attrs(attrs)
+    packed = pack_attrs(attrs)
     tmpl = template(*packed)
     handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_CreateObject(session, tmpl.ptr, tmpl.count, byref(handle))
@@ -523,7 +523,7 @@ def unwrap_key(
 ) -> int:
     """Unwrap a key using C_UnwrapKey. Returns new key handle."""
     mech = _resolve_mech(mechanism, mech_param)
-    packed = _pack_attrs(attrs)
+    packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     in_buf = (ctypes.c_ubyte * len(wrapped_key))(*wrapped_key)
     handle = CK_OBJECT_HANDLE(0)
@@ -552,7 +552,7 @@ def derive_key(
 ) -> int:
     """Derive a key using C_DeriveKey. Returns new key handle."""
     mech = _resolve_mech(mechanism, mech_param)
-    packed = _pack_attrs(attrs)
+    packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_DeriveKey(
@@ -582,7 +582,7 @@ def copy_object(
     attrs: dict[int, Any] | None = None,
 ) -> int:
     """Copy an object using C_CopyObject. Returns new handle."""
-    packed = _pack_attrs(attrs)
+    packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     new_handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_CopyObject(
@@ -603,7 +603,7 @@ def set_attributes(
     attrs: dict[int, Any],
 ) -> None:
     """Set attribute values on an object using C_SetAttributeValue."""
-    packed = _pack_attrs(attrs)
+    packed = pack_attrs(attrs)
     tmpl = template(*packed)
     rv = raw.C_SetAttributeValue(session, handle, tmpl.ptr, tmpl.count)
     expect_rv(rv, CKR_OK)
@@ -964,7 +964,7 @@ def encapsulate_key(
 ) -> tuple[int, bytes]:
     """C_EncapsulateKey — returns (secret_key_handle, ciphertext)."""
     mech = _resolve_mech(mechanism, mech_param)
-    packed = _pack_attrs(attrs)
+    packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
 
     # Two-call pattern for ciphertext output
@@ -1008,7 +1008,7 @@ def decapsulate_key(
 ) -> int:
     """C_DecapsulateKey — returns secret_key_handle."""
     mech = _resolve_mech(mechanism, mech_param)
-    packed = _pack_attrs(attrs)
+    packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     ct_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
     key_handle = CK_OBJECT_HANDLE(0)
@@ -1105,7 +1105,7 @@ def unwrap_key_authenticated(
 ) -> int:
     """C_UnwrapKeyAuthenticated — returns key handle."""
     mech = _resolve_mech(mechanism, mech_param)
-    packed = _pack_attrs(attrs)
+    packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     wrapped_buf = (ctypes.c_ubyte * len(wrapped_key))(*wrapped_key)
     tag_buf = (ctypes.c_ubyte * len(tag))(*tag)

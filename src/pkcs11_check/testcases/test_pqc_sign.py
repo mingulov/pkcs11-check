@@ -12,7 +12,7 @@ import pytest
 
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.recipes import (
-    _gen_keypair,
+    gen_keypair,
     destroy_quietly,
     read_attributes,
     sign_single,
@@ -54,7 +54,7 @@ def _skip_if_no(rs: Any, mech_name: str) -> None:
 def _generate_ml_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[int, int]:
     # Default to ML-DSA-65 (NIST security category 3)
     effective_param = param_set if param_set is not None else CKP_ML_DSA_65
-    return _gen_keypair(
+    return gen_keypair(
         rs.raw,
         rs.sh,
         CKM_ML_DSA_KEY_PAIR_GEN,
@@ -75,7 +75,7 @@ def _generate_ml_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[int
 def _generate_slh_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[int, int]:
     # Default to SLH-DSA-SHA2-128s (small signatures, security category 1)
     effective_param = param_set if param_set is not None else CKP_SLH_DSA_SHA2_128S
-    return _gen_keypair(
+    return gen_keypair(
         rs.raw,
         rs.sh,
         CKM_SLH_DSA_KEY_PAIR_GEN,

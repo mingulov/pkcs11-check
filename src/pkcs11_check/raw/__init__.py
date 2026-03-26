@@ -5,6 +5,7 @@ from __future__ import annotations
 from . import der, extensions, metadata_std, pack, recipes, rv, types_std
 from .api import RawPKCS11
 from .bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
+from .recipes import gen_keypair, pack_attrs
 from .types_std import (
     CK_ATTRIBUTE,
     CK_ATTRIBUTE_PTR,
@@ -120,6 +121,8 @@ __all__ = [
     "get_slot_ids",
     "login_user",
     "open_session",
+    "gen_keypair",
+    "pack_attrs",
     "metadata_std",
     "types_std",
     "der",

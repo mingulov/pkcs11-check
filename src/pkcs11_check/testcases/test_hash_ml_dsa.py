@@ -18,7 +18,7 @@ import pytest
 
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.recipes import (
-    _gen_keypair,
+    gen_keypair,
     destroy_quietly,
     sign_single,
     verify_single,
@@ -74,7 +74,7 @@ def _skip_if_no(rs: Any, mech_name: str) -> None:
 def _generate_ml_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[int, int]:
     """Generate an ML-DSA key pair for HashML-DSA sign/verify."""
     effective_param = param_set if param_set is not None else CKP_ML_DSA_65
-    return _gen_keypair(
+    return gen_keypair(
         rs.raw,
         rs.sh,
         CKM_ML_DSA_KEY_PAIR_GEN,

@@ -13,7 +13,7 @@ import pytest
 
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.recipes import (
-    _gen_keypair,
+    gen_keypair,
     decapsulate_key,
     destroy_quietly,
     encapsulate_key,
@@ -74,7 +74,7 @@ def _generate_ml_kem_keypair(
         If None, defaults to CKP_ML_KEM_768.
     """
     effective_param = param_set if param_set is not None else CKP_ML_KEM_768
-    return _gen_keypair(
+    return gen_keypair(
         rs.raw,
         rs.sh,
         CKM_ML_KEM_KEY_PAIR_GEN,

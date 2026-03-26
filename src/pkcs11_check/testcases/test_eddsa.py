@@ -13,7 +13,7 @@ import pytest
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import attr_bytes, mech_eddsa
 from pkcs11_check.raw.recipes import (
-    _gen_keypair,
+    gen_keypair,
     read_attributes,
     sign_single,
     verify_single,
@@ -37,7 +37,7 @@ ED25519_OID = encode_named_curve_parameters("ed25519")
 
 def _gen_ed25519(rs: Any) -> tuple[int, int]:
     """Generate Ed25519 keypair via raw C_GenerateKeyPair."""
-    return _gen_keypair(
+    return gen_keypair(
         rs.raw,
         rs.sh,
         CKM_EC_EDWARDS_KEY_PAIR_GEN,

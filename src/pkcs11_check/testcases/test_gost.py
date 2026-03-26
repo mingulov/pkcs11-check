@@ -61,10 +61,10 @@ def _gost_key(raw: Any, sh: int, attrs: dict[int, Any]) -> int:
     """Generate a 256-bit GOST 28147-89 key via C_GenerateKey."""
     from pkcs11_check.raw.pack import attr_ulong
     from pkcs11_check.raw.pack import template as mk_template
-    from pkcs11_check.raw.recipes import _pack_attrs
+    from pkcs11_check.raw.recipes import pack_attrs
 
     packed = [attr_ulong(CKA_VALUE_LEN, 32)]
-    packed.extend(_pack_attrs(attrs))
+    packed.extend(pack_attrs(attrs))
     tmpl = mk_template(*packed)
     mech = mech_simple(CKM_GOST28147_KEY_GEN)
     key = CK_OBJECT_HANDLE(0)

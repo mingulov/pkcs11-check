@@ -62,10 +62,10 @@ def _gen_stream_key(
     """Generate a stream cipher key via C_GenerateKey."""
     from pkcs11_check.raw.pack import attr_ulong
     from pkcs11_check.raw.pack import template as mk_template
-    from pkcs11_check.raw.recipes import _pack_attrs
+    from pkcs11_check.raw.recipes import pack_attrs
 
     packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
-    packed.extend(_pack_attrs(attrs))
+    packed.extend(pack_attrs(attrs))
     tmpl = mk_template(*packed)
     mech_p = mech_simple(mechanism)
     key = CK_OBJECT_HANDLE(0)

@@ -112,10 +112,10 @@ def _rsa_keypair(
     if mechanism is not None:
         # Non-standard keygen mechanism (e.g. X9.31): call C_GenerateKeyPair directly
         pub_packed = [attr_ulong(CKA_MODULUS_BITS, bits)]
-        from pkcs11_check.raw.recipes import _pack_attrs  # noqa: PLC2701
+        from pkcs11_check.raw.recipes import pack_attrs
 
-        pub_packed.extend(_pack_attrs(pub_attrs, skip={CKA_MODULUS_BITS}))
-        priv_packed = _pack_attrs(priv_attrs)
+        pub_packed.extend(pack_attrs(pub_attrs, skip={CKA_MODULUS_BITS}))
+        priv_packed = pack_attrs(priv_attrs)
         pub_tmpl = template(*pub_packed)
         priv_tmpl = template(*priv_packed) if priv_packed else template()
         mech = mech_simple(mechanism)

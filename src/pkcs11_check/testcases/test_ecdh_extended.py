@@ -23,7 +23,7 @@ from pkcs11_check.raw.pack import (
     mech_ecdh,
 )
 from pkcs11_check.raw.recipes import (
-    _gen_keypair,
+    gen_keypair,
     derive_key,
     destroy_quietly,
     gen_ec_keypair,
@@ -126,7 +126,7 @@ def _gen_montgomery(
         priv_attrs[CKA_DERIVE] = True
     if sign:
         priv_attrs[CKA_SIGN] = True
-    return _gen_keypair(
+    return gen_keypair(
         rs.raw,
         rs.sh,
         CKM_EC_MONTGOMERY_KEY_PAIR_GEN,

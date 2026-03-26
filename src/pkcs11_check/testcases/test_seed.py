@@ -51,9 +51,9 @@ _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 def _seed_key(raw: Any, sh: int, attrs: dict[int, Any]) -> int:
     """Generate a SEED-128 session key via C_GenerateKey (fixed size)."""
     from pkcs11_check.raw.pack import template as mk_template
-    from pkcs11_check.raw.recipes import _pack_attrs
+    from pkcs11_check.raw.recipes import pack_attrs
 
-    packed = _pack_attrs(attrs)
+    packed = pack_attrs(attrs)
     tmpl = mk_template(*packed)
     mech = mech_simple(CKM_SEED_KEY_GEN)
     key = CK_OBJECT_HANDLE(0)
