@@ -21,68 +21,111 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import (
-    FunctionFailed,
-    GeneralError,
-    MechanismInvalid,
-    MechanismParamInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-)
 
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.recipes import (
+    create_object,
+    decrypt_single,
+    derive_key,
+    destroy_quietly,
+    encrypt_single,
+    gen_ec_keypair,
+    read_attributes,
+)
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DECRYPT,
+    CKA_DERIVE,
+    CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKK_GENERIC_SECRET,
+    CKK_X2RATCHET,
+    CKM_X2RATCHET_DECRYPT,
+    CKM_X2RATCHET_ENCRYPT,
+    CKM_X2RATCHET_INITIALIZE,
+    CKM_X2RATCHET_RESPOND,
+    CKO_SECRET_KEY,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 pytestmark = pytest.mark.full
 
-# Errors that indicate the mechanism is advertised but not yet operational on
-# this token.  We xfail rather than hard-fail so the suite stays green while
-# still surfacing evidence that the mechanism was reached.
-_RATCHET_ERRORS = (
-    MechanismInvalid,
-    MechanismParamInvalid,
-    FunctionFailed,
-    GeneralError,
-    TemplateIncomplete,
-    TemplateInconsistent,
-)
-
-# Minimal template for derived / created session keys.
-_SESSION_KEY_TEMPLATE: dict[Attribute, Any] = {
-    Attribute.TOKEN: False,
-    Attribute.SENSITIVE: False,
-    Attribute.EXTRACTABLE: True,
+# CKR values that indicate the mechanism is advertised but not yet operational.
+# We xfail rather than hard-fail so the suite stays green while still
+# surfacing evidence that the mechanism was reached.
+_RATCHET_ERROR_RVS = {
+    int(CKR_MECHANISM_INVALID),
+    int(CKR_MECHANISM_PARAM_INVALID),
+    int(CKR_FUNCTION_FAILED),
+    int(CKR_GENERAL_ERROR),
+    int(CKR_TEMPLATE_INCOMPLETE),
+    int(CKR_TEMPLATE_INCONSISTENT),
 }
 
 
-def _create_ec_keypair(session: Any) -> tuple[Any, Any]:
-    """Generate a Curve25519 / X25519 EC keypair for ratchet key material.
+def _create_ec_keypair(rs: Any) -> tuple[int, int]:
+    """Generate an X25519 / EC keypair for ratchet key material.
 
     X2RATCHET uses X25519 (curve25519) for all DH operations.  Falls back to
     P-256 if the module does not advertise X25519 key generation - in that case
     the ratchet mechanisms will almost certainly MechanismInvalid anyway and the
     test will xfail as expected.
     """
-    import pkcs11 as _p11
-
     # Try X25519 first (correct curve for Signal Double Ratchet)
     try:
-        params = session.create_domain_parameters(
-            KeyType.EC,
-            {_p11.Attribute.EC_PARAMS: _p11.util.ec.encode_named_curve_parameters("curve25519")},
-            local=True,
+        curve_oid = encode_named_curve_parameters("x25519")
+        return gen_ec_keypair(
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            private_attrs={int(CKA_DERIVE): True, int(CKA_TOKEN): False},
+            public_attrs={int(CKA_TOKEN): False},
         )
-        return params.generate_keypair()  # type: ignore[no-any-return]
-    except Exception:
+    except (AssertionError, Exception):
         pass
 
     # Fallback to P-256 for availability probing
-    params = session.create_domain_parameters(
-        KeyType.EC,
-        {_p11.Attribute.EC_PARAMS: _p11.util.ec.encode_named_curve_parameters("secp256r1")},
-        local=True,
+    curve_oid = encode_named_curve_parameters("secp256r1")
+    return gen_ec_keypair(
+        rs.raw,
+        rs.sh,
+        curve_oid,
+        private_attrs={int(CKA_DERIVE): True, int(CKA_TOKEN): False},
+        public_attrs={int(CKA_TOKEN): False},
     )
-    return params.generate_keypair()  # type: ignore[no-any-return]
+
+
+def _create_generic_secret_key(
+    rs: Any,
+    value: bytes,
+    *,
+    encrypt: bool = False,
+    decrypt: bool = False,
+) -> int:
+    """Import a GENERIC_SECRET key for use with ratchet encrypt/decrypt tests."""
+    attrs: dict[int, Any] = {
+        int(CKA_CLASS): int(CKO_SECRET_KEY),
+        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+        int(CKA_VALUE): value,
+        int(CKA_TOKEN): False,
+        int(CKA_SENSITIVE): False,
+    }
+    if encrypt:
+        attrs[int(CKA_ENCRYPT)] = True
+    if decrypt:
+        attrs[int(CKA_DECRYPT)] = True
+    return create_object(rs.raw, rs.sh, attrs)
 
 
 class TestX2RatchetDerive:
@@ -92,13 +135,15 @@ class TestX2RatchetDerive:
     # CKM_X2RATCHET_INITIALIZE
     # ------------------------------------------------------------------
 
-    def test_x2ratchet_initialize_mechanism_check(self, p11_module: Any) -> None:
+    def test_x2ratchet_initialize_mechanism_check(self, p11_raw_session: Any) -> None:
         """CKM_X2RATCHET_INITIALIZE is probed in the mechanism list."""
-        if not has_mechanism(p11_module, "X2RATCHET_INITIALIZE"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_INITIALIZE"):
             pytest.skip("CKM_X2RATCHET_INITIALIZE not supported")
 
     def test_x2ratchet_initialize_derive_generic_secret(
-        self, p11_session: Any, p11_module: Any
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Alice-side ratchet init: derive a GENERIC_SECRET via X2RATCHET_INITIALIZE.
 
@@ -106,77 +151,108 @@ class TestX2RatchetDerive:
         key handles and a KDF mechanism selector.  We attempt a minimal call to
         verify the code path is reachable; the xfail covers missing param support.
         """
-        if not has_mechanism(p11_module, "X2RATCHET_INITIALIZE"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_INITIALIZE"):
             pytest.skip("CKM_X2RATCHET_INITIALIZE not supported")
 
-        pub, priv = _create_ec_keypair(p11_session)
+        pub, priv = _create_ec_keypair(rs)
         try:
-            derived = priv.derive_key(
-                KeyType.GENERIC_SECRET,
-                256,
-                mechanism=Mechanism.X2RATCHET_INITIALIZE,
-                template=_SESSION_KEY_TEMPLATE,
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_X2RATCHET_INITIALIZE,
+                attrs={
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+                    int(CKA_VALUE_LEN): 32,
+                    int(CKA_TOKEN): False,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_EXTRACTABLE): True,
+                },
             )
             try:
-                assert derived is not None
+                assert derived != 0
             finally:
-                derived.destroy()
-        except _RATCHET_ERRORS as exc:
-            pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            # Check if it's a known "not yet operational" CKR
+            msg = str(exc)
+            for ckr_val in _RATCHET_ERROR_RVS:
+                if ckr_name(ckr_val) in msg:
+                    pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
+            raise
         finally:
-            pub.destroy()
-            priv.destroy()
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_x2ratchet_initialize_two_runs_differ(self, p11_session: Any, p11_module: Any) -> None:
+    def test_x2ratchet_initialize_two_runs_differ(self, p11_raw_session: Any) -> None:
         """Two independent ratchet init calls should produce different session keys.
 
         Ratchet state includes a fresh ephemeral key each time; outputs must not
         be identical.
         """
-        if not has_mechanism(p11_module, "X2RATCHET_INITIALIZE"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_INITIALIZE"):
             pytest.skip("CKM_X2RATCHET_INITIALIZE not supported")
 
-        pub_a, priv_a = _create_ec_keypair(p11_session)
-        pub_b, priv_b = _create_ec_keypair(p11_session)
+        pub_a, priv_a = _create_ec_keypair(rs)
+        pub_b, priv_b = _create_ec_keypair(rs)
         try:
-            derived_a = priv_a.derive_key(
-                KeyType.GENERIC_SECRET,
-                256,
-                mechanism=Mechanism.X2RATCHET_INITIALIZE,
-                template=_SESSION_KEY_TEMPLATE,
+            derive_attrs: dict[int, Any] = {
+                int(CKA_CLASS): int(CKO_SECRET_KEY),
+                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+                int(CKA_VALUE_LEN): 32,
+                int(CKA_TOKEN): False,
+                int(CKA_SENSITIVE): False,
+                int(CKA_EXTRACTABLE): True,
+            }
+            derived_a = derive_key(
+                rs.raw,
+                rs.sh,
+                priv_a,
+                CKM_X2RATCHET_INITIALIZE,
+                attrs=derive_attrs,
             )
-            derived_b = priv_b.derive_key(
-                KeyType.GENERIC_SECRET,
-                256,
-                mechanism=Mechanism.X2RATCHET_INITIALIZE,
-                template=_SESSION_KEY_TEMPLATE,
+            derived_b = derive_key(
+                rs.raw,
+                rs.sh,
+                priv_b,
+                CKM_X2RATCHET_INITIALIZE,
+                attrs=derive_attrs,
             )
             try:
-                val_a = derived_a[Attribute.VALUE]
-                val_b = derived_b[Attribute.VALUE]
+                val_a = read_attributes(rs.raw, rs.sh, derived_a, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                val_b = read_attributes(rs.raw, rs.sh, derived_b, [int(CKA_VALUE)])[int(CKA_VALUE)]
                 assert val_a != val_b, "Independent ratchet inits should produce different keys"
             finally:
-                derived_a.destroy()
-                derived_b.destroy()
-        except _RATCHET_ERRORS as exc:
-            pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
+                destroy_quietly(rs.raw, rs.sh, derived_a)
+                destroy_quietly(rs.raw, rs.sh, derived_b)
+        except AssertionError as exc:
+            msg = str(exc)
+            for ckr_val in _RATCHET_ERROR_RVS:
+                if ckr_name(ckr_val) in msg:
+                    pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
+            raise
         finally:
-            pub_a.destroy()
-            priv_a.destroy()
-            pub_b.destroy()
-            priv_b.destroy()
+            destroy_quietly(rs.raw, rs.sh, pub_a)
+            destroy_quietly(rs.raw, rs.sh, priv_a)
+            destroy_quietly(rs.raw, rs.sh, pub_b)
+            destroy_quietly(rs.raw, rs.sh, priv_b)
 
     # ------------------------------------------------------------------
     # CKM_X2RATCHET_RESPOND
     # ------------------------------------------------------------------
 
-    def test_x2ratchet_respond_mechanism_check(self, p11_module: Any) -> None:
+    def test_x2ratchet_respond_mechanism_check(self, p11_raw_session: Any) -> None:
         """CKM_X2RATCHET_RESPOND is probed in the mechanism list."""
-        if not has_mechanism(p11_module, "X2RATCHET_RESPOND"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_RESPOND"):
             pytest.skip("CKM_X2RATCHET_RESPOND not supported")
 
     def test_x2ratchet_respond_derive_generic_secret(
-        self, p11_session: Any, p11_module: Any
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Bob-side ratchet respond: derive a GENERIC_SECRET via X2RATCHET_RESPOND.
 
@@ -184,29 +260,43 @@ class TestX2RatchetDerive:
         structure mirrors CK_X2RATCHET_RESPOND_PARAMS; we probe the code path
         and xfail on not-yet-operational errors.
         """
-        if not has_mechanism(p11_module, "X2RATCHET_RESPOND"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_RESPOND"):
             pytest.skip("CKM_X2RATCHET_RESPOND not supported")
 
-        pub, priv = _create_ec_keypair(p11_session)
+        pub, priv = _create_ec_keypair(rs)
         try:
-            derived = priv.derive_key(
-                KeyType.GENERIC_SECRET,
-                256,
-                mechanism=Mechanism.X2RATCHET_RESPOND,
-                template=_SESSION_KEY_TEMPLATE,
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_X2RATCHET_RESPOND,
+                attrs={
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
+                    int(CKA_VALUE_LEN): 32,
+                    int(CKA_TOKEN): False,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_EXTRACTABLE): True,
+                },
             )
             try:
-                assert derived is not None
+                assert derived != 0
             finally:
-                derived.destroy()
-        except _RATCHET_ERRORS as exc:
-            pytest.xfail(f"CKM_X2RATCHET_RESPOND not yet operational: {exc}")
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            msg = str(exc)
+            for ckr_val in _RATCHET_ERROR_RVS:
+                if ckr_name(ckr_val) in msg:
+                    pytest.xfail(f"CKM_X2RATCHET_RESPOND not yet operational: {exc}")
+            raise
         finally:
-            pub.destroy()
-            priv.destroy()
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_x2ratchet_respond_derives_x2ratchet_key_type(
-        self, p11_session: Any, p11_module: Any
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """X2RATCHET_RESPOND may produce a CKK_X2RATCHET typed key object.
 
@@ -214,33 +304,38 @@ class TestX2RatchetDerive:
         carry Double Ratchet state alongside key material.  This test checks
         that outcome if the mechanism is available.
         """
-        if not has_mechanism(p11_module, "X2RATCHET_RESPOND"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_RESPOND"):
             pytest.skip("CKM_X2RATCHET_RESPOND not supported")
 
-        pub, priv = _create_ec_keypair(p11_session)
-        ratchet_template: dict[Attribute, Any] = {
-            Attribute.TOKEN: False,
-            Attribute.SENSITIVE: False,
-            Attribute.EXTRACTABLE: True,
-            Attribute.CLASS: ObjectClass.SECRET_KEY,
-            Attribute.KEY_TYPE: KeyType.X2RATCHET,
-        }
+        pub, priv = _create_ec_keypair(rs)
         try:
-            derived = priv.derive_key(
-                KeyType.X2RATCHET,
-                0,  # key size managed by the mechanism
-                mechanism=Mechanism.X2RATCHET_RESPOND,
-                template=ratchet_template,
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_X2RATCHET_RESPOND,
+                attrs={
+                    int(CKA_CLASS): int(CKO_SECRET_KEY),
+                    int(CKA_KEY_TYPE): int(CKK_X2RATCHET),
+                    int(CKA_TOKEN): False,
+                    int(CKA_SENSITIVE): False,
+                    int(CKA_EXTRACTABLE): True,
+                },
             )
             try:
-                assert derived is not None
+                assert derived != 0
             finally:
-                derived.destroy()
-        except _RATCHET_ERRORS as exc:
-            pytest.xfail(f"CKM_X2RATCHET_RESPOND X2RATCHET key not operational: {exc}")
+                destroy_quietly(rs.raw, rs.sh, derived)
+        except AssertionError as exc:
+            msg = str(exc)
+            for ckr_val in _RATCHET_ERROR_RVS:
+                if ckr_name(ckr_val) in msg:
+                    pytest.xfail(f"CKM_X2RATCHET_RESPOND X2RATCHET key not operational: {exc}")
+            raise
         finally:
-            pub.destroy()
-            priv.destroy()
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
 
 class TestX2RatchetEncrypt:
@@ -250,112 +345,118 @@ class TestX2RatchetEncrypt:
     # CKM_X2RATCHET_ENCRYPT
     # ------------------------------------------------------------------
 
-    def test_x2ratchet_encrypt_mechanism_check(self, p11_module: Any) -> None:
+    def test_x2ratchet_encrypt_mechanism_check(self, p11_raw_session: Any) -> None:
         """CKM_X2RATCHET_ENCRYPT is probed in the mechanism list."""
-        if not has_mechanism(p11_module, "X2RATCHET_ENCRYPT"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_ENCRYPT"):
             pytest.skip("CKM_X2RATCHET_ENCRYPT not supported")
 
-    def test_x2ratchet_encrypt_basic(self, p11_session: Any, p11_module: Any) -> None:
+    def test_x2ratchet_encrypt_basic(self, p11_raw_session: Any) -> None:
         """Encrypt a short message with CKM_X2RATCHET_ENCRYPT.
 
         A valid X2RATCHET ratchet-state key is required as the mechanism key.
         We use a GENERIC_SECRET as a stand-in; the mechanism will likely reject
         it (xfail), but confirms the C_Encrypt code path was reached.
         """
-        if not has_mechanism(p11_module, "X2RATCHET_ENCRYPT"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_ENCRYPT"):
             pytest.skip("CKM_X2RATCHET_ENCRYPT not supported")
 
         plaintext = b"Double Ratchet test message"
-
-        key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-                Attribute.VALUE: bytes(range(32)),
-                Attribute.ENCRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
-        )
+        key = _create_generic_secret_key(rs, bytes(range(32)), encrypt=True)
         try:
-            ciphertext = key.encrypt(plaintext, mechanism=Mechanism.X2RATCHET_ENCRYPT)
+            ciphertext = encrypt_single(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_X2RATCHET_ENCRYPT,
+                plaintext,
+            )
             assert ciphertext != plaintext
             assert len(ciphertext) > 0
-        except _RATCHET_ERRORS as exc:
-            pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
+        except AssertionError as exc:
+            msg = str(exc)
+            for ckr_val in _RATCHET_ERROR_RVS:
+                if ckr_name(ckr_val) in msg:
+                    pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
+            raise
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
     def test_x2ratchet_encrypt_ciphertext_not_plaintext(
-        self, p11_session: Any, p11_module: Any
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Ciphertext produced by X2RATCHET_ENCRYPT must differ from plaintext."""
-        if not has_mechanism(p11_module, "X2RATCHET_ENCRYPT"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_ENCRYPT"):
             pytest.skip("CKM_X2RATCHET_ENCRYPT not supported")
 
         plaintext = b"Signal protocol Double Ratchet"
-
-        key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-                Attribute.VALUE: bytes(range(32)),
-                Attribute.ENCRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
-        )
+        key = _create_generic_secret_key(rs, bytes(range(32)), encrypt=True)
         try:
-            ciphertext = key.encrypt(plaintext, mechanism=Mechanism.X2RATCHET_ENCRYPT)
+            ciphertext = encrypt_single(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_X2RATCHET_ENCRYPT,
+                plaintext,
+            )
             assert ciphertext != plaintext, "Ciphertext must not equal plaintext"
-        except _RATCHET_ERRORS as exc:
-            pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
+        except AssertionError as exc:
+            msg = str(exc)
+            for ckr_val in _RATCHET_ERROR_RVS:
+                if ckr_name(ckr_val) in msg:
+                    pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
+            raise
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
     # ------------------------------------------------------------------
     # CKM_X2RATCHET_DECRYPT
     # ------------------------------------------------------------------
 
-    def test_x2ratchet_decrypt_mechanism_check(self, p11_module: Any) -> None:
+    def test_x2ratchet_decrypt_mechanism_check(self, p11_raw_session: Any) -> None:
         """CKM_X2RATCHET_DECRYPT is probed in the mechanism list."""
-        if not has_mechanism(p11_module, "X2RATCHET_DECRYPT"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_DECRYPT"):
             pytest.skip("CKM_X2RATCHET_DECRYPT not supported")
 
-    def test_x2ratchet_decrypt_basic(self, p11_session: Any, p11_module: Any) -> None:
+    def test_x2ratchet_decrypt_basic(self, p11_raw_session: Any) -> None:
         """Attempt C_Decrypt with CKM_X2RATCHET_DECRYPT on a stub ciphertext.
 
         Without a real ratchet-state key object we cannot produce valid
         ciphertext.  We confirm the call reaches C_Decrypt and xfail on the
         expected error rather than skipping the operation entirely.
         """
-        if not has_mechanism(p11_module, "X2RATCHET_DECRYPT"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_DECRYPT"):
             pytest.skip("CKM_X2RATCHET_DECRYPT not supported")
 
         # Synthetic ciphertext - will be rejected by any correct implementation.
         stub_ciphertext = bytes(range(64))
-
-        key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-                Attribute.VALUE: bytes(range(32)),
-                Attribute.DECRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
-        )
+        key = _create_generic_secret_key(rs, bytes(range(32)), decrypt=True)
         try:
-            plaintext = key.decrypt(stub_ciphertext, mechanism=Mechanism.X2RATCHET_DECRYPT)
+            plaintext = decrypt_single(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_X2RATCHET_DECRYPT,
+                stub_ciphertext,
+            )
             # If the module actually decrypts the stub ciphertext without error,
             # accept it - some permissive stubs may succeed.
             assert plaintext is not None
-        except _RATCHET_ERRORS as exc:
-            pytest.xfail(f"CKM_X2RATCHET_DECRYPT not yet operational: {exc}")
+        except AssertionError as exc:
+            msg = str(exc)
+            for ckr_val in _RATCHET_ERROR_RVS:
+                if ckr_name(ckr_val) in msg:
+                    pytest.xfail(f"CKM_X2RATCHET_DECRYPT not yet operational: {exc}")
+            raise
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_x2ratchet_encrypt_decrypt_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
+    def test_x2ratchet_encrypt_decrypt_roundtrip(self, p11_raw_session: Any) -> None:
         """Full encrypt-then-decrypt roundtrip with X2RATCHET mechanisms.
 
         Both ENCRYPT and DECRYPT must be available.  We use a shared
@@ -363,39 +464,37 @@ class TestX2RatchetEncrypt:
         requires a full CKK_X2RATCHET state object.  This test confirms the
         round-trip code path and xfails on not-yet-operational errors.
         """
-        if not has_mechanism(p11_module, "X2RATCHET_ENCRYPT"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("X2RATCHET_ENCRYPT"):
             pytest.skip("CKM_X2RATCHET_ENCRYPT not supported")
-        if not has_mechanism(p11_module, "X2RATCHET_DECRYPT"):
+        if not rs.has_mechanism("X2RATCHET_DECRYPT"):
             pytest.skip("CKM_X2RATCHET_DECRYPT not supported")
 
         plaintext = b"roundtrip test for double ratchet"
-
-        enc_key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-                Attribute.VALUE: bytes(range(32)),
-                Attribute.ENCRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
-        )
-        dec_key = p11_session.create_object(
-            {
-                Attribute.CLASS: ObjectClass.SECRET_KEY,
-                Attribute.KEY_TYPE: KeyType.GENERIC_SECRET,
-                Attribute.VALUE: bytes(range(32)),
-                Attribute.DECRYPT: True,
-                Attribute.TOKEN: False,
-                Attribute.SENSITIVE: False,
-            }
-        )
+        enc_key = _create_generic_secret_key(rs, bytes(range(32)), encrypt=True)
+        dec_key = _create_generic_secret_key(rs, bytes(range(32)), decrypt=True)
         try:
-            ciphertext = enc_key.encrypt(plaintext, mechanism=Mechanism.X2RATCHET_ENCRYPT)
-            recovered = dec_key.decrypt(ciphertext, mechanism=Mechanism.X2RATCHET_DECRYPT)
+            ciphertext = encrypt_single(
+                rs.raw,
+                rs.sh,
+                enc_key,
+                CKM_X2RATCHET_ENCRYPT,
+                plaintext,
+            )
+            recovered = decrypt_single(
+                rs.raw,
+                rs.sh,
+                dec_key,
+                CKM_X2RATCHET_DECRYPT,
+                ciphertext,
+            )
             assert recovered == plaintext, "Roundtrip plaintext mismatch"
-        except _RATCHET_ERRORS as exc:
-            pytest.xfail(f"CKM_X2RATCHET encrypt/decrypt roundtrip not operational: {exc}")
+        except AssertionError as exc:
+            msg = str(exc)
+            for ckr_val in _RATCHET_ERROR_RVS:
+                if ckr_name(ckr_val) in msg:
+                    pytest.xfail(f"CKM_X2RATCHET encrypt/decrypt roundtrip not operational: {exc}")
+            raise
         finally:
-            enc_key.destroy()
-            dec_key.destroy()
+            destroy_quietly(rs.raw, rs.sh, enc_key)
+            destroy_quietly(rs.raw, rs.sh, dec_key)
