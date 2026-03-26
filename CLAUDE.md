@@ -59,8 +59,8 @@ docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 - `core/isolation.py` — lower-level `spawn` helper retained for focused tests and future integration
 - `config.py` — four-layer config: CLI > env > TOML > defaults
 - `plugin.py` — pytest11 entry point, registers markers, fixtures, collection hooks
-- `fixtures.py` — p11_session (with explicit login/logout), p11_module, p11_config, p11_interface_version
-- `testcases/conftest.py` — shared helpers: mech_name(), import_aes_key(), has_mechanism(), extract_ec_point(), open_session()
+- `fixtures.py` — p11_raw_session / p11_session (both yield RawSession), p11_module, p11_config, p11_interface_version
+- `testcases/conftest.py` — shared helpers: get_pin_bytes(), extract_ec_point()
 - `testcases/ckr/` — CKR error coverage tests (102 tests, 21 files). Use `--ckr-strict` for exact spec compliance. Spec: `docs/superpowers/specs/2026-03-18-ckr-error-coverage-design.md`
 - `testcases/ckr/_ckr_spec.py` — CkrExpectation dataclass, assert_ckr() helper, spec tables
 - `testcases/ckr/_ctypes_raw.py` — raw ctypes PKCS#11 caller for NULL parameter tests (legacy, prefer `pkcs11_check.raw.api.RawPKCS11`)
@@ -144,7 +144,7 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 - `pkcs11-check test` defaults to `--isolation auto`; explicit `--isolation none` is the unsafe fast path
 - `p11_session` fixture does explicit `login()` / `logout()` per test to avoid `UserAlreadyLoggedIn` cascading
 - Tests auto-skip when interface version doesn't support them (@pytest.mark.requires_v30)
-- Mechanism availability checked at runtime via `slot.get_mechanisms()` — tests skip cleanly
+- Mechanism availability checked at runtime via `rs.has_mechanism(name)` on `RawSession` — tests skip cleanly
 - PQC tests always provide `CKA_PARAMETER_SET` (ML-KEM-768, ML-DSA-65, SLH-DSA-SHA2-128s defaults)
 - PIN tests marked `@destructive` to prevent token lockout (OpenCryptoki, TPM)
 
@@ -155,7 +155,7 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 - If a module crashes on valid parameters, that is a module bug to be reported, not a test to be skipped.
 - Tests may only be skipped for **missing capabilities** (mechanism not advertised, interface version too old) - never to hide broken behavior.
 - Do not add `pytest.skip()` or `pytest.xfail()` for crashes, segfaults, or unexpected errors. The isolation runner handles crashes; the test suite reports them.
-- Acceptable skips: `has_mechanism()` returns False, `@pytest.mark.requires_v30` on v2.40 module, optional test data not present.
+- Acceptable skips: `rs.has_mechanism()` returns False, `@pytest.mark.requires_v30` on v2.40 module, optional test data not present.
 - Unacceptable skips: module segfaults on certain inputs, module returns wrong error code, module hangs on specific operation.
 
 ### Error handling — CRITICAL
@@ -210,26 +210,28 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 from __future__ import annotations
 from typing import Any
 import pytest
-from pkcs11_check.raw.api import RawPKCS11
-from pkcs11_check.raw.types_std import (
-    CKM_AES_KEY_GEN, CKM_AES_CTR, CKA_ENCRYPT, CKA_DECRYPT, CKA_TOKEN,
-    CKK_AES, CKR_OK,
-)
-from pkcs11_check.testcases.conftest import has_mechanism
+from pkcs11_check.fixtures import RawSession
+from pkcs11_check.raw.recipes import gen_aes_key, encrypt_single, destroy_quietly
+from pkcs11_check.raw.types_std import CKM_AES_CTR, CKR_OK
 
 pytestmark = [pytest.mark.encrypt]  # assign relevant marker
 
 class TestExample:
-    def test_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
-        if not has_mechanism(p11_module, "AES_CTR"):
+    def test_roundtrip(self, p11_raw_session: RawSession) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CTR"):
             pytest.skip("CKM_AES_CTR not supported")
-        raw: RawPKCS11 = p11_session  # p11_session exposes RawPKCS11 interface
-        # generate key, encrypt, decrypt using raw CKR-returning calls
-        # assert rv == CKR_OK at each step; unexpected CKR values fail the test
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_CTR, b"test data here!")
+            # assert rv == CKR_OK at each step; unexpected CKR values fail the test
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 ```
 
 ### Key fixtures (all session-scoped unless noted)
-- `p11_session` — open RW session with login; does login/logout per test (`@pytest.fixture` scope=function)
+- `p11_raw_session` — primary fixture: yields `RawSession` with login/logout per test (function-scoped). Fields: `rs.raw` (RawPKCS11), `rs.sh` (session handle), `rs.slot_id`, `rs.has_mechanism(name)`, `rs.mechanisms`
+- `p11_session` — legacy alias: also yields `RawSession`; prefer `p11_raw_session` for new tests
 - `p11_module` — loaded PKCS#11 module (session-scoped)
 - `p11_config` — merged config from CLI/env/TOML (session-scoped)
 - `p11_interface_version` — negotiated version string: "2.40", "3.0", "3.1", "3.2"
@@ -237,7 +239,8 @@ class TestExample:
 ### Mechanism availability pattern
 ```python
 # ALWAYS check mechanism availability — never assume
-if not has_mechanism(p11_module, "MECHANISM_NAME"):
+rs = p11_raw_session
+if not rs.has_mechanism("MECHANISM_NAME"):
     pytest.skip("CKM_MECHANISM_NAME not supported")
 ```
 
@@ -248,13 +251,14 @@ note("Module does X which is above spec requirement Y", ComplianceLevel.VENDOR)
 ```
 
 ### Object cleanup pattern
-Always destroy created objects in `finally` blocks or use `try/finally`:
+Always destroy created objects in `finally` blocks:
 ```python
-obj = p11_session.generate_key(...)
+from pkcs11_check.raw.recipes import destroy_quietly
+key = gen_aes_key(rs.raw, rs.sh, 256)
 try:
     # test logic
 finally:
-    obj.destroy()
+    destroy_quietly(rs.raw, rs.sh, key)
 ```
 
 ## PKCS#11 Specification
