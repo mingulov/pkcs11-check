@@ -15,18 +15,18 @@ import textwrap
 from typing import Any
 
 import pytest
-from pkcs11.exceptions import (
-    DeviceError,
-    DeviceMemory,
-    DeviceRemoved,
-    FunctionFailed,
-    GeneralError,
-    HostMemory,
-    SessionClosed,
-    SessionHandleInvalid,
-    TokenNotPresent,
-)
 
+from pkcs11_check.raw.types_std import (
+    CKR_DEVICE_ERROR,
+    CKR_DEVICE_MEMORY,
+    CKR_DEVICE_REMOVED,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
+    CKR_SESSION_CLOSED,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_TOKEN_NOT_PRESENT,
+)
 from pkcs11_check.testcases.ckr._ckr_spec import (
     _SESSION_UNIVERSAL,
     _TOKEN_UNIVERSAL,
@@ -42,62 +42,63 @@ class TestUniversalInfrastructure:
 
     def test_universal_codes_in_tuple(self) -> None:
         """All 3 universal codes present in _UNIVERSAL."""
-        assert GeneralError in _UNIVERSAL
-        assert HostMemory in _UNIVERSAL
-        assert FunctionFailed in _UNIVERSAL
+        assert int(CKR_GENERAL_ERROR) in _UNIVERSAL
+        assert int(CKR_HOST_MEMORY) in _UNIVERSAL
+        assert int(CKR_FUNCTION_FAILED) in _UNIVERSAL
 
     def test_session_universal_in_tuple(self) -> None:
         """Session-universal codes present."""
-        assert SessionHandleInvalid in _SESSION_UNIVERSAL
-        assert DeviceRemoved in _SESSION_UNIVERSAL
-        assert SessionClosed in _SESSION_UNIVERSAL
+        assert int(CKR_SESSION_HANDLE_INVALID) in _SESSION_UNIVERSAL
+        assert int(CKR_DEVICE_REMOVED) in _SESSION_UNIVERSAL
+        assert int(CKR_SESSION_CLOSED) in _SESSION_UNIVERSAL
 
     def test_token_universal_in_tuple(self) -> None:
         """Token-universal codes present."""
-        assert DeviceMemory in _TOKEN_UNIVERSAL
-        assert DeviceError in _TOKEN_UNIVERSAL
-        assert TokenNotPresent in _TOKEN_UNIVERSAL
+        assert int(CKR_DEVICE_MEMORY) in _TOKEN_UNIVERSAL
+        assert int(CKR_DEVICE_ERROR) in _TOKEN_UNIVERSAL
+        assert int(CKR_TOKEN_NOT_PRESENT) in _TOKEN_UNIVERSAL
 
     def test_full_compat_includes_all(self) -> None:
         """full_compat() with empty base includes all 9 universal codes."""
         result = full_compat(())
-        assert GeneralError in result
-        assert HostMemory in result
-        assert FunctionFailed in result
-        assert SessionHandleInvalid in result
-        assert DeviceRemoved in result
-        assert SessionClosed in result
-        assert DeviceMemory in result
-        assert DeviceError in result
-        assert TokenNotPresent in result
+        assert int(CKR_GENERAL_ERROR) in result
+        assert int(CKR_HOST_MEMORY) in result
+        assert int(CKR_FUNCTION_FAILED) in result
+        assert int(CKR_SESSION_HANDLE_INVALID) in result
+        assert int(CKR_DEVICE_REMOVED) in result
+        assert int(CKR_SESSION_CLOSED) in result
+        assert int(CKR_DEVICE_MEMORY) in result
+        assert int(CKR_DEVICE_ERROR) in result
+        assert int(CKR_TOKEN_NOT_PRESENT) in result
 
     def test_full_compat_no_session(self) -> None:
         """full_compat() without session doesn't include session/token codes."""
         result = full_compat((), uses_session=False)
-        assert GeneralError in result
-        assert SessionHandleInvalid not in result
-        assert DeviceMemory not in result
+        assert int(CKR_GENERAL_ERROR) in result
+        assert int(CKR_SESSION_HANDLE_INVALID) not in result
+        assert int(CKR_DEVICE_MEMORY) not in result
 
 
 class TestUniversalRealTriggers:
     """Trigger universal CKR codes on real modules."""
 
-    def test_session_handle_invalid(self, p11_module: Any) -> None:
+    def test_session_handle_invalid(self, p11_raw_session: Any) -> None:
         """CKR_SESSION_HANDLE_INVALID - use invalid session handle via raw."""
         import ctypes
 
-        from pkcs11_check.raw.api import RawPKCS11
         from pkcs11_check.raw.types_std import (
-            CKR_ARGUMENTS_BAD,
-            CKR_SESSION_HANDLE_INVALID,
             CK_SESSION_INFO,
+            CKR_ARGUMENTS_BAD,
         )
 
-        raw = RawPKCS11(p11_module.lib._raw_funclist_ptr)
+        rs = p11_raw_session
         session_info = CK_SESSION_INFO()
-        rv = raw.C_GetSessionInfo(0xDEADBEEF, ctypes.byref(session_info))
+        rv = int(rs.raw.C_GetSessionInfo(0xDEADBEEF, ctypes.byref(session_info)))
         # SESSION_HANDLE_INVALID or ARGUMENTS_BAD - both prove invalid handle is detected
-        assert rv in (CKR_SESSION_HANDLE_INVALID, CKR_ARGUMENTS_BAD), f"Got 0x{rv:08x}"
+        assert rv in (
+            int(CKR_SESSION_HANDLE_INVALID),
+            int(CKR_ARGUMENTS_BAD),
+        ), f"Got 0x{rv:08x}"
 
     def test_cryptoki_not_initialized_via_subprocess(self, p11_config: Any) -> None:
         """CKR_CRYPTOKI_NOT_INITIALIZED - call after C_Finalize."""
@@ -137,23 +138,28 @@ class TestUniversalRealTriggers:
             pytest.skip("fault-proxy not built")
 
         script = textwrap.dedent(f"""\
-            import os, pkcs11
+            import os, ctypes
+            from pkcs11_check.raw.api import RawPKCS11
+            from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
+            from pkcs11_check.raw.types_std import (
+                CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_DEVICE_REMOVED, CKR_OK,
+            )
             os.environ["PKCS11_REAL_MODULE"] = "{p11_config.module}"
             os.environ["PKCS11_INJECT_FUNCTION"] = "C_GenerateRandom"
             os.environ["PKCS11_INJECT_ERROR"] = "0x00000032"  # DEVICE_REMOVED
-            lib = pkcs11.lib("{proxy}")
-            slots = lib.get_slots(token_present=True)
-            token = slots[0].get_token()
-            session = token.open(rw=True)
-            try:
-                session.generate_random(256)
-                print("FAIL")
-            except pkcs11.exceptions.DeviceRemoved:
+            raw = RawPKCS11.from_lib("{proxy}")
+            raw.C_Initialize(None)
+            slots = get_slot_ids(raw)
+            sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION | CKF_RW_SESSION))
+            buf = (ctypes.c_ubyte * 32)()
+            rv = int(raw.C_GenerateRandom(sh, buf, 32))
+            if rv == int(CKR_DEVICE_REMOVED):
                 print("OK:DEVICE_REMOVED")
-            except Exception as e:
-                print(f"OTHER:{{type(e).__name__}}")
-            session.close()
-            lib.finalize()
+            elif rv == int(CKR_OK):
+                print("FAIL")
+            else:
+                print(f"OTHER:0x{{rv:08x}}")
+            raw.C_Finalize(None)
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],

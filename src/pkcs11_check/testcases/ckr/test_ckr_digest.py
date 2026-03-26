@@ -8,9 +8,14 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import Mechanism
-from pkcs11.exceptions import PKCS11Error
 
+from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.types_std import (
+    CKM_AES_ECB,
+    CKM_RSA_PKCS,
+    CKM_SHA256,
+    CKR_OK,
+)
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_DIGEST, assert_ckr
 
 pytestmark = pytest.mark.access
@@ -19,42 +24,40 @@ pytestmark = pytest.mark.access
 class TestDigestInitErrors:
     """Per-parameter error conditions for C_DigestInit (Sec.5.12.1)."""
 
-    def test_mechanism_invalid(self, p11_session: Any, ckr_strict: bool) -> None:
+    def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using encrypt mechanism for digest -> CKR_MECHANISM_INVALID."""
-        try:
-            p11_session.digest(b"test data", mechanism=Mechanism.AES_ECB)
+        rs = p11_raw_session
+        mech = mech_simple(CKM_AES_ECB)
+        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
+        if rv == int(CKR_OK):
             pytest.fail("Should have rejected AES_ECB as digest mechanism")
-        except PKCS11Error as e:
-            # Broad catch intentional - assert_ckr validates the specific type
-            assert_ckr(CKR_DIGEST["init_mechanism_invalid"], e, ckr_strict)
+        assert_ckr(CKR_DIGEST["init_mechanism_invalid"], rv, ckr_strict)
 
-    def test_encrypt_mechanism_for_digest(
-        self, p11_session: Any, ckr_strict: bool
-    ) -> None:
+    def test_encrypt_mechanism_for_digest(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using RSA encrypt mechanism for digest -> CKR_MECHANISM_INVALID."""
-        try:
-            p11_session.digest(b"test data", mechanism=Mechanism.RSA_PKCS)
+        rs = p11_raw_session
+        mech = mech_simple(CKM_RSA_PKCS)
+        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
+        if rv == int(CKR_OK):
             pytest.fail("Should have rejected RSA_PKCS as digest mechanism")
-        except PKCS11Error as e:
-            assert_ckr(CKR_DIGEST["init_encrypt_mechanism"], e, ckr_strict)
+        assert_ckr(CKR_DIGEST["init_encrypt_mechanism"], rv, ckr_strict)
 
-    def test_mechanism_param_invalid(
-        self, p11_session: Any, ckr_strict: bool
-    ) -> None:
+    def test_mechanism_param_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """SHA-256 with unexpected parameter -> CKR_MECHANISM_PARAM_INVALID.
 
         SHA-256 takes no parameters. Providing one should error.
-        Note: some wrappers may strip the param before reaching the module.
+        Note: some modules may ignore the param.
         """
+        rs = p11_raw_session
         exp = CKR_DIGEST["init_mechanism_param_invalid"]
-        try:
-            p11_session.digest(
-                b"test data",
-                mechanism=Mechanism.SHA256,
-                mechanism_param=b"\x00" * 16,
-            )
+        # Build SHA-256 mechanism with a bogus 16-byte parameter
+        import ctypes
+
+
+        mech = mech_bytes(CKM_SHA256, b"\x00" * 16)
+        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
+        if rv == int(CKR_OK):
             # Some modules/wrappers ignore unknown params for hash mechanisms
-            if not exp.allow_success:
-                pass  # SHA-256 with param: module may ignore it - not a hard failure
-        except PKCS11Error as e:
-            assert_ckr(exp, e, ckr_strict)
+            pass
+        else:
+            assert_ckr(exp, rv, ckr_strict)

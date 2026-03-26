@@ -8,122 +8,207 @@ Source: PKCS#11 v3.2 Sec.5.14.7 (C_EncapsulateKey), Sec.5.14.8 (C_DecapsulateKey
 
 from __future__ import annotations
 
+import ctypes
+from ctypes import byref
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.constants import MLKemParameterSet
-from pkcs11.exceptions import PKCS11Error
 
+from pkcs11_check.raw.pack import (
+    attr_bool,
+    attr_ulong,
+    mech_simple,
+    template,
+)
+from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CK_ULONG,
+    CKA_DECAPSULATE,
+    CKA_ENCAPSULATE,
+    CKA_EXTRACTABLE,
+    CKA_PARAMETER_SET,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKM_AES_ECB,
+    CKM_ML_KEM,
+    CKM_ML_KEM_KEY_PAIR_GEN,
+    CKP_ML_KEM_768,
+    CKR_OK,
+)
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_KEM, assert_ckr
-from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = [pytest.mark.access, pytest.mark.pqc, pytest.mark.requires_v32]
 
 
-def _generate_ml_kem_keypair(session: Any) -> tuple[Any, Any]:
-    """Generate ML-KEM-768 keypair for tests."""
-    param_set = int(MLKemParameterSet.ML_KEM_768)
-    pub_tmpl = {
-        Attribute.ENCAPSULATE: True,
-        Attribute.PARAMETER_SET: param_set,
-        Attribute.TOKEN: False,
-    }
-    priv_tmpl = {
-        Attribute.DECAPSULATE: True,
-        Attribute.PARAMETER_SET: param_set,
-        Attribute.TOKEN: False,
-        Attribute.SENSITIVE: False,
-        Attribute.EXTRACTABLE: False,
-    }
-    return session.generate_keypair(
-        KeyType.ML_KEM,
-        mechanism=Mechanism.ML_KEM_KEY_PAIR_GEN,
-        public_template=pub_tmpl,
-        private_template=priv_tmpl,
+def _generate_ml_kem_keypair(raw: Any, sh: int) -> tuple[int, int]:
+    """Generate ML-KEM-768 keypair for tests. Returns (pub_handle, priv_handle)."""
+    mech = mech_simple(CKM_ML_KEM_KEY_PAIR_GEN)
+    pub_tmpl = template(
+        attr_bool(CKA_ENCAPSULATE, True),
+        attr_ulong(CKA_PARAMETER_SET, int(CKP_ML_KEM_768)),
+        attr_bool(CKA_TOKEN, False),
     )
+    priv_tmpl = template(
+        attr_bool(CKA_DECAPSULATE, True),
+        attr_ulong(CKA_PARAMETER_SET, int(CKP_ML_KEM_768)),
+        attr_bool(CKA_TOKEN, False),
+        attr_bool(CKA_SENSITIVE, False),
+        attr_bool(CKA_EXTRACTABLE, False),
+    )
+    pub = CK_OBJECT_HANDLE(0)
+    priv = CK_OBJECT_HANDLE(0)
+    from pkcs11_check.raw.rv import expect_rv
+
+    rv = raw.C_GenerateKeyPair(
+        sh,
+        mech.byref(),
+        pub_tmpl.ptr,
+        pub_tmpl.count,
+        priv_tmpl.ptr,
+        priv_tmpl.count,
+        byref(pub),
+        byref(priv),
+    )
+    expect_rv(int(rv), CKR_OK)
+    return int(pub.value), int(priv.value)
 
 
 class TestEncapsulateKeyErrors:
     """Error conditions for C_EncapsulateKey (Sec.5.14.7)."""
 
-    def test_mechanism_invalid(
-        self, p11_session: Any, p11_module: Any, ckr_strict: bool
-    ) -> None:
+    def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using AES mechanism for encapsulate -> CKR_MECHANISM_INVALID."""
-        if not has_mechanism(p11_module, "ML_KEM"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_KEM"):
             pytest.skip("ML_KEM not supported")
-        pub, _priv = _generate_ml_kem_keypair(p11_session)
+        pub, _priv = _generate_ml_kem_keypair(rs.raw, rs.sh)
         try:
-            pub.encapsulate_key(
-                KeyType.AES,
-                mechanism=Mechanism.AES_ECB,  # Wrong: not a KEM mechanism
+            mech = mech_simple(CKM_AES_ECB)  # Wrong: not a KEM mechanism
+            # C_EncapsulateKey: session, mech, pubkey, ct, ct_len, tmpl, count, secret
+            ct_len = CK_ULONG(0)
+            secret = CK_OBJECT_HANDLE(0)
+            secret_tmpl = template()
+            rv = int(
+                rs.raw.C_EncapsulateKey(
+                    rs.sh,
+                    mech.byref(),
+                    pub,
+                    None,
+                    byref(ct_len),
+                    secret_tmpl.ptr,
+                    secret_tmpl.count,
+                    byref(secret),
+                )
             )
-            pytest.fail("Should have rejected AES_ECB as encapsulate mechanism")
-        except PKCS11Error as e:
-            # Broad catch intentional - assert_ckr validates the specific type
-            assert_ckr(CKR_KEM["encap_mechanism_invalid"], e, ckr_strict)
+            if rv == int(CKR_OK):
+                destroy_quietly(rs.raw, rs.sh, int(secret.value))
+                pytest.fail("Should have rejected AES_ECB as encapsulate mechanism")
+            assert_ckr(CKR_KEM["encap_mechanism_invalid"], rv, ckr_strict)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, _priv)
 
-    def test_key_type_inconsistent(
-        self, p11_session: Any, p11_module: Any, ckr_strict: bool
-    ) -> None:
-        """RSA key with ML-KEM mechanism -> CKR_KEY_TYPE_INCONSISTENT.
-
-        python-pkcs11 only adds encapsulate_key() to ML-KEM public keys.
-        RSA PublicKey won't have the method. Skip if wrapper blocks.
-        """
-        if not has_mechanism(p11_module, "ML_KEM"):
+    def test_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
+        """RSA key with ML-KEM mechanism -> CKR_KEY_TYPE_INCONSISTENT."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_KEM"):
             pytest.skip("ML_KEM not supported")
-        pub, _priv = p11_session.generate_keypair(KeyType.RSA, 2048)
-        if not hasattr(pub, "encapsulate_key"):
-            pytest.skip(
-                "python-pkcs11 doesn't expose encapsulate_key on non-KEM keys "
-                "(testable via ctypes in Tier 6)"
-            )
+        from pkcs11_check.raw.recipes import gen_rsa_keypair
+
+        pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            pub.encapsulate_key(KeyType.AES, mechanism=Mechanism.ML_KEM)
-            pytest.fail("Should have rejected RSA key with ML-KEM mechanism")
-        except PKCS11Error as e:
-            assert_ckr(CKR_KEM["encap_key_type_inconsistent"], e, ckr_strict)
+            mech = mech_simple(CKM_ML_KEM)
+            ct_len = CK_ULONG(0)
+            secret = CK_OBJECT_HANDLE(0)
+            secret_tmpl = template()
+            rv = int(
+                rs.raw.C_EncapsulateKey(
+                    rs.sh,
+                    mech.byref(),
+                    pub,
+                    None,
+                    byref(ct_len),
+                    secret_tmpl.ptr,
+                    secret_tmpl.count,
+                    byref(secret),
+                )
+            )
+            if rv == int(CKR_OK):
+                destroy_quietly(rs.raw, rs.sh, int(secret.value))
+                pytest.fail("Should have rejected RSA key with ML-KEM mechanism")
+            assert_ckr(CKR_KEM["encap_key_type_inconsistent"], rv, ckr_strict)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, _priv)
 
 
 class TestDecapsulateKeyErrors:
     """Error conditions for C_DecapsulateKey (Sec.5.14.8)."""
 
-    def test_mechanism_invalid(
-        self, p11_session: Any, p11_module: Any, ckr_strict: bool
-    ) -> None:
+    def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using AES mechanism for decapsulate -> CKR_MECHANISM_INVALID."""
-        if not has_mechanism(p11_module, "ML_KEM"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_KEM"):
             pytest.skip("ML_KEM not supported")
-        _pub, priv = _generate_ml_kem_keypair(p11_session)
+        _pub, priv = _generate_ml_kem_keypair(rs.raw, rs.sh)
         try:
-            priv.decapsulate_key(
-                KeyType.AES,
-                b"\x00" * 1088,  # ML-KEM-768 ciphertext size
-                mechanism=Mechanism.AES_ECB,  # Wrong: not a KEM mechanism
+            mech = mech_simple(CKM_AES_ECB)  # Wrong: not a KEM mechanism
+            ct_buf = (ctypes.c_ubyte * 1088)(*([0] * 1088))  # ML-KEM-768 ct size
+            secret = CK_OBJECT_HANDLE(0)
+            secret_tmpl = template()
+            rv = int(
+                rs.raw.C_DecapsulateKey(
+                    rs.sh,
+                    mech.byref(),
+                    priv,
+                    ct_buf,
+                    1088,
+                    secret_tmpl.ptr,
+                    secret_tmpl.count,
+                    byref(secret),
+                )
             )
-            pytest.fail("Should have rejected AES_ECB as decapsulate mechanism")
-        except PKCS11Error as e:
-            assert_ckr(CKR_KEM["decap_mechanism_invalid"], e, ckr_strict)
+            if rv == int(CKR_OK):
+                destroy_quietly(rs.raw, rs.sh, int(secret.value))
+                pytest.fail("Should have rejected AES_ECB as decapsulate mechanism")
+            assert_ckr(CKR_KEM["decap_mechanism_invalid"], rv, ckr_strict)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, _pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_garbage_ciphertext(
-        self, p11_session: Any, p11_module: Any, ckr_strict: bool
-    ) -> None:
+    def test_garbage_ciphertext(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Decapsulate garbage ciphertext - reject or implicit rejection."""
-        if not has_mechanism(p11_module, "ML_KEM"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_KEM"):
             pytest.skip("ML_KEM not supported")
-        _pub, priv = _generate_ml_kem_keypair(p11_session)
-        exp = CKR_KEM["decap_ciphertext_invalid"]
+        _pub, priv = _generate_ml_kem_keypair(rs.raw, rs.sh)
         try:
+            exp = CKR_KEM["decap_ciphertext_invalid"]
+            mech = mech_simple(CKM_ML_KEM)
             # ML-KEM-768 ciphertext = 1088 bytes. Provide garbage.
-            priv.decapsulate_key(
-                KeyType.AES,
-                b"\xFF" * 1088,
-                mechanism=Mechanism.ML_KEM,
+            ct_buf = (ctypes.c_ubyte * 1088)(*([0xFF] * 1088))
+            secret = CK_OBJECT_HANDLE(0)
+            secret_tmpl = template()
+            rv = int(
+                rs.raw.C_DecapsulateKey(
+                    rs.sh,
+                    mech.byref(),
+                    priv,
+                    ct_buf,
+                    1088,
+                    secret_tmpl.ptr,
+                    secret_tmpl.count,
+                    byref(secret),
+                )
             )
-            # ML-KEM implicit rejection: may produce a key (spec allows this)
-            if not exp.allow_success:
-                pytest.fail("Should have rejected garbage ciphertext")
-        except PKCS11Error as e:
-            assert_ckr(exp, e, ckr_strict)
+            if rv == int(CKR_OK):
+                destroy_quietly(rs.raw, rs.sh, int(secret.value))
+                # ML-KEM implicit rejection: may produce a key (spec allows this)
+                if not exp.allow_success:
+                    pytest.fail("Should have rejected garbage ciphertext")
+            else:
+                assert_ckr(exp, rv, ckr_strict)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, _pub)
+            destroy_quietly(rs.raw, rs.sh, priv)

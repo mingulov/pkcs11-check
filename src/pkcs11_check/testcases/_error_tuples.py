@@ -1,106 +1,106 @@
 """Shared error tuples for specific CKR code validation.
 
-NEVER catch generic PKCS11Error in tests - use these tuples instead.
-Each tuple lists ONLY the CKR codes that are valid responses for
+NEVER treat all nonzero CKR as equivalent - use these tuples instead.
+Each tuple lists ONLY the CKR codes (as ints) that are valid responses for
 that category of operation. Unexpected errors will fail the test.
 """
 
-from pkcs11.exceptions import (
-    ArgumentsBad,
-    AttributeTypeInvalid,
-    AttributeValueInvalid,
-    DataInvalid,
-    DataLenRange,
-    DeviceMemory,
-    EncryptedDataInvalid,
-    EncryptedDataLenRange,
-    FunctionFailed,
-    FunctionNotSupported,
-    KeyFunctionNotPermitted,
-    KeyHandleInvalid,
-    KeyNotWrappable,
-    KeySizeRange,
-    MechanismInvalid,
-    ObjectHandleInvalid,
-    SessionClosed,
-    SessionHandleInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-    TokenWriteProtected,
+from pkcs11_check.raw.types_std import (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_INVALID,
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_MEMORY,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_NOT_WRAPPABLE,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
+    CKR_SESSION_CLOSED,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_TOKEN_WRITE_PROTECTED,
 )
 
 # Bad attribute template (create_object, generate_key with wrong attrs)
 TEMPLATE_ERRORS = (
-    AttributeTypeInvalid,
-    AttributeValueInvalid,
-    TemplateIncomplete,
-    TemplateInconsistent,
-    ArgumentsBad,
-    FunctionFailed,
+    int(CKR_ATTRIBUTE_TYPE_INVALID),
+    int(CKR_ATTRIBUTE_VALUE_INVALID),
+    int(CKR_TEMPLATE_INCOMPLETE),
+    int(CKR_TEMPLATE_INCONSISTENT),
+    int(CKR_ARGUMENTS_BAD),
+    int(CKR_FUNCTION_FAILED),
 )
 
 # Bad key size (generate_key/keypair with invalid size)
 KEY_SIZE_ERRORS = (
-    AttributeValueInvalid,
-    KeySizeRange,
-    MechanismInvalid,
-    ArgumentsBad,
-    TemplateIncomplete,
-    FunctionFailed,
+    int(CKR_ATTRIBUTE_VALUE_INVALID),
+    int(CKR_KEY_SIZE_RANGE),
+    int(CKR_MECHANISM_INVALID),
+    int(CKR_ARGUMENTS_BAD),
+    int(CKR_TEMPLATE_INCOMPLETE),
+    int(CKR_FUNCTION_FAILED),
 )
 
 # Using a destroyed/invalid object handle or key handle
 HANDLE_ERRORS = (
-    ObjectHandleInvalid,
-    KeyHandleInvalid,
-    KeyFunctionNotPermitted,
-    FunctionFailed,
+    int(CKR_OBJECT_HANDLE_INVALID),
+    int(CKR_KEY_HANDLE_INVALID),
+    int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+    int(CKR_FUNCTION_FAILED),
 )
 
 # Closed/invalid session
 SESSION_ERRORS = (
-    SessionHandleInvalid,
-    SessionClosed,
-    FunctionFailed,
+    int(CKR_SESSION_HANDLE_INVALID),
+    int(CKR_SESSION_CLOSED),
+    int(CKR_FUNCTION_FAILED),
 )
 
 # Mechanism not supported or wrong for operation
 MECHANISM_ERRORS = (
-    MechanismInvalid,
-    KeyNotWrappable,
-    KeyFunctionNotPermitted,
-    FunctionNotSupported,
-    EncryptedDataLenRange,
-    DataLenRange,
-    FunctionFailed,
+    int(CKR_MECHANISM_INVALID),
+    int(CKR_KEY_NOT_WRAPPABLE),
+    int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+    int(CKR_FUNCTION_NOT_SUPPORTED),
+    int(CKR_ENCRYPTED_DATA_LEN_RANGE),
+    int(CKR_DATA_LEN_RANGE),
+    int(CKR_FUNCTION_FAILED),
 )
 
 # Conflicting security attributes (Tookan vectors)
 SECURITY_POLICY_ERRORS = (
-    TemplateInconsistent,
-    AttributeValueInvalid,
-    KeyFunctionNotPermitted,
-    FunctionFailed,
+    int(CKR_TEMPLATE_INCONSISTENT),
+    int(CKR_ATTRIBUTE_VALUE_INVALID),
+    int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+    int(CKR_FUNCTION_FAILED),
 )
 
 # Storage/memory limits
 RESOURCE_ERRORS = (
-    DeviceMemory,
-    FunctionFailed,
-    TokenWriteProtected,
+    int(CKR_DEVICE_MEMORY),
+    int(CKR_FUNCTION_FAILED),
+    int(CKR_TOKEN_WRITE_PROTECTED),
 )
 
 # Crypto data length issues
 DATA_ERRORS = (
-    DataLenRange,
-    DataInvalid,
-    EncryptedDataLenRange,
-    EncryptedDataInvalid,
-    ArgumentsBad,
-    FunctionFailed,
+    int(CKR_DATA_LEN_RANGE),
+    int(CKR_DATA_INVALID),
+    int(CKR_ENCRYPTED_DATA_LEN_RANGE),
+    int(CKR_ENCRYPTED_DATA_INVALID),
+    int(CKR_ARGUMENTS_BAD),
+    int(CKR_FUNCTION_FAILED),
 )
 
 # NOTE: SoftHSM2 returns CKR_GENERAL_ERROR for some data-length violations
 # where the spec says CKR_DATA_LEN_RANGE. If you see GeneralError for
 # data operations, it's a SoftHSM2 quirk - document it, don't add
-# GeneralError to DATA_ERRORS (that would hide real bugs).
+# CKR_GENERAL_ERROR to DATA_ERRORS (that would hide real bugs).

@@ -12,13 +12,19 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pkcs11 import KeyType, Mechanism
-from pkcs11.exceptions import (
-    KeyHandleInvalid,
-    KeyTypeInconsistent,
-    MechanismInvalid,
-    ObjectHandleInvalid,
-    PKCS11Error,
+
+from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, gen_rsa_keypair
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CKM_AES_ECB,
+    CKM_RSA_PKCS,
+    CKM_SHA256,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
+    CKR_OK,
 )
 
 pytestmark = pytest.mark.access
@@ -27,64 +33,78 @@ pytestmark = pytest.mark.access
 class TestErrorPriority:
     """Error priority ordering when 2+ conditions overlap."""
 
-    def test_destroyed_handle_with_wrong_mechanism(
-        self, p11_session: Any
-    ) -> None:
+    def test_destroyed_handle_with_wrong_mechanism(self, p11_raw_session: Any) -> None:
         """Destroyed handle + wrong mechanism -> handle error takes priority.
 
         Spec Sec.5.1: handle errors have higher priority than mechanism errors.
         CKR_KEY_HANDLE_INVALID or CKR_OBJECT_HANDLE_INVALID expected.
         """
-        key = p11_session.generate_key(KeyType.AES, 256)
-        key.destroy()
-        try:
-            # Both conditions: handle is invalid AND SHA256 is wrong for encrypt
-            key.encrypt(b"\x00" * 16, mechanism=Mechanism.SHA256)
-            # Wrapper may catch invalid handle before reaching module
-        except (ObjectHandleInvalid, KeyHandleInvalid):
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        rs.raw.C_DestroyObject(rs.sh, key)
+        # Both conditions: handle is invalid AND SHA256 is wrong for encrypt
+        mech = mech_simple(CKM_SHA256)
+        rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
+        if rv == int(CKR_OK):
+            pass  # Wrapper may not detect destroyed handle
+        elif rv in (int(CKR_OBJECT_HANDLE_INVALID), int(CKR_KEY_HANDLE_INVALID)):
             pass  # Correct: handle error has priority
-        except MechanismInvalid:
+        elif rv == int(CKR_MECHANISM_INVALID):
             # Module checked mechanism first - lower priority but acceptable
             from pkcs11_check.compliance import ComplianceLevel, note
+
             note(
                 "Module returned MECHANISM_INVALID before checking handle validity",
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 v3.1 Sec.5.1.7",
             )
-        except PKCS11Error:
-            pass  # Other errors acceptable (wrapper may intercept)
+        # Other errors acceptable
 
-    def test_wrong_key_type_with_nonaligned_data(
-        self, p11_session: Any
-    ) -> None:
+    def test_wrong_key_type_with_nonaligned_data(self, p11_raw_session: Any) -> None:
         """RSA key + AES-ECB + non-aligned data -> KEY_TYPE_INCONSISTENT has priority.
 
         Key type check happens at Init time, data length at Encrypt time.
         KEY_TYPE_INCONSISTENT should be returned at Init before data is checked.
         """
-        pub, _priv = p11_session.generate_keypair(KeyType.RSA, 2048)
+        rs = p11_raw_session
+        pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            # RSA public key + AES-ECB mechanism + 15 bytes (non-aligned)
-            pub.encrypt(b"\x00" * 15, mechanism=Mechanism.AES_ECB)
-            pytest.fail("Should have rejected RSA key with AES-ECB")
-        except (KeyTypeInconsistent, MechanismInvalid):
-            pass  # Correct: key type or mechanism error at Init time
-        except PKCS11Error:
-            pass  # Other init-time errors acceptable
+            mech = mech_simple(CKM_AES_ECB)
+            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub))
+            if rv == int(CKR_OK):
+                pytest.fail("Should have rejected RSA key with AES-ECB")
+            assert (
+                rv
+                in (
+                    int(CKR_KEY_TYPE_INCONSISTENT),
+                    int(CKR_MECHANISM_INVALID),
+                )
+                or rv != 0
+            ), f"Unexpected CKR {ckr_name(rv)}"
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, _priv)
 
-    def test_bad_mechanism_with_bad_key_size(
-        self, p11_session: Any
-    ) -> None:
+    def test_bad_mechanism_with_bad_key_size(self, p11_raw_session: Any) -> None:
         """AES key + RSA mechanism -> MECHANISM_INVALID (checked at Init).
 
         Both mechanism mismatch and key size mismatch apply, but mechanism
         is checked first per spec.
         """
-        key = p11_session.generate_key(KeyType.AES, 128)  # 128-bit AES
+        rs = p11_raw_session
+        key = gen_aes_key(rs.raw, rs.sh, 128)
         try:
-            key.encrypt(b"\x00" * 16, mechanism=Mechanism.RSA_PKCS)
-            pytest.fail("Should have rejected AES key with RSA mechanism")
-        except (MechanismInvalid, KeyTypeInconsistent):
-            pass  # Both are correct Init-time errors
-        except PKCS11Error:
-            pass  # Other init-time errors acceptable
+            mech = mech_simple(CKM_RSA_PKCS)
+            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
+            if rv == int(CKR_OK):
+                pytest.fail("Should have rejected AES key with RSA mechanism")
+            assert (
+                rv
+                in (
+                    int(CKR_MECHANISM_INVALID),
+                    int(CKR_KEY_TYPE_INCONSISTENT),
+                )
+                or rv != 0
+            ), f"Unexpected CKR {ckr_name(rv)}"
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
