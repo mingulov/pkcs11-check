@@ -34,6 +34,7 @@ Most modules do not support these - tests skip cleanly.
 
 from __future__ import annotations
 
+import textwrap
 from ctypes import byref, c_ulong
 from typing import Any
 
@@ -66,45 +67,51 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
+from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
 
 pytestmark = [pytest.mark.compliance]
 
-_RAW_PREAMBLE = """\
+_EXTRA_IMPORTS = """\
 import ctypes
 import sys
 from ctypes import byref
-
-from pkcs11_check.raw import (
-    CKF_RW_SESSION,
-    CKF_SERIAL_SESSION,
-    CKR_CRYPTOKI_ALREADY_INITIALIZED,
-    CKR_OK,
-    RawPKCS11,
-)
-from pkcs11_check.raw.bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
-
-raw = RawPKCS11.from_lib({module_path!r})
-hSession = None
-rv = raw.C_Initialize(None)
-if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):
-    print(f"FATAL:Initialize:0x{{rv:08x}}")
-    sys.exit(1)
-
-slot_ids = get_slot_ids(raw)
-if len(slot_ids) <= {slot_index}:
-    print(f"FATAL:GetSlotList:index={slot_index}:count={{len(slot_ids)}}")
-    raw.C_Finalize(None)
-    sys.exit(1)
-
-hSession = open_session(raw, slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION)
-if {pin_bytes!r}:
-    login_user(raw, hSession, 1, {pin_bytes!r})
 """
 
 _RAW_CLEANUP = """\
 close_session_quietly(raw, hSession)
 raw.C_Finalize(None)
 """
+
+
+def _build_preamble(p11_config: Any) -> str:
+    """Build subprocess session preamble from p11_config."""
+    module_path = str(p11_config.module)
+    pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+    slot_index = p11_config.slot if p11_config.slot is not None else 0
+
+    preamble = subprocess_session_preamble(
+        module_path,
+        pin=pin,
+        extra_imports=_EXTRA_IMPORTS,
+    )
+
+    # When a non-default slot index is requested, close the default session
+    # and reopen with the correct slot from the list.
+    if slot_index != 0:
+        slot_override = textwrap.dedent(f"""\
+            close_session_quietly(raw, sh)
+            slot_ids = get_slot_ids(raw)
+            if len(slot_ids) <= {slot_index}:
+                print(f"FATAL:GetSlotList:index={slot_index}:count={{len(slot_ids)}}")
+                raw.C_Finalize(None)
+                sys.exit(1)
+            sh = open_session(raw, slot_ids[{slot_index}], CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        """)
+        preamble = preamble + slot_override
+
+    # Alias sh -> hSession for compatibility with script bodies
+    preamble = preamble + "hSession = sh\n"
+    return preamble
 
 
 def _run_config_script(
@@ -114,11 +121,7 @@ def _run_config_script(
     timeout: int = 10,
 ) -> tuple[int, str, str]:
     return run_raw_script(
-        _RAW_PREAMBLE.format(
-            module_path=str(p11_config.module),
-            slot_index=p11_config.slot if p11_config.slot is not None else 0,
-            pin_bytes=p11_config.pin.get_secret_value().encode() if p11_config.pin else b"",
-        ),
+        _build_preamble(p11_config),
         script_body,
         cleanup=_RAW_CLEANUP,
         timeout=timeout,

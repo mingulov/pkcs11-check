@@ -568,30 +568,30 @@ class TestSoftHSM2Issue722:
         """RSA encrypt/decrypt cycle in subprocess - must not crash."""
         import subprocess
         import sys
-        import textwrap
+
+        from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
 
         module = str(p11_config.module)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-        pin_repr = f'b"{pin}"' if pin is not None else "None"
 
-        script = f"""
-from pkcs11_check.raw.api import RawPKCS11
-from pkcs11_check.raw.bootstrap import get_slot_ids, open_session, login_user
-from pkcs11_check.raw.recipes import gen_rsa_keypair, encrypt_single, decrypt_single, destroy_quietly
-from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKM_RSA_PKCS, CKA_ENCRYPT, CKA_DECRYPT
-pin = {pin_repr}
-raw = RawPKCS11.from_lib("{module}")
-raw.C_Initialize(None)
+        preamble = subprocess_session_preamble(
+            module,
+            pin=pin,
+            slot_label="pkcs11-check",
+            extra_imports="""\
+from pkcs11_check.raw.recipes import (
+    gen_rsa_keypair, encrypt_single, decrypt_single, destroy_quietly,
+)
+from pkcs11_check.raw.types_std import CKM_RSA_PKCS, CKA_ENCRYPT, CKA_DECRYPT""",
+        )
+
+        script = (
+            preamble
+            + """\
 try:
-    slots = get_slot_ids(raw, label="pkcs11-check")
-    if not slots:
-        slots = get_slot_ids(raw)
-    sh = open_session(raw, slots[0], CKF_RW_SESSION | CKF_SERIAL_SESSION)
-    if pin is not None:
-        login_user(raw, sh, 1, pin)
     pub, priv = gen_rsa_keypair(raw, sh, 2048,
-        public_attrs={{CKA_ENCRYPT: True}},
-        private_attrs={{CKA_DECRYPT: True}},
+        public_attrs={CKA_ENCRYPT: True},
+        private_attrs={CKA_DECRYPT: True},
     )
     try:
         ct = encrypt_single(raw, sh, pub, CKM_RSA_PKCS, b"test data 722")
@@ -599,18 +599,19 @@ try:
         assert pt == b"test data 722"
         print("OK: RSA encrypt/decrypt cycle")
     except Exception as e:
-        print(f"ERROR: {{type(e).__name__}}: {{e}}")
+        print(f"ERROR: {type(e).__name__}: {e}")
     finally:
         destroy_quietly(raw, sh, pub)
         destroy_quietly(raw, sh, priv)
     raw.C_CloseSession(sh)
 except Exception as e:
-    print(f"ERROR: {{type(e).__name__}}: {{e}}")
+    print(f"ERROR: {type(e).__name__}: {e}")
 finally:
     raw.C_Finalize(None)
 """
+        )
         result = subprocess.run(
-            [sys.executable, "-c", textwrap.dedent(script)],
+            [sys.executable, "-c", script],
             capture_output=True,
             text=True,
             timeout=30,

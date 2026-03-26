@@ -14,51 +14,44 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
+
+_EXTRA_IMPORTS = """\
+import ctypes
+from ctypes import byref, cast
+
+from pkcs11_check.raw.types_std import (
+    CKA_ENCRYPT,
+    CKA_MODULUS_BITS,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKM_AES_ECB,
+    CKM_AES_KEY_GEN,
+    CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKM_SHA256,
+    CKM_SHA256_RSA_PKCS,
+    CKR_BUFFER_TOO_SMALL,
+    CK_ATTRIBUTE_PTR,
+    CK_OBJECT_HANDLE,
+)
+from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
+
+
+def _template_ptr(attrs):
+    return cast(attrs.array, CK_ATTRIBUTE_PTR)
+"""
 
 
 def _run_raw(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
-    pin_arg = repr(pin) if pin is not None else "None"
-    script = (
-        textwrap.dedent(f"""\
-        import ctypes
-        from ctypes import byref, cast
-
-        from pkcs11_check.raw.types_std import (
-            CKA_ENCRYPT,
-            CKA_MODULUS_BITS,
-            CKA_SIGN,
-            CKA_TOKEN,
-            CKA_VALUE_LEN,
-            CKF_RW_SESSION,
-            CKF_SERIAL_SESSION,
-            CKM_AES_ECB,
-            CKM_AES_KEY_GEN,
-            CKM_RSA_PKCS_KEY_PAIR_GEN,
-            CKM_SHA256,
-            CKM_SHA256_RSA_PKCS,
-            CKR_BUFFER_TOO_SMALL,
-            CKR_OK,
-            CK_ATTRIBUTE_PTR,
-            CK_OBJECT_HANDLE,
-        )
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
-        from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
-
-        def _template_ptr(attrs):
-            return cast(attrs.array, CK_ATTRIBUTE_PTR)
-
-        raw = RawPKCS11.from_lib("{module}")
-        raw.C_Initialize(None)
-        sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
-        pin = {pin_arg}
-        if pin is not None:
-            login_user(raw, sh, 1, pin.encode())
-    """)
-        + textwrap.dedent(code)
-        + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
+    preamble = subprocess_session_preamble(
+        module,
+        pin=pin,
+        extra_imports=_EXTRA_IMPORTS,
     )
+    script = preamble + textwrap.dedent(code) + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,

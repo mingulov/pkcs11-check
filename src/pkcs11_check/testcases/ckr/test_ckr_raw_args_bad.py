@@ -16,9 +16,11 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
-_PREAMBLE = """\
+_EXTRA_IMPORTS = """\
 import ctypes
 from ctypes import byref, cast
 
@@ -27,40 +29,29 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_TOKEN,
     CKA_VALUE_LEN,
-    CKF_RW_SESSION,
-    CKF_SERIAL_SESSION,
     CKM_AES_KEY_GEN,
     CKR_ARGUMENTS_BAD,
-    CKR_OK,
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
 )
-from pkcs11_check.raw.api import RawPKCS11
-from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
 from pkcs11_check.raw.faults import null_pointer
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 
 
 def _template_ptr(attrs):
     return cast(attrs.array, CK_ATTRIBUTE_PTR)
-
-
-raw = RawPKCS11.from_lib("{module}")
-raw.C_Initialize(None)
-slots = get_slot_ids(raw, label="pkcs11-check")
-if not slots:
-    slots = get_slot_ids(raw)
-sh = open_session(raw, slots[0], CKF_RW_SESSION | CKF_SERIAL_SESSION)
-pin = {pin_arg}
-if pin is not None:
-    login_user(raw, sh, 1, pin.encode())
 """
 
 
 def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
-    pin_arg = repr(pin) if pin is not None else "None"
+    preamble = subprocess_session_preamble(
+        module,
+        pin=pin,
+        slot_label="pkcs11-check",
+        extra_imports=_EXTRA_IMPORTS,
+    )
     script = (
-        _PREAMBLE.format(module=module, pin_arg=pin_arg)
+        preamble
         + textwrap.indent(textwrap.dedent(code), "    ")
         + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
     )
