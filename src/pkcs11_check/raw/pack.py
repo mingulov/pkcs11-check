@@ -342,7 +342,7 @@ def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
     """
     from .attr_metadata import ATTR_VALUE_TYPES
 
-    vtype = ATTR_VALUE_TYPES.get(int(attr_type))
+    vtype = ATTR_VALUE_TYPES.get(attr_type)
 
     if vtype == "bool":
         return attr_bool(attr_type, bool(value))
@@ -370,9 +370,7 @@ def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
         elif isinstance(value, str):
             # Validate format
             if len(value) != 8 or not value.isdigit():
-                raise ValueError(
-                    f"attr_auto: 'date' string must be 'YYYYMMDD', got {value!r}"
-                )
+                raise ValueError(f"attr_auto: 'date' string must be 'YYYYMMDD', got {value!r}")
             date_bytes = value.encode("ascii")
         elif isinstance(value, bytes) and len(value) == 8:
             date_bytes = value
@@ -412,9 +410,7 @@ def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
             f"and cannot infer type from {type(value).__name__}"
         )
     else:
-        raise TypeError(
-            f"attr_auto: unsupported value type {vtype!r} for attr {attr_type:#x}"
-        )
+        raise TypeError(f"attr_auto: unsupported value type {vtype!r} for attr {attr_type:#x}")
 
 
 def template_from_dict(attrs: dict[int, Any]) -> TemplateArg:
@@ -563,9 +559,7 @@ def mech_oaep(
     params.hashAlg = hash_mech
     params.mgf = mgf
     params.source = CKZ_DATA_SPECIFIED
-    params.pSourceData, params.ulSourceDataLen = _pack_bytes(
-        source_data, ka
-    )
+    params.pSourceData, params.ulSourceDataLen = _pack_bytes(source_data, ka)
     return _mech_struct(mechanism_type, params, "mech_oaep", ka)
 
 
@@ -580,12 +574,8 @@ def mech_ecdh(
     ka: list[Any] = []
     params = CK_ECDH1_DERIVE_PARAMS()
     params.kdf = kdf
-    params.pPublicData, params.ulPublicDataLen = _pack_bytes(
-        public_data, ka
-    )
-    params.pSharedData, params.ulSharedDataLen = _pack_bytes(
-        shared_data, ka
-    )
+    params.pPublicData, params.ulPublicDataLen = _pack_bytes(public_data, ka)
+    params.pSharedData, params.ulSharedDataLen = _pack_bytes(shared_data, ka)
     return _mech_struct(mechanism_type, params, "mech_ecdh", ka)
 
 
@@ -711,10 +701,12 @@ def _fill_ssl3_random(
 ) -> None:
     """Populate a CK_SSL3_RANDOM_DATA struct with client/server randoms."""
     random_data.pClientRandom, random_data.ulClientRandomLen = _pack_bytes(
-        client_random, keepalive,
+        client_random,
+        keepalive,
     )
     random_data.pServerRandom, random_data.ulServerRandomLen = _pack_bytes(
-        server_random, keepalive,
+        server_random,
+        keepalive,
     )
 
 
@@ -781,7 +773,8 @@ def mech_ssl3_key_mat(
         ka.extend([iv_client, iv_server])
     ka.append(key_mat_out)
     params.pReturnedKeyMaterial = ctypes.cast(
-        ctypes.pointer(key_mat_out), CK_VOID_PTR,
+        ctypes.pointer(key_mat_out),
+        CK_VOID_PTR,
     )
     result = _mech_struct(mechanism_type, params, "mech_ssl3_key_mat", ka)
     # Stash for callers to read output key handles
@@ -848,7 +841,8 @@ def mech_tls12_key_mat(
         ka.extend([iv_client, iv_server])
     ka.append(key_mat_out)
     params.pReturnedKeyMaterial = ctypes.cast(
-        ctypes.pointer(key_mat_out), CK_VOID_PTR,
+        ctypes.pointer(key_mat_out),
+        CK_VOID_PTR,
     )
     params.prfHashMechanism = hash_mech
     result = _mech_struct(mechanism_type, params, "mech_tls12_key_mat", ka)
@@ -878,7 +872,10 @@ def mech_tls12_extended_master_key_derive(
     else:
         params.pVersion = None
     return _mech_struct(
-        mechanism_type, params, "mech_tls12_extended_master_key_derive", ka,
+        mechanism_type,
+        params,
+        "mech_tls12_extended_master_key_derive",
+        ka,
     )
 
 
@@ -957,10 +954,12 @@ def _fill_wtls_random(
 ) -> None:
     """Populate a CK_WTLS_RANDOM_DATA struct with client/server randoms."""
     random_data.pClientRandom, random_data.ulClientRandomLen = _pack_bytes(
-        client_random, keepalive,
+        client_random,
+        keepalive,
     )
     random_data.pServerRandom, random_data.ulServerRandomLen = _pack_bytes(
-        server_random, keepalive,
+        server_random,
+        keepalive,
     )
 
 
@@ -1024,7 +1023,8 @@ def mech_wtls_key_mat(
         ka.append(iv_buf)
     ka.append(key_mat_out)
     params.pReturnedKeyMaterial = ctypes.cast(
-        ctypes.pointer(key_mat_out), CK_VOID_PTR,
+        ctypes.pointer(key_mat_out),
+        CK_VOID_PTR,
     )
     result = _mech_struct(mechanism_type, params, "mech_wtls_key_mat", ka)
     result._key_mat_out_ref = key_mat_out  # type: ignore[attr-defined]

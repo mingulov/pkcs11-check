@@ -24,10 +24,7 @@ def _build_function_type(name: str) -> Any:
     return ctypes.CFUNCTYPE(CK_RV, *argtypes)
 
 
-_FUNCTION_TYPES = {
-    name: _build_function_type(name)
-    for name in metadata_std.FUNCTION_SIGNATURES
-}
+_FUNCTION_TYPES = {name: _build_function_type(name) for name in metadata_std.FUNCTION_SIGNATURES}
 _STANDARD_FUNCTION_NAMES = tuple(
     name
     for name, index in sorted(metadata_std.FUNCTION_INDICES.items(), key=lambda item: item[1])
@@ -102,7 +99,7 @@ class RawPKCS11:
 
     def _function_list_version(self, ptr: int) -> tuple[int, int]:
         version = cast(ptr, ctypes.POINTER(CK_VERSION)).contents
-        return int(version.major), int(version.minor)
+        return version.major, version.minor
 
     def _load_versioned_function_list(self, ptr: int) -> None:
         self._load_from_ptr(ptr)
@@ -112,7 +109,9 @@ class RawPKCS11:
         if (major, minor) >= (3, 2):
             self._load_v32_from_ptr(ptr)
 
-    def _get_interface_function_list_ptr(self, get_interface: Any, version: tuple[int, int] | None) -> int | None:
+    def _get_interface_function_list_ptr(
+        self, get_interface: Any, version: tuple[int, int] | None
+    ) -> int | None:
         interface_ptr = CK_INTERFACE_PTR()
         version_ptr = None
         requested_version: CK_VERSION | None = None
@@ -122,7 +121,7 @@ class RawPKCS11:
             requested_version.minor = version[1]
             version_ptr = byref(requested_version)
 
-        rv = int(get_interface(None, version_ptr, byref(interface_ptr), 0))
+        rv = get_interface(None, version_ptr, byref(interface_ptr), 0)
         if rv != CKR_OK or not bool(interface_ptr):
             return None
         function_list_ptr = interface_ptr.contents.pFunctionList
@@ -158,7 +157,7 @@ class RawPKCS11:
         get_function_list.restype = CK_RV
         get_function_list.argtypes = [CK_FUNCTION_LIST_PTR_PTR]
         function_list_ptr = CK_FUNCTION_LIST_PTR()
-        rv = int(get_function_list(byref(function_list_ptr)))
+        rv = get_function_list(byref(function_list_ptr))
         if rv != CKR_OK:
             raise RuntimeError(f"C_GetFunctionList failed: 0x{rv:08x}")
         if not bool(function_list_ptr):

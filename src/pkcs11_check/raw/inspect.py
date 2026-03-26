@@ -74,13 +74,15 @@ def render_pointer(pointer: PointerArg) -> str:
 
 def render_attribute(attribute: PackedAttribute, *, namespace: str | None = None) -> str:
     """Render a packed attribute with its pointer and length provenance."""
-    name = _render_symbol("attrs", int(attribute.attribute.type), namespace=namespace)
+    name = _render_symbol("attrs", attribute.attribute.type, namespace=namespace)
     return f"{name} ({render_pointer(attribute.pointer_arg)} {render_length(attribute.length_arg)})"
 
 
 def render_template(template: TemplateArg, *, namespace: str | None = None) -> str:
     """Render a CK_ATTRIBUTE template and its packed attributes."""
-    rendered = ", ".join(render_attribute(attribute, namespace=namespace) for attribute in template.attributes)
+    rendered = ", ".join(
+        render_attribute(attribute, namespace=namespace) for attribute in template.attributes
+    )
     return f"template[count={template.count}] [{rendered}]"
 
 
@@ -99,14 +101,11 @@ def render_sized_fault(fault: SizedFaultArg) -> str:
 
 def render_mechanism(mechanism: PackedMechanism, *, namespace: str | None = None) -> str:
     """Render a packed mechanism using symbolic naming when available."""
-    mechanism_id = int(mechanism.ck.mechanism)
+    mechanism_id = mechanism.ck.mechanism
     name = _render_symbol("mechanisms", mechanism_id, namespace=namespace)
     inspector = lookup_inspector(mechanism_id, namespace=namespace)
     if inspector is not None:
         detail = inspector(mechanism)
     else:
         detail = render_pointer(mechanism.pointer_arg)
-    return (
-        f"{name} (0x{mechanism_id:08x}, "
-        f"{render_length(mechanism.length_arg)}, {detail})"
-    )
+    return f"{name} (0x{mechanism_id:08x}, {render_length(mechanism.length_arg)}, {detail})"
