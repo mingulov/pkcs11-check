@@ -25,23 +25,24 @@ class TestInitializeErrors:
         """C_Initialize called twice -> CKR_CRYPTOKI_ALREADY_INITIALIZED."""
         module = str(p11_config.module)
         script = textwrap.dedent(f"""\
-            import pkcs11
-            lib = pkcs11.lib("{module}")
-            # lib.__init__ already called C_Initialize
-            # Call it again via the low-level interface
-            try:
-                lib.initialize()
+            from pkcs11_check.raw.api import RawPKCS11
+            from pkcs11_check.raw.types_std import CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED
+            raw = RawPKCS11.from_lib("{module}")
+            rv1 = raw.C_Initialize(None)
+            rv2 = raw.C_Initialize(None)
+            if rv2 == int(CKR_OK):
                 print("CKR:already_init_accepted")
-            except pkcs11.exceptions.CryptokiAlreadyInitialized:
+            elif rv2 == int(CKR_CRYPTOKI_ALREADY_INITIALIZED):
                 print("CKR:CRYPTOKI_ALREADY_INITIALIZED")
-            except Exception as e:
-                print(f"CKR:{{type(e).__name__}}")
-            finally:
-                lib.finalize()
+            else:
+                print(f"CKR:0x{{rv2:08x}}")
+            raw.C_Finalize(None)
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         assert result.returncode == 0, f"Subprocess crashed: {result.stderr}"
         output = result.stdout.strip()
@@ -52,26 +53,25 @@ class TestInitializeErrors:
         """C_Finalize without C_Initialize -> CKR_CRYPTOKI_NOT_INITIALIZED."""
         module = str(p11_config.module)
         script = textwrap.dedent(f"""\
-            import ctypes
-            lib = ctypes.CDLL("{module}")
-            # Get C_Finalize via C_GetFunctionList
-            # Simpler: just call C_Finalize directly if exported
-            # Most modules export C_GetFunctionList only, so use pkcs11 to init+finalize first
-            import pkcs11
-            p = pkcs11.lib("{module}")
-            p.finalize()
+            from pkcs11_check.raw.api import RawPKCS11
+            from pkcs11_check.raw.types_std import CKR_OK, CKR_CRYPTOKI_NOT_INITIALIZED
+            raw = RawPKCS11.from_lib("{module}")
+            raw.C_Initialize(None)
+            raw.C_Finalize(None)
             # Now try finalize again - should get NOT_INITIALIZED
-            try:
-                p.finalize()
+            rv = raw.C_Finalize(None)
+            if rv == int(CKR_OK):
                 print("CKR:finalize_accepted")
-            except pkcs11.exceptions.CryptokiNotInitialized:
+            elif rv == int(CKR_CRYPTOKI_NOT_INITIALIZED):
                 print("CKR:CRYPTOKI_NOT_INITIALIZED")
-            except Exception as e:
-                print(f"CKR:{{type(e).__name__}}")
+            else:
+                print(f"CKR:0x{{rv:08x}}")
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         assert result.returncode == 0, f"Subprocess crashed: {result.stderr}"
         output = result.stdout.strip()
@@ -81,23 +81,30 @@ class TestInitializeErrors:
         """C_GetInterfaceList - should work or return FUNCTION_NOT_SUPPORTED."""
         module = str(p11_config.module)
         script = textwrap.dedent(f"""\
-            import pkcs11
-            lib = pkcs11.lib("{module}")
+            from ctypes import byref
+            from pkcs11_check.raw.api import RawPKCS11
+            from pkcs11_check.raw.types_std import CKR_OK, CKR_FUNCTION_NOT_SUPPORTED, CK_ULONG
+            raw = RawPKCS11.from_lib("{module}")
+            raw.C_Initialize(None)
             try:
-                ifaces = lib.get_interface_list()
-                print(f"CKR:OK:{{len(ifaces)}}_interfaces")
-            except pkcs11.exceptions.FunctionNotSupported:
-                print("CKR:FUNCTION_NOT_SUPPORTED")
+                count = CK_ULONG(0)
+                rv = raw.C_GetInterfaceList(None, byref(count))
+                if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+                    print("CKR:FUNCTION_NOT_SUPPORTED")
+                elif rv == int(CKR_OK):
+                    print(f"CKR:OK:{{int(count.value)}}_interfaces")
+                else:
+                    print(f"CKR:0x{{rv:08x}}")
             except AttributeError:
-                print("CKR:NO_METHOD")  # v2.40 module, no get_interface_list
-            except Exception as e:
-                print(f"CKR:{{type(e).__name__}}")
+                print("CKR:NO_METHOD")  # v2.40 module, C_GetInterfaceList not available
             finally:
-                lib.finalize()
+                raw.C_Finalize(None)
         """)
         result = subprocess.run(
             [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         assert result.returncode == 0, f"Subprocess crashed: {result.stderr}"
         output = result.stdout.strip()

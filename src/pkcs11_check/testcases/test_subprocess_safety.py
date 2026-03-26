@@ -39,13 +39,17 @@ class TestPostFinalize:
         """C_GetSlotList after C_Finalize must not crash."""
         module = str(p11_config.module)
         script = f"""
-        import pkcs11
-        lib = pkcs11.lib("{module}")
-        lib.initialize()
-        lib.get_slots()
-        lib.finalize()
+        from ctypes import byref
+        from pkcs11_check.raw.api import RawPKCS11
+        from pkcs11_check.raw.bootstrap import get_slot_ids
+        from pkcs11_check.raw.types_std import CK_ULONG
+        raw = RawPKCS11.from_lib("{module}")
+        raw.C_Initialize(None)
+        get_slot_ids(raw)
+        raw.C_Finalize(None)
         try:
-            lib.get_slots()
+            count = CK_ULONG(0)
+            raw.C_GetSlotList(1, None, byref(count))
             print("OK: returned after finalize")
         except Exception as e:
             print(f"OK: raised {{type(e).__name__}}")
@@ -58,14 +62,15 @@ class TestPostFinalize:
         """C_Initialize after C_Finalize must work."""
         module = str(p11_config.module)
         script = f"""
-        import pkcs11
-        lib = pkcs11.lib("{module}")
-        lib.initialize()
-        lib.finalize()
-        lib.initialize()
-        slots = lib.get_slots()
+        from pkcs11_check.raw.api import RawPKCS11
+        from pkcs11_check.raw.bootstrap import get_slot_ids
+        raw = RawPKCS11.from_lib("{module}")
+        raw.C_Initialize(None)
+        raw.C_Finalize(None)
+        raw.C_Initialize(None)
+        slots = get_slot_ids(raw)
         print(f"OK: reinit, {{len(slots)}} slots")
-        lib.finalize()
+        raw.C_Finalize(None)
         """
         rc, output = _run_script(script)
         assert rc == 0, f"Reinit crashed (rc={rc}): {output}"
@@ -79,23 +84,25 @@ class TestForkSafety:
         """Fork after C_Initialize - child reinitializes."""
         module = str(p11_config.module)
         script = f"""
-        import os, pkcs11
-        lib = pkcs11.lib("{module}")
-        lib.initialize()
+        import os
+        from pkcs11_check.raw.api import RawPKCS11
+        from pkcs11_check.raw.bootstrap import get_slot_ids
+        raw = RawPKCS11.from_lib("{module}")
+        raw.C_Initialize(None)
         pid = os.fork()
         if pid == 0:
             try:
-                try: lib.finalize()
+                try: raw.C_Finalize(None)
                 except: pass
-                lib.initialize()
-                lib.get_slots()
-                lib.finalize()
+                raw.C_Initialize(None)
+                get_slot_ids(raw)
+                raw.C_Finalize(None)
                 os._exit(0)
             except:
                 os._exit(1)
         else:
             _, status = os.waitpid(pid, 0)
-            lib.finalize()
+            raw.C_Finalize(None)
             exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
             print(f"OK: child exit {{exit_code}}")
         """
@@ -117,20 +124,29 @@ class TestLibraryReload:
         environment limitations, not crashes, so xfail.
         """
         module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else "None"
-        pin_arg = f'"{pin}"' if pin != "None" else "None"
+        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        pin_repr = f'b"{pin}"' if pin is not None else "None"
         script = f"""
-        import pkcs11
+        from pkcs11_check.raw.api import RawPKCS11
+        from pkcs11_check.raw.bootstrap import get_slot_ids, open_session, login_user
+        from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
+        from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION
+        pin = {pin_repr}
         for i in range(5):
-            lib = pkcs11.lib("{module}")
-            lib.initialize()
+            raw = RawPKCS11.from_lib("{module}")
+            raw.C_Initialize(None)
             try:
-                token = lib.get_token(token_label="pkcs11-check")
-                with token.open(rw=True, user_pin={pin_arg}) as s:
-                    key = s.generate_key(pkcs11.KeyType.AES, 128)
-                    key.destroy()
+                slots = get_slot_ids(raw, label="pkcs11-check")
+                if not slots:
+                    slots = get_slot_ids(raw)
+                sh = open_session(raw, slots[0], int(CKF_RW_SESSION | CKF_SERIAL_SESSION))
+                if pin is not None:
+                    login_user(raw, sh, 1, pin)
+                key = gen_aes_key(raw, sh, 128)
+                destroy_quietly(raw, sh, key)
+                raw.C_CloseSession(sh)
             finally:
-                lib.finalize()
+                raw.C_Finalize(None)
         print("OK: 5 cycles")
         """
         rc, output = _run_script(script, timeout=30)

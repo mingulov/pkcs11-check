@@ -79,17 +79,18 @@ class TestSpecAmbiguousCalls:
 
         module = str(p11_config.module)
         script = f"""
-        import pkcs11
-        lib = pkcs11.lib("{module}")
-        lib.initialize()
-        try:
-            lib.initialize()
+        from pkcs11_check.raw.api import RawPKCS11
+        from pkcs11_check.raw.types_std import CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED
+        raw = RawPKCS11.from_lib("{module}")
+        raw.C_Initialize(None)
+        rv = raw.C_Initialize(None)
+        if rv == int(CKR_OK):
             print("OK: second init succeeded")
-        except pkcs11.exceptions.CryptokiAlreadyInitialized:
+        elif rv == int(CKR_CRYPTOKI_ALREADY_INITIALIZED):
             print("OK: CKR_CRYPTOKI_ALREADY_INITIALIZED")
-        except Exception as e:
-            print(f"OK: {{type(e).__name__}}")
-        lib.finalize()
+        else:
+            print(f"OK: 0x{{rv:08x}}")
+        raw.C_Finalize(None)
         """
         result = subprocess.run(
             [sys.executable, "-c", textwrap.dedent(script)],

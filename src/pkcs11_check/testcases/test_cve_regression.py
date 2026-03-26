@@ -527,29 +527,43 @@ class TestSoftHSM2Issue722:
         import textwrap
 
         module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else "None"
-        pin_arg = f'"{pin}"' if pin != "None" else "None"
+        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        pin_repr = f'b"{pin}"' if pin is not None else "None"
 
-        # NOTE: This subprocess test intentionally uses the pkcs11 fork
-        # (not pkcs11_check.raw) because it tests crash isolation - the
-        # subprocess must segfault-survive independently.
         script = f"""
-import pkcs11
-from pkcs11 import Attribute, KeyType, Mechanism
-lib = pkcs11.lib("{module}")
-lib.initialize()
+from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.bootstrap import get_slot_ids, open_session, login_user
+from pkcs11_check.raw.recipes import gen_rsa_keypair, encrypt_single, decrypt_single, destroy_quietly
+from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKM_RSA_PKCS, CKA_ENCRYPT, CKA_DECRYPT
+pin = {pin_repr}
+raw = RawPKCS11.from_lib("{module}")
+raw.C_Initialize(None)
 try:
-    token = lib.get_token(token_label="pkcs11-check")
-    with token.open(rw=True, user_pin={pin_arg}) as session:
-        pub, priv = session.generate_keypair(KeyType.RSA, 2048)
-        ct = pub.encrypt(b"test data 722", mechanism=Mechanism.RSA_PKCS)
-        pt = priv.decrypt(ct, mechanism=Mechanism.RSA_PKCS)
+    slots = get_slot_ids(raw, label="pkcs11-check")
+    if not slots:
+        slots = get_slot_ids(raw)
+    sh = open_session(raw, slots[0], int(CKF_RW_SESSION | CKF_SERIAL_SESSION))
+    if pin is not None:
+        login_user(raw, sh, 1, pin)
+    pub, priv = gen_rsa_keypair(raw, sh, 2048,
+        public_attrs={{int(CKA_ENCRYPT): True}},
+        private_attrs={{int(CKA_DECRYPT): True}},
+    )
+    try:
+        ct = encrypt_single(raw, sh, pub, CKM_RSA_PKCS, b"test data 722")
+        pt = decrypt_single(raw, sh, priv, CKM_RSA_PKCS, ct)
         assert pt == b"test data 722"
         print("OK: RSA encrypt/decrypt cycle")
+    except Exception as e:
+        print(f"ERROR: {{type(e).__name__}}: {{e}}")
+    finally:
+        destroy_quietly(raw, sh, pub)
+        destroy_quietly(raw, sh, priv)
+    raw.C_CloseSession(sh)
 except Exception as e:
     print(f"ERROR: {{type(e).__name__}}: {{e}}")
 finally:
-    lib.finalize()
+    raw.C_Finalize(None)
 """
         result = subprocess.run(
             [sys.executable, "-c", textwrap.dedent(script)],
