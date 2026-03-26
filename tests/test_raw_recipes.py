@@ -1,4 +1,5 @@
 """Tests for raw recipe helpers."""
+
 from __future__ import annotations
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -85,6 +86,7 @@ class TestEcCurveEncoding:
 
     def test_unknown_curve_raises(self) -> None:
         import pytest
+
         with pytest.raises(ValueError, match="Unknown curve"):
             encode_named_curve_parameters("not-a-real-curve")
 
@@ -92,14 +94,17 @@ class TestEcCurveEncoding:
 class TestRawFixtureSignatures:
     def test_raw_has_mechanism_callable(self) -> None:
         from pkcs11_check.raw_fixtures import raw_has_mechanism
+
         assert callable(raw_has_mechanism)
 
     def test_raw_session_fixture_exists(self) -> None:
         from pkcs11_check.raw_fixtures import raw_session
+
         assert callable(raw_session)
 
     def test_raw_pkcs11_fixture_exists(self) -> None:
         from pkcs11_check.raw_fixtures import raw_pkcs11
+
         assert callable(raw_pkcs11)
 
 
@@ -214,3 +219,83 @@ class TestRecipeSignatures:
 
     def test_unwrap_key_authenticated_callable(self) -> None:
         assert callable(unwrap_key_authenticated)
+
+
+def test_get_session_info_returns_struct_fields() -> None:
+    from pkcs11_check.raw.recipes import get_session_info
+    from pkcs11_check.raw.types_std import CKR_OK
+
+    class FakeRaw:
+        def C_GetSessionInfo(self, session: int, info) -> int:  # noqa: N802
+            info._obj.slotID = 42
+            info._obj.state = 1
+            info._obj.flags = 0x04
+            info._obj.ulDeviceError = 0
+            return CKR_OK
+
+    result = get_session_info(FakeRaw(), 1)
+    assert result == {"slot_id": 42, "state": 1, "flags": 0x04, "device_error": 0}
+
+
+def test_get_mechanism_info_returns_struct_fields() -> None:
+    from pkcs11_check.raw.recipes import get_mechanism_info
+    from pkcs11_check.raw.types_std import CKR_OK
+
+    class FakeRaw:
+        def C_GetMechanismInfo(self, slot_id: int, mech: int, info) -> int:  # noqa: N802
+            info._obj.ulMinKeySize = 128
+            info._obj.ulMaxKeySize = 256
+            info._obj.flags = 0x01
+            return CKR_OK
+
+    result = get_mechanism_info(FakeRaw(), 0, 0x01)
+    assert result == {"min_key_size": 128, "max_key_size": 256, "flags": 0x01}
+
+
+def test_get_slot_info_returns_struct_fields() -> None:
+    from pkcs11_check.raw.recipes import get_slot_info
+    from pkcs11_check.raw.types_std import CK_VERSION, CKR_OK
+
+    class FakeRaw:
+        def C_GetSlotInfo(self, slot_id: int, info) -> int:  # noqa: N802
+            info._obj.flags = 0x03
+            info._obj.hardwareVersion = CK_VERSION(2, 1)
+            info._obj.firmwareVersion = CK_VERSION(1, 0)
+            return CKR_OK
+
+    result = get_slot_info(FakeRaw(), 0)
+    assert result["flags"] == 0x03
+    assert result["hardware_version"] == (2, 1)
+    assert result["firmware_version"] == (1, 0)
+
+
+def test_digest_single_with_key_calls_init_key_final() -> None:
+    from pkcs11_check.raw.recipes import digest_single_with_key
+    from pkcs11_check.raw.types_std import CKM_SHA224, CKR_OK
+
+    calls: list[str] = []
+
+    class FakeRaw:
+        def C_DigestInit(self, session, mech) -> int:  # noqa: N802
+            calls.append("init")
+            return CKR_OK
+
+        def C_DigestKey(self, session, key) -> int:  # noqa: N802
+            calls.append("key")
+            return CKR_OK
+
+        def C_DigestFinal(self, session, out, out_len):  # noqa: N802
+            calls.append("final")
+            if out is None:
+                out_len._obj.value = 4
+                return CKR_OK
+            out[0] = 0x01
+            out[1] = 0x02
+            out[2] = 0x03
+            out[3] = 0x04
+            out_len._obj.value = 4
+            return CKR_OK
+
+    result = digest_single_with_key(FakeRaw(), 1, CKM_SHA224, 99)
+    assert calls == ["init", "key", "final", "final"]
+    assert result == b"\x01\x02\x03\x04"

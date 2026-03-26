@@ -19,7 +19,10 @@ from .rv import expect_rv
 from .types_std import (
     CK_ATTRIBUTE,
     CK_BBOOL,
+    CK_MECHANISM_INFO,
     CK_OBJECT_HANDLE,
+    CK_SESSION_INFO,
+    CK_SLOT_INFO,
     CK_ULONG,
     CKA,
     CKA_CLASS,
@@ -37,6 +40,7 @@ from .types_std import (
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKO_SECRET_KEY,
     CKR_BUFFER_TOO_SMALL,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
@@ -364,6 +368,24 @@ def digest_single(
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(data)
     return _two_call_output(raw, "C_Digest", session, in_buf, len(data))
+
+
+def digest_single_with_key(
+    raw: RawPKCS11,
+    session: int,
+    mechanism: CKM,
+    key: int,
+) -> bytes:
+    """Digest a secret key value (C_DigestInit + C_DigestKey + C_DigestFinal).
+
+    The key material is digested directly without exposing it outside the token.
+    """
+    mech = _resolve_mech(mechanism, None)
+    rv = raw.C_DigestInit(session, mech.byref())
+    expect_rv(rv, CKR_OK)
+    rv = raw.C_DigestKey(session, key)
+    expect_rv(rv, CKR_OK, CKR_FUNCTION_NOT_SUPPORTED)
+    return _two_call_output(raw, "C_DigestFinal", session)
 
 
 def read_attributes(
@@ -827,6 +849,42 @@ def get_mechanism_list(raw: RawPKCS11, slot_id: int) -> list[int]:
     return [mechs[i] for i in range(count.value)]
 
 
+def get_session_info(raw: RawPKCS11, session: int) -> dict[str, int]:
+    """C_GetSessionInfo — returns session info as dict."""
+    info = CK_SESSION_INFO()
+    expect_rv(raw.C_GetSessionInfo(session, byref(info)), CKR_OK)
+    return {
+        "slot_id": info.slotID,
+        "state": info.state,
+        "flags": info.flags,
+        "device_error": info.ulDeviceError,
+    }
+
+
+def get_mechanism_info(raw: RawPKCS11, slot_id: int, mechanism: CKM) -> dict[str, int]:
+    """C_GetMechanismInfo — returns mechanism info as dict."""
+    info = CK_MECHANISM_INFO()
+    expect_rv(raw.C_GetMechanismInfo(slot_id, mechanism, byref(info)), CKR_OK)
+    return {
+        "min_key_size": info.ulMinKeySize,
+        "max_key_size": info.ulMaxKeySize,
+        "flags": info.flags,
+    }
+
+
+def get_slot_info(raw: RawPKCS11, slot_id: int) -> dict[str, Any]:
+    """C_GetSlotInfo — returns slot info as dict."""
+    info = CK_SLOT_INFO()
+    expect_rv(raw.C_GetSlotInfo(slot_id, byref(info)), CKR_OK)
+    return {
+        "description": bytes(info.slotDescription).decode("utf-8", errors="replace").rstrip("\x00"),
+        "manufacturer": bytes(info.manufacturerID).decode("utf-8", errors="replace").rstrip("\x00"),
+        "flags": info.flags,
+        "hardware_version": (info.hardwareVersion.major, info.hardwareVersion.minor),
+        "firmware_version": (info.firmwareVersion.major, info.firmwareVersion.minor),
+    }
+
+
 # --- v3.0 Message-based crypto ---
 
 
@@ -1099,3 +1157,48 @@ def unwrap_key_authenticated(
     )
     expect_rv(rv, CKR_OK)
     return key_handle.value
+
+
+__all__ = [
+    "copy_object",
+    "create_object",
+    "decapsulate_key",
+    "decrypt_multipart",
+    "decrypt_single",
+    "derive_key",
+    "destroy_quietly",
+    "digest_multipart",
+    "digest_single",
+    "encapsulate_key",
+    "encrypt_multipart",
+    "encrypt_single",
+    "find_objects",
+    "gen_aes_key",
+    "gen_ec_keypair",
+    "gen_keypair",
+    "gen_rsa_keypair",
+    "generate_random",
+    "get_mechanism_list",
+    "get_object_size",
+    "import_secret_key",
+    "init_pin",
+    "init_token",
+    "message_decrypt",
+    "message_encrypt",
+    "pack_attrs",
+    "quick_session",
+    "read_attributes",
+    "restore_operation_state",
+    "save_operation_state",
+    "seed_random",
+    "set_attributes",
+    "set_pin",
+    "sign_multipart",
+    "sign_single",
+    "unwrap_key",
+    "unwrap_key_authenticated",
+    "verify_multipart",
+    "verify_single",
+    "wrap_key",
+    "wrap_key_authenticated",
+]
