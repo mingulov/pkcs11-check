@@ -242,9 +242,7 @@ def test_command(
         # --report-log into the pytest session for per-test JSONL capture.
         jsonl_raw: str | None = None
         if output == "json":
-            jsonl_fd, jsonl_raw = tempfile.mkstemp(
-                prefix="pkcs11-check-jsonl-", suffix=".jsonl"
-            )
+            jsonl_fd, jsonl_raw = tempfile.mkstemp(prefix="pkcs11-check-jsonl-", suffix=".jsonl")
             os.close(jsonl_fd)
             os.environ["PKCS11_CHECK_REPORT_LOG"] = jsonl_raw
         try:

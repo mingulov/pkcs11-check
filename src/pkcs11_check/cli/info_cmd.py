@@ -18,6 +18,7 @@ def _mech_sort_key(m: object) -> str:
         return name
     return f"0x{int(m):08x}" if isinstance(m, int) else str(m)
 
+
 console = Console()
 
 

@@ -57,11 +57,11 @@ def raw_session(
     Performs login/logout per test to avoid UserAlreadyLoggedIn cascading.
     """
     flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
-    sh = open_session(raw_pkcs11, raw_slot_id, int(flags))
+    sh = open_session(raw_pkcs11, raw_slot_id, flags)
 
     pin_value = request.config.getoption("p11_pin")
     if pin_value is not None:
-        login_user(raw_pkcs11, sh, int(CKU_USER), pin_value.encode("utf-8"))
+        login_user(raw_pkcs11, sh, CKU_USER, pin_value.encode("utf-8"))
 
     try:
         yield sh
@@ -88,18 +88,18 @@ def raw_has_mechanism(raw: RawPKCS11, slot_id: int, name: str) -> bool:
     cached = _raw_mechanism_cache.get(key)
     if cached is None:
         count = CK_ULONG(0)
-        rv = int(raw.C_GetMechanismList(slot_id, None, byref(count)))
+        rv = raw.C_GetMechanismList(slot_id, None, byref(count))
         if rv != CKR_OK:
             return False
-        mechs = (CK_MECHANISM_TYPE * int(count.value))()
-        rv = int(raw.C_GetMechanismList(slot_id, mechs, byref(count)))
+        mechs = (CK_MECHANISM_TYPE * count.value)()
+        rv = raw.C_GetMechanismList(slot_id, mechs, byref(count))
         if rv != CKR_OK:
             return False
         from pkcs11_check.raw import metadata_std
 
         mech_names: set[str] = set()
-        for i in range(int(count.value)):
-            mech_val = int(mechs[i])
+        for i in range(count.value):
+            mech_val = mechs[i]
             sym = metadata_std.MECHANISM_NAMES.get(mech_val)
             if sym:
                 # Strip CKM_ prefix for compatibility with has_mechanism("AES_CBC")

@@ -58,11 +58,11 @@ class MechValue(int):
     def name(self) -> str:
         """Return canonical CKM_ name, or hex fallback."""
         names = self._get_names()
-        full = names.get(int(self), "")
+        full = names.get(self, "")
         # Strip leading CKM_ to match python-pkcs11 Mechanism.name convention
         if full.startswith("CKM_"):
             return full[4:]
-        return full or f"0x{int(self):08x}"
+        return full or f"0x{self:08x}"
 
     def __repr__(self) -> str:
         return f"<MechValue {self.name}>"
@@ -79,8 +79,8 @@ class RawToken:
     def _get_info(self) -> CK_TOKEN_INFO:
         if self._info is None:
             info = CK_TOKEN_INFO()
-            rv = int(self._raw.C_GetTokenInfo(self._slot_id, byref(info)))
-            if rv != int(CKR_OK):
+            rv = self._raw.C_GetTokenInfo(self._slot_id, byref(info))
+            if rv != CKR_OK:
                 raise RuntimeError(f"C_GetTokenInfo failed: 0x{rv:08x}")
             self._info = info
         return self._info
@@ -123,27 +123,27 @@ class RawSlot:
     def get_mechanisms(self) -> list[MechValue]:
         """Return mechanism list for this slot."""
         count = CK_ULONG(0)
-        rv = int(self._raw.C_GetMechanismList(self._slot_id, None, byref(count)))
-        if rv != int(CKR_OK):
+        rv = self._raw.C_GetMechanismList(self._slot_id, None, byref(count))
+        if rv != CKR_OK:
             raise RuntimeError(f"C_GetMechanismList (count) failed: 0x{rv:08x}")
         if count.value == 0:
             return []
-        mechs = (CK_MECHANISM_TYPE * int(count.value))()
-        rv = int(self._raw.C_GetMechanismList(self._slot_id, mechs, byref(count)))
-        if rv != int(CKR_OK):
+        mechs = (CK_MECHANISM_TYPE * count.value)()
+        rv = self._raw.C_GetMechanismList(self._slot_id, mechs, byref(count))
+        if rv != CKR_OK:
             raise RuntimeError(f"C_GetMechanismList failed: 0x{rv:08x}")
-        return [MechValue(mechs[i]) for i in range(int(count.value))]
+        return [MechValue(mechs[i]) for i in range(count.value)]
 
     def get_mechanism_info(self, mech: Any) -> MechInfo | None:
         """Return mechanism info for a single mechanism."""
         info = CK_MECHANISM_INFO()
-        rv = int(self._raw.C_GetMechanismInfo(self._slot_id, int(mech), byref(info)))
-        if rv != int(CKR_OK):
+        rv = self._raw.C_GetMechanismInfo(self._slot_id, mech, byref(info))
+        if rv != CKR_OK:
             return None
         return MechInfo(
-            min_key=int(info.ulMinKeySize),
-            max_key=int(info.ulMaxKeySize),
-            flags=int(info.flags),
+            min_key=info.ulMinKeySize,
+            max_key=info.ulMaxKeySize,
+            flags=info.flags,
         )
 
     def get_token(self) -> RawToken:
@@ -208,18 +208,18 @@ class P11Module:
 
         # First call: get count
         count = CK_ULONG(0)
-        rv = int(self._raw.C_GetInterfaceList(None, byref(count)))
-        if rv != int(CKR_OK) or count.value == 0:
+        rv = self._raw.C_GetInterfaceList(None, byref(count))
+        if rv != CKR_OK or count.value == 0:
             return []
 
         # Second call: get list
-        iface_array = (CK_INTERFACE * int(count.value))()
-        rv = int(self._raw.C_GetInterfaceList(iface_array, byref(count)))
-        if rv != int(CKR_OK):
+        iface_array = (CK_INTERFACE * count.value)()
+        rv = self._raw.C_GetInterfaceList(iface_array, byref(count))
+        if rv != CKR_OK:
             return []
 
         result = []
-        for i in range(int(count.value)):
+        for i in range(count.value):
             iface = iface_array[i]
             name_ptr = iface.pInterfaceName
             if name_ptr:
@@ -237,8 +237,8 @@ class P11Module:
                     from pkcs11_check.raw.types_std import CK_VERSION
 
                     ver = ctypes.cast(ver_ptr, ctypes.POINTER(CK_VERSION)).contents
-                    major = int(ver.major)
-                    minor = int(ver.minor)
+                    major = ver.major
+                    minor = ver.minor
                 except Exception:
                     major, minor = 0, 0
             else:
@@ -282,9 +282,9 @@ def load_module(
     # Initialize the cryptoki library. C_Initialize may return
     # CKR_CRYPTOKI_ALREADY_INITIALIZED (0x00000191) if another part of the
     # process already initialized it — that is acceptable.
-    rv = int(raw.C_Initialize(None))
+    rv = raw.C_Initialize(None)
     _ckr_already_initialized = 0x00000191
-    if rv not in (int(CKR_OK), _ckr_already_initialized):
+    if rv not in (CKR_OK, _ckr_already_initialized):
         raise RuntimeError(f"C_Initialize failed: 0x{rv:08x}")
 
     return P11Module(path=path, _raw=raw)

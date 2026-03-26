@@ -62,13 +62,13 @@ def _open_raw_session(
     slot_idx = p11_config.slot if p11_config.slot is not None else 0
     slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
 
-    flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+    flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
     sh = raw_open_session(raw, slot_id, flags)
 
     pin = p11_config.pin.get_secret_value() if p11_config.pin else None
     logged_in = False
     if pin is not None:
-        login_user(raw, sh, int(CKU_USER), pin.encode("utf-8"))
+        login_user(raw, sh, CKU_USER, pin.encode("utf-8"))
         logged_in = True
 
     return raw, sh, slot_id, logged_in
