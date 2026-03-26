@@ -17,26 +17,26 @@ class TestLibraryInit:
     """Test basic library initialization and info queries."""
 
     def test_library_loads_and_has_info(self, p11_module: Any) -> None:
-        """Library loads successfully and has basic info."""
-        lib = p11_module.lib
-        assert lib is not None
-        # Library should have at least manufacturer info
-        if hasattr(lib, "manufacturer_id"):
-            assert isinstance(lib.manufacturer_id, str)
+        """Library loads successfully and exposes raw interface."""
+        raw = p11_module.raw
+        assert raw is not None
+        # Raw interface exposes available function names
+        fnames = raw.available_function_names()
+        assert len(fnames) > 0
 
     def test_library_version_available(self, p11_module: Any) -> None:
-        """Library reports a version."""
-        lib = p11_module.lib
-        if hasattr(lib, "library_version"):
-            ver = lib.library_version
-            assert ver is not None
+        """Library reports an interface version."""
+        ver = p11_module.interface_version
+        assert ver in ("2.40", "3.0", "3.1", "3.2")
 
     def test_library_description_available(self, p11_module: Any) -> None:
-        """Library reports a description."""
-        lib = p11_module.lib
-        if hasattr(lib, "library_description"):
-            desc = lib.library_description
-            assert isinstance(desc, str)
+        """Library has readable token info (label/model) for the first slot."""
+        slots = p11_module.get_slots(token_present=True)
+        if not slots:
+            pytest.skip("No token-present slots")
+        token = slots[0].get_token()
+        # Label is space-padded to 32 bytes per spec; strip and check type
+        assert isinstance(token.label, str)
 
 
 class TestSlotDiscovery:

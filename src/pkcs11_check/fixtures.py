@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import pkcs11 as _p11
 import pytest
 
 from pkcs11_check.config import P11TestConfig
@@ -47,34 +46,48 @@ def p11_interface_version(p11_module: P11Module) -> str:
 
 @pytest.fixture
 def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[Any, None, None]:
-    """Open PKCS#11 session with login. Yields session, closes after test.
+    """Open PKCS#11 session with login. Yields RawSession, closes after test.
 
     After the test, we attempt to logout so the next test can login fresh.
     This avoids UserAlreadyLoggedIn / UserTypeInvalid cascading failures.
+
+    NOTE: This fixture now returns a RawSession (raw bootstrap-based), not a
+    python-pkcs11 Session. Test files that used the fork session API need to
+    be updated to use the raw API directly (see p11_raw_session for the
+    already-migrated path; this fixture now aliases it for the common case).
     """
-    token = p11_module.get_token(p11_config.slot)
+    from pkcs11_check.raw.bootstrap import (
+        close_session_quietly,
+        get_slot_ids,
+        login_user,
+    )
+    from pkcs11_check.raw.bootstrap import open_session as raw_open_session
+    from pkcs11_check.raw.types_std import (
+        CKF_RW_SESSION,
+        CKF_SERIAL_SESSION,
+        CKU_USER,
+    )
+
+    raw = p11_module.raw
+    slots = get_slot_ids(raw)
+    slot_idx = p11_config.slot if p11_config.slot is not None else 0
+    slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
+
+    flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+    sh = raw_open_session(raw, slot_id, flags)
+
     pin = p11_config.pin.get_secret_value() if p11_config.pin else None
-    session = token.open(rw=True)
     logged_in = False
     if pin is not None:
-        try:
-            session.login(_p11.UserType.USER, pin)
-            logged_in = True
-        except _p11.exceptions.UserAlreadyLoggedIn:
-            logged_in = True  # Already logged in at token level - reuse
+        login_user(raw, sh, int(CKU_USER), pin.encode("utf-8"))
+        logged_in = True
+
     try:
-        yield session
+        yield RawSession(raw, sh, slot_id)
     finally:
         if logged_in:
-            try:
-                session.logout()
-            except (
-                _p11.exceptions.UserNotLoggedIn,
-                _p11.exceptions.SessionClosed,
-                _p11.exceptions.FunctionFailed,
-            ):
-                pass  # Logout may fail if session closed or not logged in
-        session.close()
+            raw.C_Logout(sh)
+        close_session_quietly(raw, sh)
 
 
 @dataclass
@@ -135,14 +148,13 @@ def p11_raw_session(
     from pkcs11_check.raw.bootstrap import (
         open_session as raw_open_session,
     )
-    from pkcs11_check.raw.bridge import raw_from_module
     from pkcs11_check.raw.types_std import (
         CKF_RW_SESSION,
         CKF_SERIAL_SESSION,
         CKU_USER,
     )
 
-    raw = raw_from_module(p11_module)
+    raw = p11_module.raw
     slots = get_slot_ids(raw)
     slot_idx = p11_config.slot if p11_config.slot is not None else 0
     slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]

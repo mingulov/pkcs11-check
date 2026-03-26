@@ -23,7 +23,7 @@ class TestLibraryInfo:
     def test_module_loads(self, p11_module: Any) -> None:
         """Module loads without error."""
         assert p11_module is not None
-        assert p11_module.lib is not None
+        assert p11_module.raw is not None
 
     def test_interface_version_reported(self, p11_interface_version: str) -> None:
         """Interface version is a known value."""
@@ -66,7 +66,7 @@ class TestInterfaceV30:
 
     def test_v30_get_interface_list(self, p11_module: Any) -> None:
         """C_GetInterfaceList returns at least one interface entry."""
-        ifaces = p11_module.lib.get_interface_list()
+        ifaces = p11_module.get_interface_list()
         assert len(ifaces) > 0
         names = [name for name, _maj, _min in ifaces]
         assert "PKCS 11" in names or any("PKCS" in n for n in names), (

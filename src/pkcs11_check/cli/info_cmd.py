@@ -39,16 +39,10 @@ def info_command(
     console.print(f"[bold]Module:[/bold] {p11.path}")
     console.print(f"[bold]Interface:[/bold] v{p11.interface_version}")
 
-    lib = p11.lib
-    if hasattr(lib, "get_interface_list"):
-        ifaces = lib.get_interface_list()
-        if ifaces:
-            iface_strs = ", ".join(f"{n} v{maj}.{min}" for n, maj, min in ifaces)
-            console.print(f"[bold]Available interfaces:[/bold] {iface_strs}")
-    if hasattr(lib, "manufacturer_id"):
-        console.print(f"[bold]Manufacturer:[/bold] {lib.manufacturer_id}")
-    if hasattr(lib, "library_description"):
-        console.print(f"[bold]Description:[/bold] {lib.library_description}")
+    ifaces = p11.get_interface_list()
+    if ifaces:
+        iface_strs = ", ".join(f"{n} v{maj}.{min}" for n, maj, min in ifaces)
+        console.print(f"[bold]Available interfaces:[/bold] {iface_strs}")
 
     slots = p11.get_slots(token_present=True)
     console.print(f"\n[bold]Slots with tokens:[/bold] {len(slots)}")
