@@ -14,6 +14,8 @@ import subprocess
 import sys
 import textwrap
 
+from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD  # noqa: F401 — re-exported
+
 
 def run_null_test(
     module_path: str,
