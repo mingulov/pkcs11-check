@@ -2,9 +2,28 @@
 
 from __future__ import annotations
 
-from . import der, extensions, metadata_std, pack, recipes, rv, types_std
+from . import der, ec, extensions, metadata_std, pack, recipes, rv, types_std
 from .api import RawPKCS11
-from .bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
+from .bootstrap import (
+    close_session_quietly,
+    get_slot_ids,
+    login_user,
+    login_user_with_name,
+    logout,
+    logout_quietly,
+    open_session,
+)
+from .der import (
+    decode_ec_point,
+    decode_rsa_public_key_der,
+    ecdsa_sig_der_to_p1363,
+    ecdsa_sig_from_der,
+    ecdsa_sig_p1363_to_der,
+    ecdsa_sig_to_der,
+    encode_ec_point,
+    encode_rsa_public_key_der,
+)
+from .ec import encode_named_curve_parameters
 from .recipes import gen_keypair, pack_attrs
 from .types_std import (
     CK_ATTRIBUTE,
@@ -52,6 +71,18 @@ __all__ = [
     "CKZ",
     "RawPKCS11",
     "close_session_quietly",
+    "login_user_with_name",
+    "logout",
+    "logout_quietly",
+    "decode_ec_point",
+    "decode_rsa_public_key_der",
+    "ecdsa_sig_der_to_p1363",
+    "ecdsa_sig_from_der",
+    "ecdsa_sig_p1363_to_der",
+    "ecdsa_sig_to_der",
+    "encode_ec_point",
+    "encode_named_curve_parameters",
+    "encode_rsa_public_key_der",
     "get_slot_ids",
     "login_user",
     "open_session",
@@ -60,6 +91,7 @@ __all__ = [
     "metadata_std",
     "types_std",
     "der",
+    "ec",
     "extensions",
     "pack",
     "recipes",

@@ -48,3 +48,8 @@ def encode_named_curve_parameters(name: str) -> bytes:
     if oid is None:
         raise ValueError(f"Unknown curve: {name!r}")
     return oid
+
+
+__all__ = [
+    "encode_named_curve_parameters",
+]

@@ -71,6 +71,16 @@ def _two_call_output(
 
     ``args`` are ALL arguments before the output (buffer_ptr, buffer_len_ptr) pair,
     including session. The function appends the buffer pair automatically.
+
+    Works for: C_Encrypt, C_Sign, C_Decrypt, C_Digest, C_WrapKey, C_GetOperationState,
+    C_SignFinal, C_DigestFinal.
+
+    NOT suitable for:
+    - C_EncryptUpdate / C_DecryptUpdate (conditional zero-length output, use _multipart_output)
+    - C_EncryptMessage / C_DecryptMessage (extra aad args, use _message_crypto)
+    - C_EncapsulateKey (output buffer not the last arg, extra handle output after it)
+    - C_WrapKeyAuthenticated (two output pairs: wrapped + tag)
+    - C_GetMechanismList / C_GetSlotList / C_GetAttributeValue (non-byte array types)
     """
     fn = getattr(raw, call_fn)
     out_len = CK_ULONG(0)
@@ -352,6 +362,56 @@ def verify_single(
         return False
     expect_rv(rv, CKR_OK)
     return False  # unreachable
+
+
+def sign_recover_single(
+    raw: RawPKCS11,
+    session: int,
+    key: int,
+    mechanism: CKM,
+    data: bytes,
+    *,
+    mech_param: PackedMechanism | None = None,
+) -> bytes:
+    """Sign and recover data in a single operation (C_SignRecoverInit + C_SignRecover)."""
+    mech = _resolve_mech(mechanism, mech_param)
+    rv = raw.C_SignRecoverInit(session, mech.byref(), key)
+    expect_rv(rv, CKR_OK)
+    in_buf = _to_ubyte_buf(data)
+    return _two_call_output(raw, "C_SignRecover", session, in_buf, len(data))
+
+
+def verify_recover_single(
+    raw: RawPKCS11,
+    session: int,
+    key: int,
+    mechanism: CKM,
+    signature: bytes,
+) -> tuple[bool, bytes]:
+    """Verify and recover data (C_VerifyRecoverInit + C_VerifyRecover).
+
+    Returns (True, recovered_data) on valid signature,
+    (False, b"") on CKR_SIGNATURE_INVALID or CKR_SIGNATURE_LEN_RANGE.
+    Raises on unexpected CKR values.
+
+    Per PKCS#11 spec, CKR_SIGNATURE_INVALID has higher priority than
+    CKR_BUFFER_TOO_SMALL for C_VerifyRecover.
+    """
+    mech = _resolve_mech(mechanism, None)
+    rv = raw.C_VerifyRecoverInit(session, mech.byref(), key)
+    expect_rv(rv, CKR_OK)
+    sig_buf = _to_ubyte_buf(signature)
+    rec_len = CK_ULONG(0)
+    rv = raw.C_VerifyRecover(session, sig_buf, len(signature), None, byref(rec_len))
+    if rv in _VERIFY_FAIL_RVS:
+        return False, b""
+    expect_rv(rv, CKR_OK)
+    rec_buf = (ctypes.c_ubyte * rec_len.value)()
+    rv = raw.C_VerifyRecover(session, sig_buf, len(signature), rec_buf, byref(rec_len))
+    if rv in _VERIFY_FAIL_RVS:
+        return False, b""
+    expect_rv(rv, CKR_OK)
+    return True, bytes(rec_buf[: rec_len.value])
 
 
 def digest_single(
@@ -653,15 +713,7 @@ def _multipart_output(
             )
             expect_rv(rv, CKR_OK)
             parts.append(bytes(out_buf[: out_len.value]))
-    # Final
-    out_len = CK_ULONG(0)
-    rv = getattr(raw, final_fn)(session, None, byref(out_len))
-    expect_rv(rv, CKR_OK)
-    if out_len.value > 0:
-        out_buf = (ctypes.c_ubyte * out_len.value)()
-        rv = getattr(raw, final_fn)(session, out_buf, byref(out_len))
-        expect_rv(rv, CKR_OK)
-        parts.append(bytes(out_buf[: out_len.value]))
+    parts.append(_two_call_output(raw, final_fn, session))
     return b"".join(parts)
 
 
@@ -1194,10 +1246,12 @@ __all__ = [
     "set_attributes",
     "set_pin",
     "sign_multipart",
+    "sign_recover_single",
     "sign_single",
     "unwrap_key",
     "unwrap_key_authenticated",
     "verify_multipart",
+    "verify_recover_single",
     "verify_single",
     "wrap_key",
     "wrap_key_authenticated",

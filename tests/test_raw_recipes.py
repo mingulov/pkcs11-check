@@ -38,6 +38,7 @@ from pkcs11_check.raw.recipes import (
     unwrap_key,
     unwrap_key_authenticated,
     verify_multipart,
+    verify_recover_single,
     verify_single,
     wrap_key,
     wrap_key_authenticated,
@@ -299,3 +300,29 @@ def test_digest_single_with_key_calls_init_key_final() -> None:
     result = digest_single_with_key(FakeRaw(), 1, CKM_SHA224, 99)
     assert calls == ["init", "key", "final", "final"]
     assert result == b"\x01\x02\x03\x04"
+
+
+def test_verify_recover_single_returns_false_on_invalid_sig() -> None:
+    from pkcs11_check.raw.types_std import CKM_RSA_PKCS, CKR_OK, CKR_SIGNATURE_INVALID
+
+    class FakeRaw:
+        def C_VerifyRecoverInit(self, session, mech, key) -> int:  # noqa: N802
+            return CKR_OK
+
+        def C_VerifyRecover(self, session, sig, sig_len, out, out_len) -> int:  # noqa: N802
+            return CKR_SIGNATURE_INVALID
+
+    valid, data = verify_recover_single(FakeRaw(), 1, 1, CKM_RSA_PKCS, b"x" * 8)
+    assert valid is False
+    assert data == b""
+
+
+def test_expect_rv_context_in_error_message() -> None:
+    from pkcs11_check.raw.rv import expect_rv
+    from pkcs11_check.raw.types_std import CKR_OK
+
+    try:
+        expect_rv(999, CKR_OK, context="C_EncryptInit")
+        assert False, "Should have raised"
+    except AssertionError as e:
+        assert "C_EncryptInit" in str(e)

@@ -5,13 +5,14 @@ import ctypes
 
 def test_get_slot_ids_uses_explicit_token_present_and_two_call_pattern() -> None:
     from pkcs11_check.raw.bootstrap import get_slot_ids
-    from pkcs11_check.raw.types_std import CKR_OK
-    from pkcs11_check.raw.types_std import CK_SLOT_ID, CK_SLOT_ID_PTR, CK_ULONG_PTR
+    from pkcs11_check.raw.types_std import CK_SLOT_ID, CK_SLOT_ID_PTR, CK_ULONG_PTR, CKR_OK
 
     calls: list[int] = []
 
     class FakeRaw:
-        def C_GetSlotList(self, token_present: int, slot_list: CK_SLOT_ID_PTR | None, count: object) -> int:
+        def C_GetSlotList(
+            self, token_present: int, slot_list: CK_SLOT_ID_PTR | None, count: object
+        ) -> int:
             calls.append(token_present)
             count_ptr = ctypes.cast(count, CK_ULONG_PTR)
             if slot_list is None:
@@ -30,8 +31,13 @@ def test_get_slot_ids_uses_explicit_token_present_and_two_call_pattern() -> None
 
 def test_open_session_returns_handle_and_passes_explicit_flags() -> None:
     from pkcs11_check.raw.bootstrap import open_session
-    from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OK
-    from pkcs11_check.raw.types_std import CK_NOTIFY, CK_SESSION_HANDLE_PTR
+    from pkcs11_check.raw.types_std import (
+        CK_NOTIFY,
+        CK_SESSION_HANDLE_PTR,
+        CKF_RW_SESSION,
+        CKF_SERIAL_SESSION,
+        CKR_OK,
+    )
 
     seen: list[tuple[int, int, object, object]] = []
 
@@ -62,8 +68,7 @@ def test_open_session_returns_handle_and_passes_explicit_flags() -> None:
 
 def test_login_user_passes_explicit_user_type_and_pin_bytes() -> None:
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.types_std import CKR_OK, CKU_CONTEXT_SPECIFIC
-    from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
+    from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR, CKR_OK, CKU_CONTEXT_SPECIFIC
 
     seen: list[tuple[int, int, bytes, int]] = []
 
@@ -81,8 +86,7 @@ def test_login_user_passes_explicit_user_type_and_pin_bytes() -> None:
 
 def test_login_user_accepts_bytearray_pin_input() -> None:
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.types_std import CKR_OK, CKU_USER
-    from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
+    from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR, CKR_OK, CKU_USER
 
     seen: list[bytes] = []
 
@@ -99,8 +103,7 @@ def test_login_user_accepts_bytearray_pin_input() -> None:
 
 def test_login_user_accepts_memoryview_pin_input() -> None:
     from pkcs11_check.raw.bootstrap import login_user
-    from pkcs11_check.raw.types_std import CKR_OK, CKU_USER
-    from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
+    from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR, CKR_OK, CKU_USER
 
     seen: list[bytes] = []
 
@@ -188,10 +191,72 @@ def test_close_session_quietly_is_best_effort_for_teardown() -> None:
     assert seen == [77]
 
 
+def test_logout_delegates_to_raw_with_allowed_rvs() -> None:
+    from pkcs11_check.raw.bootstrap import logout
+    from pkcs11_check.raw.types_std import CKR_OK
+
+    class FakeRaw:
+        def C_Logout(self, session: int) -> int:
+            return CKR_OK
+
+    logout(FakeRaw(), 42)
+
+
+def test_logout_quietly_catches_exceptions() -> None:
+    from pkcs11_check.raw.bootstrap import logout_quietly
+
+    class FakeRaw:
+        def C_Logout(self, session: int) -> int:
+            raise OSError("boom")
+
+    logout_quietly(FakeRaw(), 42)
+
+
+def test_login_user_with_name_passes_username_to_raw() -> None:
+    from pkcs11_check.raw.bootstrap import login_user_with_name
+    from pkcs11_check.raw.types_std import CKR_OK
+
+    captured: list[tuple[bytes, int]] = []
+
+    class FakeRaw:
+        def C_LoginUser(
+            self, session: int, user_type: int, pin, pin_len: int, username, username_len: int
+        ) -> int:
+            captured.append((bytes(username), username_len))
+            return CKR_OK
+
+    login_user_with_name(FakeRaw(), 1, 0, b"pin", username=b"alice")
+    assert captured == [(b"alice", 5)]
+
+
+def test_login_user_with_name_raises_when_function_missing() -> None:
+    from pkcs11_check.raw.bootstrap import login_user_with_name
+
+    class FakeRaw:
+        pass
+
+    try:
+        login_user_with_name(FakeRaw(), 1, 0, b"pin")
+        assert False, "Should have raised"
+    except AttributeError:
+        pass
+
+
 def test_raw_package_exports_bootstrap_helpers() -> None:
-    from pkcs11_check.raw import close_session_quietly, get_slot_ids, login_user, open_session
+    from pkcs11_check.raw import (
+        close_session_quietly,
+        get_slot_ids,
+        login_user,
+        login_user_with_name,
+        logout,
+        logout_quietly,
+        open_session,
+    )
 
     assert get_slot_ids is not None
     assert open_session is not None
     assert login_user is not None
     assert close_session_quietly is not None
+    assert logout is not None
+    assert logout_quietly is not None
+    assert login_user_with_name is not None

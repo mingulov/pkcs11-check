@@ -172,3 +172,15 @@ def decode_rsa_public_key_der(der: bytes) -> tuple[bytes, bytes]:
     n_bytes = n_int.to_bytes((n_int.bit_length() + 7) // 8, "big")
     e_bytes = e_int.to_bytes((e_int.bit_length() + 7) // 8, "big")
     return n_bytes, e_bytes
+
+
+__all__ = [
+    "decode_ec_point",
+    "decode_rsa_public_key_der",
+    "ecdsa_sig_der_to_p1363",
+    "ecdsa_sig_from_der",
+    "ecdsa_sig_p1363_to_der",
+    "ecdsa_sig_to_der",
+    "encode_ec_point",
+    "encode_rsa_public_key_der",
+]

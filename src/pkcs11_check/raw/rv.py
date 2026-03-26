@@ -14,9 +14,18 @@ def ckr_name(rv: int) -> str:
     return lookup_symbol_name("rvs", rv) or _RV_NAMES.get(rv, f"0x{rv:08x}")
 
 
-def expect_rv(rv: int, *allowed: CKR) -> int:
+def expect_rv(rv: int, *allowed: CKR, context: str | None = None) -> int:
     """Return rv if allowed, otherwise raise an AssertionError."""
     if rv in allowed:
         return rv
+    msg = f"Unexpected CK_RV {ckr_name(rv)}"
+    if context:
+        msg = f"{context}: {msg}"
     allowed_names = ", ".join(ckr_name(value) for value in allowed)
-    raise AssertionError(f"Unexpected CK_RV {ckr_name(rv)}; expected one of: {allowed_names}")
+    raise AssertionError(f"{msg}; expected one of: {allowed_names}")
+
+
+__all__ = [
+    "ckr_name",
+    "expect_rv",
+]

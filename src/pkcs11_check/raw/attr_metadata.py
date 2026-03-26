@@ -368,3 +368,7 @@ ATTR_VALUE_TYPES: dict[int, str] = {
     # --- Sentinel ---
     CKA_VENDOR_DEFINED: "bytes",  # vendor-defined attrs default to bytes
 }
+
+__all__ = [
+    "ATTR_VALUE_TYPES",
+]

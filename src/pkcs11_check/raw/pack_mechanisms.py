@@ -607,3 +607,31 @@ def mech_wtls_prf(
     result._output_buf = out_buf  # type: ignore[attr-defined]
     result._output_len = out_len  # type: ignore[attr-defined]
     return result
+
+
+__all__ = [
+    "mech_cbc_pad",
+    "mech_ccm",
+    "mech_chacha20",
+    "mech_chacha20_poly1305",
+    "mech_ctr",
+    "mech_ecdh",
+    "mech_eddsa",
+    "mech_gcm",
+    "mech_hkdf",
+    "mech_oaep",
+    "mech_pbkdf2",
+    "mech_pss",
+    "mech_ssl3_key_mat",
+    "mech_ssl3_master_key_derive",
+    "mech_string_data",
+    "mech_tls12_extended_master_key_derive",
+    "mech_tls12_key_mat",
+    "mech_tls12_master_key_derive",
+    "mech_tls_kdf",
+    "mech_tls_mac",
+    "mech_tls_prf",
+    "mech_wtls_key_mat",
+    "mech_wtls_master_key_derive",
+    "mech_wtls_prf",
+]

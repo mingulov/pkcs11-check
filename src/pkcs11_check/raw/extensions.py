@@ -354,3 +354,14 @@ def lookup_packer(value: int | str, *, namespace: str | None = None) -> Any | No
 def lookup_inspector(value: int | str, *, namespace: str | None = None) -> Any | None:
     """Look up a mechanism parameter inspector function."""
     return _lookup_helper("inspectors", value, namespace=namespace)
+
+
+__all__ = [
+    "ExtensionNamespace",
+    "clear_extensions",
+    "lookup_inspector",
+    "lookup_packer",
+    "lookup_struct",
+    "lookup_symbol_name",
+    "register_extension",
+]
