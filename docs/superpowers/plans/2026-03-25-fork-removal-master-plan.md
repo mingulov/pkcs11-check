@@ -265,5 +265,5 @@ After each sub-project, update this section:
 - [x] Sub-project 1: Raw Layer Completion (2026-03-25: all recipes, packers, helpers)
 - [x] Sub-project 2: Test Migration Batch 1 (2026-03-25: 10 files, 107 tests, 0 fork imports)
 - [x] Sub-project 3: Test Migration Batch 2 (2026-03-26: 171 files, 34 commits, 0 fork imports)
-- [ ] Sub-project 4: Fork Removal
+- [x] Sub-project 4: Fork Removal (2026-03-26: submodule removed, zero fork imports, all tests passing)
 - [ ] Sub-project 5: Test Quality Audit
