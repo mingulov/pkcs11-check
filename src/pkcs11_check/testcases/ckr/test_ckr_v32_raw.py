@@ -23,39 +23,39 @@ pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.requires_v
 _SCRIPT_TEMPLATE = """\
 import ctypes, os, sys
 from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.bootstrap import get_slot_ids, open_session, login_user
 from pkcs11_check.raw.types_std import (
     CKR_OK, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED,
     CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT,
     CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD, CKR_KEY_HANDLE_INVALID,
-    CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION,
+    CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER,
 )
 
-import pkcs11
-lib = pkcs11.lib("{module}")
-f3 = lib._raw_funclist3_ptr
-f32 = lib._raw_funclist32_ptr
-if not f32:
-    print("SKIP:no_v32")
-    lib.finalize()
-    sys.exit(0)
+raw = RawPKCS11.from_lib("{module}")
+raw.C_Initialize(None)
 
-raw = RawPKCS11(lib._raw_funclist_ptr, funclist3_ptr=f3, funclist32_ptr=f32)
+# Check if v3.2 functions are available
+if raw.interface_version != "3.2":
+    print("SKIP:no_v32")
+    raw.C_Finalize(None)
+    sys.exit(0)
 
 if "C_VerifySignatureInit" not in raw._funcs:
     print("SKIP:no_v32_funcs")
-    lib.finalize()
+    raw.C_Finalize(None)
     sys.exit(0)
 
-slots = lib.get_slots(token_present=True)
-token = slots[0].get_token()
+# Open session
+slots = get_slot_ids(raw, token_present=True)
+sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION))
 pin = {pin_arg}
-session = token.open(rw=True, user_pin=pin) if pin else token.open(rw=True)
-sh = session.handle
+if pin:
+    login_user(raw, sh, int(CKU_USER), pin.encode())
 
 {test_code}
 
-session.close()
-lib.finalize()
+raw.C_CloseSession(sh)
+raw.C_Finalize(None)
 """
 
 

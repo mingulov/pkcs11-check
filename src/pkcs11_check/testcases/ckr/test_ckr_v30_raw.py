@@ -23,49 +23,52 @@ pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.requires_v
 _SCRIPT_TEMPLATE = """\
 import ctypes, os, sys
 from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.bootstrap import get_slot_ids, open_session, login_user
 from pkcs11_check.raw.types_std import (
     CKR_OK, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED,
     CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT,
     CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD, CKR_OPERATION_ACTIVE,
-    CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION,
+    CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER,
 )
 
-import pkcs11
-lib = pkcs11.lib("{module}")
-f3 = lib._raw_funclist3_ptr
-if not f3:
+raw = RawPKCS11.from_lib("{module}")
+raw.C_Initialize(None)
+
+# Check if v3.0 functions are available
+if raw.interface_version == "2.40":
     print("SKIP:v2.40_only")
-    lib.finalize()
+    raw.C_Finalize(None)
     sys.exit(0)
 
-raw = RawPKCS11(lib._raw_funclist_ptr, funclist3_ptr=f3)
-
-# Check if v3.0 functions are loaded
 if "C_MessageEncryptInit" not in raw._funcs:
     print("SKIP:no_v3_funcs")
-    lib.finalize()
+    raw.C_Finalize(None)
     sys.exit(0)
 
 # Open session
-slots = lib.get_slots(token_present=True)
-token = slots[0].get_token()
+slots = get_slot_ids(raw, token_present=True)
+sh = open_session(raw, slots[0], int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION))
 pin = {pin_arg}
-session = token.open(rw=True, user_pin=pin) if pin else token.open(rw=True)
-sh = session.handle
+if pin:
+    login_user(raw, sh, int(CKU_USER), pin.encode())
 
 {test_code}
 
-session.close()
-lib.finalize()
+raw.C_CloseSession(sh)
+raw.C_Finalize(None)
 """
 
 
 def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
     pin_arg = f'"{pin}"' if pin else "None"
-    script = _SCRIPT_TEMPLATE.format(module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code))
+    script = _SCRIPT_TEMPLATE.format(
+        module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code)
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
         env=os.environ.copy(),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
