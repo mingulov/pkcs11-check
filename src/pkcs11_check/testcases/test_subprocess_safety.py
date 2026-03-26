@@ -141,7 +141,7 @@ class TestLibraryReload:
                 slots = get_slot_ids(raw, label="pkcs11-check")
                 if not slots:
                     slots = get_slot_ids(raw)
-                sh = open_session(raw, slots[0], int(CKF_RW_SESSION | CKF_SERIAL_SESSION))
+                sh = open_session(raw, slots[0], CKF_RW_SESSION | CKF_SERIAL_SESSION)
                 if pin is not None:
                     login_user(raw, sh, 1, pin)
                 key = gen_aes_key(raw, sh, 128)

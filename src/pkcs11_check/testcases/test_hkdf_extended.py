@@ -247,7 +247,7 @@ class TestHKDFData:
         derived = 0
         try:
             derived = _hkdf_data_derive(rs, base_key, b"salt", b"info")
-            value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(value) == 32  # 256 bits = 32 bytes
             assert value != bytes(32), "Derived value should not be all zeros"
         except (AssertionError, Exception) as e:

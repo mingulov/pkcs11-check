@@ -133,13 +133,13 @@ class TestKeyImport:
                 CKK_AES,
                 key_bytes,
                 attrs={
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
                 },
             )
             try:
-                exported = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                exported = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
                 assert exported == key_bytes
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -246,9 +246,9 @@ class TestKeyWrapUnwrap:
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_TOKEN): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_TOKEN: False,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
         unwrapped = 0
