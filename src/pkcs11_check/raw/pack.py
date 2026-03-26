@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import datetime
 from dataclasses import dataclass
 from typing import Any
 
@@ -330,8 +331,6 @@ def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
         )
     elif vtype == "date":
         # CK_DATE is 8 bytes: YYYYMMDD in ASCII
-        import datetime
-
         if isinstance(value, datetime.date):
             date_bytes = value.strftime("%Y%m%d").encode("ascii")
         elif isinstance(value, str):

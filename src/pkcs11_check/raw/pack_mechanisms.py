@@ -1,4 +1,8 @@
-"""Specialized mechanism packer functions for PKCS#11 parameter structs."""
+"""Mechanism-specific parameter packers for PKCS#11 operations.
+
+Callers should import mechanism packers from ``pkcs11_check.raw.pack``
+(which re-exports all names), not directly from this module.
+"""
 
 from __future__ import annotations
 
@@ -45,6 +49,7 @@ from .types_std import (
     CK_WTLS_RANDOM_DATA,
     CKM,
     CKZ_DATA_SPECIFIED,
+    CKZ_SALT_SPECIFIED,
 )
 
 
@@ -236,7 +241,7 @@ def mech_pbkdf2(
     """Pack CK_PKCS5_PBKD2_PARAMS2 (saltSource=CKZ_SALT_SPECIFIED=1)."""
     ka: list[Any] = []
     params = CK_PKCS5_PBKD2_PARAMS2()
-    params.saltSource = 1  # CKZ_SALT_SPECIFIED
+    params.saltSource = CKZ_SALT_SPECIFIED
     params.pSaltSourceData, params.ulSaltSourceDataLen = _pack_bytes(salt, ka)
     params.iterations = iterations
     params.prf = prf

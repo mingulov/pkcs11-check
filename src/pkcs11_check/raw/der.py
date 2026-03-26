@@ -56,9 +56,7 @@ def _der_decode_integer(data: bytes, offset: int) -> tuple[int, int]:
     length, offset = _der_decode_length(data, offset + 1)
     end = offset + length
     if end > len(data):
-        raise ValueError(
-            f"Truncated DER INTEGER: need {length} bytes, have {len(data) - offset}"
-        )
+        raise ValueError(f"Truncated DER INTEGER: need {length} bytes, have {len(data) - offset}")
     value = int.from_bytes(data[offset:end], "big")
     return value, end
 

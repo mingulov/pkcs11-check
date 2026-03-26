@@ -11,6 +11,7 @@ from .types_std import (
     CK_NOTIFY,
     CK_SESSION_HANDLE,
     CK_SLOT_ID,
+    CK_TOKEN_INFO,
     CK_ULONG,
     CK_UTF8CHAR,
     CKR_OK,
@@ -33,8 +34,6 @@ def get_slot_ids(raw: RawPKCS11, token_present: bool = True, label: str | None =
 
     # Filter by label
     matching = []
-    from .types_std import CK_TOKEN_INFO
-
     for slot_id in found_slots:
         info = CK_TOKEN_INFO()
         if raw.C_GetTokenInfo(slot_id, byref(info)) == CKR_OK:
