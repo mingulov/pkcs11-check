@@ -60,17 +60,20 @@ def _resolve_mech(
 
 def _two_call_output(
     raw: RawPKCS11,
-    session: int,
     call_fn: str,
     *args: Any,
 ) -> bytes:
-    """Execute a PKCS#11 function using the standard two-call size pattern."""
+    """Execute a PKCS#11 function using the standard two-call size pattern.
+
+    ``args`` are ALL arguments before the output (buffer_ptr, buffer_len_ptr) pair,
+    including session. The function appends the buffer pair automatically.
+    """
     fn = getattr(raw, call_fn)
     out_len = CK_ULONG(0)
-    rv = fn(session, *args, None, byref(out_len))
+    rv = fn(*args, None, byref(out_len))
     expect_rv(rv, CKR_OK)
     out_buf = (ctypes.c_ubyte * out_len.value)()
-    rv = fn(session, *args, out_buf, byref(out_len))
+    rv = fn(*args, out_buf, byref(out_len))
     expect_rv(rv, CKR_OK)
     return bytes(out_buf[: out_len.value])
 
@@ -279,7 +282,7 @@ def encrypt_single(
     rv = raw.C_EncryptInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(plaintext)
-    return _two_call_output(raw, session, "C_Encrypt", in_buf, len(plaintext))
+    return _two_call_output(raw, "C_Encrypt", session, in_buf, len(plaintext))
 
 
 def sign_single(
@@ -296,7 +299,7 @@ def sign_single(
     rv = raw.C_SignInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(data)
-    return _two_call_output(raw, session, "C_Sign", in_buf, len(data))
+    return _two_call_output(raw, "C_Sign", session, in_buf, len(data))
 
 
 def decrypt_single(
@@ -313,13 +316,7 @@ def decrypt_single(
     rv = raw.C_DecryptInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(ciphertext)
-    return _two_call_output(
-        raw,
-        session,
-        "C_Decrypt",
-        in_buf,
-        len(ciphertext),
-    )
+    return _two_call_output(raw, "C_Decrypt", session, in_buf, len(ciphertext))
 
 
 def verify_single(
@@ -366,7 +363,7 @@ def digest_single(
     rv = raw.C_DigestInit(session, mech.byref())
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(data)
-    return _two_call_output(raw, session, "C_Digest", in_buf, len(data))
+    return _two_call_output(raw, "C_Digest", session, in_buf, len(data))
 
 
 def read_attributes(
@@ -493,27 +490,7 @@ def wrap_key(
 ) -> bytes:
     """Wrap a key using C_WrapKey (two-call output pattern). Returns wrapped key."""
     mech = _resolve_mech(mechanism, mech_param)
-    out_len = CK_ULONG(0)
-    rv = raw.C_WrapKey(
-        session,
-        mech.byref(),
-        wrapping_key,
-        target_key,
-        None,
-        byref(out_len),
-    )
-    expect_rv(rv, CKR_OK)
-    out_buf = (ctypes.c_ubyte * out_len.value)()
-    rv = raw.C_WrapKey(
-        session,
-        mech.byref(),
-        wrapping_key,
-        target_key,
-        out_buf,
-        byref(out_len),
-    )
-    expect_rv(rv, CKR_OK)
-    return bytes(out_buf[: out_len.value])
+    return _two_call_output(raw, "C_WrapKey", session, mech.byref(), wrapping_key, target_key)
 
 
 def unwrap_key(
@@ -727,7 +704,7 @@ def sign_multipart(
         in_buf = _to_ubyte_buf(chunk)
         rv = raw.C_SignUpdate(session, in_buf, len(chunk))
         expect_rv(rv, CKR_OK)
-    return _two_call_output(raw, session, "C_SignFinal")
+    return _two_call_output(raw, "C_SignFinal", session)
 
 
 def verify_multipart(
@@ -777,7 +754,7 @@ def digest_multipart(
         in_buf = _to_ubyte_buf(chunk)
         rv = raw.C_DigestUpdate(session, in_buf, len(chunk))
         expect_rv(rv, CKR_OK)
-    return _two_call_output(raw, session, "C_DigestFinal")
+    return _two_call_output(raw, "C_DigestFinal", session)
 
 
 # --- Operation state ---
@@ -785,7 +762,7 @@ def digest_multipart(
 
 def save_operation_state(raw: RawPKCS11, session: int) -> bytes:
     """C_GetOperationState — two-call output pattern."""
-    return _two_call_output(raw, session, "C_GetOperationState")
+    return _two_call_output(raw, "C_GetOperationState", session)
 
 
 def restore_operation_state(
