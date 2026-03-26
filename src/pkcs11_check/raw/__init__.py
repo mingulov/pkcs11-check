@@ -6,6 +6,11 @@ from . import der, extensions, metadata_std, pack, recipes, rv, types_std
 from .api import RawPKCS11
 from .bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
 from .types_std import (
+    CK_ATTRIBUTE,
+    CK_ATTRIBUTE_PTR,
+    CK_CONSTANT,
+    CK_MECHANISM,
+    CK_OBJECT_HANDLE,
     CKA,
     CKA_CLASS,
     CKA_DECRYPT,
@@ -17,11 +22,6 @@ from .types_std import (
     CKA_TOKEN,
     CKA_VALUE_LEN,
     CKA_VERIFY_RECOVER,
-    CK_ATTRIBUTE,
-    CK_ATTRIBUTE_PTR,
-    CK_CONSTANT,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
     CKF,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
