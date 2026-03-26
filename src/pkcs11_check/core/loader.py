@@ -204,7 +204,6 @@ class P11Module:
             return []
         from pkcs11_check.raw.types_std import (
             CK_INTERFACE,
-            CK_INTERFACE_PTR,
         )
 
         # First call: get count
@@ -284,8 +283,8 @@ def load_module(
     # CKR_CRYPTOKI_ALREADY_INITIALIZED (0x00000191) if another part of the
     # process already initialized it — that is acceptable.
     rv = int(raw.C_Initialize(None))
-    _CKR_ALREADY_INITIALIZED = 0x00000191
-    if rv not in (int(CKR_OK), _CKR_ALREADY_INITIALIZED):
+    _ckr_already_initialized = 0x00000191
+    if rv not in (int(CKR_OK), _ckr_already_initialized):
         raise RuntimeError(f"C_Initialize failed: 0x{rv:08x}")
 
     return P11Module(path=path, _raw=raw)
