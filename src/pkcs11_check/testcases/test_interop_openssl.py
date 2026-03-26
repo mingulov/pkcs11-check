@@ -38,8 +38,12 @@ def _run(cmd: str, env: dict[str, str] | None = None, timeout: int = 30) -> tupl
     if env:
         full_env.update(env)
     r = subprocess.run(
-        cmd, shell=True, capture_output=True, text=True,
-        timeout=timeout, env=full_env,
+        cmd,
+        shell=True,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=full_env,
     )
     return r.returncode, r.stdout, r.stderr
 
@@ -129,7 +133,10 @@ class TestP11KitProxy:
 
         # Use subprocess.run with Python -c and proper escaping
         result = subprocess.run(
-            [sys.executable, "-c", textwrap.dedent(f"""
+            [
+                sys.executable,
+                "-c",
+                textwrap.dedent(f"""
                 import pkcs11
                 try:
                     lib = pkcs11.lib("{proxy}")
@@ -139,8 +146,13 @@ class TestP11KitProxy:
                     lib.finalize()
                 except Exception as e:
                     print(f"ERROR: {{type(e).__name__}}: {{e}}")
-            """)],
-            capture_output=True, text=True, timeout=30,
+            """),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
-        assert result.returncode == 0, f"p11-kit proxy crashed (rc={result.returncode}): {result.stderr}"
+        assert result.returncode == 0, (
+            f"p11-kit proxy crashed (rc={result.returncode}): {result.stderr}"
+        )
         assert "OK:" in result.stdout or "ERROR:" in result.stdout

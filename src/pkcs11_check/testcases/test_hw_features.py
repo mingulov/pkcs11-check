@@ -35,9 +35,9 @@ from pkcs11_check.raw.types_std import (
 )
 
 _KNOWN_HW_FEATURE_TYPES = {
-    int(CKH_MONOTONIC_COUNTER),
-    int(CKH_CLOCK),
-    int(CKH_USER_INTERFACE),
+    CKH_MONOTONIC_COUNTER,
+    CKH_CLOCK,
+    CKH_USER_INTERFACE,
 }
 
 pytestmark = pytest.mark.object
@@ -50,13 +50,12 @@ class TestHwFeatureEnumeration:
         """Enumerate hardware feature objects, xfail if unsupported."""
         try:
             return find_objects(
-                rs.raw, rs.sh,
-                template_from_dict({int(CKA_CLASS): int(CKO_HW_FEATURE)}),
+                rs.raw,
+                rs.sh,
+                template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
             )
         except AssertionError as e:
-            pytest.xfail(
-                f"Module does not support CKO_HW_FEATURE enumeration: {e}"
-            )
+            pytest.xfail(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
             return []
 
     def test_hw_feature_enumeration(self, p11_raw_session: Any) -> None:
@@ -73,14 +72,15 @@ class TestHwFeatureEnumeration:
         for feat in features:
             try:
                 attrs = read_attributes(
-                    rs.raw, rs.sh, feat, [CKA_HW_FEATURE_TYPE],
+                    rs.raw,
+                    rs.sh,
+                    feat,
+                    [CKA_HW_FEATURE_TYPE],
                 )
-                hw_type = attrs[int(CKA_HW_FEATURE_TYPE)]
+                hw_type = attrs[CKA_HW_FEATURE_TYPE]
                 assert isinstance(hw_type, (int, bytes))
             except AssertionError as e:
-                pytest.xfail(
-                    f"Cannot read CKA_HW_FEATURE_TYPE: {e}"
-                )
+                pytest.xfail(f"Cannot read CKA_HW_FEATURE_TYPE: {e}")
 
     def test_known_hw_feature_types(self, p11_raw_session: Any) -> None:
         """HW feature types are known standard values or vendor-defined."""
@@ -91,16 +91,20 @@ class TestHwFeatureEnumeration:
         for feat in features:
             try:
                 attrs = read_attributes(
-                    rs.raw, rs.sh, feat, [CKA_HW_FEATURE_TYPE],
+                    rs.raw,
+                    rs.sh,
+                    feat,
+                    [CKA_HW_FEATURE_TYPE],
                 )
-                raw_val = attrs[int(CKA_HW_FEATURE_TYPE)]
+                raw_val = attrs[CKA_HW_FEATURE_TYPE]
                 hw_type = (
                     int.from_bytes(raw_val, "little")
-                    if isinstance(raw_val, bytes) else int(raw_val)
+                    if isinstance(raw_val, bytes)
+                    else int(raw_val)
                 )
             except (AssertionError, KeyError):
                 continue
-            if hw_type < int(CKH_VENDOR_DEFINED):
+            if hw_type < CKH_VENDOR_DEFINED:
                 assert hw_type in _KNOWN_HW_FEATURE_TYPES, (
                     f"Unknown non-vendor HW feature type 0x{hw_type:08X}"
                 )
@@ -113,26 +117,29 @@ class TestHwFeatureClock:
         """Find CKH_CLOCK hardware feature objects."""
         try:
             features = find_objects(
-                rs.raw, rs.sh,
-                template_from_dict({int(CKA_CLASS): int(CKO_HW_FEATURE)}),
+                rs.raw,
+                rs.sh,
+                template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
             )
         except AssertionError as e:
-            pytest.xfail(
-                f"Module does not support CKO_HW_FEATURE enumeration: {e}"
-            )
+            pytest.xfail(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
             return []
         clocks = []
         for feat in features:
             try:
                 attrs = read_attributes(
-                    rs.raw, rs.sh, feat, [CKA_HW_FEATURE_TYPE],
+                    rs.raw,
+                    rs.sh,
+                    feat,
+                    [CKA_HW_FEATURE_TYPE],
                 )
-                raw_val = attrs[int(CKA_HW_FEATURE_TYPE)]
+                raw_val = attrs[CKA_HW_FEATURE_TYPE]
                 hw_type = (
                     int.from_bytes(raw_val, "little")
-                    if isinstance(raw_val, bytes) else int(raw_val)
+                    if isinstance(raw_val, bytes)
+                    else int(raw_val)
                 )
-                if hw_type == int(CKH_CLOCK):
+                if hw_type == CKH_CLOCK:
                     clocks.append(feat)
             except (AssertionError, KeyError):
                 continue
@@ -146,14 +153,12 @@ class TestHwFeatureClock:
             pytest.skip("No CKH_CLOCK hardware feature objects present")
         for clock in clocks:
             attrs = read_attributes(rs.raw, rs.sh, clock, [CKA_VALUE])
-            value = attrs[int(CKA_VALUE)]
+            value = attrs[CKA_VALUE]
             if isinstance(value, bytes):
                 value_str = value.decode("ascii", errors="replace")
             else:
                 value_str = str(value)
-            assert len(value_str) == 16, (
-                f"Clock CKA_VALUE should be 16 chars, got {len(value_str)}"
-            )
+            assert len(value_str) == 16, f"Clock CKA_VALUE should be 16 chars, got {len(value_str)}"
             assert re.match(r"^\d{14}", value_str), (
                 f"Clock CKA_VALUE doesn't match YYYYMMDDhhmmss: {value_str!r}"
             )
@@ -166,26 +171,29 @@ class TestHwFeatureCounter:
         """Find CKH_MONOTONIC_COUNTER hardware feature objects."""
         try:
             features = find_objects(
-                rs.raw, rs.sh,
-                template_from_dict({int(CKA_CLASS): int(CKO_HW_FEATURE)}),
+                rs.raw,
+                rs.sh,
+                template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
             )
         except AssertionError as e:
-            pytest.xfail(
-                f"Module does not support CKO_HW_FEATURE enumeration: {e}"
-            )
+            pytest.xfail(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
             return []
         counters = []
         for feat in features:
             try:
                 attrs = read_attributes(
-                    rs.raw, rs.sh, feat, [CKA_HW_FEATURE_TYPE],
+                    rs.raw,
+                    rs.sh,
+                    feat,
+                    [CKA_HW_FEATURE_TYPE],
                 )
-                raw_val = attrs[int(CKA_HW_FEATURE_TYPE)]
+                raw_val = attrs[CKA_HW_FEATURE_TYPE]
                 hw_type = (
                     int.from_bytes(raw_val, "little")
-                    if isinstance(raw_val, bytes) else int(raw_val)
+                    if isinstance(raw_val, bytes)
+                    else int(raw_val)
                 )
-                if hw_type == int(CKH_MONOTONIC_COUNTER):
+                if hw_type == CKH_MONOTONIC_COUNTER:
                     counters.append(feat)
             except (AssertionError, KeyError):
                 continue
@@ -198,7 +206,7 @@ class TestHwFeatureCounter:
             pytest.skip("No CKH_MONOTONIC_COUNTER objects present")
         for counter in counters:
             attrs = read_attributes(rs.raw, rs.sh, counter, [CKA_VALUE])
-            value = attrs[int(CKA_VALUE)]
+            value = attrs[CKA_VALUE]
             assert value is not None
 
     def test_counter_reset_attributes(self, p11_raw_session: Any) -> None:
@@ -209,12 +217,12 @@ class TestHwFeatureCounter:
         for counter in counters:
             try:
                 attrs = read_attributes(
-                    rs.raw, rs.sh, counter,
+                    rs.raw,
+                    rs.sh,
+                    counter,
                     [CKA_RESET_ON_INIT, CKA_HAS_RESET],
                 )
-                assert int(CKA_RESET_ON_INIT) in attrs
-                assert int(CKA_HAS_RESET) in attrs
+                assert CKA_RESET_ON_INIT in attrs
+                assert CKA_HAS_RESET in attrs
             except AssertionError as e:
-                pytest.xfail(
-                    f"Cannot read reset attrs from counter: {e}"
-                )
+                pytest.xfail(f"Cannot read reset attrs from counter: {e}")

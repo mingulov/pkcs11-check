@@ -73,7 +73,7 @@ def _generate_ml_kem_keypair(
     :param param_set: Optional parameter set int value.
         If None, defaults to CKP_ML_KEM_768.
     """
-    effective_param = param_set if param_set is not None else int(CKP_ML_KEM_768)
+    effective_param = param_set if param_set is not None else CKP_ML_KEM_768
     return _gen_keypair(
         rs.raw,
         rs.sh,
@@ -81,26 +81,26 @@ def _generate_ml_kem_keypair(
         pub_base=[attr_ulong(CKA_PARAMETER_SET, effective_param)],
         priv_base=[],
         public_attrs={
-            int(CKA_ENCAPSULATE): True,
-            int(CKA_TOKEN): False,
+            CKA_ENCAPSULATE: True,
+            CKA_TOKEN: False,
         },
         private_attrs={
-            int(CKA_DECAPSULATE): True,
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): False,
-            int(CKA_TOKEN): False,
+            CKA_DECAPSULATE: True,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: False,
+            CKA_TOKEN: False,
         },
-        pub_skip={int(CKA_PARAMETER_SET)},
+        pub_skip={CKA_PARAMETER_SET},
     )
 
 
-def _encap_attrs(key_type: int = int(CKK_GENERIC_SECRET)) -> dict[int, Any]:
+def _encap_attrs(key_type: int = CKK_GENERIC_SECRET) -> dict[int, Any]:
     """Standard template for encapsulated key."""
     d: dict[int, Any] = {
-        int(CKA_KEY_TYPE): key_type,
-        int(CKA_SENSITIVE): False,
-        int(CKA_EXTRACTABLE): True,
-        int(CKA_TOKEN): False,
+        CKA_KEY_TYPE: key_type,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_TOKEN: False,
     }
     return d
 
@@ -130,10 +130,10 @@ class TestMLKEMKeyGeneration:
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         try:
-            pub_cls = read_attributes(rs.raw, rs.sh, pub, [int(CKA_CLASS)])[int(CKA_CLASS)]
-            priv_cls = read_attributes(rs.raw, rs.sh, priv, [int(CKA_CLASS)])[int(CKA_CLASS)]
-            assert pub_cls == int(CKO_PUBLIC_KEY)
-            assert priv_cls == int(CKO_PRIVATE_KEY)
+            pub_cls = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])[CKA_CLASS]
+            priv_cls = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])[CKA_CLASS]
+            assert pub_cls == CKO_PUBLIC_KEY
+            assert priv_cls == CKO_PRIVATE_KEY
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -144,10 +144,10 @@ class TestMLKEMKeyGeneration:
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         try:
-            pub_kt = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-            priv_kt = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-            assert pub_kt == int(CKK_ML_KEM)
-            assert priv_kt == int(CKK_ML_KEM)
+            pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            assert pub_kt == CKK_ML_KEM
+            assert priv_kt == CKK_ML_KEM
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -161,8 +161,8 @@ class TestMLKEMKeyGeneration:
         try:
             # Public keys must differ (overwhelming probability)
             try:
-                val_a = read_attributes(rs.raw, rs.sh, pub_a, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                val_b = read_attributes(rs.raw, rs.sh, pub_b, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                val_a = read_attributes(rs.raw, rs.sh, pub_a, [CKA_VALUE])[CKA_VALUE]
+                val_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_VALUE])[CKA_VALUE]
                 assert val_a != val_b
             except (AssertionError, OSError):
                 pytest.xfail("Module does not expose ML-KEM public key value")
@@ -233,12 +233,8 @@ class TestMLKEMEncapsulateDecapsulate:
             except (AssertionError, NotImplementedError):
                 pytest.skip("KEM operations not available (module not v3.2)")
             # Both sides must produce the same shared secret
-            encap_value = read_attributes(rs.raw, rs.sh, encap_handle, [int(CKA_VALUE)])[
-                int(CKA_VALUE)
-            ]
-            decap_value = read_attributes(rs.raw, rs.sh, decap_handle, [int(CKA_VALUE)])[
-                int(CKA_VALUE)
-            ]
+            encap_value = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
+            decap_value = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])[CKA_VALUE]
             assert encap_value == decap_value, "Encapsulated and decapsulated secrets differ"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -290,12 +286,8 @@ class TestMLKEMEncapsulateDecapsulate:
                     rs.raw, rs.sh, priv_b, CKM_ML_KEM, ct, attrs=_encap_attrs()
                 )
                 # If it succeeds, the secrets must differ (ML-KEM implicit rejection)
-                encap_val = read_attributes(rs.raw, rs.sh, encap_handle, [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
-                wrong_val = read_attributes(rs.raw, rs.sh, wrong_handle, [int(CKA_VALUE)])[
-                    int(CKA_VALUE)
-                ]
+                encap_val = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
+                wrong_val = read_attributes(rs.raw, rs.sh, wrong_handle, [CKA_VALUE])[CKA_VALUE]
                 assert encap_val != wrong_val, (
                     "Decapsulation with wrong key produced same secret as correct decapsulation"
                 )
@@ -370,11 +362,11 @@ class TestMLKEMKeyDerivation:
         aes_handle = 0
         try:
             aes_attrs: dict[int, Any] = {
-                int(CKA_KEY_TYPE): int(CKK_AES),
-                int(CKA_VALUE_LEN): 16,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_VALUE_LEN: 16,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             }
             try:
                 aes_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=aes_attrs)
@@ -383,9 +375,9 @@ class TestMLKEMKeyDerivation:
             except Exception:
                 pytest.xfail("Module does not support direct AES key derivation via encapsulation")
             assert isinstance(ct, bytes) and len(ct) > 0
-            kt = read_attributes(rs.raw, rs.sh, aes_handle, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-            assert kt == int(CKK_AES)
-            value = read_attributes(rs.raw, rs.sh, aes_handle, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            assert kt == CKK_AES
+            value = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(value, bytes)
             assert len(value) == 16, f"Expected 16-byte AES-128 key, got {len(value)} bytes"
         finally:
@@ -402,11 +394,11 @@ class TestMLKEMKeyDerivation:
         aes_handle = 0
         try:
             aes_attrs: dict[int, Any] = {
-                int(CKA_KEY_TYPE): int(CKK_AES),
-                int(CKA_VALUE_LEN): 32,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_VALUE_LEN: 32,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             }
             try:
                 aes_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=aes_attrs)
@@ -415,9 +407,9 @@ class TestMLKEMKeyDerivation:
             except Exception:
                 pytest.xfail("Module does not support direct AES key derivation via encapsulation")
             assert isinstance(ct, bytes) and len(ct) > 0
-            kt = read_attributes(rs.raw, rs.sh, aes_handle, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-            assert kt == int(CKK_AES)
-            value = read_attributes(rs.raw, rs.sh, aes_handle, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            assert kt == CKK_AES
+            value = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(value, bytes)
             assert len(value) == 32, f"Expected 32-byte AES-256 key, got {len(value)} bytes"
         finally:
@@ -445,7 +437,7 @@ class TestMLKEMKeyDerivation:
         _skip_if_no_ml_kem(rs)
         param_set = _PARAM_MAP[param_set_name]
         try:
-            pub, priv = _generate_ml_kem_keypair(rs, param_set=int(param_set))
+            pub, priv = _generate_ml_kem_keypair(rs, param_set=param_set)
         except (AssertionError, OSError):
             pytest.xfail(
                 f"Module does not support CKA_PARAMETER_SET={param_set_name} - "

@@ -69,8 +69,8 @@ def _gost_key(raw: Any, sh: int, attrs: dict[int, Any]) -> int:
     mech = mech_simple(CKM_GOST28147_KEY_GEN)
     key = CK_OBJECT_HANDLE(0)
     rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
-    expect_rv(int(rv), CKR_OK)
-    return int(key.value)
+    expect_rv(rv, CKR_OK)
+    return key.value
 
 
 def _gost_keypair(raw: Any, sh: int) -> tuple[int, int]:
@@ -83,13 +83,17 @@ def _gost_keypair(raw: Any, sh: int) -> tuple[int, int]:
     pub_h = CK_OBJECT_HANDLE(0)
     priv_h = CK_OBJECT_HANDLE(0)
     rv = raw.C_GenerateKeyPair(
-        sh, mech.byref(),
-        pub_tmpl.ptr, pub_tmpl.count,
-        priv_tmpl.ptr, priv_tmpl.count,
-        byref(pub_h), byref(priv_h),
+        sh,
+        mech.byref(),
+        pub_tmpl.ptr,
+        pub_tmpl.count,
+        priv_tmpl.ptr,
+        priv_tmpl.count,
+        byref(pub_h),
+        byref(priv_h),
     )
-    expect_rv(int(rv), CKR_OK)
-    return int(pub_h.value), int(priv_h.value)
+    expect_rv(rv, CKR_OK)
+    return pub_h.value, priv_h.value
 
 
 def _try_or_xfail(fn: Any, msg: str) -> Any:
@@ -112,12 +116,19 @@ class TestGOST28147KeyGen:
         if not rs.has_mechanism("GOST28147_KEY_GEN"):
             pytest.skip("CKM_GOST28147_KEY_GEN not supported")
 
-        key = _gost_key(rs.raw, rs.sh, {
-            int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True,
-            int(CKA_SIGN): True, int(CKA_VERIFY): True,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True,
-        })
+        key = _gost_key(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+            },
+        )
         try:
             assert key != 0
         finally:
@@ -135,9 +146,15 @@ class TestGOST28147Encryption:
         if not rs.has_mechanism("GOST28147_KEY_GEN"):
             pytest.skip("CKM_GOST28147_KEY_GEN not supported")
 
-        key = _gost_key(rs.raw, rs.sh, {
-            int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False,
-        })
+        key = _gost_key(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+            },
+        )
         try:
 
             def _do() -> None:
@@ -150,7 +167,8 @@ class TestGOST28147Encryption:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_ecb_different_keys_produce_different_ciphertext(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Two distinct keys must produce different ECB ciphertext for the same plaintext."""
         rs = p11_raw_session
@@ -159,7 +177,7 @@ class TestGOST28147Encryption:
         if not rs.has_mechanism("GOST28147_KEY_GEN"):
             pytest.skip("CKM_GOST28147_KEY_GEN not supported")
 
-        tmpl = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False}
+        tmpl = {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False}
         key1 = _gost_key(rs.raw, rs.sh, tmpl)
         key2 = _gost_key(rs.raw, rs.sh, tmpl)
         try:
@@ -182,19 +200,33 @@ class TestGOST28147Encryption:
         if not rs.has_mechanism("GOST28147_KEY_GEN"):
             pytest.skip("CKM_GOST28147_KEY_GEN not supported")
 
-        key = _gost_key(rs.raw, rs.sh, {
-            int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False,
-        })
+        key = _gost_key(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+            },
+        )
         try:
             iv = generate_random(rs.raw, rs.sh, 8)
 
             def _do() -> None:
                 ct = encrypt_single(
-                    rs.raw, rs.sh, key, CKM_GOST28147, _TWO_BLOCKS,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147,
+                    _TWO_BLOCKS,
                     mech_param=mech_bytes(CKM_GOST28147, iv),
                 )
                 pt = decrypt_single(
-                    rs.raw, rs.sh, key, CKM_GOST28147, ct,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_GOST28147,
+                    ct,
                     mech_param=mech_bytes(CKM_GOST28147, iv),
                 )
                 assert pt == _TWO_BLOCKS
@@ -215,9 +247,15 @@ class TestGOST28147MAC:
         if not rs.has_mechanism("GOST28147_KEY_GEN"):
             pytest.skip("CKM_GOST28147_KEY_GEN not supported")
 
-        key = _gost_key(rs.raw, rs.sh, {
-            int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
-        })
+        key = _gost_key(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
+            },
+        )
         try:
 
             def _do() -> None:
@@ -285,12 +323,21 @@ class TestGOSTR3410Signature:
 
             def _do() -> None:
                 sig = sign_single(
-                    rs.raw, rs.sh, priv, CKM_GOSTR3410_WITH_GOSTR3411, data,
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_GOSTR3410_WITH_GOSTR3411,
+                    data,
                 )
                 assert sig is not None
                 assert len(sig) > 0
                 verify_single(
-                    rs.raw, rs.sh, pub, CKM_GOSTR3410_WITH_GOSTR3411, data, sig,
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_GOSTR3410_WITH_GOSTR3411,
+                    data,
+                    sig,
                 )
 
             _try_or_xfail(_do, "CKM_GOSTR3410_WITH_GOSTR3411 sign/verify not operational")
@@ -341,10 +388,15 @@ class TestGOSTR3411Digest:
 
         # GOSTR3411_HMAC uses the GOSTR3411 key type for HMAC operations
         key = import_secret_key(
-            rs.raw, rs.sh, CKK_GOSTR3411, bytes(range(32)),
+            rs.raw,
+            rs.sh,
+            CKK_GOSTR3411,
+            bytes(range(32)),
             attrs={
-                int(CKA_SIGN): True, int(CKA_VERIFY): True,
-                int(CKA_TOKEN): False, int(CKA_SENSITIVE): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
         try:

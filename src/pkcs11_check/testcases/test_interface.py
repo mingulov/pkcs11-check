@@ -76,19 +76,34 @@ class TestInterfaceV30:
     def test_v30_encrypt_decrypt_aes(self, p11_raw_session: Any) -> None:
         """v3.0 AES encrypt/decrypt round-trip via v3.0 function list."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={
-            int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True,
-            int(CKA_TOKEN): False, int(CKA_SENSITIVE): False,
-        })
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+            },
+        )
         try:
             iv = b"\x00" * 16
             plaintext = b"v3.0 interface AES test data 123"
             ciphertext = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             recovered = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, ciphertext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                ciphertext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             assert recovered == plaintext
@@ -103,9 +118,7 @@ class TestInterfaceV32:
 
     def test_v32_interface_negotiated(self, p11_interface_version: str) -> None:
         """Module has negotiated v3.2 interface."""
-        assert p11_interface_version == "3.2", (
-            f"Expected v3.2 but got v{p11_interface_version}"
-        )
+        assert p11_interface_version == "3.2", f"Expected v3.2 but got v{p11_interface_version}"
 
     def test_v32_session_opens(self, p11_session: Any) -> None:
         """v3.2 module opens a session without error."""

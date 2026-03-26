@@ -140,9 +140,7 @@ class TestRSAFuzz:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
-            assert verify_single(
-                rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig
-            ) is True
+            assert verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig) is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -171,11 +169,14 @@ class TestHMACFuzz:
         rs = p11_raw_session
         key_bytes = bytes(range(32))
         p11_key = import_secret_key(
-            rs.raw, rs.sh, CKK_SHA256_HMAC, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_SHA256_HMAC,
+            key_bytes,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_SIGN: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
         try:
@@ -192,11 +193,14 @@ class TestHMACFuzz:
         rs = p11_raw_session
         key_bytes = bytes(range(32))
         p11_key = import_secret_key(
-            rs.raw, rs.sh, CKK_SHA256_HMAC, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_SHA256_HMAC,
+            key_bytes,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_SIGN: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
         try:
@@ -219,9 +223,11 @@ class TestECDSAFuzz:
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(
-            rs.raw, rs.sh, curve_oid,
-            public_attrs={int(CKA_VERIFY): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_SIGN): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
         )
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, data)

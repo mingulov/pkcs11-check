@@ -56,8 +56,8 @@ class TestAESKeySizes:
         key = gen_aes_key(rs.raw, rs.sh, key_bits)
         try:
             assert key != 0
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_AES)
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -66,8 +66,10 @@ class TestAESKeySizes:
         """AES-ECB encrypt/decrypt roundtrip at each key size."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, key_bits,
-            attrs={int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True},
+            rs.raw,
+            rs.sh,
+            key_bits,
+            attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
         plaintext = b"key size test!!!"  # 16 bytes
         try:
@@ -83,17 +85,18 @@ class TestAESKeySizes:
         rs = p11_raw_session
         key_bytes = bytes(key_bits // 8)
         key = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
             attrs={
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
-            exported = read_attributes(
-                rs.raw, rs.sh, key, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            exported = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert exported == key_bytes
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -110,9 +113,7 @@ class TestRSAKeySizes:
             pytest.skip("RSA key generation not supported")
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, key_bits)
         try:
-            modulus = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_MODULUS)]
-            )[int(CKA_MODULUS)]
+            modulus = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])[CKA_MODULUS]
             assert len(modulus) == key_bits // 8
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -125,9 +126,11 @@ class TestRSAKeySizes:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA key generation not supported")
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, key_bits,
-            public_attrs={int(CKA_VERIFY): True},
-            private_attrs={int(CKA_SIGN): True},
+            rs.raw,
+            rs.sh,
+            key_bits,
+            public_attrs={CKA_VERIFY: True},
+            private_attrs={CKA_SIGN: True},
         )
         try:
             data = f"RSA-{key_bits} sign test".encode()
@@ -145,23 +148,33 @@ class TestRSAKeySizes:
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, key_bits,
-            public_attrs={int(CKA_ENCRYPT): True},
-            private_attrs={int(CKA_DECRYPT): True},
+            rs.raw,
+            rs.sh,
+            key_bits,
+            public_attrs={CKA_ENCRYPT: True},
+            private_attrs={CKA_DECRYPT: True},
         )
         try:
             plaintext = f"OAEP-{key_bits}".encode()
             mp = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
-                hash_mech=int(CKM_SHA_1),
-                mgf=int(CKG_MGF1_SHA1),
+                hash_mech=CKM_SHA_1,
+                mgf=CKG_MGF1_SHA1,
             )
             ct = encrypt_single(
-                rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext,
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_RSA_PKCS_OAEP,
+                plaintext,
                 mech_param=mp,
             )
             pt = decrypt_single(
-                rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct,
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_RSA_PKCS_OAEP,
+                ct,
                 mech_param=mp,
             )
             assert pt == plaintext

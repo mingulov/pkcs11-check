@@ -71,11 +71,9 @@ class TestRSAInterop:
             sig = sign_single(rs.raw, rs.sh, priv_h, CKM_SHA256_RSA_PKCS, data)
 
             # Export and verify in cryptography
-            attrs = read_attributes(
-                rs.raw, rs.sh, pub_h, [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)]
-            )
-            modulus = int.from_bytes(attrs[int(CKA_MODULUS)], "big")  # type: ignore[arg-type]
-            exponent = int.from_bytes(attrs[int(CKA_PUBLIC_EXPONENT)], "big")  # type: ignore[arg-type]
+            attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
+            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
+            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
             pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
             pub_crypto.verify(sig, data, padding.PKCS1v15(), hashes.SHA256())
         finally:
@@ -88,11 +86,9 @@ class TestRSAInterop:
         pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
 
         try:
-            attrs = read_attributes(
-                rs.raw, rs.sh, pub_h, [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)]
-            )
-            modulus = int.from_bytes(attrs[int(CKA_MODULUS)], "big")  # type: ignore[arg-type]
-            exponent = int.from_bytes(attrs[int(CKA_PUBLIC_EXPONENT)], "big")  # type: ignore[arg-type]
+            attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
+            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
+            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
             pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
             pem = pub_crypto.public_bytes(
@@ -114,8 +110,8 @@ class TestRSAInterop:
         data = b"RSA-PSS interop data"
         pss_param = mech_pss(
             CKM_SHA256_RSA_PKCS_PSS,
-            hash_mech=int(CKM_SHA256),
-            mgf=int(CKG_MGF1_SHA256),
+            hash_mech=CKM_SHA256,
+            mgf=CKG_MGF1_SHA256,
             salt_len=32,
         )
 
@@ -129,11 +125,9 @@ class TestRSAInterop:
                 mech_param=pss_param,
             )
 
-            attrs = read_attributes(
-                rs.raw, rs.sh, pub_h, [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)]
-            )
-            modulus = int.from_bytes(attrs[int(CKA_MODULUS)], "big")  # type: ignore[arg-type]
-            exponent = int.from_bytes(attrs[int(CKA_PUBLIC_EXPONENT)], "big")  # type: ignore[arg-type]
+            attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
+            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
+            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
             pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
             pub_crypto.verify(
@@ -167,11 +161,9 @@ class TestRSAInterop:
         try:
             sig = sign_single(rs.raw, rs.sh, priv_h, hash_mech, data)
 
-            attrs = read_attributes(
-                rs.raw, rs.sh, pub_h, [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)]
-            )
-            modulus = int.from_bytes(attrs[int(CKA_MODULUS)], "big")  # type: ignore[arg-type]
-            exponent = int.from_bytes(attrs[int(CKA_PUBLIC_EXPONENT)], "big")  # type: ignore[arg-type]
+            attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
+            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
+            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
             pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
             pub_crypto.verify(sig, data, padding.PKCS1v15(), hash_class)
         finally:
@@ -187,8 +179,8 @@ class TestECDSAInterop:
         rs: Any,
         pub_h: int,
     ) -> bytes:
-        attrs = read_attributes(rs.raw, rs.sh, pub_h, [int(CKA_EC_POINT)])
-        raw_point = attrs[int(CKA_EC_POINT)]
+        attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_EC_POINT])
+        raw_point = attrs[CKA_EC_POINT]
         return bytes(extract_ec_point(raw_point))
 
     def test_ecdsa_sign_p11_verify_crypto(self, p11_raw_session: Any) -> None:
@@ -266,11 +258,11 @@ class TestAESInterop:
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
@@ -299,11 +291,11 @@ class TestAESInterop:
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
@@ -325,11 +317,11 @@ class TestAESInterop:
             CKK_AES,
             key_bytes,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
@@ -366,10 +358,10 @@ class TestHMACInterop:
             CKK_GENERIC_SECRET,
             key_bytes,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
         try:
@@ -396,9 +388,9 @@ class TestHMACInterop:
             CKK_GENERIC_SECRET,
             key_bytes,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_SIGN: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
         try:

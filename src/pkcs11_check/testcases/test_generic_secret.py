@@ -54,16 +54,16 @@ class TestGenericSecretKeyGen:
                 rs.raw,
                 rs.sh,
                 bits,
-                mechanism=int(CKM_GENERIC_SECRET_KEY_GEN),
+                mechanism=CKM_GENERIC_SECRET_KEY_GEN,
                 attrs={
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
                 },
             )
             try:
-                attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
-                value = attrs[int(CKA_VALUE)]
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+                value = attrs[CKA_VALUE]
                 assert isinstance(value, bytes)
                 assert len(value) == bits // 8
             finally:
@@ -79,27 +79,27 @@ class TestGenericSecretKeyGen:
             rs.raw,
             rs.sh,
             256,
-            mechanism=int(CKM_GENERIC_SECRET_KEY_GEN),
+            mechanism=CKM_GENERIC_SECRET_KEY_GEN,
             attrs={
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         k2 = gen_aes_key(
             rs.raw,
             rs.sh,
             256,
-            mechanism=int(CKM_GENERIC_SECRET_KEY_GEN),
+            mechanism=CKM_GENERIC_SECRET_KEY_GEN,
             attrs={
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
-            v1 = read_attributes(rs.raw, rs.sh, k1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, k2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, k1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, k2, [CKA_VALUE])[CKA_VALUE]
             assert v1 != v2
         finally:
             destroy_quietly(rs.raw, rs.sh, k1)
@@ -119,13 +119,13 @@ class TestGenericSecretHMAC:
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_SHA256_HMAC),
-                int(CKA_VALUE): key_bytes,
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_SHA256_HMAC,
+                CKA_VALUE: key_bytes,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
         try:
@@ -145,13 +145,13 @@ class TestGenericSecretHMAC:
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_SHA512_HMAC),
-                int(CKA_VALUE): key_bytes,
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_SHA512_HMAC,
+                CKA_VALUE: key_bytes,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
         try:

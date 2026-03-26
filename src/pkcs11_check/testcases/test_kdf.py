@@ -53,12 +53,15 @@ pytestmark = pytest.mark.keymgmt
 def _import_generic_secret(rs: Any, value: bytes, derive: bool = True) -> int:
     """Import a GENERIC_SECRET key with DERIVE=True."""
     return import_secret_key(
-        rs.raw, rs.sh, CKK_GENERIC_SECRET, value,
+        rs.raw,
+        rs.sh,
+        CKK_GENERIC_SECRET,
+        value,
         attrs={
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
-            int(CKA_DERIVE): derive,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+            CKA_DERIVE: derive,
         },
     )
 
@@ -83,11 +86,14 @@ class TestKeyDeriveSoftware:
         data = b"KDF input data for derivation"
 
         p11_key = import_secret_key(
-            rs.raw, rs.sh, CKK_SHA256_HMAC, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_SHA256_HMAC,
+            key_bytes,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_SIGN: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
         try:
@@ -104,11 +110,14 @@ class TestKeyDeriveSoftware:
         data = b"HMAC-SHA512 KDF test"
 
         p11_key = import_secret_key(
-            rs.raw, rs.sh, CKK_SHA512_HMAC, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_SHA512_HMAC,
+            key_bytes,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
+                CKA_SIGN: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
             },
         )
         try:
@@ -140,26 +149,27 @@ class TestHKDF:
         derived = 0
         try:
             derived = derive_key(
-                rs.raw, rs.sh, base_key, CKM_HKDF_DERIVE,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_HKDF_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech_hkdf(
                     CKM_HKDF_DERIVE,
-                    hash_mech=int(CKM_SHA256),
+                    hash_mech=CKM_SHA256,
                     extract=True,
                     expand=True,
                     salt=b"salt",
                     info=b"info",
                 ),
             )
-            okm = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(okm) == 32
         except (AssertionError, Exception):
             pytest.xfail("HKDF derive failed")
@@ -177,26 +187,30 @@ class TestECDHDerive:
         return gen_ec_keypair(rs.raw, rs.sh, curve_oid)
 
     def _extract_ec_point(self, rs: Any, pub_handle: int) -> bytes:
-        ec_point_raw = read_attributes(
-            rs.raw, rs.sh, pub_handle, [int(CKA_EC_POINT)]
-        )[int(CKA_EC_POINT)]
+        ec_point_raw = read_attributes(rs.raw, rs.sh, pub_handle, [CKA_EC_POINT])[CKA_EC_POINT]
         return decode_ec_point(bytes(ec_point_raw))
 
     def _derive_shared(
-        self, rs: Any, priv_handle: int, peer_point: bytes,
+        self,
+        rs: Any,
+        priv_handle: int,
+        peer_point: bytes,
     ) -> int:
         return derive_key(
-            rs.raw, rs.sh, priv_handle, CKM_ECDH1_DERIVE,
+            rs.raw,
+            rs.sh,
+            priv_handle,
+            CKM_ECDH1_DERIVE,
             attrs={
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             },
             mech_param=mech_ecdh(
                 CKM_ECDH1_DERIVE,
-                kdf=int(CKD_NULL),
+                kdf=CKD_NULL,
                 public_data=peer_point,
             ),
         )
@@ -210,12 +224,8 @@ class TestECDHDerive:
         pub_a, priv_a = self._generate_ec_keypair(rs)
         pub_b, priv_b = self._generate_ec_keypair(rs)
         try:
-            point_a = read_attributes(
-                rs.raw, rs.sh, pub_a, [int(CKA_EC_POINT)]
-            )[int(CKA_EC_POINT)]
-            point_b = read_attributes(
-                rs.raw, rs.sh, pub_b, [int(CKA_EC_POINT)]
-            )[int(CKA_EC_POINT)]
+            point_a = read_attributes(rs.raw, rs.sh, pub_a, [CKA_EC_POINT])[CKA_EC_POINT]
+            point_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])[CKA_EC_POINT]
             assert point_a != point_b
         finally:
             for h in (pub_a, priv_a, pub_b, priv_b):
@@ -240,12 +250,8 @@ class TestECDHDerive:
             shared_ab = self._derive_shared(rs, priv_a, point_b)
             shared_ba = self._derive_shared(rs, priv_b, point_a)
 
-            val_ab = read_attributes(
-                rs.raw, rs.sh, shared_ab, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
-            val_ba = read_attributes(
-                rs.raw, rs.sh, shared_ba, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val_ab = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])[CKA_VALUE]
+            val_ba = read_attributes(rs.raw, rs.sh, shared_ba, [CKA_VALUE])[CKA_VALUE]
             assert val_ab == val_ba
         finally:
             for h in (pub_a, priv_a, pub_b, priv_b):
@@ -275,12 +281,8 @@ class TestECDHDerive:
             shared_ab = self._derive_shared(rs, priv_a, point_b)
             shared_ac = self._derive_shared(rs, priv_a, point_c)
 
-            val_ab = read_attributes(
-                rs.raw, rs.sh, shared_ab, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
-            val_ac = read_attributes(
-                rs.raw, rs.sh, shared_ac, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val_ab = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])[CKA_VALUE]
+            val_ac = read_attributes(rs.raw, rs.sh, shared_ac, [CKA_VALUE])[CKA_VALUE]
             assert val_ab != val_ac
         finally:
             for h in (_pub_a, priv_a, pub_b, _priv_b, pub_c, _priv_c):

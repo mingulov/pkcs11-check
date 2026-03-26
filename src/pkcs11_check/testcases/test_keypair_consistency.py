@@ -43,12 +43,8 @@ class TestRSAKeypairConsistency:
 
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            pub_modulus = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_MODULUS)]
-            )[int(CKA_MODULUS)]
-            priv_modulus = read_attributes(
-                rs.raw, rs.sh, priv, [int(CKA_MODULUS)]
-            )[int(CKA_MODULUS)]
+            pub_modulus = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])[CKA_MODULUS]
+            priv_modulus = read_attributes(rs.raw, rs.sh, priv, [CKA_MODULUS])[CKA_MODULUS]
             assert pub_modulus == priv_modulus, "RSA modulus mismatch between pub and priv"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -62,12 +58,12 @@ class TestRSAKeypairConsistency:
 
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            pub_exp = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_PUBLIC_EXPONENT)]
-            )[int(CKA_PUBLIC_EXPONENT)]
-            priv_exp = read_attributes(
-                rs.raw, rs.sh, priv, [int(CKA_PUBLIC_EXPONENT)]
-            )[int(CKA_PUBLIC_EXPONENT)]
+            pub_exp = read_attributes(rs.raw, rs.sh, pub, [CKA_PUBLIC_EXPONENT])[
+                CKA_PUBLIC_EXPONENT
+            ]
+            priv_exp = read_attributes(rs.raw, rs.sh, priv, [CKA_PUBLIC_EXPONENT])[
+                CKA_PUBLIC_EXPONENT
+            ]
             assert pub_exp == priv_exp, "RSA public exponent mismatch"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -81,9 +77,7 @@ class TestRSAKeypairConsistency:
 
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            modulus = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_MODULUS)]
-            )[int(CKA_MODULUS)]
+            modulus = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])[CKA_MODULUS]
             assert len(modulus) == 256, f"Expected 256-byte modulus, got {len(modulus)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -102,12 +96,8 @@ class TestECKeypairConsistency:
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
         try:
-            pub_params = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_EC_PARAMS)]
-            )[int(CKA_EC_PARAMS)]
-            priv_params = read_attributes(
-                rs.raw, rs.sh, priv, [int(CKA_EC_PARAMS)]
-            )[int(CKA_EC_PARAMS)]
+            pub_params = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_PARAMS])[CKA_EC_PARAMS]
+            priv_params = read_attributes(rs.raw, rs.sh, priv, [CKA_EC_PARAMS])[CKA_EC_PARAMS]
             assert pub_params == priv_params, "EC params mismatch between pub and priv"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -122,9 +112,7 @@ class TestECKeypairConsistency:
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
         try:
-            ec_point = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_EC_POINT)]
-            )[int(CKA_EC_POINT)]
+            ec_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
             assert isinstance(ec_point, bytes)
             assert len(ec_point) > 0
         finally:
@@ -140,14 +128,10 @@ class TestECKeypairConsistency:
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
         try:
-            pub_kt = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)]
-            )[int(CKA_KEY_TYPE)]
-            priv_kt = read_attributes(
-                rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)]
-            )[int(CKA_KEY_TYPE)]
-            assert pub_kt == int(CKK_EC)
-            assert priv_kt == int(CKK_EC)
+            pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+            assert pub_kt == CKK_EC
+            assert priv_kt == CKK_EC
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

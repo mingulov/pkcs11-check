@@ -73,7 +73,7 @@ def _skip_if_no(rs: Any, mech_name: str) -> None:
 
 def _generate_slh_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[int, int]:
     """Generate an SLH-DSA key pair for HashSLH-DSA sign/verify."""
-    effective_param = param_set if param_set is not None else int(CKP_SLH_DSA_SHA2_128S)
+    effective_param = param_set if param_set is not None else CKP_SLH_DSA_SHA2_128S
     return _gen_keypair(
         rs.raw,
         rs.sh,
@@ -81,14 +81,14 @@ def _generate_slh_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[in
         pub_base=[attr_ulong(CKA_PARAMETER_SET, effective_param)],
         priv_base=[],
         public_attrs={
-            int(CKA_VERIFY): True,
-            int(CKA_TOKEN): False,
+            CKA_VERIFY: True,
+            CKA_TOKEN: False,
         },
         private_attrs={
-            int(CKA_SIGN): True,
-            int(CKA_TOKEN): False,
+            CKA_SIGN: True,
+            CKA_TOKEN: False,
         },
-        pub_skip={int(CKA_PARAMETER_SET)},
+        pub_skip={CKA_PARAMETER_SET},
     )
 
 

@@ -70,10 +70,13 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
 )
 
-_CURVE_UNSUPPORTED_RVS = {int(c) for c in (
-    CKR_CURVE_NOT_SUPPORTED, CKR_MECHANISM_INVALID,
-    CKR_TEMPLATE_INCOMPLETE, CKR_DEVICE_ERROR, CKR_GENERAL_ERROR,
-)}
+_CURVE_UNSUPPORTED_RVS = {
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_DEVICE_ERROR,
+    CKR_GENERAL_ERROR,
+}
 
 pytestmark = pytest.mark.keymgmt
 
@@ -91,8 +94,8 @@ class TestRSAKeyLifecycle:
             rs.raw,
             rs.sh,
             2048,
-            public_attrs={int(CKA_VERIFY): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_SIGN): True, int(CKA_TOKEN): False},
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
         )
         imported = 0
         try:
@@ -102,11 +105,9 @@ class TestRSAKeyLifecycle:
             assert len(sig) == 256
 
             # Export public key components
-            attrs = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)]
-            )
-            modulus = attrs[int(CKA_MODULUS)]
-            exponent = attrs[int(CKA_PUBLIC_EXPONENT)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
+            modulus = attrs[CKA_MODULUS]
+            exponent = attrs[CKA_PUBLIC_EXPONENT]
             assert isinstance(modulus, bytes)
             assert isinstance(exponent, bytes)
 
@@ -115,19 +116,17 @@ class TestRSAKeyLifecycle:
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_RSA),
-                    int(CKA_MODULUS): modulus,
-                    int(CKA_PUBLIC_EXPONENT): exponent,
-                    int(CKA_VERIFY): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_RSA,
+                    CKA_MODULUS: modulus,
+                    CKA_PUBLIC_EXPONENT: exponent,
+                    CKA_VERIFY: True,
+                    CKA_TOKEN: False,
                 },
             )
 
             # Verify with imported key
-            assert verify_single(
-                rs.raw, rs.sh, imported, CKM_SHA256_RSA_PKCS, data, sig
-            )
+            assert verify_single(rs.raw, rs.sh, imported, CKM_SHA256_RSA_PKCS, data, sig)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -149,29 +148,25 @@ class TestAESKeyWrapLifecycle:
             rs.sh,
             256,
             attrs={
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
         target = gen_aes_key(
             rs.raw,
             rs.sh,
             128,
-            attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         unwrapped = 0
         try:
             # Read original value
-            original_value = read_attributes(
-                rs.raw, rs.sh, target, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            original_value = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
 
             # Wrap
-            wrapped = wrap_key_recipe(
-                rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP
-            )
+            wrapped = wrap_key_recipe(rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP)
             assert wrapped != original_value
 
             # Unwrap
@@ -182,17 +177,15 @@ class TestAESKeyWrapLifecycle:
                 wrapped,
                 CKM_AES_KEY_WRAP,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
                 },
             )
 
             # Verify material matches
-            unwrapped_value = read_attributes(
-                rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
             assert unwrapped_value == original_value
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
@@ -210,16 +203,16 @@ class TestAESKeyWrapLifecycle:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_WRAP): True, int(CKA_UNWRAP): True},
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
         )
         target = gen_aes_key(
             rs.raw,
             rs.sh,
             128,
             attrs={
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
+                CKA_EXTRACTABLE: True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
             },
         )
         unwrapped = 0
@@ -229,9 +222,7 @@ class TestAESKeyWrapLifecycle:
             ct = encrypt_single(rs.raw, rs.sh, target, CKM_AES_ECB, plaintext)
 
             # Wrap and unwrap
-            wrapped = wrap_key_recipe(
-                rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP
-            )
+            wrapped = wrap_key_recipe(rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP)
             unwrapped = unwrap_key(
                 rs.raw,
                 rs.sh,
@@ -239,12 +230,12 @@ class TestAESKeyWrapLifecycle:
                 wrapped,
                 CKM_AES_KEY_WRAP,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_DECRYPT): True,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
                 },
             )
 
@@ -280,17 +271,21 @@ class TestECKeyLifecycle:
         mech = mech_simple(CKM_EC_KEY_PAIR_GEN)
         pub_h = CK_OBJECT_HANDLE(0)
         priv_h = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_GenerateKeyPair(
-            rs.sh, mech.byref(),
-            pub_tmpl.ptr, pub_tmpl.count,
-            priv_tmpl.ptr, priv_tmpl.count,
-            byref(pub_h), byref(priv_h),
-        ))
+        rv = rs.raw.C_GenerateKeyPair(
+            rs.sh,
+            mech.byref(),
+            pub_tmpl.ptr,
+            pub_tmpl.count,
+            priv_tmpl.ptr,
+            priv_tmpl.count,
+            byref(pub_h),
+            byref(priv_h),
+        )
         if rv in _CURVE_UNSUPPORTED_RVS:
             pytest.skip(f"secp256r1 not supported: {ckr_name(rv)}")
-        assert rv == int(CKR_OK), f"C_GenerateKeyPair failed: {ckr_name(rv)}"
-        pub = int(pub_h.value)
-        priv = int(priv_h.value)
+        assert rv == CKR_OK, f"C_GenerateKeyPair failed: {ckr_name(rv)}"
+        pub = pub_h.value
+        priv = priv_h.value
 
         imported = 0
         try:
@@ -299,11 +294,9 @@ class TestECKeyLifecycle:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, data)
 
             # Export
-            attrs = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_EC_POINT), int(CKA_EC_PARAMS)]
-            )
-            ec_point = attrs[int(CKA_EC_POINT)]
-            ec_params = attrs[int(CKA_EC_PARAMS)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT, CKA_EC_PARAMS])
+            ec_point = attrs[CKA_EC_POINT]
+            ec_params = attrs[CKA_EC_PARAMS]
             assert isinstance(ec_point, bytes)
             assert isinstance(ec_params, bytes)
 
@@ -312,19 +305,17 @@ class TestECKeyLifecycle:
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC),
-                    int(CKA_EC_PARAMS): ec_params,
-                    int(CKA_EC_POINT): ec_point,
-                    int(CKA_VERIFY): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_EC,
+                    CKA_EC_PARAMS: ec_params,
+                    CKA_EC_POINT: ec_point,
+                    CKA_VERIFY: True,
+                    CKA_TOKEN: False,
                 },
             )
 
             # Verify
-            assert verify_single(
-                rs.raw, rs.sh, imported, CKM_ECDSA, data, sig
-            )
+            assert verify_single(rs.raw, rs.sh, imported, CKM_ECDSA, data, sig)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -338,15 +329,11 @@ class TestKeyDestroyVerification:
     def test_destroyed_key_not_findable(self, p11_raw_session: Any) -> None:
         """After destroy, key cannot be found by any search."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): b"destroy-verify"}
-        )
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: b"destroy-verify"})
         destroy_quietly(rs.raw, rs.sh, key)
 
         # Search by label
-        by_label = find_objects(
-            rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, b"destroy-verify"))
-        )
+        by_label = find_objects(rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, b"destroy-verify")))
         assert len(by_label) == 0
 
     def test_destroy_does_not_affect_other_keys(self, p11_raw_session: Any) -> None:
@@ -357,14 +344,12 @@ class TestKeyDestroyVerification:
             rs.sh,
             128,
             attrs={
-                int(CKA_LABEL): b"keep-me",
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
+                CKA_LABEL: b"keep-me",
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
             },
         )
-        k2 = gen_aes_key(
-            rs.raw, rs.sh, 128, attrs={int(CKA_LABEL): b"destroy-me"}
-        )
+        k2 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: b"destroy-me"})
         try:
             destroy_quietly(rs.raw, rs.sh, k2)
 

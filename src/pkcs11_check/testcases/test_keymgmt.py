@@ -59,17 +59,20 @@ class TestKeyImport:
         rs = p11_raw_session
         key_bytes = bytes(range(32))
         key = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
             },
         )
         try:
             assert key != 0
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_AES)
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -78,13 +81,16 @@ class TestKeyImport:
         rs = p11_raw_session
         key_bytes = bytes(range(32))
         key = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
@@ -100,17 +106,18 @@ class TestKeyImport:
         rs = p11_raw_session
         key_bytes = bytes(range(16))
         key = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
             attrs={
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
-            exported = read_attributes(
-                rs.raw, rs.sh, key, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            exported = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert exported == key_bytes
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -121,7 +128,10 @@ class TestKeyImport:
         for size_bytes in [16, 24, 32]:
             key_bytes = bytes(size_bytes)
             key = import_secret_key(
-                rs.raw, rs.sh, CKK_AES, key_bytes,
+                rs.raw,
+                rs.sh,
+                CKK_AES,
+                key_bytes,
                 attrs={
                     int(CKA_TOKEN): False,
                     int(CKA_SENSITIVE): False,
@@ -129,9 +139,7 @@ class TestKeyImport:
                 },
             )
             try:
-                exported = read_attributes(
-                    rs.raw, rs.sh, key, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                exported = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])[int(CKA_VALUE)]
                 assert exported == key_bytes
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -145,12 +153,10 @@ class TestKeyExport:
             pytest.skip("RSA key generation not supported")
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            attrs = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)]
-            )
-            modulus = attrs[int(CKA_MODULUS)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
+            modulus = attrs[CKA_MODULUS]
             assert len(modulus) == 256
-            exponent = attrs[int(CKA_PUBLIC_EXPONENT)]
+            exponent = attrs[CKA_PUBLIC_EXPONENT]
             assert len(exponent) >= 1
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -164,8 +170,8 @@ class TestKeyExport:
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_EC_POINT)])
-            ec_point = attrs[int(CKA_EC_POINT)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])
+            ec_point = attrs[CKA_EC_POINT]
             assert len(ec_point) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -177,18 +183,22 @@ class TestKeyCopy:
         """Copy a key and verify attributes are preserved."""
         rs = p11_raw_session
         original = gen_aes_key(
-            rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): b"original"},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_LABEL: b"original"},
         )
         copy = 0
         try:
             copy = copy_object(
-                rs.raw, rs.sh, original, {int(CKA_LABEL): b"copy"},
+                rs.raw,
+                rs.sh,
+                original,
+                {CKA_LABEL: b"copy"},
             )
-            attrs = read_attributes(
-                rs.raw, rs.sh, copy, [int(CKA_LABEL), int(CKA_KEY_TYPE)]
-            )
-            assert attrs[int(CKA_LABEL)] in (b"copy", "copy")
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_AES)
+            attrs = read_attributes(rs.raw, rs.sh, copy, [CKA_LABEL, CKA_KEY_TYPE])
+            assert attrs[CKA_LABEL] in (b"copy", "copy")
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
         finally:
             destroy_quietly(rs.raw, rs.sh, original)
             if copy:
@@ -198,11 +208,16 @@ class TestKeyCopy:
         """Copied key works independently after original is destroyed."""
         rs = p11_raw_session
         original = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
         copy = copy_object(
-            rs.raw, rs.sh, original, {int(CKA_LABEL): b"independent"},
+            rs.raw,
+            rs.sh,
+            original,
+            {CKA_LABEL: b"independent"},
         )
         try:
             destroy_quietly(rs.raw, rs.sh, original)
@@ -220,11 +235,16 @@ class TestKeyWrapUnwrap:
             pytest.skip("CKM_AES_KEY_WRAP not supported")
         key_bytes = bytes(range(16))
         wrapping_key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_WRAP): True, int(CKA_UNWRAP): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
         )
         target = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
             attrs={
                 int(CKA_TOKEN): False,
                 int(CKA_EXTRACTABLE): True,
@@ -237,17 +257,19 @@ class TestKeyWrapUnwrap:
             assert len(wrapped) > 0
 
             unwrapped = unwrap_key(
-                rs.raw, rs.sh, wrapping_key, wrapped, CKM_AES_KEY_WRAP,
+                rs.raw,
+                rs.sh,
+                wrapping_key,
+                wrapped,
+                CKM_AES_KEY_WRAP,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
                 },
             )
-            exported = read_attributes(
-                rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            exported = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
             assert exported == key_bytes
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
@@ -271,23 +293,24 @@ class TestKeyDerive:
         derived = 0
         try:
             # Read pub_b's EC_POINT and unwrap from DER
-            ec_point_raw = read_attributes(
-                rs.raw, rs.sh, pub_b, [int(CKA_EC_POINT)]
-            )[int(CKA_EC_POINT)]
+            ec_point_raw = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])[CKA_EC_POINT]
             point_b = decode_ec_point(bytes(ec_point_raw))
 
             derived = derive_key(
-                rs.raw, rs.sh, priv_a, CKM_ECDH1_DERIVE,
+                rs.raw,
+                rs.sh,
+                priv_a,
+                CKM_ECDH1_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech_ecdh(
                     CKM_ECDH1_DERIVE,
-                    kdf=int(CKD_NULL),
+                    kdf=CKD_NULL,
                     public_data=point_b,
                 ),
             )

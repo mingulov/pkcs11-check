@@ -40,7 +40,10 @@ def _import_aes_key(rs: Any, key_bytes: bytes) -> int:
     from pkcs11_check.raw.types_std import CKA_DECRYPT, CKA_ENCRYPT, CKA_TOKEN
 
     return import_secret_key(
-        rs.raw, rs.sh, CKK_AES, key_bytes,
+        rs.raw,
+        rs.sh,
+        CKK_AES,
+        key_bytes,
         attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
     )
 

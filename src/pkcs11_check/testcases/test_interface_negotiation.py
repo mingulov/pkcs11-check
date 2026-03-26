@@ -41,7 +41,7 @@ class TestInterfaceVersion:
 
         raw = RawPKCS11.from_lib(str(module_path))
         rv = raw.C_Initialize(None)
-        assert rv in (int(CKR_OK), 0x00000191), f"C_Initialize: 0x{int(rv):08x}"
+        assert rv in (CKR_OK, 0x00000191), f"C_Initialize: 0x{rv:08x}"
         try:
             fnames = raw.available_function_names()
             # v2.40 functions are always present; v3.0+ have C_GetInterfaceList
@@ -98,8 +98,8 @@ class TestGetInterfaceList:
 
         count = CK_ULONG(0)
         rv = rs.raw.C_GetInterfaceList(None, byref(count))
-        expect_rv(int(rv), CKR_OK)
-        assert int(count.value) >= 1
+        expect_rv(rv, CKR_OK)
+        assert count.value >= 1
 
     def test_v240_has_no_interface_list(
         self,

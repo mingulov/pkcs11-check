@@ -43,7 +43,9 @@ pytestmark = pytest.mark.security
 
 
 def _read_bool_attr_safe(
-    rs: Any, handle: int, attr: int,
+    rs: Any,
+    handle: int,
+    attr: int,
 ) -> bool | None:
     """Read a bool attribute, returning None if CKR_ATTRIBUTE_TYPE_INVALID."""
     import ctypes
@@ -55,10 +57,10 @@ def _read_bool_attr_safe(
     tmpl[0].type = attr
     tmpl[0].pValue = ctypes.cast(ctypes.pointer(val), CK_VOID_PTR)
     tmpl[0].ulValueLen = ctypes.sizeof(val)
-    rv = int(rs.raw.C_GetAttributeValue(rs.sh, handle, tmpl, 1))
-    if rv == int(CKR_ATTRIBUTE_TYPE_INVALID):
+    rv = rs.raw.C_GetAttributeValue(rs.sh, handle, tmpl, 1)
+    if rv == CKR_ATTRIBUTE_TYPE_INVALID:
         return None
-    if rv != int(CKR_OK):
+    if rv != CKR_OK:
         return None
     return val.value != 0
 
@@ -67,54 +69,53 @@ class TestNeverExtractable:
     """Verify CKA_NEVER_EXTRACTABLE flag semantics."""
 
     def test_generated_non_extractable_is_never_extractable(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Key generated with EXTRACTABLE=False has NEVER_EXTRACTABLE=True."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_EXTRACTABLE): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_EXTRACTABLE: False},
         )
         try:
-            attrs = read_attributes(
-                rs.raw, rs.sh, key, [int(CKA_NEVER_EXTRACTABLE)]
-            )
-            assert attrs[int(CKA_NEVER_EXTRACTABLE)] is True
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_NEVER_EXTRACTABLE])
+            assert attrs[CKA_NEVER_EXTRACTABLE] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_generated_extractable_is_not_never_extractable(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Key generated with EXTRACTABLE=True has NEVER_EXTRACTABLE=False."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
-            attrs = read_attributes(
-                rs.raw, rs.sh, key, [int(CKA_NEVER_EXTRACTABLE)]
-            )
-            assert attrs[int(CKA_NEVER_EXTRACTABLE)] is False
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_NEVER_EXTRACTABLE])
+            assert attrs[CKA_NEVER_EXTRACTABLE] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_extractable_and_never_extractable_consistent(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """EXTRACTABLE=True implies NEVER_EXTRACTABLE=False (and vice versa for default)."""
         rs = p11_raw_session
         # Default key: non-extractable
         key_default = gen_aes_key(rs.raw, rs.sh, 256)
         try:
-            attrs_d = read_attributes(
-                rs.raw, rs.sh, key_default, [int(CKA_EXTRACTABLE)]
-            )
-            assert attrs_d[int(CKA_EXTRACTABLE)] is False
-            never_ext_default = _read_bool_attr_safe(
-                rs, key_default, int(CKA_NEVER_EXTRACTABLE)
-            )
+            attrs_d = read_attributes(rs.raw, rs.sh, key_default, [CKA_EXTRACTABLE])
+            assert attrs_d[CKA_EXTRACTABLE] is False
+            never_ext_default = _read_bool_attr_safe(rs, key_default, CKA_NEVER_EXTRACTABLE)
             if never_ext_default is None:
                 pytest.xfail(
                     "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
@@ -126,17 +127,15 @@ class TestNeverExtractable:
 
         # Extractable key
         key_ext = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
-            attrs_e = read_attributes(
-                rs.raw, rs.sh, key_ext, [int(CKA_EXTRACTABLE)]
-            )
-            assert attrs_e[int(CKA_EXTRACTABLE)] is True
-            never_ext = _read_bool_attr_safe(
-                rs, key_ext, int(CKA_NEVER_EXTRACTABLE)
-            )
+            attrs_e = read_attributes(rs.raw, rs.sh, key_ext, [CKA_EXTRACTABLE])
+            assert attrs_e[CKA_EXTRACTABLE] is True
+            never_ext = _read_bool_attr_safe(rs, key_ext, CKA_NEVER_EXTRACTABLE)
             if never_ext is None:
                 pytest.xfail(
                     "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
@@ -159,8 +158,8 @@ class TestLocalFlag:
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_LOCAL)])
-            assert attrs[int(CKA_LOCAL)] is True
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
+            assert attrs[CKA_LOCAL] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -168,18 +167,21 @@ class TestLocalFlag:
         """Imported keys have LOCAL=False."""
         rs = p11_raw_session
         key = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, b"\x00" * 32,
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            b"\x00" * 32,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_LOCAL)])
-            assert attrs[int(CKA_LOCAL)] is False
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
+            assert attrs[CKA_LOCAL] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -191,8 +193,8 @@ class TestLocalFlag:
 
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            pub_local = _read_bool_attr_safe(rs, pub, int(CKA_LOCAL))
-            priv_local = _read_bool_attr_safe(rs, priv, int(CKA_LOCAL))
+            pub_local = _read_bool_attr_safe(rs, pub, CKA_LOCAL)
+            priv_local = _read_bool_attr_safe(rs, priv, CKA_LOCAL)
 
             if pub_local is None or priv_local is None:
                 pytest.xfail(
@@ -221,16 +223,20 @@ class TestAlwaysSensitive:
         """Key generated sensitive has ALWAYS_SENSITIVE=True."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_SENSITIVE): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_SENSITIVE: True},
         )
         try:
             attrs = read_attributes(
-                rs.raw, rs.sh, key,
-                [int(CKA_SENSITIVE), int(CKA_ALWAYS_SENSITIVE)],
+                rs.raw,
+                rs.sh,
+                key,
+                [CKA_SENSITIVE, CKA_ALWAYS_SENSITIVE],
             )
-            assert attrs[int(CKA_SENSITIVE)] is True
-            assert attrs[int(CKA_ALWAYS_SENSITIVE)] is True
+            assert attrs[CKA_SENSITIVE] is True
+            assert attrs[CKA_ALWAYS_SENSITIVE] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -238,16 +244,20 @@ class TestAlwaysSensitive:
         """Key generated non-sensitive has ALWAYS_SENSITIVE=False."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_SENSITIVE): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_SENSITIVE: False},
         )
         try:
             attrs = read_attributes(
-                rs.raw, rs.sh, key,
-                [int(CKA_SENSITIVE), int(CKA_ALWAYS_SENSITIVE)],
+                rs.raw,
+                rs.sh,
+                key,
+                [CKA_SENSITIVE, CKA_ALWAYS_SENSITIVE],
             )
-            assert attrs[int(CKA_SENSITIVE)] is False
-            assert attrs[int(CKA_ALWAYS_SENSITIVE)] is False
+            assert attrs[CKA_SENSITIVE] is False
+            assert attrs[CKA_ALWAYS_SENSITIVE] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -257,19 +267,27 @@ class TestAutopadding:
 
     @pytest.mark.parametrize("plaintext_len", [1, 7, 15, 16, 17, 31, 32, 100])
     def test_aes_cbc_pad_variable_length(
-        self, p11_raw_session: Any, plaintext_len: int,
+        self,
+        p11_raw_session: Any,
+        plaintext_len: int,
     ) -> None:
         """AES-CBC-PAD roundtrip works for non-block-aligned plaintext lengths."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = bytes(range(256))[:plaintext_len]
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             # Ciphertext should be padded to next block boundary
@@ -277,7 +295,11 @@ class TestAutopadding:
             assert len(ct) >= plaintext_len
 
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                ct,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             assert pt == plaintext

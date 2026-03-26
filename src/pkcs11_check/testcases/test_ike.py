@@ -55,36 +55,47 @@ _SPI_I = b"\xaa" * 8  # initiator SPI
 _SPI_R = b"\xbb" * 8  # responder SPI
 
 _DERIVE_ATTRS: dict[int, Any] = {
-    int(CKA_SENSITIVE): False,
-    int(CKA_EXTRACTABLE): True,
-    int(CKA_TOKEN): False,
+    CKA_SENSITIVE: False,
+    CKA_EXTRACTABLE: True,
+    CKA_TOKEN: False,
 }
 
 
 def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
     """Create a GENERIC_SECRET base key suitable for IKE derivation."""
-    return create_object(rs.raw, rs.sh, {
-        int(CKA_CLASS): int(CKO_SECRET_KEY),
-        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-        int(CKA_VALUE): key_bytes,
-        int(CKA_DERIVE): True,
-        int(CKA_TOKEN): False,
-        int(CKA_SENSITIVE): False,
-    })
+    return create_object(
+        rs.raw,
+        rs.sh,
+        {
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_VALUE: key_bytes,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+        },
+    )
 
 
 def _derive_generic(
-    rs: Any, base_key: int, mech: int, param: bytes, bits: int = 256,
+    rs: Any,
+    base_key: int,
+    mech: int,
+    param: bytes,
+    bits: int = 256,
 ) -> int:
     """Derive a GENERIC_SECRET key using the given mechanism and params."""
     attrs: dict[int, Any] = {
-        int(CKA_CLASS): int(CKO_SECRET_KEY),
-        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-        int(CKA_VALUE_LEN): bits // 8,
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+        CKA_VALUE_LEN: bits // 8,
         **_DERIVE_ATTRS,
     }
     return derive_key(
-        rs.raw, rs.sh, base_key, mech,
+        rs.raw,
+        rs.sh,
+        base_key,
+        mech,
         attrs=attrs,
         mech_param=mech_bytes(mech, param),
     )
@@ -93,13 +104,16 @@ def _derive_generic(
 def _derive_aes128(rs: Any, base_key: int, mech: int, param: bytes) -> int:
     """Derive an AES-128 key using the given mechanism and params."""
     attrs: dict[int, Any] = {
-        int(CKA_CLASS): int(CKO_SECRET_KEY),
-        int(CKA_KEY_TYPE): int(CKK_AES),
-        int(CKA_VALUE_LEN): 16,
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_AES,
+        CKA_VALUE_LEN: 16,
         **_DERIVE_ATTRS,
     }
     return derive_key(
-        rs.raw, rs.sh, base_key, mech,
+        rs.raw,
+        rs.sh,
+        base_key,
+        mech,
         attrs=attrs,
         mech_param=mech_bytes(mech, param),
     )
@@ -108,7 +122,7 @@ def _derive_aes128(rs: Any, base_key: int, mech: int, param: bytes) -> int:
 def _get_value(rs: Any, handle: int) -> bytes:
     """Read CKA_VALUE from a key handle."""
     attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
-    return attrs[int(CKA_VALUE)]  # type: ignore[return-value]
+    return attrs[CKA_VALUE]  # type: ignore[return-value]
 
 
 class TestIKE2PRFPlusDerive:
@@ -125,7 +139,10 @@ class TestIKE2PRFPlusDerive:
         base_key = _create_base_key(rs)
         try:
             derived = _derive_generic(
-                rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R,
+                rs,
+                base_key,
+                CKM_IKE2_PRF_PLUS_DERIVE,
+                _NONCE_I + _NONCE_R,
             )
             try:
                 raw = _get_value(rs, derived)
@@ -144,7 +161,10 @@ class TestIKE2PRFPlusDerive:
         base_key = _create_base_key(rs)
         try:
             derived = _derive_aes128(
-                rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R,
+                rs,
+                base_key,
+                CKM_IKE2_PRF_PLUS_DERIVE,
+                _NONCE_I + _NONCE_R,
             )
             try:
                 raw = _get_value(rs, derived)

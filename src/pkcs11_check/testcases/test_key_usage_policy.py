@@ -44,12 +44,14 @@ class TestAESKeyUsagePolicy:
         """AES key with ENCRYPT=True, DECRYPT=False cannot be used for decrypt."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): False,
-                int(CKA_SIGN): False,
-                int(CKA_VERIFY): False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: False,
+                CKA_SIGN: False,
+                CKA_VERIFY: False,
             },
         )
         try:
@@ -60,8 +62,8 @@ class TestAESKeyUsagePolicy:
 
             # DecryptInit should fail with KEY_FUNCTION_NOT_PERMITTED
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_DecryptInit(rs.sh, mech.byref(), key))
-            assert rv != int(CKR_OK), "Key with DECRYPT=False should not allow decrypt"
+            rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
+            assert rv != CKR_OK, "Key with DECRYPT=False should not allow decrypt"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -69,21 +71,23 @@ class TestAESKeyUsagePolicy:
         """AES key with DECRYPT=True, ENCRYPT=False cannot be used for encrypt."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_ENCRYPT): False,
-                int(CKA_DECRYPT): True,
-                int(CKA_SIGN): False,
-                int(CKA_VERIFY): False,
+                CKA_ENCRYPT: False,
+                CKA_DECRYPT: True,
+                CKA_SIGN: False,
+                CKA_VERIFY: False,
             },
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_DECRYPT)])
-            assert attrs[int(CKA_DECRYPT)] is True
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_DECRYPT])
+            assert attrs[CKA_DECRYPT] is True
 
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            assert rv != int(CKR_OK), "Key with ENCRYPT=False should not allow encrypt"
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            assert rv != CKR_OK, "Key with ENCRYPT=False should not allow encrypt"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -91,18 +95,20 @@ class TestAESKeyUsagePolicy:
         """Key with SIGN=True but ENCRYPT=False cannot encrypt."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
-                int(CKA_ENCRYPT): False,
-                int(CKA_DECRYPT): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_ENCRYPT: False,
+                CKA_DECRYPT: False,
             },
         )
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            assert rv != int(CKR_OK), "Key with ENCRYPT=False should not allow encrypt"
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            assert rv != CKR_OK, "Key with ENCRYPT=False should not allow encrypt"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -110,14 +116,16 @@ class TestAESKeyUsagePolicy:
         """Key with all capabilities can encrypt."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_SIGN): True,
-                int(CKA_VERIFY): True,
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
             },
         )
         try:
@@ -137,33 +145,35 @@ class TestRSAKeyUsagePolicy:
             pytest.skip("CKM_RSA_PKCS not supported")
 
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
+            rs.raw,
+            rs.sh,
+            2048,
             public_attrs={
-                int(CKA_ENCRYPT): False,
-                int(CKA_VERIFY): True,
-                int(CKA_WRAP): False,
+                CKA_ENCRYPT: False,
+                CKA_VERIFY: True,
+                CKA_WRAP: False,
             },
             private_attrs={
-                int(CKA_DECRYPT): False,
-                int(CKA_SIGN): True,
-                int(CKA_UNWRAP): False,
+                CKA_DECRYPT: False,
+                CKA_SIGN: True,
+                CKA_UNWRAP: False,
             },
         )
         try:
             # Verify SIGN is True on private
-            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_SIGN)])
-            assert priv_attrs[int(CKA_SIGN)] is True
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SIGN])
+            assert priv_attrs[CKA_SIGN] is True
 
             # Verify VERIFY is True on public
-            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_VERIFY)])
-            assert pub_attrs[int(CKA_VERIFY)] is True
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_VERIFY])
+            assert pub_attrs[CKA_VERIFY] is True
 
             # Encrypt should fail on public key
             from pkcs11_check.raw.types_std import CKM_RSA_PKCS
 
             mech = mech_simple(CKM_RSA_PKCS)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub))
-            assert rv != int(CKR_OK), "PublicKey with ENCRYPT=False should not allow encrypt"
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
+            assert rv != CKR_OK, "PublicKey with ENCRYPT=False should not allow encrypt"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -175,31 +185,33 @@ class TestRSAKeyUsagePolicy:
             pytest.skip("CKM_RSA_PKCS not supported")
 
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
+            rs.raw,
+            rs.sh,
+            2048,
             public_attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_VERIFY): False,
-                int(CKA_WRAP): False,
+                CKA_ENCRYPT: True,
+                CKA_VERIFY: False,
+                CKA_WRAP: False,
             },
             private_attrs={
-                int(CKA_DECRYPT): True,
-                int(CKA_SIGN): False,
-                int(CKA_UNWRAP): False,
+                CKA_DECRYPT: True,
+                CKA_SIGN: False,
+                CKA_UNWRAP: False,
             },
         )
         try:
-            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_ENCRYPT)])
-            assert pub_attrs[int(CKA_ENCRYPT)] is True
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ENCRYPT])
+            assert pub_attrs[CKA_ENCRYPT] is True
 
-            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_DECRYPT)])
-            assert priv_attrs[int(CKA_DECRYPT)] is True
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DECRYPT])
+            assert priv_attrs[CKA_DECRYPT] is True
 
             # Sign should fail on private key
             from pkcs11_check.raw.types_std import CKM_SHA256_RSA_PKCS
 
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
-            rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv))
-            assert rv != int(CKR_OK), "PrivateKey with SIGN=False should not allow sign"
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
+            assert rv != CKR_OK, "PrivateKey with SIGN=False should not allow sign"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -212,24 +224,28 @@ class TestCapabilityReadback:
         """Generated key's capability flags match what was requested."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): False,
-                int(CKA_SIGN): False,
-                int(CKA_VERIFY): False,
-                int(CKA_WRAP): False,
-                int(CKA_UNWRAP): False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: False,
+                CKA_SIGN: False,
+                CKA_VERIFY: False,
+                CKA_WRAP: False,
+                CKA_UNWRAP: False,
             },
         )
         try:
             attrs = read_attributes(
-                rs.raw, rs.sh, key,
-                [int(CKA_ENCRYPT), int(CKA_DECRYPT), int(CKA_SIGN)],
+                rs.raw,
+                rs.sh,
+                key,
+                [CKA_ENCRYPT, CKA_DECRYPT, CKA_SIGN],
             )
-            assert attrs[int(CKA_ENCRYPT)] is True
-            assert attrs[int(CKA_DECRYPT)] is False
-            assert attrs[int(CKA_SIGN)] is False
+            assert attrs[CKA_ENCRYPT] is True
+            assert attrs[CKA_DECRYPT] is False
+            assert attrs[CKA_SIGN] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -240,22 +256,20 @@ class TestCapabilityReadback:
             pytest.skip("CKM_RSA_PKCS not supported")
 
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ENCRYPT): True, int(CKA_VERIFY): False},
-            private_attrs={int(CKA_DECRYPT): True, int(CKA_SIGN): False},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_VERIFY: False},
+            private_attrs={CKA_DECRYPT: True, CKA_SIGN: False},
         )
         try:
-            pub_attrs = read_attributes(
-                rs.raw, rs.sh, pub, [int(CKA_ENCRYPT), int(CKA_VERIFY)]
-            )
-            assert pub_attrs[int(CKA_ENCRYPT)] is True
-            assert pub_attrs[int(CKA_VERIFY)] is False
+            pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ENCRYPT, CKA_VERIFY])
+            assert pub_attrs[CKA_ENCRYPT] is True
+            assert pub_attrs[CKA_VERIFY] is False
 
-            priv_attrs = read_attributes(
-                rs.raw, rs.sh, priv, [int(CKA_DECRYPT), int(CKA_SIGN)]
-            )
-            assert priv_attrs[int(CKA_DECRYPT)] is True
-            assert priv_attrs[int(CKA_SIGN)] is False
+            priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DECRYPT, CKA_SIGN])
+            assert priv_attrs[CKA_DECRYPT] is True
+            assert priv_attrs[CKA_SIGN] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

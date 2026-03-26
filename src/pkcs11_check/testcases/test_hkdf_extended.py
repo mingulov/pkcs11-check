@@ -51,18 +51,19 @@ pytestmark = pytest.mark.keymgmt
 
 # Common derive error RVs
 _DERIVE_ERROR_RVS = {
-    int(c) for c in (
-        CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID,
-        CKR_FUNCTION_FAILED, CKR_TEMPLATE_INCONSISTENT, CKR_ARGUMENTS_BAD,
-    )
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ARGUMENTS_BAD,
 }
 
 # Keygen error RVs
 _KEYGEN_ERROR_RVS = {
-    int(c) for c in (
-        CKR_KEY_TYPE_INCONSISTENT, CKR_TEMPLATE_INCONSISTENT,
-        CKR_MECHANISM_INVALID, CKR_ARGUMENTS_BAD,
-    )
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_ARGUMENTS_BAD,
 }
 
 
@@ -83,25 +84,26 @@ def _gen_hkdf_key(rs: Any, key_type: int, bits: int = 256) -> int | None:
     tmpl = template(*packed)
     mech = mech_simple(CKM_HKDF_KEY_GEN)
     key_h = CK_OBJECT_HANDLE(0)
-    rv = int(rs.raw.C_GenerateKey(
-        rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h)
-    ))
-    if rv != int(CKR_OK):
+    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
+    if rv != CKR_OK:
         if rv in _KEYGEN_ERROR_RVS:
             return None
         return None
-    return int(key_h.value)
+    return key_h.value
 
 
 def _create_base_key(rs: Any) -> int:
     """Create a GENERIC_SECRET key suitable for HKDF derivation."""
     ikm = bytes(range(32))
     return import_secret_key(
-        rs.raw, rs.sh, CKK_GENERIC_SECRET, ikm,
+        rs.raw,
+        rs.sh,
+        CKK_GENERIC_SECRET,
+        ikm,
         attrs={
-            int(CKA_DERIVE): True,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
         },
     )
 
@@ -109,17 +111,20 @@ def _create_base_key(rs: Any) -> int:
 def _hkdf_derive(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
     """Derive a GENERIC_SECRET key via HKDF."""
     return derive_key(
-        rs.raw, rs.sh, base_key, CKM_HKDF_DERIVE,
+        rs.raw,
+        rs.sh,
+        base_key,
+        CKM_HKDF_DERIVE,
         attrs={
-            int(CKA_CLASS): int(CKO_SECRET_KEY),
-            int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
-            int(CKA_TOKEN): False,
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+            CKA_TOKEN: False,
         },
         mech_param=mech_hkdf(
             CKM_HKDF_DERIVE,
-            hash_mech=int(CKM_SHA256),
+            hash_mech=CKM_SHA256,
             extract=True,
             expand=True,
             salt=salt,
@@ -131,17 +136,20 @@ def _hkdf_derive(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
 def _hkdf_data_derive(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
     """Derive a GENERIC_SECRET key via CKM_HKDF_DATA."""
     return derive_key(
-        rs.raw, rs.sh, base_key, CKM_HKDF_DATA,
+        rs.raw,
+        rs.sh,
+        base_key,
+        CKM_HKDF_DATA,
         attrs={
-            int(CKA_CLASS): int(CKO_SECRET_KEY),
-            int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
-            int(CKA_TOKEN): False,
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
+            CKA_TOKEN: False,
         },
         mech_param=mech_hkdf(
             CKM_HKDF_DATA,
-            hash_mech=int(CKM_SHA256),
+            hash_mech=CKM_SHA256,
             extract=True,
             expand=True,
             salt=salt,
@@ -157,9 +165,9 @@ class TestHKDFKeyGen:
     @pytest.mark.parametrize(
         "key_type",
         [
-            int(CKK_HKDF),
+            CKK_HKDF,
             pytest.param(
-                int(CKK_GENERIC_SECRET),
+                CKK_GENERIC_SECRET,
                 marks=pytest.mark.xfail(
                     reason="CKM_HKDF_KEY_GEN should produce CKK_HKDF per spec",
                 ),
@@ -168,7 +176,9 @@ class TestHKDFKeyGen:
         ids=["CKK_HKDF", "CKK_GENERIC_SECRET"],
     )
     def test_hkdf_key_gen_basic(
-        self, p11_raw_session: Any, key_type: int,
+        self,
+        p11_raw_session: Any,
+        key_type: int,
     ) -> None:
         """Generate a key via CKM_HKDF_KEY_GEN with the given key type."""
         rs = p11_raw_session
@@ -181,13 +191,15 @@ class TestHKDFKeyGen:
         try:
             assert handle != 0
             attrs = read_attributes(
-                rs.raw, rs.sh, handle,
-                [int(CKA_KEY_TYPE), int(CKA_VALUE), int(CKA_DERIVE)],
+                rs.raw,
+                rs.sh,
+                handle,
+                [CKA_KEY_TYPE, CKA_VALUE, CKA_DERIVE],
             )
-            assert attrs[int(CKA_KEY_TYPE)] == key_type
-            value = attrs[int(CKA_VALUE)]
+            assert attrs[CKA_KEY_TYPE] == key_type
+            value = attrs[CKA_VALUE]
             assert len(value) == 32  # 256 bits = 32 bytes
-            assert attrs[int(CKA_DERIVE)] is True
+            assert attrs[CKA_DERIVE] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -201,7 +213,7 @@ class TestHKDFKeyGen:
 
         # Try CKK_HKDF first, then CKK_GENERIC_SECRET
         base_key = None
-        for kt in (int(CKK_HKDF), int(CKK_GENERIC_SECRET)):
+        for kt in (CKK_HKDF, CKK_GENERIC_SECRET):
             base_key = _gen_hkdf_key(rs, kt, 256)
             if base_key is not None:
                 break
@@ -211,9 +223,7 @@ class TestHKDFKeyGen:
         derived = 0
         try:
             derived = _hkdf_derive(rs, base_key, b"salt-value", b"info-value")
-            okm = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(okm) == 32
         except (AssertionError, Exception) as e:
             pytest.xfail(f"HKDF_DERIVE with HKDF_KEY_GEN key failed: {e}")
@@ -237,9 +247,7 @@ class TestHKDFData:
         derived = 0
         try:
             derived = _hkdf_data_derive(rs, base_key, b"salt", b"info")
-            value = read_attributes(
-                rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            value = read_attributes(rs.raw, rs.sh, derived, [int(CKA_VALUE)])[int(CKA_VALUE)]
             assert len(value) == 32  # 256 bits = 32 bytes
             assert value != bytes(32), "Derived value should not be all zeros"
         except (AssertionError, Exception) as e:
@@ -261,12 +269,8 @@ class TestHKDFData:
         try:
             derived_1 = _hkdf_data_derive(rs, base_key, b"det-salt", b"det-info")
             derived_2 = _hkdf_data_derive(rs, base_key, b"det-salt", b"det-info")
-            val_1 = read_attributes(
-                rs.raw, rs.sh, derived_1, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
-            val_2 = read_attributes(
-                rs.raw, rs.sh, derived_2, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val_1 = read_attributes(rs.raw, rs.sh, derived_1, [CKA_VALUE])[CKA_VALUE]
+            val_2 = read_attributes(rs.raw, rs.sh, derived_2, [CKA_VALUE])[CKA_VALUE]
             assert val_1 == val_2, "HKDF_DATA must be deterministic"
         except (AssertionError, Exception) as e:
             pytest.xfail(f"HKDF_DATA derive failed: {e}")
@@ -278,7 +282,8 @@ class TestHKDFData:
                 destroy_quietly(rs.raw, rs.sh, derived_2)
 
     def test_hkdf_data_different_info_different_output(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Different 'info' values produce different HKDF_DATA output."""
         rs = p11_raw_session
@@ -291,12 +296,8 @@ class TestHKDFData:
         try:
             derived_a = _hkdf_data_derive(rs, base_key, b"salt", b"info-alpha")
             derived_b = _hkdf_data_derive(rs, base_key, b"salt", b"info-bravo")
-            val_a = read_attributes(
-                rs.raw, rs.sh, derived_a, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
-            val_b = read_attributes(
-                rs.raw, rs.sh, derived_b, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
+            val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
             assert val_a != val_b, "Different info strings must produce different output"
         except (AssertionError, Exception) as e:
             pytest.xfail(f"HKDF_DATA derive failed: {e}")
