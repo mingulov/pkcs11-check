@@ -64,10 +64,14 @@ raw.C_Finalize(None)
 
 def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
     pin_arg = repr(pin) if pin is not None else "None"
-    script = _SCRIPT_TEMPLATE.format(module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code))
+    script = _SCRIPT_TEMPLATE.format(
+        module=module, pin_arg=pin_arg, test_code=textwrap.dedent(code)
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
         env=os.environ.copy(),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()

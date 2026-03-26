@@ -79,10 +79,16 @@ key_handle = key.value
 
 def _run(module: str, pin: str | None, test_code: str) -> tuple[int, str, str]:
     pin_arg = repr(pin) if pin is not None else "None"
-    script = _SCRIPT_PREAMBLE.format(module=module, pin_arg=pin_arg) + textwrap.dedent(test_code) + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
+    script = (
+        _SCRIPT_PREAMBLE.format(module=module, pin_arg=pin_arg)
+        + textwrap.dedent(test_code)
+        + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
         env=os.environ.copy(),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()

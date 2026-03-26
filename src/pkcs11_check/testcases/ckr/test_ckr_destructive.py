@@ -33,9 +33,21 @@ def _create_temp_softhsm_token() -> tuple[str, str, str]:
     env = os.environ.copy()
     env["SOFTHSM2_CONF"] = conf_path
     subprocess.run(
-        ["softhsm2-util", "--init-token", "--slot", "0",
-         "--label", "ckr-temp", "--so-pin", "87654321", "--pin", "1234"],
-        env=env, capture_output=True, check=True,
+        [
+            "softhsm2-util",
+            "--init-token",
+            "--slot",
+            "0",
+            "--label",
+            "ckr-temp",
+            "--so-pin",
+            "87654321",
+            "--pin",
+            "1234",
+        ],
+        env=env,
+        capture_output=True,
+        check=True,
     )
     return conf_path, "/usr/lib/softhsm/libsofthsm2.so", token_dir
 
@@ -43,7 +55,8 @@ def _create_temp_softhsm_token() -> tuple[str, str, str]:
 def _run_destructive(test_code: str) -> tuple[int, str, str]:
     """Run a destructive test against a temporary token."""
     conf, module, token_dir = _create_temp_softhsm_token()
-    script = textwrap.dedent(f"""\
+    script = (
+        textwrap.dedent(f"""\
         import os, ctypes
         os.environ["SOFTHSM2_CONF"] = "{conf}"
         from pkcs11_check.raw.api import RawPKCS11
@@ -59,16 +72,22 @@ def _run_destructive(test_code: str) -> tuple[int, str, str]:
         sl = (ctypes.c_ulong * sc.value)()
         raw.C_GetSlotList(1, sl, ctypes.byref(sc))
         slot = sl[0]
-    """) + textwrap.dedent(test_code) + "\nraw.C_Finalize(None)\n"
+    """)
+        + textwrap.dedent(test_code)
+        + "\nraw.C_Finalize(None)\n"
+    )
 
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
         env=os.environ.copy(),
     )
 
     # Cleanup temp token
     import shutil
+
     shutil.rmtree(token_dir, ignore_errors=True)
 
     return result.returncode, result.stdout.strip(), result.stderr.strip()

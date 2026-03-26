@@ -19,7 +19,8 @@ pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 def _run_raw(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
     pin_arg = repr(pin) if pin is not None else "None"
-    script = textwrap.dedent(f"""\
+    script = (
+        textwrap.dedent(f"""\
         import ctypes
         from ctypes import byref, cast
 
@@ -54,10 +55,15 @@ def _run_raw(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
         pin = {pin_arg}
         if pin is not None:
             login_user(raw, sh, 1, pin.encode())
-    """) + textwrap.dedent(code) + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
+    """)
+        + textwrap.dedent(code)
+        + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
         env=os.environ.copy(),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()

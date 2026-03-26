@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -65,7 +66,7 @@ def ec_p256_keypair(p11_raw_session: Any) -> Any:
     if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
         pytest.skip("EC key pair generation not supported")
     try:
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, "secp256r1")
+        pub, priv = gen_ec_keypair(rs.raw, rs.sh, encode_named_curve_parameters("secp256r1"))
     except AssertionError as e:
         pytest.skip(f"Cannot generate EC P-256 keypair: {e}")
     yield pub, priv, rs

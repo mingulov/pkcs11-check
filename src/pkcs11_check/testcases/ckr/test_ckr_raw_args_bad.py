@@ -59,10 +59,16 @@ if pin is not None:
 
 def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
     pin_arg = repr(pin) if pin is not None else "None"
-    script = _PREAMBLE.format(module=module, pin_arg=pin_arg) + textwrap.indent(textwrap.dedent(code), "    ") + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
+    script = (
+        _PREAMBLE.format(module=module, pin_arg=pin_arg)
+        + textwrap.indent(textwrap.dedent(code), "    ")
+        + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
         env=os.environ.copy(),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
@@ -80,7 +86,10 @@ class TestArgsBadNullPointers:
 
     def test_encrypt_init_null_mechanism(self, p11_config: Any) -> None:
         """C_EncryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
-        rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
 attrs = template(
     attr_ulong(CKA_VALUE_LEN, 32),
     attr_bool(CKA_ENCRYPT, True),
@@ -95,12 +104,16 @@ rv = raw.C_EncryptInit(sh, null_pointer().pointer, int(key.value))
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
-""")
+""",
+        )
         _assert_ok(rc, out, err, "C_EncryptInit(NULL mech)")
 
     def test_decrypt_init_null_mechanism(self, p11_config: Any) -> None:
         """C_DecryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
-        rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
 attrs = template(
     attr_ulong(CKA_VALUE_LEN, 32),
     attr_bool(CKA_DECRYPT, True),
@@ -114,69 +127,94 @@ rv = raw.C_DecryptInit(sh, null_pointer().pointer, int(key.value))
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
-""")
+""",
+        )
         _assert_ok(rc, out, err, "C_DecryptInit(NULL mech)")
 
     def test_sign_init_null_mechanism(self, p11_config: Any) -> None:
         """C_SignInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
-        rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
 rv = raw.C_SignInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
-""")
+""",
+        )
         _assert_ok(rc, out, err, "C_SignInit(NULL mech)")
 
     def test_verify_init_null_mechanism(self, p11_config: Any) -> None:
         """C_VerifyInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
-        rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
 rv = raw.C_VerifyInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
-""")
+""",
+        )
         _assert_ok(rc, out, err, "C_VerifyInit(NULL mech)")
 
     def test_digest_init_null_mechanism(self, p11_config: Any) -> None:
         """C_DigestInit(session, NULL) -> CKR_ARGUMENTS_BAD."""
-        rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
 rv = raw.C_DigestInit(sh, null_pointer().pointer)
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
-""")
+""",
+        )
         _assert_ok(rc, out, err, "C_DigestInit(NULL mech)")
 
     def test_generate_key_null_mechanism(self, p11_config: Any) -> None:
         """C_GenerateKey(session, NULL, ...) -> CKR_ARGUMENTS_BAD."""
-        rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
 key = ctypes.c_ulong(0)
 rv = raw.C_GenerateKey(sh, null_pointer().pointer, None, 0, ctypes.byref(key))
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
 print("OK")
-""")
+""",
+        )
         _assert_ok(rc, out, err, "C_GenerateKey(NULL mech)")
 
     def test_wrap_key_null_mechanism(self, p11_config: Any) -> None:
         """C_WrapKey(session, NULL, ...) -> CKR_ARGUMENTS_BAD."""
-        rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
 out_len = ctypes.c_ulong(256)
 rv = raw.C_WrapKey(sh, null_pointer().pointer, 0, 0, None, ctypes.byref(out_len))
 print(f"CKR:0x{rv:08x}")
 # ARGUMENTS_BAD or KEY_HANDLE_INVALID - both acceptable for NULL mechanism
 assert rv in (CKR_ARGUMENTS_BAD, 0x60, 0x70), f"Got 0x{rv:08x}"
 print("OK")
-""")
+""",
+        )
         _assert_ok(rc, out, err, "C_WrapKey(NULL mech)")
 
     def test_derive_key_null_mechanism(self, p11_config: Any) -> None:
         """C_DeriveKey(session, NULL, ...) -> CKR_ARGUMENTS_BAD."""
-        rc, out, err = _run(str(p11_config.module), p11_config.pin.get_secret_value() if p11_config.pin else None, """\
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
 key = ctypes.c_ulong(0)
 rv = raw.C_DeriveKey(sh, null_pointer().pointer, 0, None, 0, ctypes.byref(key))
 print(f"CKR:0x{rv:08x}")
 assert rv in (CKR_ARGUMENTS_BAD, 0x60, 0x70), f"Got 0x{rv:08x}"
 print("OK")
-""")
+""",
+        )
         _assert_ok(rc, out, err, "C_DeriveKey(NULL mech)")
