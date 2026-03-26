@@ -22,8 +22,14 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.bootstrap import close_session_quietly
-from pkcs11_check.raw.bootstrap import open_session as raw_open_session
+from pkcs11_check.raw.bootstrap import (
+    close_session_quietly,
+    login_user_with_name,
+    logout_quietly,
+)
+from pkcs11_check.raw.bootstrap import (
+    open_session as raw_open_session,
+)
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
@@ -681,3 +687,32 @@ class TestSessionCancel:
             f"Expected session to accept new DigestInit after C_SessionCancel, "
             f"got: {stdout!r}\nstderr: {stderr!r}"
         )
+
+
+class TestLoginUserWithNameRecipe:
+    """Tests exercising the login_user_with_name() bootstrap recipe."""
+
+    def test_login_user_with_name_empty_username(self, p11_raw_session: Any) -> None:
+        """login_user_with_name with empty username behaves like C_Login."""
+        rs = p11_raw_session
+        if not hasattr(rs.raw, "C_LoginUser"):
+            pytest.skip("C_LoginUser not available (v2.40 module)")
+        login_user_with_name(rs.raw, rs.sh, CKU_USER, rs.config.pin or b"")
+        logout_quietly(rs.raw, rs.sh)
+
+    def test_login_user_with_name_nonempty_username(self, p11_raw_session: Any) -> None:
+        """login_user_with_name with non-empty username.
+
+        Most current PKCS#11 providers ignore the username field.
+        This test is future-ready for modules that support named users.
+        """
+        rs = p11_raw_session
+        if not hasattr(rs.raw, "C_LoginUser"):
+            pytest.skip("C_LoginUser not available (v2.40 module)")
+        try:
+            login_user_with_name(
+                rs.raw, rs.sh, CKU_USER, rs.config.pin or b"", username=b"testuser"
+            )
+            logout_quietly(rs.raw, rs.sh)
+        except AssertionError:
+            pytest.xfail("Module does not support non-empty username for C_LoginUser")

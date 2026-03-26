@@ -21,6 +21,7 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_aes_key,
     gen_rsa_keypair,
+    get_mechanism_info,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -36,7 +37,6 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
-    CKR_OK,
 )
 
 pytestmark = pytest.mark.sign
@@ -67,14 +67,10 @@ class TestCMSSig:
         if not rs.has_mechanism("CMS_SIG"):
             pytest.skip("CKM_CMS_SIG not supported")
 
-        from ctypes import byref
-
-        from pkcs11_check.raw.types_std import CK_MECHANISM_INFO
-
-        info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, CKM_CMS_SIG, byref(info))
-        if rv == CKR_OK:
-            assert info is not None
+        try:
+            get_mechanism_info(rs.raw, rs.slot_id, CKM_CMS_SIG)
+        except AssertionError:
+            pass  # mechanism not available
 
     def test_cms_sig_requires_rsa_key(self, p11_raw_session: Any) -> None:
         """CKM_CMS_SIG sign attempt with RSA key and no params is expected to fail cleanly.

@@ -24,11 +24,10 @@ from pkcs11_check.raw.pack import (
     mech_simple,
     template,
 )
-from pkcs11_check.raw.recipes import gen_aes_key
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.recipes import gen_aes_key, get_session_info
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
-    CK_SESSION_INFO,
     CKA_CLASS,
     CKA_KEY_TYPE,
     CKA_TOKEN,
@@ -38,7 +37,6 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKM_AES_KEY_GEN,
     CKO_SECRET_KEY,
-    CKR_OK,
     CKR_SESSION_READ_ONLY,
     CKR_SESSION_READ_ONLY_EXISTS,
     CKR_USER_NOT_LOGGED_IN,
@@ -61,10 +59,7 @@ class TestSessionInfo:
         if pin_bytes is not None:
             login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
         try:
-            info = CK_SESSION_INFO()
-            rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
-            expect_rv(rv, CKR_OK)
-            is_rw = bool(info.flags & CKF_RW_SESSION)
+            is_rw = bool(get_session_info(rs.raw, test_sh)["flags"] & CKF_RW_SESSION)
             assert is_rw is True
         finally:
             close_session_quietly(rs.raw, test_sh)
@@ -78,10 +73,7 @@ class TestSessionInfo:
         if pin_bytes is not None:
             login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
         try:
-            info = CK_SESSION_INFO()
-            rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
-            expect_rv(rv, CKR_OK)
-            is_rw = bool(info.flags & CKF_RW_SESSION)
+            is_rw = bool(get_session_info(rs.raw, test_sh)["flags"] & CKF_RW_SESSION)
             assert is_rw is False
         finally:
             close_session_quietly(rs.raw, test_sh)

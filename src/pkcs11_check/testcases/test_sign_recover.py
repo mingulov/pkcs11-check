@@ -32,6 +32,13 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    gen_rsa_keypair,
+    sign_recover_single,
+    verify_recover_single,
+)
+from pkcs11_check.raw.types_std import CKM_RSA_X_509
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
 
@@ -460,3 +467,50 @@ def _has_rsa_x509(p11_module: Any) -> bool:
         return "RSA_X_509" in mechs
     except Exception:
         return False
+
+
+class TestSignRecoverRecipes:
+    """In-process tests exercising sign_recover_single / verify_recover_single recipes."""
+
+    @staticmethod
+    def _gen_recover_key(rs: Any) -> tuple[int, int]:
+        if not rs.has_mechanism("RSA_X_509"):
+            pytest.skip("CKM_RSA_X_509 not supported")
+        return gen_rsa_keypair(rs.raw, rs.sh, 2048)
+
+    def test_sign_recover_single_returns_signature(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        pub, priv = self._gen_recover_key(rs)
+        try:
+            data = b"\x00" + b"\xff" * 254
+            sig = sign_recover_single(rs.raw, rs.sh, priv, CKM_RSA_X_509, data)
+            assert isinstance(sig, bytes)
+            assert len(sig) == 256
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_verify_recover_round_trip(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        pub, priv = self._gen_recover_key(rs)
+        try:
+            data = b"\x00" + b"\xff" * 254
+            sig = sign_recover_single(rs.raw, rs.sh, priv, CKM_RSA_X_509, data)
+            valid, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, sig)
+            assert valid is True
+            assert recovered == data
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_verify_recover_invalid_signature(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        pub, priv = self._gen_recover_key(rs)
+        try:
+            bad_sig = b"\x00" * 256
+            valid, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, bad_sig)
+            assert valid is False
+            assert recovered == b""
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)

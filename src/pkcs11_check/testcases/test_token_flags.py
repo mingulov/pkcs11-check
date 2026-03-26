@@ -12,10 +12,9 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.bootstrap import get_slot_ids
-from pkcs11_check.raw.recipes import generate_random
+from pkcs11_check.raw.recipes import generate_random, get_slot_info
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
-    CK_SLOT_INFO,
     CK_TOKEN_INFO,
     CKF_TOKEN_INITIALIZED,
     CKF_TOKEN_PRESENT,
@@ -153,41 +152,33 @@ class TestSlotInfo:
         """All slots should have readable info."""
         rs = p11_raw_session
         for slot_id in get_slot_ids(rs.raw, token_present=True):
-            info = CK_SLOT_INFO()
-            rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            expect_rv(rv, CKR_OK)
+            get_slot_info(rs.raw, slot_id)
 
     def test_slot_has_token_present_flag(self, p11_raw_session: Any) -> None:
         """Slots from get_slot_ids(token_present=True) must have CKF_TOKEN_PRESENT set."""
         rs = p11_raw_session
         for slot_id in get_slot_ids(rs.raw, token_present=True):
-            info = CK_SLOT_INFO()
-            rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            expect_rv(rv, CKR_OK)
-            assert info.flags & CKF_TOKEN_PRESENT, (
+            info = get_slot_info(rs.raw, slot_id)
+            assert info["flags"] & CKF_TOKEN_PRESENT, (
                 f"Slot {slot_id} returned by token_present=True must have "
-                f"CKF_TOKEN_PRESENT; flags=0x{info.flags:08x}"
+                f"CKF_TOKEN_PRESENT; flags=0x{info['flags']:08x}"
             )
 
     def test_slot_hardware_version_is_valid(self, p11_raw_session: Any) -> None:
         """CK_SLOT_INFO.hardwareVersion must have valid major/minor."""
         rs = p11_raw_session
         for slot_id in get_slot_ids(rs.raw, token_present=True):
-            info = CK_SLOT_INFO()
-            rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            expect_rv(rv, CKR_OK)
-            assert info.hardwareVersion.major >= 0
-            assert info.hardwareVersion.minor >= 0
+            info = get_slot_info(rs.raw, slot_id)
+            assert info["hardware_version"][0] >= 0
+            assert info["hardware_version"][1] >= 0
 
     def test_slot_firmware_version_is_valid(self, p11_raw_session: Any) -> None:
         """CK_SLOT_INFO.firmwareVersion must have valid major/minor."""
         rs = p11_raw_session
         for slot_id in get_slot_ids(rs.raw, token_present=True):
-            info = CK_SLOT_INFO()
-            rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            expect_rv(rv, CKR_OK)
-            assert info.firmwareVersion.major >= 0
-            assert info.firmwareVersion.minor >= 0
+            info = get_slot_info(rs.raw, slot_id)
+            assert info["firmware_version"][0] >= 0
+            assert info["firmware_version"][1] >= 0
 
 
 class TestLibraryInfo:

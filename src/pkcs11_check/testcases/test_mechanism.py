@@ -2,20 +2,13 @@
 
 from __future__ import annotations
 
-from ctypes import byref
 from typing import Any
 
 import pytest
 
 from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
-from pkcs11_check.raw.recipes import get_mechanism_list
-from pkcs11_check.raw.rv import expect_rv
-from pkcs11_check.raw.types_std import (
-    CK_MECHANISM_INFO,
-    CKM_AES_CBC,
-    CKM_RSA_PKCS,
-    CKR_OK,
-)
+from pkcs11_check.raw.recipes import get_mechanism_info, get_mechanism_list
+from pkcs11_check.raw.types_std import CKM_AES_CBC, CKM_RSA_PKCS
 
 pytestmark = pytest.mark.mechflags
 
@@ -32,20 +25,16 @@ class TestMechanismInfo:
         mechanisms = get_mechanism_list(rs.raw, rs.slot_id)
         assert len(mechanisms) > 0
         for mech in mechanisms:
-            info = CK_MECHANISM_INFO()
-            rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mech, byref(info))
-            expect_rv(rv, CKR_OK)
-            assert info.ulMinKeySize >= 0
-            assert info.ulMaxKeySize >= info.ulMinKeySize
+            info = get_mechanism_info(rs.raw, rs.slot_id, mech)
+            assert info["min_key_size"] >= 0
+            assert info["max_key_size"] >= info["min_key_size"]
             break
 
     def test_all_mechanisms_have_info(self, p11_raw_session: Any) -> None:
         """Every reported mechanism returns valid info."""
         rs = p11_raw_session
         for mech in get_mechanism_list(rs.raw, rs.slot_id):
-            info = CK_MECHANISM_INFO()
-            rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mech, byref(info))
-            expect_rv(rv, CKR_OK)
+            get_mechanism_info(rs.raw, rs.slot_id, mech)
 
     def test_aes_key_sizes(self, p11_raw_session: Any) -> None:
         """AES mechanism reports correct key size range."""
@@ -53,11 +42,9 @@ class TestMechanismInfo:
         mechanisms = get_mechanism_list(rs.raw, rs.slot_id)
         if CKM_AES_CBC not in mechanisms:
             pytest.skip("AES_CBC not supported")
-        info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, CKM_AES_CBC, byref(info))
-        expect_rv(rv, CKR_OK)
-        assert info.ulMinKeySize <= 16  # 128 bits = 16 bytes
-        assert info.ulMaxKeySize >= 32  # 256 bits = 32 bytes
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_CBC)
+        assert info["min_key_size"] <= 16  # 128 bits = 16 bytes
+        assert info["max_key_size"] >= 32  # 256 bits = 32 bytes
 
     def test_rsa_key_sizes(self, p11_raw_session: Any) -> None:
         """RSA mechanism reports reasonable key size range."""
@@ -65,11 +52,9 @@ class TestMechanismInfo:
         mechanisms = get_mechanism_list(rs.raw, rs.slot_id)
         if CKM_RSA_PKCS not in mechanisms:
             pytest.skip("RSA_PKCS not supported")
-        info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, CKM_RSA_PKCS, byref(info))
-        expect_rv(rv, CKR_OK)
-        assert info.ulMinKeySize <= 2048
-        assert info.ulMaxKeySize >= 2048
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS)
+        assert info["min_key_size"] <= 2048
+        assert info["max_key_size"] >= 2048
 
 
 class TestMechanismCategories:

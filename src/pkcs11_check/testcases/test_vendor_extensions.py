@@ -11,9 +11,8 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.recipes import get_mechanism_list
+from pkcs11_check.raw.recipes import get_mechanism_info, get_mechanism_list
 from pkcs11_check.raw.types_std import (
-    CK_MECHANISM_INFO,
     CKM_AES_CBC,
     CKM_AES_ECB,
     CKM_AES_KEY_GEN,
@@ -58,10 +57,7 @@ class TestVendorMechanisms:
         mechs = get_mechanism_list(rs.raw, rs.slot_id)
 
         for mech in mechs[:10]:
-            info = CK_MECHANISM_INFO()
-            rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mech, byref(info))
-            # Any response is OK - just verify no crash
-            assert rv == CKR_OK or rv != CKR_OK
+            get_mechanism_info(rs.raw, rs.slot_id, mech)  # crash safety check
 
 
 class TestFIPSMode:

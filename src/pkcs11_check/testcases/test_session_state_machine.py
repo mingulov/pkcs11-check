@@ -31,10 +31,10 @@ from pkcs11_check.raw.recipes import (
     find_objects,
     gen_aes_key,
     generate_random,
+    get_session_info,
 )
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
-    CK_SESSION_INFO,
     CK_UTF8CHAR,
     CKA_CLASS,
     CKA_LABEL,
@@ -482,10 +482,7 @@ class TestSessionFlags:
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            info = CK_SESSION_INFO()
-            rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
-            expect_rv(rv, CKR_OK)
-            is_rw = bool(info.flags & CKF_RW_SESSION)
+            is_rw = bool(get_session_info(rs.raw, test_sh)["flags"] & CKF_RW_SESSION)
             assert is_rw is True
         finally:
             close_session_quietly(rs.raw, test_sh)
@@ -496,10 +493,7 @@ class TestSessionFlags:
         flags = CKF_SERIAL_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            info = CK_SESSION_INFO()
-            rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
-            expect_rv(rv, CKR_OK)
-            is_rw = bool(info.flags & CKF_RW_SESSION)
+            is_rw = bool(get_session_info(rs.raw, test_sh)["flags"] & CKF_RW_SESSION)
             assert is_rw is False
         finally:
             close_session_quietly(rs.raw, test_sh)
@@ -510,13 +504,9 @@ class TestSessionFlags:
         rw_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         try:
-            info_rw = CK_SESSION_INFO()
-            rs.raw.C_GetSessionInfo(rw_sh, byref(info_rw))
-            assert bool(info_rw.flags & CKF_RW_SESSION) is True
+            assert bool(get_session_info(rs.raw, rw_sh)["flags"] & CKF_RW_SESSION) is True
 
-            info_ro = CK_SESSION_INFO()
-            rs.raw.C_GetSessionInfo(ro_sh, byref(info_ro))
-            assert bool(info_ro.flags & CKF_RW_SESSION) is False
+            assert bool(get_session_info(rs.raw, ro_sh)["flags"] & CKF_RW_SESSION) is False
         finally:
             close_session_quietly(rs.raw, ro_sh)
             close_session_quietly(rs.raw, rw_sh)
@@ -528,9 +518,7 @@ class TestSessionFlags:
         sessions = [raw_open_session(rs.raw, rs.slot_id, flags) for _ in range(3)]
         try:
             for sh in sessions:
-                info = CK_SESSION_INFO()
-                rs.raw.C_GetSessionInfo(sh, byref(info))
-                assert bool(info.flags & CKF_RW_SESSION) is True
+                assert bool(get_session_info(rs.raw, sh)["flags"] & CKF_RW_SESSION) is True
         finally:
             for sh in sessions:
                 close_session_quietly(rs.raw, sh)
@@ -925,10 +913,7 @@ class TestSessionContextManager:
         rs = p11_raw_session
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
-        info = CK_SESSION_INFO()
-        rv = rs.raw.C_GetSessionInfo(test_sh, byref(info))
-        expect_rv(rv, CKR_OK)
-        assert bool(info.flags & CKF_RW_SESSION) is True
+        assert bool(get_session_info(rs.raw, test_sh)["flags"] & CKF_RW_SESSION) is True
         close_session_quietly(rs.raw, test_sh)
 
         # Session should be closed - operations should fail

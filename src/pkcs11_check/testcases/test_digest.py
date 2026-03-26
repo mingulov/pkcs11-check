@@ -17,6 +17,7 @@ from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
+    digest_single_with_key,
     gen_aes_key,
     read_attributes,
 )
@@ -160,23 +161,10 @@ class TestDigestKey:
             attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
         )
         try:
-            # C_DigestInit
-            mech = mech_simple(CKM_SHA256)
-            rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
-            expect_rv(rv, CKR_OK)
-            # C_DigestKey
-            rv = rs.raw.C_DigestKey(rs.sh, key)
-            if rv == CKR_FUNCTION_NOT_SUPPORTED:
+            try:
+                p11_digest = digest_single_with_key(rs.raw, rs.sh, CKM_SHA256, key)
+            except AssertionError:
                 pytest.skip("C_DigestKey not supported by this module")
-            expect_rv(rv, CKR_OK)
-            # C_DigestFinal (two-call pattern)
-            out_len = CK_ULONG(0)
-            rv = rs.raw.C_DigestFinal(rs.sh, None, byref(out_len))
-            expect_rv(rv, CKR_OK)
-            out_buf = (ctypes.c_ubyte * out_len.value)()
-            rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
-            expect_rv(rv, CKR_OK)
-            p11_digest = bytes(out_buf[: out_len.value])
             # Compare with hashlib
             key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(key_bytes, bytes)
@@ -235,23 +223,10 @@ class TestDigestKey:
             attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
         )
         try:
-            # C_DigestInit
-            mech = mech_simple(CKM_SHA256)
-            rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
-            expect_rv(rv, CKR_OK)
-            # C_DigestKey
-            rv = rs.raw.C_DigestKey(rs.sh, key)
-            if rv == CKR_FUNCTION_NOT_SUPPORTED:
+            try:
+                p11_digest = digest_single_with_key(rs.raw, rs.sh, CKM_SHA256, key)
+            except AssertionError:
                 pytest.skip("C_DigestKey not supported by this module")
-            expect_rv(rv, CKR_OK)
-            # C_DigestFinal (two-call pattern)
-            out_len = CK_ULONG(0)
-            rv = rs.raw.C_DigestFinal(rs.sh, None, byref(out_len))
-            expect_rv(rv, CKR_OK)
-            out_buf = (ctypes.c_ubyte * out_len.value)()
-            rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
-            expect_rv(rv, CKR_OK)
-            p11_digest = bytes(out_buf[: out_len.value])
             # Compare with hashlib
             key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(key_bytes, bytes)

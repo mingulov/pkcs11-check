@@ -20,10 +20,11 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     gen_rsa_keypair,
     generate_random,
+    get_mechanism_info,
     get_mechanism_list,
+    get_slot_info,
 )
 from pkcs11_check.raw.types_std import (
-    CK_MECHANISM_INFO,
     CKM_AES_ECB,
     CKM_AES_KEY_GEN,
     CKM_SHA224,
@@ -56,9 +57,7 @@ class TestHiddenMechanisms:
         rs = p11_raw_session
         mechanisms = get_mechanism_list(rs.raw, rs.slot_id)
         for mech in mechanisms:
-            info = CK_MECHANISM_INFO()
-            rv = rs.raw.C_GetMechanismInfo(rs.slot_id, mech, byref(info))
-            assert rv == CKR_OK, f"Mechanism {_mech_name(mech)} has no info"
+            get_mechanism_info(rs.raw, rs.slot_id, mech)
 
     def test_mechanism_count_reasonable(self, p11_raw_session: Any) -> None:
         """Module should report a reasonable number of mechanisms."""
@@ -95,15 +94,12 @@ class TestSlotConsistency:
     def test_all_slots_have_info(self, p11_raw_session: Any) -> None:
         """Every slot should return valid slot info."""
         from pkcs11_check.raw.bootstrap import get_slot_ids
-        from pkcs11_check.raw.types_std import CK_SLOT_INFO
 
         rs = p11_raw_session
         slots = get_slot_ids(rs.raw, token_present=False)
         assert len(slots) > 0
         for slot_id in slots:
-            info = CK_SLOT_INFO()
-            rv = rs.raw.C_GetSlotInfo(slot_id, byref(info))
-            assert rv == CKR_OK
+            get_slot_info(rs.raw, slot_id)
 
     def test_token_present_slots_have_token(
         self,
@@ -221,12 +217,7 @@ class TestMechanismFlagsConsistency:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("AES_ECB not supported")
 
-        info = CK_MECHANISM_INFO()
-        rs.raw.C_GetMechanismInfo(
-            rs.slot_id,
-            CKM_AES_ECB,
-            byref(info),
-        )
+        get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_ECB)
 
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
@@ -250,22 +241,18 @@ class TestMechanismFlagsConsistency:
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES_KEY_GEN not supported")
 
-        info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(
-            rs.slot_id,
-            CKM_AES_KEY_GEN,
-            byref(info),
-        )
-        if rv != CKR_OK:
+        try:
+            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
+        except AssertionError:
             pytest.skip("Cannot get AES_KEY_GEN mechanism info")
 
-        if info.ulMinKeySize > 0:
-            key = gen_aes_key(rs.raw, rs.sh, int(info.ulMinKeySize) * 8)
+        if info["min_key_size"] > 0:
+            key = gen_aes_key(rs.raw, rs.sh, int(info["min_key_size"]) * 8)
             assert key != 0
             destroy_quietly(rs.raw, rs.sh, key)
 
-        if info.ulMaxKeySize >= 32:
-            bits = min(int(info.ulMaxKeySize) * 8, 256)
+        if info["max_key_size"] >= 32:
+            bits = min(int(info["max_key_size"]) * 8, 256)
             key = gen_aes_key(rs.raw, rs.sh, bits)
             assert key != 0
             destroy_quietly(rs.raw, rs.sh, key)
@@ -282,16 +269,12 @@ class TestMechanismLimitProbing:
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES_KEY_GEN not supported")
 
-        info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(
-            rs.slot_id,
-            CKM_AES_KEY_GEN,
-            byref(info),
-        )
-        if rv != CKR_OK:
+        try:
+            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
+        except AssertionError:
             pytest.skip("Cannot get AES_KEY_GEN info")
 
-        oversize = (int(info.ulMaxKeySize) + 8) * 8
+        oversize = (int(info["max_key_size"]) + 8) * 8
         try:
             key = gen_aes_key(rs.raw, rs.sh, oversize)
             note(
@@ -312,20 +295,16 @@ class TestMechanismLimitProbing:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
 
-        info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(
-            rs.slot_id,
-            CKM_RSA_PKCS_KEY_PAIR_GEN,
-            byref(info),
-        )
-        if rv != CKR_OK:
+        try:
+            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
+        except AssertionError:
             pytest.skip("Cannot get RSA key info")
 
-        if int(info.ulMinKeySize) == 0:
+        if int(info["min_key_size"]) == 0:
             pytest.skip("No minimum key length reported")
 
-        undersize = max(int(info.ulMinKeySize) - 256, 512)
-        if undersize >= int(info.ulMinKeySize):
+        undersize = max(int(info["min_key_size"]) - 256, 512)
+        if undersize >= int(info["min_key_size"]):
             pytest.skip("Cannot test below minimum (already at 512)")
 
         try:
@@ -411,16 +390,12 @@ class TestMechanismLimitProbing:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
 
-        info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(
-            rs.slot_id,
-            CKM_RSA_PKCS_KEY_PAIR_GEN,
-            byref(info),
-        )
-        if rv != CKR_OK:
+        try:
+            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
+        except AssertionError:
             pytest.skip("Cannot get RSA info")
 
-        oversize = int(info.ulMaxKeySize) + 1024
+        oversize = int(info["max_key_size"]) + 1024
         try:
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, oversize)
             from pkcs11_check.compliance import ComplianceLevel, note
