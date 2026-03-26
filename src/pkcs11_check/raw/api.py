@@ -73,6 +73,16 @@ class RawPKCS11:
     def available_function_names(self) -> set[str]:
         return set(self._funcs)
 
+    @property
+    def interface_version(self) -> str:
+        """Detect negotiated PKCS#11 interface version."""
+        names = self.available_function_names()
+        if "C_EncapsulateKey" in names:
+            return "3.2"
+        if "C_GetInterface" in names:
+            return "3.0"  # 3.0 and 3.1 share the same function set
+        return "2.40"
+
     def _load_functions_from_ptr(self, ptr: int, names: tuple[str, ...]) -> None:
         for name in names:
             offset = _VERSION_SIZE + (metadata_std.FUNCTION_INDICES[name] * _PTR_SIZE)
