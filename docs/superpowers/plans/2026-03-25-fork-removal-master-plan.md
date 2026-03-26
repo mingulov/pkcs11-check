@@ -3,12 +3,11 @@
 **Goal:** Remove dependency on python-pkcs11 fork. Replace with pkcs11_check.raw
 for all PKCS#11 access. Audit and fix test quality along the way.
 
-**Current state (2026-03-25):**
-- 188 test files import from python-pkcs11 fork (`pkcs11.*`)
-- 19 test files already use `pkcs11_check.raw`
-- 344 xfails, 1050 skips, 390 `except PKCS11Error: pass` patterns
-- pkcs11_check.raw has typed constants, pack/fault/inspect, bootstrap, recipes
-- Missing: session helpers, mechanism param packers, attribute helpers
+**Current state (2026-03-26):**
+- ALL 171 test files migrated to pkcs11_check.raw (zero fork imports in testcases/)
+- Raw layer complete: 45+ recipes, 25+ mechanism packers, DER/EC/bootstrap helpers
+- python-pkcs11 submodule still present but unused by test code
+- Next: remove submodule, then audit test quality on clean codebase
 
 **References (CLAUDE.md has project rules, structure, commands):**
 - `src/pkcs11_check/raw/README.md` - raw package contract
@@ -22,11 +21,11 @@ Raw C_* returns plain int. expect_rv() for recipes (AssertionError).
 
 **Sub-projects (execute in order, each in a fresh session):**
 
-1. **Raw Layer Completion** - builds missing infrastructure
-2. **Test Migration (batch 1)** - simple tests first
-3. **Test Migration (batch 2)** - complex tests
-4. **Test Quality Audit** - audit on clean raw-based tests (after fork workarounds are gone)
-5. **Fork Removal** - final cleanup
+1. **Raw Layer Completion** - builds missing infrastructure — DONE
+2. **Test Migration (batch 1)** - simple tests first — DONE
+3. **Test Migration (batch 2)** - complex tests — DONE (171 files, 34 commits)
+4. **Fork Removal** - remove submodule, clean build/docs (reordered: before audit)
+5. **Test Quality Audit** - audit on clean codebase with zero fork dependency
 
 ---
 
@@ -239,31 +238,32 @@ grep -rn "python-pkcs11" should return nothing except git history.
 ## Dependency Graph
 
 ```
-Sub-project 1 (Raw Layer Completion)
+Sub-project 1 (Raw Layer Completion)         ✅ DONE
          |
          v (provides infrastructure)
-Sub-project 2 (Migration Batch 1)
+Sub-project 2 (Migration Batch 1)            ✅ DONE
          |
          v
-Sub-project 3 (Migration Batch 2)
+Sub-project 3 (Migration Batch 2)            ✅ DONE (171 files)
          |
-         v (fork workarounds gone, tests use raw directly)
-Sub-project 4 (Test Quality Audit)
+         v (all tests use raw, fork unused)
+Sub-project 4 (Fork Removal)                 ← NEXT
          |
-         v
-Sub-project 5 (Fork Removal)
+         v (clean codebase, no fork artifacts)
+Sub-project 5 (Test Quality Audit)
 ```
 
 Sequential: each depends on the previous.
-Test quality audit runs AFTER migration so it sees real test logic
-without fork workarounds (template injection, method stripping, etc.).
+Fork removal runs before quality audit so the audit sees a clean
+codebase without fork artifacts (submodule, dead imports, stale docs).
+Quality audit then runs on the final clean state.
 
 ## Progress Tracking
 
 After each sub-project, update this section:
 
-- [ ] Sub-project 1: Raw Layer Completion
+- [x] Sub-project 1: Raw Layer Completion (2026-03-25: all recipes, packers, helpers)
 - [x] Sub-project 2: Test Migration Batch 1 (2026-03-25: 10 files, 107 tests, 0 fork imports)
-- [ ] Sub-project 3: Test Migration Batch 2
-- [ ] Sub-project 4: Test Quality Audit
-- [ ] Sub-project 5: Fork Removal
+- [x] Sub-project 3: Test Migration Batch 2 (2026-03-26: 171 files, 34 commits, 0 fork imports)
+- [ ] Sub-project 4: Fork Removal
+- [ ] Sub-project 5: Test Quality Audit

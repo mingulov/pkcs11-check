@@ -1,3 +1,5 @@
+> **Archived 2026-03-26:** The python-pkcs11 fork has been removed. pkcs11_check.raw is now the sole PKCS#11 access layer. This document describes the fork's changes for historical reference.
+
 # python-pkcs11 Fork — Changes and Upstream Plan
 
 Fork: `github.com/mingulov/python-pkcs11` (git submodule at `python-pkcs11/`)

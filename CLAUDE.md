@@ -12,7 +12,7 @@ CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pyte
 - **Testing:** pytest (meta-tests in `tests/`, product test cases in `src/pkcs11_check/testcases/`)
 - **Linting:** ruff
 - **Type checking:** mypy --strict
-- **PKCS#11 binding:** python-pkcs11 fork (git submodule at `python-pkcs11/`)
+- **PKCS#11 binding:** pkcs11_check.raw (pure ctypes, no C compilation)
 
 ## Commands
 
@@ -63,19 +63,19 @@ docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 - `testcases/conftest.py` — shared helpers: mech_name(), import_aes_key(), has_mechanism(), extract_ec_point(), open_session()
 - `testcases/ckr/` — CKR error coverage tests (102 tests, 21 files). Use `--ckr-strict` for exact spec compliance. Spec: `docs/superpowers/specs/2026-03-18-ckr-error-coverage-design.md`
 - `testcases/ckr/_ckr_spec.py` — CkrExpectation dataclass, assert_ckr() helper, spec tables
-- `testcases/ckr/_ctypes_raw.py` — raw ctypes PKCS#11 caller for NULL parameter tests (legacy, prefer `pkcs11.raw.RawPKCS11`)
+- `testcases/ckr/_ctypes_raw.py` — raw ctypes PKCS#11 caller for NULL parameter tests (legacy, prefer `pkcs11_check.raw.api.RawPKCS11`)
 
-### Raw PKCS#11 access (pkcs11.raw.RawPKCS11)
-For tests that need to bypass python-pkcs11's safety checks (NULL pointers, invalid handles, state corruption, wrapper-blocked CKR conditions), use `RawPKCS11` from the fork — pure Python ctypes, no C compilation needed.
+### Raw PKCS#11 access (pkcs11_check.raw.api.RawPKCS11)
+For tests that need to bypass the high-level binding's safety checks (NULL pointers, invalid handles, state corruption, wrapper-blocked CKR conditions), use `RawPKCS11` from `pkcs11_check.raw` — pure Python ctypes, no C compilation needed.
 
 ```python
-# In-process (shares session with python-pkcs11):
-from pkcs11.raw import RawPKCS11
-raw = RawPKCS11(lib._raw_funclist_ptr)  # lib is pkcs11.lib() return
+# In-process (shares session with the module):
+from pkcs11_check.raw.api import RawPKCS11
+raw = RawPKCS11.from_lib("/path/to/module.so")
 rv = raw.C_GetTokenInfo(slot_id, byref(token_info))
 
 # Standalone (subprocess, for crash-safe NULL tests):
-from pkcs11.raw import RawPKCS11
+from pkcs11_check.raw.api import RawPKCS11
 raw = RawPKCS11.from_lib("/path/to/module.so")
 raw.C_Initialize()
 rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
@@ -140,7 +140,7 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 - When finishing a branch: `git checkout dev && git merge <branch>` — NEVER `git checkout main`
 
 ### Key design decisions
-- python-pkcs11 fork as git submodule with v3.0/3.1/3.2 interface negotiation, PQC mechanisms, 50+ new enums, specific CKR exception classes for ALL standard error codes
+- `pkcs11_check.raw` is the sole PKCS#11 access layer: pure ctypes, v2.40/v3.0/v3.1/v3.2 interface negotiation, PQC mechanisms, generated type/metadata from vendored PKCS#11 headers
 - `pkcs11-check test` defaults to `--isolation auto`; explicit `--isolation none` is the unsafe fast path
 - `p11_session` fixture does explicit `login()` / `logout()` per test to avoid `UserAlreadyLoggedIn` cascading
 - Tests auto-skip when interface version doesn't support them (@pytest.mark.requires_v30)
@@ -159,16 +159,21 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 - Unacceptable skips: module segfaults on certain inputs, module returns wrong error code, module hangs on specific operation.
 
 ### Error handling — CRITICAL
-- **NEVER use generic `except PKCS11Error: pass`** — this hides real bugs. Every catch must list SPECIFIC acceptable CKR codes for that operation.
-- Use predefined error tuples for common patterns:
+- **NEVER use a bare `except Exception: pass` or catch-all CKR check** — this hides real bugs. Every CKR check must list SPECIFIC acceptable return codes for that operation.
+- Use predefined CKR tuples for common patterns:
   ```python
-  _TEMPLATE_ERRORS = (AttributeTypeInvalid, AttributeValueInvalid,
-                      TemplateIncomplete, TemplateInconsistent, ArgumentsBad)
-  _KEY_SIZE_ERRORS = (AttributeValueInvalid, KeySizeRange, MechanismInvalid,
-                      ArgumentsBad, TemplateIncomplete)
+  from pkcs11_check.raw.types_std import (
+      CKR_TEMPLATE_INCOMPLETE, CKR_TEMPLATE_INCONSISTENT,
+      CKR_ATTRIBUTE_VALUE_INVALID, CKR_MECHANISM_INVALID,
+      CKR_KEY_SIZE_RANGE, CKR_ARGUMENTS_BAD,
+  )
+  _TEMPLATE_ERRORS = (CKR_TEMPLATE_INCOMPLETE, CKR_TEMPLATE_INCONSISTENT,
+                      CKR_ATTRIBUTE_VALUE_INVALID, CKR_ARGUMENTS_BAD)
+  _KEY_SIZE_ERRORS = (CKR_ATTRIBUTE_VALUE_INVALID, CKR_KEY_SIZE_RANGE,
+                      CKR_MECHANISM_INVALID, CKR_ARGUMENTS_BAD, CKR_TEMPLATE_INCOMPLETE)
   ```
-- If a module returns an unexpected error (e.g., `DeviceError` for a bad template), the test should FAIL — exposing the module bug.
-- `UserAlreadyLoggedIn` handling: catch only `UserAlreadyLoggedIn` (standard) and `UserTypeInvalid` (NSS quirk). Never catch broad `PKCS11Error` for login failures.
+- If a module returns an unexpected CKR (e.g., `CKR_DEVICE_ERROR` for a bad template), the test should FAIL — exposing the module bug.
+- Login error handling: check specifically for `CKR_USER_ALREADY_LOGGED_IN` (standard) and `CKR_USER_TYPE_INVALID` (NSS quirk). Never accept all non-zero CKR values for login failures.
 
 ### PIN handling
 - PIN values are never logged, printed, or included in error messages
@@ -205,8 +210,11 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 from __future__ import annotations
 from typing import Any
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism, ObjectClass
-from pkcs11.exceptions import MechanismInvalid, FunctionFailed
+from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.types_std import (
+    CKM_AES_KEY_GEN, CKM_AES_CTR, CKA_ENCRYPT, CKA_DECRYPT, CKA_TOKEN,
+    CKK_AES, CKR_OK,
+)
 from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = [pytest.mark.encrypt]  # assign relevant marker
@@ -215,17 +223,9 @@ class TestExample:
     def test_roundtrip(self, p11_session: Any, p11_module: Any) -> None:
         if not has_mechanism(p11_module, "AES_CTR"):
             pytest.skip("CKM_AES_CTR not supported")
-        key = p11_session.generate_key(
-            KeyType.AES, 256,
-            mechanism=Mechanism.AES_KEY_GEN,
-            template={Attribute.ENCRYPT: True, Attribute.DECRYPT: True, Attribute.TOKEN: False},
-        )
-        try:
-            ct = key.encrypt(b"test data here!", mechanism=Mechanism.AES_CTR, mechanism_param=params)
-            pt = key.decrypt(ct, mechanism=Mechanism.AES_CTR, mechanism_param=params)
-            assert pt == b"test data here!"
-        finally:
-            key.destroy()
+        raw: RawPKCS11 = p11_session  # p11_session exposes RawPKCS11 interface
+        # generate key, encrypt, decrypt using raw CKR-returning calls
+        # assert rv == CKR_OK at each step; unexpected CKR values fail the test
 ```
 
 ### Key fixtures (all session-scoped unless noted)
@@ -277,7 +277,7 @@ The OASIS PKCS#11 spec is available in Markdown format:
 - `docs/gap-analysis-oasis-spec.md` — OASIS spec compliance gap analysis (mechanisms, functions, objects, attributes)
 - `docs/test-coverage.md` — Test coverage summary
 - `docs/test-coverage-generated.md` — Auto-generated from `scripts/generate-coverage-report.py`
-- `docs/python-pkcs11-fork.md` — Fork changes and upstream PR plan
+- `docs/archive/python-pkcs11-fork.md` — Historical: python-pkcs11 fork changes (archived after fork removal)
 - `docs/docker-artifacts.md` — Standard Docker test runner, artifacts, and wrapper usage
 - `docs/superpowers/specs/` — Design specs (vendor extensions, CKR coverage, comprehensive testing)
 - `docs/superpowers/specs/2026-03-20-vendor-extension-system-design.md` — Vendor mechanism support (IBM first)
