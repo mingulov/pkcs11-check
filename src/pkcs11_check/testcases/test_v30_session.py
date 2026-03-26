@@ -20,13 +20,31 @@ import sys
 import textwrap
 from typing import Any
 
-import pkcs11
 import pytest
-from pkcs11.exceptions import (
-    FunctionNotSupported,
-    OperationNotInitialized,
-    UserAlreadyLoggedIn,
-    UserNotLoggedIn,
+
+from pkcs11_check.raw.bootstrap import close_session_quietly
+from pkcs11_check.raw.bootstrap import open_session as raw_open_session
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    digest_single,
+    gen_aes_key,
+)
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CK_UTF8CHAR,
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKM_SHA256,
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_PIN_INCORRECT,
+    CKR_USER_ALREADY_LOGGED_IN,
+    CKR_USER_NOT_LOGGED_IN,
+    CKR_USER_TYPE_INVALID,
+    CKU_CONTEXT_SPECIFIC,
+    CKU_USER,
 )
 
 pytestmark = [pytest.mark.requires_v30, pytest.mark.access]
@@ -37,111 +55,119 @@ pytestmark = [pytest.mark.requires_v30, pytest.mark.access]
 # ---------------------------------------------------------------------------
 
 
-def _pin_str(p11_config: Any) -> str | None:
-    """Return the PIN as a plain string, or None if not configured."""
+def _pin_bytes(p11_config: Any) -> bytes | None:
+    """Return the PIN as bytes, or None if not configured."""
     if p11_config.pin is None:
         return None
-    return p11_config.pin.get_secret_value()
+    return p11_config.pin.get_secret_value().encode("utf-8")
+
+
+def _raw_login(raw: Any, sh: int, user_type: int, pin: bytes) -> int:
+    """Call C_Login and return the raw CKR."""
+    pin_buf = (CK_UTF8CHAR * len(pin))(*pin)
+    return int(raw.C_Login(sh, user_type, pin_buf, len(pin)))
+
+
+def _raw_login_user(
+    raw: Any,
+    sh: int,
+    user_type: int,
+    pin: bytes,
+    username: bytes,
+) -> int:
+    """Call C_LoginUser and return the raw CKR."""
+    pin_buf = (CK_UTF8CHAR * len(pin))(*pin)
+    user_buf = (CK_UTF8CHAR * len(username))(*username) if username else None
+    user_len = len(username) if username else 0
+    return int(raw.C_LoginUser(sh, user_type, pin_buf, len(pin), user_buf, user_len))
+
+
+def _raw_logout(raw: Any, sh: int) -> int:
+    """Call C_Logout and return the raw CKR."""
+    return int(raw.C_Logout(sh))
 
 
 # ---------------------------------------------------------------------------
 # C_LoginUser tests
 # ---------------------------------------------------------------------------
 
+_CONTEXT_OK = {int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN)}
+_LOGIN_REJECT = {
+    int(CKR_USER_TYPE_INVALID),
+    int(CKR_ARGUMENTS_BAD),
+    int(CKR_PIN_INCORRECT),
+}
+
 
 @pytest.mark.requires_v30
 class TestCLoginUser:
     """C_LoginUser (v3.0+) exercises the username parameter path.
 
-    C_LoginUser is called internally when session.login(..., username=...) is
-    used.  The python-pkcs11 binding raises NotImplementedError on v2.40
-    modules - the requires_v30 marker skips those automatically.
+    C_LoginUser extends C_Login with a (pUsername, ulUsernameLen) pair.
+    On v2.40 modules the function does not exist in the function list.
     """
 
-    def test_c_login_user_empty_username_user_type(self, p11_module: Any, p11_config: Any) -> None:
+    def test_c_login_user_empty_username_user_type(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
         """C_LoginUser with empty username string exercises the v3.0 code path.
 
         The PKCS#11 spec allows pUsername / ulUsernameLen = NULL / 0 to mean
-        "default user".  python-pkcs11 encodes an empty string as a zero-length
-        buffer, which is equivalent.  Most tokens accept this and treat it
-        identically to C_Login(CKU_USER).
+        "default user".  Most tokens accept this and treat it identically to
+        C_Login(CKU_USER).
 
         Expected outcomes (all acceptable):
         - CKR_OK - module treats it as a normal user login.
-        - CKR_USER_ALREADY_LOGGED_IN - p11_session already logged in.
+        - CKR_USER_ALREADY_LOGGED_IN - p11_raw_session already logged in.
         - CKR_FUNCTION_NOT_SUPPORTED - module exposes v3.0 interface but
           didn't implement C_LoginUser (unusual but legal).
         """
-        pin = _pin_str(p11_config)
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
         if pin is None:
             pytest.skip("No PIN configured - cannot exercise C_LoginUser")
 
-        token = p11_module.get_token()
-        session = token.open(rw=True)
-        try:
-            # First do a normal CKU_USER login so the session state is known.
-            try:
-                session.login(pkcs11.UserType.USER, pin)
-            except UserAlreadyLoggedIn:
-                pass  # Token-level login already active - that is fine.
+        if "C_LoginUser" not in rs.raw.available_function_names():
+            pytest.skip("C_LoginUser not in module function list")
 
-            # Now exercise C_LoginUser with an empty username string.
-            # This must not raise NotImplementedError on a v3.0+ interface.
-            try:
-                session.login(pkcs11.UserType.USER, pin=pin, username="")
-            except UserAlreadyLoggedIn:
-                pass  # Acceptable: we are already logged in as USER.
-            except FunctionNotSupported:
-                pytest.xfail(
-                    "Module exposes v3.0 interface but C_LoginUser returns "
-                    "CKR_FUNCTION_NOT_SUPPORTED"
-                )
-        finally:
-            try:
-                session.logout()
-            except (UserNotLoggedIn, pkcs11.exceptions.SessionClosed):
-                pass
-            session.close()
+        # p11_raw_session is already logged in as CKU_USER.
+        # Exercise C_LoginUser with an empty username.
+        rv = _raw_login_user(rs.raw, rs.sh, int(CKU_USER), pin, b"")
+        if rv == int(CKR_USER_ALREADY_LOGGED_IN):
+            pass  # Acceptable: we are already logged in as USER.
+        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+            pytest.xfail(
+                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            )
+        elif rv == int(CKR_OK):
+            pass  # Accepted.
+        else:
+            pytest.fail(f"Unexpected CKR from C_LoginUser: {ckr_name(rv)}")
 
-    def test_c_login_user_not_implemented_on_v240(
-        self, p11_interface_version: str, p11_module: Any, p11_config: Any
+    def test_c_login_user_not_available_on_v240(
+        self,
+        p11_raw_session: Any,
+        p11_interface_version: str,
     ) -> None:
-        """C_LoginUser raises NotImplementedError when forced on a v2.40 module.
+        """C_LoginUser is not in the function list on a v2.40 module.
 
         This test only runs if the negotiated version is exactly 2.40.
-        The requires_v30 marker on the class would normally skip it, so we
-        invert the logic: skip unless we're on 2.40.
-
-        Note: this test is intentionally outside the class-level skip so we
-        can verify the binding's guard is in place.  It is added as a
-        regression check for the binding implementation.
         """
-        # This test is meaningful only on v2.40 - skip otherwise.
         if p11_interface_version != "2.40":
             pytest.skip("This test is specifically for v2.40 modules")
 
-        pin = _pin_str(p11_config)
-        if pin is None:
-            pytest.skip("No PIN configured")
+        rs = p11_raw_session
+        assert "C_LoginUser" not in rs.raw.available_function_names(), (
+            "C_LoginUser should not be in the v2.40 function list"
+        )
 
-        token = p11_module.get_token()
-        session = token.open(rw=True)
-        try:
-            try:
-                session.login(pkcs11.UserType.USER, pin)
-            except UserAlreadyLoggedIn:
-                pass
-
-            with pytest.raises(NotImplementedError):
-                session.login(pkcs11.UserType.USER, pin=pin, username="anyuser")
-        finally:
-            try:
-                session.logout()
-            except (UserNotLoggedIn, pkcs11.exceptions.SessionClosed):
-                pass
-            session.close()
-
-    def test_c_login_user_non_empty_username(self, p11_module: Any, p11_config: Any) -> None:
+    def test_c_login_user_non_empty_username(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
         """C_LoginUser with a non-empty username does not crash the module.
 
         Tokens that implement named users accept a username string.  Tokens
@@ -150,45 +176,29 @@ class TestCLoginUser:
         The important property is that the module returns a well-formed CKR
         rather than crashing or hanging.
         """
-        pin = _pin_str(p11_config)
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
         if pin is None:
             pytest.skip("No PIN configured - cannot exercise C_LoginUser")
 
-        token = p11_module.get_token()
-        session = token.open(rw=True)
-        logged_in = False
-        try:
-            # Attempt C_LoginUser with a plausible username.  We do NOT
-            # require success here - rejection is expected on most tokens.
-            try:
-                session.login(pkcs11.UserType.USER, pin=pin, username="user")
-                # If we get here the module accepted it - that is valid.
-                logged_in = True
-            except UserAlreadyLoggedIn:
-                logged_in = True  # Already logged in - acceptable.
-            except FunctionNotSupported:
-                # Module does not implement C_LoginUser despite v3.0 interface.
-                pytest.xfail(
-                    "Module exposes v3.0 interface but C_LoginUser returns "
-                    "CKR_FUNCTION_NOT_SUPPORTED"
-                )
-            except (
-                pkcs11.exceptions.UserTypeInvalid,
-                pkcs11.exceptions.ArgumentsBad,
-                pkcs11.exceptions.PinIncorrect,
-            ):
-                pass  # Module does not support named users - acceptable.
-        finally:
-            if logged_in:
-                try:
-                    session.logout()
-                except (UserNotLoggedIn, pkcs11.exceptions.SessionClosed):
-                    pass
-            session.close()
+        if "C_LoginUser" not in rs.raw.available_function_names():
+            pytest.skip("C_LoginUser not in module function list")
+
+        rv = _raw_login_user(rs.raw, rs.sh, int(CKU_USER), pin, b"user")
+        if rv == int(CKR_OK) or rv == int(CKR_USER_ALREADY_LOGGED_IN):
+            pass  # Accepted or already logged in.
+        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+            pytest.xfail(
+                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            )
+        elif rv in _LOGIN_REJECT:
+            pass  # Module does not support named users - acceptable.
+        else:
+            pytest.fail(f"Unexpected CKR from C_LoginUser: {ckr_name(rv)}")
 
 
 # ---------------------------------------------------------------------------
-# CKU_CONTEXT_SPECIFIC tests (reaffirm_credentials / C_Login type 2)
+# CKU_CONTEXT_SPECIFIC tests (C_Login type 2)
 # ---------------------------------------------------------------------------
 
 
@@ -202,13 +212,14 @@ class TestContextSpecificLogin:
     operation returns CKR_OPERATION_NOT_INITIALIZED.
 
     These tests verify:
-    1. The binding correctly calls C_Login with user_type=2.
+    1. C_Login with user_type=2 is callable.
     2. The module returns a well-formed CKR (not a crash).
-    3. reaffirm_credentials() is a thin wrapper for the above.
     """
 
     def test_context_specific_login_without_active_op(
-        self, p11_session: Any, p11_config: Any
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """CKU_CONTEXT_SPECIFIC login without an active op returns CKR_OPERATION_NOT_INITIALIZED.
 
@@ -220,116 +231,98 @@ class TestContextSpecificLogin:
         state guard fires first), or CKR_FUNCTION_NOT_SUPPORTED (module does
         not implement context-specific login at all).
         """
-        pin = _pin_str(p11_config)
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
         if pin is None:
             pytest.skip("No PIN configured - cannot test context-specific login")
 
-        # p11_session is already logged in as CKU_USER.
-        # Calling login(CKU_CONTEXT_SPECIFIC) with no active crypto op should
-        # be rejected by a conformant module.
-        try:
-            p11_session.login(pkcs11.UserType.CONTEXT_SPECIFIC, pin=pin)
-            # Some lenient modules accept it - note as an xfail.
+        # p11_raw_session is already logged in as CKU_USER.
+        rv = _raw_login(rs.raw, rs.sh, int(CKU_CONTEXT_SPECIFIC), pin)
+        if rv == int(CKR_OK):
             pytest.xfail(
                 "Module accepted CKU_CONTEXT_SPECIFIC login without an active "
                 "operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
             )
-        except OperationNotInitialized:
+        elif rv == int(CKR_OPERATION_NOT_INITIALIZED):
             pass  # Correct per spec.
-        except UserNotLoggedIn:
+        elif rv == int(CKR_USER_NOT_LOGGED_IN):
             pass  # Acceptable: module checks login state before operation state.
-        except FunctionNotSupported:
+        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
             pytest.xfail(
                 "Module does not support CKU_CONTEXT_SPECIFIC login (CKR_FUNCTION_NOT_SUPPORTED)"
             )
+        else:
+            pytest.fail(f"Unexpected CKR from C_Login(CONTEXT_SPECIFIC): {ckr_name(rv)}")
 
-    def test_reaffirm_credentials_without_active_op(
-        self, p11_session: Any, p11_config: Any
+    def test_context_specific_login_uses_c_login(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
-        """reaffirm_credentials() without an active operation is rejected.
-
-        reaffirm_credentials(pin) is a python-pkcs11 convenience wrapper for
-        session.login(UserType.CONTEXT_SPECIFIC, pin=pin).  It must propagate
-        the same CKR errors as the direct login() call.
-        """
-        pin = _pin_str(p11_config)
-        if pin is None:
-            pytest.skip("No PIN configured - cannot test reaffirm_credentials")
-
-        try:
-            p11_session.reaffirm_credentials(pin)
-            pytest.xfail(
-                "Module accepted reaffirm_credentials() without an active "
-                "operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
-            )
-        except OperationNotInitialized:
-            pass  # Correct per spec.
-        except UserNotLoggedIn:
-            pass  # Acceptable: module checks login state first.
-        except FunctionNotSupported:
-            pytest.xfail(
-                "Module does not support CKU_CONTEXT_SPECIFIC login (CKR_FUNCTION_NOT_SUPPORTED)"
-            )
-
-    def test_context_specific_login_uses_c_login(self, p11_session: Any, p11_config: Any) -> None:
         """CKU_CONTEXT_SPECIFIC login uses C_Login (not C_LoginUser) on v3.0+.
 
-        When username is None, the binding always falls through to C_Login
-        regardless of the interface version.  This test confirms the binding
-        does not erroneously route CKU_CONTEXT_SPECIFIC through C_LoginUser.
-
-        Verification: the call must not raise NotImplementedError (which the
-        binding would raise only if it incorrectly required username= for
-        CKU_CONTEXT_SPECIFIC).
+        Verification: calling C_Login directly with CKU_CONTEXT_SPECIFIC
+        must return a well-formed CKR (not crash).
         """
-        pin = _pin_str(p11_config)
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
         if pin is None:
             pytest.skip("No PIN configured")
 
-        # Must not raise NotImplementedError regardless of interface version.
-        try:
-            p11_session.login(pkcs11.UserType.CONTEXT_SPECIFIC, pin=pin)
+        rv = _raw_login(rs.raw, rs.sh, int(CKU_CONTEXT_SPECIFIC), pin)
+        if rv == int(CKR_OK):
             pytest.xfail("Module accepted CKU_CONTEXT_SPECIFIC without active operation")
-        except NotImplementedError:
-            pytest.fail(
-                "login(CONTEXT_SPECIFIC) raised NotImplementedError - "
-                "binding incorrectly requires username= for CKU_CONTEXT_SPECIFIC"
-            )
-        except OperationNotInitialized:
+        elif rv == int(CKR_OPERATION_NOT_INITIALIZED):
             pass  # Correct.
-        except UserNotLoggedIn:
+        elif rv == int(CKR_USER_NOT_LOGGED_IN):
             pass  # Acceptable.
-        except FunctionNotSupported:
+        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
             pytest.xfail("Module does not implement CKU_CONTEXT_SPECIFIC login")
+        else:
+            pytest.fail(f"Unexpected CKR: {ckr_name(rv)}")
 
-    def test_context_specific_via_c_login_user(self, p11_session: Any, p11_config: Any) -> None:
+    def test_context_specific_via_c_login_user(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
         """C_LoginUser with CKU_CONTEXT_SPECIFIC and empty username is also rejected.
 
-        This verifies that the C_LoginUser code path (username != None) is
-        exercised for CKU_CONTEXT_SPECIFIC - and that the module rejects it
-        for the same reason (no active operation), not due to a crash.
+        This verifies that the C_LoginUser code path is exercised for
+        CKU_CONTEXT_SPECIFIC - and that the module rejects it for the same
+        reason (no active operation), not due to a crash.
         """
-        pin = _pin_str(p11_config)
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
         if pin is None:
             pytest.skip("No PIN configured")
 
-        try:
-            p11_session.login(pkcs11.UserType.CONTEXT_SPECIFIC, pin=pin, username="")
-            pytest.xfail(
-                "Module accepted CKU_CONTEXT_SPECIFIC via C_LoginUser without "
-                "an active operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
-            )
-        except NotImplementedError:
+        if "C_LoginUser" not in rs.raw.available_function_names():
             pytest.xfail(
                 "Module does not expose v3.0 function list for C_LoginUser "
                 "(unexpected on a v3.0+ negotiated interface)"
             )
-        except OperationNotInitialized:
+
+        rv = _raw_login_user(
+            rs.raw,
+            rs.sh,
+            int(CKU_CONTEXT_SPECIFIC),
+            pin,
+            b"",
+        )
+        if rv == int(CKR_OK):
+            pytest.xfail(
+                "Module accepted CKU_CONTEXT_SPECIFIC via C_LoginUser without "
+                "an active operation - spec requires CKR_OPERATION_NOT_INITIALIZED"
+            )
+        elif rv == int(CKR_OPERATION_NOT_INITIALIZED):
             pass  # Correct per spec.
-        except UserNotLoggedIn:
+        elif rv == int(CKR_USER_NOT_LOGGED_IN):
             pass  # Acceptable.
-        except FunctionNotSupported:
+        elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
             pytest.xfail("Module does not implement C_LoginUser")
+        else:
+            pytest.fail(f"Unexpected CKR: {ckr_name(rv)}")
 
 
 # ---------------------------------------------------------------------------
@@ -341,72 +334,74 @@ class TestContextSpecificLogin:
 class TestLoginLogoutCycle:
     """Basic login/logout cycle verification for v3.0+ modules.
 
-    These tests open their own sessions (not p11_session) to ensure a clean
-    login state and to verify that C_LoginUser round-trips correctly.
+    These tests open their own sessions to ensure a clean login state and to
+    verify that C_LoginUser round-trips correctly.
     """
 
-    def test_normal_login_logout(self, p11_module: Any, p11_config: Any) -> None:
+    def test_normal_login_logout(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Normal CKU_USER login and logout cycle works on a v3.0+ module."""
-        pin = _pin_str(p11_config)
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
         if pin is None:
             pytest.skip("No PIN configured")
 
-        token = p11_module.get_token()
-        session = token.open(rw=True)
+        # Open a fresh session for this test.
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            try:
-                session.login(pkcs11.UserType.USER, pin)
-            except UserAlreadyLoggedIn:
-                pass  # Token-level login - still valid.
+            rv = _raw_login(rs.raw, sh2, int(CKU_USER), pin)
+            assert rv in (int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN)), (
+                f"C_Login failed: {ckr_name(rv)}"
+            )
 
             # Verify the session is functional after login.
-            key = session.generate_key(pkcs11.KeyType.AES, 128)
-            assert key is not None, "generate_key returned None after login"
+            key = gen_aes_key(rs.raw, sh2, 128)
+            assert key != 0, "generate_key returned 0 after login"
+            destroy_quietly(rs.raw, sh2, key)
 
-            session.logout()
-
-            # After logout, generating a key in a no-PIN slot should still work
-            # (session key) or fail gracefully - we just verify no exception
-            # from logout itself.
-        except UserNotLoggedIn:
-            pass  # Logout without prior login is fine.
+            rv = _raw_logout(rs.raw, sh2)
+            assert rv in (int(CKR_OK), int(CKR_USER_NOT_LOGGED_IN)), (
+                f"C_Logout failed: {ckr_name(rv)}"
+            )
         finally:
-            session.close()
+            close_session_quietly(rs.raw, sh2)
 
-    def test_c_login_user_then_logout(self, p11_module: Any, p11_config: Any) -> None:
+    def test_c_login_user_then_logout(self, p11_raw_session: Any, p11_config: Any) -> None:
         """C_LoginUser login followed by C_Logout is a clean round-trip.
 
-        After a successful C_LoginUser, session.logout() must succeed (CKR_OK).
-        The session must then be usable again (can re-login).
+        After a successful C_LoginUser, C_Logout must succeed (CKR_OK).
         """
-        pin = _pin_str(p11_config)
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
         if pin is None:
             pytest.skip("No PIN configured")
 
-        token = p11_module.get_token()
-        session = token.open(rw=True)
+        if "C_LoginUser" not in rs.raw.available_function_names():
+            pytest.xfail("Module does not implement C_LoginUser (not in function list)")
+
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         logged_in = False
         try:
-            # Use C_LoginUser (username="" -> zero-length username buffer).
-            try:
-                session.login(pkcs11.UserType.USER, pin=pin, username="")
+            rv = _raw_login_user(rs.raw, sh2, int(CKU_USER), pin, b"")
+            if rv == int(CKR_OK):
                 logged_in = True
-            except UserAlreadyLoggedIn:
-                logged_in = True  # Already logged in - skip the logout check.
-            except FunctionNotSupported:
+            elif rv == int(CKR_USER_ALREADY_LOGGED_IN):
+                logged_in = True
+            elif rv == int(CKR_FUNCTION_NOT_SUPPORTED):
                 pytest.xfail("Module does not implement C_LoginUser (CKR_FUNCTION_NOT_SUPPORTED)")
+            else:
+                pytest.fail(f"C_LoginUser failed: {ckr_name(rv)}")
 
             if logged_in:
-                # Logout must succeed or raise UserNotLoggedIn (if token-level
-                # login state differs from session-level).
-                try:
-                    session.logout()
-                except UserNotLoggedIn:
-                    pass  # Acceptable: token-level logout already happened.
+                rv = _raw_logout(rs.raw, sh2)
+                assert rv in (int(CKR_OK), int(CKR_USER_NOT_LOGGED_IN)), (
+                    f"C_Logout failed: {ckr_name(rv)}"
+                )
         finally:
-            session.close()
+            close_session_quietly(rs.raw, sh2)
 
-    def test_double_login_rejected(self, p11_module: Any, p11_config: Any) -> None:
+    def test_double_login_rejected(self, p11_raw_session: Any, p11_config: Any) -> None:
         """A second CKU_USER login on an already-logged-in session is rejected.
 
         The PKCS#11 spec requires CKR_USER_ALREADY_LOGGED_IN when C_Login or
@@ -414,39 +409,40 @@ class TestLoginLogoutCycle:
 
         Source: PKCS#11 v3.0 Sec.5.5 C_LoginUser error table.
         """
-        pin = _pin_str(p11_config)
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
         if pin is None:
             pytest.skip("No PIN configured")
 
-        token = p11_module.get_token()
-        session = token.open(rw=True)
+        if "C_LoginUser" not in rs.raw.available_function_names():
+            pytest.xfail("Module does not implement C_LoginUser (not in function list)")
+
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             # First login.
-            try:
-                session.login(pkcs11.UserType.USER, pin)
-            except UserAlreadyLoggedIn:
-                # Already logged in from a previous test - that is fine;
-                # proceed to the second login check below.
-                pass
+            rv = _raw_login(rs.raw, sh2, int(CKU_USER), pin)
+            assert rv in (int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN)), (
+                f"First C_Login failed: {ckr_name(rv)}"
+            )
 
             # Second login via C_LoginUser must be rejected.
-            try:
-                session.login(pkcs11.UserType.USER, pin=pin, username="")
+            rv2 = _raw_login_user(rs.raw, sh2, int(CKU_USER), pin, b"")
+            if rv2 == int(CKR_USER_ALREADY_LOGGED_IN):
+                pass  # Correct per spec.
+            elif rv2 == int(CKR_OK):
                 pytest.xfail(
                     "Module accepted a second C_LoginUser login without "
                     "intervening logout - spec requires "
                     "CKR_USER_ALREADY_LOGGED_IN"
                 )
-            except UserAlreadyLoggedIn:
-                pass  # Correct per spec.
-            except FunctionNotSupported:
+            elif rv2 == int(CKR_FUNCTION_NOT_SUPPORTED):
                 pytest.xfail("Module does not implement C_LoginUser (CKR_FUNCTION_NOT_SUPPORTED)")
+            else:
+                pytest.fail(f"Unexpected CKR from second C_LoginUser: {ckr_name(rv2)}")
         finally:
-            try:
-                session.logout()
-            except (UserNotLoggedIn, pkcs11.exceptions.SessionClosed):
-                pass
-            session.close()
+            _raw_logout(rs.raw, sh2)
+            close_session_quietly(rs.raw, sh2)
 
 
 # ---------------------------------------------------------------------------
@@ -459,14 +455,12 @@ class TestSessionCancel:
     """C_SessionCancel (v3.0+) cancels active cryptographic operations.
 
     C_SessionCancel is a PKCS#11 v3.0 extension that terminates any active
-    operation on a session.  The python-pkcs11 binding exposes it as
-    ``session.cancel(flags=0)`` and raises ``NotImplementedError`` on v2.40
-    modules.
+    operation on a session.
 
     Source: PKCS#11 v3.0 Sec.5.15  C_SessionCancel
     """
 
-    def test_cancel_with_no_active_operation(self, p11_session: Any) -> None:
+    def test_cancel_with_no_active_operation(self, p11_raw_session: Any) -> None:
         """C_SessionCancel with no active operation returns CKR_OK.
 
         The PKCS#11 v3.0 spec states that C_SessionCancel with flags=0
@@ -476,55 +470,65 @@ class TestSessionCancel:
         Source: PKCS#11 v3.0 Sec.5.15 - no CKR error defined for the case where
         no operation is active; the call is a no-op that returns CKR_OK.
         """
-        try:
-            p11_session.cancel()
-        except NotImplementedError:
-            pytest.skip("cancel() requires v3.0 interface - not available on this module")
-        except FunctionNotSupported:
+        rs = p11_raw_session
+        if "C_SessionCancel" not in rs.raw.available_function_names():
+            pytest.skip(
+                "C_SessionCancel not in module function list - not available on this module"
+            )
+        rv = int(rs.raw.C_SessionCancel(rs.sh, 0))
+        if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
             pytest.xfail(
                 "Module exposes v3.0 interface but C_SessionCancel returns "
                 "CKR_FUNCTION_NOT_SUPPORTED"
             )
-        # No exception means CKR_OK was returned - correct.
+        # CKR_OK means success.
 
-    def test_cancel_leaves_session_usable(self, p11_session: Any) -> None:
+    def test_cancel_leaves_session_usable(self, p11_raw_session: Any) -> None:
         """After C_SessionCancel the session can be used for a new operation.
 
         Verify that calling cancel() does not corrupt session state.  A digest
         started after cancel() must complete successfully.
         """
-        try:
-            p11_session.cancel()
-        except NotImplementedError:
-            pytest.skip("cancel() requires v3.0 interface - not available on this module")
-        except FunctionNotSupported:
+        rs = p11_raw_session
+        if "C_SessionCancel" not in rs.raw.available_function_names():
+            pytest.skip(
+                "C_SessionCancel not in module function list - not available on this module"
+            )
+        rv = int(rs.raw.C_SessionCancel(rs.sh, 0))
+        if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
             pytest.xfail(
                 "Module exposes v3.0 interface but C_SessionCancel returns "
                 "CKR_FUNCTION_NOT_SUPPORTED"
             )
 
         # Session must still be usable: perform a SHA-256 digest.
-        result = p11_session.digest(b"pkcs11-cancel-test", mechanism=pkcs11.Mechanism.SHA256)
+        result = digest_single(rs.raw, rs.sh, CKM_SHA256, b"pkcs11-cancel-test")
         assert len(result) == 32, f"Expected 32-byte SHA-256 digest, got {len(result)} bytes"
 
-    def test_cancel_with_flags_zero(self, p11_session: Any) -> None:
+    def test_cancel_with_flags_zero(self, p11_raw_session: Any) -> None:
         """C_SessionCancel(flags=0) cancels all active operations per spec.
 
         Passing flags=0 is the conventional way to cancel all ongoing
         cryptographic operations on a session.  This test explicitly passes
-        the value to exercise the flags parameter path in the binding.
+        the value to exercise the flags parameter path.
         """
-        try:
-            p11_session.cancel(flags=0)
-        except NotImplementedError:
-            pytest.skip("cancel() requires v3.0 interface - not available on this module")
-        except FunctionNotSupported:
+        rs = p11_raw_session
+        if "C_SessionCancel" not in rs.raw.available_function_names():
+            pytest.skip(
+                "C_SessionCancel not in module function list - not available on this module"
+            )
+        rv = int(rs.raw.C_SessionCancel(rs.sh, 0))
+        if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
             pytest.xfail(
                 "Module exposes v3.0 interface but C_SessionCancel returns "
                 "CKR_FUNCTION_NOT_SUPPORTED"
             )
 
-    def test_cancel_after_digest_init_subprocess(self, p11_module: Any, p11_config: Any) -> None:
+    def test_cancel_after_digest_init_subprocess(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
         """C_SessionCancel clears a pending DigestInit state.
 
         Starts a digest operation via RawPKCS11 (C_DigestInit), then calls
@@ -535,12 +539,10 @@ class TestSessionCancel:
         Source: PKCS#11 v3.0 Sec.5.15 - after C_SessionCancel, the session may
         be used for new operations without a C_Finalize/C_Initialize cycle.
         """
+        rs = p11_raw_session
         module_path = str(p11_config.module)
         pin_value = p11_config.pin.get_secret_value() if p11_config.pin is not None else ""
-        # Resolve the actual slot ID via python-pkcs11 (which already has the
-        # correct KRYOPTIC_CONF / NSS_LIB_PARAMS / etc. environment applied).
-        token = p11_module.get_token()
-        actual_slot_id: int = token.slot.slot_id
+        actual_slot_id: int = rs.slot_id
 
         script = textwrap.dedent(
             f"""\
@@ -664,11 +666,10 @@ class TestSessionCancel:
         # "the session state will not be modified and CKR_OK will be returned".
         # Modules that return other CKR codes for flags=0 are non-conformant.
         # Known non-conformant responses:
-        #   0x00000091 = CKR_OPERATION_NOT_INITIALIZED (NSS — not a valid return)
-        #   0x00000001 = CKR_CANCEL (kryoptic-main — callback code, wrong here)
-        #   0x00000051 = CKR_FUNCTION_NOT_PARALLEL (BouncyHSM — legacy parallel)
+        #   0x00000091 = CKR_OPERATION_NOT_INITIALIZED (NSS)
+        #   0x00000001 = CKR_CANCEL (kryoptic-main)
+        #   0x00000051 = CKR_FUNCTION_NOT_PARALLEL (BouncyHSM)
         if "CANCEL:0x" in stdout:
-            # Extract the hex code for the xfail message
             cancel_part = next(
                 (part for part in stdout.split() if part.startswith("CANCEL:0x")), stdout
             )

@@ -9,59 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pkcs11 as _p11
-from pkcs11 import Attribute, KeyType, ObjectClass
-
-
-def mech_name(m: Any) -> str:
-    """Get mechanism name safely - handles both Mechanism enum and raw int."""
-    name = getattr(m, "name", None)
-    if isinstance(name, str):
-        return name
-    if name is not None:
-        return str(name)
-    if isinstance(m, int):
-        return f"0x{m:08x}"
-    return str(m)
-
-
-def import_aes_key(session: Any, key_bytes: bytes, **extra: Any) -> Any:
-    """Import raw AES key bytes into a PKCS#11 session object.
-
-    Returns a secret key object with encrypt, decrypt, and extract capabilities.
-    """
-    template: dict[Attribute, Any] = {
-        Attribute.CLASS: ObjectClass.SECRET_KEY,
-        Attribute.KEY_TYPE: KeyType.AES,
-        Attribute.VALUE: key_bytes,
-        Attribute.ENCRYPT: True,
-        Attribute.DECRYPT: True,
-        Attribute.TOKEN: False,
-        Attribute.SENSITIVE: False,
-        Attribute.EXTRACTABLE: True,
-    }
-    template.update(extra)
-    return session.create_object(template)
-
-
-_mechanism_cache: dict[int, frozenset[str]] = {}
-
-
-def has_mechanism(p11_module: Any, name: str) -> bool:
-    """Check if a PKCS#11 module supports a named mechanism.
-
-    The mechanism list is cached per module instance - it never changes
-    during a session and querying it involves two PKCS#11 RPCs
-    (C_GetSlotList + C_GetMechanismList) that can be slow over IPC.
-    """
-    key = id(p11_module)
-    cached = _mechanism_cache.get(key)
-    if cached is None:
-        slot = p11_module.get_slots(token_present=True)[0]
-        cached = frozenset(mech_name(m) for m in slot.get_mechanisms())
-        _mechanism_cache[key] = cached
-    return name in cached
-
 
 def get_pin_bytes(p11_config: Any) -> bytes | None:
     """Extract PIN as bytes from config, or None if no PIN configured."""
@@ -70,20 +17,6 @@ def get_pin_bytes(p11_config: Any) -> bytes | None:
     pin = p11_config.pin
     pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
     return pin_str.encode("utf-8")
-
-
-def open_session(token: Any, rw: bool = True, pin: str | None = None) -> Any:
-    """Open a PKCS#11 session, handling UserAlreadyLoggedIn gracefully.
-
-    PKCS#11 login is per-token, not per-session. If another test left a login
-    active, token.open(user_pin=...) will fail. This helper catches that and
-    opens without re-login.
-    """
-    try:
-        return token.open(rw=rw, user_pin=pin)
-    except _p11.exceptions.UserAlreadyLoggedIn:
-        # Token-level login already active - reuse it
-        return token.open(rw=rw)
 
 
 def extract_ec_point(ec_point_der: Any) -> Any:

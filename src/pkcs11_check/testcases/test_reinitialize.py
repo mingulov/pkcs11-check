@@ -8,8 +8,25 @@ from __future__ import annotations
 
 from typing import Any
 
-import pkcs11
 import pytest
+
+from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.bootstrap import (
+    close_session_quietly,
+    get_slot_ids,
+    login_user,
+)
+from pkcs11_check.raw.bootstrap import open_session as raw_open_session
+from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.types_std import (
+    CKF_RW_SESSION,
+    CKF_SERIAL_SESSION,
+    CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    CKR_OK,
+    CKU_USER,
+)
+from pkcs11_check.testcases.conftest import get_pin_bytes
 
 pytestmark = [pytest.mark.access, pytest.mark.destructive]
 
@@ -22,60 +39,87 @@ class TestReinitialize:
         module_path = p11_config.module
         if hasattr(module_path, "get_secret_value"):
             module_path = module_path.get_secret_value()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
+        pin_bytes = get_pin_bytes(p11_config)
 
         # Load and initialize
-        lib = pkcs11.lib(str(module_path))
-        lib.initialize()
+        raw = RawPKCS11.from_lib(str(module_path))
+        rv = raw.C_Initialize(None)
+        assert rv in (int(CKR_OK), int(CKR_CRYPTOKI_ALREADY_INITIALIZED))
 
         try:
-            # Use normally
-            token = lib.get_token(token_label="pkcs11-check")
-            with token.open(rw=True, user_pin=pin_str) as session:
-                key = session.generate_key(pkcs11.KeyType.AES, 128)
-                assert key is not None
+            slots = get_slot_ids(raw)
+            slot_idx = p11_config.slot if p11_config.slot is not None else 0
+            slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
+            flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+            sh = raw_open_session(raw, slot_id, flags)
+            if pin_bytes is not None:
+                login_user(raw, sh, int(CKU_USER), pin_bytes)
+            key = gen_aes_key(raw, sh, 128)
+            assert key != 0
+            destroy_quietly(raw, sh, key)
+            close_session_quietly(raw, sh)
         finally:
-            lib.finalize()
+            raw.C_Finalize(None)
 
         # Re-initialize
-        lib.initialize()
+        rv = raw.C_Initialize(None)
+        expect_rv(int(rv), CKR_OK)
         try:
-            token = lib.get_token(token_label="pkcs11-check")
-            with token.open(rw=True, user_pin=pin_str) as session:
-                key = session.generate_key(pkcs11.KeyType.AES, 128)
-                assert key is not None
+            slots = get_slot_ids(raw)
+            slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
+            sh = raw_open_session(raw, slot_id, flags)
+            if pin_bytes is not None:
+                login_user(raw, sh, int(CKU_USER), pin_bytes)
+            key = gen_aes_key(raw, sh, 128)
+            assert key != 0
+            destroy_quietly(raw, sh, key)
+            close_session_quietly(raw, sh)
         finally:
-            lib.finalize()
+            raw.C_Finalize(None)
 
     def test_finalize_closes_sessions(self, p11_config: Any) -> None:
         """After finalize, previously opened sessions are invalid."""
         module_path = p11_config.module
         if hasattr(module_path, "get_secret_value"):
             module_path = module_path.get_secret_value()
-        pin = p11_config.pin
-        pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else pin
+        pin_bytes = get_pin_bytes(p11_config)
 
-        lib = pkcs11.lib(str(module_path))
-        lib.initialize()
+        raw = RawPKCS11.from_lib(str(module_path))
+        rv = raw.C_Initialize(None)
+        assert rv in (int(CKR_OK), int(CKR_CRYPTOKI_ALREADY_INITIALIZED))
 
-        token = lib.get_token(token_label="pkcs11-check")
-        session = token.open(rw=True, user_pin=pin_str)
+        slots = get_slot_ids(raw)
+        slot_idx = p11_config.slot if p11_config.slot is not None else 0
+        slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
+        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        sh = raw_open_session(raw, slot_id, flags)
+        if pin_bytes is not None:
+            login_user(raw, sh, int(CKU_USER), pin_bytes)
 
         # Generate a key to prove session works
-        key = session.generate_key(pkcs11.KeyType.AES, 128)
-        assert key is not None
+        key = gen_aes_key(raw, sh, 128)
+        assert key != 0
+        destroy_quietly(raw, sh, key)
 
-        lib.finalize()
+        raw.C_Finalize(None)
 
         # After finalize, using the old session should fail
-        lib.initialize()
+        rv = raw.C_Initialize(None)
+        expect_rv(int(rv), CKR_OK)
         try:
-            # Old session handle should be invalid now
-            try:
-                session.generate_key(pkcs11.KeyType.AES, 128)
-                # Some modules may reuse the handle - that's OK
-            except pkcs11.exceptions.PKCS11Error:
-                pass  # Expected - session invalidated by finalize
+            # Old session handle should be invalid now — any C_ call should fail
+            from ctypes import byref
+
+            from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
+            from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CKA_VALUE_LEN, CKM_AES_KEY_GEN
+
+            tmpl = template(attr_ulong(CKA_VALUE_LEN, 16))
+            mech = mech_simple(CKM_AES_KEY_GEN)
+            new_key = CK_OBJECT_HANDLE(0)
+            rv2 = int(raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(new_key)))
+            # Some modules may reuse the handle — CKR_OK is acceptable
+            # CKR_SESSION_HANDLE_INVALID (0xb3) or any non-OK is expected
+            if rv2 == int(CKR_OK):
+                destroy_quietly(raw, sh, int(new_key.value))
         finally:
-            lib.finalize()
+            raw.C_Finalize(None)

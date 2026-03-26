@@ -34,18 +34,38 @@ Most modules do not support these - tests skip cleanly.
 
 from __future__ import annotations
 
+from ctypes import byref, c_ulong
 from typing import Any
 
 import pytest
-from pkcs11 import Attribute, KeyType, Mechanism
-from pkcs11.exceptions import (
-    AttributeTypeInvalid,
-    FunctionNotSupported,
-    PKCS11Error,
-)
 
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    gen_aes_key,
+    read_attributes,
+    sign_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_DERIVE,
+    CKA_DERIVE_TEMPLATE,
+    CKA_ENCRYPT,
+    CKA_OTP_FORMAT,
+    CKA_OTP_LENGTH,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_UNWRAP,
+    CKA_UNWRAP_TEMPLATE,
+    CKA_VERIFY,
+    CKA_WRAP,
+    CKA_WRAP_TEMPLATE,
+    CKM_AES_CMAC_GENERAL,
+    CKM_HOTP_KEY_GEN,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_NO_EVENT,
+    CKR_OK,
+)
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
-from pkcs11_check.testcases.conftest import has_mechanism
 
 pytestmark = [pytest.mark.compliance]
 
@@ -113,94 +133,82 @@ def _run_config_script(
 class TestTemplateConstraintAttributes:
     """CKA_WRAP_TEMPLATE, CKA_UNWRAP_TEMPLATE, CKA_DERIVE_TEMPLATE."""
 
-    def test_wrap_template_attribute_readable(
-        self, p11_session: Any, p11_module: Any
-    ) -> None:
+    def test_wrap_template_attribute_readable(self, p11_raw_session: Any) -> None:
         """Keys should accept CKA_WRAP_TEMPLATE if the module supports it."""
-        if not has_mechanism(p11_module, "AES_KEY_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES not supported")
-        try:
-            key = p11_session.generate_key(
-                KeyType.AES,
-                256,
-                mechanism=Mechanism.AES_KEY_GEN,
-                template={
-                    Attribute.ENCRYPT: True,
-                    Attribute.DECRYPT: True,
-                    Attribute.WRAP: True,
-                    Attribute.TOKEN: False,
-                },
-            )
-        except (FunctionNotSupported, PKCS11Error) as e:
-            pytest.skip(f"AES key generation not supported: {e}")
-            return
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={
+                int(CKA_ENCRYPT): True,
+                int(CKA_DECRYPT): True,
+                int(CKA_WRAP): True,
+                int(CKA_TOKEN): False,
+            },
+        )
         try:
             try:
-                wt = key[Attribute.WRAP_TEMPLATE]
+                vals = read_attributes(rs.raw, rs.sh, key, [int(CKA_WRAP_TEMPLATE)])
+                wt = vals[int(CKA_WRAP_TEMPLATE)]
                 assert wt is not None or wt == b""
-            except (AttributeTypeInvalid, PKCS11Error):
+            except AssertionError:
                 pytest.skip("Module does not support CKA_WRAP_TEMPLATE")
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_unwrap_template_attribute_readable(
-        self, p11_session: Any, p11_module: Any
-    ) -> None:
+    def test_unwrap_template_attribute_readable(self, p11_raw_session: Any) -> None:
         """Keys should accept CKA_UNWRAP_TEMPLATE if the module supports it."""
-        if not has_mechanism(p11_module, "AES_KEY_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES not supported")
-        try:
-            key = p11_session.generate_key(
-                KeyType.AES,
-                256,
-                mechanism=Mechanism.AES_KEY_GEN,
-                template={
-                    Attribute.ENCRYPT: True,
-                    Attribute.DECRYPT: True,
-                    Attribute.UNWRAP: True,
-                    Attribute.TOKEN: False,
-                },
-            )
-        except (FunctionNotSupported, PKCS11Error) as e:
-            pytest.skip(f"AES key generation not supported: {e}")
-            return
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={
+                int(CKA_ENCRYPT): True,
+                int(CKA_DECRYPT): True,
+                int(CKA_UNWRAP): True,
+                int(CKA_TOKEN): False,
+            },
+        )
         try:
             try:
-                ut = key[Attribute.UNWRAP_TEMPLATE]
+                vals = read_attributes(rs.raw, rs.sh, key, [int(CKA_UNWRAP_TEMPLATE)])
+                ut = vals[int(CKA_UNWRAP_TEMPLATE)]
                 assert ut is not None or ut == b""
-            except (AttributeTypeInvalid, PKCS11Error):
+            except AssertionError:
                 pytest.skip("Module does not support CKA_UNWRAP_TEMPLATE")
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_derive_template_attribute_readable(
-        self, p11_session: Any, p11_module: Any
-    ) -> None:
+    def test_derive_template_attribute_readable(self, p11_raw_session: Any) -> None:
         """Keys should accept CKA_DERIVE_TEMPLATE if the module supports it."""
-        if not has_mechanism(p11_module, "AES_KEY_GEN"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES not supported")
-        try:
-            key = p11_session.generate_key(
-                KeyType.AES,
-                256,
-                mechanism=Mechanism.AES_KEY_GEN,
-                template={
-                    Attribute.ENCRYPT: True,
-                    Attribute.DERIVE: True,
-                    Attribute.TOKEN: False,
-                },
-            )
-        except (FunctionNotSupported, PKCS11Error) as e:
-            pytest.skip(f"AES key generation not supported: {e}")
-            return
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={
+                int(CKA_ENCRYPT): True,
+                int(CKA_DERIVE): True,
+                int(CKA_TOKEN): False,
+            },
+        )
         try:
             try:
-                dt = key[Attribute.DERIVE_TEMPLATE]
+                vals = read_attributes(rs.raw, rs.sh, key, [int(CKA_DERIVE_TEMPLATE)])
+                dt = vals[int(CKA_DERIVE_TEMPLATE)]
                 assert dt is not None or dt == b""
-            except (AttributeTypeInvalid, PKCS11Error):
+            except AssertionError:
                 pytest.skip("Module does not support CKA_DERIVE_TEMPLATE")
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 # ---------------------------------------------------------------------------
@@ -215,33 +223,39 @@ class TestOtpKeyAttributes:
     OTP-specific CKA_OTP_* attributes on key objects.
     """
 
-    def test_otp_key_format_attribute(
-        self, p11_session: Any, p11_module: Any
-    ) -> None:
+    def test_otp_key_format_attribute(self, p11_raw_session: Any) -> None:
         """CKA_OTP_FORMAT should be readable on OTP keys if supported."""
-        if not has_mechanism(p11_module, "HOTP_KEY_GEN"):
+        from pkcs11_check.raw.pack import attr_bool, mech_simple, template
+        from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
+
+        rs = p11_raw_session
+        if not rs.has_mechanism("HOTP_KEY_GEN"):
             pytest.skip("CKM_HOTP_KEY_GEN not supported")
+        tmpl = template(
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_SIGN, True),
+        )
+        mech = mech_simple(CKM_HOTP_KEY_GEN)
+        key = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
+        )
+        if int(rv) != int(CKR_OK):
+            pytest.skip(f"HOTP key generation failed: CKR 0x{int(rv):08x}")
+        key_h = int(key.value)
         try:
-            key = p11_session.generate_key(
-                KeyType.HOTP,
-                mechanism=Mechanism.HOTP_KEY_GEN,
-                template={Attribute.TOKEN: False, Attribute.SIGN: True},
-            )
-        except PKCS11Error as e:
-            pytest.skip(f"HOTP key generation failed: {e}")
-            return
-        try:
-            for attr_name in ("OTP_FORMAT", "OTP_LENGTH"):
-                attr = getattr(Attribute, attr_name, None)
-                if attr is None:
-                    continue
+            for attr_int in (int(CKA_OTP_FORMAT), int(CKA_OTP_LENGTH)):
                 try:
-                    val = key[attr]
-                    assert val is not None
-                except (AttributeTypeInvalid, PKCS11Error):
+                    vals = read_attributes(rs.raw, rs.sh, key_h, [attr_int])
+                    assert vals[attr_int] is not None
+                except AssertionError:
                     pass  # Module may not expose all OTP attributes
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key_h)
 
 
 # ---------------------------------------------------------------------------
@@ -252,24 +266,25 @@ class TestOtpKeyAttributes:
 class TestWaitForSlotEvent:
     """C_WaitForSlotEvent - non-blocking poll."""
 
-    def test_wait_for_slot_event_non_blocking(self, p11_module: Any) -> None:
+    def test_wait_for_slot_event_non_blocking(self, p11_raw_session: Any) -> None:
         """Non-blocking C_WaitForSlotEvent should return CKR_NO_EVENT or succeed."""
-        try:
-            # Non-blocking call - should return immediately
-            p11_module.lib.wait_for_slot_event(blocking=False)
-        except FunctionNotSupported:
+        rs = p11_raw_session
+        slot_out = c_ulong(0)
+        # flags=1 means CKF_DONT_BLOCK (non-blocking)
+        rv = int(rs.raw.C_WaitForSlotEvent(1, byref(slot_out), None))
+        if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
             pytest.skip("C_WaitForSlotEvent not supported")
-        except PKCS11Error as e:
-            # CKR_NO_EVENT (0x08) is the expected "nothing happened" response
-            if "NO_EVENT" in str(type(e).__name__).upper() or "0x00000008" in str(e):
-                pass  # Expected - no slot events pending
-            else:
-                from pkcs11_check.compliance import ComplianceLevel, note
+        if rv == int(CKR_OK):
+            pass  # Got an event — valid
+        elif rv == int(CKR_NO_EVENT):
+            pass  # Expected — no slot events pending
+        else:
+            from pkcs11_check.compliance import ComplianceLevel, note
 
-                note(
-                    f"C_WaitForSlotEvent returned unexpected error: {e}",
-                    ComplianceLevel.VENDOR,
-                )
+            note(
+                f"C_WaitForSlotEvent returned unexpected CKR: 0x{rv:08x}",
+                ComplianceLevel.VENDOR,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +300,7 @@ class TestLegacyParallelFunctions:
     """
 
     def test_get_function_status_returns_not_parallel(
-        self, p11_session: Any, p11_config: Any
+        self, p11_raw_session: Any, p11_config: Any
     ) -> None:
         """C_GetFunctionStatus must return CKR_FUNCTION_NOT_PARALLEL."""
         returncode, stdout, stderr = _run_config_script(
@@ -300,7 +315,7 @@ print(f"CF:0x{rv2:08x}")
         if returncode != 0:
             pytest.xfail(f"Subprocess failed: {stderr[:200]}")
         lines = stdout.strip().split("\n")
-        gfs_line = next((l for l in lines if l.startswith("GFS:")), None)
+        gfs_line = next((ln for ln in lines if ln.startswith("GFS:")), None)
         assert gfs_line is not None, f"No GFS output: {stdout!r}"
         rv_hex = gfs_line.split(":")[1]
         # Spec says CKR_FUNCTION_NOT_PARALLEL (0x51).
@@ -320,7 +335,7 @@ print(f"CF:0x{rv2:08x}")
             )
 
     def test_cancel_function_returns_not_parallel(
-        self, p11_session: Any, p11_config: Any
+        self, p11_raw_session: Any, p11_config: Any
     ) -> None:
         """C_CancelFunction must return CKR_FUNCTION_NOT_PARALLEL."""
         returncode, stdout, stderr = _run_config_script(
@@ -333,7 +348,7 @@ print(f"CF:0x{rv:08x}")
         if returncode != 0:
             pytest.xfail(f"Subprocess failed: {stderr[:200]}")
         lines = stdout.strip().split("\n")
-        cf_line = next((l for l in lines if l.startswith("CF:")), None)
+        cf_line = next((ln for ln in lines if ln.startswith("CF:")), None)
         assert cf_line is not None, f"No CF output: {stdout!r}"
         rv_hex = cf_line.split(":")[1]
         acceptable = {"0x00000051", "0x00000091"}
@@ -364,30 +379,16 @@ class TestMessageFinalizers:
     """
 
     @pytest.mark.requires_v30
-    def test_message_encrypt_final_availability(
-        self, p11_module: Any
-    ) -> None:
+    def test_message_encrypt_final_availability(self, p11_raw_session: Any) -> None:
         """Check if message-based encrypt final is accessible."""
-        try:
-            from pkcs11_check.raw.bridge import raw_from_module
-
-            raw = raw_from_module(p11_module)
-            assert "C_MessageEncryptFinal" in raw.available_function_names()
-        except (AttributeError, ImportError):
-            pytest.skip("Cannot access raw function list")
+        rs = p11_raw_session
+        assert "C_MessageEncryptFinal" in rs.raw.available_function_names()
 
     @pytest.mark.requires_v30
-    def test_message_verify_final_availability(
-        self, p11_module: Any
-    ) -> None:
+    def test_message_verify_final_availability(self, p11_raw_session: Any) -> None:
         """Check if message-based verify final is accessible."""
-        try:
-            from pkcs11_check.raw.bridge import raw_from_module
-
-            raw = raw_from_module(p11_module)
-            assert "C_MessageVerifyFinal" in raw.available_function_names()
-        except (AttributeError, ImportError):
-            pytest.skip("Cannot access raw function list")
+        rs = p11_raw_session
+        assert "C_MessageVerifyFinal" in rs.raw.available_function_names()
 
 
 # ---------------------------------------------------------------------------
@@ -399,30 +400,18 @@ class TestAsyncLifecycle:
     """C_AsyncComplete, C_AsyncJoin - v3.0+ async operation management."""
 
     @pytest.mark.requires_v30
-    def test_async_complete_availability(self, p11_module: Any) -> None:
+    def test_async_complete_availability(self, p11_raw_session: Any) -> None:
         """Check if C_AsyncComplete is in the function list."""
-        try:
-            from pkcs11_check.raw.bridge import raw_from_module
-
-            raw = raw_from_module(p11_module)
-            has_func = "C_AsyncComplete" in raw.available_function_names()
-            if not has_func:
-                pytest.skip("C_AsyncComplete not in function list")
-        except (AttributeError, ImportError):
-            pytest.skip("Cannot access raw function list")
+        rs = p11_raw_session
+        if "C_AsyncComplete" not in rs.raw.available_function_names():
+            pytest.skip("C_AsyncComplete not in function list")
 
     @pytest.mark.requires_v30
-    def test_async_join_availability(self, p11_module: Any) -> None:
+    def test_async_join_availability(self, p11_raw_session: Any) -> None:
         """Check if C_AsyncJoin is in the function list."""
-        try:
-            from pkcs11_check.raw.bridge import raw_from_module
-
-            raw = raw_from_module(p11_module)
-            has_func = "C_AsyncJoin" in raw.available_function_names()
-            if not has_func:
-                pytest.skip("C_AsyncJoin not in function list")
-        except (AttributeError, ImportError):
-            pytest.skip("Cannot access raw function list")
+        rs = p11_raw_session
+        if "C_AsyncJoin" not in rs.raw.available_function_names():
+            pytest.skip("C_AsyncJoin not in function list")
 
 
 # ---------------------------------------------------------------------------
@@ -433,9 +422,9 @@ class TestAsyncLifecycle:
 class TestRsaPkcsNull:
     """CKM_RSA_PKCS_NULL - raw RSA with no formatting."""
 
-    def test_null_mechanism_availability(self, p11_module: Any) -> None:
+    def test_null_mechanism_availability(self, p11_raw_session: Any) -> None:
         """Check if CKM_RSA_PKCS_NULL is reported by the module."""
-        if not has_mechanism(p11_module, "RSA_PKCS_NULL"):
+        if not p11_raw_session.has_mechanism("RSA_PKCS_NULL"):
             pytest.skip("CKM_RSA_PKCS_NULL not supported")
 
 
@@ -447,12 +436,12 @@ class TestRsaPkcsNull:
 class TestKmac:
     """CKM_KMAC_128 and CKM_KMAC_256 - NIST SP 800-185 KECCAK MAC."""
 
-    def test_kmac_128_availability(self, p11_module: Any) -> None:
-        if not has_mechanism(p11_module, "KMAC_128"):
+    def test_kmac_128_availability(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("KMAC_128"):
             pytest.skip("CKM_KMAC_128 not supported")
 
-    def test_kmac_256_availability(self, p11_module: Any) -> None:
-        if not has_mechanism(p11_module, "KMAC_256"):
+    def test_kmac_256_availability(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("KMAC_256"):
             pytest.skip("CKM_KMAC_256 not supported")
 
 
@@ -464,12 +453,12 @@ class TestKmac:
 class TestShakeXof:
     """Standalone SHAKE128/SHAKE256 as XOF digest mechanisms."""
 
-    def test_shake_128_availability(self, p11_module: Any) -> None:
-        if not has_mechanism(p11_module, "SHAKE_128"):
+    def test_shake_128_availability(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("SHAKE_128"):
             pytest.skip("CKM_SHAKE_128 not supported")
 
-    def test_shake_256_availability(self, p11_module: Any) -> None:
-        if not has_mechanism(p11_module, "SHAKE_256"):
+    def test_shake_256_availability(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("SHAKE_256"):
             pytest.skip("CKM_SHAKE_256 not supported")
 
 
@@ -482,13 +471,13 @@ class TestMlDsaExternalMu:
     """CKM_ML_DSA_EXTERNAL_MU and CKM_ML_DSA_EXTERNAL_MU_GEN."""
 
     @pytest.mark.requires_v32
-    def test_external_mu_availability(self, p11_module: Any) -> None:
-        if not has_mechanism(p11_module, "ML_DSA_EXTERNAL_MU"):
+    def test_external_mu_availability(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("ML_DSA_EXTERNAL_MU"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU not supported")
 
     @pytest.mark.requires_v32
-    def test_external_mu_gen_availability(self, p11_module: Any) -> None:
-        if not has_mechanism(p11_module, "ML_DSA_EXTERNAL_MU_GEN"):
+    def test_external_mu_gen_availability(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("ML_DSA_EXTERNAL_MU_GEN"):
             pytest.skip("CKM_ML_DSA_EXTERNAL_MU_GEN not supported")
 
 
@@ -500,12 +489,12 @@ class TestMlDsaExternalMu:
 class TestPkcs12Pbe:
     """CKM_PKCS12_PBE_EXPORT and CKM_PKCS12_PBE_IMPORT."""
 
-    def test_pkcs12_pbe_export_availability(self, p11_module: Any) -> None:
-        if not has_mechanism(p11_module, "PKCS12_PBE_EXPORT"):
+    def test_pkcs12_pbe_export_availability(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("PKCS12_PBE_EXPORT"):
             pytest.skip("CKM_PKCS12_PBE_EXPORT not supported")
 
-    def test_pkcs12_pbe_import_availability(self, p11_module: Any) -> None:
-        if not has_mechanism(p11_module, "PKCS12_PBE_IMPORT"):
+    def test_pkcs12_pbe_import_availability(self, p11_raw_session: Any) -> None:
+        if not p11_raw_session.has_mechanism("PKCS12_PBE_IMPORT"):
             pytest.skip("CKM_PKCS12_PBE_IMPORT not supported")
 
 
@@ -517,38 +506,43 @@ class TestPkcs12Pbe:
 class TestTier1Stragglers:
     """Mechanisms identified as Tier 1 gaps in the audit."""
 
-    def test_aes_cmac_general_availability(
-        self, p11_session: Any, p11_module: Any
-    ) -> None:
+    def test_aes_cmac_general_availability(self, p11_raw_session: Any) -> None:
         """CKM_AES_CMAC_GENERAL - parameterized CMAC tag length."""
-        if not has_mechanism(p11_module, "AES_CMAC_GENERAL"):
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CMAC_GENERAL"):
             pytest.skip("CKM_AES_CMAC_GENERAL not supported")
-        key = p11_session.generate_key(
-            KeyType.AES,
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
             256,
-            mechanism=Mechanism.AES_KEY_GEN,
-            template={Attribute.SIGN: True, Attribute.VERIFY: True, Attribute.TOKEN: False},
+            attrs={
+                int(CKA_SIGN): True,
+                int(CKA_VERIFY): True,
+                int(CKA_TOKEN): False,
+            },
         )
         try:
-            sig = key.sign(b"test data for cmac general", mechanism=Mechanism.AES_CMAC_GENERAL)
+            sig = sign_single(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CMAC_GENERAL,
+                b"test data for cmac general",
+            )
             assert len(sig) > 0
-        except PKCS11Error as e:
+        except AssertionError as e:
             pytest.xfail(f"AES_CMAC_GENERAL sign failed: {e}")
         finally:
-            key.destroy()
+            destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_dsa_probabilistic_parameter_gen_availability(
-        self, p11_module: Any
-    ) -> None:
+    def test_dsa_probabilistic_parameter_gen_availability(self, p11_raw_session: Any) -> None:
         """CKM_DSA_PROBABILISTIC_PARAMETER_GEN."""
-        if not has_mechanism(p11_module, "DSA_PROBABILISTIC_PARAMETER_GEN"):
+        if not p11_raw_session.has_mechanism("DSA_PROBABILISTIC_PARAMETER_GEN"):
             pytest.skip("CKM_DSA_PROBABILISTIC_PARAMETER_GEN not supported")
 
-    def test_ec_key_pair_gen_w_extra_bits_availability(
-        self, p11_module: Any
-    ) -> None:
+    def test_ec_key_pair_gen_w_extra_bits_availability(self, p11_raw_session: Any) -> None:
         """CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS."""
-        if not has_mechanism(p11_module, "EC_KEY_PAIR_GEN_W_EXTRA_BITS"):
+        if not p11_raw_session.has_mechanism("EC_KEY_PAIR_GEN_W_EXTRA_BITS"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS not supported")
 
 
@@ -565,9 +559,7 @@ class TestDualFunctionRemaining:
     indices 56 and 57. Most modules return CKR_FUNCTION_NOT_SUPPORTED.
     """
 
-    def test_sign_encrypt_update_callable(
-        self, p11_config: Any
-    ) -> None:
+    def test_sign_encrypt_update_callable(self, p11_config: Any) -> None:
         """C_SignEncryptUpdate (index 56) exists and returns a defined CKR code."""
         returncode, stdout, stderr = _run_config_script(
             p11_config,
@@ -587,13 +579,11 @@ print(f"SEU:0x{rv:08x}")
             pytest.xfail(f"C_SignEncryptUpdate crashed (signal {-returncode})")
         if returncode != 0:
             pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
-        seu_line = next((l for l in stdout.strip().split("\n") if l.startswith("SEU:")), None)
+        seu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("SEU:")), None)
         assert seu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
         # Any CKR response is valid - we're testing the function exists and doesn't crash
 
-    def test_decrypt_verify_update_callable(
-        self, p11_config: Any
-    ) -> None:
+    def test_decrypt_verify_update_callable(self, p11_config: Any) -> None:
         """C_DecryptVerifyUpdate (index 57) exists and returns a defined CKR code."""
         returncode, stdout, stderr = _run_config_script(
             p11_config,
@@ -613,5 +603,5 @@ print(f"DVU:0x{rv:08x}")
             pytest.xfail(f"C_DecryptVerifyUpdate crashed (signal {-returncode})")
         if returncode != 0:
             pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
-        dvu_line = next((l for l in stdout.strip().split("\n") if l.startswith("DVU:")), None)
+        dvu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("DVU:")), None)
         assert dvu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
