@@ -71,33 +71,46 @@ pytestmark = pytest.mark.security
 # Acceptable CKR sets per error category
 # ---------------------------------------------------------------------------
 
-_INVALID_PARAM_RVS = {int(c) for c in (
-    CKR_MECHANISM_PARAM_INVALID, CKR_MECHANISM_INVALID,
-    CKR_ARGUMENTS_BAD, CKR_DATA_LEN_RANGE,
-)}
+_INVALID_PARAM_RVS = {
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_MECHANISM_INVALID,
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_LEN_RANGE,
+}
 
-_KEY_SIZE_RVS = {int(c) for c in (
-    CKR_KEY_SIZE_RANGE, CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_MECHANISM_INVALID, CKR_ARGUMENTS_BAD, CKR_TEMPLATE_INCOMPLETE,
-)}
+_KEY_SIZE_RVS = {
+    CKR_KEY_SIZE_RANGE,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_MECHANISM_INVALID,
+    CKR_ARGUMENTS_BAD,
+    CKR_TEMPLATE_INCOMPLETE,
+}
 
-_VERIFY_MISMATCH_RVS = {int(c) for c in (
-    CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE, CKR_GENERAL_ERROR,
-)}
+_VERIFY_MISMATCH_RVS = {
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
+    CKR_GENERAL_ERROR,
+}
 
-_KEY_FUNCTION_RVS = {int(c) for c in (
-    CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID, CKR_ARGUMENTS_BAD,
-)}
+_KEY_FUNCTION_RVS = {
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_ARGUMENTS_BAD,
+}
 
-_DECRYPT_GARBAGE_RVS = {int(c) for c in (
-    CKR_ENCRYPTED_DATA_INVALID, CKR_DATA_LEN_RANGE,
-    CKR_GENERAL_ERROR, CKR_ENCRYPTED_DATA_LEN_RANGE,
-)}
+_DECRYPT_GARBAGE_RVS = {
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_DATA_LEN_RANGE,
+    CKR_GENERAL_ERROR,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+}
 
-_EMPTY_DATA_RVS = {int(c) for c in (
-    CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD, CKR_MECHANISM_PARAM_INVALID,
-)}
+_EMPTY_DATA_RVS = {
+    CKR_DATA_LEN_RANGE,
+    CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_PARAM_INVALID,
+}
 
 
 class TestInvalidOperations:
@@ -107,29 +120,33 @@ class TestInvalidOperations:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_bytes(CKM_AES_CBC_PAD, b"short")
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv == CKR_OK:
                 # Init succeeded, try encrypt -- module may reject at this stage
                 out_len = CK_ULONG(0)
                 in_buf = (ctypes.c_ubyte * 16)(*b"0123456789abcdef")
-                rv = int(rs.raw.C_Encrypt(
-                    rs.sh, in_buf, 16, None, byref(out_len),
-                ))
-                if rv == int(CKR_OK):
-                    out_buf = (ctypes.c_ubyte * out_len.value)()
-                    rv = int(rs.raw.C_Encrypt(
-                        rs.sh, in_buf, 16, out_buf, byref(out_len),
-                    ))
-                    # If we got OK both times, the module accepted a short IV
-                    assert isinstance(bytes(out_buf[:out_len.value]), bytes)
-                else:
-                    assert rv in _INVALID_PARAM_RVS, (
-                        f"Unexpected CKR: {ckr_name(rv)}"
-                    )
-            else:
-                assert rv in _INVALID_PARAM_RVS, (
-                    f"Unexpected CKR: {ckr_name(rv)}"
+                rv = rs.raw.C_Encrypt(
+                    rs.sh,
+                    in_buf,
+                    16,
+                    None,
+                    byref(out_len),
                 )
+                if rv == CKR_OK:
+                    out_buf = (ctypes.c_ubyte * out_len.value)()
+                    rv = rs.raw.C_Encrypt(
+                        rs.sh,
+                        in_buf,
+                        16,
+                        out_buf,
+                        byref(out_len),
+                    )
+                    # If we got OK both times, the module accepted a short IV
+                    assert isinstance(bytes(out_buf[: out_len.value]), bytes)
+                else:
+                    assert rv in _INVALID_PARAM_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+            else:
+                assert rv in _INVALID_PARAM_RVS, f"Unexpected CKR: {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -147,12 +164,16 @@ class TestInvalidOperations:
         tmpl = template(*packed)
         mech = mech_simple(CKM_AES_KEY_GEN)
         key = CK_OBJECT_HANDLE(0)
-        rv = int(rs.raw.C_GenerateKey(
-            rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key),
-        ))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
+        )
+        if rv == CKR_OK:
             # Module accepted it -- destroy and move on
-            destroy_quietly(rs.raw, rs.sh, int(key.value))
+            destroy_quietly(rs.raw, rs.sh, key.value)
         else:
             assert rv in _KEY_SIZE_RVS, f"Unexpected CKR: {ckr_name(rv)}"
 
@@ -166,20 +187,22 @@ class TestInvalidOperations:
 
             # Attempt verify with a different hash mechanism
             mech = mech_simple(CKM_SHA384_RSA_PKCS)
-            rv = int(rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
+            if rv == CKR_OK:
                 data_buf = (ctypes.c_ubyte * len(data))(*data)
                 sig_buf = (ctypes.c_ubyte * len(sig))(*sig)
-                rv = int(rs.raw.C_Verify(
-                    rs.sh, data_buf, len(data), sig_buf, len(sig),
-                ))
+                rv = rs.raw.C_Verify(
+                    rs.sh,
+                    data_buf,
+                    len(data),
+                    sig_buf,
+                    len(sig),
+                )
                 # Module should reject -- signature or general error
-                if rv == int(CKR_OK):
+                if rv == CKR_OK:
                     pass  # Some modules don't check DigestInfo OID
                 else:
-                    assert rv in _VERIFY_MISMATCH_RVS, (
-                        f"Unexpected CKR: {ckr_name(rv)}"
-                    )
+                    assert rv in _VERIFY_MISMATCH_RVS, f"Unexpected CKR: {ckr_name(rv)}"
             else:
                 # VerifyInit itself rejected -- acceptable
                 assert rv in _VERIFY_MISMATCH_RVS | _KEY_FUNCTION_RVS, (
@@ -195,14 +218,12 @@ class TestInvalidOperations:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_RSA_PKCS)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), priv))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), priv)
+            if rv == CKR_OK:
                 # Module allowed init on a private key -- some do
                 pass
             else:
-                assert rv in _KEY_FUNCTION_RVS, (
-                    f"Unexpected CKR: {ckr_name(rv)}"
-                )
+                assert rv in _KEY_FUNCTION_RVS, f"Unexpected CKR: {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -211,15 +232,17 @@ class TestInvalidOperations:
         """Decrypting random garbage should fail cleanly."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             garbage = generate_random(rs.raw, rs.sh, 256)  # 256 bytes
             mech = mech_simple(CKM_RSA_PKCS)
-            rv = int(rs.raw.C_DecryptInit(rs.sh, mech.byref(), priv))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), priv)
+            if rv != CKR_OK:
                 # Some modules reject decrypt on default-generated keys
                 assert rv in _KEY_FUNCTION_RVS | _DECRYPT_GARBAGE_RVS, (
                     f"Unexpected CKR on DecryptInit: {ckr_name(rv)}"
@@ -228,16 +251,18 @@ class TestInvalidOperations:
             in_buf = (ctypes.c_ubyte * len(garbage))(*garbage)
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
-            rv = int(rs.raw.C_Decrypt(
-                rs.sh, in_buf, len(garbage), out_buf, byref(out_len),
-            ))
-            if rv == int(CKR_OK):
+            rv = rs.raw.C_Decrypt(
+                rs.sh,
+                in_buf,
+                len(garbage),
+                out_buf,
+                byref(out_len),
+            )
+            if rv == CKR_OK:
                 # Decryption "succeeded" -- result is garbage, that is OK
                 pass
             else:
-                assert rv in _DECRYPT_GARBAGE_RVS, (
-                    f"Unexpected CKR: {ckr_name(rv)}"
-                )
+                assert rv in _DECRYPT_GARBAGE_RVS, f"Unexpected CKR: {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -251,32 +276,34 @@ class TestEmptyInputs:
         try:
             iv = generate_random(rs.raw, rs.sh, 16)  # 16 bytes
             mech = mech_bytes(CKM_AES_CBC_PAD, iv)
-            rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-            if rv != int(CKR_OK):
-                assert rv in _EMPTY_DATA_RVS, (
-                    f"Unexpected CKR on EncryptInit: {ckr_name(rv)}"
-                )
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            if rv != CKR_OK:
+                assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR on EncryptInit: {ckr_name(rv)}"
                 return
             # Try encrypting empty buffer
             out_len = CK_ULONG(0)
-            rv = int(rs.raw.C_Encrypt(
-                rs.sh, None, 0, None, byref(out_len),
-            ))
-            if rv == int(CKR_OK) and out_len.value > 0:
+            rv = rs.raw.C_Encrypt(
+                rs.sh,
+                None,
+                0,
+                None,
+                byref(out_len),
+            )
+            if rv == CKR_OK and out_len.value > 0:
                 out_buf = (ctypes.c_ubyte * out_len.value)()
-                rv = int(rs.raw.C_Encrypt(
-                    rs.sh, None, 0, out_buf, byref(out_len),
-                ))
-                if rv == int(CKR_OK):
-                    assert isinstance(bytes(out_buf[:out_len.value]), bytes)
-                else:
-                    assert rv in _EMPTY_DATA_RVS, (
-                        f"Unexpected CKR: {ckr_name(rv)}"
-                    )
-            elif rv != int(CKR_OK):
-                assert rv in _EMPTY_DATA_RVS, (
-                    f"Unexpected CKR: {ckr_name(rv)}"
+                rv = rs.raw.C_Encrypt(
+                    rs.sh,
+                    None,
+                    0,
+                    out_buf,
+                    byref(out_len),
                 )
+                if rv == CKR_OK:
+                    assert isinstance(bytes(out_buf[: out_len.value]), bytes)
+                else:
+                    assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+            elif rv != CKR_OK:
+                assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR: {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -292,30 +319,30 @@ class TestEmptyInputs:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
-            rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv))
-            if rv != int(CKR_OK):
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
+            if rv != CKR_OK:
                 assert rv in _EMPTY_DATA_RVS | _KEY_FUNCTION_RVS, (
                     f"Unexpected CKR on SignInit: {ckr_name(rv)}"
                 )
                 return
             # Two-call pattern: query length, then sign
             out_len = CK_ULONG(0)
-            rv = int(rs.raw.C_Sign(rs.sh, None, 0, None, byref(out_len)))
-            if rv == int(CKR_OK) and out_len.value > 0:
+            rv = rs.raw.C_Sign(rs.sh, None, 0, None, byref(out_len))
+            if rv == CKR_OK and out_len.value > 0:
                 out_buf = (ctypes.c_ubyte * out_len.value)()
-                rv = int(rs.raw.C_Sign(
-                    rs.sh, None, 0, out_buf, byref(out_len),
-                ))
-                if rv == int(CKR_OK):
+                rv = rs.raw.C_Sign(
+                    rs.sh,
+                    None,
+                    0,
+                    out_buf,
+                    byref(out_len),
+                )
+                if rv == CKR_OK:
                     assert out_len.value == 256  # RSA-2048 signature
                 else:
-                    assert rv in _EMPTY_DATA_RVS, (
-                        f"Unexpected CKR: {ckr_name(rv)}"
-                    )
-            elif rv != int(CKR_OK):
-                assert rv in _EMPTY_DATA_RVS, (
-                    f"Unexpected CKR: {ckr_name(rv)}"
-                )
+                    assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+            elif rv != CKR_OK:
+                assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR: {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -328,8 +355,8 @@ class TestKeyLifecycle:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         destroy_quietly(rs.raw, rs.sh, key)
         mech = mech_simple(CKM_AES_ECB)
-        rv = int(rs.raw.C_EncryptInit(rs.sh, mech.byref(), key))
-        assert rv != int(CKR_OK), "Should not be able to use destroyed key"
+        rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+        assert rv != CKR_OK, "Should not be able to use destroyed key"
 
     def test_bulk_key_generation(self, p11_raw_session: Any) -> None:
         """Generate many keys in sequence without issues."""
@@ -338,8 +365,10 @@ class TestKeyLifecycle:
         try:
             for i in range(10):
                 key = gen_aes_key(
-                    rs.raw, rs.sh, 256,
-                    attrs={int(CKA_LABEL): f"bulk-{i}".encode()},
+                    rs.raw,
+                    rs.sh,
+                    256,
+                    attrs={CKA_LABEL: f"bulk-{i}".encode()},
                 )
                 keys.append(key)
             assert len(keys) == 10
@@ -353,23 +382,29 @@ class TestKeyLifecycle:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             attrs = read_attributes(
-                rs.raw, rs.sh, key,
-                [int(CKA_KEY_TYPE), int(CKA_ENCRYPT)],
+                rs.raw,
+                rs.sh,
+                key,
+                [CKA_KEY_TYPE, CKA_ENCRYPT],
             )
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_AES)
-            assert attrs[int(CKA_ENCRYPT)] in (True, False)
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
+            assert attrs[CKA_ENCRYPT] in (True, False)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_create_object_minimal(self, p11_raw_session: Any) -> None:
         """Import a key with minimal attributes."""
         rs = p11_raw_session
-        key = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_SECRET_KEY),
-            int(CKA_KEY_TYPE): int(CKK_AES),
-            int(CKA_VALUE): bytes(32),
-            int(CKA_TOKEN): False,
-        })
+        key = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_VALUE: bytes(32),
+                CKA_TOKEN: False,
+            },
+        )
         try:
             assert key is not None
         finally:
@@ -396,11 +431,23 @@ class TestSessionEdgeCases:
         try:
             data = b"x" * 10000
             sig = sign_single(
-                rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data,
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_SHA256_RSA_PKCS,
+                data,
             )
-            assert verify_single(
-                rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig,
-            ) is True
+            assert (
+                verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_SHA256_RSA_PKCS,
+                    data,
+                    sig,
+                )
+                is True
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -412,10 +459,18 @@ class TestSessionEdgeCases:
         try:
             for _ in range(100):
                 ct = encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_ECB, b"0123456789abcdef",
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_ECB,
+                    b"0123456789abcdef",
                 )
                 pt = decrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_ECB, ct,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_ECB,
+                    ct,
                 )
                 assert pt == b"0123456789abcdef"
         finally:

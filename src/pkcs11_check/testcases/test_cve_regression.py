@@ -85,31 +85,34 @@ pytestmark = pytest.mark.security
 
 # CKR codes that indicate template/attribute rejection (not crash)
 _TEMPLATE_REJECT_RVS = {
-    int(c) for c in (
-        CKR_ATTRIBUTE_TYPE_INVALID, CKR_ATTRIBUTE_VALUE_INVALID,
-        CKR_TEMPLATE_INCOMPLETE, CKR_TEMPLATE_INCONSISTENT,
-        CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED,
-    )
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
 }
 
 # CKR codes for data length / crypto errors
 _DATA_ERROR_RVS = {
-    int(c) for c in (
-        CKR_DATA_LEN_RANGE, CKR_DATA_INVALID,
-        CKR_ENCRYPTED_DATA_LEN_RANGE, CKR_ENCRYPTED_DATA_INVALID,
-        CKR_ARGUMENTS_BAD, CKR_FUNCTION_FAILED,
-        CKR_GENERAL_ERROR, CKR_DEVICE_ERROR,
-    )
+    CKR_DATA_LEN_RANGE,
+    CKR_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_DEVICE_ERROR,
 }
 
 # CKR codes for mechanism errors during wrap
 _MECHANISM_ERROR_RVS = {
-    int(c) for c in (
-        CKR_MECHANISM_INVALID, CKR_KEY_NOT_WRAPPABLE,
-        CKR_KEY_FUNCTION_NOT_PERMITTED,
-        CKR_ENCRYPTED_DATA_LEN_RANGE, CKR_DATA_LEN_RANGE,
-        CKR_FUNCTION_FAILED,
-    )
+    CKR_MECHANISM_INVALID,
+    CKR_KEY_NOT_WRAPPABLE,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_DATA_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
 }
 
 
@@ -124,13 +127,14 @@ class TestCKATrusted:
         rs = p11_raw_session
         try:
             obj = create_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): b"trusted-test",
-                    int(CKA_VALUE): b"trusted-data",
-                    int(CKA_TOKEN): False,
-                    int(CKA_TRUSTED): True,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: b"trusted-test",
+                    CKA_VALUE: b"trusted-data",
+                    CKA_TOKEN: False,
+                    CKA_TRUSTED: True,
                 },
             )
             # If accepted, verify the object was created
@@ -161,8 +165,10 @@ class TestCKADeriveOnEC:
         curve_oid = encode_named_curve_parameters("secp256r1")
         try:
             pub, priv = gen_ec_keypair(
-                rs.raw, rs.sh, curve_oid,
-                private_attrs={int(CKA_DERIVE): True},
+                rs.raw,
+                rs.sh,
+                curve_oid,
+                private_attrs={CKA_DERIVE: True},
             )
             assert priv != 0
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -183,7 +189,8 @@ class TestTookanUnwrapAttrs:
     """
 
     def test_unwrapped_key_preserves_extractable(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """Unwrapped key should not be more extractable than the template says."""
         rs = p11_raw_session
@@ -191,40 +198,52 @@ class TestTookanUnwrapAttrs:
             pytest.skip("AES_KEY_WRAP not supported")
 
         wrap_h = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_WRAP): True, int(CKA_UNWRAP): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
         )
         target = gen_aes_key(
-            rs.raw, rs.sh, 128,
-            attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
 
         try:
             wrapped = wrap_key_recipe(
-                rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP,
+                rs.raw,
+                rs.sh,
+                wrap_h,
+                target,
+                CKM_AES_KEY_WRAP,
             )
 
             # Unwrap with EXTRACTABLE=False - must stay non-extractable
             unwrapped = unwrap_key(
-                rs.raw, rs.sh, wrap_h, wrapped, CKM_AES_KEY_WRAP,
+                rs.raw,
+                rs.sh,
+                wrap_h,
+                wrapped,
+                CKM_AES_KEY_WRAP,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_EXTRACTABLE): False,
-                    int(CKA_SENSITIVE): True,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: False,
+                    CKA_SENSITIVE: True,
                 },
             )
             try:
                 attrs = read_attributes(
-                    rs.raw, rs.sh, unwrapped,
-                    [int(CKA_EXTRACTABLE), int(CKA_SENSITIVE)],
+                    rs.raw,
+                    rs.sh,
+                    unwrapped,
+                    [CKA_EXTRACTABLE, CKA_SENSITIVE],
                 )
-                assert attrs[int(CKA_EXTRACTABLE)] is False, (
+                assert attrs[CKA_EXTRACTABLE] is False, (
                     "Tookan: unwrapped key is EXTRACTABLE despite template saying False"
                 )
-                assert attrs[int(CKA_SENSITIVE)] is True, (
-                    "Tookan: unwrapped key lost SENSITIVE flag"
-                )
+                assert attrs[CKA_SENSITIVE] is True, "Tookan: unwrapped key lost SENSITIVE flag"
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -239,7 +258,9 @@ class TestSessionObjectsAfterLogout:
     """
 
     def test_session_objects_after_logout(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Create session objects, logout, verify they're gone."""
         rs = p11_raw_session
@@ -251,8 +272,10 @@ class TestSessionObjectsAfterLogout:
 
         # Generate a key with a unique label
         key = gen_aes_key(
-            rs.raw, rs.sh, 128,
-            attrs={int(CKA_LABEL): label},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_LABEL: label},
         )
 
         # Verify it exists
@@ -261,8 +284,8 @@ class TestSessionObjectsAfterLogout:
         assert len(found) >= 1
 
         # Logout (not close)
-        rv = int(rs.raw.C_Logout(rs.sh))
-        if rv != int(CKR_OK):
+        rv = rs.raw.C_Logout(rs.sh)
+        if rv != CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key)
             pytest.skip(f"Logout failed: {ckr_name(rv)} (another session holds login)")
 
@@ -275,6 +298,7 @@ class TestSessionObjectsAfterLogout:
         # But the operation must not crash
         if len(found_after) > 0:
             from pkcs11_check.compliance import ComplianceLevel, note
+
             note(
                 "Session objects survive C_Logout",
                 ComplianceLevel.NOT_RECOMMENDED,
@@ -297,8 +321,8 @@ class TestROCAFingerprint:
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_MODULUS)])
-            modulus = attrs[int(CKA_MODULUS)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])
+            modulus = attrs[CKA_MODULUS]
             assert isinstance(modulus, bytes)
             n = int.from_bytes(modulus, "big")
 
@@ -306,9 +330,19 @@ class TestROCAFingerprint:
             # Simplified check - full ROCA uses 39 primes
             roca_primes = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43]
             roca_markers = [
-                0x6, 0x18, 0x60, 0x420, 0x1800, 0x30000, 0xC0000,
-                0x780000, 0x18000000, 0xC0000000, 0x3000000000,
-                0x60000000000, 0x1C0000000000,
+                0x6,
+                0x18,
+                0x60,
+                0x420,
+                0x1800,
+                0x30000,
+                0xC0000,
+                0x780000,
+                0x18000000,
+                0xC0000000,
+                0x3000000000,
+                0x60000000000,
+                0x1C0000000000,
             ]
             roca_hits = 0
             for p, marker in zip(roca_primes, roca_markers):
@@ -316,9 +350,7 @@ class TestROCAFingerprint:
                     roca_hits += 1
 
             # Software tokens should NOT produce ROCA-patterned keys
-            assert roca_hits < 10, (
-                f"RSA modulus has ROCA-like fingerprint ({roca_hits}/13 matches)"
-            )
+            assert roca_hits < 10, f"RSA modulus has ROCA-like fingerprint ({roca_hits}/13 matches)"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -332,7 +364,8 @@ class TestECDSATimingBasic:
     """
 
     def test_ecdsa_timing_variance(
-        self, p11_raw_session: Any,
+        self,
+        p11_raw_session: Any,
     ) -> None:
         """ECDSA P-256 signing should have low timing variance."""
         import time
@@ -368,8 +401,8 @@ class TestECDSATimingBasic:
             # and CV can be high. Only flag truly extreme variance (CV > 1.0).
             # Real Minerva leaks show CV > 2.0 with bimodal distribution.
             assert cv < 1.0, (
-                f"ECDSA timing CV={cv:.3f} (mean={mean_t*1000:.2f}ms, "
-                f"stdev={stdev_t*1000:.2f}ms) - possible timing leak"
+                f"ECDSA timing CV={cv:.3f} (mean={mean_t * 1000:.2f}ms, "
+                f"stdev={stdev_t * 1000:.2f}ms) - possible timing leak"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -388,7 +421,7 @@ class TestBoundaryLengthCrypto:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             for size in [0, 1, 15, 16, 17, 31, 32]:
-                data = b"\xAA" * size
+                data = b"\xaa" * size
                 if size % 16 == 0 and size > 0:
                     # Block-aligned - should work
                     ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
@@ -445,18 +478,20 @@ class TestInvalidECCurve:
 
         try:
             obj = create_object(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC),
-                    int(CKA_EC_PARAMS): bad_oid,
-                    int(CKA_EC_POINT): fake_point,
-                    int(CKA_VERIFY): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_EC,
+                    CKA_EC_PARAMS: bad_oid,
+                    CKA_EC_POINT: fake_point,
+                    CKA_VERIFY: True,
+                    CKA_TOKEN: False,
                 },
             )
             # If accepted - this is the CVE-2021-3798 vulnerability
             from pkcs11_check.compliance import ComplianceLevel, note
+
             note(
                 "Module accepted EC key with invalid curve OID (CVE-2021-3798 pattern)",
                 ComplianceLevel.NOT_RECOMMENDED,
@@ -483,8 +518,10 @@ class TestSoftHSM2Issue596:
             pytest.skip("AES_KEY_WRAP not supported")
 
         wrap_h = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_WRAP): True, int(CKA_UNWRAP): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
         )
         # 3DES keygen uses CKM_DES3_KEY_GEN with no CKA_VALUE_LEN
         des3_tmpl = template(
@@ -494,16 +531,23 @@ class TestSoftHSM2Issue596:
         des3_mech = mech_simple(CKM_DES3_KEY_GEN)
         des3_h = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(
-            rs.sh, des3_mech.byref(), des3_tmpl.ptr, des3_tmpl.count,
+            rs.sh,
+            des3_mech.byref(),
+            des3_tmpl.ptr,
+            des3_tmpl.count,
             byref(des3_h),
         )
-        expect_rv(int(rv), CKR_OK)
-        des3_key = int(des3_h.value)
+        expect_rv(rv, CKR_OK)
+        des3_key = des3_h.value
 
         try:
             try:
                 wrapped = wrap_key_recipe(
-                    rs.raw, rs.sh, wrap_h, des3_key, CKM_AES_KEY_WRAP,
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    des3_key,
+                    CKM_AES_KEY_WRAP,
                 )
                 assert len(wrapped) > 0  # Wrap succeeded
             except AssertionError:
@@ -542,12 +586,12 @@ try:
     slots = get_slot_ids(raw, label="pkcs11-check")
     if not slots:
         slots = get_slot_ids(raw)
-    sh = open_session(raw, slots[0], int(CKF_RW_SESSION | CKF_SERIAL_SESSION))
+    sh = open_session(raw, slots[0], CKF_RW_SESSION | CKF_SERIAL_SESSION)
     if pin is not None:
         login_user(raw, sh, 1, pin)
     pub, priv = gen_rsa_keypair(raw, sh, 2048,
-        public_attrs={{int(CKA_ENCRYPT): True}},
-        private_attrs={{int(CKA_DECRYPT): True}},
+        public_attrs={{CKA_ENCRYPT: True}},
+        private_attrs={{CKA_DECRYPT: True}},
     )
     try:
         ct = encrypt_single(raw, sh, pub, CKM_RSA_PKCS, b"test data 722")
@@ -567,7 +611,9 @@ finally:
 """
         result = subprocess.run(
             [sys.executable, "-c", textwrap.dedent(script)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 0, (
             f"RSA encrypt/decrypt crashed (rc={result.returncode}): {result.stderr}"

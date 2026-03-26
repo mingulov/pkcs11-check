@@ -54,7 +54,7 @@ def _unique_label(prefix: str = "conc") -> bytes:
 
 def _open_second_session(rs: Any) -> int:
     """Open a second RW session, login is already active at token level."""
-    flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+    flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
     return open_session(rs.raw, rs.slot_id, flags)
 
 
@@ -62,15 +62,19 @@ class TestConcurrentSessions:
     """Two sessions operating concurrently on the same token."""
 
     def test_two_sessions_see_same_token_object(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Object created in session A with TOKEN=True is visible in session B."""
         rs = p11_raw_session
         label = _unique_label("vis")
 
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_TOKEN: True, CKA_LABEL: label},
         )
 
         # Open a second session (already logged in at token level)
@@ -86,15 +90,19 @@ class TestConcurrentSessions:
         destroy_quietly(rs.raw, rs.sh, key)
 
     def test_destroy_in_one_session_reflected_in_other(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Destroying a token object in session A is reflected in session B."""
         rs = p11_raw_session
         label = _unique_label("destr")
 
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_TOKEN: True, CKA_LABEL: label},
         )
 
         sh2 = _open_second_session(rs)
@@ -115,7 +123,9 @@ class TestConcurrentSessions:
             close_session_quietly(rs.raw, sh2)
 
     def test_use_key_from_concurrent_session(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Token key created in session A can be used for crypto in session B."""
         rs = p11_raw_session
@@ -128,12 +138,14 @@ class TestConcurrentSessions:
         plaintext = b"concurrent-test!" * 2  # 32 bytes
 
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_TOKEN): True,
-                int(CKA_LABEL): label,
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
+                CKA_TOKEN: True,
+                CKA_LABEL: label,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
             },
         )
 
@@ -158,7 +170,9 @@ class TestConcurrentObjectCreation:
     """Test rapid object creation/destruction across sessions."""
 
     def test_rapid_create_destroy_cycle(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Create and immediately destroy objects in rapid succession - no leak."""
         rs = p11_raw_session
@@ -167,8 +181,10 @@ class TestConcurrentObjectCreation:
             label = _unique_label(f"rapid-{i}")
             labels.append(label)
             key = gen_aes_key(
-                rs.raw, rs.sh, 128,
-                attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label},
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_TOKEN: True, CKA_LABEL: label},
             )
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -179,7 +195,9 @@ class TestConcurrentObjectCreation:
             assert len(found) == 0, f"Object '{label!r}' leaked after destroy"
 
     def test_create_in_both_sessions_no_conflict(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """Creating objects in two concurrent sessions doesn't cause conflicts."""
         rs = p11_raw_session
@@ -188,15 +206,19 @@ class TestConcurrentObjectCreation:
         label_b = _unique_label("sB")
 
         key_a = gen_aes_key(
-            rs.raw, rs.sh, 128,
-            attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label_a},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_TOKEN: True, CKA_LABEL: label_a},
         )
 
         sh2 = _open_second_session(rs)
         try:
             key_b = gen_aes_key(
-                rs.raw, sh2, 128,
-                attrs={int(CKA_TOKEN): True, int(CKA_LABEL): label_b},
+                rs.raw,
+                sh2,
+                128,
+                attrs={CKA_TOKEN: True, CKA_LABEL: label_b},
             )
 
             # Both should be visible in both sessions
@@ -218,19 +240,22 @@ class TestConcurrentDataObjects:
     """Test CKO_DATA objects across concurrent sessions."""
 
     def test_data_object_visible_across_sessions(
-        self, p11_raw_session: Any, p11_config: Any,
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
     ) -> None:
         """CKO_DATA with TOKEN=True visible in concurrent session."""
         rs = p11_raw_session
         label = _unique_label("data")
 
         obj = create_object(
-            rs.raw, rs.sh,
+            rs.raw,
+            rs.sh,
             {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_LABEL): label,
-                int(CKA_VALUE): b"shared-data",
-                int(CKA_TOKEN): True,
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: b"shared-data",
+                CKA_TOKEN: True,
             },
         )
 
@@ -239,8 +264,8 @@ class TestConcurrentDataObjects:
             tmpl = template(attr_bytes(CKA_LABEL, label))
             found = find_objects(rs.raw, sh2, tmpl)
             assert len(found) >= 1
-            attrs = read_attributes(rs.raw, sh2, found[0], [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == b"shared-data"
+            attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
+            assert attrs[CKA_VALUE] == b"shared-data"
         finally:
             close_session_quietly(rs.raw, sh2)
 

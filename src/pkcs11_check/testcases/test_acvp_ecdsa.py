@@ -45,9 +45,9 @@ if not ACVP_AVAILABLE:
 
 # ACVP hashAlg -> (CKM mechanism int, mechanism name string for has_mechanism)
 _HASH_TO_MECH: dict[str, tuple[int, str]] = {
-    "SHA2-256": (int(CKM_ECDSA_SHA256), "ECDSA_SHA256"),
-    "SHA2-384": (int(CKM_ECDSA_SHA384), "ECDSA_SHA384"),
-    "SHA2-512": (int(CKM_ECDSA_SHA512), "ECDSA_SHA512"),
+    "SHA2-256": (CKM_ECDSA_SHA256, "ECDSA_SHA256"),
+    "SHA2-384": (CKM_ECDSA_SHA384, "ECDSA_SHA384"),
+    "SHA2-512": (CKM_ECDSA_SHA512, "ECDSA_SHA512"),
 }
 
 # ACVP curve name -> (pkcs11 curve name, coordinate byte length)
@@ -153,9 +153,7 @@ _ECDSA_SIGVER_VECTORS = _load_ecdsa_sigver_vectors()
     _ECDSA_SIGVER_VECTORS,
     ids=[v[0] for v in _ECDSA_SIGVER_VECTORS],
 )
-def test_acvp_ecdsa_sigver(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ECDSA signature verification from NIST ACVP FIPS 186-5 vectors.
 
     Imports an EC public key from the ACVP-provided (qx, qy) coordinates,
@@ -182,21 +180,19 @@ def test_acvp_ecdsa_sigver(
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC),
-                    int(CKA_EC_PARAMS): vec["ec_params"],
-                    int(CKA_EC_POINT): vec["ec_point_der"],
-                    int(CKA_TOKEN): False,
-                    int(CKA_VERIFY): True,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_EC,
+                    CKA_EC_PARAMS: vec["ec_params"],
+                    CKA_EC_POINT: vec["ec_point_der"],
+                    CKA_TOKEN: False,
+                    CKA_VERIFY: True,
                 },
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import EC public key for {vec['curve']}: {e}")
 
         try:
-            verified = verify_single(
-                rs.raw, rs.sh, pub_key, mech_int, vec["msg"], vec["sig"]
-            )
+            verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], vec["sig"])
         except AssertionError as exc:
             exc_msg = str(exc)
             # Signature invalid / data invalid / function failed / device error
@@ -204,8 +200,10 @@ def test_acvp_ecdsa_sigver(
             if any(
                 name in exc_msg
                 for name in (
-                    "CKR_SIGNATURE_INVALID", "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DATA_INVALID", "CKR_FUNCTION_FAILED",
+                    "CKR_SIGNATURE_INVALID",
+                    "CKR_SIGNATURE_LEN_RANGE",
+                    "CKR_DATA_INVALID",
+                    "CKR_FUNCTION_FAILED",
                     "CKR_DEVICE_ERROR",
                 )
             ):

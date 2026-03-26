@@ -83,31 +83,34 @@ def _mech_cbc_encrypt_data(iv: bytes, data: bytes) -> Any:
 def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
     """Create an AES base key suitable for derivation."""
     return import_secret_key(
-        rs.raw, rs.sh, CKK_AES, key_bytes,
+        rs.raw,
+        rs.sh,
+        CKK_AES,
+        key_bytes,
         attrs={
-            int(CKA_DERIVE): True,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
         },
     )
 
 
 _DERIVE_ATTRS: dict[int, Any] = {
-    int(CKA_CLASS): int(CKO_SECRET_KEY),
-    int(CKA_KEY_TYPE): int(CKK_AES),
-    int(CKA_SENSITIVE): False,
-    int(CKA_EXTRACTABLE): True,
-    int(CKA_TOKEN): False,
-    int(CKA_VALUE_LEN): 16,
+    CKA_CLASS: CKO_SECRET_KEY,
+    CKA_KEY_TYPE: CKK_AES,
+    CKA_SENSITIVE: False,
+    CKA_EXTRACTABLE: True,
+    CKA_TOKEN: False,
+    CKA_VALUE_LEN: 16,
 }
 
 _DERIVE_ATTRS_32: dict[int, Any] = {
-    int(CKA_CLASS): int(CKO_SECRET_KEY),
-    int(CKA_KEY_TYPE): int(CKK_AES),
-    int(CKA_SENSITIVE): False,
-    int(CKA_EXTRACTABLE): True,
-    int(CKA_TOKEN): False,
-    int(CKA_VALUE_LEN): 32,
+    CKA_CLASS: CKO_SECRET_KEY,
+    CKA_KEY_TYPE: CKK_AES,
+    CKA_SENSITIVE: False,
+    CKA_EXTRACTABLE: True,
+    CKA_TOKEN: False,
+    CKA_VALUE_LEN: 32,
 }
 
 
@@ -123,14 +126,15 @@ class TestAESECBEncryptData:
         base_key = _create_base_key(rs)
         try:
             derived = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_ECB_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
             try:
-                okm = read_attributes(
-                    rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(okm, bytes)
                 assert len(okm) == 16, f"Expected 16-byte derived key, got {len(okm)}"
                 assert okm != b"\x00" * 16, "Derived key is all zeros"
@@ -148,18 +152,24 @@ class TestAESECBEncryptData:
         base_key = _create_base_key(rs)
         try:
             derived1 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_ECB_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
             derived2 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_ECB_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
                 assert v1 == v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -176,18 +186,24 @@ class TestAESECBEncryptData:
         base_key = _create_base_key(rs)
         try:
             derived1 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_ECB_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
             derived2 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_ECB_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _ALT_DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
                 assert v1 != v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -204,14 +220,15 @@ class TestAESECBEncryptData:
         base_key = _create_base_key(rs)
         try:
             derived = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_ECB_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_ECB_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS_32,
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_32),
             )
             try:
-                okm = read_attributes(
-                    rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(okm, bytes)
                 assert len(okm) == 32, f"Expected 32-byte derived key, got {len(okm)}"
             finally:
@@ -232,14 +249,15 @@ class TestAESCBCEncryptData:
         base_key = _create_base_key(rs)
         try:
             derived = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_CBC_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
             try:
-                okm = read_attributes(
-                    rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(okm, bytes)
                 assert len(okm) == 16, f"Expected 16-byte derived key, got {len(okm)}"
                 assert okm != b"\x00" * 16, "Derived key is all zeros"
@@ -257,18 +275,24 @@ class TestAESCBCEncryptData:
         base_key = _create_base_key(rs)
         try:
             derived1 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_CBC_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
             derived2 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_CBC_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
                 assert v1 == v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -285,18 +309,24 @@ class TestAESCBCEncryptData:
         base_key = _create_base_key(rs)
         try:
             derived1 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_CBC_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
             derived2 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_CBC_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=_mech_cbc_encrypt_data(_IV, _ALT_DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
                 assert v1 != v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -315,18 +345,24 @@ class TestAESCBCEncryptData:
         base_key = _create_base_key(rs)
         try:
             derived1 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_CBC_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
             derived2 = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_CBC_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS,
                 mech_param=_mech_cbc_encrypt_data(alt_iv, _DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
+                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
                 assert v1 != v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -343,14 +379,15 @@ class TestAESCBCEncryptData:
         base_key = _create_base_key(rs)
         try:
             derived = derive_key(
-                rs.raw, rs.sh, base_key, CKM_AES_CBC_ENCRYPT_DATA,
+                rs.raw,
+                rs.sh,
+                base_key,
+                CKM_AES_CBC_ENCRYPT_DATA,
                 attrs=_DERIVE_ATTRS_32,
                 mech_param=_mech_cbc_encrypt_data(_IV, _DATA_32),
             )
             try:
-                okm = read_attributes(
-                    rs.raw, rs.sh, derived, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(okm, bytes)
                 assert len(okm) == 32, f"Expected 32-byte derived key, got {len(okm)}"
             finally:

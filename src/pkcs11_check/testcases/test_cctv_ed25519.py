@@ -78,12 +78,12 @@ def test_ed25519_cctv(vec: dict[str, Any], p11_raw_session: Any) -> None:
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC_EDWARDS),
-                    int(CKA_EC_PARAMS): bytes.fromhex("06032b6570"),  # OID for Ed25519
-                    int(CKA_EC_POINT): pub_key_bytes,
-                    int(CKA_VERIFY): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_EC_EDWARDS,
+                    CKA_EC_PARAMS: bytes.fromhex("06032b6570"),  # OID for Ed25519
+                    CKA_EC_POINT: pub_key_bytes,
+                    CKA_VERIFY: True,
+                    CKA_TOKEN: False,
                 },
             )
         except AssertionError:

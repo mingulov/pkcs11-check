@@ -66,9 +66,9 @@ pytestmark = pytest.mark.sign
 
 # Verification failure return values
 _VERIFY_FAIL_RVS = {
-    int(CKR_SIGNATURE_INVALID),
-    int(CKR_SIGNATURE_LEN_RANGE),
-    int(CKR_FUNCTION_FAILED),
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
 }
 
 # Prehash DSA variants (excluding DSA_SHA256 which is tested elsewhere)
@@ -95,8 +95,8 @@ def _generate_dsa_params(raw: Any, sh: int) -> int:
     dp_handle = CK_OBJECT_HANDLE(0)
     mech = mech_simple(CKM_DSA_PARAMETER_GEN)
     rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(dp_handle))
-    expect_rv(int(rv), CKR_OK)
-    return int(dp_handle.value)
+    expect_rv(rv, CKR_OK)
+    return dp_handle.value
 
 
 def _gen_dsa_keypair_from_params(
@@ -113,11 +113,11 @@ def _gen_dsa_keypair_from_params(
         raw,
         sh,
         dp_handle,
-        [int(CKA_PRIME), int(CKA_SUBPRIME), int(CKA_BASE)],
+        [CKA_PRIME, CKA_SUBPRIME, CKA_BASE],
     )
-    prime = dp_attrs[int(CKA_PRIME)]
-    subprime = dp_attrs[int(CKA_SUBPRIME)]
-    base = dp_attrs[int(CKA_BASE)]
+    prime = dp_attrs[CKA_PRIME]
+    subprime = dp_attrs[CKA_SUBPRIME]
+    base = dp_attrs[CKA_BASE]
 
     assert isinstance(prime, bytes)
     assert isinstance(subprime, bytes)
@@ -147,8 +147,8 @@ def _gen_dsa_keypair_from_params(
         byref(pub_h),
         byref(priv_h),
     )
-    expect_rv(int(rv), CKR_OK)
-    return int(pub_h.value), int(priv_h.value)
+    expect_rv(rv, CKR_OK)
+    return pub_h.value, priv_h.value
 
 
 def _generate_dsa_keypair(
@@ -246,14 +246,14 @@ class TestDSARaw:
             # Sign with wrong-length digest - must be rejected
             mech = mech_simple(CKM_DSA)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
-            if int(rv) != int(CKR_OK):
+            if rv != CKR_OK:
                 # SignInit itself rejected it -- acceptable
                 return
 
             in_buf = (ctypes.c_ubyte * len(bad_digest))(*bad_digest)
             out_len = ctypes.c_ulong(0)
             rv = rs.raw.C_Sign(rs.sh, in_buf, len(bad_digest), None, byref(out_len))
-            if int(rv) == int(CKR_OK) and out_len.value > 0:
+            if rv == CKR_OK and out_len.value > 0:
                 out_buf = (ctypes.c_ubyte * out_len.value)()
                 rv = rs.raw.C_Sign(
                     rs.sh,
@@ -263,8 +263,8 @@ class TestDSARaw:
                     byref(out_len),
                 )
 
-            rv_int = int(rv)
-            if rv_int == int(CKR_OK):
+            rv_int = rv
+            if rv_int == CKR_OK:
                 # Module accepted wrong-length digest - non-standard
                 pytest.xfail(
                     "Module accepted wrong-length digest for CKM_DSA - "
@@ -272,11 +272,11 @@ class TestDSARaw:
                 )
             # Any rejection is acceptable
             assert rv_int in {
-                int(CKR_DATA_LEN_RANGE),
-                int(CKR_MECHANISM_INVALID),
-                int(CKR_FUNCTION_FAILED),
-                int(CKR_ARGUMENTS_BAD),
-                int(CKR_GENERAL_ERROR),
+                CKR_DATA_LEN_RANGE,
+                CKR_MECHANISM_INVALID,
+                CKR_FUNCTION_FAILED,
+                CKR_ARGUMENTS_BAD,
+                CKR_GENERAL_ERROR,
             }, f"Unexpected CKR: {ckr_name(rv_int)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

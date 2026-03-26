@@ -33,11 +33,14 @@ pytestmark = pytest.mark.crossverify
 def _import_aes(rs: Any, key_bytes: bytes) -> int:
     """Import an AES key with encrypt/decrypt for the raw session."""
     return import_secret_key(
-        rs.raw, rs.sh, CKK_AES, key_bytes,
+        rs.raw,
+        rs.sh,
+        CKK_AES,
+        key_bytes,
         attrs={
-            int(CKA_ENCRYPT): True,
-            int(CKA_DECRYPT): True,
-            int(CKA_TOKEN): False,
+            CKA_ENCRYPT: True,
+            CKA_DECRYPT: True,
+            CKA_TOKEN: False,
         },
     )
 
@@ -56,7 +59,11 @@ class TestAESGCMCrossVerify:
         p11_key = _import_aes(rs, key_bytes)
         try:
             p11_ct = encrypt_single(
-                rs.raw, rs.sh, p11_key, CKM_AES_GCM, plaintext,
+                rs.raw,
+                rs.sh,
+                p11_key,
+                CKM_AES_GCM,
+                plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce, aad=aad, tag_bits=128),
             )
 
@@ -79,7 +86,11 @@ class TestAESGCMCrossVerify:
         p11_key = _import_aes(rs, key_bytes)
         try:
             p11_ct = encrypt_single(
-                rs.raw, rs.sh, p11_key, CKM_AES_GCM, plaintext,
+                rs.raw,
+                rs.sh,
+                p11_key,
+                CKM_AES_GCM,
+                plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce, tag_bits=128),
             )
 
@@ -104,7 +115,11 @@ class TestAESGCMCrossVerify:
         p11_key = _import_aes(rs, key_bytes)
         try:
             p11_pt = decrypt_single(
-                rs.raw, rs.sh, p11_key, CKM_AES_GCM, crypto_ct,
+                rs.raw,
+                rs.sh,
+                p11_key,
+                CKM_AES_GCM,
+                crypto_ct,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce, aad=aad, tag_bits=128),
             )
 
@@ -131,7 +146,11 @@ class TestAESGCMCrossVerify:
         try:
             with pytest.raises(AssertionError):
                 decrypt_single(
-                    rs.raw, rs.sh, p11_key, CKM_AES_GCM, bytes(tampered),
+                    rs.raw,
+                    rs.sh,
+                    p11_key,
+                    CKM_AES_GCM,
+                    bytes(tampered),
                     mech_param=mech_gcm(CKM_AES_GCM, nonce, aad=aad, tag_bits=128),
                 )
         finally:
@@ -151,7 +170,11 @@ class TestAESGCMCrossVerify:
         try:
             with pytest.raises(AssertionError):
                 decrypt_single(
-                    rs.raw, rs.sh, p11_key, CKM_AES_GCM, crypto_ct,
+                    rs.raw,
+                    rs.sh,
+                    p11_key,
+                    CKM_AES_GCM,
+                    crypto_ct,
                     mech_param=mech_gcm(CKM_AES_GCM, nonce, aad=b"wrong aad", tag_bits=128),
                 )
         finally:
@@ -172,11 +195,19 @@ class TestAESGCMProperties:
 
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_GCM, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_GCM,
+                plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce1, tag_bits=128),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_GCM, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_GCM,
+                plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce2, tag_bits=128),
             )
 
@@ -194,12 +225,20 @@ class TestAESGCMProperties:
 
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_GCM, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_GCM,
+                plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce, aad=aad, tag_bits=128),
             )
 
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_GCM, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_GCM,
+                ct,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce, aad=aad, tag_bits=128),
             )
 

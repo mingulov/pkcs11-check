@@ -57,13 +57,16 @@ pytestmark = pytest.mark.crossverify
 def _import_aes_key_raw(rs: Any, key_bytes: bytes) -> int:
     """Import raw AES key bytes via raw API."""
     return import_secret_key(
-        rs.raw, rs.sh, CKK_AES, key_bytes,
+        rs.raw,
+        rs.sh,
+        CKK_AES,
+        key_bytes,
         attrs={
-            int(CKA_ENCRYPT): True,
-            int(CKA_DECRYPT): True,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
+            CKA_ENCRYPT: True,
+            CKA_DECRYPT: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
         },
     )
 
@@ -82,7 +85,11 @@ class TestAESCBCCrossVerify:
         p11_key = _import_aes_key_raw(rs, key_bytes)
         try:
             ct_p11 = encrypt_single(
-                rs.raw, rs.sh, p11_key, CKM_AES_CBC, data,
+                rs.raw,
+                rs.sh,
+                p11_key,
+                CKM_AES_CBC,
+                data,
                 mech_param=mech_bytes(CKM_AES_CBC, iv),
             )
 
@@ -111,7 +118,11 @@ class TestAESCBCCrossVerify:
         p11_key = _import_aes_key_raw(rs, key_bytes)
         try:
             pt = decrypt_single(
-                rs.raw, rs.sh, p11_key, CKM_AES_CBC, ct,
+                rs.raw,
+                rs.sh,
+                p11_key,
+                CKM_AES_CBC,
+                ct,
                 mech_param=mech_bytes(CKM_AES_CBC, iv),
             )
             assert pt == data
@@ -142,7 +153,11 @@ class TestAESGCMCrossVerify:
         try:
             gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             pt = decrypt_single(
-                rs.raw, rs.sh, p11_key, CKM_AES_GCM, ct_tag,
+                rs.raw,
+                rs.sh,
+                p11_key,
+                CKM_AES_GCM,
+                ct_tag,
                 mech_param=gcm,
             )
             assert pt == plaintext
@@ -167,22 +182,28 @@ class TestRSAPSSCrossVerify:
             data = b"RSA-PSS cross-verify test"
             pss = mech_pss(
                 CKM_SHA256_RSA_PKCS_PSS,
-                hash_mech=int(CKM_SHA256),
-                mgf=int(CKG_MGF1_SHA256),
+                hash_mech=CKM_SHA256,
+                mgf=CKG_MGF1_SHA256,
                 salt_len=32,
             )
             sig = sign_single(
-                rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS_PSS, data,
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_SHA256_RSA_PKCS_PSS,
+                data,
                 mech_param=pss,
             )
 
             # Export public key components
             attrs = read_attributes(
-                rs.raw, rs.sh, pub,
-                [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)],
+                rs.raw,
+                rs.sh,
+                pub,
+                [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
             )
-            modulus = attrs[int(CKA_MODULUS)]
-            exponent = attrs[int(CKA_PUBLIC_EXPONENT)]
+            modulus = attrs[CKA_MODULUS]
+            exponent = attrs[CKA_PUBLIC_EXPONENT]
 
             # Reconstruct public key in cryptography
             n = int.from_bytes(modulus, "big")  # type: ignore[arg-type]
@@ -217,44 +238,55 @@ class TestRSAOAEPCrossVerify:
             pytest.skip("RSA-OAEP not supported")
 
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
+            rs.raw,
+            rs.sh,
+            2048,
             private_attrs={
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
             plaintext = b"OAEP cross-verify"
             oaep = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
-                hash_mech=int(CKM_SHA_1),
-                mgf=int(CKG_MGF1_SHA1),
+                hash_mech=CKM_SHA_1,
+                mgf=CKG_MGF1_SHA1,
             )
             ct = encrypt_single(
-                rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext,
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_RSA_PKCS_OAEP,
+                plaintext,
                 mech_param=oaep,
             )
 
             # Export private key components for cryptography
             priv_attrs = read_attributes(
-                rs.raw, rs.sh, priv,
+                rs.raw,
+                rs.sh,
+                priv,
                 [
-                    int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT),
-                    int(CKA_PRIVATE_EXPONENT),
-                    int(CKA_PRIME_1), int(CKA_PRIME_2),
-                    int(CKA_EXPONENT_1), int(CKA_EXPONENT_2),
-                    int(CKA_COEFFICIENT),
+                    CKA_MODULUS,
+                    CKA_PUBLIC_EXPONENT,
+                    CKA_PRIVATE_EXPONENT,
+                    CKA_PRIME_1,
+                    CKA_PRIME_2,
+                    CKA_EXPONENT_1,
+                    CKA_EXPONENT_2,
+                    CKA_COEFFICIENT,
                 ],
             )
 
-            n = int.from_bytes(priv_attrs[int(CKA_MODULUS)], "big")  # type: ignore[arg-type]
-            e = int.from_bytes(priv_attrs[int(CKA_PUBLIC_EXPONENT)], "big")  # type: ignore[arg-type]
-            d = int.from_bytes(priv_attrs[int(CKA_PRIVATE_EXPONENT)], "big")  # type: ignore[arg-type]
-            p_int = int.from_bytes(priv_attrs[int(CKA_PRIME_1)], "big")  # type: ignore[arg-type]
-            q_int = int.from_bytes(priv_attrs[int(CKA_PRIME_2)], "big")  # type: ignore[arg-type]
-            dp_int = int.from_bytes(priv_attrs[int(CKA_EXPONENT_1)], "big")  # type: ignore[arg-type]
-            dq_int = int.from_bytes(priv_attrs[int(CKA_EXPONENT_2)], "big")  # type: ignore[arg-type]
-            qi_int = int.from_bytes(priv_attrs[int(CKA_COEFFICIENT)], "big")  # type: ignore[arg-type]
+            n = int.from_bytes(priv_attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
+            e = int.from_bytes(priv_attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
+            d = int.from_bytes(priv_attrs[CKA_PRIVATE_EXPONENT], "big")  # type: ignore[arg-type]
+            p_int = int.from_bytes(priv_attrs[CKA_PRIME_1], "big")  # type: ignore[arg-type]
+            q_int = int.from_bytes(priv_attrs[CKA_PRIME_2], "big")  # type: ignore[arg-type]
+            dp_int = int.from_bytes(priv_attrs[CKA_EXPONENT_1], "big")  # type: ignore[arg-type]
+            dq_int = int.from_bytes(priv_attrs[CKA_EXPONENT_2], "big")  # type: ignore[arg-type]
+            qi_int = int.from_bytes(priv_attrs[CKA_COEFFICIENT], "big")  # type: ignore[arg-type]
 
             crypto_priv = rsa.RSAPrivateNumbers(
                 p_int,

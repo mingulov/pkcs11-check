@@ -82,10 +82,10 @@ from pkcs11_check.testcases.conftest import get_pin_bytes
 pytestmark = pytest.mark.access
 
 _TEMPLATE_ERROR_RVS = (
-    int(CKR_ATTRIBUTE_TYPE_INVALID),
-    int(CKR_ATTRIBUTE_VALUE_INVALID),
-    int(CKR_TEMPLATE_INCOMPLETE),
-    int(CKR_TEMPLATE_INCONSISTENT),
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 
@@ -99,8 +99,8 @@ def _login_user_raw(raw: Any, sh: int, pin_bytes: bytes | None) -> None:
     if pin_bytes is None:
         return
     pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-    rv = int(raw.C_Login(sh, int(CKU_USER), pin_buf, len(pin_bytes)))
-    if rv not in (int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_TYPE_INVALID)):
+    rv = raw.C_Login(sh, CKU_USER, pin_buf, len(pin_bytes))
+    if rv not in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID):
         expect_rv(rv, CKR_OK)
 
 
@@ -124,7 +124,7 @@ class TestPublicSessionVisibility:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         label = f"pub-vis-{id(self)}"
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Create a non-private object while logged in
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -134,11 +134,11 @@ class TestPublicSessionVisibility:
                 rs.raw,
                 s1,
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): label,
-                    int(CKA_VALUE): b"public-data",
-                    int(CKA_TOKEN): True,
-                    int(CKA_PRIVATE): False,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
+                    CKA_VALUE: b"public-data",
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: False,
                 },
             )
         finally:
@@ -146,12 +146,12 @@ class TestPublicSessionVisibility:
             close_session_quietly(rs.raw, s1)
 
         # Open public session (no login) and check visibility
-        pub_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        pub_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         try:
             tmpl = template_from_dict(
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): label,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
                 }
             )
             found = find_objects(rs.raw, pub_sh, tmpl)
@@ -172,8 +172,8 @@ class TestPublicSessionVisibility:
             _login_user_raw(rs.raw, cleanup_sh, pin_bytes)
             tmpl2 = template_from_dict(
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): label,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
                 }
             )
             for h in find_objects(rs.raw, cleanup_sh, tmpl2):
@@ -189,7 +189,7 @@ class TestPublicSessionVisibility:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         label = f"priv-invis-{id(self)}"
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Create a private token object while logged in
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -200,9 +200,9 @@ class TestPublicSessionVisibility:
                 s1,
                 256,
                 attrs={
-                    int(CKA_TOKEN): True,
-                    int(CKA_PRIVATE): True,
-                    int(CKA_LABEL): label,
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: True,
+                    CKA_LABEL: label,
                 },
             )
         finally:
@@ -210,12 +210,12 @@ class TestPublicSessionVisibility:
             close_session_quietly(rs.raw, s1)
 
         # Open public session - private objects must not be visible
-        pub_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        pub_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         try:
             tmpl = template_from_dict(
                 {
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_LABEL): label,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_LABEL: label,
                 }
             )
             found = find_objects(rs.raw, pub_sh, tmpl)
@@ -227,7 +227,7 @@ class TestPublicSessionVisibility:
         cleanup_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, cleanup_sh, pin_bytes)
-            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({int(CKA_LABEL): label})):
+            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({CKA_LABEL: label})):
                 destroy_quietly(rs.raw, cleanup_sh, h)
         finally:
             _logout_safe(rs.raw, cleanup_sh)
@@ -236,7 +236,7 @@ class TestPublicSessionVisibility:
     def test_public_session_can_digest(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Public session can perform digest operations (no login needed)."""
         rs = p11_raw_session
-        pub_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        pub_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         try:
             digest = digest_single(rs.raw, pub_sh, CKM_SHA256, b"public digest")
             assert len(digest) == 32
@@ -248,7 +248,7 @@ class TestPublicSessionVisibility:
     ) -> None:
         """Public session can generate random (no login needed)."""
         rs = p11_raw_session
-        pub_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        pub_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         try:
             rand = generate_random(rs.raw, pub_sh, 16)
             assert len(rand) == 16  # 128 bits = 16 bytes
@@ -271,7 +271,7 @@ class TestUserSessionCapabilities:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         label = f"user-priv-{id(self)}"
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
@@ -281,15 +281,15 @@ class TestUserSessionCapabilities:
                 s1,
                 256,
                 attrs={
-                    int(CKA_TOKEN): True,
-                    int(CKA_PRIVATE): True,
-                    int(CKA_LABEL): label,
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: True,
+                    CKA_LABEL: label,
                 },
             )
             assert key_h != 0
 
             # Verify visible in same session
-            tmpl = template_from_dict({int(CKA_LABEL): label})
+            tmpl = template_from_dict({CKA_LABEL: label})
             found = find_objects(rs.raw, s1, tmpl)
             assert len(found) >= 1, "Private object not visible in USER session"
 
@@ -307,7 +307,7 @@ class TestUserSessionCapabilities:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         label = f"user-pub-{id(self)}"
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
@@ -316,17 +316,17 @@ class TestUserSessionCapabilities:
                 rs.raw,
                 s1,
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): label,
-                    int(CKA_VALUE): b"pub-data",
-                    int(CKA_TOKEN): True,
-                    int(CKA_PRIVATE): False,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
+                    CKA_VALUE: b"pub-data",
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: False,
                 },
             )
             tmpl = template_from_dict(
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): label,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
                 }
             )
             found = find_objects(rs.raw, s1, tmpl)
@@ -344,7 +344,7 @@ class TestUserSessionCapabilities:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_TOKEN): False, int(CKA_LABEL): "user-create-test"},
+            attrs={CKA_TOKEN: False, CKA_LABEL: "user-create-test"},
         )
         assert key_h != 0
         destroy_quietly(rs.raw, rs.sh, key_h)
@@ -360,10 +360,10 @@ class TestUserSessionCapabilities:
             rs.sh,
             256,
             attrs={
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
-                int(CKA_TOKEN): False,
-                int(CKA_PRIVATE): True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_PRIVATE: True,
             },
         )
         try:
@@ -395,11 +395,11 @@ class TestUserSessionCapabilities:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = int(rs.raw.C_Login(rs.sh, int(CKU_SO), pin_buf, len(pin_bytes)))
+        rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(pin_bytes))
         assert rv in (
-            int(CKR_USER_ALREADY_LOGGED_IN),
-            int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN),
-            int(CKR_USER_TYPE_INVALID),
+            CKR_USER_ALREADY_LOGGED_IN,
+            CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+            CKR_USER_TYPE_INVALID,
         ), f"Expected SO login rejected while USER active, got {ckr_name(rv)}"
 
 
@@ -421,7 +421,7 @@ class TestSOSessionCapabilities:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear any existing login
         pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -431,19 +431,19 @@ class TestSOSessionCapabilities:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-            rv = int(rs.raw.C_Login(s1, int(CKU_SO), pin_buf, len(pin_bytes)))
-            if rv == int(CKR_PIN_INCORRECT):
+            rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
+            if rv == CKR_PIN_INCORRECT:
                 pytest.skip("SO PIN differs from user PIN on this module")
-            if rv in (int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN)):
+            if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
                 pytest.skip("Another user already logged in on this token")
             expect_rv(rv, CKR_OK)
 
             # Verify SO is logged in by attempting USER login (should fail)
-            rv2 = int(rs.raw.C_Login(s1, int(CKU_USER), pin_buf, len(pin_bytes)))
+            rv2 = rs.raw.C_Login(s1, CKU_USER, pin_buf, len(pin_bytes))
             assert rv2 in (
-                int(CKR_USER_ALREADY_LOGGED_IN),
-                int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN),
-                int(CKR_USER_TYPE_INVALID),
+                CKR_USER_ALREADY_LOGGED_IN,
+                CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+                CKR_USER_TYPE_INVALID,
             )
         finally:
             _logout_safe(rs.raw, s1)
@@ -458,7 +458,7 @@ class TestSOSessionCapabilities:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear any existing login
         pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -467,11 +467,11 @@ class TestSOSessionCapabilities:
 
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = int(rs.raw.C_Login(s1, int(CKU_SO), pin_buf, len(pin_bytes)))
-        if rv == int(CKR_PIN_INCORRECT):
+        rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
+        if rv == CKR_PIN_INCORRECT:
             close_session_quietly(rs.raw, s1)
             pytest.skip("SO PIN differs from user PIN on this module")
-        if rv in (int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN)):
+        if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
             close_session_quietly(rs.raw, s1)
             pytest.skip("Another user already logged in on this token")
 
@@ -487,7 +487,7 @@ class TestSOSessionCapabilities:
 
             restore_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
             try:
-                login_user(rs.raw, restore_sh, int(CKU_USER), new_pin)
+                login_user(rs.raw, restore_sh, CKU_USER, new_pin)
                 set_pin(rs.raw, restore_sh, new_pin, pin_bytes)
             except Exception:
                 # Best-effort restore; if it fails, token may need re-init
@@ -506,7 +506,7 @@ class TestSOSessionCapabilities:
         if not rs.has_mechanism("AES_CBC_PAD"):
             pytest.skip("CKM_AES_CBC_PAD not supported")
         label = f"so-no-crypto-{id(self)}"
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Create a private key while logged in as USER
         user_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -517,10 +517,10 @@ class TestSOSessionCapabilities:
                 user_sh,
                 256,
                 attrs={
-                    int(CKA_TOKEN): True,
-                    int(CKA_PRIVATE): True,
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_LABEL): label,
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: True,
+                    CKA_ENCRYPT: True,
+                    CKA_LABEL: label,
                 },
             )
         finally:
@@ -530,29 +530,29 @@ class TestSOSessionCapabilities:
         # Login as SO and try to find/use the key
         so_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = int(rs.raw.C_Login(so_sh, int(CKU_SO), pin_buf, len(pin_bytes)))
-        if rv == int(CKR_PIN_INCORRECT):
+        rv = rs.raw.C_Login(so_sh, CKU_SO, pin_buf, len(pin_bytes))
+        if rv == CKR_PIN_INCORRECT:
             close_session_quietly(rs.raw, so_sh)
             # Cleanup
             cleanup_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
             _login_user_raw(rs.raw, cleanup_sh, pin_bytes)
-            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({int(CKA_LABEL): label})):
+            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({CKA_LABEL: label})):
                 destroy_quietly(rs.raw, cleanup_sh, h)
             _logout_safe(rs.raw, cleanup_sh)
             close_session_quietly(rs.raw, cleanup_sh)
             pytest.skip("SO PIN differs from user PIN")
-        if rv in (int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN)):
+        if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
             close_session_quietly(rs.raw, so_sh)
             cleanup_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
             _login_user_raw(rs.raw, cleanup_sh, pin_bytes)
-            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({int(CKA_LABEL): label})):
+            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({CKA_LABEL: label})):
                 destroy_quietly(rs.raw, cleanup_sh, h)
             _logout_safe(rs.raw, cleanup_sh)
             close_session_quietly(rs.raw, cleanup_sh)
             pytest.skip("Another user already logged in")
 
         try:
-            tmpl = template_from_dict({int(CKA_LABEL): label})
+            tmpl = template_from_dict({CKA_LABEL: label})
             found = find_objects(rs.raw, so_sh, tmpl)
             if len(found) == 0:
                 # SO cannot see private keys - expected per spec
@@ -574,9 +574,7 @@ class TestSOSessionCapabilities:
             cleanup_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
             try:
                 _login_user_raw(rs.raw, cleanup_sh, pin_bytes)
-                for h in find_objects(
-                    rs.raw, cleanup_sh, template_from_dict({int(CKA_LABEL): label})
-                ):
+                for h in find_objects(rs.raw, cleanup_sh, template_from_dict({CKA_LABEL: label})):
                     destroy_quietly(rs.raw, cleanup_sh, h)
             finally:
                 _logout_safe(rs.raw, cleanup_sh)
@@ -589,7 +587,7 @@ class TestSOSessionCapabilities:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear any existing login
         pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -599,11 +597,11 @@ class TestSOSessionCapabilities:
         # Login as SO first
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = int(rs.raw.C_Login(s1, int(CKU_SO), pin_buf, len(pin_bytes)))
-        if rv == int(CKR_PIN_INCORRECT):
+        rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
+        if rv == CKR_PIN_INCORRECT:
             close_session_quietly(rs.raw, s1)
             pytest.skip("SO PIN differs from user PIN")
-        if rv in (int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN)):
+        if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
             close_session_quietly(rs.raw, s1)
             pytest.skip("Another user already logged in")
 
@@ -611,11 +609,11 @@ class TestSOSessionCapabilities:
             # Try USER login on a second session - should fail
             s2 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
             try:
-                rv2 = int(rs.raw.C_Login(s2, int(CKU_USER), pin_buf, len(pin_bytes)))
+                rv2 = rs.raw.C_Login(s2, CKU_USER, pin_buf, len(pin_bytes))
                 assert rv2 in (
-                    int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN),
-                    int(CKR_USER_ALREADY_LOGGED_IN),
-                    int(CKR_USER_TYPE_INVALID),
+                    CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+                    CKR_USER_ALREADY_LOGGED_IN,
+                    CKR_USER_TYPE_INVALID,
                 ), f"Expected USER login rejected while SO active, got {ckr_name(rv2)}"
             finally:
                 close_session_quietly(rs.raw, s2)
@@ -639,7 +637,7 @@ class TestTrustedAttribute:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear login
         pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -648,11 +646,11 @@ class TestTrustedAttribute:
 
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-        rv = int(rs.raw.C_Login(s1, int(CKU_SO), pin_buf, len(pin_bytes)))
-        if rv == int(CKR_PIN_INCORRECT):
+        rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
+        if rv == CKR_PIN_INCORRECT:
             close_session_quietly(rs.raw, s1)
             pytest.skip("SO PIN differs from user PIN")
-        if rv in (int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN)):
+        if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
             close_session_quietly(rs.raw, s1)
             pytest.skip("Another user already logged in")
 
@@ -663,9 +661,9 @@ class TestTrustedAttribute:
                     s1,
                     256,
                     attrs={
-                        int(CKA_TOKEN): False,
-                        int(CKA_WRAP): True,
-                        int(CKA_TRUSTED): True,
+                        CKA_TOKEN: False,
+                        CKA_WRAP: True,
+                        CKA_TRUSTED: True,
                     },
                 )
             except AssertionError as e:
@@ -680,8 +678,8 @@ class TestTrustedAttribute:
                 return
 
             try:
-                attrs = read_attributes(rs.raw, s1, key_h, [int(CKA_TRUSTED)])
-                val = attrs.get(int(CKA_TRUSTED))
+                attrs = read_attributes(rs.raw, s1, key_h, [CKA_TRUSTED])
+                val = attrs.get(CKA_TRUSTED)
                 assert val is True, f"Expected CKA_TRUSTED=True, got {val}"
             except AssertionError as e:
                 pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
@@ -700,9 +698,9 @@ class TestTrustedAttribute:
                 rs.sh,
                 256,
                 attrs={
-                    int(CKA_TOKEN): False,
-                    int(CKA_WRAP): True,
-                    int(CKA_TRUSTED): True,
+                    CKA_TOKEN: False,
+                    CKA_WRAP: True,
+                    CKA_TRUSTED: True,
                 },
             )
         except AssertionError:
@@ -733,9 +731,9 @@ class TestTrustedAttribute:
                 rs.sh,
                 128,
                 attrs={
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_WRAP_WITH_TRUSTED): True,
-                    int(CKA_TOKEN): False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_WRAP_WITH_TRUSTED: True,
+                    CKA_TOKEN: False,
                 },
             )
         except AssertionError as e:
@@ -743,8 +741,8 @@ class TestTrustedAttribute:
             return
 
         try:
-            attrs = read_attributes(rs.raw, rs.sh, target_h, [int(CKA_WRAP_WITH_TRUSTED)])
-            val = attrs.get(int(CKA_WRAP_WITH_TRUSTED))
+            attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
+            val = attrs.get(CKA_WRAP_WITH_TRUSTED)
         except AssertionError as e:
             destroy_quietly(rs.raw, rs.sh, target_h)
             pytest.skip(f"Module does not expose CKA_WRAP_WITH_TRUSTED: {e}")
@@ -760,20 +758,22 @@ class TestTrustedAttribute:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_WRAP): True, int(CKA_TOKEN): False},
+            attrs={CKA_WRAP: True, CKA_TOKEN: False},
         )
 
         try:
             mech = mech_simple(CKM_AES_ECB)
             out_len = CK_ULONG(0)
-            rv = int(
-                rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, None, byref(out_len))
-            )
-            assert rv in (
-                int(CKR_ACTION_PROHIBITED),
-                int(CKR_KEY_NOT_WRAPPABLE),
-                int(CKR_FUNCTION_FAILED),
-            ) or rv != int(CKR_OK), f"Expected wrap rejection, got {ckr_name(rv)}"
+            rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, None, byref(out_len))
+            assert (
+                rv
+                in (
+                    CKR_ACTION_PROHIBITED,
+                    CKR_KEY_NOT_WRAPPABLE,
+                    CKR_FUNCTION_FAILED,
+                )
+                or rv != CKR_OK
+            ), f"Expected wrap rejection, got {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapper_h)
             destroy_quietly(rs.raw, rs.sh, target_h)
@@ -801,9 +801,9 @@ class TestAlwaysAuthenticate:
                 rs.sh,
                 2048,
                 private_attrs={
-                    int(CKA_SIGN): True,
-                    int(CKA_ALWAYS_AUTHENTICATE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_SIGN: True,
+                    CKA_ALWAYS_AUTHENTICATE: True,
+                    CKA_TOKEN: False,
                 },
             )
         except AssertionError as e:
@@ -812,8 +812,8 @@ class TestAlwaysAuthenticate:
 
         try:
             try:
-                attrs = read_attributes(rs.raw, rs.sh, priv_h, [int(CKA_ALWAYS_AUTHENTICATE)])
-                val = attrs.get(int(CKA_ALWAYS_AUTHENTICATE))
+                attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_ALWAYS_AUTHENTICATE])
+                val = attrs.get(CKA_ALWAYS_AUTHENTICATE)
             except AssertionError as e:
                 pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
                 return
@@ -861,9 +861,9 @@ class TestAlwaysAuthenticate:
                 rs.sh,
                 2048,
                 private_attrs={
-                    int(CKA_SIGN): True,
-                    int(CKA_ALWAYS_AUTHENTICATE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_SIGN: True,
+                    CKA_ALWAYS_AUTHENTICATE: True,
+                    CKA_TOKEN: False,
                 },
             )
         except AssertionError as e:
@@ -872,8 +872,8 @@ class TestAlwaysAuthenticate:
 
         try:
             try:
-                attrs = read_attributes(rs.raw, rs.sh, priv_h, [int(CKA_ALWAYS_AUTHENTICATE)])
-                val = attrs.get(int(CKA_ALWAYS_AUTHENTICATE))
+                attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_ALWAYS_AUTHENTICATE])
+                val = attrs.get(CKA_ALWAYS_AUTHENTICATE)
             except AssertionError as e:
                 pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
                 return
@@ -883,8 +883,8 @@ class TestAlwaysAuthenticate:
 
             # Do context-specific login, then sign
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-            rv = int(rs.raw.C_Login(rs.sh, int(CKU_CONTEXT_SPECIFIC), pin_buf, len(pin_bytes)))
-            if rv not in (int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN)):
+            rv = rs.raw.C_Login(rs.sh, CKU_CONTEXT_SPECIFIC, pin_buf, len(pin_bytes))
+            if rv not in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN):
                 pytest.skip(f"Context-specific login not supported: {ckr_name(rv)}")
                 return
 
@@ -916,7 +916,7 @@ class TestAccessLevelMatrix:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         label = f"sess-pub-{id(self)}"
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Create session object (PRIVATE=False, TOKEN=False) while logged in
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -926,21 +926,21 @@ class TestAccessLevelMatrix:
                 rs.raw,
                 s1,
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): label,
-                    int(CKA_VALUE): b"session-public",
-                    int(CKA_TOKEN): False,
-                    int(CKA_PRIVATE): False,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
+                    CKA_VALUE: b"session-public",
+                    CKA_TOKEN: False,
+                    CKA_PRIVATE: False,
                 },
             )
 
             # Open another session without login on same token
-            s2 = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            s2 = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
                 tmpl = template_from_dict(
                     {
-                        int(CKA_CLASS): int(CKO_DATA),
-                        int(CKA_LABEL): label,
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: label,
                     }
                 )
                 found = find_objects(rs.raw, s2, tmpl)
@@ -968,7 +968,7 @@ class TestAccessLevelMatrix:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         label = f"tok-pub-{id(self)}"
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Create token object
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -978,11 +978,11 @@ class TestAccessLevelMatrix:
                 rs.raw,
                 s1,
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): label,
-                    int(CKA_VALUE): b"token-public",
-                    int(CKA_TOKEN): True,
-                    int(CKA_PRIVATE): False,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
+                    CKA_VALUE: b"token-public",
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: False,
                 },
             )
         finally:
@@ -990,12 +990,12 @@ class TestAccessLevelMatrix:
             close_session_quietly(rs.raw, s1)
 
         # Check visibility without login
-        s2 = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        s2 = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         try:
             tmpl = template_from_dict(
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): label,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
                 }
             )
             found = find_objects(rs.raw, s2, tmpl)
@@ -1017,7 +1017,7 @@ class TestAccessLevelMatrix:
             for h in find_objects(
                 rs.raw,
                 cleanup_sh,
-                template_from_dict({int(CKA_CLASS): int(CKO_DATA), int(CKA_LABEL): label}),
+                template_from_dict({CKA_CLASS: CKO_DATA, CKA_LABEL: label}),
             ):
                 destroy_quietly(rs.raw, cleanup_sh, h)
         finally:
@@ -1033,7 +1033,7 @@ class TestAccessLevelMatrix:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         label = f"tok-priv-{id(self)}"
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
@@ -1043,9 +1043,9 @@ class TestAccessLevelMatrix:
                 s1,
                 256,
                 attrs={
-                    int(CKA_TOKEN): True,
-                    int(CKA_PRIVATE): True,
-                    int(CKA_LABEL): label,
+                    CKA_TOKEN: True,
+                    CKA_PRIVATE: True,
+                    CKA_LABEL: label,
                 },
             )
         finally:
@@ -1053,12 +1053,12 @@ class TestAccessLevelMatrix:
             close_session_quietly(rs.raw, s1)
 
         # Check NOT visible without login
-        s2 = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        s2 = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         try:
             tmpl = template_from_dict(
                 {
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_LABEL): label,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_LABEL: label,
                 }
             )
             found = find_objects(rs.raw, s2, tmpl)
@@ -1070,7 +1070,7 @@ class TestAccessLevelMatrix:
         cleanup_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, cleanup_sh, pin_bytes)
-            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({int(CKA_LABEL): label})):
+            for h in find_objects(rs.raw, cleanup_sh, template_from_dict({CKA_LABEL: label})):
                 destroy_quietly(rs.raw, cleanup_sh, h)
         finally:
             _logout_safe(rs.raw, cleanup_sh)
@@ -1085,7 +1085,7 @@ class TestAccessLevelMatrix:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
         label = f"sess-priv-{id(self)}"
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
@@ -1095,14 +1095,14 @@ class TestAccessLevelMatrix:
                 s1,
                 128,
                 attrs={
-                    int(CKA_TOKEN): False,
-                    int(CKA_PRIVATE): True,
-                    int(CKA_LABEL): label,
+                    CKA_TOKEN: False,
+                    CKA_PRIVATE: True,
+                    CKA_LABEL: label,
                 },
             )
 
             # Verify visible while logged in
-            tmpl = template_from_dict({int(CKA_LABEL): label})
+            tmpl = template_from_dict({CKA_LABEL: label})
             found = find_objects(rs.raw, s1, tmpl)
             assert len(found) >= 1
 
@@ -1122,7 +1122,7 @@ class TestAccessLevelMatrix:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         combos: list[tuple[bool, bool, str]] = [
             (False, False, f"matrix-sf-{id(self)}"),  # session, public
@@ -1140,11 +1140,11 @@ class TestAccessLevelMatrix:
                     rs.raw,
                     s1,
                     {
-                        int(CKA_CLASS): int(CKO_DATA),
-                        int(CKA_LABEL): label,
-                        int(CKA_VALUE): b"matrix-data",
-                        int(CKA_TOKEN): is_token,
-                        int(CKA_PRIVATE): is_private,
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: label,
+                        CKA_VALUE: b"matrix-data",
+                        CKA_TOKEN: is_token,
+                        CKA_PRIVATE: is_private,
                     },
                 )
                 created_labels.append(label)
@@ -1153,8 +1153,8 @@ class TestAccessLevelMatrix:
             for label in created_labels:
                 tmpl = template_from_dict(
                     {
-                        int(CKA_CLASS): int(CKO_DATA),
-                        int(CKA_LABEL): label,
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: label,
                     }
                 )
                 found = find_objects(rs.raw, s1, tmpl)
@@ -1164,8 +1164,8 @@ class TestAccessLevelMatrix:
             for label in created_labels:
                 tmpl = template_from_dict(
                     {
-                        int(CKA_CLASS): int(CKO_DATA),
-                        int(CKA_LABEL): label,
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: label,
                     }
                 )
                 for h in find_objects(rs.raw, s1, tmpl):
@@ -1189,17 +1189,17 @@ class TestSOOnROSession:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        flags_ro = int(CKF_SERIAL_SESSION)
+        flags_ro = CKF_SERIAL_SESSION
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_ro)
         try:
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-            rv = int(rs.raw.C_Login(s1, int(CKU_SO), pin_buf, len(pin_bytes)))
+            rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
             assert rv in (
-                int(CKR_SESSION_READ_ONLY_EXISTS),
-                int(CKR_SESSION_READ_ONLY),
-                int(CKR_USER_ALREADY_LOGGED_IN),
-                int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN),
-                int(CKR_USER_TYPE_INVALID),
+                CKR_SESSION_READ_ONLY_EXISTS,
+                CKR_SESSION_READ_ONLY,
+                CKR_USER_ALREADY_LOGGED_IN,
+                CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+                CKR_USER_TYPE_INVALID,
             ), f"Expected SO login rejected on RO session, got {ckr_name(rv)}"
         finally:
             _logout_safe(rs.raw, s1)
@@ -1219,7 +1219,7 @@ class TestPublicSessionRestrictions:
     ) -> None:
         """Public session (no login) cannot create CKA_PRIVATE=True token objects."""
         rs = p11_raw_session
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear login
         pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -1234,9 +1234,9 @@ class TestPublicSessionRestrictions:
                     s1,
                     256,
                     attrs={
-                        int(CKA_TOKEN): True,
-                        int(CKA_PRIVATE): True,
-                        int(CKA_LABEL): "public-no-create",
+                        CKA_TOKEN: True,
+                        CKA_PRIVATE: True,
+                        CKA_LABEL: "public-no-create",
                     },
                 )
                 # If it succeeded, some modules don't enforce this
@@ -1259,7 +1259,7 @@ class TestPublicSessionRestrictions:
     ) -> None:
         """Public session may create CKA_PRIVATE=False data objects."""
         rs = p11_raw_session
-        flags_rw = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear login
         pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
@@ -1274,11 +1274,11 @@ class TestPublicSessionRestrictions:
                     rs.raw,
                     s1,
                     {
-                        int(CKA_CLASS): int(CKO_DATA),
-                        int(CKA_LABEL): label,
-                        int(CKA_VALUE): b"pub-created",
-                        int(CKA_TOKEN): True,
-                        int(CKA_PRIVATE): False,
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: label,
+                        CKA_VALUE: b"pub-created",
+                        CKA_TOKEN: True,
+                        CKA_PRIVATE: False,
                     },
                 )
             except AssertionError:
@@ -1295,8 +1295,8 @@ class TestPublicSessionRestrictions:
             # Cleanup
             tmpl = template_from_dict(
                 {
-                    int(CKA_CLASS): int(CKO_DATA),
-                    int(CKA_LABEL): label,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
                 }
             )
             for h in find_objects(rs.raw, s1, tmpl):

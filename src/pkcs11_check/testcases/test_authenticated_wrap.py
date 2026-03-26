@@ -36,9 +36,7 @@ pytestmark = pytest.mark.keymgmt
 class TestAuthenticatedWrap:
     """Test AES-GCM authenticated key wrapping (v3.2)."""
 
-    def test_aes_gcm_wrap_unwrap(
-        self, p11_raw_session: Any, p11_interface_version: str
-    ) -> None:
+    def test_aes_gcm_wrap_unwrap(self, p11_raw_session: Any, p11_interface_version: str) -> None:
         """Wrap/unwrap AES key with AES-GCM authenticated wrapping."""
         rs = p11_raw_session
         if p11_interface_version not in ("3.2",):
@@ -48,31 +46,37 @@ class TestAuthenticatedWrap:
 
         # Generate wrapping key
         wrap_h = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_ENCRYPT): True,
-                int(CKA_DECRYPT): True,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
             },
         )
 
         # Generate target key
         target = gen_aes_key(
-            rs.raw, rs.sh, 128,
-            attrs={int(CKA_EXTRACTABLE): True, int(CKA_SENSITIVE): False},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
-            original_value = read_attributes(
-                rs.raw, rs.sh, target, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            original_value = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
 
             # Wrap with authentication
             iv = generate_random(rs.raw, rs.sh, 12)
             gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             try:
                 wrapped, tag = wrap_key_authenticated(
-                    rs.raw, rs.sh, wrap_h, target, CKM_AES_GCM,
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    target,
+                    CKM_AES_GCM,
                     mech_param=gcm,
                 )
             except (NotImplementedError, AttributeError, TypeError):
@@ -89,19 +93,20 @@ class TestAuthenticatedWrap:
             # Unwrap with authentication
             gcm2 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             unwrapped = unwrap_key_authenticated(
-                rs.raw, rs.sh, wrap_h, wrapped,
+                rs.raw,
+                rs.sh,
+                wrap_h,
+                wrapped,
                 tag if tag else b"",
                 CKM_AES_GCM,
                 attrs={
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
                 },
                 mech_param=gcm2,
             )
             try:
-                unwrapped_value = read_attributes(
-                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
                 assert unwrapped_value == original_value
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
@@ -119,8 +124,10 @@ class TestAuthenticatedWrap:
 
         key = gen_aes_key(rs.raw, rs.sh, 256)
         target = gen_aes_key(
-            rs.raw, rs.sh, 128,
-            attrs={int(CKA_EXTRACTABLE): True},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True},
         )
 
         try:
@@ -131,7 +138,11 @@ class TestAuthenticatedWrap:
                 gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
                 try:
                     wrap_key_authenticated(
-                        rs.raw, rs.sh, key, target, CKM_AES_GCM,
+                        rs.raw,
+                        rs.sh,
+                        key,
+                        target,
+                        CKM_AES_GCM,
                         mech_param=gcm,
                     )
                 except (AssertionError, AttributeError, NotImplementedError):

@@ -43,23 +43,23 @@ from pkcs11_check.raw.types_std import (
 pytestmark = pytest.mark.crossverify
 
 # Private key attrs: enable derive usage
-_PRIV_DERIVE: dict[int, Any] = {int(CKA_DERIVE): True}
+_PRIV_DERIVE: dict[int, Any] = {CKA_DERIVE: True}
 
 # Shared ECDH derive template: raw shared secret, extractable, session-only
 _DERIVE_ATTRS: dict[int, Any] = {
-    int(CKA_CLASS): int(CKO_SECRET_KEY),
-    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-    int(CKA_VALUE_LEN): 32,
-    int(CKA_SENSITIVE): False,
-    int(CKA_EXTRACTABLE): True,
-    int(CKA_TOKEN): False,
+    CKA_CLASS: CKO_SECRET_KEY,
+    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+    CKA_VALUE_LEN: 32,
+    CKA_SENSITIVE: False,
+    CKA_EXTRACTABLE: True,
+    CKA_TOKEN: False,
 }
 
 
 def _ec_point_from_handle(rs: Any, handle: int) -> bytes:
     """Read and decode EC_POINT from a public key handle."""
-    attrs = read_attributes(rs.raw, rs.sh, handle, [int(CKA_EC_POINT)])
-    return decode_ec_point(attrs[int(CKA_EC_POINT)])  # type: ignore[arg-type]
+    attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
+    return decode_ec_point(attrs[CKA_EC_POINT])  # type: ignore[arg-type]
 
 
 class TestECDHKnownAnswer:
@@ -99,7 +99,7 @@ class TestECDHKnownAnswer:
             # PKCS#11: p11_priv x crypto_pub (NULL KDF = raw shared secret)
             ecdh_param = mech_ecdh(
                 CKM_ECDH1_DERIVE,
-                kdf=int(CKD_NULL),
+                kdf=CKD_NULL,
                 public_data=crypto_point,
             )
             try:
@@ -115,7 +115,7 @@ class TestECDHKnownAnswer:
                 pytest.skip("ECDH derivation failed")
                 raise  # unreachable
 
-            p11_secret = read_attributes(rs.raw, rs.sh, derived_h, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            p11_secret = read_attributes(rs.raw, rs.sh, derived_h, [CKA_VALUE])[CKA_VALUE]
 
             # cryptography: crypto_priv x p11_pub
             p11_x = int.from_bytes(p11_point[1:33], "big")
@@ -169,12 +169,12 @@ class TestECDHKnownAnswer:
 
             ecdh_ab = mech_ecdh(
                 CKM_ECDH1_DERIVE,
-                kdf=int(CKD_NULL),
+                kdf=CKD_NULL,
                 public_data=point_b,
             )
             ecdh_ba = mech_ecdh(
                 CKM_ECDH1_DERIVE,
-                kdf=int(CKD_NULL),
+                kdf=CKD_NULL,
                 public_data=point_a,
             )
             try:
@@ -198,8 +198,8 @@ class TestECDHKnownAnswer:
                 pytest.skip("ECDH derivation failed")
                 raise  # unreachable
 
-            secret_ab = read_attributes(rs.raw, rs.sh, key_ab, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            secret_ba = read_attributes(rs.raw, rs.sh, key_ba, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            secret_ab = read_attributes(rs.raw, rs.sh, key_ab, [CKA_VALUE])[CKA_VALUE]
+            secret_ba = read_attributes(rs.raw, rs.sh, key_ba, [CKA_VALUE])[CKA_VALUE]
             assert secret_ab == secret_ba
         finally:
             if key_ab:

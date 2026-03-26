@@ -71,10 +71,14 @@ class TestMalformedAttributes:
         """CKA_CLASS with invalid value must be rejected, not crash."""
         rs = p11_raw_session
         try:
-            h = create_object(rs.raw, rs.sh, {
-                int(CKA_CLASS): 0xDEADBEEF,
-                int(CKA_TOKEN): False,
-            })
+            h = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: 0xDEADBEEF,
+                    CKA_TOKEN: False,
+                },
+            )
             destroy_quietly(rs.raw, rs.sh, h)
             pytest.fail("Module accepted invalid CKA_CLASS value 0xDEADBEEF")
         except AssertionError as e:
@@ -87,12 +91,16 @@ class TestMalformedAttributes:
         """CKA_VALUE with empty bytes on AES key - must reject or accept."""
         rs = p11_raw_session
         try:
-            h = create_object(rs.raw, rs.sh, {
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_AES),
-                int(CKA_VALUE): b"",
-                int(CKA_TOKEN): False,
-            })
+            h = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE: b"",
+                    CKA_TOKEN: False,
+                },
+            )
             # SoftHSM2 accepts - key won't be usable but no crash
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
@@ -106,12 +114,16 @@ class TestMalformedAttributes:
         """AES key with 7-byte VALUE (not 16/24/32) - must reject or accept."""
         rs = p11_raw_session
         try:
-            h = create_object(rs.raw, rs.sh, {
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_AES),
-                int(CKA_VALUE): b"\x00" * 7,
-                int(CKA_TOKEN): False,
-            })
+            h = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE: b"\x00" * 7,
+                    CKA_TOKEN: False,
+                },
+            )
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
@@ -150,11 +162,15 @@ class TestMalformedAttributes:
         """Creating object without CKA_CLASS must fail."""
         rs = p11_raw_session
         try:
-            h = create_object(rs.raw, rs.sh, {
-                int(CKA_LABEL): "no-class",
-                int(CKA_VALUE): b"data",
-                int(CKA_TOKEN): False,
-            })
+            h = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_LABEL: "no-class",
+                    CKA_VALUE: b"data",
+                    CKA_TOKEN: False,
+                },
+            )
             destroy_quietly(rs.raw, rs.sh, h)
             pytest.fail("Module accepted object without CKA_CLASS")
         except AssertionError as e:
@@ -167,12 +183,16 @@ class TestMalformedAttributes:
         """DATA object with KEY_TYPE attribute must be rejected or ignored."""
         rs = p11_raw_session
         try:
-            h = create_object(rs.raw, rs.sh, {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_KEY_TYPE): int(CKK_AES),
-                int(CKA_VALUE): b"conflicting",
-                int(CKA_TOKEN): False,
-            })
+            h = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_DATA,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE: b"conflicting",
+                    CKA_TOKEN: False,
+                },
+            )
             # If it succeeds, module ignores KEY_TYPE on DATA - acceptable
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
@@ -186,12 +206,16 @@ class TestMalformedAttributes:
         """CKA_TOKEN with non-boolean value - must reject or handle gracefully."""
         rs = p11_raw_session
         try:
-            h = create_object(rs.raw, rs.sh, {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_LABEL): "bool-test",
-                int(CKA_VALUE): b"test",
-                int(CKA_TOKEN): 42,  # Not a bool
-            })
+            h = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: "bool-test",
+                    CKA_VALUE: b"test",
+                    CKA_TOKEN: 42,  # Not a bool
+                },
+            )
             destroy_quietly(rs.raw, rs.sh, h)
         except (AssertionError, TypeError, ValueError):
             pass  # Correct: reject bad type
@@ -204,12 +228,16 @@ class TestLargeAttributes:
         """Very long CKA_LABEL (10KB) - must not crash."""
         rs = p11_raw_session
         try:
-            h = create_object(rs.raw, rs.sh, {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_LABEL): "X" * 10240,
-                int(CKA_VALUE): b"big-label",
-                int(CKA_TOKEN): False,
-            })
+            h = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: "X" * 10240,
+                    CKA_VALUE: b"big-label",
+                    CKA_TOKEN: False,
+                },
+            )
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
@@ -222,12 +250,16 @@ class TestLargeAttributes:
         """Large CKA_VALUE (1MB) on data object - must not crash."""
         rs = p11_raw_session
         try:
-            h = create_object(rs.raw, rs.sh, {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_LABEL): "big-value",
-                int(CKA_VALUE): b"\xAB" * (1024 * 1024),
-                int(CKA_TOKEN): False,
-            })
+            h = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: "big-value",
+                    CKA_VALUE: b"\xab" * (1024 * 1024),
+                    CKA_TOKEN: False,
+                },
+            )
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:

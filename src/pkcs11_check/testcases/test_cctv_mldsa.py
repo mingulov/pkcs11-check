@@ -43,9 +43,9 @@ _BENCHMARK_DIR = CCTV_DIR / "ML-DSA" / "benchmark"
 
 # ML-DSA parameter set name -> (CKP parameter set int, benchmark file)
 _PARAM_CONFIGS: list[tuple[str, int, Path]] = [
-    ("ML-DSA-44", int(CKP_ML_DSA_44), _BENCHMARK_DIR / "ML-DSA-44.json"),
-    ("ML-DSA-65", int(CKP_ML_DSA_65), _BENCHMARK_DIR / "ML-DSA-65.json"),
-    ("ML-DSA-87", int(CKP_ML_DSA_87), _BENCHMARK_DIR / "ML-DSA-87.json"),
+    ("ML-DSA-44", CKP_ML_DSA_44, _BENCHMARK_DIR / "ML-DSA-44.json"),
+    ("ML-DSA-65", CKP_ML_DSA_65, _BENCHMARK_DIR / "ML-DSA-65.json"),
+    ("ML-DSA-87", CKP_ML_DSA_87, _BENCHMARK_DIR / "ML-DSA-87.json"),
 ]
 
 # Limit to first N messages per parameter set for speed
@@ -97,13 +97,17 @@ def _gen_mldsa_keypair(rs: Any, param_set: int) -> tuple[int, int]:
     pub_h = CK_OBJECT_HANDLE(0)
     priv_h = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKeyPair(
-        rs.sh, mech.byref(),
-        pub_tmpl.ptr, pub_tmpl.count,
-        priv_tmpl.ptr, priv_tmpl.count,
-        byref(pub_h), byref(priv_h),
+        rs.sh,
+        mech.byref(),
+        pub_tmpl.ptr,
+        pub_tmpl.count,
+        priv_tmpl.ptr,
+        priv_tmpl.count,
+        byref(pub_h),
+        byref(priv_h),
     )
-    expect_rv(int(rv), CKR_OK)
-    return int(pub_h.value), int(priv_h.value)
+    expect_rv(rv, CKR_OK)
+    return pub_h.value, priv_h.value
 
 
 @pytest.mark.parametrize(
@@ -111,9 +115,7 @@ def _gen_mldsa_keypair(rs: Any, param_set: int) -> tuple[int, int]:
     _ALL_VECTORS,
     ids=[v[0] for v in _ALL_VECTORS],
 )
-def test_cctv_mldsa_sign_verify(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_cctv_mldsa_sign_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ML-DSA sign + verify round-trip using CCTV benchmark messages.
 
     Generates a fresh ML-DSA key pair, signs the message, then verifies the
@@ -144,7 +146,8 @@ def test_cctv_mldsa_sign_verify(
             if any(
                 name in exc_msg
                 for name in (
-                    "CKR_MECHANISM_INVALID", "CKR_FUNCTION_FAILED",
+                    "CKR_MECHANISM_INVALID",
+                    "CKR_FUNCTION_FAILED",
                 )
             ):
                 pytest.skip(f"{param_name}: key generation failed - {exc_msg}")

@@ -47,28 +47,18 @@ pytestmark = [pytest.mark.kat, pytest.mark.cctv]
 
 # --- RFC 6979 / CCTV P-256 rejection-sampling vector ---
 # Private key integer d (big-endian, 32 bytes)
-_PRIV_D = bytes.fromhex(
-    "C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721"
-)
+_PRIV_D = bytes.fromhex("C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721")
 
 # Public key coordinates
-_PUB_QX = bytes.fromhex(
-    "60FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB6"
-)
-_PUB_QY = bytes.fromhex(
-    "7903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299"
-)
+_PUB_QX = bytes.fromhex("60FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB6")
+_PUB_QY = bytes.fromhex("7903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299")
 
 # Message bytes (ASCII)
 _MSG = b"wv[vnX"
 
 # Expected signature (raw r||s, each 32 bytes) - only produced by RFC 6979 implementations
-_EXPECTED_R = bytes.fromhex(
-    "EFD9073B652E76DA1B5A019C0E4A2E3FA529B035A6ABB91EF67F0ED7A1F21234"
-)
-_EXPECTED_S = bytes.fromhex(
-    "3DB4706C9D9F4A4FE13BB5E08EF0FAB53A57DBAB2061C83A35FA411C68D2BA33"
-)
+_EXPECTED_R = bytes.fromhex("EFD9073B652E76DA1B5A019C0E4A2E3FA529B035A6ABB91EF67F0ED7A1F21234")
+_EXPECTED_S = bytes.fromhex("3DB4706C9D9F4A4FE13BB5E08EF0FAB53A57DBAB2061C83A35FA411C68D2BA33")
 _EXPECTED_SIG = _EXPECTED_R + _EXPECTED_S
 
 _EC_PARAMS = encode_named_curve_parameters("secp256r1")
@@ -96,20 +86,18 @@ def test_rfc6979_ecdsa_verify(p11_raw_session: Any) -> None:
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC),
-                    int(CKA_EC_PARAMS): _EC_PARAMS,
-                    int(CKA_EC_POINT): _EC_POINT_DER,
-                    int(CKA_TOKEN): False,
-                    int(CKA_VERIFY): True,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_EC,
+                    CKA_EC_PARAMS: _EC_PARAMS,
+                    CKA_EC_POINT: _EC_POINT_DER,
+                    CKA_TOKEN: False,
+                    CKA_VERIFY: True,
                 },
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import P-256 public key: {e}")
 
-        verified = verify_single(
-            rs.raw, rs.sh, pub_key, CKM_ECDSA_SHA256, _MSG, _EXPECTED_SIG
-        )
+        verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA_SHA256, _MSG, _EXPECTED_SIG)
         if not verified:
             pytest.fail(
                 "Module rejected a VALID ECDSA-SHA256 signature - "
@@ -147,14 +135,14 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any) -> None:
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC),
-                    int(CKA_EC_PARAMS): _EC_PARAMS,
-                    int(CKA_EC_POINT): _EC_POINT_DER,
-                    int(CKA_VALUE): _PRIV_D,
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_SIGN): True,
+                    CKA_CLASS: CKO_PRIVATE_KEY,
+                    CKA_KEY_TYPE: CKK_EC,
+                    CKA_EC_PARAMS: _EC_PARAMS,
+                    CKA_EC_POINT: _EC_POINT_DER,
+                    CKA_VALUE: _PRIV_D,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_SIGN: True,
                 },
             )
         except AssertionError as e:

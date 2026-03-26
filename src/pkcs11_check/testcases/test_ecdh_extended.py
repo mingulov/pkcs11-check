@@ -64,28 +64,28 @@ _X25519_OID = encode_named_curve_parameters("x25519")
 _X448_OID = encode_named_curve_parameters("x448")
 
 # Private key attrs for ECDH: enable derive usage
-_PRIV_DERIVE: dict[int, Any] = {int(CKA_DERIVE): True}
+_PRIV_DERIVE: dict[int, Any] = {CKA_DERIVE: True}
 
 # Shared ECDH derive template: raw shared secret, extractable, session-only
 _DERIVE_ATTRS: dict[int, Any] = {
-    int(CKA_CLASS): int(CKO_SECRET_KEY),
-    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-    int(CKA_VALUE_LEN): 32,
-    int(CKA_SENSITIVE): False,
-    int(CKA_EXTRACTABLE): True,
-    int(CKA_TOKEN): False,
+    CKA_CLASS: CKO_SECRET_KEY,
+    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+    CKA_VALUE_LEN: 32,
+    CKA_SENSITIVE: False,
+    CKA_EXTRACTABLE: True,
+    CKA_TOKEN: False,
 }
 
 # AES derive template
 _AES_DERIVE_ATTRS: dict[int, Any] = {
-    int(CKA_CLASS): int(CKO_SECRET_KEY),
-    int(CKA_KEY_TYPE): int(CKK_AES),
-    int(CKA_VALUE_LEN): 32,
-    int(CKA_ENCRYPT): True,
-    int(CKA_DECRYPT): True,
-    int(CKA_SENSITIVE): False,
-    int(CKA_EXTRACTABLE): True,
-    int(CKA_TOKEN): False,
+    CKA_CLASS: CKO_SECRET_KEY,
+    CKA_KEY_TYPE: CKK_AES,
+    CKA_VALUE_LEN: 32,
+    CKA_ENCRYPT: True,
+    CKA_DECRYPT: True,
+    CKA_SENSITIVE: False,
+    CKA_EXTRACTABLE: True,
+    CKA_TOKEN: False,
 }
 
 
@@ -100,8 +100,8 @@ _MECH_SKIP_CKRS = {
 
 def _ec_point(rs: Any, handle: int) -> bytes:
     """Read and decode EC_POINT from a public key handle."""
-    attrs = read_attributes(rs.raw, rs.sh, handle, [int(CKA_EC_POINT)])
-    return decode_ec_point(attrs[int(CKA_EC_POINT)])  # type: ignore[arg-type]
+    attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
+    return decode_ec_point(attrs[CKA_EC_POINT])  # type: ignore[arg-type]
 
 
 def _gen_ec(rs: Any) -> tuple[int, int]:
@@ -119,22 +119,22 @@ def _gen_montgomery(
 ) -> tuple[int, int]:
     """Generate a Montgomery curve keypair (X25519/X448) via raw C_GenerateKeyPair."""
     priv_attrs: dict[int, Any] = {
-        int(CKA_SENSITIVE): True,
-        int(CKA_TOKEN): False,
+        CKA_SENSITIVE: True,
+        CKA_TOKEN: False,
     }
     if derive:
-        priv_attrs[int(CKA_DERIVE)] = True
+        priv_attrs[CKA_DERIVE] = True
     if sign:
-        priv_attrs[int(CKA_SIGN)] = True
+        priv_attrs[CKA_SIGN] = True
     return _gen_keypair(
         rs.raw,
         rs.sh,
         CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
         pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
         priv_base=[],
-        public_attrs={int(CKA_TOKEN): False},
+        public_attrs={CKA_TOKEN: False},
         private_attrs=priv_attrs,
-        pub_skip={int(CKA_EC_PARAMS)},
+        pub_skip={CKA_EC_PARAMS},
     )
 
 
@@ -146,7 +146,7 @@ def _ecdh_derive(
     attrs: dict[int, Any] | None = None,
 ) -> int:
     """Derive a key via ECDH using the given mechanism."""
-    ecdh_param = mech_ecdh(mechanism, kdf=int(CKD_NULL), public_data=peer_point)
+    ecdh_param = mech_ecdh(mechanism, kdf=CKD_NULL, public_data=peer_point)
     return derive_key(
         rs.raw,
         rs.sh,
@@ -159,8 +159,8 @@ def _ecdh_derive(
 
 def _read_value(rs: Any, handle: int) -> bytes:
     """Read CKA_VALUE from a derived key."""
-    result = read_attributes(rs.raw, rs.sh, handle, [int(CKA_VALUE)])
-    val = result[int(CKA_VALUE)]
+    result = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
+    val = result[CKA_VALUE]
     assert isinstance(val, bytes)
     return val
 
@@ -279,9 +279,9 @@ class TestECDH1CofactorDerive:
                 pytest.skip("Cofactor ECDH cannot derive AES key")
                 raise  # unreachable
 
-            attrs = read_attributes(rs.raw, rs.sh, derived, [int(CKA_KEY_TYPE), int(CKA_VALUE)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_AES)
-            val = attrs[int(CKA_VALUE)]
+            attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
+            val = attrs[CKA_VALUE]
             assert isinstance(val, bytes)
             assert len(val) == 32
         finally:
@@ -480,9 +480,9 @@ class TestECMontgomeryKeyPairGen:
             raise  # unreachable
 
         try:
-            attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE), int(CKA_EC_POINT)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_EC_MONTGOMERY)
-            ec_point = attrs[int(CKA_EC_POINT)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE, CKA_EC_POINT])
+            assert attrs[CKA_KEY_TYPE] == CKK_EC_MONTGOMERY
+            ec_point = attrs[CKA_EC_POINT]
             assert ec_point is not None
             assert len(ec_point) > 0  # type: ignore[arg-type]
         finally:
@@ -502,9 +502,9 @@ class TestECMontgomeryKeyPairGen:
             raise  # unreachable
 
         try:
-            attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE), int(CKA_EC_POINT)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_EC_MONTGOMERY)
-            ec_point = attrs[int(CKA_EC_POINT)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE, CKA_EC_POINT])
+            assert attrs[CKA_KEY_TYPE] == CKK_EC_MONTGOMERY
+            ec_point = attrs[CKA_EC_POINT]
             assert ec_point is not None
             assert len(ec_point) > 0  # type: ignore[arg-type]
         finally:
@@ -525,8 +525,8 @@ class TestECMontgomeryKeyPairGen:
             raise  # unreachable
 
         try:
-            point_a = read_attributes(rs.raw, rs.sh, pub_a, [int(CKA_EC_POINT)])[int(CKA_EC_POINT)]
-            point_b = read_attributes(rs.raw, rs.sh, pub_b, [int(CKA_EC_POINT)])[int(CKA_EC_POINT)]
+            point_a = read_attributes(rs.raw, rs.sh, pub_a, [CKA_EC_POINT])[CKA_EC_POINT]
+            point_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])[CKA_EC_POINT]
             assert point_a != point_b
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_a)

@@ -42,10 +42,14 @@ from pkcs11_check.raw.types_std import (
 pytestmark = pytest.mark.sign
 
 # CKR codes expected when attempting CMS_SIG without proper params / unsupported
-_SIGN_ERROR_CKRS = frozenset({
-    int(CKR_MECHANISM_INVALID), int(CKR_MECHANISM_PARAM_INVALID),
-    int(CKR_FUNCTION_FAILED), int(CKR_GENERAL_ERROR),
-})
+_SIGN_ERROR_CKRS = frozenset(
+    {
+        CKR_MECHANISM_INVALID,
+        CKR_MECHANISM_PARAM_INVALID,
+        CKR_FUNCTION_FAILED,
+        CKR_GENERAL_ERROR,
+    }
+)
 
 
 class TestCMSSig:
@@ -68,8 +72,8 @@ class TestCMSSig:
         from pkcs11_check.raw.types_std import CK_MECHANISM_INFO
 
         info = CK_MECHANISM_INFO()
-        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, int(CKM_CMS_SIG), byref(info))
-        if rv == int(CKR_OK):
+        rv = rs.raw.C_GetMechanismInfo(rs.slot_id, CKM_CMS_SIG, byref(info))
+        if rv == CKR_OK:
             assert info is not None
 
     def test_cms_sig_requires_rsa_key(self, p11_raw_session: Any) -> None:
@@ -90,14 +94,20 @@ class TestCMSSig:
             pytest.skip("CKM_CMS_SIG not supported")
 
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
+            rs.raw,
+            rs.sh,
+            2048,
             public_attrs={
-                int(CKA_ENCRYPT): False, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+                CKA_ENCRYPT: False,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
             private_attrs={
-                int(CKA_DECRYPT): False, int(CKA_SIGN): True,
-                int(CKA_SENSITIVE): True, int(CKA_EXTRACTABLE): False,
-                int(CKA_TOKEN): False,
+                CKA_DECRYPT: False,
+                CKA_SIGN: True,
+                CKA_SENSITIVE: True,
+                CKA_EXTRACTABLE: False,
+                CKA_TOKEN: False,
             },
         )
         try:
@@ -131,4 +141,4 @@ class TestCMSSig:
 
     def test_cms_sig_mechanism_value(self) -> None:
         """CKM_CMS_SIG numeric value must be 0x500 per PKCS#11 spec."""
-        assert int(CKM_CMS_SIG) == 0x500
+        assert CKM_CMS_SIG == 0x500

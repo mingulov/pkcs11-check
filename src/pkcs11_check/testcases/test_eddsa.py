@@ -44,14 +44,14 @@ def _gen_ed25519(rs: Any) -> tuple[int, int]:
         pub_base=[attr_bytes(CKA_EC_PARAMS, ED25519_OID)],
         priv_base=[],
         public_attrs={
-            int(CKA_VERIFY): True,
-            int(CKA_TOKEN): False,
+            CKA_VERIFY: True,
+            CKA_TOKEN: False,
         },
         private_attrs={
-            int(CKA_SIGN): True,
-            int(CKA_TOKEN): False,
+            CKA_SIGN: True,
+            CKA_TOKEN: False,
         },
-        pub_skip={int(CKA_EC_PARAMS)},
+        pub_skip={CKA_EC_PARAMS},
     )
 
 
@@ -81,10 +81,10 @@ class TestEdDSAKeyGeneration:
         """Ed25519 key should have EC_EDWARDS key type."""
         rs = p11_raw_session
         pub, priv = ed25519_keypair
-        pub_kt = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-        priv_kt = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])[int(CKA_KEY_TYPE)]
-        assert pub_kt == int(CKK_EC_EDWARDS)
-        assert priv_kt == int(CKK_EC_EDWARDS)
+        pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+        priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+        assert pub_kt == CKK_EC_EDWARDS
+        assert priv_kt == CKK_EC_EDWARDS
 
     def test_ed25519_ec_params(
         self, p11_raw_session: Any, ed25519_keypair: tuple[int, int]
@@ -92,7 +92,7 @@ class TestEdDSAKeyGeneration:
         """Ed25519 key should have correct EC params (OID)."""
         rs = p11_raw_session
         pub, _ = ed25519_keypair
-        params = read_attributes(rs.raw, rs.sh, pub, [int(CKA_EC_PARAMS)])[int(CKA_EC_PARAMS)]
+        params = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_PARAMS])[CKA_EC_PARAMS]
         assert params == ED25519_OID
 
 
@@ -219,7 +219,7 @@ class TestEdDSACrossVerify:
         sig = sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data, mech_param=eddsa)
 
         # Export the public key point
-        ec_point = read_attributes(rs.raw, rs.sh, pub, [int(CKA_EC_POINT)])[int(CKA_EC_POINT)]
+        ec_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
         assert isinstance(ec_point, bytes)
         # DER OCTET STRING: 04 <len> <32-byte point>
         if ec_point[0] == 0x04:

@@ -57,14 +57,22 @@ class TestAESEncryption:
 
         try:
             ciphertext = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             assert ciphertext != plaintext
             assert len(ciphertext) > 0
 
             decrypted = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, ciphertext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                ciphertext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             assert decrypted == plaintext
@@ -81,11 +89,19 @@ class TestAESEncryption:
 
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key1, CKM_AES_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key1,
+                CKM_AES_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key2, CKM_AES_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key2,
+                CKM_AES_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
             )
             assert ct1 != ct2
@@ -114,8 +130,8 @@ class TestAESEncryption:
         key = gen_aes_key(rs.raw, rs.sh, key_bits)
         try:
             assert key is not None
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_KEY_TYPE)])
-            assert attrs[int(CKA_KEY_TYPE)] == int(CKK_AES)
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -140,11 +156,19 @@ class TestAESEncryption:
 
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv1),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CBC_PAD, iv2),
             )
             assert ct1 != ct2
@@ -184,9 +208,11 @@ class TestRSAEncryption:
         """RSA PKCS#1 v1.5 encrypt/decrypt roundtrip."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             plaintext = b"RSA roundtrip test"
@@ -201,23 +227,33 @@ class TestRSAEncryption:
         """RSA-OAEP encrypt/decrypt roundtrip."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             plaintext = b"OAEP roundtrip test"
             oaep = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
-                hash_mech=int(CKM_SHA_1),
-                mgf=int(CKG_MGF1_SHA1),
+                hash_mech=CKM_SHA_1,
+                mgf=CKG_MGF1_SHA1,
             )
             ct = encrypt_single(
-                rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext,
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_RSA_PKCS_OAEP,
+                plaintext,
                 mech_param=oaep,
             )
             pt = decrypt_single(
-                rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct,
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_RSA_PKCS_OAEP,
+                ct,
                 mech_param=oaep,
             )
             assert pt == plaintext
@@ -229,23 +265,33 @@ class TestRSAEncryption:
         """RSA-OAEP should produce different ciphertexts for same plaintext."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
-            private_attrs={int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             plaintext = b"randomness test"
             oaep = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
-                hash_mech=int(CKM_SHA_1),
-                mgf=int(CKG_MGF1_SHA1),
+                hash_mech=CKM_SHA_1,
+                mgf=CKG_MGF1_SHA1,
             )
             ct1 = encrypt_single(
-                rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext,
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_RSA_PKCS_OAEP,
+                plaintext,
                 mech_param=oaep,
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext,
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_RSA_PKCS_OAEP,
+                plaintext,
                 mech_param=oaep,
             )
             assert ct1 != ct2

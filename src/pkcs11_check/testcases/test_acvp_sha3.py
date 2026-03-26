@@ -31,10 +31,10 @@ if not ACVP_AVAILABLE:
 
 # ACVP algorithm name -> (CKM mechanism int, mechanism name string)
 _ALG_TO_MECH: dict[str, tuple[int, str]] = {
-    "SHA3-224-2.0": (int(CKM_SHA3_224), "SHA3_224"),
-    "SHA3-256-2.0": (int(CKM_SHA3_256), "SHA3_256"),
-    "SHA3-384-2.0": (int(CKM_SHA3_384), "SHA3_384"),
-    "SHA3-512-2.0": (int(CKM_SHA3_512), "SHA3_512"),
+    "SHA3-224-2.0": (CKM_SHA3_224, "SHA3_224"),
+    "SHA3-256-2.0": (CKM_SHA3_256, "SHA3_256"),
+    "SHA3-384-2.0": (CKM_SHA3_384, "SHA3_384"),
+    "SHA3-512-2.0": (CKM_SHA3_512, "SHA3_512"),
 }
 
 
@@ -89,9 +89,7 @@ _SHA3_VECTORS = _load_sha3_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _SHA3_VECTORS, ids=[v[0] for v in _SHA3_VECTORS])
-def test_acvp_sha3(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_sha3(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SHA-3 digest from NIST ACVP vectors.
 
     Compares PKCS#11 digest output against official NIST ACVP expected results.
@@ -117,7 +115,5 @@ def test_acvp_sha3(
         pytest.fail(f"SHA-3 digest failed for {vec_id}: {e}")
 
     assert digest == expected_md, (
-        f"{vec_id}: digest mismatch\n"
-        f"  expected: {expected_md.hex()}\n"
-        f"  got:      {digest.hex()}"
+        f"{vec_id}: digest mismatch\n  expected: {expected_md.hex()}\n  got:      {digest.hex()}"
     )

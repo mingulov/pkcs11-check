@@ -52,9 +52,7 @@ class TestDigestLengths:
         ],
         ids=["SHA-1", "SHA-224", "SHA-256", "SHA-384", "SHA-512"],
     )
-    def test_digest_length(
-        self, p11_raw_session: Any, mechanism: Any, expected_len: int
-    ) -> None:
+    def test_digest_length(self, p11_raw_session: Any, mechanism: Any, expected_len: int) -> None:
         """Each hash mechanism produces the correct output length."""
         rs = p11_raw_session
         digest = digest_single(rs.raw, rs.sh, mechanism, b"test data")
@@ -72,9 +70,7 @@ class TestDigestProperties:
         d2 = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
         assert d1 == d2
 
-    def test_sha256_different_input_different_digest(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_sha256_different_input_different_digest(self, p11_raw_session: Any) -> None:
         """Different inputs produce different digests."""
         rs = p11_raw_session
         d1 = digest_single(rs.raw, rs.sh, CKM_SHA256, b"input one")
@@ -116,9 +112,7 @@ class TestDigestCrossVerify:
         ],
         ids=["SHA-1", "SHA-224", "SHA-256", "SHA-384", "SHA-512"],
     )
-    def test_cross_verify(
-        self, p11_raw_session: Any, mechanism: Any, hashlib_name: str
-    ) -> None:
+    def test_cross_verify(self, p11_raw_session: Any, mechanism: Any, hashlib_name: str) -> None:
         """PKCS#11 digest matches hashlib for each algorithm."""
         rs = p11_raw_session
         data = b"cross-verification test data for digest operations"
@@ -160,31 +154,31 @@ class TestDigestKey:
         """DigestKey of extractable AES-128 key matches hashlib digest of key bytes."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 128,
-            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
         )
         try:
             # C_DigestInit
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             # C_DigestKey
-            rv = int(rs.raw.C_DigestKey(rs.sh, key))
-            if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+            rv = rs.raw.C_DigestKey(rs.sh, key)
+            if rv == CKR_FUNCTION_NOT_SUPPORTED:
                 pytest.skip("C_DigestKey not supported by this module")
             expect_rv(rv, CKR_OK)
             # C_DigestFinal (two-call pattern)
             out_len = CK_ULONG(0)
             rv = rs.raw.C_DigestFinal(rs.sh, None, byref(out_len))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             out_buf = (ctypes.c_ubyte * out_len.value)()
             rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             p11_digest = bytes(out_buf[: out_len.value])
             # Compare with hashlib
-            key_bytes = read_attributes(
-                rs.raw, rs.sh, key, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(key_bytes).digest()
             assert p11_digest == ref_digest
@@ -195,36 +189,36 @@ class TestDigestKey:
         """DigestKey mixed with data: SHA-256(data_prefix + key_bytes)."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 128,
-            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
         )
         data_prefix = b"prefix-data-for-digest"
         try:
             # C_DigestInit
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             # C_DigestUpdate with data prefix
             in_buf = (ctypes.c_ubyte * len(data_prefix))(*data_prefix)
             rv = rs.raw.C_DigestUpdate(rs.sh, in_buf, len(data_prefix))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             # C_DigestKey
-            rv = int(rs.raw.C_DigestKey(rs.sh, key))
-            if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+            rv = rs.raw.C_DigestKey(rs.sh, key)
+            if rv == CKR_FUNCTION_NOT_SUPPORTED:
                 pytest.skip("C_DigestKey not supported by this module")
             expect_rv(rv, CKR_OK)
             # C_DigestFinal (two-call pattern)
             out_len = CK_ULONG(0)
             rv = rs.raw.C_DigestFinal(rs.sh, None, byref(out_len))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             out_buf = (ctypes.c_ubyte * out_len.value)()
             rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             p11_digest = bytes(out_buf[: out_len.value])
             # Compare with hashlib
-            key_bytes = read_attributes(
-                rs.raw, rs.sh, key, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(data_prefix + key_bytes).digest()
             assert p11_digest == ref_digest
@@ -235,31 +229,31 @@ class TestDigestKey:
         """DigestKey works with AES-256 key."""
         rs = p11_raw_session
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
         )
         try:
             # C_DigestInit
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             # C_DigestKey
-            rv = int(rs.raw.C_DigestKey(rs.sh, key))
-            if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+            rv = rs.raw.C_DigestKey(rs.sh, key)
+            if rv == CKR_FUNCTION_NOT_SUPPORTED:
                 pytest.skip("C_DigestKey not supported by this module")
             expect_rv(rv, CKR_OK)
             # C_DigestFinal (two-call pattern)
             out_len = CK_ULONG(0)
             rv = rs.raw.C_DigestFinal(rs.sh, None, byref(out_len))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             out_buf = (ctypes.c_ubyte * out_len.value)()
             rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
-            expect_rv(int(rv), CKR_OK)
+            expect_rv(rv, CKR_OK)
             p11_digest = bytes(out_buf[: out_len.value])
             # Compare with hashlib
-            key_bytes = read_attributes(
-                rs.raw, rs.sh, key, [int(CKA_VALUE)]
-            )[int(CKA_VALUE)]
+            key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(key_bytes).digest()
             assert p11_digest == ref_digest

@@ -80,10 +80,10 @@ class TestECKeygen:
         rs = p11_raw_session
         pub, priv = _try_gen_ec(rs, curve_name)
         try:
-            attrs_pub = read_attributes(rs.raw, rs.sh, pub, [int(CKA_KEY_TYPE)])
-            attrs_priv = read_attributes(rs.raw, rs.sh, priv, [int(CKA_KEY_TYPE)])
-            assert attrs_pub[int(CKA_KEY_TYPE)] == int(CKK_EC)
-            assert attrs_priv[int(CKA_KEY_TYPE)] == int(CKK_EC)
+            attrs_pub = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
+            attrs_priv = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
+            assert attrs_pub[CKA_KEY_TYPE] == CKK_EC
+            assert attrs_priv[CKA_KEY_TYPE] == CKK_EC
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -117,9 +117,7 @@ class TestECDSACrossVerify:
 
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
 
-            ec_point_der = read_attributes(rs.raw, rs.sh, pub, [int(CKA_EC_POINT)])[
-                int(CKA_EC_POINT)
-            ]
+            ec_point_der = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
             point_bytes = decode_ec_point(ec_point_der)  # type: ignore[arg-type]
             pub_crypto = ec.EllipticCurvePublicKey.from_encoded_point(crypto_curve, point_bytes)
 

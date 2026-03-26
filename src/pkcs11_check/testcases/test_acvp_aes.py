@@ -49,9 +49,9 @@ _MAX_PER_DIRECTION = 20  # cap for speed
 # ---------------------------------------------------------------------------
 
 
-def _load_gcm_vectors() -> (
-    tuple[list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]]
-):
+def _load_gcm_vectors() -> tuple[
+    list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]
+]:
     """Load AES-GCM ACVP vectors, split into encrypt and decrypt lists.
 
     Returns (encrypt_vectors, decrypt_vectors) where each entry is
@@ -150,10 +150,10 @@ def _import_aes_key(
         CKK_AES,
         key_bytes,
         attrs={
-            int(CKA_ENCRYPT): encrypt,
-            int(CKA_DECRYPT): decrypt,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
+            CKA_ENCRYPT: encrypt,
+            CKA_DECRYPT: decrypt,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
         },
     )
 
@@ -168,9 +168,7 @@ def _import_aes_key(
     _ENCRYPT_VECTORS,
     ids=[v[0] for v in _ENCRYPT_VECTORS],
 )
-def test_acvp_aes_gcm_encrypt(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_aes_gcm_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GCM encryption from NIST ACVP vectors.
 
     For each vector (key, iv, aad, pt) the module must produce the expected
@@ -188,9 +186,7 @@ def test_acvp_aes_gcm_encrypt(
     try:
         gcm_param = mech_gcm(CKM_AES_GCM, iv, aad=aad, tag_bits=vec["tag_len_bits"])
     except (AssertionError, ValueError, TypeError):
-        pytest.xfail(
-            f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B"
-        )
+        pytest.xfail(f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B")
 
     key = 0
     try:
@@ -198,15 +194,18 @@ def test_acvp_aes_gcm_encrypt(
 
         try:
             result = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_GCM, vec["pt"],
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_GCM,
+                vec["pt"],
                 mech_param=gcm_param,
             )
         except AssertionError as exc:
             exc_msg = str(exc)
             # Module does not support this IV/tag size combination
             pytest.xfail(
-                f"Module limitation: GCM iv={len(iv)}B tag={tag_bytes}B "
-                f"not supported ({exc_msg})"
+                f"Module limitation: GCM iv={len(iv)}B tag={tag_bytes}B not supported ({exc_msg})"
             )
 
         # raw recipe returns ciphertext||tag as a single bytestring
@@ -224,8 +223,7 @@ def test_acvp_aes_gcm_encrypt(
             f"expected {vec['ct_expected'].hex()}"
         )
         assert tag_got == vec["tag_expected"], (
-            f"{vec_id}: tag mismatch: got {tag_got.hex()}, "
-            f"expected {vec['tag_expected'].hex()}"
+            f"{vec_id}: tag mismatch: got {tag_got.hex()}, expected {vec['tag_expected'].hex()}"
         )
     finally:
         if key:
@@ -242,9 +240,7 @@ def test_acvp_aes_gcm_encrypt(
     _DECRYPT_VECTORS,
     ids=[v[0] for v in _DECRYPT_VECTORS],
 )
-def test_acvp_aes_gcm_decrypt(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_aes_gcm_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-GCM decryption from NIST ACVP vectors.
 
     For valid-tag vectors (testPassed=true/absent): the module must decrypt
@@ -265,9 +261,7 @@ def test_acvp_aes_gcm_decrypt(
     try:
         gcm_param = mech_gcm(CKM_AES_GCM, iv, aad=aad, tag_bits=vec["tag_len_bits"])
     except (AssertionError, ValueError, TypeError):
-        pytest.xfail(
-            f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B"
-        )
+        pytest.xfail(f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B")
         return
 
     # ACVP decrypt: ciphertext and tag are provided separately; PKCS#11 wants ct||tag
@@ -279,7 +273,11 @@ def test_acvp_aes_gcm_decrypt(
 
         try:
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_GCM, ct_with_tag,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_GCM,
+                ct_with_tag,
                 mech_param=gcm_param,
             )
         except AssertionError as exc:
@@ -287,7 +285,8 @@ def test_acvp_aes_gcm_decrypt(
             if any(
                 name in exc_msg
                 for name in (
-                    "CKR_MECHANISM_PARAM_INVALID", "CKR_ARGUMENTS_BAD",
+                    "CKR_MECHANISM_PARAM_INVALID",
+                    "CKR_ARGUMENTS_BAD",
                 )
             ):
                 # Module does not support this IV/tag size combination
@@ -299,7 +298,8 @@ def test_acvp_aes_gcm_decrypt(
             if any(
                 name in exc_msg
                 for name in (
-                    "CKR_ENCRYPTED_DATA_INVALID", "CKR_ENCRYPTED_DATA_LEN_RANGE",
+                    "CKR_ENCRYPTED_DATA_INVALID",
+                    "CKR_ENCRYPTED_DATA_LEN_RANGE",
                     "CKR_AEAD_DECRYPT_FAILED",
                 )
             ):
@@ -307,23 +307,19 @@ def test_acvp_aes_gcm_decrypt(
                     # Expected: module correctly rejected invalid tag
                     return
                 # Unexpected: module rejected a valid-tag vector
-                pytest.fail(
-                    f"{vec_id}: valid-tag GCM vector rejected with tag auth failure"
-                )
+                pytest.fail(f"{vec_id}: valid-tag GCM vector rejected with tag auth failure")
                 return
             raise
 
         # Decryption succeeded
         if test_passed:
             assert pt == vec["pt_expected"], (
-                f"{vec_id}: plaintext mismatch: got {pt.hex()}, "
-                f"expected {vec['pt_expected'].hex()}"
+                f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {vec['pt_expected'].hex()}"
             )
         else:
             # Module accepted an invalid tag - this is a security failure
             pytest.fail(
-                f"{vec_id}: module accepted GCM ciphertext with invalid tag "
-                f"(tag auth bypass)"
+                f"{vec_id}: module accepted GCM ciphertext with invalid tag (tag auth bypass)"
             )
     finally:
         if key:

@@ -47,7 +47,7 @@ class TestEncryptBufferSizes:
     def test_single_block(self, p11_raw_session: Any) -> None:
         """Encrypt exactly one AES block (16 bytes)."""
         rs = p11_raw_session
-        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
         try:
             pt = b"X" * 16
@@ -61,7 +61,7 @@ class TestEncryptBufferSizes:
     def test_two_blocks(self, p11_raw_session: Any) -> None:
         """Encrypt exactly two blocks."""
         rs = p11_raw_session
-        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
         try:
             pt = b"Y" * 32
@@ -75,7 +75,7 @@ class TestEncryptBufferSizes:
     def test_100_blocks(self, p11_raw_session: Any) -> None:
         """Encrypt 100 blocks (1600 bytes)."""
         rs = p11_raw_session
-        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
         try:
             pt = b"Z" * 1600
@@ -89,7 +89,7 @@ class TestEncryptBufferSizes:
     def test_64kb(self, p11_raw_session: Any) -> None:
         """Encrypt 64KB payload."""
         rs = p11_raw_session
-        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
         try:
             pt = bytes(range(256)) * 256  # 64KB, block-aligned
@@ -103,10 +103,10 @@ class TestEncryptBufferSizes:
     def test_1mb(self, p11_raw_session: Any) -> None:
         """Encrypt 1MB payload - tests streaming/chunking."""
         rs = p11_raw_session
-        enc_attrs = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True}
+        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
         try:
-            pt = b"\xAB" * (1024 * 1024)  # 1MB
+            pt = b"\xab" * (1024 * 1024)  # 1MB
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
             assert len(ct) == 1024 * 1024
             dt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
@@ -163,9 +163,11 @@ class TestSignBufferSizes:
         """RSA sign of empty data."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_VERIFY): True},
-            private_attrs={int(CKA_SIGN): True},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_VERIFY: True},
+            private_attrs={CKA_SIGN: True},
         )
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"")
@@ -179,9 +181,11 @@ class TestSignBufferSizes:
         """RSA sign of single byte."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_VERIFY): True},
-            private_attrs={int(CKA_SIGN): True},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_VERIFY: True},
+            private_attrs={CKA_SIGN: True},
         )
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"X")
@@ -194,9 +198,11 @@ class TestSignBufferSizes:
         """RSA sign of 100KB payload."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
-            public_attrs={int(CKA_VERIFY): True},
-            private_attrs={int(CKA_SIGN): True},
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_VERIFY: True},
+            private_attrs={CKA_SIGN: True},
         )
         try:
             data = b"E" * 100_000
@@ -213,36 +219,45 @@ class TestKeyImportBufferSizes:
     def test_aes_128(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         key = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, bytes(16),
-            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            bytes(16),
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == bytes(16)
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            assert attrs[CKA_VALUE] == bytes(16)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_aes_192(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         key = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, bytes(24),
-            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            bytes(24),
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == bytes(24)
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            assert attrs[CKA_VALUE] == bytes(24)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_aes_256(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         key = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, bytes(32),
-            attrs={int(CKA_SENSITIVE): False, int(CKA_EXTRACTABLE): True},
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            bytes(32),
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == bytes(32)
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            assert attrs[CKA_VALUE] == bytes(32)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

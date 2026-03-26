@@ -62,9 +62,9 @@ class TestECPublicKeyImport:
         imported_pub = 0
         try:
             # Export public point and params
-            attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_EC_POINT), int(CKA_EC_PARAMS)])
-            ec_point_der = attrs[int(CKA_EC_POINT)]
-            ec_params = attrs[int(CKA_EC_PARAMS)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT, CKA_EC_PARAMS])
+            ec_point_der = attrs[CKA_EC_POINT]
+            ec_params = attrs[CKA_EC_PARAMS]
             assert isinstance(ec_point_der, bytes)
             assert len(ec_point_der) > 0
 
@@ -79,12 +79,12 @@ class TestECPublicKeyImport:
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC),
-                    int(CKA_EC_PARAMS): ec_params,
-                    int(CKA_EC_POINT): ec_point_der,
-                    int(CKA_VERIFY): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_EC,
+                    CKA_EC_PARAMS: ec_params,
+                    CKA_EC_POINT: ec_point_der,
+                    CKA_VERIFY: True,
+                    CKA_TOKEN: False,
                 },
             )
 
@@ -108,9 +108,7 @@ class TestECPointExport:
 
         pub, priv = _make_ec_keypair(rs, "secp256r1")
         try:
-            ec_point_der = read_attributes(rs.raw, rs.sh, pub, [int(CKA_EC_POINT)])[
-                int(CKA_EC_POINT)
-            ]
+            ec_point_der = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
             raw_point = decode_ec_point(ec_point_der)  # type: ignore[arg-type]
             assert raw_point[0] == 0x04, "EC point should be uncompressed (0x04 prefix)"
         finally:
@@ -125,9 +123,7 @@ class TestECPointExport:
 
         pub, priv = _make_ec_keypair(rs, "secp256r1")
         try:
-            ec_point_der = read_attributes(rs.raw, rs.sh, pub, [int(CKA_EC_POINT)])[
-                int(CKA_EC_POINT)
-            ]
+            ec_point_der = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
             raw_point = decode_ec_point(ec_point_der)  # type: ignore[arg-type]
             assert len(raw_point) == 65, f"P-256 point should be 65 bytes, got {len(raw_point)}"
         finally:
@@ -143,8 +139,8 @@ class TestECPointExport:
         pub1, priv1 = _make_ec_keypair(rs, "secp256r1")
         pub2, priv2 = _make_ec_keypair(rs, "secp256r1")
         try:
-            point1 = read_attributes(rs.raw, rs.sh, pub1, [int(CKA_EC_POINT)])[int(CKA_EC_POINT)]
-            point2 = read_attributes(rs.raw, rs.sh, pub2, [int(CKA_EC_POINT)])[int(CKA_EC_POINT)]
+            point1 = read_attributes(rs.raw, rs.sh, pub1, [CKA_EC_POINT])[CKA_EC_POINT]
+            point2 = read_attributes(rs.raw, rs.sh, pub2, [CKA_EC_POINT])[CKA_EC_POINT]
             assert point1 != point2, "Two keypairs should not have the same public point"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub1)

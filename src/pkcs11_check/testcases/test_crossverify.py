@@ -61,13 +61,16 @@ pytestmark = pytest.mark.crossverify
 def _import_aes_key_raw(rs: Any, key_bytes: bytes) -> int:
     """Import raw AES key bytes via raw API."""
     return import_secret_key(
-        rs.raw, rs.sh, CKK_AES, key_bytes,
+        rs.raw,
+        rs.sh,
+        CKK_AES,
+        key_bytes,
         attrs={
-            int(CKA_ENCRYPT): True,
-            int(CKA_DECRYPT): True,
-            int(CKA_TOKEN): False,
-            int(CKA_SENSITIVE): False,
-            int(CKA_EXTRACTABLE): True,
+            CKA_ENCRYPT: True,
+            CKA_DECRYPT: True,
+            CKA_TOKEN: False,
+            CKA_SENSITIVE: False,
+            CKA_EXTRACTABLE: True,
         },
     )
 
@@ -159,11 +162,13 @@ class TestRSACrossVerify:
     def _export_rsa_pubkey(self, rs: Any, pub_h: int) -> rsa.RSAPublicKey:
         """Export RSA public key from PKCS#11 and load into cryptography."""
         attrs = read_attributes(
-            rs.raw, rs.sh, pub_h,
-            [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)],
+            rs.raw,
+            rs.sh,
+            pub_h,
+            [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
         )
-        modulus = int.from_bytes(attrs[int(CKA_MODULUS)], "big")  # type: ignore[arg-type]
-        exponent = int.from_bytes(attrs[int(CKA_PUBLIC_EXPONENT)], "big")  # type: ignore[arg-type]
+        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
+        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
         return rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
     def test_rsa_pkcs_sign(self, p11_raw_session: Any) -> None:
@@ -217,13 +222,19 @@ class TestECDSACrossVerify:
     """
 
     def _export_ec_pubkey(
-        self, rs: Any, pub_h: int, curve: ec.EllipticCurve,
+        self,
+        rs: Any,
+        pub_h: int,
+        curve: ec.EllipticCurve,
     ) -> ec.EllipticCurvePublicKey:
         """Export EC public key from PKCS#11 point encoding."""
         attrs = read_attributes(
-            rs.raw, rs.sh, pub_h, [int(CKA_EC_POINT)],
+            rs.raw,
+            rs.sh,
+            pub_h,
+            [CKA_EC_POINT],
         )
-        ec_point = attrs[int(CKA_EC_POINT)]
+        ec_point = attrs[CKA_EC_POINT]
         assert isinstance(ec_point, bytes)
         # Unwrap DER OCTET STRING to raw point (0x04||x||y)
         point_bytes = decode_ec_point(ec_point)
@@ -333,12 +344,15 @@ class TestHMACCrossVerify:
         for key_type in (CKK_SHA256_HMAC, CKK_GENERIC_SECRET):
             try:
                 p11_key = import_secret_key(
-                    rs.raw, rs.sh, key_type, key_bytes,
+                    rs.raw,
+                    rs.sh,
+                    key_type,
+                    key_bytes,
                     attrs={
-                        int(CKA_SIGN): True,
-                        int(CKA_VERIFY): True,
-                        int(CKA_TOKEN): False,
-                        int(CKA_SENSITIVE): False,
+                        CKA_SIGN: True,
+                        CKA_VERIFY: True,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
                     },
                 )
                 break
@@ -363,11 +377,14 @@ class TestHMACCrossVerify:
 
         try:
             p11_key = import_secret_key(
-                rs.raw, rs.sh, CKK_SHA_1_HMAC, key_bytes,
+                rs.raw,
+                rs.sh,
+                CKK_SHA_1_HMAC,
+                key_bytes,
                 attrs={
-                    int(CKA_SIGN): True,
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
+                    CKA_SIGN: True,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
                 },
             )
         except (AssertionError, AttributeError):
@@ -388,11 +405,13 @@ class TestRSAKeySizeCrossVerify:
 
     def _export_rsa_pubkey(self, rs: Any, pub_h: int) -> Any:
         attrs = read_attributes(
-            rs.raw, rs.sh, pub_h,
-            [int(CKA_MODULUS), int(CKA_PUBLIC_EXPONENT)],
+            rs.raw,
+            rs.sh,
+            pub_h,
+            [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
         )
-        modulus = int.from_bytes(attrs[int(CKA_MODULUS)], "big")  # type: ignore[arg-type]
-        exponent = int.from_bytes(attrs[int(CKA_PUBLIC_EXPONENT)], "big")  # type: ignore[arg-type]
+        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
+        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
         return rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
     def test_rsa_3072_sha384(self, p11_raw_session: Any) -> None:

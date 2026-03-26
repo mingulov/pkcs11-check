@@ -89,7 +89,11 @@ def test_bench_aes256_cbc_encrypt(benchmark: Any, p11_raw_session: Any) -> None:
     # Verify mechanism works before benchmarking
     try:
         encrypt_single(
-            rs.raw, rs.sh, key, CKM_AES_CBC, data,
+            rs.raw,
+            rs.sh,
+            key,
+            CKM_AES_CBC,
+            data,
             mech_param=mech_bytes(CKM_AES_CBC, iv),
         )
     except AssertionError:
@@ -98,7 +102,11 @@ def test_bench_aes256_cbc_encrypt(benchmark: Any, p11_raw_session: Any) -> None:
 
     def encrypt() -> bytes:
         return encrypt_single(
-            rs.raw, rs.sh, key, CKM_AES_CBC, data,
+            rs.raw,
+            rs.sh,
+            key,
+            CKM_AES_CBC,
+            data,
             mech_param=mech_bytes(CKM_AES_CBC, iv),
         )
 

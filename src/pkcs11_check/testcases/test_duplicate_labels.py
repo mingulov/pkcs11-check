@@ -44,10 +44,8 @@ class TestDuplicateLabels:
         k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
         k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
         try:
-            found = find_objects(rs.raw, rs.sh, template_from_dict({int(CKA_LABEL): label}))
-            assert len(found) >= 2, (
-                f"Expected >=2 objects with label '{label}', got {len(found)}"
-            )
+            found = find_objects(rs.raw, rs.sh, template_from_dict({CKA_LABEL: label}))
+            assert len(found) >= 2, f"Expected >=2 objects with label '{label}', got {len(found)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, k1)
             destroy_quietly(rs.raw, rs.sh, k2)
@@ -56,28 +54,36 @@ class TestDuplicateLabels:
         """Two CKO_DATA objects with the same label - both findable."""
         rs = p11_raw_session
         label = _unique_label()
-        o1 = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): b"first",
-            int(CKA_TOKEN): False,
-        })
-        o2 = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): b"second",
-            int(CKA_TOKEN): False,
-        })
+        o1 = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: b"first",
+                CKA_TOKEN: False,
+            },
+        )
+        o2 = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: b"second",
+                CKA_TOKEN: False,
+            },
+        )
         try:
             found = find_objects(
-                rs.raw, rs.sh,
-                template_from_dict({int(CKA_CLASS): int(CKO_DATA), int(CKA_LABEL): label}),
+                rs.raw,
+                rs.sh,
+                template_from_dict({CKA_CLASS: CKO_DATA, CKA_LABEL: label}),
             )
             assert len(found) >= 2
 
             values = sorted(
-                read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])[int(CKA_VALUE)]
-                for h in found
+                read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])[CKA_VALUE] for h in found
             )
             assert b"first" in values
             assert b"second" in values
@@ -90,15 +96,19 @@ class TestDuplicateLabels:
         rs = p11_raw_session
         label = _unique_label()
         k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
-        o1 = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): b"data-obj",
-            int(CKA_TOKEN): False,
-        })
+        o1 = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: b"data-obj",
+                CKA_TOKEN: False,
+            },
+        )
         try:
             # Search by label only (no class filter)
-            found = find_objects(rs.raw, rs.sh, template_from_dict({int(CKA_LABEL): label}))
+            found = find_objects(rs.raw, rs.sh, template_from_dict({CKA_LABEL: label}))
             assert len(found) >= 2
         finally:
             destroy_quietly(rs.raw, rs.sh, k1)
@@ -112,7 +122,7 @@ class TestDuplicateLabels:
         k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
         try:
             destroy_quietly(rs.raw, rs.sh, k1)
-            found = find_objects(rs.raw, rs.sh, template_from_dict({int(CKA_LABEL): label}))
+            found = find_objects(rs.raw, rs.sh, template_from_dict({CKA_LABEL: label}))
             assert len(found) >= 1
         finally:
             destroy_quietly(rs.raw, rs.sh, k2)

@@ -130,8 +130,8 @@ def _gen_dh_keypair(
         byref(pub_h),
         byref(priv_h),
     )
-    expect_rv(int(rv), CKR_OK)
-    return int(pub_h.value), int(priv_h.value)
+    expect_rv(rv, CKR_OK)
+    return pub_h.value, priv_h.value
 
 
 class TestDHKeyAgreement:
@@ -148,8 +148,8 @@ class TestDHKeyAgreement:
             assert priv is not None
 
             # Public key value should be non-empty
-            attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_VALUE)])
-            pub_value = attrs[int(CKA_VALUE)]
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_VALUE])
+            pub_value = attrs[CKA_VALUE]
             assert isinstance(pub_value, bytes)
             assert len(pub_value) > 0
         finally:
@@ -165,10 +165,10 @@ class TestDHKeyAgreement:
         alice_pub, alice_priv = _gen_dh_keypair(rs.raw, rs.sh)
         bob_pub, bob_priv = _gen_dh_keypair(rs.raw, rs.sh)
         try:
-            alice_attrs = read_attributes(rs.raw, rs.sh, alice_pub, [int(CKA_VALUE)])
-            bob_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [int(CKA_VALUE)])
-            alice_value = alice_attrs[int(CKA_VALUE)]
-            bob_value = bob_attrs[int(CKA_VALUE)]
+            alice_attrs = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])
+            bob_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])
+            alice_value = alice_attrs[CKA_VALUE]
+            bob_value = bob_attrs[CKA_VALUE]
             assert alice_value != bob_value  # Different public keys
 
             # Each derives an AES-128 key using the other's public value
@@ -178,12 +178,12 @@ class TestDHKeyAgreement:
                 alice_priv,
                 CKM_DH_PKCS_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_VALUE_LEN): 16,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE_LEN: 16,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, bob_value),
             )
@@ -193,20 +193,20 @@ class TestDHKeyAgreement:
                 bob_priv,
                 CKM_DH_PKCS_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_VALUE_LEN): 16,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE_LEN: 16,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
                 },
                 mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, alice_value),
             )
             try:
                 # Both should derive the same key material
-                a_val = read_attributes(rs.raw, rs.sh, alice_shared, [int(CKA_VALUE)])
-                b_val = read_attributes(rs.raw, rs.sh, bob_shared, [int(CKA_VALUE)])
-                assert a_val[int(CKA_VALUE)] == b_val[int(CKA_VALUE)]
+                a_val = read_attributes(rs.raw, rs.sh, alice_shared, [CKA_VALUE])
+                b_val = read_attributes(rs.raw, rs.sh, bob_shared, [CKA_VALUE])
+                assert a_val[CKA_VALUE] == b_val[CKA_VALUE]
             finally:
                 destroy_quietly(rs.raw, rs.sh, alice_shared)
                 destroy_quietly(rs.raw, rs.sh, bob_shared)
@@ -224,8 +224,8 @@ class TestDHKeyAgreement:
         alice_pub, alice_priv = _gen_dh_keypair(rs.raw, rs.sh)
         bob_pub, bob_priv = _gen_dh_keypair(rs.raw, rs.sh)
         try:
-            bob_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [int(CKA_VALUE)])
-            alice_attrs = read_attributes(rs.raw, rs.sh, alice_pub, [int(CKA_VALUE)])
+            bob_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])
+            alice_attrs = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])
 
             # Alice derives shared key, encrypts
             shared_key = derive_key(
@@ -234,14 +234,14 @@ class TestDHKeyAgreement:
                 alice_priv,
                 CKM_DH_PKCS_DERIVE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_VALUE_LEN): 16,
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_DECRYPT): True,
-                    int(CKA_TOKEN): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE_LEN: 16,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                    CKA_TOKEN: False,
                 },
-                mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, bob_attrs[int(CKA_VALUE)]),
+                mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, bob_attrs[CKA_VALUE]),
             )
             try:
                 plaintext = b"DH key agreement!" + b"\x00" * 15  # pad to 32 bytes
@@ -256,14 +256,14 @@ class TestDHKeyAgreement:
                     bob_priv,
                     CKM_DH_PKCS_DERIVE,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_AES),
-                        int(CKA_VALUE_LEN): 16,
-                        int(CKA_ENCRYPT): True,
-                        int(CKA_DECRYPT): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 16,
+                        CKA_ENCRYPT: True,
+                        CKA_DECRYPT: True,
+                        CKA_TOKEN: False,
                     },
-                    mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, alice_attrs[int(CKA_VALUE)]),
+                    mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, alice_attrs[CKA_VALUE]),
                 )
                 try:
                     pt = decrypt_single(rs.raw, rs.sh, bob_key, CKM_AES_ECB, ct)
@@ -289,19 +289,19 @@ class TestDHKeyAgreement:
         # Exchange 1
         _pub1, priv1 = _gen_dh_keypair(rs.raw, rs.sh)
         pub2, _priv2 = _gen_dh_keypair(rs.raw, rs.sh)
-        pub2_val = read_attributes(rs.raw, rs.sh, pub2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+        pub2_val = read_attributes(rs.raw, rs.sh, pub2, [CKA_VALUE])[CKA_VALUE]
         key1 = derive_key(
             rs.raw,
             rs.sh,
             priv1,
             CKM_DH_PKCS_DERIVE,
             attrs={
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_AES),
-                int(CKA_VALUE_LEN): 16,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_VALUE_LEN: 16,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             },
             mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, pub2_val),
         )
@@ -309,27 +309,27 @@ class TestDHKeyAgreement:
         # Exchange 2 (fresh keypairs)
         _pub3, priv3 = _gen_dh_keypair(rs.raw, rs.sh)
         pub4, _priv4 = _gen_dh_keypair(rs.raw, rs.sh)
-        pub4_val = read_attributes(rs.raw, rs.sh, pub4, [int(CKA_VALUE)])[int(CKA_VALUE)]
+        pub4_val = read_attributes(rs.raw, rs.sh, pub4, [CKA_VALUE])[CKA_VALUE]
         key2 = derive_key(
             rs.raw,
             rs.sh,
             priv3,
             CKM_DH_PKCS_DERIVE,
             attrs={
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_AES),
-                int(CKA_VALUE_LEN): 16,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_TOKEN): False,
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_VALUE_LEN: 16,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
             },
             mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, pub4_val),
         )
 
         try:
             # Different exchanges should produce different keys
-            v1 = read_attributes(rs.raw, rs.sh, key1, [int(CKA_VALUE)])[int(CKA_VALUE)]
-            v2 = read_attributes(rs.raw, rs.sh, key2, [int(CKA_VALUE)])[int(CKA_VALUE)]
+            v1 = read_attributes(rs.raw, rs.sh, key1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, key2, [CKA_VALUE])[CKA_VALUE]
             assert v1 != v2
         finally:
             destroy_quietly(rs.raw, rs.sh, key1)
@@ -366,16 +366,16 @@ class TestDHParameterGeneration:
             tmpl.count,
             byref(dp_handle),
         )
-        expect_rv(int(rv), CKR_OK)
+        expect_rv(rv, CKR_OK)
         try:
-            assert int(dp_handle.value) != 0
+            assert dp_handle.value != 0
 
-            attrs = read_attributes(rs.raw, rs.sh, int(dp_handle.value), [int(CKA_PRIME)])
-            prime = attrs[int(CKA_PRIME)]
+            attrs = read_attributes(rs.raw, rs.sh, dp_handle.value, [CKA_PRIME])
+            prime = attrs[CKA_PRIME]
             assert isinstance(prime, bytes)
             assert len(prime) * 8 >= 2048
         finally:
-            destroy_quietly(rs.raw, rs.sh, int(dp_handle.value))
+            destroy_quietly(rs.raw, rs.sh, dp_handle.value)
 
     def test_generated_params_produce_valid_keypair(
         self,
@@ -404,17 +404,17 @@ class TestDHParameterGeneration:
             tmpl.count,
             byref(dp_handle),
         )
-        expect_rv(int(rv), CKR_OK)
+        expect_rv(rv, CKR_OK)
         try:
             # Read the generated prime and base
             dp_attrs = read_attributes(
                 rs.raw,
                 rs.sh,
-                int(dp_handle.value),
-                [int(CKA_PRIME), int(CKA_BASE)],
+                dp_handle.value,
+                [CKA_PRIME, CKA_BASE],
             )
-            prime = dp_attrs[int(CKA_PRIME)]
-            base = dp_attrs[int(CKA_BASE)]
+            prime = dp_attrs[CKA_PRIME]
+            base = dp_attrs[CKA_BASE]
             assert isinstance(prime, bytes)
             assert isinstance(base, bytes)
 
@@ -422,8 +422,8 @@ class TestDHParameterGeneration:
             pub_a, priv_a = _gen_dh_keypair(rs.raw, rs.sh, prime, base)
             pub_b, priv_b = _gen_dh_keypair(rs.raw, rs.sh, prime, base)
             try:
-                pub_b_val = read_attributes(rs.raw, rs.sh, pub_b, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                pub_a_val = read_attributes(rs.raw, rs.sh, pub_a, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                pub_b_val = read_attributes(rs.raw, rs.sh, pub_b, [CKA_VALUE])[CKA_VALUE]
+                pub_a_val = read_attributes(rs.raw, rs.sh, pub_a, [CKA_VALUE])[CKA_VALUE]
 
                 key_a = derive_key(
                     rs.raw,
@@ -431,12 +431,12 @@ class TestDHParameterGeneration:
                     priv_a,
                     CKM_DH_PKCS_DERIVE,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_AES),
-                        int(CKA_VALUE_LEN): 16,
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 16,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, pub_b_val),
                 )
@@ -446,18 +446,18 @@ class TestDHParameterGeneration:
                     priv_b,
                     CKM_DH_PKCS_DERIVE,
                     attrs={
-                        int(CKA_CLASS): int(CKO_SECRET_KEY),
-                        int(CKA_KEY_TYPE): int(CKK_AES),
-                        int(CKA_VALUE_LEN): 16,
-                        int(CKA_SENSITIVE): False,
-                        int(CKA_EXTRACTABLE): True,
-                        int(CKA_TOKEN): False,
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 16,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
                     },
                     mech_param=mech_bytes(CKM_DH_PKCS_DERIVE, pub_a_val),
                 )
                 try:
-                    va = read_attributes(rs.raw, rs.sh, key_a, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                    vb = read_attributes(rs.raw, rs.sh, key_b, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                    va = read_attributes(rs.raw, rs.sh, key_a, [CKA_VALUE])[CKA_VALUE]
+                    vb = read_attributes(rs.raw, rs.sh, key_b, [CKA_VALUE])[CKA_VALUE]
                     assert va == vb
                 finally:
                     destroy_quietly(rs.raw, rs.sh, key_a)
@@ -468,4 +468,4 @@ class TestDHParameterGeneration:
                 destroy_quietly(rs.raw, rs.sh, pub_b)
                 destroy_quietly(rs.raw, rs.sh, priv_b)
         finally:
-            destroy_quietly(rs.raw, rs.sh, int(dp_handle.value))
+            destroy_quietly(rs.raw, rs.sh, dp_handle.value)

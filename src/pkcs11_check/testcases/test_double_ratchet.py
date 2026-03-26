@@ -65,12 +65,12 @@ pytestmark = pytest.mark.full
 # We xfail rather than hard-fail so the suite stays green while still
 # surfacing evidence that the mechanism was reached.
 _RATCHET_ERROR_RVS = {
-    int(CKR_MECHANISM_INVALID),
-    int(CKR_MECHANISM_PARAM_INVALID),
-    int(CKR_FUNCTION_FAILED),
-    int(CKR_GENERAL_ERROR),
-    int(CKR_TEMPLATE_INCOMPLETE),
-    int(CKR_TEMPLATE_INCONSISTENT),
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 }
 
 
@@ -89,8 +89,8 @@ def _create_ec_keypair(rs: Any) -> tuple[int, int]:
             rs.raw,
             rs.sh,
             curve_oid,
-            private_attrs={int(CKA_DERIVE): True, int(CKA_TOKEN): False},
-            public_attrs={int(CKA_TOKEN): False},
+            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+            public_attrs={CKA_TOKEN: False},
         )
     except (AssertionError, Exception):
         pass
@@ -101,8 +101,8 @@ def _create_ec_keypair(rs: Any) -> tuple[int, int]:
         rs.raw,
         rs.sh,
         curve_oid,
-        private_attrs={int(CKA_DERIVE): True, int(CKA_TOKEN): False},
-        public_attrs={int(CKA_TOKEN): False},
+        private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+        public_attrs={CKA_TOKEN: False},
     )
 
 
@@ -115,16 +115,16 @@ def _create_generic_secret_key(
 ) -> int:
     """Import a GENERIC_SECRET key for use with ratchet encrypt/decrypt tests."""
     attrs: dict[int, Any] = {
-        int(CKA_CLASS): int(CKO_SECRET_KEY),
-        int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-        int(CKA_VALUE): value,
-        int(CKA_TOKEN): False,
-        int(CKA_SENSITIVE): False,
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+        CKA_VALUE: value,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
     }
     if encrypt:
-        attrs[int(CKA_ENCRYPT)] = True
+        attrs[CKA_ENCRYPT] = True
     if decrypt:
-        attrs[int(CKA_DECRYPT)] = True
+        attrs[CKA_DECRYPT] = True
     return create_object(rs.raw, rs.sh, attrs)
 
 
@@ -163,12 +163,12 @@ class TestX2RatchetDerive:
                 priv,
                 CKM_X2RATCHET_INITIALIZE,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 32,
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 32,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
                 },
             )
             try:
@@ -200,12 +200,12 @@ class TestX2RatchetDerive:
         pub_b, priv_b = _create_ec_keypair(rs)
         try:
             derive_attrs: dict[int, Any] = {
-                int(CKA_CLASS): int(CKO_SECRET_KEY),
-                int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                int(CKA_VALUE_LEN): 32,
-                int(CKA_TOKEN): False,
-                int(CKA_SENSITIVE): False,
-                int(CKA_EXTRACTABLE): True,
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: 32,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             }
             derived_a = derive_key(
                 rs.raw,
@@ -222,8 +222,8 @@ class TestX2RatchetDerive:
                 attrs=derive_attrs,
             )
             try:
-                val_a = read_attributes(rs.raw, rs.sh, derived_a, [int(CKA_VALUE)])[int(CKA_VALUE)]
-                val_b = read_attributes(rs.raw, rs.sh, derived_b, [int(CKA_VALUE)])[int(CKA_VALUE)]
+                val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
+                val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
                 assert val_a != val_b, "Independent ratchet inits should produce different keys"
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived_a)
@@ -272,12 +272,12 @@ class TestX2RatchetDerive:
                 priv,
                 CKM_X2RATCHET_RESPOND,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_GENERIC_SECRET),
-                    int(CKA_VALUE_LEN): 32,
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: 32,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
                 },
             )
             try:
@@ -316,11 +316,11 @@ class TestX2RatchetDerive:
                 priv,
                 CKM_X2RATCHET_RESPOND,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_X2RATCHET),
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_X2RATCHET,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
                 },
             )
             try:

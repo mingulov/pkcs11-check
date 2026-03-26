@@ -69,10 +69,10 @@ class TestWrapDecryptOracle:
                 rs.sh,
                 256,
                 attrs={
-                    int(CKA_WRAP): True,
-                    int(CKA_UNWRAP): True,
-                    int(CKA_ENCRYPT): True,
-                    int(CKA_DECRYPT): True,
+                    CKA_WRAP: True,
+                    CKA_UNWRAP: True,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
                 },
             )
         except AssertionError:
@@ -85,7 +85,7 @@ class TestWrapDecryptOracle:
                 rs.raw,
                 rs.sh,
                 128,
-                attrs={int(CKA_EXTRACTABLE): True},
+                attrs={CKA_EXTRACTABLE: True},
             )
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, dual_key_h, target_h, CKM_AES_ECB)
@@ -117,11 +117,11 @@ class TestSensitiveExtraction:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_SENSITIVE): True, int(CKA_EXTRACTABLE): False},
+            attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False},
         )
         try:
             try:
-                read_attributes(rs.raw, rs.sh, key_h, [int(CKA_VALUE)])
+                read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
                 pytest.fail("Reading CKA_VALUE on SENSITIVE key should fail")
             except AssertionError:
                 pass  # Expected
@@ -134,7 +134,7 @@ class TestSensitiveExtraction:
         pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             try:
-                read_attributes(rs.raw, rs.sh, priv_h, [int(CKA_PRIVATE_EXPONENT)])
+                read_attributes(rs.raw, rs.sh, priv_h, [CKA_PRIVATE_EXPONENT])
                 pytest.fail("Reading CKA_PRIVATE_EXPONENT should fail")
             except AssertionError:
                 pass  # Expected
@@ -153,11 +153,11 @@ class TestAttributeEscalation:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_EXTRACTABLE): False},
+            attrs={CKA_EXTRACTABLE: False},
         )
         try:
             try:
-                set_attributes(rs.raw, rs.sh, key_h, {int(CKA_EXTRACTABLE): True})
+                set_attributes(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: True})
                 pytest.xfail("SECURITY: CKA_EXTRACTABLE escalated from False to True")
             except AssertionError:
                 pass  # Module prevented escalation - correct
@@ -171,11 +171,11 @@ class TestAttributeEscalation:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_SENSITIVE): True},
+            attrs={CKA_SENSITIVE: True},
         )
         try:
             try:
-                set_attributes(rs.raw, rs.sh, key_h, {int(CKA_SENSITIVE): False})
+                set_attributes(rs.raw, rs.sh, key_h, {CKA_SENSITIVE: False})
                 pytest.xfail("SECURITY: CKA_SENSITIVE downgraded from True to False")
             except AssertionError:
                 pass  # Correct
@@ -197,14 +197,14 @@ class TestAttributeLaunderingViaCopy:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_EXTRACTABLE): False, int(CKA_COPYABLE): True},
+            attrs={CKA_EXTRACTABLE: False, CKA_COPYABLE: True},
         )
         try:
             try:
-                copy_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_EXTRACTABLE): True})
+                copy_h = copy_object(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: True})
                 # If copy succeeded, try to read the value
                 try:
-                    read_attributes(rs.raw, rs.sh, copy_h, [int(CKA_VALUE)])
+                    read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
                     pytest.xfail("SECURITY: Copy escalated CKA_EXTRACTABLE, key material readable")
                 except AssertionError:
                     pass  # Value still protected despite attribute change
@@ -222,13 +222,13 @@ class TestAttributeLaunderingViaCopy:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_SENSITIVE): True, int(CKA_COPYABLE): True},
+            attrs={CKA_SENSITIVE: True, CKA_COPYABLE: True},
         )
         try:
             try:
-                copy_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_SENSITIVE): False})
+                copy_h = copy_object(rs.raw, rs.sh, key_h, {CKA_SENSITIVE: False})
                 try:
-                    read_attributes(rs.raw, rs.sh, copy_h, [int(CKA_VALUE)])
+                    read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
                     pytest.xfail("SECURITY: Copy downgraded CKA_SENSITIVE, key material readable")
                 except AssertionError:
                     pass
@@ -250,11 +250,11 @@ class TestKeyUsageRestrictions:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_ENCRYPT): False, int(CKA_DECRYPT): True},
+            attrs={CKA_ENCRYPT: False, CKA_DECRYPT: True},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_ENCRYPT)])
-            assert attrs[int(CKA_ENCRYPT)] is False
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_ENCRYPT])
+            assert attrs[CKA_ENCRYPT] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -265,11 +265,11 @@ class TestKeyUsageRestrictions:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_EXTRACTABLE): False, int(CKA_SENSITIVE): True},
+            attrs={CKA_EXTRACTABLE: False, CKA_SENSITIVE: True},
         )
         try:
             try:
-                read_attributes(rs.raw, rs.sh, key_h, [int(CKA_VALUE)])
+                read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
                 pytest.fail("Reading CKA_VALUE on non-extractable key should fail")
             except AssertionError as e:
                 if "Reading CKA_VALUE" in str(e):
@@ -286,16 +286,16 @@ class TestKeyUsageRestrictions:
             rs.sh,
             256,
             attrs={
-                int(CKA_ENCRYPT): False,
-                int(CKA_DECRYPT): True,
-                int(CKA_WRAP): False,
-                int(CKA_UNWRAP): False,
+                CKA_ENCRYPT: False,
+                CKA_DECRYPT: True,
+                CKA_WRAP: False,
+                CKA_UNWRAP: False,
             },
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_DECRYPT), int(CKA_ENCRYPT)])
-            assert attrs[int(CKA_DECRYPT)] is True
-            assert attrs[int(CKA_ENCRYPT)] is False
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_DECRYPT, CKA_ENCRYPT])
+            assert attrs[CKA_DECRYPT] is True
+            assert attrs[CKA_ENCRYPT] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -307,9 +307,9 @@ class TestAccessControl:
         """Without login, private objects should not be visible."""
         rs = p11_raw_session
         # Open a public (non-logged-in) session
-        pub_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+        pub_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         try:
-            tmpl = template_from_dict({int(CKA_CLASS): int(CKO_PRIVATE_KEY)})
+            tmpl = template_from_dict({CKA_CLASS: CKO_PRIVATE_KEY})
             found = find_objects(rs.raw, pub_sh, tmpl)
             # This isn't a hard assertion since there may be no private keys at all
             # The point is that the search doesn't crash and doesn't leak
@@ -323,7 +323,7 @@ class TestAccessControl:
         # Create multiple keys simultaneously (don't destroy) to get unique handles
         keys = []
         for i in range(10):
-            key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={int(CKA_LABEL): f"handle-{i}"})
+            key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: f"handle-{i}"})
             keys.append(key_h)
         # All should be distinct handles
         assert len(keys) == 10

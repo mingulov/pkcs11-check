@@ -70,8 +70,14 @@ _TWO_BLOCKS = b"12345678abcdefgh"  # exactly 16 bytes
 
 
 def _encrypt_or_skip(
-    raw: Any, sh: int, key: int, mechanism: Any, data: bytes,
-    *, mech_param: Any = None, skip_msg: str = "",
+    raw: Any,
+    sh: int,
+    key: int,
+    mechanism: Any,
+    data: bytes,
+    *,
+    mech_param: Any = None,
+    skip_msg: str = "",
 ) -> bytes:
     """Try encrypt_single; skip if module returns CKR_MECHANISM_INVALID.
 
@@ -96,8 +102,8 @@ def _gen_des_key(raw: Any, sh: int, mechanism: Any, attrs: dict[int, Any]) -> in
     mech = mech_simple(mechanism)
     key = CK_OBJECT_HANDLE(0)
     rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
-    expect_rv(int(rv), CKR_OK)
-    return int(key.value)
+    expect_rv(rv, CKR_OK)
+    return key.value
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +120,10 @@ class TestDESKeyGen:
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_TOKEN: False},
         )
         try:
             assert key != 0
@@ -128,8 +136,10 @@ class TestDESKeyGen:
         if not rs.has_mechanism("DES_KEY_GEN"):
             pytest.skip("CKM_DES_KEY_GEN not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_TOKEN: False},
         )
         try:
             assert key != 0
@@ -156,13 +166,20 @@ class TestDESEncryption:
         if not rs.has_mechanism("DES_ECB"):
             pytest.skip("CKM_DES_ECB not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
-        des_skip ="CKM_DES advertised but rejected (OpenSSL 3 legacy provider absent)"
+        des_skip = "CKM_DES advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
             ct = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_DES_ECB, _TWO_BLOCKS, skip_msg=des_skip,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_ECB,
+                _TWO_BLOCKS,
+                skip_msg=des_skip,
             )
             assert ct != _TWO_BLOCKS
             assert len(ct) == len(_TWO_BLOCKS)
@@ -178,13 +195,18 @@ class TestDESEncryption:
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_ECB"):
             pytest.skip("CKM_DES_ECB not supported")
-        des_skip ="CKM_DES advertised but rejected (OpenSSL 3 legacy provider absent)"
-        tmpl = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False}
+        des_skip = "CKM_DES advertised but rejected (OpenSSL 3 legacy provider absent)"
+        tmpl = {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False}
         key1 = _gen_des_key(rs.raw, rs.sh, CKM_DES_KEY_GEN, tmpl)
         key2 = _gen_des_key(rs.raw, rs.sh, CKM_DES_KEY_GEN, tmpl)
         try:
             ct1 = _encrypt_or_skip(
-                rs.raw, rs.sh, key1, CKM_DES_ECB, _TWO_BLOCKS, skip_msg=des_skip,
+                rs.raw,
+                rs.sh,
+                key1,
+                CKM_DES_ECB,
+                _TWO_BLOCKS,
+                skip_msg=des_skip,
             )
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_DES_ECB, _TWO_BLOCKS)
             assert ct1 != ct2
@@ -200,19 +222,30 @@ class TestDESEncryption:
         if not rs.has_mechanism("DES_CBC"):
             pytest.skip("CKM_DES_CBC not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 8)
-        des_skip ="CKM_DES_CBC advertised but rejected (OpenSSL 3 legacy provider absent)"
+        des_skip = "CKM_DES_CBC advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
             ct = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_DES_CBC, _TWO_BLOCKS,
-                mech_param=mech_bytes(CKM_DES_CBC, iv), skip_msg=des_skip,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CBC,
+                _TWO_BLOCKS,
+                mech_param=mech_bytes(CKM_DES_CBC, iv),
+                skip_msg=des_skip,
             )
             assert ct != _TWO_BLOCKS
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_DES_CBC, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CBC,
+                ct,
                 mech_param=mech_bytes(CKM_DES_CBC, iv),
             )
             assert pt == _TWO_BLOCKS
@@ -226,20 +259,31 @@ class TestDESEncryption:
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_CBC"):
             pytest.skip("CKM_DES_CBC not supported")
-        des_skip ="CKM_DES_CBC advertised but rejected (OpenSSL 3 legacy provider absent)"
+        des_skip = "CKM_DES_CBC advertised but rejected (OpenSSL 3 legacy provider absent)"
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv1 = generate_random(rs.raw, rs.sh, 8)
         iv2 = generate_random(rs.raw, rs.sh, 8)
         try:
             ct1 = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_DES_CBC, _TWO_BLOCKS,
-                mech_param=mech_bytes(CKM_DES_CBC, iv1), skip_msg=des_skip,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CBC,
+                _TWO_BLOCKS,
+                mech_param=mech_bytes(CKM_DES_CBC, iv1),
+                skip_msg=des_skip,
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_DES_CBC, _TWO_BLOCKS,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CBC,
+                _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES_CBC, iv2),
             )
             assert ct1 != ct2
@@ -254,23 +298,34 @@ class TestDESEncryption:
         if not rs.has_mechanism("DES_CBC_PAD"):
             pytest.skip("CKM_DES_CBC_PAD not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 8)
         # Non-block-aligned data - PKCS#5 padding handles it
         plaintext = b"DES CBC PAD test data!"  # 22 bytes, not a multiple of 8
-        des_skip ="CKM_DES_CBC_PAD advertised but rejected (OpenSSL 3 legacy provider absent)"
+        des_skip = "CKM_DES_CBC_PAD advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
             ct = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_DES_CBC_PAD, plaintext,
-                mech_param=mech_bytes(CKM_DES_CBC_PAD, iv), skip_msg=des_skip,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CBC_PAD,
+                plaintext,
+                mech_param=mech_bytes(CKM_DES_CBC_PAD, iv),
+                skip_msg=des_skip,
             )
             assert ct != plaintext
             # Ciphertext is padded to block boundary
             assert len(ct) % 8 == 0
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_DES_CBC_PAD, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CBC_PAD,
+                ct,
                 mech_param=mech_bytes(CKM_DES_CBC_PAD, iv),
             )
             assert pt == plaintext
@@ -285,21 +340,32 @@ class TestDESEncryption:
         if not rs.has_mechanism("DES_OFB64"):
             pytest.skip("CKM_DES_OFB64 not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 8)
         plaintext = b"OFB test data!!"  # 15 bytes - stream mode, no alignment needed
-        des_skip ="CKM_DES_OFB64 advertised but rejected (OpenSSL 3 legacy provider absent)"
+        des_skip = "CKM_DES_OFB64 advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
             ct = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_DES_OFB64, plaintext,
-                mech_param=mech_bytes(CKM_DES_OFB64, iv), skip_msg=des_skip,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_OFB64,
+                plaintext,
+                mech_param=mech_bytes(CKM_DES_OFB64, iv),
+                skip_msg=des_skip,
             )
             assert ct != plaintext
             assert len(ct) == len(plaintext)
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_DES_OFB64, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_OFB64,
+                ct,
                 mech_param=mech_bytes(CKM_DES_OFB64, iv),
             )
             assert pt == plaintext
@@ -314,20 +380,31 @@ class TestDESEncryption:
         if not rs.has_mechanism("DES_CFB8"):
             pytest.skip("CKM_DES_CFB8 not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 8)
         plaintext = b"CFB8 test data!!"  # 16 bytes
-        des_skip ="CKM_DES_CFB8 advertised but rejected (OpenSSL 3 legacy provider absent)"
+        des_skip = "CKM_DES_CFB8 advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
             ct = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_DES_CFB8, plaintext,
-                mech_param=mech_bytes(CKM_DES_CFB8, iv), skip_msg=des_skip,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CFB8,
+                plaintext,
+                mech_param=mech_bytes(CKM_DES_CFB8, iv),
+                skip_msg=des_skip,
             )
             assert ct != plaintext
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_DES_CFB8, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CFB8,
+                ct,
                 mech_param=mech_bytes(CKM_DES_CFB8, iv),
             )
             assert pt == plaintext
@@ -342,20 +419,31 @@ class TestDESEncryption:
         if not rs.has_mechanism("DES_CFB64"):
             pytest.skip("CKM_DES_CFB64 not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 8)
         plaintext = b"CFB64 test data!"  # 16 bytes
-        des_skip ="CKM_DES_CFB64 advertised but rejected (OpenSSL 3 legacy provider absent)"
+        des_skip = "CKM_DES_CFB64 advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
             ct = _encrypt_or_skip(
-                rs.raw, rs.sh, key, CKM_DES_CFB64, plaintext,
-                mech_param=mech_bytes(CKM_DES_CFB64, iv), skip_msg=des_skip,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CFB64,
+                plaintext,
+                mech_param=mech_bytes(CKM_DES_CFB64, iv),
+                skip_msg=des_skip,
             )
             assert ct != plaintext
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_DES_CFB64, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_CFB64,
+                ct,
                 mech_param=mech_bytes(CKM_DES_CFB64, iv),
             )
             assert pt == plaintext
@@ -379,11 +467,13 @@ class TestDESMAC:
         if not rs.has_mechanism("DES_MAC"):
             pytest.skip("CKM_DES_MAC not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         data = b"DES MAC test data for signing"
-        des_skip ="CKM_DES_MAC advertised but rejected (OpenSSL 3 legacy provider absent)"
+        des_skip = "CKM_DES_MAC advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
             try:
                 mac = sign_single(rs.raw, rs.sh, key, CKM_DES_MAC, data)
@@ -404,18 +494,25 @@ class TestDESMAC:
         if not rs.has_mechanism("DES_MAC_GENERAL"):
             pytest.skip("CKM_DES_MAC_GENERAL not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES_KEY_GEN,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES_KEY_GEN,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         data = b"DES MAC GENERAL test data"
         mac_len = 4  # request 4-byte MAC (half block)
-        des_skip ="CKM_DES_MAC_GENERAL advertised but rejected (OpenSSL 3 legacy provider absent)"
+        des_skip = "CKM_DES_MAC_GENERAL advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
             try:
                 mac = sign_single(
-                    rs.raw, rs.sh, key, CKM_DES_MAC_GENERAL, data,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_DES_MAC_GENERAL,
+                    data,
                     mech_param=mech_bytes(
-                        CKM_DES_MAC_GENERAL, mac_len.to_bytes(8, "little"),
+                        CKM_DES_MAC_GENERAL,
+                        mac_len.to_bytes(8, "little"),
                     ),
                 )
             except AssertionError as exc:
@@ -424,7 +521,12 @@ class TestDESMAC:
                 raise
             assert len(mac) == mac_len
             assert verify_single(
-                rs.raw, rs.sh, key, CKM_DES_MAC_GENERAL, data, mac,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES_MAC_GENERAL,
+                data,
+                mac,
                 mech_param=mech_bytes(CKM_DES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
         finally:
@@ -437,8 +539,8 @@ class TestDESMAC:
             pytest.skip("CKM_DES_KEY_GEN not supported")
         if not rs.has_mechanism("DES_MAC"):
             pytest.skip("CKM_DES_MAC not supported")
-        des_skip ="CKM_DES_MAC advertised but rejected (OpenSSL 3 legacy provider absent)"
-        tmpl = {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False}
+        des_skip = "CKM_DES_MAC advertised but rejected (OpenSSL 3 legacy provider absent)"
+        tmpl = {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False}
         key1 = _gen_des_key(rs.raw, rs.sh, CKM_DES_KEY_GEN, tmpl)
         key2 = _gen_des_key(rs.raw, rs.sh, CKM_DES_KEY_GEN, tmpl)
         data = b"MAC key independence test data"
@@ -470,8 +572,10 @@ class TestDES2KeyGen:
         if not rs.has_mechanism("DES2_KEY_GEN"):
             pytest.skip("CKM_DES2_KEY_GEN not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES2_KEY_GEN,
-            {int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES2_KEY_GEN,
+            {CKA_TOKEN: False},
         )
         try:
             assert key != 0
@@ -493,8 +597,10 @@ class TestDES3KeyGen:
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_TOKEN: False},
         )
         try:
             assert key != 0
@@ -507,8 +613,10 @@ class TestDES3KeyGen:
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_TOKEN: False},
         )
         try:
             assert key != 0
@@ -527,8 +635,10 @@ class TestDES3Encryption:
         if not rs.has_mechanism("DES3_ECB"):
             pytest.skip("CKM_DES3_ECB not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_DES3_ECB, _TWO_BLOCKS)
@@ -546,7 +656,7 @@ class TestDES3Encryption:
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_ECB"):
             pytest.skip("CKM_DES3_ECB not supported")
-        tmpl = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False}
+        tmpl = {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False}
         key1 = _gen_des_key(rs.raw, rs.sh, CKM_DES3_KEY_GEN, tmpl)
         key2 = _gen_des_key(rs.raw, rs.sh, CKM_DES3_KEY_GEN, tmpl)
         try:
@@ -565,18 +675,28 @@ class TestDES3Encryption:
         if not rs.has_mechanism("DES3_CBC"):
             pytest.skip("CKM_DES3_CBC not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 8)
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_DES3_CBC, _TWO_BLOCKS,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_CBC,
+                _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv),
             )
             assert ct != _TWO_BLOCKS
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_DES3_CBC, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_CBC,
+                ct,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv),
             )
             assert pt == _TWO_BLOCKS
@@ -591,18 +711,28 @@ class TestDES3Encryption:
         if not rs.has_mechanism("DES3_CBC"):
             pytest.skip("CKM_DES3_CBC not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv1 = generate_random(rs.raw, rs.sh, 8)
         iv2 = generate_random(rs.raw, rs.sh, 8)
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_DES3_CBC, _TWO_BLOCKS,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_CBC,
+                _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv1),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_DES3_CBC, _TWO_BLOCKS,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_CBC,
+                _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES3_CBC, iv2),
             )
             assert ct1 != ct2
@@ -617,20 +747,30 @@ class TestDES3Encryption:
         if not rs.has_mechanism("DES3_CBC_PAD"):
             pytest.skip("CKM_DES3_CBC_PAD not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 8)
         plaintext = b"DES3 CBC PAD test data!"  # 23 bytes, not a multiple of 8
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_DES3_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
             assert ct != plaintext
             assert len(ct) % 8 == 0
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_DES3_CBC_PAD, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_CBC_PAD,
+                ct,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
             assert pt == plaintext
@@ -644,18 +784,26 @@ class TestDES3Encryption:
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_CBC_PAD"):
             pytest.skip("CKM_DES3_CBC_PAD not supported")
-        tmpl = {int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False}
+        tmpl = {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False}
         key1 = _gen_des_key(rs.raw, rs.sh, CKM_DES3_KEY_GEN, tmpl)
         key2 = _gen_des_key(rs.raw, rs.sh, CKM_DES3_KEY_GEN, tmpl)
         iv = generate_random(rs.raw, rs.sh, 8)
         plaintext = b"DES3 CBC PAD key independence!!"  # 32 bytes
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key1, CKM_DES3_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key1,
+                CKM_DES3_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key2, CKM_DES3_CBC_PAD, plaintext,
+                rs.raw,
+                rs.sh,
+                key2,
+                CKM_DES3_CBC_PAD,
+                plaintext,
                 mech_param=mech_bytes(CKM_DES3_CBC_PAD, iv),
             )
             assert ct1 != ct2
@@ -675,8 +823,10 @@ class TestDES3MAC:
         if not rs.has_mechanism("DES3_MAC"):
             pytest.skip("CKM_DES3_MAC not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         data = b"DES3 MAC test data for signing"
         try:
@@ -694,19 +844,30 @@ class TestDES3MAC:
         if not rs.has_mechanism("DES3_MAC_GENERAL"):
             pytest.skip("CKM_DES3_MAC_GENERAL not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         data = b"DES3 MAC GENERAL test data"
         mac_len = 4  # request 4-byte MAC (half block)
         try:
             mac = sign_single(
-                rs.raw, rs.sh, key, CKM_DES3_MAC_GENERAL, data,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_MAC_GENERAL,
+                data,
                 mech_param=mech_bytes(CKM_DES3_MAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
             assert len(mac) == mac_len
             assert verify_single(
-                rs.raw, rs.sh, key, CKM_DES3_MAC_GENERAL, data, mac,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_MAC_GENERAL,
+                data,
+                mac,
                 mech_param=mech_bytes(CKM_DES3_MAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
         finally:
@@ -720,8 +881,10 @@ class TestDES3MAC:
         if not rs.has_mechanism("DES3_CMAC"):
             pytest.skip("CKM_DES3_CMAC not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         data = b"DES3 CMAC test data for signing"
         try:
@@ -738,7 +901,7 @@ class TestDES3MAC:
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_CMAC"):
             pytest.skip("CKM_DES3_CMAC not supported")
-        tmpl = {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False}
+        tmpl = {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False}
         key1 = _gen_des_key(rs.raw, rs.sh, CKM_DES3_KEY_GEN, tmpl)
         key2 = _gen_des_key(rs.raw, rs.sh, CKM_DES3_KEY_GEN, tmpl)
         data = b"CMAC key independence test data"
@@ -758,19 +921,30 @@ class TestDES3MAC:
         if not rs.has_mechanism("DES3_CMAC_GENERAL"):
             pytest.skip("CKM_DES3_CMAC_GENERAL not supported")
         key = _gen_des_key(
-            rs.raw, rs.sh, CKM_DES3_KEY_GEN,
-            {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            CKM_DES3_KEY_GEN,
+            {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         data = b"DES3 CMAC GENERAL test data"
         mac_len = 4  # request 4-byte truncated CMAC
         try:
             mac = sign_single(
-                rs.raw, rs.sh, key, CKM_DES3_CMAC_GENERAL, data,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_CMAC_GENERAL,
+                data,
                 mech_param=mech_bytes(CKM_DES3_CMAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
             assert len(mac) == mac_len
             assert verify_single(
-                rs.raw, rs.sh, key, CKM_DES3_CMAC_GENERAL, data, mac,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_DES3_CMAC_GENERAL,
+                data,
+                mac,
                 mech_param=mech_bytes(CKM_DES3_CMAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
         finally:
@@ -783,7 +957,7 @@ class TestDES3MAC:
             pytest.skip("CKM_DES3_KEY_GEN not supported")
         if not rs.has_mechanism("DES3_MAC"):
             pytest.skip("CKM_DES3_MAC not supported")
-        tmpl = {int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False}
+        tmpl = {CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False}
         key1 = _gen_des_key(rs.raw, rs.sh, CKM_DES3_KEY_GEN, tmpl)
         key2 = _gen_des_key(rs.raw, rs.sh, CKM_DES3_KEY_GEN, tmpl)
         data = b"MAC key independence test data"

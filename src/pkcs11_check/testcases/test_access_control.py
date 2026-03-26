@@ -52,10 +52,10 @@ from pkcs11_check.testcases.conftest import get_pin_bytes
 pytestmark = pytest.mark.security
 
 _COPY_REJECT_RVS = (
-    int(CKR_ACTION_PROHIBITED),
-    int(CKR_ATTRIBUTE_TYPE_INVALID),
-    int(CKR_ATTRIBUTE_VALUE_INVALID),
-    int(CKR_TEMPLATE_INCONSISTENT),
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 
@@ -67,8 +67,8 @@ class TestPrivateAttribute:
         rs = p11_raw_session
         key_h = gen_aes_key(rs.raw, rs.sh, 256)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_PRIVATE)])
-            assert attrs[int(CKA_PRIVATE)] is True
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_PRIVATE])
+            assert attrs[CKA_PRIVATE] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -87,22 +87,22 @@ class TestPrivateAttribute:
             rs.raw,
             rs.sh,
             {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_LABEL): label,
-                int(CKA_VALUE): b"public-data",
-                int(CKA_TOKEN): True,
-                int(CKA_PRIVATE): False,
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: b"public-data",
+                CKA_TOKEN: True,
+                CKA_PRIVATE: False,
             },
         )
 
         try:
             # Open R/O session WITHOUT login - non-private object should be visible
-            ro_sh = raw_open_session(rs.raw, rs.slot_id, int(CKF_SERIAL_SESSION))
+            ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
                 tmpl = template_from_dict(
                     {
-                        int(CKA_CLASS): int(CKO_DATA),
-                        int(CKA_LABEL): label,
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: label,
                     }
                 )
                 found = find_objects(rs.raw, ro_sh, tmpl)
@@ -127,22 +127,22 @@ class TestModifiableAttribute:
     def test_default_key_is_modifiable(self, p11_raw_session: Any) -> None:
         """Generated keys have CKA_MODIFIABLE=True by default."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): "mod-test"})
+        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "mod-test"})
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_MODIFIABLE)])
-            assert attrs[int(CKA_MODIFIABLE)] is True
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
+            assert attrs[CKA_MODIFIABLE] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
     def test_modifiable_key_label_changeable(self, p11_raw_session: Any) -> None:
         """Key with MODIFIABLE=True allows label change."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): "mod-before"})
+        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "mod-before"})
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_MODIFIABLE)])
-            assert attrs[int(CKA_MODIFIABLE)] is True
-            set_attributes(rs.raw, rs.sh, key_h, {int(CKA_LABEL): "mod-after"})
-            tmpl = template_from_dict({int(CKA_LABEL): "mod-after"})
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
+            assert attrs[CKA_MODIFIABLE] is True
+            set_attributes(rs.raw, rs.sh, key_h, {CKA_LABEL: "mod-after"})
+            tmpl = template_from_dict({CKA_LABEL: "mod-after"})
             found = find_objects(rs.raw, rs.sh, tmpl)
             assert len(found) >= 1
         finally:
@@ -157,8 +157,8 @@ class TestCopyableAttribute:
         rs = p11_raw_session
         key_h = gen_aes_key(rs.raw, rs.sh, 256)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_COPYABLE)])
-            copyable = attrs[int(CKA_COPYABLE)]
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
+            copyable = attrs[CKA_COPYABLE]
             assert isinstance(copyable, bool)
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
@@ -166,19 +166,19 @@ class TestCopyableAttribute:
     def test_copyable_key_can_be_copied(self, p11_raw_session: Any) -> None:
         """Key with COPYABLE=True can be copied via C_CopyObject."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): "copy-src"})
+        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "copy-src"})
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_COPYABLE)])
-            if not attrs[int(CKA_COPYABLE)]:
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
+            if not attrs[CKA_COPYABLE]:
                 pytest.skip("Key not copyable by default")
             try:
-                copied_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_LABEL): "copy-dst"})
+                copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "copy-dst"})
             except AssertionError:
                 pytest.skip("C_CopyObject not supported")
                 return
             try:
-                copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [int(CKA_LABEL)])
-                assert copy_attrs[int(CKA_LABEL)] == "copy-dst"
+                copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_LABEL])
+                assert copy_attrs[CKA_LABEL] == "copy-dst"
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
@@ -191,13 +191,13 @@ class TestCopyObject:
     def test_copy_with_modified_label(self, p11_raw_session: Any) -> None:
         """Copy a key with a new label - label changes, other attrs preserved."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_LABEL): "orig-label"})
+        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "orig-label"})
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_COPYABLE)])
-            if not attrs[int(CKA_COPYABLE)]:
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
+            if not attrs[CKA_COPYABLE]:
                 pytest.skip("Key not copyable by default")
             try:
-                copied_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_LABEL): "copied-label"})
+                copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "copied-label"})
             except AssertionError:
                 pytest.skip("C_CopyObject not supported or module rejected copy template")
                 return
@@ -206,17 +206,17 @@ class TestCopyObject:
                     rs.raw,
                     rs.sh,
                     copied_h,
-                    [int(CKA_LABEL), int(CKA_KEY_TYPE), int(CKA_VALUE_LEN)],
+                    [CKA_LABEL, CKA_KEY_TYPE, CKA_VALUE_LEN],
                 )
                 orig_attrs = read_attributes(
                     rs.raw,
                     rs.sh,
                     key_h,
-                    [int(CKA_KEY_TYPE), int(CKA_VALUE_LEN)],
+                    [CKA_KEY_TYPE, CKA_VALUE_LEN],
                 )
-                assert copy_attrs[int(CKA_LABEL)] == "copied-label"
-                assert copy_attrs[int(CKA_KEY_TYPE)] == orig_attrs[int(CKA_KEY_TYPE)]
-                assert copy_attrs[int(CKA_VALUE_LEN)] == orig_attrs[int(CKA_VALUE_LEN)]
+                assert copy_attrs[CKA_LABEL] == "copied-label"
+                assert copy_attrs[CKA_KEY_TYPE] == orig_attrs[CKA_KEY_TYPE]
+                assert copy_attrs[CKA_VALUE_LEN] == orig_attrs[CKA_VALUE_LEN]
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
@@ -230,24 +230,24 @@ class TestCopyObject:
             rs.sh,
             256,
             attrs={
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
-                int(CKA_LABEL): "extractable-src",
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+                CKA_LABEL: "extractable-src",
             },
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_COPYABLE), int(CKA_EXTRACTABLE)])
-            if not attrs[int(CKA_COPYABLE)]:
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE, CKA_EXTRACTABLE])
+            if not attrs[CKA_COPYABLE]:
                 pytest.skip("Key not copyable")
-            assert attrs[int(CKA_EXTRACTABLE)] is True
+            assert attrs[CKA_EXTRACTABLE] is True
             try:
-                copied_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_EXTRACTABLE): False})
+                copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: False})
             except AssertionError as exc:
                 pytest.skip(f"Module rejected EXTRACTABLE restriction on copy: {exc}")
                 return
             try:
-                copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [int(CKA_EXTRACTABLE)])
-                assert copy_attrs[int(CKA_EXTRACTABLE)] is False
+                copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_EXTRACTABLE])
+                assert copy_attrs[CKA_EXTRACTABLE] is False
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
@@ -261,17 +261,17 @@ class TestCopyObject:
                 rs.raw,
                 rs.sh,
                 256,
-                attrs={int(CKA_COPYABLE): False, int(CKA_LABEL): "non-copyable"},
+                attrs={CKA_COPYABLE: False, CKA_LABEL: "non-copyable"},
             )
         except AssertionError:
             pytest.skip("Module does not support setting CKA_COPYABLE=False at key gen")
             return
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_COPYABLE)])
-            if attrs[int(CKA_COPYABLE)] is not False:
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
+            if attrs[CKA_COPYABLE] is not False:
                 pytest.skip("Module did not honour CKA_COPYABLE=False in template")
             try:
-                copied_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_LABEL): "should-fail"})
+                copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "should-fail"})
                 # Should not reach here
                 destroy_quietly(rs.raw, rs.sh, copied_h)
                 pytest.fail("C_CopyObject succeeded on non-copyable key")
@@ -287,21 +287,21 @@ class TestCopyObject:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_TOKEN): False, int(CKA_LABEL): "session-src"},
+            attrs={CKA_TOKEN: False, CKA_LABEL: "session-src"},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_COPYABLE), int(CKA_TOKEN)])
-            if not attrs[int(CKA_COPYABLE)]:
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE, CKA_TOKEN])
+            if not attrs[CKA_COPYABLE]:
                 pytest.skip("Key not copyable")
-            assert attrs[int(CKA_TOKEN)] is False
+            assert attrs[CKA_TOKEN] is False
             try:
-                copied_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_LABEL): "session-copy"})
+                copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "session-copy"})
             except AssertionError:
                 pytest.skip("C_CopyObject not supported or module rejected copy template")
                 return
             try:
-                copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [int(CKA_TOKEN)])
-                assert copy_attrs[int(CKA_TOKEN)] is False
+                copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_TOKEN])
+                assert copy_attrs[CKA_TOKEN] is False
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
@@ -314,23 +314,23 @@ class TestCopyObject:
             rs.raw,
             rs.sh,
             256,
-            attrs={int(CKA_TOKEN): True, int(CKA_LABEL): "token-src"},
+            attrs={CKA_TOKEN: True, CKA_LABEL: "token-src"},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key_h, [int(CKA_COPYABLE), int(CKA_TOKEN)])
-            if not attrs[int(CKA_COPYABLE)]:
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE, CKA_TOKEN])
+            if not attrs[CKA_COPYABLE]:
                 destroy_quietly(rs.raw, rs.sh, key_h)
                 pytest.skip("Key not copyable")
-            assert attrs[int(CKA_TOKEN)] is True
+            assert attrs[CKA_TOKEN] is True
             copied_h = None
             try:
                 try:
-                    copied_h = copy_object(rs.raw, rs.sh, key_h, {int(CKA_LABEL): "token-copy"})
+                    copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "token-copy"})
                 except AssertionError:
                     pytest.skip("C_CopyObject not supported or module rejected copy template")
                     return
-                copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [int(CKA_TOKEN)])
-                assert copy_attrs[int(CKA_TOKEN)] is True
+                copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_TOKEN])
+                assert copy_attrs[CKA_TOKEN] is True
             finally:
                 if copied_h is not None:
                     destroy_quietly(rs.raw, rs.sh, copied_h)

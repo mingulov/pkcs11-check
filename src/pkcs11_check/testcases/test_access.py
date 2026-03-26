@@ -57,10 +57,10 @@ class TestSessionTypes:
         """R/O session can create session objects (not token objects)."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        flags = int(CKF_SERIAL_SESSION)  # RO
+        flags = CKF_SERIAL_SESSION  # RO
         ro_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, ro_sh, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, ro_sh, CKU_USER, pin_bytes)
         try:
             # Session objects should be creatable in R/O sessions
             key_h = gen_aes_key(rs.raw, ro_sh, 256)
@@ -73,10 +73,10 @@ class TestSessionTypes:
         """R/O session can still read objects and generate random."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        flags = int(CKF_SERIAL_SESSION)  # RO
+        flags = CKF_SERIAL_SESSION  # RO
         ro_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, ro_sh, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, ro_sh, CKU_USER, pin_bytes)
         try:
             random_data = generate_random(rs.raw, ro_sh, 32)
             assert len(random_data) == 32
@@ -90,10 +90,10 @@ class TestLoginStates:
     def test_public_session_no_private_keys(self, p11_raw_session: Any) -> None:
         """Without login, private objects should not be visible."""
         rs = p11_raw_session
-        flags = int(CKF_SERIAL_SESSION)  # RO, no login
+        flags = CKF_SERIAL_SESSION  # RO, no login
         pub_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            tmpl = template_from_dict({int(CKA_CLASS): int(CKO_PRIVATE_KEY)})
+            tmpl = template_from_dict({CKA_CLASS: CKO_PRIVATE_KEY})
             priv_keys = find_objects(rs.raw, pub_sh, tmpl)
             # Should be empty (no login = no access to private objects)
             assert len(priv_keys) == 0
@@ -109,7 +109,7 @@ class TestLoginStates:
             assert priv_h != 0
 
             # Should be findable
-            tmpl = template_from_dict({int(CKA_CLASS): int(CKO_PRIVATE_KEY)})
+            tmpl = template_from_dict({CKA_CLASS: CKO_PRIVATE_KEY})
             found = find_objects(rs.raw, rs.sh, tmpl)
             assert len(found) >= 1
         finally:
@@ -124,15 +124,15 @@ class TestMultipleSessions:
         """Two sessions can operate independently."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, s1, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, s1, CKU_USER, pin_bytes)
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            key1 = gen_aes_key(rs.raw, s1, 128, attrs={int(CKA_LABEL): "sess1"})
-            key2 = gen_aes_key(rs.raw, s2, 128, attrs={int(CKA_LABEL): "sess2"})
+            key1 = gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: "sess1"})
+            key2 = gen_aes_key(rs.raw, s2, 128, attrs={CKA_LABEL: "sess2"})
             assert key1 != 0
             assert key2 != 0
             destroy_quietly(rs.raw, s1, key1)
@@ -147,16 +147,16 @@ class TestMultipleSessions:
         """Session objects created in one session are visible in another."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, s1, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, s1, CKU_USER, pin_bytes)
         try:
-            key_h = gen_aes_key(rs.raw, s1, 128, attrs={int(CKA_LABEL): "session-obj-test"})
+            key_h = gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: "session-obj-test"})
             s2 = raw_open_session(rs.raw, rs.slot_id, flags)
             try:
-                tmpl = template_from_dict({int(CKA_LABEL): "session-obj-test"})
+                tmpl = template_from_dict({CKA_LABEL: "session-obj-test"})
                 found = find_objects(rs.raw, s2, tmpl)
                 assert len(found) >= 1  # Should be visible
             finally:
@@ -173,21 +173,21 @@ class TestSessionLifecycle:
         """Session objects should be destroyed when session closes."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Create object in a session, then close it
         temp_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, temp_sh, int(CKU_USER), pin_bytes)
-        gen_aes_key(rs.raw, temp_sh, 128, attrs={int(CKA_LABEL): "lifecycle-test"})
+            login_user(rs.raw, temp_sh, CKU_USER, pin_bytes)
+        gen_aes_key(rs.raw, temp_sh, 128, attrs={CKA_LABEL: "lifecycle-test"})
         close_session_quietly(rs.raw, temp_sh)
 
         # Object should be gone in a new session
         new_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
-            login_user(rs.raw, new_sh, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, new_sh, CKU_USER, pin_bytes)
         try:
-            tmpl = template_from_dict({int(CKA_LABEL): "lifecycle-test"})
+            tmpl = template_from_dict({CKA_LABEL: "lifecycle-test"})
             found = find_objects(rs.raw, new_sh, tmpl)
             assert len(found) == 0
         finally:

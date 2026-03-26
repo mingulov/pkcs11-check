@@ -55,7 +55,7 @@ def _read_str(attrs: dict[int, Any], key: int) -> str:
 def _search_by_label(raw: Any, sh: int, label: str) -> list[int]:
     """Find CKO_DATA objects matching a label."""
     tmpl = template(
-        attr_ulong(CKA_CLASS, int(CKO_DATA)),
+        attr_ulong(CKA_CLASS, CKO_DATA),
         attr_bytes(CKA_LABEL, label.encode("utf-8")),
     )
     return find_objects(raw, sh, tmpl)
@@ -68,13 +68,17 @@ class TestDataObjectCreate:
         """Can create a CKO_DATA object with label, app, and value."""
         rs = p11_raw_session
         label = _unique_label()
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_APPLICATION): "pkcs11-check",
-            int(CKA_VALUE): b"hello world",
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_APPLICATION: "pkcs11-check",
+                CKA_VALUE: b"hello world",
+                CKA_TOKEN: False,
+            },
+        )
         try:
             assert h != 0
         finally:
@@ -84,12 +88,16 @@ class TestDataObjectCreate:
         """CKO_DATA with empty VALUE is valid."""
         rs = p11_raw_session
         label = _unique_label()
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): b"",
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: b"",
+                CKA_TOKEN: False,
+            },
+        )
         try:
             assert h != 0
         finally:
@@ -100,15 +108,19 @@ class TestDataObjectCreate:
         rs = p11_raw_session
         label = _unique_label()
         big_data = bytes(range(256)) * 256  # 64KB
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): big_data,
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: big_data,
+                CKA_TOKEN: False,
+            },
+        )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == big_data
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
+            assert attrs[CKA_VALUE] == big_data
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
@@ -120,12 +132,16 @@ class TestDataObjectSearch:
         """Find CKO_DATA by CKA_LABEL."""
         rs = p11_raw_session
         label = _unique_label()
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): b"searchable",
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: b"searchable",
+                CKA_TOKEN: False,
+            },
+        )
         try:
             found = _search_by_label(rs.raw, rs.sh, label)
             assert len(found) >= 1
@@ -136,15 +152,19 @@ class TestDataObjectSearch:
         """Find CKO_DATA by CKA_APPLICATION."""
         rs = p11_raw_session
         app_name = _unique_label("app")
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_APPLICATION): app_name,
-            int(CKA_VALUE): b"app-data",
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_APPLICATION: app_name,
+                CKA_VALUE: b"app-data",
+                CKA_TOKEN: False,
+            },
+        )
         try:
             tmpl = template(
-                attr_ulong(CKA_CLASS, int(CKO_DATA)),
+                attr_ulong(CKA_CLASS, CKO_DATA),
                 attr_bytes(CKA_APPLICATION, app_name.encode("utf-8")),
             )
             found = find_objects(rs.raw, rs.sh, tmpl)
@@ -156,19 +176,23 @@ class TestDataObjectSearch:
         """Search for all CKO_DATA objects returns at least the one we created."""
         rs = p11_raw_session
         label = _unique_label()
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): b"class-search",
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: b"class-search",
+                CKA_TOKEN: False,
+            },
+        )
         try:
-            tmpl = template(attr_ulong(CKA_CLASS, int(CKO_DATA)))
+            tmpl = template(attr_ulong(CKA_CLASS, CKO_DATA))
             found = find_objects(rs.raw, rs.sh, tmpl)
             labels = []
             for fh in found:
-                attrs = read_attributes(rs.raw, rs.sh, fh, [int(CKA_LABEL)])
-                labels.append(_read_str(attrs, int(CKA_LABEL)))
+                attrs = read_attributes(rs.raw, rs.sh, fh, [CKA_LABEL])
+                labels.append(_read_str(attrs, CKA_LABEL))
             assert label in labels
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
@@ -177,7 +201,7 @@ class TestDataObjectSearch:
         """Search for non-existent label returns empty list."""
         rs = p11_raw_session
         tmpl = template(
-            attr_ulong(CKA_CLASS, int(CKO_DATA)),
+            attr_ulong(CKA_CLASS, CKO_DATA),
             attr_bytes(CKA_LABEL, ("does-not-exist-" + uuid.uuid4().hex).encode("utf-8")),
         )
         found = find_objects(rs.raw, rs.sh, tmpl)
@@ -192,15 +216,19 @@ class TestDataObjectReadValue:
         rs = p11_raw_session
         label = _unique_label()
         payload = b"\x00\x01\x02\xff" * 100
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): payload,
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: payload,
+                CKA_TOKEN: False,
+            },
+        )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == payload
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
+            assert attrs[CKA_VALUE] == payload
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
@@ -209,34 +237,40 @@ class TestDataObjectReadValue:
         rs = p11_raw_session
         label = _unique_label()
         app = "test-app"
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_APPLICATION): app,
-            int(CKA_VALUE): b"meta",
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_APPLICATION: app,
+                CKA_VALUE: b"meta",
+                CKA_TOKEN: False,
+            },
+        )
         try:
-            attrs = read_attributes(
-                rs.raw, rs.sh, h, [int(CKA_LABEL), int(CKA_APPLICATION)]
-            )
-            assert _read_str(attrs, int(CKA_LABEL)) == label
-            assert _read_str(attrs, int(CKA_APPLICATION)) == app
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL, CKA_APPLICATION])
+            assert _read_str(attrs, CKA_LABEL) == label
+            assert _read_str(attrs, CKA_APPLICATION) == app
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
     def test_object_class_is_data(self, p11_raw_session: Any) -> None:
         """CKA_CLASS reports CKO_DATA."""
         rs = p11_raw_session
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): _unique_label(),
-            int(CKA_VALUE): b"class-check",
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: _unique_label(),
+                CKA_VALUE: b"class-check",
+                CKA_TOKEN: False,
+            },
+        )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_CLASS)])
-            assert attrs[int(CKA_CLASS)] == int(CKO_DATA)
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_CLASS])
+            assert attrs[CKA_CLASS] == CKO_DATA
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
@@ -248,12 +282,16 @@ class TestDataObjectDestroy:
         """Destroyed CKO_DATA no longer appears in search."""
         rs = p11_raw_session
         label = _unique_label()
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_LABEL): label,
-            int(CKA_VALUE): b"destroy-me",
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: label,
+                CKA_VALUE: b"destroy-me",
+                CKA_TOKEN: False,
+            },
+        )
         rs.raw.C_DestroyObject(rs.sh, h)
         found = _search_by_label(rs.raw, rs.sh, label)
         assert len(found) == 0
@@ -264,12 +302,16 @@ class TestDataObjectDestroy:
         labels = [_unique_label() for _ in range(5)]
         handles = []
         for lbl in labels:
-            h = create_object(rs.raw, rs.sh, {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_LABEL): lbl,
-                int(CKA_VALUE): b"multi",
-                int(CKA_TOKEN): False,
-            })
+            h = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: lbl,
+                    CKA_VALUE: b"multi",
+                    CKA_TOKEN: False,
+                },
+            )
             handles.append(h)
 
         for h in handles:
@@ -290,31 +332,35 @@ class TestDataObjectToken:
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
         label = _unique_label("persist")
-        flags = int(CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Session 1: create token object
         sh1 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes:
-            login_user(rs.raw, sh1, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, sh1, CKU_USER, pin_bytes)
         try:
-            create_object(rs.raw, sh1, {
-                int(CKA_CLASS): int(CKO_DATA),
-                int(CKA_LABEL): label,
-                int(CKA_VALUE): b"persistent-data",
-                int(CKA_TOKEN): True,
-            })
+            create_object(
+                rs.raw,
+                sh1,
+                {
+                    CKA_CLASS: CKO_DATA,
+                    CKA_LABEL: label,
+                    CKA_VALUE: b"persistent-data",
+                    CKA_TOKEN: True,
+                },
+            )
         finally:
             close_session_quietly(rs.raw, sh1)
 
         # Session 2: find and verify
         sh2 = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes:
-            login_user(rs.raw, sh2, int(CKU_USER), pin_bytes)
+            login_user(rs.raw, sh2, CKU_USER, pin_bytes)
         try:
             found = _search_by_label(rs.raw, sh2, label)
             assert len(found) >= 1
-            attrs = read_attributes(rs.raw, sh2, found[0], [int(CKA_VALUE)])
-            assert attrs[int(CKA_VALUE)] == b"persistent-data"
+            attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
+            assert attrs[CKA_VALUE] == b"persistent-data"
         finally:
             # Cleanup: destroy all matching objects
             for fh in _search_by_label(rs.raw, sh2, label):

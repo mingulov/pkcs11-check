@@ -59,7 +59,7 @@ _ED448_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x71])
 
 # ACVP curve name -> (EC_PARAMS OID bytes, expected public key length in bytes)
 _CURVE_MAP: dict[str, tuple[bytes, int, int]] = {
-    "ED-25519": (_ED25519_OID, 32, 64),   # (oid, pk_len, sig_len)
+    "ED-25519": (_ED25519_OID, 32, 64),  # (oid, pk_len, sig_len)
     "ED-448": (_ED448_OID, 57, 114),
 }
 
@@ -231,9 +231,7 @@ _SIGGEN_VECTORS = _load_eddsa_siggen_vectors()
     _SIGVER_VECTORS,
     ids=[v[0] for v in _SIGVER_VECTORS],
 )
-def test_acvp_eddsa_sigver(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """EdDSA (Ed25519/Ed448) signature verification from NIST ACVP SigVer vectors.
 
     Imports an Edwards-curve public key from the ACVP-provided raw public key
@@ -254,28 +252,28 @@ def test_acvp_eddsa_sigver(
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PUBLIC_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC_EDWARDS),
-                    int(CKA_EC_PARAMS): vec["ec_params"],
-                    int(CKA_EC_POINT): vec["ec_point"],
-                    int(CKA_TOKEN): False,
-                    int(CKA_VERIFY): True,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_EC_EDWARDS,
+                    CKA_EC_PARAMS: vec["ec_params"],
+                    CKA_EC_POINT: vec["ec_point"],
+                    CKA_TOKEN: False,
+                    CKA_VERIFY: True,
                 },
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import EdDSA public key for {vec['curve']}: {e}")
 
         try:
-            verified = verify_single(
-                rs.raw, rs.sh, pub_key, CKM_EDDSA, vec["msg"], vec["sig"]
-            )
+            verified = verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, vec["msg"], vec["sig"])
         except AssertionError as exc:
             exc_msg = str(exc)
             if any(
                 name in exc_msg
                 for name in (
-                    "CKR_SIGNATURE_INVALID", "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DATA_INVALID", "CKR_FUNCTION_FAILED",
+                    "CKR_SIGNATURE_INVALID",
+                    "CKR_SIGNATURE_LEN_RANGE",
+                    "CKR_DATA_INVALID",
+                    "CKR_FUNCTION_FAILED",
                     "CKR_DEVICE_ERROR",
                 )
             ):
@@ -315,9 +313,7 @@ def test_acvp_eddsa_sigver(
     _SIGGEN_VECTORS,
     ids=[v[0] for v in _SIGGEN_VECTORS],
 )
-def test_acvp_eddsa_siggen(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_eddsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Ed25519 signature generation from NIST ACVP SigGen vectors.
 
     Imports an Ed25519 private key (seed d from internalProjection.json),
@@ -341,14 +337,14 @@ def test_acvp_eddsa_siggen(
                 rs.raw,
                 rs.sh,
                 {
-                    int(CKA_CLASS): int(CKO_PRIVATE_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_EC_EDWARDS),
-                    int(CKA_EC_PARAMS): vec["ec_params"],
-                    int(CKA_VALUE): vec["d"],
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SIGN): True,
+                    CKA_CLASS: CKO_PRIVATE_KEY,
+                    CKA_KEY_TYPE: CKK_EC_EDWARDS,
+                    CKA_EC_PARAMS: vec["ec_params"],
+                    CKA_VALUE: vec["d"],
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SIGN: True,
                 },
             )
         except AssertionError as e:

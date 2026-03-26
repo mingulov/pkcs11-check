@@ -45,7 +45,11 @@ class TestBlake2bDigestLength:
         ids=["BLAKE2B-160", "BLAKE2B-256", "BLAKE2B-384", "BLAKE2B-512"],
     )
     def test_digest_length(
-        self, p11_raw_session: Any, mech_name_str: str, mechanism: Any, expected_len: int,
+        self,
+        p11_raw_session: Any,
+        mech_name_str: str,
+        mechanism: Any,
+        expected_len: int,
     ) -> None:
         """Each BLAKE2B mechanism produces the correct output length."""
         rs = p11_raw_session
@@ -73,7 +77,11 @@ class TestBlake2bCrossVerify:
         ids=["BLAKE2B-160", "BLAKE2B-256", "BLAKE2B-384", "BLAKE2B-512"],
     )
     def test_cross_verify(
-        self, p11_raw_session: Any, mech_name_str: str, mechanism: Any, digest_size: int,
+        self,
+        p11_raw_session: Any,
+        mech_name_str: str,
+        mechanism: Any,
+        digest_size: int,
     ) -> None:
         """PKCS#11 BLAKE2B digest matches hashlib for each output size."""
         rs = p11_raw_session
@@ -93,7 +101,11 @@ class TestBlake2bCrossVerify:
         ids=["BLAKE2B-256", "BLAKE2B-512"],
     )
     def test_cross_verify_binary_data(
-        self, p11_raw_session: Any, mech_name_str: str, mechanism: Any, digest_size: int,
+        self,
+        p11_raw_session: Any,
+        mech_name_str: str,
+        mechanism: Any,
+        digest_size: int,
     ) -> None:
         """Digest of all 256 byte values matches hashlib."""
         rs = p11_raw_session

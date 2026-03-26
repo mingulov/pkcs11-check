@@ -67,13 +67,21 @@ class TestAESCTR:
         plaintext = b"AES-CTR test data, any length ok"
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CTR, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CTR,
+                plaintext,
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
             assert ct != plaintext
             assert len(ct) == len(plaintext)
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CTR, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CTR,
+                ct,
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
             assert pt == plaintext
@@ -86,21 +94,33 @@ class TestAESCTR:
         if not rs.has_mechanism("AES_CTR"):
             pytest.skip("CKM_AES_CTR not supported")
         key1 = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
         )
         key2 = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
         )
         plaintext = b"key independence test data here!!"  # 32 bytes
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key1, CKM_AES_CTR, plaintext,
+                rs.raw,
+                rs.sh,
+                key1,
+                CKM_AES_CTR,
+                plaintext,
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key2, CKM_AES_CTR, plaintext,
+                rs.raw,
+                rs.sh,
+                key2,
+                CKM_AES_CTR,
+                plaintext,
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
             assert ct1 != ct2
@@ -119,21 +139,33 @@ class TestAESCTR:
         if not rs.has_mechanism("AES_CTR"):
             pytest.skip("CKM_AES_CTR not supported")
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
             },
         )
         # 17 bytes - deliberately NOT block-aligned
         plaintext = b"seventeen chars!!"[:17]
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CTR, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CTR,
+                plaintext,
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
             assert len(ct) == 17, f"CTR output must match input length, got {len(ct)}"
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CTR, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CTR,
+                ct,
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
             assert pt == plaintext
@@ -150,9 +182,13 @@ class TestAESCTS:
         if not rs.has_mechanism("AES_CTS"):
             pytest.skip("CKM_AES_CTS not supported")
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_ENCRYPT): True, int(CKA_DECRYPT): True, int(CKA_TOKEN): False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
             },
         )
         iv = generate_random(rs.raw, rs.sh, 16)
@@ -160,12 +196,20 @@ class TestAESCTS:
         plaintext = b"CTS handles non-block-aligned!" + b"\x00" * 3  # 33 bytes
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CTS, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CTS,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CTS, iv),
             )
             assert ct != plaintext
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CTS, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CTS,
+                ct,
                 mech_param=mech_bytes(CKM_AES_CTS, iv),
             )
             assert pt == plaintext
@@ -178,22 +222,34 @@ class TestAESCTS:
         if not rs.has_mechanism("AES_CTS"):
             pytest.skip("CKM_AES_CTS not supported")
         key1 = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
         )
         key2 = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_ENCRYPT): True, int(CKA_TOKEN): False},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
         )
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"CTS key independence test!!" + b"\x00" * 6  # 32 bytes
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key1, CKM_AES_CTS, plaintext,
+                rs.raw,
+                rs.sh,
+                key1,
+                CKM_AES_CTS,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CTS, iv),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key2, CKM_AES_CTS, plaintext,
+                rs.raw,
+                rs.sh,
+                key2,
+                CKM_AES_CTS,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_CTS, iv),
             )
             assert ct1 != ct2
@@ -213,9 +269,7 @@ class TestAESCFB:
     """AES-CFB (Cipher Feedback) encrypt/decrypt tests for 8/64/128-bit modes."""
 
     @pytest.mark.parametrize("mech_name_str,mech", _CFB_MODES)
-    def test_aes_cfb_roundtrip(
-        self, p11_raw_session: Any, mech_name_str: str, mech: Any
-    ) -> None:
+    def test_aes_cfb_roundtrip(self, p11_raw_session: Any, mech_name_str: str, mech: Any) -> None:
         """AES-CFB encrypt/decrypt roundtrip."""
         rs = p11_raw_session
         if not rs.has_mechanism(mech_name_str):
@@ -225,12 +279,20 @@ class TestAESCFB:
         plaintext = b"CFB mode test data block!!" + b"\x00" * 6  # 32 bytes
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, mech, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                mech,
+                plaintext,
                 mech_param=mech_bytes(mech, iv),
             )
             assert ct != plaintext
             pt = decrypt_single(
-                rs.raw, rs.sh, key, mech, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                mech,
+                ct,
                 mech_param=mech_bytes(mech, iv),
             )
             assert pt == plaintext
@@ -251,11 +313,19 @@ class TestAESCFB:
         plaintext = b"CFB key independence!" + b"\x00" * 11  # 32 bytes
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key1, mech, plaintext,
+                rs.raw,
+                rs.sh,
+                key1,
+                mech,
+                plaintext,
                 mech_param=mech_bytes(mech, iv),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key2, mech, plaintext,
+                rs.raw,
+                rs.sh,
+                key2,
+                mech,
+                plaintext,
                 mech_param=mech_bytes(mech, iv),
             )
             assert ct1 != ct2
@@ -277,12 +347,20 @@ class TestAESOFB:
         plaintext = b"OFB mode test data!!" + b"\x00" * 12  # 32 bytes
         try:
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_OFB, plaintext,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_OFB,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_OFB, iv),
             )
             assert ct != plaintext
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_OFB, ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_OFB,
+                ct,
                 mech_param=mech_bytes(CKM_AES_OFB, iv),
             )
             assert pt == plaintext
@@ -300,11 +378,19 @@ class TestAESOFB:
         plaintext = b"OFB key independence!" + b"\x00" * 11  # 32 bytes
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key1, CKM_AES_OFB, plaintext,
+                rs.raw,
+                rs.sh,
+                key1,
+                CKM_AES_OFB,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_OFB, iv),
             )
             ct2 = encrypt_single(
-                rs.raw, rs.sh, key2, CKM_AES_OFB, plaintext,
+                rs.raw,
+                rs.sh,
+                key2,
+                CKM_AES_OFB,
+                plaintext,
                 mech_param=mech_bytes(CKM_AES_OFB, iv),
             )
             assert ct1 != ct2
@@ -322,21 +408,34 @@ class TestAESMACGeneral:
         if not rs.has_mechanism("AES_MAC_GENERAL"):
             pytest.skip("CKM_AES_MAC_GENERAL not supported")
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
         )
         data = b"MAC general test data for signing"
         mac_len = 8  # request 8-byte MAC
         try:
             mac = sign_single(
-                rs.raw, rs.sh, key, CKM_AES_MAC_GENERAL, data,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_MAC_GENERAL,
+                data,
                 mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
             assert len(mac) == mac_len
             assert verify_single(
-                rs.raw, rs.sh, key, CKM_AES_MAC_GENERAL, data, mac,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_MAC_GENERAL,
+                data,
+                mac,
                 mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
         finally:
@@ -348,26 +447,42 @@ class TestAESMACGeneral:
         if not rs.has_mechanism("AES_MAC_GENERAL"):
             pytest.skip("CKM_AES_MAC_GENERAL not supported")
         key1 = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
         )
         key2 = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
         )
         data = b"MAC key independence test"
         mac_len = 8
         try:
             mac1 = sign_single(
-                rs.raw, rs.sh, key1, CKM_AES_MAC_GENERAL, data,
+                rs.raw,
+                rs.sh,
+                key1,
+                CKM_AES_MAC_GENERAL,
+                data,
                 mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
             mac2 = sign_single(
-                rs.raw, rs.sh, key2, CKM_AES_MAC_GENERAL, data,
+                rs.raw,
+                rs.sh,
+                key2,
+                CKM_AES_MAC_GENERAL,
+                data,
                 mech_param=mech_bytes(CKM_AES_MAC_GENERAL, mac_len.to_bytes(8, "little")),
             )
             assert mac1 != mac2
@@ -385,9 +500,13 @@ class TestAESXCBCMAC:
         if not rs.has_mechanism("AES_XCBC_MAC"):
             pytest.skip("CKM_AES_XCBC_MAC not supported")
         key = gen_aes_key(
-            rs.raw, rs.sh, 128,  # XCBC-MAC is defined for 128-bit keys
+            rs.raw,
+            rs.sh,
+            128,  # XCBC-MAC is defined for 128-bit keys
             attrs={
-                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
         )
         data = b"XCBC-MAC test data for signing"
@@ -404,9 +523,13 @@ class TestAESXCBCMAC:
         if not rs.has_mechanism("AES_XCBC_MAC_96"):
             pytest.skip("CKM_AES_XCBC_MAC_96 not supported")
         key = gen_aes_key(
-            rs.raw, rs.sh, 128,  # XCBC-MAC-96 is defined for 128-bit keys
+            rs.raw,
+            rs.sh,
+            128,  # XCBC-MAC-96 is defined for 128-bit keys
             attrs={
-                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
         )
         data = b"XCBC-MAC-96 test data for signing"
@@ -423,15 +546,23 @@ class TestAESXCBCMAC:
         if not rs.has_mechanism("AES_XCBC_MAC"):
             pytest.skip("CKM_AES_XCBC_MAC not supported")
         key1 = gen_aes_key(
-            rs.raw, rs.sh, 128,
+            rs.raw,
+            rs.sh,
+            128,
             attrs={
-                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
         )
         key2 = gen_aes_key(
-            rs.raw, rs.sh, 128,
+            rs.raw,
+            rs.sh,
+            128,
             attrs={
-                int(CKA_SIGN): True, int(CKA_VERIFY): True, int(CKA_TOKEN): False,
+                CKA_SIGN: True,
+                CKA_VERIFY: True,
+                CKA_TOKEN: False,
             },
         )
         data = b"XCBC key independence test"
@@ -454,47 +585,59 @@ class TestAESKeyWrapPKCS7:
             pytest.skip("CKM_AES_KEY_WRAP_PKCS7 not supported")
 
         wrap_key_h = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={
-                int(CKA_WRAP): True,
-                int(CKA_UNWRAP): True,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
 
         # Create a target key with known material (non-block-aligned size to test PKCS7 padding)
         import os
+
         key_bytes = os.urandom(24)  # 192-bit key
         target = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
             attrs={
-                int(CKA_TOKEN): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_TOKEN: False,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
 
         try:
             wrapped = wrap_key(
-                rs.raw, rs.sh, wrap_key_h, target, CKM_AES_KEY_WRAP_PKCS7,
+                rs.raw,
+                rs.sh,
+                wrap_key_h,
+                target,
+                CKM_AES_KEY_WRAP_PKCS7,
             )
             assert wrapped != key_bytes
 
             unwrapped = unwrap_key(
-                rs.raw, rs.sh, wrap_key_h, wrapped, CKM_AES_KEY_WRAP_PKCS7,
+                rs.raw,
+                rs.sh,
+                wrap_key_h,
+                wrapped,
+                CKM_AES_KEY_WRAP_PKCS7,
                 attrs={
-                    int(CKA_CLASS): int(CKO_SECRET_KEY),
-                    int(CKA_KEY_TYPE): int(CKK_AES),
-                    int(CKA_VALUE_LEN): 24,
-                    int(CKA_EXTRACTABLE): True,
-                    int(CKA_SENSITIVE): False,
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE_LEN: 24,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
                 },
             )
             try:
-                okm = read_attributes(
-                    rs.raw, rs.sh, unwrapped, [int(CKA_VALUE)]
-                )[int(CKA_VALUE)]
+                okm = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
                 assert okm == key_bytes
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
@@ -502,40 +645,54 @@ class TestAESKeyWrapPKCS7:
             destroy_quietly(rs.raw, rs.sh, target)
             destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
-    def test_aes_key_wrap_pkcs7_different_wrapping_keys(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_aes_key_wrap_pkcs7_different_wrapping_keys(self, p11_raw_session: Any) -> None:
         """Different wrapping keys produce different wrapped outputs."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP_PKCS7"):
             pytest.skip("CKM_AES_KEY_WRAP_PKCS7 not supported")
 
         wrap_key1 = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_WRAP): True, int(CKA_UNWRAP): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
         )
         wrap_key2 = gen_aes_key(
-            rs.raw, rs.sh, 256,
-            attrs={int(CKA_WRAP): True, int(CKA_UNWRAP): True},
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
         )
 
         import os
+
         key_bytes = os.urandom(16)
         target = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, key_bytes,
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
             attrs={
-                int(CKA_TOKEN): False,
-                int(CKA_EXTRACTABLE): True,
-                int(CKA_SENSITIVE): False,
+                CKA_TOKEN: False,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
             },
         )
 
         try:
             wrapped1 = wrap_key(
-                rs.raw, rs.sh, wrap_key1, target, CKM_AES_KEY_WRAP_PKCS7,
+                rs.raw,
+                rs.sh,
+                wrap_key1,
+                target,
+                CKM_AES_KEY_WRAP_PKCS7,
             )
             wrapped2 = wrap_key(
-                rs.raw, rs.sh, wrap_key2, target, CKM_AES_KEY_WRAP_PKCS7,
+                rs.raw,
+                rs.sh,
+                wrap_key2,
+                target,
+                CKM_AES_KEY_WRAP_PKCS7,
             )
             assert wrapped1 != wrapped2
         finally:

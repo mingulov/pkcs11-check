@@ -68,7 +68,7 @@ class TestSecretKeyDefaults:
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES key generation not supported")
         try:
-            key = gen_aes_key(rs.raw, rs.sh, 256, attrs={int(CKA_TOKEN): False})
+            key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
         except (AssertionError, Exception) as e:
             pytest.skip(f"Cannot generate AES key with minimal template: {e}")
         yield rs, key
@@ -77,56 +77,56 @@ class TestSecretKeyDefaults:
     def test_token_is_false(self, aes_key: Any) -> None:
         """CKA_TOKEN is False (explicitly set)."""
         rs, key = aes_key
-        attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_TOKEN)])
-        assert attrs[int(CKA_TOKEN)] is False
+        attrs = read_attributes(rs.raw, rs.sh, key, [CKA_TOKEN])
+        assert attrs[CKA_TOKEN] is False
 
     def test_local_is_true(self, aes_key: Any) -> None:
         """CKA_LOCAL should be True for a generated key."""
         rs, key = aes_key
-        attrs = read_attributes(rs.raw, rs.sh, key, [int(CKA_LOCAL)])
-        assert attrs[int(CKA_LOCAL)] is True
+        attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
+        assert attrs[CKA_LOCAL] is True
 
     def test_sensitive_is_bool(self, aes_key: Any) -> None:
         """CKA_SENSITIVE defaults to a boolean (True on most modules)."""
         rs, key = aes_key
-        val = _read_attr(rs.raw, rs.sh, key, int(CKA_SENSITIVE))
+        val = _read_attr(rs.raw, rs.sh, key, CKA_SENSITIVE)
         assert isinstance(val, bool)
 
     def test_extractable_is_bool(self, aes_key: Any) -> None:
         """CKA_EXTRACTABLE defaults to a boolean (False on most modules)."""
         rs, key = aes_key
-        val = _read_attr(rs.raw, rs.sh, key, int(CKA_EXTRACTABLE))
+        val = _read_attr(rs.raw, rs.sh, key, CKA_EXTRACTABLE)
         assert isinstance(val, bool)
 
     def test_modifiable_default(self, aes_key: Any) -> None:
         """CKA_MODIFIABLE defaults to True."""
         rs, key = aes_key
-        val = _read_attr(rs.raw, rs.sh, key, int(CKA_MODIFIABLE))
+        val = _read_attr(rs.raw, rs.sh, key, CKA_MODIFIABLE)
         assert val is True
 
     def test_copyable_default(self, aes_key: Any) -> None:
         """CKA_COPYABLE defaults to True."""
         rs, key = aes_key
-        val = _read_attr(rs.raw, rs.sh, key, int(CKA_COPYABLE))
+        val = _read_attr(rs.raw, rs.sh, key, CKA_COPYABLE)
         assert val is True
 
     def test_destroyable_default(self, aes_key: Any) -> None:
         """CKA_DESTROYABLE defaults to True."""
         rs, key = aes_key
-        val = _read_attr(rs.raw, rs.sh, key, int(CKA_DESTROYABLE))
+        val = _read_attr(rs.raw, rs.sh, key, CKA_DESTROYABLE)
         assert val is True
 
     def test_private_default(self, aes_key: Any) -> None:
         """CKA_PRIVATE defaults to True for secret keys."""
         rs, key = aes_key
-        val = _read_attr(rs.raw, rs.sh, key, int(CKA_PRIVATE))
+        val = _read_attr(rs.raw, rs.sh, key, CKA_PRIVATE)
         assert val is True
 
     def test_always_sensitive_consistent(self, aes_key: Any) -> None:
         """CKA_ALWAYS_SENSITIVE is True when SENSITIVE defaults to True."""
         rs, key = aes_key
-        sensitive = _read_attr(rs.raw, rs.sh, key, int(CKA_SENSITIVE))
-        always_sensitive = _read_attr(rs.raw, rs.sh, key, int(CKA_ALWAYS_SENSITIVE))
+        sensitive = _read_attr(rs.raw, rs.sh, key, CKA_SENSITIVE)
+        always_sensitive = _read_attr(rs.raw, rs.sh, key, CKA_ALWAYS_SENSITIVE)
         if sensitive:
             assert always_sensitive is True
         else:
@@ -136,8 +136,8 @@ class TestSecretKeyDefaults:
     def test_never_extractable_consistent(self, aes_key: Any) -> None:
         """CKA_NEVER_EXTRACTABLE is True when EXTRACTABLE defaults to False."""
         rs, key = aes_key
-        extractable = _read_attr(rs.raw, rs.sh, key, int(CKA_EXTRACTABLE))
-        never_extractable = _read_attr(rs.raw, rs.sh, key, int(CKA_NEVER_EXTRACTABLE))
+        extractable = _read_attr(rs.raw, rs.sh, key, CKA_EXTRACTABLE)
+        never_extractable = _read_attr(rs.raw, rs.sh, key, CKA_NEVER_EXTRACTABLE)
         if not extractable:
             assert never_extractable is True
         else:
@@ -165,14 +165,14 @@ class TestKeyPairDefaults:
     def test_public_key_local(self, rsa_keypair: Any) -> None:
         """Public key CKA_LOCAL should be True."""
         rs, pub, _priv = rsa_keypair
-        attrs = read_attributes(rs.raw, rs.sh, pub, [int(CKA_LOCAL)])
-        assert attrs[int(CKA_LOCAL)] is True
+        attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_LOCAL])
+        assert attrs[CKA_LOCAL] is True
 
     def test_private_key_local(self, rsa_keypair: Any) -> None:
         """Private key CKA_LOCAL should be True."""
         rs, _pub, priv = rsa_keypair
-        attrs = read_attributes(rs.raw, rs.sh, priv, [int(CKA_LOCAL)])
-        assert attrs[int(CKA_LOCAL)] is True
+        attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_LOCAL])
+        assert attrs[CKA_LOCAL] is True
 
     def test_private_key_sensitive(self, rsa_keypair: Any) -> None:
         """Private key CKA_SENSITIVE is a boolean.
@@ -182,43 +182,43 @@ class TestKeyPairDefaults:
         the module may default to either True or False.
         """
         rs, _pub, priv = rsa_keypair
-        val = _read_attr(rs.raw, rs.sh, priv, int(CKA_SENSITIVE))
+        val = _read_attr(rs.raw, rs.sh, priv, CKA_SENSITIVE)
         assert isinstance(val, bool)
 
     def test_private_key_extractable(self, rsa_keypair: Any) -> None:
         """Private key CKA_EXTRACTABLE defaults to False."""
         rs, _pub, priv = rsa_keypair
-        val = _read_attr(rs.raw, rs.sh, priv, int(CKA_EXTRACTABLE))
+        val = _read_attr(rs.raw, rs.sh, priv, CKA_EXTRACTABLE)
         assert val is False
 
     def test_private_key_private(self, rsa_keypair: Any) -> None:
         """Private key CKA_PRIVATE defaults to True."""
         rs, _pub, priv = rsa_keypair
-        val = _read_attr(rs.raw, rs.sh, priv, int(CKA_PRIVATE))
+        val = _read_attr(rs.raw, rs.sh, priv, CKA_PRIVATE)
         assert val is True
 
     def test_public_key_encrypt_is_bool(self, rsa_keypair: Any) -> None:
         """Public key CKA_ENCRYPT is a boolean."""
         rs, pub, _priv = rsa_keypair
-        val = _read_attr(rs.raw, rs.sh, pub, int(CKA_ENCRYPT))
+        val = _read_attr(rs.raw, rs.sh, pub, CKA_ENCRYPT)
         assert isinstance(val, bool)
 
     def test_public_key_verify_is_bool(self, rsa_keypair: Any) -> None:
         """Public key CKA_VERIFY is a boolean."""
         rs, pub, _priv = rsa_keypair
-        val = _read_attr(rs.raw, rs.sh, pub, int(CKA_VERIFY))
+        val = _read_attr(rs.raw, rs.sh, pub, CKA_VERIFY)
         assert isinstance(val, bool)
 
     def test_private_key_sign_is_bool(self, rsa_keypair: Any) -> None:
         """Private key CKA_SIGN is a boolean."""
         rs, _pub, priv = rsa_keypair
-        val = _read_attr(rs.raw, rs.sh, priv, int(CKA_SIGN))
+        val = _read_attr(rs.raw, rs.sh, priv, CKA_SIGN)
         assert isinstance(val, bool)
 
     def test_private_key_decrypt_is_bool(self, rsa_keypair: Any) -> None:
         """Private key CKA_DECRYPT is a boolean."""
         rs, _pub, priv = rsa_keypair
-        val = _read_attr(rs.raw, rs.sh, priv, int(CKA_DECRYPT))
+        val = _read_attr(rs.raw, rs.sh, priv, CKA_DECRYPT)
         assert isinstance(val, bool)
 
 
@@ -229,28 +229,32 @@ class TestDataObjectDefaults:
     def data_obj(self, p11_raw_session: Any) -> Any:
         """Create a CKO_DATA object with minimal template."""
         rs = p11_raw_session
-        h = create_object(rs.raw, rs.sh, {
-            int(CKA_CLASS): int(CKO_DATA),
-            int(CKA_VALUE): b"test-defaults",
-            int(CKA_TOKEN): False,
-        })
+        h = create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_DATA,
+                CKA_VALUE: b"test-defaults",
+                CKA_TOKEN: False,
+            },
+        )
         yield rs, h
         destroy_quietly(rs.raw, rs.sh, h)
 
     def test_token_is_false(self, data_obj: Any) -> None:
         """CKA_TOKEN is False (explicitly set)."""
         rs, h = data_obj
-        attrs = read_attributes(rs.raw, rs.sh, h, [int(CKA_TOKEN)])
-        assert attrs[int(CKA_TOKEN)] is False
+        attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TOKEN])
+        assert attrs[CKA_TOKEN] is False
 
     def test_modifiable_default(self, data_obj: Any) -> None:
         """CKA_MODIFIABLE defaults to True."""
         rs, h = data_obj
-        val = _read_attr(rs.raw, rs.sh, h, int(CKA_MODIFIABLE))
+        val = _read_attr(rs.raw, rs.sh, h, CKA_MODIFIABLE)
         assert val is True
 
     def test_private_is_bool(self, data_obj: Any) -> None:
         """CKA_PRIVATE defaults to a boolean (module-dependent)."""
         rs, h = data_obj
-        val = _read_attr(rs.raw, rs.sh, h, int(CKA_PRIVATE))
+        val = _read_attr(rs.raw, rs.sh, h, CKA_PRIVATE)
         assert isinstance(val, bool)

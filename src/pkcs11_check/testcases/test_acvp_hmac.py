@@ -46,17 +46,23 @@ if not ACVP_AVAILABLE:
 
 # ACVP algorithm name -> (CKK key type, CKM mechanism, display name)
 _ALG_MAP: dict[str, tuple[int, int, str]] = {
-    "HMAC-SHA2-256-2.0": (int(CKK_SHA256_HMAC), int(CKM_SHA256_HMAC), "SHA256_HMAC"),
-    "HMAC-SHA2-384-2.0": (int(CKK_SHA384_HMAC), int(CKM_SHA384_HMAC), "SHA384_HMAC"),
-    "HMAC-SHA2-512-2.0": (int(CKK_SHA512_HMAC), int(CKM_SHA512_HMAC), "SHA512_HMAC"),
+    "HMAC-SHA2-256-2.0": (CKK_SHA256_HMAC, CKM_SHA256_HMAC, "SHA256_HMAC"),
+    "HMAC-SHA2-384-2.0": (CKK_SHA384_HMAC, CKM_SHA384_HMAC, "SHA384_HMAC"),
+    "HMAC-SHA2-512-2.0": (CKK_SHA512_HMAC, CKM_SHA512_HMAC, "SHA512_HMAC"),
     "HMAC-SHA3-256-2.0": (
-        int(CKK_SHA3_256_HMAC), int(CKM_SHA3_256_HMAC), "SHA3_256_HMAC",
+        CKK_SHA3_256_HMAC,
+        CKM_SHA3_256_HMAC,
+        "SHA3_256_HMAC",
     ),
     "HMAC-SHA3-384-2.0": (
-        int(CKK_SHA3_384_HMAC), int(CKM_SHA3_384_HMAC), "SHA3_384_HMAC",
+        CKK_SHA3_384_HMAC,
+        CKM_SHA3_384_HMAC,
+        "SHA3_384_HMAC",
     ),
     "HMAC-SHA3-512-2.0": (
-        int(CKK_SHA3_512_HMAC), int(CKM_SHA3_512_HMAC), "SHA3_512_HMAC",
+        CKK_SHA3_512_HMAC,
+        CKM_SHA3_512_HMAC,
+        "SHA3_512_HMAC",
     ),
 }
 
@@ -104,9 +110,7 @@ _ALL_HMAC_VECTORS = _load_hmac_vectors()
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_HMAC_VECTORS, ids=[v[0] for v in _ALL_HMAC_VECTORS])
-def test_acvp_hmac(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_hmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """HMAC generation from NIST ACVP vectors.
 
     Tests that the PKCS#11 module can correctly compute HMAC MACs using
@@ -125,9 +129,9 @@ def test_acvp_hmac(
                 vec["key_type"],
                 vec["key"],
                 attrs={
-                    int(CKA_SIGN): True,
-                    int(CKA_TOKEN): False,
-                    int(CKA_SENSITIVE): False,
+                    CKA_SIGN: True,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
                 },
             )
         except AssertionError as e:
@@ -149,8 +153,7 @@ def test_acvp_hmac(
         expected = vec["mac_expected"]
 
         assert truncated == expected, (
-            f"HMAC mismatch for {vec_id}: "
-            f"got {truncated.hex()}, expected {expected.hex()}"
+            f"HMAC mismatch for {vec_id}: got {truncated.hex()}, expected {expected.hex()}"
         )
     finally:
         if key:
