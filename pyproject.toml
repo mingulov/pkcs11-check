@@ -65,7 +65,12 @@ packages = ["src/pkcs11_check"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-exclude = ["src/pkcs11_check/testcases/data/"]
+exclude = [
+    "src/pkcs11_check/testcases/data/",
+    "src/pkcs11_check/raw/metadata_std.py",
+    "src/pkcs11_check/raw/types_std.py",
+    "tests/data/",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
