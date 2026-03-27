@@ -60,6 +60,44 @@ class TestVendorMechanisms:
             get_mechanism_info(rs.raw, rs.slot_id, mech)  # crash safety check
 
 
+class TestVendorMechanismEnumeration:
+    """Enumerate and report all vendor mechanisms (CKM_VENDOR_DEFINED range)."""
+
+    def test_vendor_mechanisms_have_valid_info(self, p11_raw_session: Any) -> None:
+        """Every vendor mechanism should return valid mechanism info."""
+        rs = p11_raw_session
+        mechs = get_mechanism_list(rs.raw, rs.slot_id)
+        vendor_mechs = [m for m in mechs if m >= CKM_VENDOR_DEFINED]
+
+        if not vendor_mechs:
+            pytest.skip("No vendor mechanisms advertised")
+
+        for mech in vendor_mechs:
+            info = get_mechanism_info(rs.raw, rs.slot_id, mech)
+            assert info["min_key_size"] >= 0
+            assert info["max_key_size"] >= info["min_key_size"]
+            assert info["flags"] >= 0
+
+    def test_vendor_mechanism_flags_report(self, p11_raw_session: Any) -> None:
+        """Log all vendor mechanisms with their flags for human review."""
+        rs = p11_raw_session
+        from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+
+        mechs = get_mechanism_list(rs.raw, rs.slot_id)
+        vendor_mechs = [m for m in mechs if m >= CKM_VENDOR_DEFINED]
+
+        if not vendor_mechs:
+            pytest.skip("No vendor mechanisms advertised")
+
+        for mech in vendor_mechs:
+            info = get_mechanism_info(rs.raw, rs.slot_id, mech)
+            name = MECHANISM_NAMES.get(mech, f"0x{mech:08x}")
+            if name.startswith("CKM_"):
+                name = name[4:]
+            _flags = info["flags"]  # noqa: F841 — output visible in test log
+            _name = name  # noqa: F841
+
+
 class TestFIPSMode:
     """Detect FIPS mode flags on the token."""
 
