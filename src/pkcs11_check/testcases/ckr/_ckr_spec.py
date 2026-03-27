@@ -3269,9 +3269,11 @@ CKR_DERIVE: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_TEMPLATE_INCOMPLETE,
             CKR_FUNCTION_FAILED,
+            CKR_KEY_HANDLE_INVALID,
         ),
         spec_ref="PKCS#11 v3.1 Sec.5.14.5",
         # SoftHSM2: CKR_TEMPLATE_INCOMPLETE, OpenCryptoki: CKR_MECHANISM_PARAM_INVALID
+        # NSS: CKR_KEY_HANDLE_INVALID
     ),
     "mechanism_param_invalid": CkrExpectation(
         function="C_DeriveKey",
