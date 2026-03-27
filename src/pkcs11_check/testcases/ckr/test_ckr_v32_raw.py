@@ -142,6 +142,33 @@ print("OK")
         )
         _check(rc, out, err, "C_EncapsulateKey")
 
+    def test_encapsulate_null_pointers(self, p11_config: Any) -> None:
+        """C_EncapsulateKey with NULL pointers must return CKR_ARGUMENTS_BAD without crashing."""
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+mech = CK_MECHANISM()
+mech.mechanism = 0x1081
+ct = (ctypes.c_ubyte * 2048)()
+ct_len = ctypes.c_ulong(2048)
+enc_key = ctypes.c_ulong(0)
+
+# Pass NULL for pMechanism
+rv = raw.C_EncapsulateKey(sh, None, 0, None, 0, ct, ctypes.byref(ct_len), ctypes.byref(enc_key))
+print(f"NULL pMechanism -> CKR:0x{rv:08x}")
+assert rv == CKR_ARGUMENTS_BAD, "NULL pMechanism should yield CKR_ARGUMENTS_BAD"
+
+# Pass NULL for pulCiphertextLen
+rv = raw.C_EncapsulateKey(sh, ctypes.byref(mech), 0, None, 0, ct, None, ctypes.byref(enc_key))
+print(f"NULL pulCiphertextLen -> CKR:0x{rv:08x}")
+assert rv == CKR_ARGUMENTS_BAD, "NULL pulCiphertextLen should yield CKR_ARGUMENTS_BAD"
+
+print("OK")
+""",
+        )
+        _check(rc, out, err, "C_EncapsulateKey_NULLs")
+
 
 class TestDecapsulateKeyErrors:
     """v3.2 C_DecapsulateKey via raw calls."""
@@ -163,6 +190,37 @@ print("OK")
 """,
         )
         _check(rc, out, err, "C_DecapsulateKey")
+
+    def test_decapsulate_null_pointers(self, p11_config: Any) -> None:
+        """C_DecapsulateKey with NULL pointers must return CKR_ARGUMENTS_BAD without crashing."""
+        rc, out, err = _run(
+            str(p11_config.module),
+            p11_config.pin.get_secret_value() if p11_config.pin else None,
+            """\
+mech = CK_MECHANISM()
+mech.mechanism = 0x1081
+ct = (ctypes.c_ubyte * 1088)(*([0xFF]*1088))
+key = ctypes.c_ulong(0)
+
+# Pass NULL for pMechanism
+rv = raw.C_DecapsulateKey(sh, None, 0, None, 0, ct, 1088, ctypes.byref(key))
+print(f"NULL pMechanism -> CKR:0x{rv:08x}")
+assert rv == CKR_ARGUMENTS_BAD, "NULL pMechanism should yield CKR_ARGUMENTS_BAD"
+
+# Pass NULL for phKey
+rv = raw.C_DecapsulateKey(sh, ctypes.byref(mech), 0, None, 0, ct, 1088, None)
+print(f"NULL phKey -> CKR:0x{rv:08x}")
+assert rv == CKR_ARGUMENTS_BAD, "NULL phKey should yield CKR_ARGUMENTS_BAD"
+
+# Note: OASIS may allow pCiphertext=None if ulCiphertextLen=0, but otherwise ARGUMENTS_BAD
+rv = raw.C_DecapsulateKey(sh, ctypes.byref(mech), 0, None, 0, None, 1088, ctypes.byref(key))
+print(f"NULL pCiphertext with length>0 -> CKR:0x{rv:08x}")
+assert rv == CKR_ARGUMENTS_BAD, "NULL pCiphertext should yield CKR_ARGUMENTS_BAD"
+
+print("OK")
+""",
+        )
+        _check(rc, out, err, "C_DecapsulateKey_NULLs")
 
 
 class TestAsyncErrors:
