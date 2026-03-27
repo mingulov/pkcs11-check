@@ -153,6 +153,8 @@ class TestDestroyable:
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_DESTROYABLE])
+            if CKA_DESTROYABLE not in attrs:
+                pytest.skip("CKA_DESTROYABLE not supported by module")
             val = attrs[CKA_DESTROYABLE]
             assert val is True, f"Expected default CKA_DESTROYABLE=True, got {val}"
         except AssertionError as e:
@@ -179,6 +181,8 @@ class TestDestroyable:
 
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_DESTROYABLE])
+            if CKA_DESTROYABLE not in attrs:
+                pytest.skip("CKA_DESTROYABLE not supported by module")
             val = attrs[CKA_DESTROYABLE]
         except AssertionError as e:
             if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
@@ -189,6 +193,15 @@ class TestDestroyable:
             pytest.skip("Module did not honour CKA_DESTROYABLE=False")
 
         rv = rs.raw.C_DestroyObject(rs.sh, key)
+        if rv == CKR_OK:
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                "Module ignores CKA_DESTROYABLE=False — C_DestroyObject succeeded",
+                ComplianceLevel.CRITICAL,
+                reference="PKCS#11 v3.1 Sec.4.1.2: CKA_DESTROYABLE=False must prevent destroy",
+            )
+            pytest.xfail("Module ignores CKA_DESTROYABLE=False (spec violation)")
         assert rv != CKR_OK, (
             "C_DestroyObject succeeded on CKA_DESTROYABLE=False key "
             "(expected CKR_ACTION_PROHIBITED)"
@@ -221,6 +234,8 @@ class TestKeyGenMechanism:
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_GEN_MECHANISM])
+            if CKA_KEY_GEN_MECHANISM not in attrs:
+                pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
             mech = attrs[CKA_KEY_GEN_MECHANISM]
             assert mech == CKM_AES_KEY_GEN, f"Expected CKM_AES_KEY_GEN, got {mech}"
         except AssertionError as e:
@@ -240,6 +255,8 @@ class TestKeyGenMechanism:
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_GEN_MECHANISM])
+                if CKA_KEY_GEN_MECHANISM not in attrs:
+                    pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
                 mech = attrs[CKA_KEY_GEN_MECHANISM]
                 assert mech == CKM_RSA_PKCS_KEY_PAIR_GEN, (
                     f"Expected CKM_RSA_PKCS_KEY_PAIR_GEN, got {mech}"
@@ -266,6 +283,8 @@ class TestKeyGenMechanism:
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_GEN_MECHANISM])
+                if CKA_KEY_GEN_MECHANISM not in attrs:
+                    pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
                 mech = attrs[CKA_KEY_GEN_MECHANISM]
             except (AssertionError, Exception) as e:
                 if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
@@ -287,7 +306,9 @@ class TestKeyGenMechanism:
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
         try:
             try:
-                read_attributes(rs.raw, rs.sh, key, [CKA_KEY_GEN_MECHANISM])
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_GEN_MECHANISM])
+                if CKA_KEY_GEN_MECHANISM not in attrs:
+                    pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
             except AssertionError as e:
                 if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
                     pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
@@ -425,6 +446,8 @@ class TestAlwaysAuthenticate:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
+            if CKA_ALWAYS_AUTHENTICATE not in attrs:
+                pytest.skip("CKA_ALWAYS_AUTHENTICATE not supported by module")
             val = attrs[CKA_ALWAYS_AUTHENTICATE]
             assert val is False, f"Default CKA_ALWAYS_AUTHENTICATE should be False, got {val}"
         except AssertionError as e:

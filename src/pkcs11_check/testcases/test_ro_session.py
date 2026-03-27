@@ -40,7 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKO_PUBLIC_KEY,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
 
 pytestmark = pytest.mark.access
 
@@ -143,6 +143,7 @@ class TestSessionObjectLifecycle:
     def test_token_object_persists_after_close(self, p11_raw_session: Any, p11_config: Any) -> None:
         """TOKEN=True object persists after session closes."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 

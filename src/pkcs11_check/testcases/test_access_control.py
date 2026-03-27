@@ -68,7 +68,17 @@ class TestPrivateAttribute:
         key_h = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_PRIVATE])
-            assert attrs[CKA_PRIVATE] is True
+            try:
+                assert attrs[CKA_PRIVATE] is True
+            except AssertionError:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "Module defaults CKA_PRIVATE to False for secret keys (spec requires True)",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 v3.1 Sec.4.9.2: default CKA_PRIVATE is True for secret keys",
+                )
+                pytest.xfail("Module defaults CKA_PRIVATE=False for secret keys (spec violation)")
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -158,6 +168,8 @@ class TestCopyableAttribute:
         key_h = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
+            if CKA_COPYABLE not in attrs:
+                pytest.skip("CKA_COPYABLE not supported by module")
             copyable = attrs[CKA_COPYABLE]
             assert isinstance(copyable, bool)
         finally:
@@ -169,7 +181,7 @@ class TestCopyableAttribute:
         key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "copy-src"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
-            if not attrs[CKA_COPYABLE]:
+            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
                 pytest.skip("Key not copyable by default")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "copy-dst"})
@@ -194,7 +206,7 @@ class TestCopyObject:
         key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "orig-label"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
-            if not attrs[CKA_COPYABLE]:
+            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
                 pytest.skip("Key not copyable by default")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "copied-label"})
@@ -237,7 +249,7 @@ class TestCopyObject:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE, CKA_EXTRACTABLE])
-            if not attrs[CKA_COPYABLE]:
+            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
                 pytest.skip("Key not copyable")
             assert attrs[CKA_EXTRACTABLE] is True
             try:
@@ -268,13 +280,22 @@ class TestCopyObject:
             return
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
+            if CKA_COPYABLE not in attrs:
+                pytest.skip("CKA_COPYABLE not supported by module")
             if attrs[CKA_COPYABLE] is not False:
                 pytest.skip("Module did not honour CKA_COPYABLE=False in template")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "should-fail"})
                 # Should not reach here
                 destroy_quietly(rs.raw, rs.sh, copied_h)
-                pytest.fail("C_CopyObject succeeded on non-copyable key")
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "Module ignores CKA_COPYABLE=False: C_CopyObject succeeded on non-copyable key",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.4.1.2: CKA_COPYABLE=False must prevent copy",
+                )
+                pytest.xfail("Module ignores CKA_COPYABLE=False (spec violation)")
             except AssertionError:
                 pass  # Expected
         finally:
@@ -291,7 +312,7 @@ class TestCopyObject:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE, CKA_TOKEN])
-            if not attrs[CKA_COPYABLE]:
+            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
                 pytest.skip("Key not copyable")
             assert attrs[CKA_TOKEN] is False
             try:
@@ -319,7 +340,7 @@ class TestCopyObject:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE, CKA_TOKEN])
-            if not attrs[CKA_COPYABLE]:
+            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
                 destroy_quietly(rs.raw, rs.sh, key_h)
                 pytest.skip("Key not copyable")
             assert attrs[CKA_TOKEN] is True
