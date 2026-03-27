@@ -473,8 +473,13 @@ def read_attributes(
         tmpl[i].ulValueLen = 0
 
     # CK_UNAVAILABLE_INFORMATION sentinel: ulValueLen set to (CK_ULONG)-1 for
-    # sensitive or type-invalid attributes.
-    _ck_unavailable = ctypes.c_ulong(-1).value  # 0xFFFF...FFFF
+    # sensitive or type-invalid attributes. Some modules return 0xFFFFFFFF
+    # (32-bit sentinel) even on 64-bit platforms.
+    _ck_unavailable_64 = ctypes.c_ulong(-1).value  # 0xFFFFFFFFFFFFFFFF on 64-bit
+    _ck_unavailable_32 = 0xFFFFFFFF
+
+    def _is_unavailable(val: int) -> bool:
+        return val == _ck_unavailable_64 or val == _ck_unavailable_32
 
     # First call: query sizes
     rv = raw.C_GetAttributeValue(session, handle, tmpl, count)
@@ -484,7 +489,7 @@ def read_attributes(
     buffers = []
     for i in range(count):
         size = tmpl[i].ulValueLen
-        if size == _ck_unavailable:
+        if _is_unavailable(size):
             buffers.append(None)
             continue
         buf = (ctypes.c_ubyte * size)()
@@ -499,7 +504,7 @@ def read_attributes(
     result: dict[int, bytes | int | bool | str | list[int]] = {}
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
-        if size == _ck_unavailable or buffers[i] is None:
+        if _is_unavailable(size) or buffers[i] is None:
             continue  # Attribute sensitive or type invalid — skip
         raw_bytes = bytes(buffers[i][:size])
         vtype = ATTR_VALUE_TYPES.get(at, "bytes")

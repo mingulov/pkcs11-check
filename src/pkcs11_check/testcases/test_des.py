@@ -179,7 +179,7 @@ class TestDESEncryption:
                 key,
                 CKM_DES_ECB,
                 _TWO_BLOCKS,
-                skip_msg=des_skip,
+                xfail_msg=des_skip,
             )
             assert ct != _TWO_BLOCKS
             assert len(ct) == len(_TWO_BLOCKS)
@@ -206,7 +206,7 @@ class TestDESEncryption:
                 key1,
                 CKM_DES_ECB,
                 _TWO_BLOCKS,
-                skip_msg=des_skip,
+                xfail_msg=des_skip,
             )
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_DES_ECB, _TWO_BLOCKS)
             assert ct1 != ct2
@@ -237,7 +237,7 @@ class TestDESEncryption:
                 CKM_DES_CBC,
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES_CBC, iv),
-                skip_msg=des_skip,
+                xfail_msg=des_skip,
             )
             assert ct != _TWO_BLOCKS
             pt = decrypt_single(
@@ -276,7 +276,7 @@ class TestDESEncryption:
                 CKM_DES_CBC,
                 _TWO_BLOCKS,
                 mech_param=mech_bytes(CKM_DES_CBC, iv1),
-                skip_msg=des_skip,
+                xfail_msg=des_skip,
             )
             ct2 = encrypt_single(
                 rs.raw,
@@ -315,7 +315,7 @@ class TestDESEncryption:
                 CKM_DES_CBC_PAD,
                 plaintext,
                 mech_param=mech_bytes(CKM_DES_CBC_PAD, iv),
-                skip_msg=des_skip,
+                xfail_msg=des_skip,
             )
             assert ct != plaintext
             # Ciphertext is padded to block boundary
@@ -356,7 +356,7 @@ class TestDESEncryption:
                 CKM_DES_OFB64,
                 plaintext,
                 mech_param=mech_bytes(CKM_DES_OFB64, iv),
-                skip_msg=des_skip,
+                xfail_msg=des_skip,
             )
             assert ct != plaintext
             assert len(ct) == len(plaintext)
@@ -396,7 +396,7 @@ class TestDESEncryption:
                 CKM_DES_CFB8,
                 plaintext,
                 mech_param=mech_bytes(CKM_DES_CFB8, iv),
-                skip_msg=des_skip,
+                xfail_msg=des_skip,
             )
             assert ct != plaintext
             pt = decrypt_single(
@@ -435,7 +435,7 @@ class TestDESEncryption:
                 CKM_DES_CFB64,
                 plaintext,
                 mech_param=mech_bytes(CKM_DES_CFB64, iv),
-                skip_msg=des_skip,
+                xfail_msg=des_skip,
             )
             assert ct != plaintext
             pt = decrypt_single(
