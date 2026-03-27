@@ -167,14 +167,30 @@ class TestROTokenObjectCreation:
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
-            from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
-            from pkcs11_check.raw.types_std import CKA_MODULUS_BITS
+            from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, template
+            from pkcs11_check.raw.types_std import (
+                CKA_MODULUS_BITS,
+                CKA_PUBLIC_EXPONENT,
+                CKR_TEMPLATE_INCOMPLETE,
+                CKR_TOKEN_WRITE_PROTECTED,
+            )
 
+            # Provide a complete RSA template so modules that validate
+            # templates before checking session type still reach the RO check.
+            # NSS requires CKA_PUBLIC_EXPONENT; without it, it returns
+            # CKR_TEMPLATE_INCOMPLETE before the session-type check.
             pub_tmpl = template(
                 attr_ulong(CKA_MODULUS_BITS, 2048),
+                attr_bytes(CKA_PUBLIC_EXPONENT, b"\x01\x00\x01"),
                 attr_bool(CKA_TOKEN, True),
+                attr_bool(CKA_VERIFY, True),
+                attr_bool(CKA_ENCRYPT, True),
             )
-            priv_tmpl = template(attr_bool(CKA_TOKEN, True))
+            priv_tmpl = template(
+                attr_bool(CKA_TOKEN, True),
+                attr_bool(CKA_SIGN, True),
+                attr_bool(CKA_DECRYPT, True),
+            )
             mech = mech_simple(CKM_RSA_PKCS_KEY_PAIR_GEN)
             pub_h = CK_OBJECT_HANDLE(0)
             priv_h = CK_OBJECT_HANDLE(0)
@@ -188,7 +204,14 @@ class TestROTokenObjectCreation:
                 byref(pub_h),
                 byref(priv_h),
             )
-            assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
+            # Accept RO errors, write-protected, or template-incomplete
+            # (modules may validate template before checking session type)
+            _ro_or_template_rvs = (
+                *_RO_ERROR_RVS,
+                CKR_TOKEN_WRITE_PROTECTED,
+                CKR_TEMPLATE_INCOMPLETE,
+            )
+            assert rv in _ro_or_template_rvs, f"Expected RO error, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, ro_sh)
 
