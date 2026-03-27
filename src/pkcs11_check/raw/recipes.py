@@ -47,6 +47,7 @@ from .types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKK,
+    CKK_AES,
     CKM,
     CKM_AES_KEY_GEN,
     CKM_EC_KEY_PAIR_GEN,
@@ -170,7 +171,11 @@ def gen_aes_key(
     mechanism: int = CKM_AES_KEY_GEN,
 ) -> int:
     """Generate an AES key with explicit attributes."""
-    _defaults: dict[int, Any] = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
+    _defaults: dict[int, Any] = {
+        CKA_KEY_TYPE: CKK_AES,
+        CKA_ENCRYPT: True,
+        CKA_DECRYPT: True,
+    }
     if attrs:
         _defaults.update(attrs)
     packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
