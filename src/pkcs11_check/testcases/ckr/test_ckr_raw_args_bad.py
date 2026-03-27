@@ -50,11 +50,7 @@ def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
         slot_label="pkcs11-check",
         extra_imports=_EXTRA_IMPORTS,
     )
-    script = (
-        preamble
-        + textwrap.indent(textwrap.dedent(code), "    ")
-        + "\nraw.C_CloseSession(sh)\nraw.C_Finalize(None)\n"
-    )
+    script = preamble + textwrap.dedent(code) + "\ncleanup()\n"
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
