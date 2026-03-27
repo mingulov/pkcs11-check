@@ -23,6 +23,8 @@ from pkcs11_check.fixtures import (  # noqa: F401
 from pkcs11_check.markers import MARKER_DEFINITIONS, should_skip_for_version
 
 _MANIFEST_KEY: pytest.StashKey[CapabilityManifest | None] = pytest.StashKey()
+_CUMULATIVE_FUNCTIONS: pytest.StashKey[set[str]] = pytest.StashKey()
+_RAW_INSTANCE: pytest.StashKey[Any] = pytest.StashKey()
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -87,6 +89,8 @@ def pytest_configure(config: pytest.Config) -> None:
     for marker in MARKER_DEFINITIONS:
         config.addinivalue_line("markers", f"{marker.name}: {marker.description}")
     config.stash[_MANIFEST_KEY] = None
+    config.stash[_CUMULATIVE_FUNCTIONS] = set()
+    config.stash[_RAW_INSTANCE] = None
 
     # Inject --report-log when PKCS11_CHECK_REPORT_LOG is set (by test_cmd.py for
     # --isolation none JSON runs).  Guard against meta-tests (no --p11-module) and
@@ -273,3 +277,49 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     from pkcs11_check.compliance import clear_notes
 
     clear_notes()
+
+    session = getattr(item, "session", None)
+    if session is None:
+        return
+
+    try:
+        cumulative = session.config.stash[_CUMULATIVE_FUNCTIONS]
+    except (KeyError, AttributeError):
+        return
+
+    raw_ref = None
+    try:
+        raw_ref = session.config.stash[_RAW_INSTANCE]
+    except KeyError:
+        pass
+
+    funcargs = getattr(item, "funcargs", None)
+    if funcargs and isinstance(funcargs, dict):
+        for name in ("p11_raw_session", "p11_session"):
+            rs = funcargs.get(name)
+            if rs is not None and hasattr(rs, "raw"):
+                cumulative.update(rs.raw.call_log.keys())
+                if raw_ref is None:
+                    session.config.stash[_RAW_INSTANCE] = rs.raw
+                break
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    config = session.config
+    if config.getoption("p11_module", default=None) is None:
+        return
+    raw = config.stash[_RAW_INSTANCE]
+    if raw is None:
+        return
+    cumulative = config.stash[_CUMULATIVE_FUNCTIONS]
+    available = raw.available_function_names()
+    called = cumulative & available
+    total = len(available)
+    called_n = len(called)
+    pct = (called_n * 100 // total) if total else 0
+    print("\n=== PKCS#11 Function Coverage ===")
+    print(f"Functions available: {total}")
+    print(f"Functions called: {called_n} ({pct}%)")
+    uncalled = sorted(available - cumulative)
+    if uncalled:
+        print(f"Unused functions ({len(uncalled)}): {', '.join(uncalled)}")
