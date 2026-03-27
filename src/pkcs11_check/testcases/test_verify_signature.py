@@ -43,8 +43,8 @@ def _data_buf(data: bytes) -> tuple[Any, int]:
 class TestVerifySignatureRoundtrip:
     @staticmethod
     def _skip_unless_available(rs: Any) -> None:
-        if not hasattr(rs.raw, "C_VerifySignatureInit"):
-            pytest.skip("C_VerifySignatureInit not available")
+        if "C_VerifySignatureInit" not in rs.raw.available_function_names():
+            pytest.skip("C_VerifySignatureInit not available in this module")
 
     def test_verify_signature_single_shot(self, p11_raw_session: Any) -> None:
         """Sign with C_SignInit, verify with C_VerifySignatureInit + C_VerifySignature."""

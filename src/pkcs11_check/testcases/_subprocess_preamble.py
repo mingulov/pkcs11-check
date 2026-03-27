@@ -6,8 +6,6 @@ Used by test files that need crash-safe isolation via subprocess.run().
 
 from __future__ import annotations
 
-import textwrap
-
 
 def subprocess_session_preamble(
     module_path: str,
@@ -33,42 +31,46 @@ def subprocess_session_preamble(
         extra_imports: Additional import lines to include in the script.
         slot_label: If set, filter slots by token label substring.
     """
-    slot_discovery = ""
     if slot_id is not None:
         slot_discovery = f"slot_id = {slot_id}"
     elif slot_label is not None:
-        slot_discovery = textwrap.dedent(f"""\
-            slots = get_slot_ids(raw, label="{slot_label}")
-            if not slots:
-                slots = get_slot_ids(raw)
-            slot_id = slots[0]""")
+        slot_discovery = (
+            f'slots = get_slot_ids(raw, label="{slot_label}")\n'
+            f"if not slots:\n"
+            f"    slots = get_slot_ids(raw)\n"
+            f"slot_id = slots[0]"
+        )
     else:
         slot_discovery = "slot_id = get_slot_ids(raw)[0]"
 
-    login_block = ""
+    login_line = ""
     if pin is not None:
-        login_block = f'login_user(raw, sh, CKU_USER, b"{pin}")'
+        login_line = f'login_user(raw, sh, CKU_USER, b"{pin}")\n'
 
-    extra_line = f"\n{extra_imports}" if extra_imports else ""
+    extra_block = ""
+    if extra_imports:
+        extra_block = f"{extra_imports}\n"
 
-    return textwrap.dedent(f"""\
-        from pkcs11_check.raw.api import RawPKCS11
-        from pkcs11_check.raw.bootstrap import (
-            close_session_quietly, get_slot_ids, login_user, open_session,
-        )
-        from pkcs11_check.raw.types_std import (
-            CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OK, CKU_USER,
-        ){extra_line}
-
-        raw = RawPKCS11.from_lib("{module_path}")
-        rv = raw.C_Initialize(None)
-        assert rv in (CKR_OK, 0x00000191), f"C_Initialize: 0x{{rv:08x}}"
-
-        {slot_discovery}
-        sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
-        {login_block}
-
-        def cleanup():
-            close_session_quietly(raw, sh)
-            raw.C_Finalize(None)
-    """)
+    return (
+        f"from pkcs11_check.raw.api import RawPKCS11\n"
+        f"from pkcs11_check.raw.bootstrap import (\n"
+        f"    close_session_quietly, get_slot_ids, login_user, open_session,\n"
+        f")\n"
+        f"from pkcs11_check.raw.types_std import (\n"
+        f"    CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OK, CKU_USER,\n"
+        f")\n"
+        f"{extra_block}"
+        f"\n"
+        f'raw = RawPKCS11.from_lib("{module_path}")\n'
+        f"rv = raw.C_Initialize(None)\n"
+        f'assert rv in (CKR_OK, 0x00000191), f"C_Initialize: 0x{{rv:08x}}"\n'
+        f"\n"
+        f"{slot_discovery}\n"
+        f"sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)\n"
+        f"{login_line}"
+        f"\n"
+        f"def cleanup():\n"
+        f"    close_session_quietly(raw, sh)\n"
+        f"    raw.C_Finalize(None)\n"
+        f"\n"
+    )
