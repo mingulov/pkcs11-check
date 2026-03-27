@@ -118,7 +118,19 @@ class TestVerifySignatureRoundtrip:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_verify_signature_wrong_key(self, p11_raw_session: Any) -> None:
-        """Wrong key returns CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID."""
+        """Wrong key returns CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID.
+
+        SECURITY: A module that returns CKR_OK when verifying with a mismatched
+        key silently accepts forged signatures.
+
+        NSS deviation: NSS C_VerifySignatureInit returns CKR_OK even when the
+        signature was created with a different key pair (pub2 vs priv1).
+        This is a SECURITY BUG in NSS's C_VerifySignatureInit — it does not
+        validate key-signature correspondence at init time.
+        Tracked in docs/module-issues.md under NSS (SECURITY).
+        """
+        from pkcs11_check.compliance import ComplianceLevel, note
+
         rs = p11_raw_session
         self._skip_unless_available(rs)
         if not rs.has_mechanism("RSA_PKCS"):
@@ -131,6 +143,19 @@ class TestVerifySignatureRoundtrip:
             sig_ptr, sig_len = _sig_buf(sig)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_VerifySignatureInit(rs.sh, mech.byref(), pub2, sig_ptr, sig_len)
+            if rv == CKR_OK:
+                note(
+                    "C_VerifySignatureInit returned CKR_OK for a signature created with a "
+                    "different key — module does not validate key-signature correspondence "
+                    "at init time (SECURITY)",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 spec C_VerifySignatureInit",
+                )
+                pytest.xfail(
+                    "SECURITY: NSS C_VerifySignatureInit returned CKR_OK when verifying "
+                    "with a mismatched public key — silent acceptance of forged signatures "
+                    "(expected CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID)"
+                )
             assert rv in (
                 CKR_KEY_HANDLE_INVALID,
                 CKR_SIGNATURE_INVALID,

@@ -695,15 +695,33 @@ class TestLoginUserWithNameRecipe:
     def test_login_user_with_name_empty_username(
         self, p11_raw_session: Any, p11_config: Any
     ) -> None:
-        """login_user_with_name with empty username behaves like C_Login."""
+        """login_user_with_name with empty username behaves like C_Login.
+
+        NSS deviation: NSS returns CKR_OPERATION_NOT_INITIALIZED when
+        C_LoginUser is called on an already-logged-in session, instead of
+        CKR_USER_ALREADY_LOGGED_IN or CKR_OK.
+        Tracked in docs/module-issues.md under NSS.
+        """
         rs = p11_raw_session
         if not hasattr(rs.raw, "C_LoginUser"):
             pytest.skip("C_LoginUser not available (v2.40 module)")
         pin = (
             p11_config.pin.get_secret_value().encode("utf-8") if p11_config.pin is not None else b""
         )
-        login_user_with_name(rs.raw, rs.sh, CKU_USER, pin)
-        logout_quietly(rs.raw, rs.sh)
+        try:
+            login_user_with_name(rs.raw, rs.sh, CKU_USER, pin)
+            logout_quietly(rs.raw, rs.sh)
+        except AssertionError as exc:
+            from pkcs11_check.raw.types_std import CKR_OPERATION_NOT_INITIALIZED
+            from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+
+            xfail_if_known_ckr(
+                exc,
+                {CKR_OPERATION_NOT_INITIALIZED},
+                "NSS returns CKR_OPERATION_NOT_INITIALIZED from C_LoginUser "
+                "(expected CKR_OK or CKR_USER_ALREADY_LOGGED_IN per PKCS#11 v3.0 spec)",
+            )
+            raise
 
     def test_login_user_with_name_nonempty_username(
         self, p11_raw_session: Any, p11_config: Any

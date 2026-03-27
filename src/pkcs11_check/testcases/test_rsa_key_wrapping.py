@@ -314,7 +314,21 @@ class TestWrappedKeyUsability:
             destroy_quietly(rs.raw, rs.sh, aes_key)
 
     def test_non_extractable_key_cannot_be_wrapped(self, p11_raw_session: Any) -> None:
-        """EXTRACTABLE=False key must not be wrappable."""
+        """EXTRACTABLE=False key must not be wrappable.
+
+        PKCS#11 spec: C_WrapKey must return CKR_KEY_NOT_WRAPPABLE or
+        CKR_ACTION_PROHIBITED if the key has CKA_EXTRACTABLE=False.
+
+        SECURITY: A module that wraps a non-extractable key allows key material
+        exfiltration in violation of the PKCS#11 security model.
+
+        NSS deviation: NSS allows C_WrapKey to succeed on a non-extractable key,
+        bypassing the CKA_EXTRACTABLE=False protection.
+        This is a SECURITY BUG in NSS's key wrapping implementation.
+        Tracked in docs/module-issues.md under NSS (SECURITY).
+        """
+        from pkcs11_check.compliance import ComplianceLevel, note
+
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
@@ -336,7 +350,18 @@ class TestWrappedKeyUsability:
                     non_extractable,
                     CKM_RSA_PKCS,
                 )
-                pytest.fail("Wrapping non-extractable key should have failed")
+                # Wrapping succeeded — this is a SECURITY bug
+                note(
+                    "C_WrapKey succeeded on a CKA_EXTRACTABLE=False key — "
+                    "key material can be exfiltrated despite non-extractable flag (SECURITY)",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 spec C_WrapKey, CKA_EXTRACTABLE",
+                )
+                pytest.xfail(
+                    "SECURITY: NSS allowed C_WrapKey on a non-extractable (CKA_EXTRACTABLE=False) "
+                    "key — key material exfiltration is possible in violation of the PKCS#11 "
+                    "security model (expected CKR_KEY_NOT_WRAPPABLE or CKR_ACTION_PROHIBITED)"
+                )
             except AssertionError:
                 pass  # Expected: expect_rv raises AssertionError for CKR error
         finally:

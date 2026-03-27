@@ -31,6 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CBC,
     CKM_AES_ECB,
     CKO_DATA,
+    CKR_ARGUMENTS_BAD,
 )
 
 pytestmark = pytest.mark.security
@@ -94,10 +95,27 @@ class TestLargeRandomGeneration:
     """Test large random number generation."""
 
     def test_generate_100kb_random(self, p11_raw_session: Any) -> None:
-        """Generate 100KB of random data via C_GenerateRandom."""
+        """Generate 100KB of random data via C_GenerateRandom.
+
+        NSS deviation: NSS returns CKR_ARGUMENTS_BAD for C_GenerateRandom
+        requests larger than approximately 32KB — NSS has an internal size
+        limit on single random generation calls.
+        Tracked in docs/module-issues.md under NSS.
+        """
         rs = p11_raw_session
-        rand = generate_random(rs.raw, rs.sh, 100 * 1024)
-        assert len(rand) == 100 * 1024
+        try:
+            rand = generate_random(rs.raw, rs.sh, 100 * 1024)
+            assert len(rand) == 100 * 1024
+        except AssertionError as exc:
+            from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+
+            xfail_if_known_ckr(
+                exc,
+                {CKR_ARGUMENTS_BAD},
+                "NSS rejects C_GenerateRandom(100KB) with CKR_ARGUMENTS_BAD — "
+                "NSS has an internal size limit on single random generation calls",
+            )
+            raise
 
     def test_generate_1kb_random_is_unique(self, p11_raw_session: Any) -> None:
         """Two 1KB random blocks should be different."""

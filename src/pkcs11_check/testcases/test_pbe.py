@@ -50,6 +50,11 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 
+# CKK_GENERIC_SECRET is the raw integer value 0x10; CKK_SHA_1_HMAC is 0x28.
+# Some modules (NSS) return CKK_GENERIC_SECRET for CKM_PBA_SHA1_WITH_SHA1_HMAC keys
+# instead of CKK_SHA_1_HMAC, as they do not distinguish HMAC key types.
+_CKK_GENERIC_SECRET_INT = int(CKK_GENERIC_SECRET)
+
 pytestmark = pytest.mark.keymgmt
 
 # Acceptable CKR codes for PBE operations
@@ -428,6 +433,13 @@ class TestPBASHA1:
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not supported")
 
     def test_generate_key(self, p11_raw_session: Any) -> None:
+        """CKM_PBA_SHA1_WITH_SHA1_HMAC generates a key with CKA_KEY_TYPE=CKK_SHA_1_HMAC.
+
+        NSS deviation: NSS generates a key with CKA_KEY_TYPE=CKK_GENERIC_SECRET (0x10)
+        instead of CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC — NSS does
+        not differentiate HMAC key types and uses the generic secret key type.
+        Tracked in docs/module-issues.md under NSS.
+        """
         rs = p11_raw_session
         if not rs.has_mechanism("PBA_SHA1_WITH_SHA1_HMAC"):
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not supported")
@@ -446,7 +458,24 @@ class TestPBASHA1:
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            assert attrs[CKA_KEY_TYPE] == CKK_SHA_1_HMAC
+            actual_key_type = int(attrs[CKA_KEY_TYPE])  # type: ignore[arg-type]
+            if actual_key_type == _CKK_GENERIC_SECRET_INT:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"CKM_PBA_SHA1_WITH_SHA1_HMAC generated CKK_GENERIC_SECRET "
+                    f"(0x{actual_key_type:02x}) instead of CKK_SHA_1_HMAC (0x28) — "
+                    f"module does not distinguish HMAC key types",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 spec CKM_PBA_SHA1_WITH_SHA1_HMAC, CKK_SHA_1_HMAC",
+                )
+                pytest.xfail(
+                    f"NSS returns CKK_GENERIC_SECRET (0x{actual_key_type:02x}) instead of "
+                    f"CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC key generation"
+                )
+            assert attrs[CKA_KEY_TYPE] == CKK_SHA_1_HMAC, (
+                f"Expected CKK_SHA_1_HMAC (0x28), got 0x{actual_key_type:02x}"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 

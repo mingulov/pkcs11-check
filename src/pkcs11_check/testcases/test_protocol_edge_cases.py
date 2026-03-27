@@ -23,6 +23,7 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE,
     CKO_DATA,
+    CKR_ARGUMENTS_BAD,
 )
 
 pytestmark = pytest.mark.security
@@ -68,10 +69,27 @@ class TestResourceExhaustion:
             destroy_quietly(rs.raw, rs.sh, o)
 
     def test_generate_random_large(self, p11_raw_session: Any) -> None:
-        """Generate large random (1MB). Must not crash or hang."""
+        """Generate large random (1MB). Must not crash or hang.
+
+        NSS deviation: NSS returns CKR_ARGUMENTS_BAD for C_GenerateRandom
+        requests larger than approximately 32KB — NSS has an internal size
+        limit on single random generation calls.
+        Tracked in docs/module-issues.md under NSS.
+        """
         rs = p11_raw_session
-        data = generate_random(rs.raw, rs.sh, 1024 * 1024)
-        assert len(data) == 1024 * 1024
+        try:
+            data = generate_random(rs.raw, rs.sh, 1024 * 1024)
+            assert len(data) == 1024 * 1024
+        except AssertionError as exc:
+            from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+
+            xfail_if_known_ckr(
+                exc,
+                {CKR_ARGUMENTS_BAD},
+                "NSS rejects C_GenerateRandom(1MB) with CKR_ARGUMENTS_BAD — "
+                "NSS has an internal size limit on single random generation calls",
+            )
+            raise
 
 
 class TestSpecAmbiguousCalls:

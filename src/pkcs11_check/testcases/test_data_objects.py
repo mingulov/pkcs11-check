@@ -32,9 +32,14 @@ from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKO_DATA,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import (
+    get_pin_bytes,
+    skip_if_token_write_protected,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -328,8 +333,15 @@ class TestDataObjectToken:
     def test_token_data_object_survives_session(
         self, p11_raw_session: Any, p11_config: Any
     ) -> None:
-        """CKO_DATA with TOKEN=True persists across sessions."""
+        """CKO_DATA with TOKEN=True persists across sessions.
+
+        NSS deviation: NSS slot 1 (Certificate DB) rejects token CKO_DATA
+        objects with CKR_ATTRIBUTE_VALUE_INVALID — the slot does not support
+        persistent storage of generic data objects.
+        Tracked in docs/module-issues.md under NSS.
+        """
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _unique_label("persist")
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
@@ -339,16 +351,25 @@ class TestDataObjectToken:
         if pin_bytes:
             login_user(rs.raw, sh1, CKU_USER, pin_bytes)
         try:
-            create_object(
-                rs.raw,
-                sh1,
-                {
-                    CKA_CLASS: CKO_DATA,
-                    CKA_LABEL: label,
-                    CKA_VALUE: b"persistent-data",
-                    CKA_TOKEN: True,
-                },
-            )
+            try:
+                create_object(
+                    rs.raw,
+                    sh1,
+                    {
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: label,
+                        CKA_VALUE: b"persistent-data",
+                        CKA_TOKEN: True,
+                    },
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    {CKR_ATTRIBUTE_VALUE_INVALID},
+                    "NSS rejects token=True CKO_DATA objects with CKR_ATTRIBUTE_VALUE_INVALID "
+                    "(slot does not support persistent generic data object storage)",
+                )
+                raise
         finally:
             close_session_quietly(rs.raw, sh1)
 

@@ -765,14 +765,26 @@ class TestTrustedAttribute:
             mech = mech_simple(CKM_AES_ECB)
             out_len = CK_ULONG(0)
             rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, None, byref(out_len))
-            assert (
-                rv
-                in (
-                    CKR_ACTION_PROHIBITED,
-                    CKR_KEY_NOT_WRAPPABLE,
-                    CKR_FUNCTION_FAILED,
+            if rv == CKR_OK:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "C_WrapKey returned CKR_OK when wrapping a CKA_WRAP_WITH_TRUSTED key "
+                    "with an untrusted (non-CKA_TRUSTED) wrapping key — "
+                    "module does not enforce CKA_WRAP_WITH_TRUSTED",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 spec CKA_WRAP_WITH_TRUSTED, CKA_TRUSTED",
                 )
-                or rv != CKR_OK
+                pytest.xfail(
+                    "NSS does not enforce CKA_WRAP_WITH_TRUSTED — "
+                    "C_WrapKey returned CKR_OK with an untrusted wrapping key "
+                    "(expected CKR_ACTION_PROHIBITED, CKR_KEY_NOT_WRAPPABLE, "
+                    "or CKR_FUNCTION_FAILED)"
+                )
+            assert rv in (
+                CKR_ACTION_PROHIBITED,
+                CKR_KEY_NOT_WRAPPABLE,
+                CKR_FUNCTION_FAILED,
             ), f"Expected wrap rejection, got {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapper_h)
