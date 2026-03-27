@@ -372,8 +372,19 @@ class TestMLKEMKeyDerivation:
                 aes_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=aes_attrs)
             except (AssertionError, NotImplementedError):
                 pytest.skip("encapsulate_key not available (module not v3.2)")
-            except Exception:
-                pytest.skip("Module does not support direct AES key derivation via encapsulation")
+            except (AssertionError, Exception) as exc:
+                from pkcs11_check.raw.types_std import (
+                    CKR_DEVICE_ERROR,
+                    CKR_FUNCTION_NOT_SUPPORTED,
+                    CKR_MECHANISM_INVALID,
+                )
+                from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+
+                xfail_if_known_ckr(
+                    exc,
+                    (CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED, CKR_DEVICE_ERROR),
+                    "KEM operation not supported",
+                )
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             assert kt == CKK_AES
@@ -404,8 +415,19 @@ class TestMLKEMKeyDerivation:
                 aes_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=aes_attrs)
             except (AssertionError, NotImplementedError):
                 pytest.skip("encapsulate_key not available (module not v3.2)")
-            except Exception:
-                pytest.skip("Module does not support direct AES key derivation via encapsulation")
+            except (AssertionError, Exception) as exc:
+                from pkcs11_check.raw.types_std import (
+                    CKR_DEVICE_ERROR,
+                    CKR_FUNCTION_NOT_SUPPORTED,
+                    CKR_MECHANISM_INVALID,
+                )
+                from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+
+                xfail_if_known_ckr(
+                    exc,
+                    (CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED, CKR_DEVICE_ERROR),
+                    "KEM operation not supported",
+                )
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             assert kt == CKK_AES

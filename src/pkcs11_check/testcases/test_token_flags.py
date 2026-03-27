@@ -41,41 +41,43 @@ class TestTokenInfo:
         """Token label is a non-empty string."""
         info = self._get_token_info(p11_raw_session)
         label = bytes(info.label).decode("utf-8", errors="replace").strip()
-        assert label is not None
+        assert isinstance(label, str)
 
     def test_token_has_manufacturer(self, p11_raw_session: Any) -> None:
         """Token has a manufacturer ID."""
         info = self._get_token_info(p11_raw_session)
         manufacturer = bytes(info.manufacturerID).decode("utf-8", errors="replace").strip()
-        assert manufacturer is not None
+        assert isinstance(manufacturer, str)
 
     def test_token_has_model(self, p11_raw_session: Any) -> None:
         """Token has a model string."""
         info = self._get_token_info(p11_raw_session)
         model = bytes(info.model).decode("utf-8", errors="replace").strip()
-        assert model is not None
+        assert isinstance(model, str)
 
     def test_token_has_serial(self, p11_raw_session: Any) -> None:
         """Token has a serial number."""
         info = self._get_token_info(p11_raw_session)
         serial = bytes(info.serialNumber).decode("utf-8", errors="replace").strip()
-        assert serial is not None
+        assert isinstance(serial, str)
 
     def test_token_hardware_version_is_valid(self, p11_raw_session: Any) -> None:
-        """CK_TOKEN_INFO.hardwareVersion must have valid major/minor."""
+        """CK_TOKEN_INFO.hardwareVersion fields must be readable CK_BYTE values."""
         info = self._get_token_info(p11_raw_session)
         major = info.hardwareVersion.major
         minor = info.hardwareVersion.minor
-        assert major >= 0, f"hardware_version major must be non-negative, got {major}"
-        assert minor >= 0, f"hardware_version minor must be non-negative, got {minor}"
+        assert (major, minor) != (0xFF, 0xFF), (
+            f"hardware_version {major}.{minor} looks like uninitialized memory"
+        )
 
     def test_token_firmware_version_is_valid(self, p11_raw_session: Any) -> None:
-        """CK_TOKEN_INFO.firmwareVersion must have valid major/minor."""
+        """CK_TOKEN_INFO.firmwareVersion fields must be readable CK_BYTE values."""
         info = self._get_token_info(p11_raw_session)
         major = info.firmwareVersion.major
         minor = info.firmwareVersion.minor
-        assert major >= 0, f"firmware_version major must be non-negative, got {major}"
-        assert minor >= 0, f"firmware_version minor must be non-negative, got {minor}"
+        assert (major, minor) != (0xFF, 0xFF), (
+            f"firmware_version {major}.{minor} looks like uninitialized memory"
+        )
 
 
 class TestTokenFlags:
@@ -108,7 +110,7 @@ class TestTokenFlags:
         rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
         expect_rv(rv, CKR_OK)
         flags = info.flags
-        assert flags is not None
+        assert isinstance(flags, int)
 
     def test_token_initialized_flag_set(self, p11_raw_session: Any) -> None:
         """CKF_TOKEN_INITIALIZED must be set on an initialized token."""
@@ -175,20 +177,24 @@ class TestSlotInfo:
             )
 
     def test_slot_hardware_version_is_valid(self, p11_raw_session: Any) -> None:
-        """CK_SLOT_INFO.hardwareVersion must have valid major/minor."""
+        """CK_SLOT_INFO.hardwareVersion fields must be readable CK_BYTE values."""
         rs = p11_raw_session
         for slot_id in get_slot_ids(rs.raw, token_present=True):
             info = get_slot_info(rs.raw, slot_id)
-            assert info["hardware_version"][0] >= 0
-            assert info["hardware_version"][1] >= 0
+            hw = info["hardware_version"]
+            assert hw != (0xFF, 0xFF), (
+                f"slot {slot_id} hardware_version looks like uninitialized memory"
+            )
 
     def test_slot_firmware_version_is_valid(self, p11_raw_session: Any) -> None:
-        """CK_SLOT_INFO.firmwareVersion must have valid major/minor."""
+        """CK_SLOT_INFO.firmwareVersion fields must be readable CK_BYTE values."""
         rs = p11_raw_session
         for slot_id in get_slot_ids(rs.raw, token_present=True):
             info = get_slot_info(rs.raw, slot_id)
-            assert info["firmware_version"][0] >= 0
-            assert info["firmware_version"][1] >= 0
+            fw = info["firmware_version"]
+            assert fw != (0xFF, 0xFF), (
+                f"slot {slot_id} firmware_version looks like uninitialized memory"
+            )
 
 
 class TestLibraryInfo:

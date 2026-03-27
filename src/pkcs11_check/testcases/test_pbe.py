@@ -146,7 +146,9 @@ def _pbe_gen_key(
     if rv != CKR_OK:
         if rv in _PBE_ERROR_RVS:
             return None
-        return None  # still return None, test will xfail
+        from pkcs11_check.raw.rv import ckr_name
+
+        raise AssertionError(f"Unexpected CKR from PBE keygen: {ckr_name(rv)}")
     return key_h.value
 
 
@@ -189,7 +191,11 @@ def _pbkdf2_gen_key(
     key_h = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mp.byref(), tmpl.ptr, tmpl.count, byref(key_h))
     if rv != CKR_OK:
-        return None
+        if rv in _PBE_ERROR_RVS:
+            return None
+        from pkcs11_check.raw.rv import ckr_name
+
+        raise AssertionError(f"Unexpected CKR from PBKDF2 keygen: {ckr_name(rv)}")
     return key_h.value
 
 

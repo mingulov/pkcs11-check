@@ -356,8 +356,17 @@ class TestHMACCrossVerify:
                     },
                 )
                 break
-            except (AssertionError, Exception):
-                continue
+            except AssertionError as exc:
+                if any(
+                    name in str(exc)
+                    for name in (
+                        "CKR_MECHANISM_INVALID",
+                        "CKR_KEY_SIZE_RANGE",
+                        "CKR_TEMPLATE_INCONSISTENT",
+                    )
+                ):
+                    continue
+                raise
         if p11_key == 0:
             pytest.skip("Cannot create HMAC key")
 

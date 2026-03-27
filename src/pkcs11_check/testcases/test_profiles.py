@@ -60,9 +60,10 @@ class TestProfileObjects:
                 rs.sh,
                 template_from_dict({CKA_CLASS: CKO_PROFILE}),
             )
-        except (AssertionError, Exception):
-            pytest.skip("Module does not support CKO_PROFILE enumeration")
-            return []
+        except AssertionError as exc:
+            if "CKR_" in str(exc):
+                pytest.skip(f"Profile enumeration not supported: {exc}")
+            raise
 
     def test_profile_object_enumeration(self, p11_raw_session: Any) -> None:
         """Enumerate CKO_PROFILE objects without error."""
