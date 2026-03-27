@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import datetime
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,18 @@ from .types_std import (
     CKA,
     CKM,
 )
+
+# Thread-safe mechanism detail log for stacked coverage tracking
+_mechanism_detail_lock = threading.Lock()
+_mechanism_detail_log: list[tuple[int, dict[str, int]]] = []
+
+
+def drain_mechanism_details() -> list[tuple[int, dict[str, int]]]:
+    """Return and clear all recorded mechanism detail entries."""
+    with _mechanism_detail_lock:
+        result = list(_mechanism_detail_log)
+        _mechanism_detail_log.clear()
+        return result
 
 
 @dataclass(frozen=True)
@@ -123,15 +136,20 @@ class PackedMechanism:
         pointer_arg: PointerArg | None = None,
         length_arg: LengthArg | None = None,
         params: Any = None,
+        sub_mechanisms: dict[str, int] | None = None,
     ) -> None:
         self.ck = ck
         self.storage = storage
         self.pointer_arg = pointer_arg or PointerArg.null()
         self.length_arg = length_arg or LengthArg.explicit_value(0)
         self.params = params
+        self.sub_mechanisms = sub_mechanisms
         self._keepalive: list[Any] = []
 
     def byref(self) -> Any:
+        if self.sub_mechanisms:
+            with _mechanism_detail_lock:
+                _mechanism_detail_log.append((int(self.ck.mechanism), dict(self.sub_mechanisms)))
         return ctypes.byref(self.ck)
 
 
@@ -435,6 +453,7 @@ def _mech_struct(
     params: ctypes.Structure,
     origin: str,
     keepalive: list[Any] | None = None,
+    sub_mechanisms: dict[str, int] | None = None,
 ) -> PackedMechanism:
     """Build a PackedMechanism from a pre-populated ctypes struct."""
     pointer_arg = PointerArg.to_storage(params, origin=origin)
@@ -445,6 +464,7 @@ def _mech_struct(
         pointer_arg=pointer_arg,
         length_arg=length_arg,
         params=params,
+        sub_mechanisms=sub_mechanisms,
     )
     if keepalive:
         result._keepalive.extend(keepalive)

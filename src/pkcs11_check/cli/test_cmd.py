@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -15,6 +16,7 @@ from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
     discover_auto_isolation_units,
     discover_pytest_units,
+    extract_coverage_from_jsonl,
     load_run_state,
     postprocess_jsonl_to_unified,
     run_isolated_pytest_units,
@@ -253,6 +255,10 @@ def test_command(
         if output == "json" and jsonl_raw is not None:
             jsonl_p = Path(jsonl_raw)
             unified_path = Path(output_file or "pkcs11-check-results.json")
+            coverage_data = extract_coverage_from_jsonl(jsonl_p)
+            if coverage_data:
+                coverage_path = unified_path.parent / "coverage.json"
+                coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
             postprocess_jsonl_to_unified(jsonl_p, unified_path)
             jsonl_p.unlink(missing_ok=True)
         raise typer.Exit(code=int(exit_code))

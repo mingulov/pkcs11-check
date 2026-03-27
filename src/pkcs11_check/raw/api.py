@@ -11,6 +11,76 @@ from . import metadata_std
 from .types_std import *  # noqa: F401,F403,F405
 
 _PTR_SIZE = ctypes.sizeof(c_void_p)
+
+# Reverse lookups: int → named constant
+_CKR_BY_VALUE: dict[int, CKR] = {}  # type: ignore[type-arg]
+_CKM_BY_VALUE: dict[int, CKM] = {}  # type: ignore[type-arg]
+_CK_PREFIX_LOOKUPS: dict[str, dict[int, Any]] = {}  # prefix → {value → constant}
+
+
+def _build_constant_lookups() -> None:
+    """Populate reverse lookup tables from all named constants in types_std."""
+    import importlib
+
+    mod = importlib.import_module("pkcs11_check.raw.types_std")
+    for attr_name in dir(mod):
+        obj = getattr(mod, attr_name)
+        if not isinstance(obj, int) or not hasattr(obj, "_name"):
+            continue
+        val = int(obj)
+        if attr_name.startswith("CKR_"):
+            _CKR_BY_VALUE[val] = obj
+        elif attr_name.startswith("CKM_"):
+            _CKM_BY_VALUE[val] = obj
+        if hasattr(obj, "_name") and obj._name:
+            prefix = attr_name.split("_", 1)[0] + "_"
+            lookup = _CK_PREFIX_LOOKUPS.setdefault(prefix, {})
+            lookup[val] = obj
+
+
+_build_constant_lookups()
+
+
+def _to_ckr(rv: int) -> CKR:
+    """Convert a raw return value to a named CKR constant."""
+    known = _CKR_BY_VALUE.get(rv)
+    if known is not None:
+        return known
+    return CKR(rv)  # type: ignore[call-arg]
+
+
+def ckm_name(mechanism_id: int) -> str:
+    """Return the CKM_* name for a mechanism ID, or hex if unknown."""
+    obj = _CKM_BY_VALUE.get(mechanism_id)
+    if obj is not None:
+        return str(obj)
+    return f"0x{mechanism_id:08x}"
+
+
+def constant_name(value: int, prefix: str = "") -> str:
+    """Return the name of a CK_CONSTANT by value, optionally filtering by prefix."""
+    if prefix:
+        lookup = _CK_PREFIX_LOOKUPS.get(prefix, {})
+        obj = lookup.get(value)
+        if obj is not None:
+            return str(obj)
+    obj = _CKM_BY_VALUE.get(value)
+    if obj is not None:
+        return str(obj)
+    return f"0x{value:08x}"
+
+
+_SUB_PARAM_PREFIXES: dict[str, str] = {"mgf": "CKG_", "kdf": "CKD_"}
+
+
+def sub_param_name(param_name: str, value: int) -> str:
+    """Return the named constant for a sub-mechanism parameter value."""
+    prefix = _SUB_PARAM_PREFIXES.get(param_name)
+    if prefix:
+        return constant_name(value, prefix)
+    return ckm_name(value)
+
+
 _VERSION_SIZE = _PTR_SIZE
 _V30_START = metadata_std.FUNCTION_INDICES["C_GetInterfaceList"]
 _V32_START = metadata_std.FUNCTION_INDICES["C_EncapsulateKey"]
@@ -214,7 +284,7 @@ class RawPKCS11:
     def from_lib(cls, lib_path: str) -> RawPKCS11:
         return cls(lib_path=lib_path)
 
-    def _call(self, name: str, *args: Any) -> int:
+    def _call(self, name: str, *args: Any) -> CKR:
         self._call_log[name] += 1
         if name in _MECHANISM_ARG_FUNCS and len(args) >= 2:
             try:
@@ -224,11 +294,11 @@ class RawPKCS11:
         func = self._funcs.get(name)
         if func is None:
             raise AttributeError(f"{name} not available in this module")
-        return int(func(*args))
+        return _to_ckr(int(func(*args)))
 
 
 def _make_method(name: str) -> Any:
-    def method(self: RawPKCS11, *args: Any) -> int:
+    def method(self: RawPKCS11, *args: Any) -> CKR:
         return self._call(name, *args)
 
     method.__name__ = name

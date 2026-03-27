@@ -27,6 +27,10 @@ _CUMULATIVE_FUNCTIONS: pytest.StashKey[set[str]] = pytest.StashKey()
 _CUMULATIVE_MECHANISMS: pytest.StashKey[set[str]] = pytest.StashKey()
 _RAW_INSTANCE: pytest.StashKey[Any] = pytest.StashKey()
 _COVERAGE_DATA: pytest.StashKey[dict[str, Any]] = pytest.StashKey()
+_CUMULATIVE_USED_MECHANISMS: pytest.StashKey[set[int]] = pytest.StashKey()
+_CUMULATIVE_MECHANISM_DETAILS: pytest.StashKey[set[tuple[int, frozenset[tuple[str, int]]]]] = (
+    pytest.StashKey()
+)
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -95,6 +99,8 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_CUMULATIVE_MECHANISMS] = set()
     config.stash[_RAW_INSTANCE] = None
     config.stash[_COVERAGE_DATA] = {}
+    config.stash[_CUMULATIVE_USED_MECHANISMS] = set()
+    config.stash[_CUMULATIVE_MECHANISM_DETAILS] = set()
 
     # Inject --report-log when PKCS11_CHECK_REPORT_LOG is set (by test_cmd.py for
     # --isolation none JSON runs).  Guard against meta-tests (no --p11-module) and
@@ -312,7 +318,42 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                         mech_cumulative.update(rs.mechanisms)
                     except (KeyError, AttributeError):
                         pass
+                # Collect actually-invoked mechanism IDs
+                try:
+                    used = session.config.stash[_CUMULATIVE_USED_MECHANISMS]
+                    used.update(rs.raw.used_mechanisms)
+                except (KeyError, AttributeError):
+                    pass
                 break
+
+    # Drain stacked mechanism details from PackedMechanism.byref() calls
+    try:
+        from pkcs11_check.raw.pack import drain_mechanism_details
+
+        details = drain_mechanism_details()
+        if details:
+            detail_set = session.config.stash[_CUMULATIVE_MECHANISM_DETAILS]
+            for mech_id, subs in details:
+                detail_set.add((mech_id, frozenset(subs.items())))
+    except (KeyError, ImportError):
+        pass
+
+
+def _build_stacked_strings(
+    detail_set: set[tuple[int, frozenset[tuple[str, int]]]],
+) -> list[str]:
+    """Build sorted stacked strings like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
+    from pkcs11_check.raw.api import ckm_name, sub_param_name
+
+    result: list[str] = []
+    for mech_id, subs_frozen in detail_set:
+        base = ckm_name(mech_id)
+        if subs_frozen:
+            parts = ",".join(f"{k}={sub_param_name(k, v)}" for k, v in sorted(subs_frozen))
+            result.append(f"{base}[{parts}]")
+        else:
+            result.append(base)
+    return sorted(result)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
@@ -323,16 +364,27 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if raw is None:
         return
 
+    from pkcs11_check.raw.api import ckm_name
+
     # Function coverage
     cumulative = config.stash[_CUMULATIVE_FUNCTIONS]
     available = raw.available_function_names()
     called = sorted(cumulative & available)
     uncalled = sorted(available - cumulative)
 
-    # Mechanism coverage
+    # Mechanism coverage (available from module info)
     mech_available = config.stash.get(_CUMULATIVE_MECHANISMS, set())
-    # Filter to canonical CKM_ names only (mechanisms set has both forms)
     mech_ckm = sorted(n for n in mech_available if n.startswith("CKM_"))
+
+    # Actually-invoked mechanisms (from _call() tracking)
+    used_ids = config.stash.get(_CUMULATIVE_USED_MECHANISMS, set())
+    invoked_names = sorted({ckm_name(m) for m in used_ids})
+    available_set = set(mech_ckm)
+    not_invoked = sorted(available_set - set(invoked_names))
+
+    # Stacked mechanism details
+    detail_set = config.stash.get(_CUMULATIVE_MECHANISM_DETAILS, set())
+    stacked = _build_stacked_strings(detail_set)
 
     coverage_data: dict[str, Any] = {
         "function_coverage": {
@@ -343,7 +395,22 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         },
         "mechanism_coverage": {
             "available": len(mech_ckm),
-            "names": mech_ckm,
+            "available_names": mech_ckm,
+            "invoked": len(invoked_names),
+            "invoked_names": invoked_names,
+            "not_invoked": len(not_invoked),
+            "not_invoked_names": not_invoked,
+            "invoked_detail": stacked,
         },
     }
     config.stash[_COVERAGE_DATA] = coverage_data
+
+    # Emit CoverageReport to JSONL (for file_runner merging)
+    report_log_plugin = getattr(config, "_report_log_plugin", None)
+    if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
+        report_log_plugin._write_json_data(
+            {
+                "$report_type": "CoverageReport",
+                **coverage_data,
+            }
+        )

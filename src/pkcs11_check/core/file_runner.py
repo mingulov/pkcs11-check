@@ -622,6 +622,71 @@ def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
             src.unlink(missing_ok=True)
 
 
+def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
+    """Extract and merge CoverageReport entries from a JSONL artifact.
+
+    Returns a merged coverage dict with function_coverage and mechanism_coverage,
+    or None if no CoverageReport entries are found.
+    """
+    try:
+        text = jsonl_path.read_text()
+    except (FileNotFoundError, OSError):
+        return None
+
+    all_called: set[str] = set()
+    all_uncalled: set[str] = set()
+    func_available = 0
+    all_invoked: set[str] = set()
+    all_not_invoked: set[str] = set()
+    all_available_mechs: set[str] = set()
+    all_detail: set[str] = set()
+    found = False
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("$report_type") != "CoverageReport":
+            continue
+        found = True
+        fc = rec.get("function_coverage", {})
+        func_available = max(func_available, fc.get("available", 0))
+        all_called.update(fc.get("called_names", []))
+        all_uncalled.update(fc.get("uncalled_names", []))
+        mc = rec.get("mechanism_coverage", {})
+        all_available_mechs.update(mc.get("available_names", []))
+        all_invoked.update(mc.get("invoked_names", []))
+        all_not_invoked.update(mc.get("not_invoked_names", []))
+        all_detail.update(mc.get("invoked_detail", []))
+
+    if not found:
+        return None
+
+    merged_not_invoked = sorted(all_available_mechs - all_invoked)
+    merged_uncalled = sorted(all_uncalled - all_called)
+    return {
+        "function_coverage": {
+            "available": func_available,
+            "called": len(all_called),
+            "called_names": sorted(all_called),
+            "uncalled_names": merged_uncalled,
+        },
+        "mechanism_coverage": {
+            "available": len(all_available_mechs),
+            "available_names": sorted(all_available_mechs),
+            "invoked": len(all_invoked),
+            "invoked_names": sorted(all_invoked),
+            "not_invoked": len(merged_not_invoked),
+            "not_invoked_names": merged_not_invoked,
+            "invoked_detail": sorted(all_detail),
+        },
+    }
+
+
 def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
     """Convert a pytest-reportlog JSONL file to pkcs11-check unified format.
 
@@ -2015,14 +2080,27 @@ def run_isolated_pytest_units(
                 if unit_jsonl_path is not None:
                     unit_jsonl_path.unlink(missing_ok=True)
     finally:
+        coverage_data: dict[str, Any] | None = None
         if report_config is not None:
-            write_isolated_report(
-                report_config,
-                state,
-                per_unit_details=per_unit_details,
-            )
             if report_config.jsonl_path is not None:
                 write_report_jsonl(jsonl_paths, report_config.jsonl_path)
+                coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
+                if coverage_data:
+                    coverage_path = report_config.jsonl_path.parent / "coverage.json"
+                    coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+            if report_config.output_format == "json":
+                write_isolated_json_report(
+                    report_config.output_path,
+                    state,
+                    per_unit_details=per_unit_details,
+                    coverage=coverage_data,
+                )
+            else:
+                write_isolated_report(
+                    report_config,
+                    state,
+                    per_unit_details=per_unit_details,
+                )
 
     return exit_code
 

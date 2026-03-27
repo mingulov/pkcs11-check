@@ -112,7 +112,12 @@ def mech_pss(
     params.hashAlg = hash_mech
     params.mgf = mgf
     params.sLen = salt_len
-    return _mech_struct(mechanism_type, params, "mech_pss")
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_pss",
+        sub_mechanisms={"hashAlg": hash_mech, "mgf": mgf},
+    )
 
 
 def mech_oaep(
@@ -129,7 +134,13 @@ def mech_oaep(
     params.mgf = mgf
     params.source = CKZ_DATA_SPECIFIED
     params.pSourceData, params.ulSourceDataLen = _pack_bytes(source_data, ka)
-    return _mech_struct(mechanism_type, params, "mech_oaep", ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_oaep",
+        ka,
+        sub_mechanisms={"hashAlg": hash_mech, "mgf": mgf},
+    )
 
 
 def mech_ecdh(
@@ -145,7 +156,13 @@ def mech_ecdh(
     params.kdf = kdf
     params.pPublicData, params.ulPublicDataLen = _pack_bytes(public_data, ka)
     params.pSharedData, params.ulSharedDataLen = _pack_bytes(shared_data, ka)
-    return _mech_struct(mechanism_type, params, "mech_ecdh", ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ecdh",
+        ka,
+        sub_mechanisms={"kdf": kdf},
+    )
 
 
 def mech_hkdf(
@@ -169,7 +186,13 @@ def mech_hkdf(
     params.hSaltKey = salt_key
     params.pSalt, params.ulSaltLen = _pack_bytes(salt, ka)
     params.pInfo, params.ulInfoLen = _pack_bytes(info, ka)
-    return _mech_struct(mechanism_type, params, "mech_hkdf", ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_hkdf",
+        ka,
+        sub_mechanisms={"prfHashMechanism": hash_mech},
+    )
 
 
 def mech_cbc_pad(mechanism_type: CKM, iv: bytes) -> PackedMechanism:
@@ -246,7 +269,13 @@ def mech_pbkdf2(
     params.pPrfData = None
     params.ulPrfDataLen = 0
     params.pPassword, params.ulPasswordLen = _pack_bytes(password, ka)
-    return _mech_struct(mechanism_type, params, "mech_pbkdf2", ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_pbkdf2",
+        ka,
+        sub_mechanisms={"prf": prf},
+    )
 
 
 def mech_string_data(mechanism_type: CKM, data: bytes) -> PackedMechanism:
@@ -372,7 +401,13 @@ def mech_tls12_master_key_derive(
     else:
         params.pVersion = None
     params.prfHashMechanism = hash_mech
-    return _mech_struct(mechanism_type, params, "mech_tls12_master_key_derive", ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_tls12_master_key_derive",
+        ka,
+        sub_mechanisms={"prfHashMechanism": hash_mech},
+    )
 
 
 def mech_tls12_key_mat(
@@ -412,7 +447,13 @@ def mech_tls12_key_mat(
         CK_VOID_PTR,
     )
     params.prfHashMechanism = hash_mech
-    result = _mech_struct(mechanism_type, params, "mech_tls12_key_mat", ka)
+    result = _mech_struct(
+        mechanism_type,
+        params,
+        "mech_tls12_key_mat",
+        ka,
+        sub_mechanisms={"prfHashMechanism": hash_mech},
+    )
     result._key_mat_out_ref = key_mat_out  # type: ignore[attr-defined]
     return result
 
@@ -443,6 +484,7 @@ def mech_tls12_extended_master_key_derive(
         params,
         "mech_tls12_extended_master_key_derive",
         ka,
+        sub_mechanisms={"prfHashMechanism": hash_mech},
     )
 
 
@@ -492,7 +534,13 @@ def mech_tls_kdf(
     params.pLabel, params.ulLabelLength = _pack_bytes(label, ka)
     _fill_random_data(params.RandomInfo, client_random, server_random, ka)
     params.pContextData, params.ulContextDataLength = _pack_bytes(context_data, ka)
-    return _mech_struct(mechanism_type, params, "mech_tls_kdf", ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_tls_kdf",
+        ka,
+        sub_mechanisms={"prfMechanism": prf_mechanism},
+    )
 
 
 def mech_tls_mac(
@@ -510,7 +558,12 @@ def mech_tls_mac(
     params.prfHashMechanism = prf_hash_mechanism
     params.ulMacLength = mac_length
     params.ulServerOrClient = server_or_client
-    return _mech_struct(mechanism_type, params, "mech_tls_mac")
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_tls_mac",
+        sub_mechanisms={"prfHashMechanism": prf_hash_mechanism},
+    )
 
 
 def mech_wtls_master_key_derive(
@@ -535,7 +588,13 @@ def mech_wtls_master_key_derive(
         params.pVersion = ctypes.cast(ctypes.pointer(ver), CK_VOID_PTR)
     else:
         params.pVersion = None
-    return _mech_struct(mechanism_type, params, "mech_wtls_master_key_derive", ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_wtls_master_key_derive",
+        ka,
+        sub_mechanisms={"DigestMechanism": digest_mechanism},
+    )
 
 
 def mech_wtls_key_mat(
@@ -576,7 +635,13 @@ def mech_wtls_key_mat(
         ctypes.pointer(key_mat_out),
         CK_VOID_PTR,
     )
-    result = _mech_struct(mechanism_type, params, "mech_wtls_key_mat", ka)
+    result = _mech_struct(
+        mechanism_type,
+        params,
+        "mech_wtls_key_mat",
+        ka,
+        sub_mechanisms={"DigestMechanism": digest_mechanism},
+    )
     result._key_mat_out_ref = key_mat_out  # type: ignore[attr-defined]
     return result
 
@@ -603,7 +668,13 @@ def mech_wtls_prf(
     out_len = CK_ULONG(output_len)
     ka.append(out_len)
     params.pulOutputLen = ctypes.cast(ctypes.pointer(out_len), CK_VOID_PTR)
-    result = _mech_struct(mechanism_type, params, "mech_wtls_prf", ka)
+    result = _mech_struct(
+        mechanism_type,
+        params,
+        "mech_wtls_prf",
+        ka,
+        sub_mechanisms={"DigestMechanism": digest_mechanism},
+    )
     result._output_buf = out_buf  # type: ignore[attr-defined]
     result._output_len = out_len  # type: ignore[attr-defined]
     return result
