@@ -264,3 +264,12 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     reason = _runtime_skip_reason(item, item.config, manifest)
     if reason is not None:
         pytest.skip(reason)
+
+
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
+    """Clear compliance notes after each testcase item to prevent leakage."""
+    if not _is_testcase_item(item):
+        return
+    from pkcs11_check.compliance import clear_notes
+
+    clear_notes()
