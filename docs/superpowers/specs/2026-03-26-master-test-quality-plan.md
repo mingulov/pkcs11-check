@@ -7,10 +7,10 @@
 
 pkcs11-check has ~75K tests across 209 files covering 104 PKCS#11 functions, but has systematic quality and coverage gaps that undermine trust in results. The test suite needs:
 
-1. **Infrastructure hardening** — dead compliance system, unused markers, no PKCS#11-level coverage tracking
+1. **Infrastructure hardening** — partially-wired compliance system with per-test leakage, unused markers, no PKCS#11-level coverage tracking
 2. **Test correctness** — xfail/skip misuse, inconsistent patterns, mechanism name drift
 3. **Functional test gaps** — 17 functions with CKR-only coverage (no roundtrip)
-4. **Mechanism/CKR expansion** — 8 CKR codes untested, legacy symmetric ciphers uncovered
+4. **Mechanism/CKR expansion** — 7 CKR codes untested, legacy symmetric ciphers uncovered
 
 ## Methodology
 
@@ -20,24 +20,28 @@ This plan follows the principle: **fix existing tests first, then expand coverag
 
 ### 1.1 Fix compliance.note() system
 
-**Problem:** `compliance.note()` accumulates notes in a global mutable list that is never cleared and never included in any report output. The system is dead code.
+**Problem:** `compliance.note()` is actively used (65+ call sites across test files) and
+`compliance_report.py` can serialize notes to JSON. However, `clear_notes()` is never
+called between tests, so notes from one test leak into subsequent tests' reports. The
+system is partially wired but has a per-test leakage bug and is not integrated into
+the standard pytest output hooks.
 
 **Fix:**
-- Wire `clear_notes()` into `pytest_runtest_teardown` hook in `plugin.py`
-- Include compliance notes in the unified JSON report output (add `compliance_notes` field per test unit)
+- Wire `clear_notes()` into `pytest_runtest_teardown` hook in `plugin.py` to prevent leakage
+- Include per-test compliance notes in the unified JSON report output (add `compliance_notes` field per test unit)
 - Add compliance notes to the console summary (truncated if >10)
-- Add a meta-test verifying the hook integration
+- Add a meta-test verifying the hook integration and per-test isolation
 
 **Files:** `plugin.py`, `core/file_runner.py`, `compliance.py`, `tests/test_compliance_report.py`
 
 ### 1.2 Activate or remove `needs_mechanism` marker
 
-**Problem:** The `needs_mechanism` marker is defined in `markers.py`, checked in `plugin.py`, but zero test files use it. 611 manual `has_mechanism()` calls do the same thing imperatively with inconsistent skip messages.
+**Problem:** The `needs_mechanism` marker is defined in `markers.py`, checked in `plugin.py`, but zero test files use it. ~650 manual `has_mechanism()` calls across 103 files do the same thing imperatively with inconsistent skip messages.
 
 **Fix (recommended):** Convert to a decorator helper that replaces the verbose pattern:
 
 ```python
-# Before (611 occurrences):
+# Before (~650 occurrences across 103 files):
 def test_something(self, p11_raw_session):
     rs = p11_raw_session
     if not rs.has_mechanism("AES_GCM"):
@@ -51,23 +55,30 @@ def test_something(self, p11_raw_session):
 
 Implementation: Create `needs_mechanism()` decorator in `testcases/conftest.py` that wraps the `has_mechanism()` check. Migrate high-value test files first (sign, encrypt, digest). Leave the marker definition intact for collection-level filtering.
 
-**Files:** `testcases/conftest.py`, `markers.py` (no change needed), 20+ test files (gradual migration)
+**Files:** `testcases/conftest.py`, `markers.py` (no change needed), 103 test files (gradual migration)
 
 ### 1.3 Add PKCS#11 function coverage tracking
 
 **Problem:** Python code coverage (`coverage.py`) tracks which Python lines execute, not which C functions are invoked through ctypes. We cannot answer "what percentage of the PKCS#11 API surface did this test run exercise against module X?"
 
-**Fix:** Add a lightweight call counter to `RawPKCS11`:
+**Fix:** Add a lightweight call counter to `RawPKCS11._call()`. Since all 104
+dynamic methods route through the single `_call(name, *args)` dispatch point,
+a single line suffices:
 
 ```python
 class RawPKCS11:
-    def __init__(self):
+    def __init__(self, ...):
         self._call_log: dict[str, int] = defaultdict(int)
+        ...
 
-    def C_Encrypt(self, session, data, data_len, encrypted_data, encrypted_data_len):
-        self._call_log["C_Encrypt"] += 1
+    def _call(self, name: str, *args: Any) -> int:
+        self._call_log[name] += 1  # one line added
+        func = self._funcs.get(name)
         ...
 ```
+
+**Note:** The raw/ module was recently cleaned up (int() removal, pack.py split,
+API renames). Changes to `api.py` should be made against the current state.
 
 - Aggregate per-test in a pytest fixture (store on `p11_raw_session`)
 - Include in JSON report: `{"pkcs11_functions_called": {"C_Encrypt": 12, "C_EncryptInit": 12, ...}}`
@@ -78,7 +89,7 @@ class RawPKCS11:
 
 ### 1.4 Standardize mechanism skip messages
 
-**Problem:** 611 `has_mechanism()` calls produce inconsistent skip messages:
+**Problem:** ~650 `has_mechanism()` calls produce inconsistent skip messages:
 - `"AES_ECB not supported"`
 - `"CKM_AES_ECB not supported"`
 - `"CKM_AES_ECB not supported by module"`
@@ -95,7 +106,7 @@ Migrate incrementally. The `@needs_mechanism` decorator (1.2) provides the stand
 
 ### 1.5 Audit and fix xfail/skip misuse
 
-**Problem:** 254 `pytest.xfail()` calls. Some cover known module bugs (correct), but others cover missing capabilities that should be `pytest.skip()`. xfails for capability gaps mask when a module adds support.
+**Problem:** ~284 `pytest.xfail()` calls across 64 files. Most cover known module bugs (correct usage), but a small number cover missing capabilities that should be `pytest.skip()`. xfails for capability gaps mask when a module adds support.
 
 **Fix:**
 - Grep all xfail calls with reason strings
@@ -105,23 +116,28 @@ Migrate incrementally. The `@needs_mechanism` decorator (1.2) provides the stand
 
 **Files:** 30+ test files (gradual), `tests/` (new meta-test)
 
-### 1.6 Secure PIN passing in subprocess tests
+### 1.6 Secure PIN passing in subprocess tests (LOW priority)
 
-**Problem:** `_subprocess_preamble.py` embeds the PIN as a literal string in generated scripts, visible via `ps` or core dumps.
+**Problem:** `_subprocess_preamble.py` embeds the PIN as a literal string in generated
+scripts. While `subprocess.run([sys.executable, "-c", script])` does NOT expose the
+script content via `ps` (unlike shell commands), the PIN is visible in core dumps.
+However, the PIN is already passed via `--p11-pin` or `P11TEST_PIN` env var which are
+equally visible. This is a marginal security improvement for a test tool.
 
-**Fix:** Write PIN to a temp file with `os.open(path, flags=0o600)`, pass the file path as an argument, read and delete in the subprocess. Update `subprocess_session_preamble()` to accept a pin_fd parameter.
+**Fix (if desired):** Write PIN to a temp file with `os.open(path, flags=0o600)`, pass
+the file path as an argument, read and delete in the subprocess. Update
+`subprocess_session_preamble()` to accept a pin_file parameter.
 
 **Files:** `testcases/_subprocess_preamble.py`, `testcases/_raw_subprocess.py`
 
 ## Phase 2: CKR Return Code Coverage Expansion
 
-### 2.1 Add 8 missing CKR code tests
+### 2.1 Add 7 missing CKR code tests
 
-These CKR codes are defined in `types_std.py` and the OASIS spec but have no test coverage in `_ckr_spec.py`:
+These CKR codes are defined in `types_std.py` and the OASIS spec but have no test coverage:
 
 | CKR Code | How to Test | Difficulty |
 |----------|-------------|------------|
-| `CKR_AEAD_DECRYPT_FAILED` | AES-GCM decrypt with wrong tag (not tampered ciphertext) | LOW |
 | `CKR_PIN_TOO_WEAK` | `C_InitPIN` with a 1-byte PIN (module may enforce minimum) | LOW |
 | `CKR_PUBLIC_KEY_INVALID` | Import malformed public key, then sign | MEDIUM |
 | `CKR_PENDING` | Async operation check (if module supports async) | LOW (presence check) |
@@ -130,13 +146,15 @@ These CKR codes are defined in `types_std.py` and the OASIS spec but have no tes
 | `CKR_OPERATION_NOT_VALIDATED` | `C_VerifySignatureFinal` without validation (v3.1+) | MEDIUM |
 | `CKR_TOKEN_NOT_INITIALIZED` | `C_InitPIN` on uninitialized token | LOW |
 
+**Note:** `CKR_AEAD_DECRYPT_FAILED` is already tested in `_ckr_spec.py` and `test_acvp_aes.py`.
+
 **Implementation:** Add CkrExpectation entries in `_ckr_spec.py` for testable ones. For untestable-in-practice ones (CKR_LIBRARY_LOAD_FAILED, CKR_FIPS_SELF_TEST_FAILED, CKR_PENDING), add documented `testable=False` entries.
 
-**Files:** `testcases/ckr/_ckr_spec.py`, `testcases/ckr/test_ckr_*` (new tests for the 4 testable ones)
+**Files:** `testcases/ckr/_ckr_spec.py`, `testcases/ckr/test_ckr_*` (new tests for the 3 testable ones)
 
 ### 2.2 Audit CKR spec completeness against OASIS spec
 
-The `_ckr_spec.py` claims coverage of "all 802 OASIS spec entries." Verify this claim:
+The `_ckr_spec.py` contains 862 CkrExpectation entries. Verify completeness against the OASIS spec:
 
 1. Extract all function+error combinations from OASIS `function_return_values.md`
 2. Cross-reference against all CkrExpectation entries in `_ckr_spec.py`
@@ -146,9 +164,15 @@ The `_ckr_spec.py` claims coverage of "all 802 OASIS spec entries." Verify this 
 
 ## Phase 3: Functional Test Expansion
 
-### 3.1 VerifySignature API (v3.1) — 4 functions
+### 3.1 VerifySignature API (v3.0+ loaded, v3.1 spec) — 4 functions
 
 **Problem:** `C_VerifySignatureInit/Update/Final` have CKR error expectations but no positive-path roundtrip test. This API differs from `C_VerifyInit` — it accepts the signature at initialization time, not final time.
+
+**Version handling note:** The codebase only distinguishes v2.40, v3.0, and v3.2.
+`interface_version` returns `"3.0"` for both 3.0 and 3.1 modules (they share the
+same function set). The VerifySignature functions (metadata indices 94-97) load as
+part of the v3.0+ block. There is no `@requires_v31` marker. Tests should gate on
+`"C_VerifySignatureInit" in raw.available_function_names()` rather than version strings.
 
 **New test file:** `test_verify_signature.py`
 
@@ -157,15 +181,18 @@ Tests:
 2. Roundtrip: sign multipart → verify with `C_VerifySignatureInit` + `C_VerifySignatureUpdate` + `C_VerifySignatureFinal` (multipart)
 3. Wrong signature returns CKR_SIGNATURE_INVALID
 4. Wrong key returns CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID
-5. Version gate: skip on v2.40/v3.0 modules
+5. Gate: skip if `C_VerifySignatureInit` not in `available_function_names()`
 
-**Requires:** A module implementing v3.1+ (Kryoptic or NSS may have it). Otherwise xfail.
+**Requires:** A module implementing these functions. No known module currently does — tests will likely skip until implementations appear.
 
 **Files:** `testcases/test_verify_signature.py` (new)
 
-### 3.2 Message-based functions (v3.0) — 14 functions
+### 3.2 Message-based functions (v3.0) — 20 functions
 
-**Problem:** 14 of 20 message-based functions have no positive-path tests. No current module implements these.
+**Problem:** All 20 message-based functions (C_MessageEncryptInit through
+C_MessageVerifyFinal) lack positive-path tests. ~6 have CKR error tests in
+`test_ckr_v30_raw.py` and `_ckr_spec.py` has expectations for all 20, but none have
+functional roundtrip tests. No current module implements these.
 
 **Approach:** Write the test infrastructure now so it's ready when modules add support:
 
@@ -179,17 +206,21 @@ Tests:
 
 **Files:** `testcases/test_message_crypto.py` (new)
 
-### 3.3 C_GetSessionValidationFlags (v3.1) — 1 function
+### 3.3 C_GetSessionValidationFlags (v3.0+ loaded, v3.1 spec) — 1 function
 
-**New test:** Query validation flags on a session, verify they're a non-empty flags bitmask. Skip on v2.40/v3.0.
+**New test:** Query validation flags on a session, verify they're a non-empty flags
+bitmask. Gate: skip if `C_GetSessionValidationFlags` not in `available_function_names()`.
 
 **Files:** `testcases/test_v30_session.py` (extend)
 
-### 3.4 Async function lifecycle (v3.0/v3.2) — 3 functions
+### 3.4 Async function lifecycle (v3.0+) — 3 functions
 
-**Problem:** `C_AsyncComplete`, `C_AsyncGetID`, `C_AsyncJoin` have only presence/CKR tests.
+**Problem:** `C_AsyncComplete`, `C_AsyncGetID`, `C_AsyncJoin` have only presence/CKR
+tests. `test_remaining_gaps.py` already has basic presence checks.
 
-**Approach:** Write a test that starts an async operation (if supported), polls with `C_AsyncGetID`, and completes with `C_AsyncJoin`. If no module supports async, mark as skip with documentation.
+**Approach:** Write a test that starts an async operation (if supported), polls with
+`C_AsyncGetID`, and completes with `C_AsyncJoin`. Gate on
+`available_function_names()`. If no module supports async, tests skip.
 
 **Files:** `testcases/test_async.py` (new)
 
@@ -197,7 +228,9 @@ Tests:
 
 ### 4.1 High-priority mechanism tests
 
-These mechanisms are commonly supported but lack dedicated tests:
+These mechanisms are commonly supported but lack dedicated functional tests.
+`test_remaining_gaps.py` has basic presence/stub tests for some (SHAKE, KMAC,
+ML_DSA_EXTERNAL_MU) but no roundtrip verification:
 
 | Mechanism | Category | Test Type | Effort |
 |-----------|----------|-----------|--------|
@@ -270,20 +303,27 @@ Create a reproducible workflow:
 
 **Files:** `scripts/compare-results.py` (new), `tests/data/baselines/` (new)
 
+## Dependencies
+
+- **raw/ module cleanup** (Phase 1 and 2 in `2026-03-26-raw-module-cleanup-design.md`
+  and `2026-03-26-raw-module-polish-design.md`) is complete. Changes to `api.py`,
+  `recipes.py`, `pack.py` etc. should be made against the current `dev` branch state.
+
 ## Execution Order
 
 | Phase | Dependencies | Estimated Effort |
 |-------|-------------|-----------------|
-| 1.1-1.2 | None | Small (1 day) |
+| 1.1-1.2 | None | Small-Medium (2 days — decorator + 103-file gradual migration) |
 | 1.3-1.4 | None | Medium (2 days) |
 | 1.5 | None | Medium (2 days) |
 | 1.6 | None | Small (0.5 day) |
 | 2.1-2.2 | None | Small (1 day) |
-| 3.1-3.4 | 1.1-1.3 done | Medium (3 days) |
+| 3.1-3.4 | 1.1-1.3 done | Medium (3 days — tests will mostly skip) |
 | 4.1-4.3 | 1.2-1.4 done | Medium (3 days) |
-| 5.1-5.3 | 1.3 done | Medium (2 days) |
+| 5.1-5.3 | 1.3 done | Medium-Large (3 days — 12 module baselines) |
 
-**Total estimated: ~15 days of focused work.**
+**Total estimated: ~17 days of focused work.** Add ~3-5 days for multi-module
+Docker validation if full coverage across all 12 targets is required.
 
 ## Success Criteria
 
