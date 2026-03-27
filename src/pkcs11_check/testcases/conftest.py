@@ -7,7 +7,32 @@ collection-safe capability manifest before test setup.
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable
 from typing import Any
+
+import pytest
+
+
+def needs_mechanism(name: str) -> Callable[[Any], Any]:
+    """Decorator that skips the test if the mechanism is not supported."""
+
+    def decorator(func: Any) -> Any:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            rs = kwargs.get("p11_raw_session")
+            if rs is not None and not rs.has_mechanism(name):
+                pytest.skip(f"{name} not supported")
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def skip_unless_mechanism(rs: Any, name: str) -> None:
+    if not rs.has_mechanism(name):
+        pytest.skip(f"{name} not supported")
 
 
 def get_pin_bytes(p11_config: Any) -> bytes | None:
@@ -29,5 +54,5 @@ def extract_ec_point(ec_point_der: Any) -> Any:
 
     data = bytes(ec_point_der)
     if not data or data[0] != 0x04:
-        return ec_point_der  # not DER-wrapped, return as-is
+        return ec_point_der
     return decode_ec_point(data)
