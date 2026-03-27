@@ -78,6 +78,43 @@ Updated as Docker targets are analyzed.
 
 ---
 
+## NSS-PQC (3.121.0)
+
+**Library:** `libsoftokn3.so` (NSS 3.121.0 with PQC support)
+**Interface version:** v3.0
+**Docker target:** `test-nss-pqc`
+**Baseline (2026-03-27):** 35,292 passed / 415 failed / 31,947 skipped / 598 xfailed (68,252 total)
+
+Inherits all quirks from NSS 3.120.1 above. Additional findings below.
+
+### Improvements over NSS 3.120.1
+
+- 203 fewer failures (415 vs 618) — RSA operations significantly improved
+- PQC mechanisms available: CKM_ML_KEM (encapsulate/decapsulate), ML-KEM key generation
+- ML-DSA/SLH-DSA mechanisms NOT yet supported (all tests skip)
+
+### PQC Issues
+
+- **ML-KEM buffer sizing:** C_EncapsulateKey/C_DecapsulateKey return CKR_BUFFER_TOO_SMALL — under investigation
+- **ML-KEM-512:** Wycheproof semi-expanded decapsulation fails — may not support semi-expanded key format
+
+### Security Findings
+
+(To be populated during Phase 4 investigation)
+
+### Spec Deviations
+
+(To be populated during Phases 2-3 investigation)
+
+### Known Limitations
+
+- ML-DSA (FIPS 204) not supported — all ML-DSA tests skip
+- SLH-DSA (FIPS 205) not supported — all SLH-DSA tests skip
+- Same DSA Wycheproof rejections as NSS 3.120.1 (296 failures)
+- Same EdDSA CKR_MECHANISM_PARAM_INVALID as NSS 3.120.1 (7 failures)
+
+---
+
 ## BouncyHSM 2.0.1 (v3.2)
 
 **Status: Segfault on stale-handle attribute read (BouncyHSM PKCS#11 shim bug)**
