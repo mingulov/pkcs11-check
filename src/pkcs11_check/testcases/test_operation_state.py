@@ -33,7 +33,8 @@ import ctypes
 import sys
 from ctypes import byref, c_char_p, c_ubyte, cast
 
-from pkcs11_check.raw import (
+from pkcs11_check.raw import CK_ATTRIBUTE_PTR, CK_MECHANISM, CK_OBJECT_HANDLE, RawPKCS11
+from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -52,10 +53,6 @@ from pkcs11_check.raw import (
     CKR_OK,
     CKR_SAVED_STATE_INVALID,
     CKR_STATE_UNSAVEABLE,
-    CK_ATTRIBUTE_PTR,
-    CK_MECHANISM,
-    CK_OBJECT_HANDLE,
-    RawPKCS11,
 )
 from pkcs11_check.raw.bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template

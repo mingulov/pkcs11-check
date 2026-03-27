@@ -410,6 +410,7 @@ def write_isolated_json_report(
     state: FileRunState,
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
+    coverage: dict[str, Any] | None = None,
 ) -> None:
     """Write an aggregated JSON report for an isolated run in unified format."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -466,6 +467,8 @@ def write_isolated_json_report(
         "summary": summary,
         "units": units_out,
     }
+    if coverage:
+        payload["coverage"] = coverage
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 

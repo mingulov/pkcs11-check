@@ -50,7 +50,8 @@ import ctypes
 import sys
 from ctypes import byref, c_ubyte, cast
 
-from pkcs11_check.raw import (
+from pkcs11_check.raw import CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE, RawPKCS11
+from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_KEY_TYPE,
     CKA_MODULUS_BITS,
@@ -73,9 +74,6 @@ from pkcs11_check.raw import (
     CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
-    CK_ATTRIBUTE_PTR,
-    CK_OBJECT_HANDLE,
-    RawPKCS11,
 )
 from pkcs11_check.raw.bootstrap import close_session_quietly, get_slot_ids, login_user, open_session
 from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template

@@ -24,7 +24,9 @@ from pkcs11_check.markers import MARKER_DEFINITIONS, should_skip_for_version
 
 _MANIFEST_KEY: pytest.StashKey[CapabilityManifest | None] = pytest.StashKey()
 _CUMULATIVE_FUNCTIONS: pytest.StashKey[set[str]] = pytest.StashKey()
+_CUMULATIVE_MECHANISMS: pytest.StashKey[set[str]] = pytest.StashKey()
 _RAW_INSTANCE: pytest.StashKey[Any] = pytest.StashKey()
+_COVERAGE_DATA: pytest.StashKey[dict[str, Any]] = pytest.StashKey()
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -90,7 +92,9 @@ def pytest_configure(config: pytest.Config) -> None:
         config.addinivalue_line("markers", f"{marker.name}: {marker.description}")
     config.stash[_MANIFEST_KEY] = None
     config.stash[_CUMULATIVE_FUNCTIONS] = set()
+    config.stash[_CUMULATIVE_MECHANISMS] = set()
     config.stash[_RAW_INSTANCE] = None
+    config.stash[_COVERAGE_DATA] = {}
 
     # Inject --report-log when PKCS11_CHECK_REPORT_LOG is set (by test_cmd.py for
     # --isolation none JSON runs).  Guard against meta-tests (no --p11-module) and
@@ -301,6 +305,13 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                 cumulative.update(rs.raw.call_log.keys())
                 if raw_ref is None:
                     session.config.stash[_RAW_INSTANCE] = rs.raw
+                # Collect mechanism names used by this session
+                if hasattr(rs, "mechanisms"):
+                    try:
+                        mech_cumulative = session.config.stash[_CUMULATIVE_MECHANISMS]
+                        mech_cumulative.update(rs.mechanisms)
+                    except (KeyError, AttributeError):
+                        pass
                 break
 
 
@@ -308,18 +319,31 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     config = session.config
     if config.getoption("p11_module", default=None) is None:
         return
-    raw = config.stash[_RAW_INSTANCE]
+    raw = config.stash.get(_RAW_INSTANCE, None)
     if raw is None:
         return
+
+    # Function coverage
     cumulative = config.stash[_CUMULATIVE_FUNCTIONS]
     available = raw.available_function_names()
-    called = cumulative & available
-    total = len(available)
-    called_n = len(called)
-    pct = (called_n * 100 // total) if total else 0
-    print("\n=== PKCS#11 Function Coverage ===")
-    print(f"Functions available: {total}")
-    print(f"Functions called: {called_n} ({pct}%)")
+    called = sorted(cumulative & available)
     uncalled = sorted(available - cumulative)
-    if uncalled:
-        print(f"Unused functions ({len(uncalled)}): {', '.join(uncalled)}")
+
+    # Mechanism coverage
+    mech_available = config.stash.get(_CUMULATIVE_MECHANISMS, set())
+    # Filter to canonical CKM_ names only (mechanisms set has both forms)
+    mech_ckm = sorted(n for n in mech_available if n.startswith("CKM_"))
+
+    coverage_data: dict[str, Any] = {
+        "function_coverage": {
+            "available": len(available),
+            "called": len(called),
+            "called_names": called,
+            "uncalled_names": uncalled,
+        },
+        "mechanism_coverage": {
+            "available": len(mech_ckm),
+            "names": mech_ckm,
+        },
+    }
+    config.stash[_COVERAGE_DATA] = coverage_data
