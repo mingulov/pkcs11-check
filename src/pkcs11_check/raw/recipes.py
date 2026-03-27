@@ -653,7 +653,7 @@ def derive_key(
     """Derive a key using C_DeriveKey. Returns new key handle."""
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
-    tmpl = template(*packed) if packed else None
+    tmpl = template(*packed)
     handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_DeriveKey(
         session,
@@ -1098,9 +1098,9 @@ def encapsulate_key(
         mech.byref(),
         pub_key,
         *template_ptr_count(tmpl),
-        None,
+        None,  # pCiphertext
         byref(ct_len),
-        byref(key_handle),
+        byref(key_handle),  # Some modules (Kryoptic) require this to be non-NULL even for length query
     )
     expect_rv(rv, CKR_OK)
     ct_buf = (ctypes.c_ubyte * ct_len.value)()
@@ -1130,7 +1130,7 @@ def decapsulate_key(
     """C_DecapsulateKey — returns secret_key_handle."""
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
-    tmpl = template(*packed) if packed else None
+    tmpl = template(*packed)
     ct_buf = _to_ubyte_buf(ciphertext)
     key_handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_DecapsulateKey(

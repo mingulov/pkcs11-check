@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKK_ML_KEM,
     CKM_ML_KEM,
     CKO_PRIVATE_KEY,
+    CKO_SECRET_KEY,
     CKP_ML_KEM_512,
     CKP_ML_KEM_768,
     CKP_ML_KEM_1024,
@@ -130,6 +131,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
             CKM_ML_KEM,
             ciphertext,
             attrs={
+                CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_AES,
             },
         )
