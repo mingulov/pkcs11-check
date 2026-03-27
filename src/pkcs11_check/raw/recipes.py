@@ -39,6 +39,8 @@ from .types_std import (
     CKM_EC_KEY_PAIR_GEN,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
@@ -444,7 +446,9 @@ def digest_single_with_key(
     rv = raw.C_DigestInit(session, mech.byref())
     expect_rv(rv, CKR_OK)
     rv = raw.C_DigestKey(session, key)
-    expect_rv(rv, CKR_OK, CKR_FUNCTION_NOT_SUPPORTED)
+    if rv == CKR_FUNCTION_NOT_SUPPORTED:
+        raise NotImplementedError("C_DigestKey not supported by this module")
+    expect_rv(rv, CKR_OK)
     return _two_call_output(raw, "C_DigestFinal", session)
 
 
@@ -468,14 +472,21 @@ def read_attributes(
         tmpl[i].pValue = None
         tmpl[i].ulValueLen = 0
 
+    # CK_UNAVAILABLE_INFORMATION sentinel: ulValueLen set to (CK_ULONG)-1 for
+    # sensitive or type-invalid attributes.
+    _ck_unavailable = ctypes.c_ulong(-1).value  # 0xFFFF...FFFF
+
     # First call: query sizes
     rv = raw.C_GetAttributeValue(session, handle, tmpl, count)
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
 
-    # Allocate buffers
+    # Allocate buffers (skip unavailable attributes)
     buffers = []
     for i in range(count):
         size = tmpl[i].ulValueLen
+        if size == _ck_unavailable:
+            buffers.append(None)
+            continue
         buf = (ctypes.c_ubyte * size)()
         tmpl[i].pValue = ctypes.cast(buf, ctypes.c_void_p)
         tmpl[i].ulValueLen = size
@@ -483,11 +494,13 @@ def read_attributes(
 
     # Second call: read values
     rv = raw.C_GetAttributeValue(session, handle, tmpl, count)
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
 
     result: dict[int, bytes | int | bool | str | list[int]] = {}
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
+        if size == _ck_unavailable or buffers[i] is None:
+            continue  # Attribute sensitive or type invalid — skip
         raw_bytes = bytes(buffers[i][:size])
         vtype = ATTR_VALUE_TYPES.get(at, "bytes")
         if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):
@@ -693,25 +706,22 @@ def _multipart_output(
     parts: list[bytes] = []
     for chunk in chunks:
         in_buf = _to_ubyte_buf(chunk)
-        out_len = CK_ULONG(0)
+        # Allocate a conservative output buffer upfront (chunk + 256 bytes for
+        # block cipher expansion). Do NOT use the two-call size-probe pattern for
+        # Update functions — probing feeds the same chunk twice, corrupting cipher
+        # state. The Final two-call pattern remains correct.
+        max_out = len(chunk) + 256
+        out_buf = (ctypes.c_ubyte * max_out)()
+        out_len = CK_ULONG(max_out)
         rv = getattr(raw, update_fn)(
             session,
             in_buf,
             len(chunk),
-            None,
+            out_buf,
             byref(out_len),
         )
         expect_rv(rv, CKR_OK)
         if out_len.value > 0:
-            out_buf = (ctypes.c_ubyte * out_len.value)()
-            rv = getattr(raw, update_fn)(
-                session,
-                in_buf,
-                len(chunk),
-                out_buf,
-                byref(out_len),
-            )
-            expect_rv(rv, CKR_OK)
             parts.append(bytes(out_buf[: out_len.value]))
     parts.append(_two_call_output(raw, final_fn, session))
     return b"".join(parts)

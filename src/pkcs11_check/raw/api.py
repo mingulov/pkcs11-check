@@ -152,8 +152,8 @@ class RawPKCS11:
             if function_list_ptr is not None:
                 self._load_versioned_function_list(function_list_ptr)
                 return
-        except (AttributeError, OSError, TypeError, ValueError):
-            pass
+        except (AttributeError, OSError):
+            pass  # Module does not export C_GetInterface or library load failed
 
         get_function_list = self._lib.C_GetFunctionList
         get_function_list.restype = CK_RV
