@@ -65,6 +65,7 @@ class TestAESGCMCrossVerify:
                 CKM_AES_GCM,
                 plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce, aad=aad, tag_bits=128),
+                output_overhead=16,  # GCM appends a 128-bit (16-byte) authentication tag
             )
 
             # p11 returns ciphertext + tag concatenated
@@ -92,6 +93,7 @@ class TestAESGCMCrossVerify:
                 CKM_AES_GCM,
                 plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce, tag_bits=128),
+                output_overhead=16,  # GCM appends a 128-bit (16-byte) authentication tag
             )
 
             aesgcm = AESGCM(key_bytes)
@@ -201,6 +203,7 @@ class TestAESGCMProperties:
                 CKM_AES_GCM,
                 plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce1, tag_bits=128),
+                output_overhead=16,  # GCM appends a 128-bit (16-byte) authentication tag
             )
             ct2 = encrypt_single(
                 rs.raw,
@@ -209,6 +212,7 @@ class TestAESGCMProperties:
                 CKM_AES_GCM,
                 plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce2, tag_bits=128),
+                output_overhead=16,
             )
 
             assert ct1 != ct2
@@ -231,6 +235,7 @@ class TestAESGCMProperties:
                 CKM_AES_GCM,
                 plaintext,
                 mech_param=mech_gcm(CKM_AES_GCM, nonce, aad=aad, tag_bits=128),
+                output_overhead=16,  # GCM appends a 128-bit (16-byte) authentication tag
             )
 
             pt = decrypt_single(

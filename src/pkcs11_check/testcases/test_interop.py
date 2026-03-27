@@ -333,6 +333,7 @@ class TestAESInterop:
                 CKM_AES_GCM,
                 plaintext,
                 mech_param=gcm_param,
+                output_overhead=16,  # GCM appends a 128-bit (16-byte) authentication tag
             )
 
             aesgcm = AESGCM(key_bytes)

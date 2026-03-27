@@ -201,6 +201,7 @@ class TestAESKeyWrapKWP:
                 wrapping_key,
                 target_key,
                 CKM_AES_KEY_WRAP_KWP,
+                output_size_hint=64,  # KWP overhead: 8-byte ICV + up to 15 bytes padding
             )
             assert len(wrapped) > 0, "wrap_key returned empty output"
 
@@ -255,6 +256,7 @@ class TestAESKeyWrapKWP:
                 wrapping_key,
                 target_key,
                 CKM_AES_KEY_WRAP_KWP,
+                output_size_hint=64,  # KWP overhead: 8-byte ICV + up to 15 bytes padding
             )
             assert len(wrapped) > 0
 

@@ -91,6 +91,7 @@ def _two_call_output(
     raw: RawPKCS11,
     call_fn: str,
     *args: Any,
+    output_size_hint: int = 0,
 ) -> bytes:
     """Execute a PKCS#11 function using the standard two-call size pattern.
 
@@ -106,8 +107,28 @@ def _two_call_output(
     - C_EncapsulateKey (output buffer not the last arg, extra handle output after it)
     - C_WrapKeyAuthenticated (two output pairs: wrapped + tag)
     - C_GetMechanismList / C_GetSlotList / C_GetAttributeValue (non-byte array types)
+
+    ``output_size_hint`` enables single-call mode for modules that do not support the
+    NULL-buffer size-query pass (e.g. NSS softoken for AES-GCM / AES-KEY-WRAP-KWP).
+    When provided, the NULL-buffer query is skipped entirely and a single call is made
+    with a pre-allocated buffer of ``output_size_hint`` bytes.  The output is truncated
+    to the length reported by the module after the call.
+
+    Per PKCS#11 spec section 5.2, the standard two-call pattern is used when
+    ``output_size_hint`` is 0: first call with NULL buffer to obtain the required size,
+    then second call with a properly allocated buffer.
     """
     fn = getattr(raw, call_fn)
+    if output_size_hint > 0:
+        # Single-call mode: allocate upfront and call once.
+        # Required for modules (e.g. NSS softoken) where passing NULL on the first
+        # call either fails to set the output length or consumes the operation state.
+        out_len = CK_ULONG(output_size_hint)
+        out_buf = (ctypes.c_ubyte * output_size_hint)()
+        rv = fn(*args, out_buf, byref(out_len))
+        expect_rv(rv, CKR_OK)
+        return bytes(out_buf[: out_len.value])
+    # Standard two-call pattern: query size with NULL, then allocate and call again.
     out_len = CK_ULONG(0)
     rv = fn(*args, None, byref(out_len))
     expect_rv(rv, CKR_OK)
@@ -338,13 +359,30 @@ def encrypt_single(
     plaintext: bytes,
     *,
     mech_param: PackedMechanism | None = None,
+    output_overhead: int = 0,
 ) -> bytes:
-    """Encrypt data in a single operation. Returns ciphertext."""
+    """Encrypt data in a single operation. Returns ciphertext.
+
+    ``output_overhead`` is the number of bytes the mechanism appends beyond the
+    plaintext length (e.g. 16 for AES-GCM with a 128-bit tag).  This is only
+    needed for modules (e.g. NSS softoken) that do not set the output length
+    when called with a NULL buffer pointer during the size-query pass.
+    """
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_EncryptInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(plaintext)
-    return _two_call_output(raw, "C_Encrypt", session, in_buf, len(plaintext))
+    # output_size_hint > 0 activates single-call mode (skip NULL-buffer size query).
+    # Only set it when output_overhead is specified (e.g. AEAD mechanisms that append a tag).
+    hint = (len(plaintext) + output_overhead) if output_overhead > 0 else 0
+    return _two_call_output(
+        raw,
+        "C_Encrypt",
+        session,
+        in_buf,
+        len(plaintext),
+        output_size_hint=hint,
+    )
 
 
 def sign_single(
@@ -633,10 +671,25 @@ def wrap_key(
     mechanism: CKM,
     *,
     mech_param: PackedMechanism | None = None,
+    output_size_hint: int = 0,
 ) -> bytes:
-    """Wrap a key using C_WrapKey (two-call output pattern). Returns wrapped key."""
+    """Wrap a key using C_WrapKey (two-call output pattern). Returns wrapped key.
+
+    ``output_size_hint`` is used as the buffer allocation size when the module
+    does not set the output length during the NULL-buffer size-query pass (e.g.
+    NSS softoken for AES-KEY-WRAP-KWP).  It should be at least as large as the
+    actual wrapped-key output.
+    """
     mech = _resolve_mech(mechanism, mech_param)
-    return _two_call_output(raw, "C_WrapKey", session, mech.byref(), wrapping_key, target_key)
+    return _two_call_output(
+        raw,
+        "C_WrapKey",
+        session,
+        mech.byref(),
+        wrapping_key,
+        target_key,
+        output_size_hint=output_size_hint,
+    )
 
 
 def unwrap_key(
