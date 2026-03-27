@@ -214,7 +214,7 @@ class TestPBESHA1DES3:
             _ITERATIONS,
         )
         if handle is None:
-            pytest.xfail("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
+            pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
             assert attrs[CKA_KEY_TYPE] == CKK_DES3
@@ -244,7 +244,7 @@ class TestPBESHA1DES3:
             _ITERATIONS,
         )
         if h1 is None or h2 is None:
-            pytest.xfail("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
+            pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
             v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
@@ -276,7 +276,7 @@ class TestPBESHA1DES3:
             _ITERATIONS,
         )
         if ha is None or hb is None:
-            pytest.xfail("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
+            pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
             va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
@@ -308,7 +308,7 @@ class TestPBESHA1DES3:
             _ITERATIONS,
         )
         if ha is None or hb is None:
-            pytest.xfail("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
+            pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
             va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
@@ -339,7 +339,7 @@ class TestPBESHA1DES2:
             _ITERATIONS,
         )
         if handle is None:
-            pytest.xfail("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
+            pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
             assert attrs[CKA_KEY_TYPE] == CKK_DES2
@@ -369,7 +369,7 @@ class TestPBESHA1DES2:
             _ITERATIONS,
         )
         if h1 is None or h2 is None:
-            pytest.xfail("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
+            pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
         try:
             v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
@@ -401,7 +401,7 @@ class TestPBESHA1DES2:
             _ITERATIONS,
         )
         if ha is None or hb is None:
-            pytest.xfail("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
+            pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
         try:
             va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
@@ -434,7 +434,7 @@ class TestPBASHA1:
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )
         if handle is None:
-            pytest.xfail("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
+            pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
             assert attrs[CKA_KEY_TYPE] == CKK_SHA_1_HMAC
@@ -468,7 +468,7 @@ class TestPBASHA1:
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )
         if h1 is None or h2 is None:
-            pytest.xfail("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
+            pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
             v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
@@ -504,7 +504,7 @@ class TestPBASHA1:
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )
         if ha is None or hb is None:
-            pytest.xfail("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
+            pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
             va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
@@ -535,7 +535,7 @@ class TestPKCS5PBKD2:
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if handle is None:
-            pytest.xfail("CKM_PKCS5_PBKD2 (HMAC-SHA256) not operational")
+            pytest.skip("CKM_PKCS5_PBKD2 (HMAC-SHA256) not operational")
         try:
             val = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32
@@ -557,7 +557,7 @@ class TestPKCS5PBKD2:
             CKP_PKCS5_PBKD2_HMAC_SHA1,
         )
         if handle is None:
-            pytest.xfail("CKM_PKCS5_PBKD2 (HMAC-SHA1) not operational")
+            pytest.skip("CKM_PKCS5_PBKD2 (HMAC-SHA1) not operational")
         try:
             val = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 20
@@ -587,7 +587,7 @@ class TestPKCS5PBKD2:
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if h1 is None or h2 is None:
-            pytest.xfail("CKM_PKCS5_PBKD2 not operational")
+            pytest.skip("CKM_PKCS5_PBKD2 not operational")
         try:
             v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
@@ -619,7 +619,7 @@ class TestPKCS5PBKD2:
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if ha is None or hb is None:
-            pytest.xfail("CKM_PKCS5_PBKD2 not operational")
+            pytest.skip("CKM_PKCS5_PBKD2 not operational")
         try:
             va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
@@ -651,7 +651,7 @@ class TestPKCS5PBKD2:
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if ha is None or hb is None:
-            pytest.xfail("CKM_PKCS5_PBKD2 not operational")
+            pytest.skip("CKM_PKCS5_PBKD2 not operational")
         try:
             va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
@@ -683,7 +683,7 @@ class TestPKCS5PBKD2:
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
         if ha is None or hb is None:
-            pytest.xfail("CKM_PKCS5_PBKD2 not operational")
+            pytest.skip("CKM_PKCS5_PBKD2 not operational")
         try:
             va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
@@ -707,7 +707,7 @@ class TestPKCS5PBKD2:
             extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
         if handle is None:
-            pytest.xfail("CKM_PKCS5_PBKD2 AES key derivation not operational")
+            pytest.skip("CKM_PKCS5_PBKD2 AES key derivation not operational")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE, CKA_VALUE])
             assert attrs[CKA_KEY_TYPE] == CKK_AES

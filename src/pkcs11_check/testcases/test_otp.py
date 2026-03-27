@@ -86,7 +86,7 @@ class TestHOTP:
             key = _gen_otp_key(rs, CKK_HOTP, CKM_HOTP_KEY_GEN)
             assert key != 0
         except AssertionError as exc:
-            pytest.xfail(f"CKM_HOTP_KEY_GEN keygen rejected: {exc}")
+            pytest.skip(f"CKM_HOTP_KEY_GEN keygen rejected: {exc}")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -103,7 +103,7 @@ class TestHOTP:
             otp = sign_single(rs.raw, rs.sh, key, CKM_HOTP, b"")
             assert len(otp) > 0
         except AssertionError as exc:
-            pytest.xfail(f"CKM_HOTP not operational: {exc}")
+            pytest.skip(f"CKM_HOTP not operational: {exc}")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -123,7 +123,7 @@ class TestHOTP:
         except AssertionError as exc:
             if "Consecutive" in str(exc):
                 raise
-            pytest.xfail(f"CKM_HOTP not operational: {exc}")
+            pytest.skip(f"CKM_HOTP not operational: {exc}")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -141,7 +141,7 @@ class TestSecurID:
             key = _gen_otp_key(rs, CKK_SECURID, CKM_SECURID_KEY_GEN)
             assert key != 0
         except AssertionError as exc:
-            pytest.xfail(f"CKM_SECURID_KEY_GEN keygen rejected: {exc}")
+            pytest.skip(f"CKM_SECURID_KEY_GEN keygen rejected: {exc}")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -158,7 +158,7 @@ class TestSecurID:
             otp = sign_single(rs.raw, rs.sh, key, CKM_SECURID, b"")
             assert len(otp) > 0
         except AssertionError as exc:
-            pytest.xfail(f"CKM_SECURID not operational: {exc}")
+            pytest.skip(f"CKM_SECURID not operational: {exc}")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -176,7 +176,7 @@ class TestACTI:
             key = _gen_otp_key(rs, CKK_ACTI, CKM_ACTI_KEY_GEN)
             assert key != 0
         except AssertionError as exc:
-            pytest.xfail(f"CKM_ACTI_KEY_GEN keygen rejected: {exc}")
+            pytest.skip(f"CKM_ACTI_KEY_GEN keygen rejected: {exc}")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -193,7 +193,7 @@ class TestACTI:
             otp = sign_single(rs.raw, rs.sh, key, CKM_ACTI, b"")
             assert len(otp) > 0
         except AssertionError as exc:
-            pytest.xfail(f"CKM_ACTI not operational: {exc}")
+            pytest.skip(f"CKM_ACTI not operational: {exc}")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -252,10 +252,10 @@ class TestCTKIP:
                 CKK_GENERIC_SECRET,
                 CKM_KIP_DERIVE,
             )
-            # This will almost certainly fail - xfail expected
-            pytest.xfail("CKM_KIP_DERIVE keygen unexpectedly succeeded")
+            # Key gen failed — KIP_DERIVE not operational
+            pytest.skip("CKM_KIP_DERIVE not operational with generic secret key type")
         except AssertionError as exc:
-            pytest.xfail(f"CKM_KIP_DERIVE rejected: {exc}")
+            pytest.skip(f"CKM_KIP_DERIVE rejected: {exc}")
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -269,8 +269,8 @@ class TestCTKIP:
         rs = p11_raw_session
         if not rs.has_mechanism("KIP_WRAP"):
             pytest.skip("CKM_KIP_WRAP not supported")
-        # If mechanism is listed, attempt and xfail
-        pytest.xfail("CKM_KIP_WRAP requires specialized key types")
+        # Mechanism listed but requires specialized key types not available in standard tests
+        pytest.skip("CKM_KIP_WRAP requires specialized key types")
 
     def test_kip_mac_skips_when_unsupported(
         self,
@@ -279,7 +279,7 @@ class TestCTKIP:
         rs = p11_raw_session
         if not rs.has_mechanism("KIP_MAC"):
             pytest.skip("CKM_KIP_MAC not supported")
-        pytest.xfail("CKM_KIP_MAC requires specialized key types")
+        pytest.skip("CKM_KIP_MAC requires specialized key types")
 
     def test_kip_mac_verify_skips_when_unsupported(
         self,
@@ -288,4 +288,4 @@ class TestCTKIP:
         rs = p11_raw_session
         if not rs.has_mechanism("KIP_MAC"):
             pytest.skip("CKM_KIP_MAC not supported")
-        pytest.xfail("CKM_KIP_MAC requires specialized key types")
+        pytest.skip("CKM_KIP_MAC requires specialized key types")

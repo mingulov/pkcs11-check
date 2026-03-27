@@ -62,7 +62,7 @@ def _seed_key(raw: Any, sh: int, attrs: dict[int, Any]) -> int:
     return key.value
 
 
-def _encrypt_or_skip(
+def _encrypt_or_xfail(
     raw: Any,
     sh: int,
     key: int,
@@ -71,16 +71,16 @@ def _encrypt_or_skip(
     *,
     mech_param: Any = None,
 ) -> bytes:
-    """Try encrypt_single; skip if module returns CKR_MECHANISM_INVALID."""
+    """Try encrypt_single; xfail if module returns CKR_MECHANISM_INVALID."""
     try:
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
         if "CKR_MECHANISM_INVALID" in str(exc):
-            pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
+            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
         raise
 
 
-def _sign_or_skip(
+def _sign_or_xfail(
     raw: Any,
     sh: int,
     key: int,
@@ -89,12 +89,12 @@ def _sign_or_skip(
     *,
     mech_param: Any = None,
 ) -> bytes:
-    """Try sign_single; skip if module returns CKR_MECHANISM_INVALID."""
+    """Try sign_single; xfail if module returns CKR_MECHANISM_INVALID."""
     try:
         return sign_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
         if "CKR_MECHANISM_INVALID" in str(exc):
-            pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
+            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
         raise
 
 
@@ -139,7 +139,7 @@ class TestSEEDEncryption:
             {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
-            ct = _encrypt_or_skip(rs.raw, rs.sh, key, CKM_SEED_ECB, _TWO_BLOCKS)
+            ct = _encrypt_or_xfail(rs.raw, rs.sh, key, CKM_SEED_ECB, _TWO_BLOCKS)
             assert ct != _TWO_BLOCKS
             assert len(ct) == len(_TWO_BLOCKS)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_SEED_ECB, ct)
@@ -158,7 +158,7 @@ class TestSEEDEncryption:
         key1 = _seed_key(rs.raw, rs.sh, tmpl)
         key2 = _seed_key(rs.raw, rs.sh, tmpl)
         try:
-            ct1 = _encrypt_or_skip(rs.raw, rs.sh, key1, CKM_SEED_ECB, _TWO_BLOCKS)
+            ct1 = _encrypt_or_xfail(rs.raw, rs.sh, key1, CKM_SEED_ECB, _TWO_BLOCKS)
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_SEED_ECB, _TWO_BLOCKS)
             assert ct1 != ct2
         finally:
@@ -179,7 +179,7 @@ class TestSEEDEncryption:
         )
         iv = generate_random(rs.raw, rs.sh, 16)
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -215,7 +215,7 @@ class TestSEEDEncryption:
         iv1 = generate_random(rs.raw, rs.sh, 16)
         iv2 = generate_random(rs.raw, rs.sh, 16)
         try:
-            ct1 = _encrypt_or_skip(
+            ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -251,7 +251,7 @@ class TestSEEDEncryption:
         # Non-block-aligned data - PKCS#7 padding handles it
         plaintext = b"SEED CBC PAD test data!!"  # 24 bytes, not a multiple of 16
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -287,7 +287,7 @@ class TestSEEDEncryption:
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"SEED CBC PAD key independence test!!"  # 36 bytes
         try:
-            ct1 = _encrypt_or_skip(
+            ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key1,
@@ -331,7 +331,7 @@ class TestSEEDMAC:
         )
         data = b"SEED MAC test data for signing"
         try:
-            mac = _sign_or_skip(rs.raw, rs.sh, key, CKM_SEED_MAC, data)
+            mac = _sign_or_xfail(rs.raw, rs.sh, key, CKM_SEED_MAC, data)
             assert len(mac) > 0
             assert verify_single(rs.raw, rs.sh, key, CKM_SEED_MAC, data, mac)
         finally:
@@ -352,7 +352,7 @@ class TestSEEDMAC:
         data = b"SEED MAC GENERAL test data"
         mac_len = 8  # request 8-byte MAC (half block)
         try:
-            mac = _sign_or_skip(
+            mac = _sign_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -385,7 +385,7 @@ class TestSEEDMAC:
         key2 = _seed_key(rs.raw, rs.sh, tmpl)
         data = b"MAC key independence test data"
         try:
-            mac1 = _sign_or_skip(rs.raw, rs.sh, key1, CKM_SEED_MAC, data)
+            mac1 = _sign_or_xfail(rs.raw, rs.sh, key1, CKM_SEED_MAC, data)
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_SEED_MAC, data)
             assert mac1 != mac2
         finally:

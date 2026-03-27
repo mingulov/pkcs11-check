@@ -16,6 +16,7 @@ from pkcs11_check.raw.recipes import generate_random, get_slot_info
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_TOKEN_INFO,
+    CKF_RNG,
     CKF_TOKEN_INITIALIZED,
     CKF_TOKEN_PRESENT,
     CKF_USER_PIN_FINAL_TRY,
@@ -83,13 +84,22 @@ class TestTokenFlags:
     def test_rng_flag_matches_capability(self, p11_raw_session: Any) -> None:
         """If C_GenerateRandom works, CKF_RNG should be set."""
         rs = p11_raw_session
-        # Try generating random - if it works, RNG is available
+        # Try generating random - if it works, RNG flag must be set
+        has_rng = False
         try:
             data = generate_random(rs.raw, rs.sh, 32)
             assert len(data) == 32
-            # RNG works - module should have CKF_RNG flag
+            has_rng = True
         except Exception:
-            pass  # RNG not available
+            pass  # RNG not available or failed
+
+        if has_rng:
+            info = CK_TOKEN_INFO()
+            rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
+            expect_rv(rv, CKR_OK)
+            assert info.flags & CKF_RNG, (
+                f"C_GenerateRandom succeeded but CKF_RNG is not set; flags=0x{info.flags:08x}"
+            )
 
     def test_token_initialized(self, p11_raw_session: Any) -> None:
         """Token should report as initialized (we initialized it in setup)."""

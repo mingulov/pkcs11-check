@@ -111,9 +111,8 @@ class TestECDHKnownAnswer:
                     attrs=_DERIVE_ATTRS,
                     mech_param=ecdh_param,
                 )
-            except AssertionError:
-                pytest.skip("ECDH derivation failed")
-                raise  # unreachable
+            except AssertionError as exc:
+                pytest.xfail(f"ECDH derivation failed — mechanism advertised but rejected: {exc}")
 
             p11_secret = read_attributes(rs.raw, rs.sh, derived_h, [CKA_VALUE])[CKA_VALUE]
 
@@ -194,9 +193,8 @@ class TestECDHKnownAnswer:
                     attrs=_DERIVE_ATTRS,
                     mech_param=ecdh_ba,
                 )
-            except AssertionError:
-                pytest.skip("ECDH derivation failed")
-                raise  # unreachable
+            except AssertionError as exc:
+                pytest.xfail(f"ECDH derivation failed — mechanism advertised but rejected: {exc}")
 
             secret_ab = read_attributes(rs.raw, rs.sh, key_ab, [CKA_VALUE])[CKA_VALUE]
             secret_ba = read_attributes(rs.raw, rs.sh, key_ba, [CKA_VALUE])[CKA_VALUE]

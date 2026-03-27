@@ -69,7 +69,7 @@ pytestmark = pytest.mark.full
 _TWO_BLOCKS = b"12345678abcdefgh"  # exactly 16 bytes
 
 
-def _encrypt_or_skip(
+def _encrypt_or_xfail(
     raw: Any,
     sh: int,
     key: int,
@@ -77,9 +77,9 @@ def _encrypt_or_skip(
     data: bytes,
     *,
     mech_param: Any = None,
-    skip_msg: str = "",
+    xfail_msg: str = "",
 ) -> bytes:
-    """Try encrypt_single; skip if module returns CKR_MECHANISM_INVALID.
+    """Try encrypt_single; xfail if module returns CKR_MECHANISM_INVALID.
 
     Needed for single-DES on OpenSSL 3 where the mechanism is advertised but
     the legacy cipher provider is absent.
@@ -88,7 +88,7 @@ def _encrypt_or_skip(
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
         if "CKR_MECHANISM_INVALID" in str(exc):
-            pytest.skip(skip_msg or f"Mechanism advertised but rejected at use: {exc}")
+            pytest.xfail(xfail_msg or f"Mechanism advertised but rejected at use: {exc}")
         raise
 
 
@@ -173,7 +173,7 @@ class TestDESEncryption:
         )
         des_skip = "CKM_DES advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -200,7 +200,7 @@ class TestDESEncryption:
         key1 = _gen_des_key(rs.raw, rs.sh, CKM_DES_KEY_GEN, tmpl)
         key2 = _gen_des_key(rs.raw, rs.sh, CKM_DES_KEY_GEN, tmpl)
         try:
-            ct1 = _encrypt_or_skip(
+            ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key1,
@@ -230,7 +230,7 @@ class TestDESEncryption:
         iv = generate_random(rs.raw, rs.sh, 8)
         des_skip = "CKM_DES_CBC advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -269,7 +269,7 @@ class TestDESEncryption:
         iv1 = generate_random(rs.raw, rs.sh, 8)
         iv2 = generate_random(rs.raw, rs.sh, 8)
         try:
-            ct1 = _encrypt_or_skip(
+            ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -308,7 +308,7 @@ class TestDESEncryption:
         plaintext = b"DES CBC PAD test data!"  # 22 bytes, not a multiple of 8
         des_skip = "CKM_DES_CBC_PAD advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -349,7 +349,7 @@ class TestDESEncryption:
         plaintext = b"OFB test data!!"  # 15 bytes - stream mode, no alignment needed
         des_skip = "CKM_DES_OFB64 advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -389,7 +389,7 @@ class TestDESEncryption:
         plaintext = b"CFB8 test data!!"  # 16 bytes
         des_skip = "CKM_DES_CFB8 advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -428,7 +428,7 @@ class TestDESEncryption:
         plaintext = b"CFB64 test data!"  # 16 bytes
         des_skip = "CKM_DES_CFB64 advertised but rejected (OpenSSL 3 legacy provider absent)"
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,

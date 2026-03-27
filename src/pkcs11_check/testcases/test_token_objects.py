@@ -86,9 +86,11 @@ class TestTokenObjectLifecycle:
 
         # Session 1: create
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
-        login_user(rs.raw, s1, CKU_USER, pin_bytes)
-        gen_aes_key(rs.raw, s1, 256, attrs={CKA_LABEL: label, CKA_TOKEN: True})
-        close_session_quietly(rs.raw, s1)
+        try:
+            login_user(rs.raw, s1, CKU_USER, pin_bytes)
+            gen_aes_key(rs.raw, s1, 256, attrs={CKA_LABEL: label, CKA_TOKEN: True})
+        finally:
+            close_session_quietly(rs.raw, s1)
 
         # Session 2: find
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
@@ -116,20 +118,22 @@ class TestTokenObjectLifecycle:
 
         # Session 1: create + encrypt
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
-        login_user(rs.raw, s1, CKU_USER, pin_bytes)
-        key1_h = gen_aes_key(
-            rs.raw,
-            s1,
-            256,
-            attrs={
-                CKA_LABEL: label,
-                CKA_TOKEN: True,
-                CKA_ENCRYPT: True,
-                CKA_DECRYPT: True,
-            },
-        )
-        ct = encrypt_single(rs.raw, s1, key1_h, CKM_AES_ECB, plaintext)
-        close_session_quietly(rs.raw, s1)
+        try:
+            login_user(rs.raw, s1, CKU_USER, pin_bytes)
+            key1_h = gen_aes_key(
+                rs.raw,
+                s1,
+                256,
+                attrs={
+                    CKA_LABEL: label,
+                    CKA_TOKEN: True,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                },
+            )
+            ct = encrypt_single(rs.raw, s1, key1_h, CKM_AES_ECB, plaintext)
+        finally:
+            close_session_quietly(rs.raw, s1)
 
         # Session 2: find + decrypt
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
