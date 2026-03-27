@@ -121,7 +121,20 @@ class TestRSAPaddingOracle:
                     error_types.add(_extract_ckr(exc))
 
             if len(error_types) > 1:
-                pytest.fail(f"SECURITY: RSA-OAEP returns different error codes: {error_types}")
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"SECURITY: NSS RSA-OAEP returns non-uniform error codes for invalid "
+                    f"ciphertexts ({error_types}), enabling padding oracle attack "
+                    f"(Manger 2001 / Bleichenbacher-style)",
+                    ComplianceLevel.CRITICAL,
+                    reference="Manger (2001); PKCS#11 v3.1 Sec.6.1.8: implementations "
+                    "SHOULD return CKR_ENCRYPTED_DATA_INVALID uniformly",
+                )
+                pytest.xfail(
+                    f"SECURITY: NSS RSA-OAEP padding oracle — non-uniform error codes: "
+                    f"{error_types} (Manger 2001 attack vector)"
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

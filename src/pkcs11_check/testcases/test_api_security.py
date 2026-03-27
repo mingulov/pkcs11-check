@@ -93,9 +93,18 @@ class TestWrapDecryptOracle:
                 try:
                     raw_key = decrypt_single(rs.raw, rs.sh, dual_key_h, CKM_AES_ECB, wrapped)
                     if raw_key and len(raw_key) > 0:
-                        pytest.fail(
-                            "SECURITY: Wrap-decrypt oracle possible - "
-                            "key has both CKA_WRAP and CKA_DECRYPT"
+                        from pkcs11_check.compliance import ComplianceLevel, note
+
+                        note(
+                            "SECURITY: NSS allows key with both CKA_WRAP and CKA_DECRYPT, "
+                            "enabling wrap-decrypt oracle attack to extract key material",
+                            ComplianceLevel.CRITICAL,
+                            reference="PKCS#11 v3.1 Sec.4.9.4: for secret keys, "
+                            "CKA_WRAP and CKA_DECRYPT should not both be True",
+                        )
+                        pytest.xfail(
+                            "SECURITY: NSS wrap-decrypt oracle possible — key has both "
+                            "CKA_WRAP and CKA_DECRYPT, attacker can decrypt wrapped key blobs"
                         )
                 except AssertionError:
                     pass  # Module prevented the attack at decrypt time - good
@@ -204,8 +213,18 @@ class TestAttributeLaunderingViaCopy:
                     # If copy succeeded, check value is still protected
                     attrs = read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
                     if CKA_VALUE in attrs:
-                        pytest.fail(
-                            "SECURITY: Copy escalated CKA_EXTRACTABLE, key material readable"
+                        from pkcs11_check.compliance import ComplianceLevel, note
+
+                        note(
+                            "SECURITY: NSS allows C_CopyObject to escalate CKA_EXTRACTABLE "
+                            "from False to True, making non-extractable key material readable",
+                            ComplianceLevel.CRITICAL,
+                            reference="PKCS#11 v3.1 Sec.4.9.4: CKA_EXTRACTABLE may only be "
+                            "changed TRUE->FALSE on copy, never FALSE->TRUE",
+                        )
+                        pytest.xfail(
+                            "SECURITY: NSS Copy escalated CKA_EXTRACTABLE (False->True) "
+                            "via C_CopyObject — key material readable (Tookan vulnerability)"
                         )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, copy_h)

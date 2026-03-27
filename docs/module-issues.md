@@ -100,7 +100,47 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 
 ### Security Findings
 
-(To be populated during Phase 4 investigation)
+**CRITICAL: Sensitive key material readable (CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE)**
+
+- `CKA_VALUE` readable on `CKA_SENSITIVE=True` AES keys via `C_GetAttributeValue`
+- `CKA_PRIVATE_EXPONENT` readable on `CKA_SENSITIVE=True` RSA private keys
+- NSS softoken returns `CKR_OK` and fills the attribute buffer instead of `CKR_ATTRIBUTE_SENSITIVE`
+- Ref: PKCS#11 v3.1 Sec.4.9.2: "sensitive attributes cannot be revealed in plaintext"
+- Affected tests: `test_sensitivity.py::TestSensitiveKeyValue::test_sensitive_aes_value_not_readable`,
+  `test_sensitivity.py::TestSensitiveKeyValue::test_sensitive_rsa_private_exponent_not_readable`
+- Impact: Private key material and symmetric key values extractable despite `CKA_SENSITIVE=True`
+
+**CRITICAL: CKA_EXTRACTABLE escalation via C_CopyObject (Tookan vulnerability)**
+
+- `C_CopyObject` allows changing `CKA_EXTRACTABLE` from `False` to `True` on a copy
+- OASIS PKCS#11 spec explicitly states this MUST NOT be permitted (only `True`→`False` allowed)
+- Confirmed by both `test_tookan.py` and `test_api_security.py`
+- Ref: PKCS#11 v3.1 Sec.4.9.4; Bortolozzo et al. "Attacking and Fixing PKCS#11 Security Tokens"
+  (CCS 2010); Tookan paper (CCS 2020)
+- Affected tests: `test_tookan.py::TestSensitivePreservation::test_extractable_cannot_escalate_on_copy`,
+  `test_api_security.py::TestAttributeLaunderingViaCopy::test_copy_cannot_escalate_extractable`
+- Impact: Non-extractable keys can be copied as extractable, bypassing key protection policy
+
+**HIGH: Wrap-decrypt oracle possible (CKA_WRAP + CKA_DECRYPT on same key)**
+
+- NSS allows creating a key with both `CKA_WRAP=True` and `CKA_DECRYPT=True`
+- This enables the classic wrap-then-decrypt attack: wrap a target key under the dual-purpose key,
+  then decrypt the wrapped blob to recover raw key material
+- Ref: PKCS#11 v3.1 Sec.4.9.4: "for secret keys, at most one of CKA_WRAP/CKA_ENCRYPT";
+  Clulow "On the Security of PKCS#11" (CHES 2003)
+- Affected test: `test_api_security.py::TestWrapDecryptOracle::test_wrap_decrypt_combination_prevented`
+- Impact: Enables wrap-then-decrypt attack to extract key material from the token
+
+**MEDIUM: RSA-OAEP padding oracle (non-uniform error codes)**
+
+- Different CKR codes returned for different invalid OAEP ciphertexts
+  (observed: `CKR_ARGUMENTS_BAD` and `CKR_ENCRYPTED_DATA_INVALID` mixed)
+- A uniform error code (`CKR_ENCRYPTED_DATA_INVALID`) must be returned for all decryption failures
+  to prevent information leakage about ciphertext structure
+- Ref: Manger "A Chosen Ciphertext Attack on RSA Optimal Asymmetric Encryption Padding" (CRYPTO 2001);
+  PKCS#11 v3.1 Sec.6.1.8
+- Affected test: `test_padding_oracle.py::TestRSAPaddingOracle::test_oaep_error_uniformity`
+- Impact: Potential plaintext recovery via error oracle (~O(log n) queries for 2048-bit RSA)
 
 ### Spec Deviations
 

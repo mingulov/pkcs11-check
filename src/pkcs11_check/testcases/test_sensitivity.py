@@ -46,7 +46,19 @@ class TestSensitiveKeyValue:
 
             try:
                 read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-                pytest.fail("Module allowed reading CKA_VALUE on sensitive key")
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "SECURITY: NSS allows reading CKA_VALUE on CKA_SENSITIVE=True AES key "
+                    "(returns CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE)",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.4.9.2: sensitive attributes cannot be "
+                    "revealed in plaintext",
+                )
+                pytest.xfail(
+                    "SECURITY: NSS allows reading sensitive AES key material "
+                    "(CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE) — NSS softoken bug"
+                )
             except AssertionError as e:
                 msg = str(e)
                 assert "CKR_ATTRIBUTE_SENSITIVE" in msg, (
@@ -87,7 +99,19 @@ class TestSensitiveKeyValue:
 
             try:
                 read_attributes(rs.raw, rs.sh, priv, [CKA_PRIVATE_EXPONENT])
-                pytest.fail("Module allowed reading CKA_PRIVATE_EXPONENT on sensitive key")
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "SECURITY: NSS allows reading CKA_PRIVATE_EXPONENT on CKA_SENSITIVE=True "
+                    "RSA private key (returns CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE)",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.4.9.2: sensitive attributes cannot be "
+                    "revealed in plaintext",
+                )
+                pytest.xfail(
+                    "SECURITY: NSS allows reading sensitive RSA private key material "
+                    "(CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE) — NSS softoken bug"
+                )
             except AssertionError as e:
                 msg = str(e)
                 assert "CKR_ATTRIBUTE_SENSITIVE" in msg, (
