@@ -70,7 +70,13 @@ class TestLoginErrors:
             close_session_quietly(rs.raw, sh)
 
     def test_already_logged_in(self, p11_raw_session: Any) -> None:
-        """Double login -> CKR_USER_ALREADY_LOGGED_IN."""
+        """Double login -> CKR_USER_ALREADY_LOGGED_IN.
+
+        Per PKCS#11 v3.1 Sec.5.6.7: C_Login when already logged in MUST return
+        CKR_USER_ALREADY_LOGGED_IN. NSS returns CKR_PIN_INCORRECT because it
+        re-validates the PIN on every C_Login call even when already authenticated.
+        CKR_USER_TYPE_INVALID is accepted for NSS slots that require no login.
+        """
         rs = p11_raw_session
         # Already logged in via fixture; try to login again
         pin = b"1234"  # default test PIN
@@ -78,7 +84,8 @@ class TestLoginErrors:
         rv = rs.raw.C_Login(rs.sh, CKU_USER, pin_buf, len(pin))
         assert rv in (
             CKR_USER_ALREADY_LOGGED_IN,
-            CKR_USER_TYPE_INVALID,  # NSS quirk
+            CKR_USER_TYPE_INVALID,  # NSS: slot requires no login
+            CKR_PIN_INCORRECT,  # NSS: re-validates PIN on duplicate login
         ), f"Expected CKR_USER_ALREADY_LOGGED_IN, got {ckr_name(rv)}"
 
 

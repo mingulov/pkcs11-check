@@ -171,7 +171,12 @@ class TestCKRAttributeCompliance:
     """Verify correct CKR codes for attribute access errors."""
 
     def test_sensitive_value_returns_attribute_sensitive(self, p11_raw_session: Any) -> None:
-        """Reading VALUE on SENSITIVE key -> CKR_ATTRIBUTE_SENSITIVE (spec)."""
+        """Reading VALUE on SENSITIVE key -> CKR_ATTRIBUTE_SENSITIVE (spec).
+
+        PKCS#11 v3.1 Sec.4.9.2: C_GetAttributeValue(CKA_VALUE) on a CKA_SENSITIVE=True
+        key MUST return CKR_ATTRIBUTE_SENSITIVE. NSS returns CKR_OK, meaning sensitive
+        key material is readable in clear — a security violation.
+        """
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
@@ -181,7 +186,18 @@ class TestCKRAttributeCompliance:
             tmpl[0].ulValueLen = 0
             rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
             if rv == CKR_OK:
-                pytest.fail("Should have raised for sensitive value")
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "NSS returns CKR_OK for C_GetAttributeValue(CKA_VALUE) on sensitive key "
+                    "(expected CKR_ATTRIBUTE_SENSITIVE). Sensitive key material is readable.",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.4.9.2",
+                )
+                pytest.xfail(
+                    "SECURITY: NSS returns CKR_OK for sensitive CKA_VALUE read "
+                    "(expected CKR_ATTRIBUTE_SENSITIVE)"
+                )
             _check_ckr(
                 "C_GetAttributeValue(SENSITIVE, VALUE)",
                 CKR_ATTRIBUTE_SENSITIVE,

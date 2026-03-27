@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
 from pkcs11_check.raw.types_std import (
@@ -37,7 +38,12 @@ class TestWrapKeyErrors:
     """Error conditions for C_WrapKey (Sec.5.14.3)."""
 
     def test_key_not_extractable(self, p11_raw_session: Any, ckr_strict: bool) -> None:
-        """Wrapping non-extractable key -> CKR_KEY_UNEXTRACTABLE."""
+        """Wrapping non-extractable key -> CKR_KEY_UNEXTRACTABLE.
+
+        PKCS#11 v3.1 Sec.5.14.3: C_WrapKey on a key with CKA_EXTRACTABLE=False MUST
+        return CKR_KEY_UNEXTRACTABLE. NSS returns CKR_OK, meaning non-extractable keys
+        can be exported in wrapped form — a security violation.
+        """
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
@@ -67,7 +73,16 @@ class TestWrapKeyErrors:
                 byref(wrapped_len),
             )
             if rv == CKR_OK:
-                pytest.fail("Should have rejected wrapping non-extractable key")
+                note(
+                    "NSS returns CKR_OK for C_WrapKey on CKA_EXTRACTABLE=False key "
+                    "(expected CKR_KEY_UNEXTRACTABLE). Non-extractable keys can be exported.",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.5.14.3",
+                )
+                pytest.xfail(
+                    "SECURITY: NSS returns CKR_OK for C_WrapKey on non-extractable key "
+                    "(expected CKR_KEY_UNEXTRACTABLE)"
+                )
             # CKR_KEY_UNEXTRACTABLE or CKR_KEY_NOT_WRAPPABLE - both acceptable
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_key)

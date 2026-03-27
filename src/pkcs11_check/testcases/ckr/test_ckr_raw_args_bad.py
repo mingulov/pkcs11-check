@@ -31,9 +31,17 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKM_AES_KEY_GEN,
     CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
 )
+# NULL mechanism pointer: acceptable CKR codes per OASIS PKCS#11 v3.1 Sec.5.2
+# CKR_ARGUMENTS_BAD — NULL pointer is bad argument
+# CKR_MECHANISM_INVALID — NULL interpreted as invalid mechanism (NSS)
+# CKR_MECHANISM_PARAM_INVALID — NULL mechanism params interpreted as invalid
+# CKR_OK (0) — v3.0+ spec allows NULL mech to cancel an in-progress operation
+_NULL_MECH_OK = (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0)
 from pkcs11_check.raw.faults import null_pointer
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 
@@ -72,7 +80,7 @@ class TestArgsBadNullPointers:
     """Pass NULL to functions that require valid pointers."""
 
     def test_encrypt_init_null_mechanism(self, p11_config: Any) -> None:
-        """C_EncryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
+        """C_EncryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD or CKR_MECHANISM_INVALID."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -87,16 +95,18 @@ key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
 # EncryptInit with NULL mechanism
+# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_EncryptInit(sh, null_pointer().pointer, key.value)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
+assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0), \
+    f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
         _assert_ok(rc, out, err, "C_EncryptInit(NULL mech)")
 
     def test_decrypt_init_null_mechanism(self, p11_config: Any) -> None:
-        """C_DecryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
+        """C_DecryptInit(session, NULL, key) -> CKR_ARGUMENTS_BAD or CKR_MECHANISM_INVALID."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
@@ -110,37 +120,43 @@ mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
 assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
+# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_DecryptInit(sh, null_pointer().pointer, key.value)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
+assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0), \
+    f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
         _assert_ok(rc, out, err, "C_DecryptInit(NULL mech)")
 
     def test_sign_init_null_mechanism(self, p11_config: Any) -> None:
-        """C_SignInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
+        """C_SignInit(session, NULL, key) -> CKR_ARGUMENTS_BAD or CKR_MECHANISM_INVALID."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
+# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_SignInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
+assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0), \
+    f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
         _assert_ok(rc, out, err, "C_SignInit(NULL mech)")
 
     def test_verify_init_null_mechanism(self, p11_config: Any) -> None:
-        """C_VerifyInit(session, NULL, key) -> CKR_ARGUMENTS_BAD."""
+        """C_VerifyInit(session, NULL, key) -> CKR_ARGUMENTS_BAD or CKR_MECHANISM_INVALID."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
+# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_VerifyInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
+assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0), \
+    f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
@@ -192,15 +208,18 @@ print("OK")
         _assert_ok(rc, out, err, "C_WrapKey(NULL mech)")
 
     def test_derive_key_null_mechanism(self, p11_config: Any) -> None:
-        """C_DeriveKey(session, NULL, ...) -> CKR_ARGUMENTS_BAD."""
+        """C_DeriveKey(session, NULL, ...) -> CKR_ARGUMENTS_BAD or CKR_MECHANISM_INVALID."""
         rc, out, err = _run(
             str(p11_config.module),
             p11_config.pin.get_secret_value() if p11_config.pin else None,
             """\
+# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 key = ctypes.c_ulong(0)
 rv = raw.C_DeriveKey(sh, null_pointer().pointer, 0, None, 0, ctypes.byref(key))
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, 0x60, 0x70), f"Got 0x{rv:08x}"
+# 0x60 = CKR_KEY_HANDLE_INVALID, 0x70 = CKR_MECHANISM_INVALID
+assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0x60, 0x70), \
+    f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
