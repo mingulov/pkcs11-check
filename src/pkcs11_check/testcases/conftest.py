@@ -56,3 +56,28 @@ def extract_ec_point(ec_point_der: Any) -> Any:
     if not data or data[0] != 0x04:
         return ec_point_der
     return decode_ec_point(data)
+
+
+def xfail_if_known_ckr(
+    exc: Exception,
+    known_ckrs: set[int] | tuple[int, ...],
+    msg: str,
+) -> None:
+    """xfail if the exception message contains a known CKR name, otherwise re-raise.
+
+    Use this instead of ``except (AssertionError, Exception): pytest.xfail(...)``
+    to ensure that only specific CKR failures become expected failures, while
+    Python coding bugs and wrong-output assertions propagate as real failures.
+
+    Args:
+        exc: The caught exception.
+        known_ckrs: Set of CKR integer values to match against.
+        msg: Message for pytest.xfail if a known CKR is found.
+    """
+    from pkcs11_check.raw.rv import ckr_name
+
+    exc_str = str(exc)
+    for ckr in known_ckrs:
+        if ckr_name(ckr) in exc_str:
+            pytest.xfail(f"{msg}: {ckr_name(ckr)}")
+    raise  # Not a known CKR — propagate as real failure
