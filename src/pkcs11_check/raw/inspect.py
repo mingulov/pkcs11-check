@@ -96,7 +96,9 @@ def render_count_fault(fault: CountFaultArg) -> str:
 
 def render_sized_fault(fault: SizedFaultArg) -> str:
     """Render a malformed pointer/length state such as truncated or wrong-shape input."""
-    return f"sized_fault[{fault.note}] ({render_pointer(fault.pointer_arg)}, {render_length(fault.length_arg)})"
+    ptr = render_pointer(fault.pointer_arg)
+    length = render_length(fault.length_arg)
+    return f"sized_fault[{fault.note}] ({ptr}, {length})"
 
 
 def render_mechanism(mechanism: PackedMechanism, *, namespace: str | None = None) -> str:

@@ -99,9 +99,17 @@ _MECH_SKIP_CKRS = {
 
 
 def _ec_point(rs: Any, handle: int) -> bytes:
-    """Read and decode EC_POINT from a public key handle."""
+    """Read and decode EC_POINT from a public key handle.
+
+    For Weierstrass curves (P-256, P-384, P-521) the attribute is DER OCTET STRING
+    wrapping 0x04||x||y.  For Montgomery curves (X25519, X448) the value is raw
+    little-endian bytes with no DER wrapper (RFC 7748 / OASIS PKCS#11 v3.2).
+    """
     attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
-    return decode_ec_point(attrs[CKA_EC_POINT])  # type: ignore[arg-type]
+    raw = attrs[CKA_EC_POINT]
+    if isinstance(raw, bytes) and len(raw) > 0 and raw[0] == 0x04:
+        return decode_ec_point(raw)  # type: ignore[arg-type]
+    return raw  # type: ignore[return-value]
 
 
 def _gen_ec(rs: Any) -> tuple[int, int]:

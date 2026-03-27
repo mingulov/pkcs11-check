@@ -132,7 +132,9 @@ key = ctypes.c_ulong(0)
 ct = (ctypes.c_ubyte * 2048)()
 ct_len = ctypes.c_ulong(2048)
 enc_key = ctypes.c_ulong(0)
-rv = raw.C_EncapsulateKey(sh, ctypes.byref(mech), 0, None, 0, ct, ctypes.byref(ct_len), ctypes.byref(enc_key))
+rv = raw.C_EncapsulateKey(
+    sh, ctypes.byref(mech), 0, None, 0, ct, ctypes.byref(ct_len), ctypes.byref(enc_key)
+)
 print(f"CKR:0x{rv:08x}")
 assert rv != CKR_OK, f"Should have rejected AES_ECB for Encapsulate"
 print("OK")
@@ -199,7 +201,9 @@ ct = (ctypes.c_ubyte * 256)()
 ct_len = ctypes.c_ulong(256)
 out = (ctypes.c_ubyte * 256)()
 out_len = ctypes.c_ulong(256)
-rv = raw.C_WrapKeyAuthenticated(sh, ctypes.byref(mech), 0, 0, ct, ct_len, out, ctypes.byref(out_len))
+rv = raw.C_WrapKeyAuthenticated(
+    sh, ctypes.byref(mech), 0, 0, ct, ct_len, out, ctypes.byref(out_len)
+)
 print(f"CKR:0x{rv:08x}")
 assert rv != CKR_OK, f"Should have rejected SHA256 for WrapAuth"
 print("OK")

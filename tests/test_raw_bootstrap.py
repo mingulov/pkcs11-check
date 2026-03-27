@@ -10,7 +10,7 @@ def test_get_slot_ids_uses_explicit_token_present_and_two_call_pattern() -> None
     calls: list[int] = []
 
     class FakeRaw:
-        def C_GetSlotList(
+        def C_GetSlotList(  # noqa: N802
             self, token_present: int, slot_list: CK_SLOT_ID_PTR | None, count: object
         ) -> int:
             calls.append(token_present)
@@ -42,7 +42,7 @@ def test_open_session_returns_handle_and_passes_explicit_flags() -> None:
     seen: list[tuple[int, int, object, object]] = []
 
     class FakeRaw:
-        def C_OpenSession(
+        def C_OpenSession(  # noqa: N802
             self,
             slot_id: int,
             flags: int,
@@ -73,7 +73,7 @@ def test_login_user_passes_explicit_user_type_and_pin_bytes() -> None:
     seen: list[tuple[int, int, bytes, int]] = []
 
     class FakeRaw:
-        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:  # noqa: N802
             pin_ptr = ctypes.cast(pin, CK_UTF8CHAR_PTR)
             pin_bytes = bytes(pin_ptr[index] for index in range(pin_len))
             seen.append((session, user_type, pin_bytes, pin_len))
@@ -91,7 +91,7 @@ def test_login_user_accepts_bytearray_pin_input() -> None:
     seen: list[bytes] = []
 
     class FakeRaw:
-        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:  # noqa: N802
             pin_ptr = ctypes.cast(pin, CK_UTF8CHAR_PTR)
             seen.append(bytes(pin_ptr[index] for index in range(pin_len)))
             return CKR_OK
@@ -108,7 +108,7 @@ def test_login_user_accepts_memoryview_pin_input() -> None:
     seen: list[bytes] = []
 
     class FakeRaw:
-        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:  # noqa: N802
             pin_ptr = ctypes.cast(pin, CK_UTF8CHAR_PTR)
             seen.append(bytes(pin_ptr[index] for index in range(pin_len)))
             return CKR_OK
@@ -125,7 +125,7 @@ def test_login_user_keeps_empty_pin_explicit_instead_of_null() -> None:
     seen: list[tuple[object, int]] = []
 
     class FakeRaw:
-        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:  # noqa: N802
             seen.append((pin, pin_len))
             return CKR_OK
 
@@ -141,7 +141,7 @@ def test_login_user_tolerates_user_already_logged_in_for_setup_flows() -> None:
     from pkcs11_check.raw.types_std import CKR_USER_ALREADY_LOGGED_IN, CKU_USER
 
     class FakeRaw:
-        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:  # noqa: N802
             return CKR_USER_ALREADY_LOGGED_IN
 
     login_user(FakeRaw(), session=17, user_type=CKU_USER, pin=b"1234")
@@ -154,7 +154,7 @@ def test_login_user_rejects_text_pin_input() -> None:
     from pkcs11_check.raw.types_std import CKU_USER
 
     class FakeRaw:
-        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:  # noqa: N802
             raise AssertionError("should not be called")
 
     with pytest.raises(TypeError, match="pin must be bytes-like"):
@@ -168,7 +168,7 @@ def test_login_user_rejects_non_buffer_input() -> None:
     from pkcs11_check.raw.types_std import CKU_USER
 
     class FakeRaw:
-        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:
+        def C_Login(self, session: int, user_type: int, pin: object, pin_len: int) -> int:  # noqa: N802
             raise AssertionError("should not be called")
 
     with pytest.raises(TypeError, match="pin must be bytes-like"):
@@ -182,7 +182,7 @@ def test_close_session_quietly_is_best_effort_for_teardown() -> None:
     seen: list[int] = []
 
     class FakeRaw:
-        def C_CloseSession(self, session: int) -> int:
+        def C_CloseSession(self, session: int) -> int:  # noqa: N802
             seen.append(session)
             return CKR_SESSION_HANDLE_INVALID
 
@@ -196,7 +196,7 @@ def test_logout_delegates_to_raw_with_allowed_rvs() -> None:
     from pkcs11_check.raw.types_std import CKR_OK
 
     class FakeRaw:
-        def C_Logout(self, session: int) -> int:
+        def C_Logout(self, session: int) -> int:  # noqa: N802
             return CKR_OK
 
     logout(FakeRaw(), 42)
@@ -206,7 +206,7 @@ def test_logout_quietly_catches_exceptions() -> None:
     from pkcs11_check.raw.bootstrap import logout_quietly
 
     class FakeRaw:
-        def C_Logout(self, session: int) -> int:
+        def C_Logout(self, session: int) -> int:  # noqa: N802
             raise OSError("boom")
 
     logout_quietly(FakeRaw(), 42)
@@ -219,7 +219,7 @@ def test_login_user_with_name_passes_username_to_raw() -> None:
     captured: list[tuple[bytes, int]] = []
 
     class FakeRaw:
-        def C_LoginUser(
+        def C_LoginUser(  # noqa: N802
             self, session: int, user_type: int, pin, pin_len: int, username, username_len: int
         ) -> int:
             captured.append((bytes(username), username_len))

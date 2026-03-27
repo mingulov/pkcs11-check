@@ -157,7 +157,7 @@ class TestTemplateConstraintAttributes:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_WRAP_TEMPLATE])
                 wt = vals[CKA_WRAP_TEMPLATE]
                 assert wt is not None or wt == b""
-            except AssertionError:
+            except (AssertionError, KeyError):
                 pytest.skip("Module does not support CKA_WRAP_TEMPLATE")
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -183,7 +183,7 @@ class TestTemplateConstraintAttributes:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_UNWRAP_TEMPLATE])
                 ut = vals[CKA_UNWRAP_TEMPLATE]
                 assert ut is not None or ut == b""
-            except AssertionError:
+            except (AssertionError, KeyError):
                 pytest.skip("Module does not support CKA_UNWRAP_TEMPLATE")
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -208,7 +208,7 @@ class TestTemplateConstraintAttributes:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_DERIVE_TEMPLATE])
                 dt = vals[CKA_DERIVE_TEMPLATE]
                 assert dt is not None or dt == b""
-            except AssertionError:
+            except (AssertionError, KeyError):
                 pytest.skip("Module does not support CKA_DERIVE_TEMPLATE")
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

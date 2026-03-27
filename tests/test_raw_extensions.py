@@ -70,7 +70,8 @@ def test_extension_registry_supports_structs_packers_and_inspectors() -> None:
 def test_extension_global_helper_lookup_returns_none_for_equal_value_collision() -> None:
     from pkcs11_check.raw.extensions import lookup_inspector, lookup_packer, register_extension
 
-    helper = lambda value: value
+    def helper(value: object) -> object:
+        return value
 
     register_extension(
         namespace="ibm",
@@ -103,10 +104,17 @@ def test_extension_global_struct_lookup_returns_none_for_equal_value_collision()
 def test_extension_numeric_helper_collision_requires_namespace() -> None:
     from pkcs11_check.raw.extensions import lookup_inspector, lookup_packer, register_extension
 
-    packer_a = lambda value: value
-    packer_b = lambda value: value + 1
-    inspector_a = lambda value: "a"
-    inspector_b = lambda value: "b"
+    def packer_a(value: object) -> object:
+        return value
+
+    def packer_b(value: int) -> int:
+        return value + 1
+
+    def inspector_a(value: object) -> str:
+        return "a"
+
+    def inspector_b(value: object) -> str:
+        return "b"
 
     register_extension(
         namespace="ibm", packers={0x80010003: packer_a}, inspectors={0x80010003: inspector_a}
@@ -124,8 +132,11 @@ def test_extension_numeric_helper_collision_requires_namespace() -> None:
 def test_extension_namespaced_numeric_lookup_uses_vendor_symbol_mapping() -> None:
     from pkcs11_check.raw.extensions import lookup_inspector, lookup_packer, register_extension
 
-    packer_ibm = lambda value: value
-    inspector_ibm = lambda value: "ibm"
+    def packer_ibm(value: object) -> object:
+        return value
+
+    def inspector_ibm(value: object) -> str:
+        return "ibm"
 
     register_extension(
         namespace="ibm",
@@ -184,7 +195,8 @@ def test_extension_read_only_lookup_does_not_create_namespace() -> None:
 def test_extension_global_numeric_lookup_uses_unique_vendor_symbolic_helper() -> None:
     from pkcs11_check.raw.extensions import lookup_inspector, register_extension
 
-    inspector = lambda value: "vendor-numeric-fallback"
+    def inspector(value: object) -> str:
+        return "vendor-numeric-fallback"
 
     register_extension(
         namespace="ibm",
@@ -198,8 +210,11 @@ def test_extension_global_numeric_lookup_uses_unique_vendor_symbolic_helper() ->
 def test_extension_global_numeric_lookup_keeps_vendor_symbolic_fallback_local() -> None:
     from pkcs11_check.raw.extensions import lookup_inspector, register_extension
 
-    ibm_inspector = lambda value: "ibm-local"
-    acme_inspector = lambda value: "acme-local"
+    def ibm_inspector(value: object) -> str:
+        return "ibm-local"
+
+    def acme_inspector(value: object) -> str:
+        return "acme-local"
 
     register_extension(
         namespace="ibm",
@@ -235,8 +250,11 @@ def test_extension_global_numeric_lookup_returns_none_when_vendor_id_is_ambiguou
 def test_extension_global_helper_ambiguity_is_family_specific() -> None:
     from pkcs11_check.raw.extensions import lookup_inspector, lookup_packer, register_extension
 
-    packer = lambda value: value
-    inspector = lambda value: "inspector"
+    def packer(value: object) -> object:
+        return value
+
+    def inspector(value: object) -> str:
+        return "inspector"
 
     register_extension(
         namespace="ibm",
@@ -288,7 +306,8 @@ def test_extension_register_rejects_dead_string_helper_key() -> None:
 def test_extension_register_accepts_same_call_vendor_string_helper_key() -> None:
     from pkcs11_check.raw.extensions import lookup_inspector, register_extension
 
-    inspector = lambda value: "ok"
+    def inspector(value: object) -> str:
+        return "ok"
 
     register_extension(
         namespace="ibm",
@@ -411,8 +430,11 @@ def test_extension_register_rejects_conflicting_numeric_and_symbolic_helper_valu
 
     from pkcs11_check.raw.extensions import register_extension
 
-    helper_a = lambda value: "a"
-    helper_b = lambda value: "b"
+    def helper_a(value: object) -> str:
+        return "a"
+
+    def helper_b(value: object) -> str:
+        return "b"
 
     with pytest.raises(ValueError, match="conflicting helper registration"):
         register_extension(

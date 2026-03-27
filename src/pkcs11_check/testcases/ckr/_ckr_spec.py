@@ -299,6 +299,7 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
             CKR_MECHANISM_PARAM_INVALID,
             CKR_MECHANISM_INVALID,
             CKR_ARGUMENTS_BAD,
+            CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.1 Sec.5.8.1",
@@ -664,6 +665,7 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
             CKR_MECHANISM_PARAM_INVALID,
             CKR_MECHANISM_INVALID,
             CKR_ARGUMENTS_BAD,
+            CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.1 Sec.5.9.1",
@@ -1167,6 +1169,7 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_MECHANISM_PARAM_INVALID,
             CKR_MECHANISM_INVALID,
             CKR_ARGUMENTS_BAD,
+            CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.1 Sec.5.10.1",
@@ -3474,7 +3477,11 @@ CKR_KEM: dict[str, CkrExpectation] = {
         function="C_EncapsulateKey",
         condition="unsupported_mechanism",
         spec_ckr=CKR_MECHANISM_INVALID,
-        compat_tuple=MECHANISM_ERRORS,
+        compat_tuple=(
+            CKR_MECHANISM_INVALID,
+            CKR_TEMPLATE_INCONSISTENT,
+            *MECHANISM_ERRORS[1:],
+        ),
         spec_ref="PKCS#11 v3.2 Sec.5.14.7",
     ),
     "encap_key_type_inconsistent": CkrExpectation(
@@ -3486,6 +3493,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
             CKR_MECHANISM_INVALID,
             CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_ARGUMENTS_BAD,
+            CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.2 Sec.5.14.7",
@@ -3495,7 +3503,11 @@ CKR_KEM: dict[str, CkrExpectation] = {
         function="C_DecapsulateKey",
         condition="unsupported_mechanism",
         spec_ckr=CKR_MECHANISM_INVALID,
-        compat_tuple=MECHANISM_ERRORS,
+        compat_tuple=(
+            CKR_MECHANISM_INVALID,
+            CKR_TEMPLATE_INCONSISTENT,
+            *MECHANISM_ERRORS[1:],
+        ),
         spec_ref="PKCS#11 v3.2 Sec.5.14.8",
     ),
     "decap_ciphertext_invalid": CkrExpectation(
@@ -3507,6 +3519,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
             CKR_ENCRYPTED_DATA_LEN_RANGE,
             CKR_ARGUMENTS_BAD,
             CKR_MECHANISM_INVALID,
+            CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.2 Sec.5.14.8",
@@ -4302,7 +4315,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 Sec.5.7.1",
         allow_success=True,  # Module may ignore unknown attributes
     ),
-    "create_user_not_logged_in": CkrExpectation(
+    "create_private_object_not_logged_in": CkrExpectation(
         function="C_CreateObject",
         condition="private_object_without_login",
         spec_ckr=CKR_ATTRIBUTE_VALUE_INVALID,

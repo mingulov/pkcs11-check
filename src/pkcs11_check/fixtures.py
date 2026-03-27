@@ -93,6 +93,32 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
         close_session_quietly(raw, sh)
 
 
+def _build_ckm_alias_map() -> dict[int, list[str]]:
+    """Build a reverse map from CKM int value to all CKM_* names for that value."""
+    import importlib as _il
+    from collections import defaultdict
+
+    _ts = _il.import_module("pkcs11_check.raw.types_std")
+    by_val: dict[int, list[str]] = defaultdict(list)
+    for attr_name in dir(_ts):
+        if attr_name.startswith("CKM_") and attr_name.isupper():
+            val = getattr(_ts, attr_name)
+            if isinstance(val, int):
+                by_val[int(val)].append(attr_name)
+    return {v: names for v, names in by_val.items() if len(names) > 1}
+
+
+_CKM_ALIAS_MAP: dict[int, list[str]] | None = None
+
+
+def _get_ckm_aliases(types_std_mod: Any, mech_int: int) -> list[str]:
+    """Return alias CKM names for a mechanism value (empty if no aliases)."""
+    global _CKM_ALIAS_MAP
+    if _CKM_ALIAS_MAP is None:
+        _CKM_ALIAS_MAP = _build_ckm_alias_map()
+    return _CKM_ALIAS_MAP.get(mech_int, [])
+
+
 @dataclass
 class RawSession:
     """Raw PKCS#11 session.
@@ -108,11 +134,17 @@ class RawSession:
 
     @property
     def mechanisms(self) -> frozenset[str]:
-        """Cached mechanism name set (both 'CKM_AES_ECB' and 'AES_ECB' forms)."""
+        """Cached mechanism name set (both 'CKM_AES_ECB' and 'AES_ECB' forms).
+
+        Includes alias names (e.g. 'EC_KEY_PAIR_GEN' for CKM_ECDSA_KEY_PAIR_GEN).
+        """
         if self._mechanisms is None:
+            from importlib import importlib as _importlib
+
             from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
             from pkcs11_check.raw.recipes import get_mechanism_list
 
+            _ts = _importlib.import_module("pkcs11_check.raw.types_std")
             mechs = get_mechanism_list(self.raw, self.slot_id)
             names: set[str] = set()
             for m in mechs:
@@ -121,6 +153,10 @@ class RawSession:
                     names.add(mname)
                     if mname.startswith("CKM_"):
                         names.add(mname[4:])
+                for alias in _get_ckm_aliases(_ts, int(m)):
+                    names.add(alias)
+                    if alias.startswith("CKM_"):
+                        names.add(alias[4:])
             self._mechanisms = frozenset(names)
         return self._mechanisms
 

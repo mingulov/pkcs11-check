@@ -433,7 +433,7 @@ class TestDigestStateRoundTrip:
                 c_ulong(0),
             )
             if rv2 == CKR_OK:
-                print("CROSS_SESSION_ACCEPTED")
+                print("CROSS_SESSION_ACCEPTED:1")
             else:
                 print(f"CROSS_SESSION_REJECTED:0x{rv2:08x}")
 

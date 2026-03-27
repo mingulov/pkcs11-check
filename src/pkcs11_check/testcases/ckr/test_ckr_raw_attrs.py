@@ -120,7 +120,12 @@ rv = raw.C_SignInit(sh, mech.byref(), key.value)
 print(f"CKR:0x{rv:08x}")
 # KEY_FUNCTION_NOT_PERMITTED or MECHANISM_INVALID (if module doesn't support CMAC)
 # KEY_FUNCTION_NOT_PERMITTED, MECHANISM_INVALID, or KEY_TYPE_INCONSISTENT
-assert rv in (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_MECHANISM_INVALID, CKR_KEY_TYPE_INCONSISTENT, 0x06), f"Got 0x{rv:08x}"
+assert rv in (
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_MECHANISM_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    0x06,
+), f"Got 0x{rv:08x}"
 print("OK")
 """,
         )

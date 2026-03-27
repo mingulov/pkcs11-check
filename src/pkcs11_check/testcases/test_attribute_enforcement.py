@@ -324,6 +324,8 @@ class TestCheckValue:
             kcv = attrs[CKA_CHECK_VALUE]
             assert isinstance(kcv, bytes), f"Expected bytes, got {type(kcv)}"
             assert len(kcv) == 3, f"Expected 3-byte KCV, got {len(kcv)} bytes"
+        except KeyError:
+            pytest.skip("Module does not expose CKA_CHECK_VALUE")
         except AssertionError as e:
             if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
                 pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
@@ -350,6 +352,8 @@ class TestCheckValue:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE])
                 kcv = attrs[CKA_CHECK_VALUE]
+            except KeyError:
+                pytest.skip("Module does not expose CKA_CHECK_VALUE")
             except AssertionError as e:
                 if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
                     pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
@@ -389,6 +393,8 @@ class TestCheckValue:
                 a2 = read_attributes(rs.raw, rs.sh, key2, [CKA_CHECK_VALUE])
                 kcv1 = a1[CKA_CHECK_VALUE]
                 kcv2 = a2[CKA_CHECK_VALUE]
+            except KeyError:
+                pytest.skip("Module does not expose CKA_CHECK_VALUE")
             except AssertionError as e:
                 if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
                     pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")

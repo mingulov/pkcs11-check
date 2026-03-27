@@ -8,7 +8,7 @@ from ctypes import byref, c_void_p, cast
 from typing import Any
 
 from . import metadata_std
-from .types_std import *  # noqa: F401,F403
+from .types_std import *  # noqa: F401,F403,F405
 
 _PTR_SIZE = ctypes.sizeof(c_void_p)
 _VERSION_SIZE = _PTR_SIZE
@@ -43,6 +43,28 @@ _V32_FUNCTION_NAMES = tuple(
 )
 
 
+_MECHANISM_ARG_FUNCS = frozenset(
+    {
+        "C_EncryptInit",
+        "C_DecryptInit",
+        "C_DigestInit",
+        "C_SignInit",
+        "C_VerifyInit",
+        "C_SignRecoverInit",
+        "C_VerifyRecoverInit",
+        "C_GenerateKey",
+        "C_GenerateKeyPair",
+        "C_WrapKey",
+        "C_UnwrapKey",
+        "C_DeriveKey",
+        "C_MessageEncryptInit",
+        "C_MessageDecryptInit",
+        "C_MessageSignInit",
+        "C_MessageVerifyInit",
+    }
+)
+
+
 class RawPKCS11:
     """Raw ctypes access to PKCS#11 C_* functions."""
 
@@ -56,6 +78,7 @@ class RawPKCS11:
         self._funcs: dict[str, Any] = {}
         self._lib: ctypes.CDLL | None = None
         self._call_log: dict[str, int] = defaultdict(int)
+        self._used_mechanisms: set[int] = set()
 
         if funclist_ptr:
             self._load_from_ptr(funclist_ptr)
@@ -180,12 +203,24 @@ class RawPKCS11:
     def reset_call_log(self) -> None:
         self._call_log.clear()
 
+    @property
+    def used_mechanisms(self) -> set[int]:
+        return set(self._used_mechanisms)
+
+    def reset_used_mechanisms(self) -> None:
+        self._used_mechanisms.clear()
+
     @classmethod
     def from_lib(cls, lib_path: str) -> RawPKCS11:
         return cls(lib_path=lib_path)
 
     def _call(self, name: str, *args: Any) -> int:
         self._call_log[name] += 1
+        if name in _MECHANISM_ARG_FUNCS and len(args) >= 2:
+            try:
+                self._used_mechanisms.add(args[1]._obj.mechanism)
+            except (AttributeError, TypeError):
+                pass
         func = self._funcs.get(name)
         if func is None:
             raise AttributeError(f"{name} not available in this module")

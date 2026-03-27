@@ -128,7 +128,9 @@ _KEYGEN_SCRIPT = """\
     kg_mech = mech_simple(CKM_AES_KEY_GEN)
 
     hKey = CK_OBJECT_HANDLE(0)
-    rv = raw.C_GenerateKey(hSession, kg_mech.byref(), _template_ptr(attrs), attrs.count, byref(hKey))
+    rv = raw.C_GenerateKey(
+        hSession, kg_mech.byref(), _template_ptr(attrs), attrs.count, byref(hKey)
+    )
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
         print(f"SKIP:GenerateKeyUnsupported:0x{rv:08x}")
         sys.exit(0)

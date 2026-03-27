@@ -692,15 +692,20 @@ class TestSessionCancel:
 class TestLoginUserWithNameRecipe:
     """Tests exercising the login_user_with_name() bootstrap recipe."""
 
-    def test_login_user_with_name_empty_username(self, p11_raw_session: Any) -> None:
+    def test_login_user_with_name_empty_username(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         """login_user_with_name with empty username behaves like C_Login."""
         rs = p11_raw_session
         if not hasattr(rs.raw, "C_LoginUser"):
             pytest.skip("C_LoginUser not available (v2.40 module)")
-        login_user_with_name(rs.raw, rs.sh, CKU_USER, rs.config.pin or b"")
+        pin = p11_config.pin.get_secret_value() if p11_config.pin is not None else b""
+        login_user_with_name(rs.raw, rs.sh, CKU_USER, pin)
         logout_quietly(rs.raw, rs.sh)
 
-    def test_login_user_with_name_nonempty_username(self, p11_raw_session: Any) -> None:
+    def test_login_user_with_name_nonempty_username(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         """login_user_with_name with non-empty username.
 
         Most current PKCS#11 providers ignore the username field.
@@ -709,10 +714,9 @@ class TestLoginUserWithNameRecipe:
         rs = p11_raw_session
         if not hasattr(rs.raw, "C_LoginUser"):
             pytest.skip("C_LoginUser not available (v2.40 module)")
+        pin = p11_config.pin.get_secret_value() if p11_config.pin is not None else b""
         try:
-            login_user_with_name(
-                rs.raw, rs.sh, CKU_USER, rs.config.pin or b"", username=b"testuser"
-            )
+            login_user_with_name(rs.raw, rs.sh, CKU_USER, pin, username=b"testuser")
             logout_quietly(rs.raw, rs.sh)
         except AssertionError:
             pytest.skip("Module does not support non-empty username for C_LoginUser")

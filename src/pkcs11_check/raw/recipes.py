@@ -26,11 +26,15 @@ from .types_std import (
     CK_ULONG,
     CKA,
     CKA_CLASS,
+    CKA_DECRYPT,
     CKA_EC_PARAMS,
+    CKA_ENCRYPT,
     CKA_KEY_TYPE,
     CKA_MODULUS_BITS,
+    CKA_SIGN,
     CKA_VALUE,
     CKA_VALUE_LEN,
+    CKA_VERIFY,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKK,
@@ -148,8 +152,11 @@ def gen_aes_key(
     mechanism: int = CKM_AES_KEY_GEN,
 ) -> int:
     """Generate an AES key with explicit attributes."""
+    _defaults: dict[int, Any] = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
+    if attrs:
+        _defaults.update(attrs)
     packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
-    packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
+    packed.extend(pack_attrs(_defaults, skip={CKA_VALUE_LEN}))
     tmpl = template(*packed)
     mech = mech_simple(mechanism)
     key = CK_OBJECT_HANDLE(0)
@@ -200,14 +207,20 @@ def gen_rsa_keypair(
     private_attrs: dict[CKA, Any] | None = None,
 ) -> tuple[int, int]:
     """Generate an RSA key pair. Returns (pub_handle, priv_handle)."""
+    _pub_defaults: dict[CKA, Any] = {CKA_VERIFY: True, CKA_ENCRYPT: True}
+    _priv_defaults: dict[CKA, Any] = {CKA_SIGN: True, CKA_DECRYPT: True}
+    if public_attrs:
+        _pub_defaults.update(public_attrs)
+    if private_attrs:
+        _priv_defaults.update(private_attrs)
     return gen_keypair(
         raw,
         session,
         CKM_RSA_PKCS_KEY_PAIR_GEN,
         pub_base=[attr_ulong(CKA_MODULUS_BITS, bits)],
         priv_base=[],
-        public_attrs=public_attrs,
-        private_attrs=private_attrs,
+        public_attrs=_pub_defaults,
+        private_attrs=_priv_defaults,
         pub_skip={CKA_MODULUS_BITS},
     )
 
@@ -220,14 +233,20 @@ def gen_ec_keypair(
     private_attrs: dict[CKA, Any] | None = None,
 ) -> tuple[int, int]:
     """Generate an EC key pair. Returns (pub_handle, priv_handle)."""
+    _pub_defaults: dict[CKA, Any] = {CKA_VERIFY: True}
+    _priv_defaults: dict[CKA, Any] = {CKA_SIGN: True}
+    if public_attrs:
+        _pub_defaults.update(public_attrs)
+    if private_attrs:
+        _priv_defaults.update(private_attrs)
     return gen_keypair(
         raw,
         session,
         CKM_EC_KEY_PAIR_GEN,
         pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
         priv_base=[],
-        public_attrs=public_attrs,
-        private_attrs=private_attrs,
+        public_attrs=_pub_defaults,
+        private_attrs=_priv_defaults,
         pub_skip={CKA_EC_PARAMS},
     )
 

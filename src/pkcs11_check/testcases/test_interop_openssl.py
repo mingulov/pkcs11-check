@@ -57,7 +57,6 @@ class TestOpenSSLPkcs11Provider:
             pytest.skip("pkcs11-provider not installed")
 
         module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else ""
 
         # Use PKCS11_PROVIDER_MODULE env var
         rc, out, err = _run(
@@ -73,7 +72,7 @@ class TestOpenSSLPkcs11Provider:
         if not _have_pkcs11_provider():
             pytest.skip("pkcs11-provider not installed")
 
-        module = str(p11_config.module)
+        _module = str(p11_config.module)
 
         # Simple digest - doesn't need token login
         rc, out, err = _run(
@@ -91,7 +90,6 @@ class TestOpenSSLPkcs11Provider:
             pytest.skip("pkcs11-provider not installed")
 
         module = str(p11_config.module)
-        pin = p11_config.pin.get_secret_value() if p11_config.pin else ""
 
         # Generate RSA key via OpenSSL with PKCS#11 - just verify no crash
         script = f"""

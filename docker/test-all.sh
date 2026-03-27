@@ -11,7 +11,7 @@ ALL_PROVIDERS=(
     nss-pqc
     nss-main
     opencryptoki
-    #opencryptoki-master
+    opencryptoki-master
     tpm2
     bouncyhsm
     pkcs11-mock

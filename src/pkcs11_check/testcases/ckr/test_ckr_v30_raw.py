@@ -115,7 +115,11 @@ out_len = ctypes.c_ulong(32)
 if "C_EncryptMessage" in raw._funcs:
     rv = raw.C_EncryptMessage(sh, None, 0, data, 16, None, 0, out, ctypes.byref(out_len))
     print(f"CKR:0x{rv:08x}")
-    assert rv in (CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD), f"Got 0x{rv:08x}"
+    assert rv in (
+        CKR_OPERATION_NOT_INITIALIZED,
+        CKR_FUNCTION_NOT_SUPPORTED,
+        CKR_ARGUMENTS_BAD,
+    ), f"Got 0x{rv:08x}"
 else:
     print("SKIP:no_EncryptMessage")
 print("OK")

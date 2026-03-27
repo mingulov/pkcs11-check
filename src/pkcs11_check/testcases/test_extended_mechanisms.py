@@ -121,7 +121,7 @@ class TestSHA512Truncated:
         if not rs.has_mechanism("SHA512_224"):
             pytest.skip("CKM_SHA512_224 not supported")
         p11_digest = digest_single(rs.raw, rs.sh, CKM_SHA512_224, b"")
-        expected = hashlib.sha512_224(b"").digest()
+        expected = hashlib.new("sha512_224", b"").digest()
         assert p11_digest == expected
         assert len(p11_digest) == 28
 
@@ -139,7 +139,7 @@ class TestSHA512Truncated:
         if not rs.has_mechanism("SHA512_256"):
             pytest.skip("CKM_SHA512_256 not supported")
         p11_digest = digest_single(rs.raw, rs.sh, CKM_SHA512_256, b"")
-        expected = hashlib.sha256(b"").digest()
+        expected = hashlib.new("sha512_256", b"").digest()
         assert p11_digest == expected
         assert len(p11_digest) == 32
 

@@ -32,13 +32,14 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
     sign_recover_single,
     verify_recover_single,
 )
-from pkcs11_check.raw.types_std import CKM_RSA_X_509
+from pkcs11_check.raw.types_std import CKM_RSA_X_509, CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
 
@@ -471,9 +472,20 @@ class TestSignRecoverRecipes:
     """In-process tests exercising sign_recover_single / verify_recover_single recipes."""
 
     @staticmethod
-    def _gen_recover_key(rs: Any) -> tuple[int, int]:
+    def _check_sign_recover(rs: Any) -> None:
         if not rs.has_mechanism("RSA_X_509"):
             pytest.skip("CKM_RSA_X_509 not supported")
+        try:
+            mech = mech_simple(CKM_RSA_X_509)
+            rv = rs.raw.C_SignRecoverInit(rs.sh, mech.byref(), 0)
+        except (AttributeError, TypeError):
+            pytest.skip("C_SignRecoverInit not available")
+        if rv == CKR_FUNCTION_NOT_SUPPORTED:
+            pytest.skip("C_SignRecover not supported by module")
+
+    @staticmethod
+    def _gen_recover_key(rs: Any) -> tuple[int, int]:
+        TestSignRecoverRecipes._check_sign_recover(rs)
         return gen_rsa_keypair(rs.raw, rs.sh, 2048)
 
     def test_sign_recover_single_returns_signature(self, p11_raw_session: Any) -> None:
