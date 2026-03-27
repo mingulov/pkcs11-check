@@ -87,7 +87,7 @@ Updated as Docker targets are analyzed.
 **Interface version:** v3.0
 **Docker target:** `test-nss-pqc`
 **Baseline (2026-03-27):** 35,292 passed / 415 failed / 31,947 skipped / 598 xfailed (68,252 total)
-**Post-Phase-8 baseline:** 35,327 passed / 302 failed / 31,984 skipped / 639 xfailed (68,252 total)
+**Post-fix (Phases 1-11):** 35,327 passed / 296 failed / 31,984 skipped / 645 xfailed (68,252 total)
 
 Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 
@@ -148,6 +148,90 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 
 ### Spec Deviations
 
+Findings from Phases 2-3 investigation and ongoing testing. All references are to PKCS#11 v3.1
+unless noted.
+
+#### Key Attribute Defaults (Phase 2)
+
+- **CKA_PRIVATE defaults to False for secret and private keys**: PKCS#11 v3.1 Sec.4.7 Table 4
+  specifies `CKA_PRIVATE` defaults to `CK_TRUE` for private and secret key objects. NSS softoken
+  generates AES secret keys and RSA private keys with `CKA_PRIVATE=False` unless explicitly set.
+  Affected tests in `test_attributes.py` are marked `xfail` (2 secret-key tests + 2 RSA private-key
+  tests). Impact: private key objects accessible in read-only sessions without prior login.
+
+- **CKA_LOCAL not set on generated keys**: PKCS#11 v3.1 Sec.4.7 requires `CKA_LOCAL=True` for
+  keys whose raw material was generated on the token (via `C_GenerateKey`/`C_GenerateKeyPair`).
+  NSS softoken returns `CKA_LOCAL=False` for all generated AES, RSA public, and RSA private keys.
+  Affected: 3 xfails in `test_attributes.py` (one per key class). Ref: Sec.10.7 (secret keys),
+  Sec.10.1 (RSA keys).
+
+- **CKA_EXTRACTABLE defaults to True for RSA private keys**: PKCS#11 v3.1 Sec.10.1 recommends
+  `CKA_EXTRACTABLE` default `CK_FALSE` for private keys to prevent inadvertent export. NSS softoken
+  defaults to `CKA_EXTRACTABLE=True`. Affected: 1 xfail in `test_attributes.py`.
+
+- **CKA_NEVER_EXTRACTABLE inconsistent**: When `CKA_EXTRACTABLE` is explicitly set to `True` at
+  creation, `CKA_NEVER_EXTRACTABLE` must be `False` (Sec.4.9.4). NSS softoken behavior is
+  inconsistent with this rule in combination with the default-extractable deviation above.
+
+#### Missing/Unsupported Attributes (Phase 2)
+
+- **CKA_COPYABLE not enforced**: Setting `CKA_COPYABLE=False` at key creation should prevent
+  `C_CopyObject` from succeeding. NSS softoken ignores this attribute — `C_CopyObject` succeeds
+  on non-copyable objects. Ref: PKCS#11 v3.1 Sec.4.9.1. Affected: 1 xfail in `test_attributes.py`.
+
+- **CKA_DESTROYABLE not enforced**: Setting `CKA_DESTROYABLE=False` should cause `C_DestroyObject`
+  to return `CKR_ACTION_PROHIBITED`. NSS softoken ignores this attribute. Ref: Sec.4.9.1. Affected:
+  1 xfail in `test_attributes.py`.
+
+- **CKA_KEY_GEN_MECHANISM not supported**: NSS softoken does not set `CKA_KEY_GEN_MECHANISM` on
+  generated keys (returns `CKR_ATTRIBUTE_TYPE_INVALID`). PKCS#11 v3.1 Sec.10.7 lists this as a
+  required attribute for secret keys. Covered by attribute-default tests.
+
+- **CKA_ALWAYS_AUTHENTICATE not supported**: NSS softoken does not implement the
+  `CKA_ALWAYS_AUTHENTICATE` attribute (Sec.4.7). Private key objects cannot require per-operation
+  authentication. Tests that set this attribute skip.
+
+#### Session and Login Behavior (Phase 3)
+
+- **CKR_PIN_INCORRECT instead of CKR_USER_ALREADY_LOGGED_IN**: When a session is already logged
+  in and `C_Login` is called again with a wrong PIN, NSS softoken returns `CKR_PIN_INCORRECT` rather
+  than `CKR_USER_ALREADY_LOGGED_IN`. PKCS#11 v3.1 Sec.5.6 requires `CKR_USER_ALREADY_LOGGED_IN`
+  when the token is already authenticated. This is the `CKR_USER_TYPE_INVALID` / `CKR_PIN_INCORRECT`
+  quirk; handled in fixture login logic.
+
+- **NSS auto-initializes after C_Finalize (CKR_OK instead of CKR_CRYPTOKI_NOT_INITIALIZED)**:
+  Calling any PKCS#11 function after `C_Finalize` should return `CKR_CRYPTOKI_NOT_INITIALIZED`
+  (Sec.5.4). NSS softoken instead auto-reinitializes the library transparently and returns `CKR_OK`.
+  This is a vendor extension. Affected: 1 xfail in `test_attributes.py` / `test_api_state.py`.
+
+- **C_CloseSession returns CKR_OK on already-closed session**: PKCS#11 v3.1 Sec.5.7 requires
+  `CKR_SESSION_HANDLE_INVALID` when the handle is invalid (including already-closed sessions). NSS
+  softoken returns `CKR_OK`. Covered by CKR tests.
+
+- **CKR ordering — template checks before session-type checks**: NSS validates template
+  completeness (`CKR_TEMPLATE_INCOMPLETE`) before checking whether the session is read-only
+  (`CKR_SESSION_READ_ONLY`). For example, `C_GenerateKeyPair` in a RO session with an incomplete
+  template returns `CKR_TEMPLATE_INCOMPLETE` rather than `CKR_SESSION_READ_ONLY`. The PKCS#11
+  spec does not mandate a specific validation order; this is a documented NSS ordering quirk.
+  Ref: Token Write-Protection section below.
+
+#### Mechanism Parameter Handling (Phase 3)
+
+- **NULL mechanism pointer returns CKR_MECHANISM_INVALID (not CKR_ARGUMENTS_BAD)**: PKCS#11 v3.1
+  Sec.5.2 lists `CKR_ARGUMENTS_BAD` as the return when a required pointer argument is NULL.
+  NSS softoken returns `CKR_MECHANISM_INVALID` when a NULL `CK_MECHANISM_PTR` is passed to
+  `C_EncryptInit`, `C_SignInit`, etc. Both are acceptable per the spec's "may also return" clause;
+  documented as NSS behavior in CKR raw-args tests.
+
+#### Trust and Wrapping Policy (Phase 2)
+
+- **CKA_WRAP_WITH_TRUSTED not enforced**: A key with `CKA_WRAP_WITH_TRUSTED=True` should only
+  be wrappable by a key with `CKA_TRUSTED=True` (Sec.4.9.4). NSS softoken permits wrapping
+  regardless of the wrapping key's trust status. Affected: 1 xfail in `test_api_security.py`
+  (`TestWrapWithTrusted`).
+
+#### EdDSA and DSA (Phases 2, 5)
+
 - **EdDSA rejects CK_EDDSA_PARAMS (CKR_MECHANISM_PARAM_INVALID)**: NSS softoken returns
   `CKR_MECHANISM_PARAM_INVALID` when `CK_EDDSA_PARAMS` is provided for `CKM_EDDSA` sign/verify,
   even for pure-mode EdDSA with `phFlag=0` and no context data. PKCS#11 v3.0 Sec.2.3.13 mandates
@@ -195,9 +279,9 @@ Tests requiring token object creation skip with "Token is write-protected" on NS
 - Same DSA Wycheproof rejections as NSS 3.120.1 (296 failures — see Spec Deviations)
 - EdDSA CKR_MECHANISM_PARAM_INVALID: 7 sign/verify tests in `test_eddsa.py` now xfailed (see Spec Deviations)
 
-### Xfail Triage (Phase 9) — 639 xfails categorized
+### Xfail Triage (Phases 9-11) — 645 xfails categorized
 
-All 639 xfails were individually verified against NSS softoken behavior.
+All 645 xfails were individually verified against NSS softoken behavior.
 **None are fixable test bugs.** Every xfail represents a genuine NSS limitation or spec deviation.
 
 #### xfail breakdown by root cause
@@ -424,12 +508,14 @@ All 13 are xfailed with descriptive security messages. See Security Findings sec
 
 #### Triage conclusion
 
-All 639 xfails are verified as legitimate NSS softoken limitations. Distribution:
+All 645 xfails (final post-Phase-11 count) are verified as legitimate NSS softoken limitations.
+Distribution:
 
-- **NSS softoken implementation gaps** (mechanisms advertised but broken): 595 (93%)
+- **NSS softoken implementation gaps** (mechanisms advertised but broken): 595 (92%)
   — ChaCha20-Poly1305, HKDF output, AES-KWP, IKE, SP800-108 feedback/pipeline, HKDF_DATA
-- **NSS spec deviations** (non-conformant behavior): 32 (5%)
-  — EdDSA params, attribute defaults, session/cancel behavior
+- **NSS spec deviations** (non-conformant behavior): 37 (6%)
+  — EdDSA params, attribute defaults (CKA_PRIVATE, CKA_LOCAL, CKA_EXTRACTABLE),
+  CKA_COPYABLE/DESTROYABLE not enforced, session/cancel behavior, auto-init, CKA_WRAP_WITH_TRUSTED
 - **Security policy violations** (PKCS#11 security model broken): 13 (2%)
   — Tookan, sensitive reads, key extraction, padding oracle
 
@@ -437,9 +523,9 @@ No xfails should be removed or converted to skips. These are the findings pkcs11
 exists to report. The xfail annotations serve as a permanent record that the behavior is
 known, documented, and not a test defect.
 
-### Coverage & Skip Analysis (Phase 10)
+### Coverage & Skip Analysis (Phases 10-11)
 
-**Baseline (post-Phase-9):** 35,327 passed / 302 failed / 31,984 skipped / 639 xfailed (68,252 total)
+**Final (post-Phase-11):** 35,327 passed / 296 failed / 31,984 skipped / 645 xfailed (68,252 total)
 
 #### Function Coverage
 

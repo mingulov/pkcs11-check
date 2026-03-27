@@ -1,6 +1,6 @@
 # pkcs11-check Current Status
 
-Last updated: 2026-03-21
+Last updated: 2026-03-27
 
 ## What Works
 
@@ -30,11 +30,85 @@ Last updated: 2026-03-21
 - **Remaining mechanism gaps** — ML_DSA_EXTERNAL_MU, KMAC, standalone SHAKE, PKCS12_PBE_EXPORT/IMPORT, RSA_PKCS_NULL, a few Tier 1 stragglers
 - **Remaining attribute gaps** — CKA_WRAP_TEMPLATE, CKA_UNWRAP_TEMPLATE, CKA_DERIVE_TEMPLATE, explicit CKO_OTP_KEY object tests
 - **Compliance report accounting** — function/mechanism keyword mappings need refresh
-- **Per-target validation** — SoftHSM2 + Kryoptic validated; OpenCryptoki, TPM2, BouncyHSM need fresh runs
+- **Per-target validation** — SoftHSM2 + Kryoptic validated; NSS-PQC 3.121.0 fully triaged (Phases 1-11); OpenCryptoki, TPM2, BouncyHSM need fresh runs
+
+## NSS-PQC 3.121.0 (2026-03-27)
+
+Full 11-phase validation against NSS 3.121.0 (softoken with PQC support) completed.
+
+### Final Numbers
+
+| Metric | Baseline | Post-fix | Delta |
+|--------|----------|---------|-------|
+| Passed | 35,292 | 35,327 | +35 |
+| Failed | 415 | 296 | -119 |
+| Skipped | 31,947 | 31,984 | +37 |
+| Xfailed | 598 | 645 | +47 |
+| **Total** | **68,252** | **68,252** | — |
+
+### Test Coverage
+
+- **Function coverage:** 64/104 PKCS#11 functions called (61%)
+- **Mechanism coverage:** 107/140 advertised mechanisms exercised (76%)
+- **Interface version:** v3.0 (negotiated via `C_GetInterfaceList`)
+
+### Remaining Failures (296)
+
+All 296 remaining failures are Wycheproof DSA vectors (`test_wycheproof_dsa.py`) where NSS
+softoken rejects externally imported public keys with raw domain parameters. This is a
+fundamental NSS architectural limitation — DSA verification requires keys generated or imported
+through NSS's internal format, not raw `CKO_PUBLIC_KEY` objects via `C_CreateObject`. These
+remain as failures (not xfailed) because the module is genuinely rejecting valid signatures.
+
+### Xfail Summary (645 total)
+
+All 645 xfails verified as legitimate NSS softoken limitations — none are test bugs:
+
+| Count | Category |
+|------:|---------|
+| 256 | ChaCha20-Poly1305: non-standard AEAD parameter format |
+| 232 | HKDF: incorrect output vs. RFC 5869 expected values |
+| 77 | AES-KWP: RFC 5649 non-conformance (size/content/minimum) |
+| 16 | IKE derive: mechanisms advertised but not operational |
+| 13 | Security bugs: sensitive reads, Tookan, padding oracle, key extraction |
+| 7 | EdDSA: rejects standard CK_EDDSA_PARAMS (PKCS#11 v3.0 Sec.2.3.13) |
+| 7 | SP800-108 KDF: feedback/pipeline advertised but not operational |
+| 25 | Attribute/spec deviations: CKA_PRIVATE, CKA_LOCAL, CKA_EXTRACTABLE, etc. |
+| 3 | HKDF_DATA: CKO_DATA object derivation not supported |
+| 9 | Miscellaneous NSS quirks and limitations |
+
+### Security Findings
+
+Four high-severity security bugs confirmed in NSS softoken (documented in `docs/module-issues.md`):
+
+1. **CRITICAL:** `CKA_VALUE`/`CKA_PRIVATE_EXPONENT` readable despite `CKA_SENSITIVE=True`
+2. **CRITICAL:** `CKA_EXTRACTABLE` escalation `False→True` via `C_CopyObject` (Tookan)
+3. **HIGH:** Wrap-decrypt oracle (key with both `CKA_WRAP` and `CKA_DECRYPT`)
+4. **MEDIUM:** RSA-OAEP non-uniform error codes (Manger 2001 padding oracle)
+
+### Spec Deviations Discovered
+
+- `CKA_PRIVATE` defaults to False for secret/private keys (spec: True)
+- `CKA_LOCAL` not set on generated keys
+- `CKA_EXTRACTABLE` defaults to True for RSA private keys (spec recommends False)
+- `CKA_COPYABLE` / `CKA_DESTROYABLE` not enforced
+- `CKA_KEY_GEN_MECHANISM` / `CKA_ALWAYS_AUTHENTICATE` not supported
+- `CKR_PIN_INCORRECT` instead of `CKR_USER_ALREADY_LOGGED_IN` on re-login
+- Auto-initialize after `C_Finalize` returns `CKR_OK` (vendor extension)
+- `C_CloseSession` returns `CKR_OK` on already-closed session
+- Template checks before session-type checks (ordering deviation)
+- NULL mechanism pointer returns `CKR_MECHANISM_INVALID` (not `CKR_ARGUMENTS_BAD`)
+- `CKA_WRAP_WITH_TRUSTED` wrapping not enforced
+
+### Skip Summary (31,984 total)
+
+79% of skips (25,167) are from NSS's restricted EC curve support — only P-256, P-384, P-521.
+Remaining: SHA-3/RSA absent, AES CCM/XTS/GMAC missing, ML-DSA/SLH-DSA not yet in NSS 3.121.0,
+Montgomery/Ed/RSA-OAEP key import limitations.
 
 ## What's Planned
 
 - **Close Phase A-H remaining gaps** — ~15 specific items identified in gap analysis
 - **Vendor extension system** — configurable vendor mechanism support (IBM/OpenCryptoki first), designed and spec'd
-- **Per-target re-validation** — fresh runs on all 12 Docker targets
+- **Per-target re-validation** — fresh runs on remaining Docker targets (SoftHSM2, NSS 3.120.1, OpenCryptoki, TPM2, BouncyHSM)
 - **Compliance report hardening** — accurate function/mechanism coverage mapping
