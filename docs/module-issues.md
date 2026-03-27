@@ -64,8 +64,9 @@ Updated as Docker targets are analyzed.
 | 296 | DSA Wycheproof | NSS DSA implementation rejects valid 3072-bit DSA vectors — likely NSS strictness on parameter validation |
 | ~16 | Session/access tests | NSS returns `CKR_USER_TYPE_INVALID` instead of `CKR_USER_ALREADY_LOGGED_IN` — PKCS#11 spec compliance deviation |
 | ~16 | KEM/PQC | ML-KEM not supported in NSS 3.120.1 (expected skips, showing as errors) |
-| ~7 | EdDSA | Ed25519 signing failures — needs investigation |
-| ~27 | Other | AEAD, key flags, mechanism fuzz, etc. — per-file analysis needed (task 2.3) |
+| ~7 | EdDSA | NSS requires mechanism params for EdDSA sign/verify — returns CKR_ARGUMENTS_BAD without them |
+| ~2 | AES-XCBC-MAC | NSS returns CKR_KEY_TYPE_INCONSISTENT on verify despite CKA_VERIFY=True |
+| ~27 | Other | AEAD, key flags, mechanism fuzz, etc. — per-file analysis needed |
 
 ### Known quirks
 - **Read-only crypto services token**: NSS's default slot ("NSS Generic Crypto Services") is read-only. Cannot create objects, generate keys, or store tokens. Tests requiring RW access should skip.
@@ -73,6 +74,8 @@ Updated as Docker targets are analyzed.
 - **Two slots**: NSS exposes 2 slots. Slot 0 is the crypto services slot (read-only), slot 1 may be an NSS internal database slot.
 - **Needs configDir for full functionality**: `libsoftokn3.so` must be loaded with `configDir='sql:/path/to/db'` NSS init args to access the writable database slot. Without this, only the read-only crypto services slot is available. See `/home/user/src/m/pkcs11-proxy/pkcs11-proxy/scripts/test-nss-fixtures.sh` for reference configuration.
 - **RSA keypair requires CKA_PUBLIC_EXPONENT**: NSS requires `CKA_PUBLIC_EXPONENT` in the public key template for `CKM_RSA_PKCS_KEY_PAIR_GEN`. Kryoptic and SoftHSM2 are more lenient and accept the default (65537). The recipe now includes this attribute for cross-module compatibility.
+- **EdDSA sign/verify requires mechanism params**: NSS returns `CKR_ARGUMENTS_BAD` on `C_Sign`/`C_Verify` with `CKM_EDDSA` unless specific mechanism parameters are provided. The softoken expects Ed25519ctx/Ed25519ph style params. This is a known NSS limitation - EdDSA tests skip on NSS.
+- **AES-XCBC-MAC verification**: NSS returns `CKR_KEY_TYPE_INCONSISTENT` on verify operations even with `CKA_VERIFY=True` key attribute. XCBC-MAC sign works but verify fails. This is an NSS softoken quirk.
 
 ---
 
