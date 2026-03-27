@@ -47,7 +47,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
 
 pytestmark = pytest.mark.security
 
@@ -310,6 +310,7 @@ class TestCopyObject:
     def test_copy_token_object_stays_token(self, p11_raw_session: Any) -> None:
         """Copy of a token object is also a token object (CKA_TOKEN=True)."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         key_h = gen_aes_key(
             rs.raw,
             rs.sh,

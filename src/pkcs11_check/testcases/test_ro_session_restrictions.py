@@ -75,7 +75,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_TYPE_INVALID,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
 
 pytestmark = pytest.mark.access
 
@@ -260,6 +260,7 @@ class TestROTokenObjectMutation:
     def test_destroy_token_object_in_ro_fails(self, p11_raw_session: Any) -> None:
         """C_DestroyObject of token object in RO session must fail."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = "ro-destroy-test"
         key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_TOKEN: True, CKA_LABEL: label})
         try:
@@ -278,6 +279,7 @@ class TestROTokenObjectMutation:
     def test_set_attribute_token_object_in_ro_fails(self, p11_raw_session: Any) -> None:
         """C_SetAttributeValue on token object in RO session must fail."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = "ro-setattr-test"
         key_h = gen_aes_key(
             rs.raw,
@@ -314,6 +316,7 @@ class TestROTokenObjectMutation:
         from pkcs11_check.raw.recipes import copy_object
 
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = "ro-copy-test"
         key_h = gen_aes_key(
             rs.raw,
@@ -441,6 +444,7 @@ class TestROCryptoOperations:
     def test_verify_token_key_in_ro(self, p11_raw_session: Any) -> None:
         """Verification with a token key works in RO session."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = "ro-verify-rsa-test"
         pub_h, priv_h = gen_rsa_keypair(
             rs.raw,
@@ -504,6 +508,7 @@ class TestROExactCKR:
     def test_destroy_token_object_returns_session_read_only(self, p11_raw_session: Any) -> None:
         """Destroy of token object in RO returns CKR_SESSION_READ_ONLY."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = "ro-ckr-destroy-test"
         key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_TOKEN: True, CKA_LABEL: label})
         try:
@@ -548,6 +553,7 @@ class TestROWrapUnwrapRestrictions:
     def test_unwrap_to_token_object_in_ro_fails(self, p11_raw_session: Any) -> None:
         """Unwrap with TOKEN=True template in RO session must fail."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported for wrapping")
 
@@ -616,6 +622,7 @@ class TestROWrapUnwrapRestrictions:
     def test_unwrap_to_session_object_in_ro_succeeds(self, p11_raw_session: Any) -> None:
         """Unwrap with TOKEN=False template in RO session succeeds."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported for wrapping")
 

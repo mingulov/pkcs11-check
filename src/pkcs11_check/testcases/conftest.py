@@ -58,6 +58,20 @@ def extract_ec_point(ec_point_der: Any) -> Any:
     return decode_ec_point(data)
 
 
+def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:
+    """Skip test if the token is write-protected (cannot create token objects)."""
+    from ctypes import byref
+
+    from pkcs11_check.raw.types_std import CK_TOKEN_INFO, CKF_WRITE_PROTECTED, CKR_OK
+
+    info = CK_TOKEN_INFO()
+    rv = raw.C_GetTokenInfo(slot_id, byref(info))
+    if rv != CKR_OK:
+        return  # Can't determine, let the test try
+    if info.flags & CKF_WRITE_PROTECTED:
+        pytest.skip("Token is write-protected — cannot create token objects")
+
+
 def xfail_if_known_ckr(
     exc: Exception,
     known_ckrs: set[int] | tuple[int, ...],

@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKO_DATA,
 )
+from pkcs11_check.testcases.conftest import skip_if_token_write_protected
 
 pytestmark = pytest.mark.security
 
@@ -68,6 +69,7 @@ class TestConcurrentSessions:
     ) -> None:
         """Object created in session A with TOKEN=True is visible in session B."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = _unique_label("vis")
 
         key = gen_aes_key(
@@ -96,6 +98,7 @@ class TestConcurrentSessions:
     ) -> None:
         """Destroying a token object in session A is reflected in session B."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = _unique_label("destr")
 
         key = gen_aes_key(
@@ -129,6 +132,7 @@ class TestConcurrentSessions:
     ) -> None:
         """Token key created in session A can be used for crypto in session B."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("CKM_AES_KEY_GEN not supported")
         if not rs.has_mechanism("AES_ECB"):
@@ -176,6 +180,7 @@ class TestConcurrentObjectCreation:
     ) -> None:
         """Create and immediately destroy objects in rapid succession - no leak."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         labels: list[bytes] = []
         for i in range(20):
             label = _unique_label(f"rapid-{i}")
@@ -201,6 +206,7 @@ class TestConcurrentObjectCreation:
     ) -> None:
         """Creating objects in two concurrent sessions doesn't cause conflicts."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
 
         label_a = _unique_label("sA")
         label_b = _unique_label("sB")
@@ -246,6 +252,7 @@ class TestConcurrentDataObjects:
     ) -> None:
         """CKO_DATA with TOKEN=True visible in concurrent session."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = _unique_label("data")
 
         obj = create_object(

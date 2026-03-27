@@ -38,7 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
 
 pytestmark = pytest.mark.access
 
@@ -167,6 +167,7 @@ class TestTokenObjectPersistence:
     ) -> None:
         """Token object (CKA_TOKEN=True) persists after session closes."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("tok-persist")
 
@@ -193,6 +194,7 @@ class TestTokenObjectPersistence:
     ) -> None:
         """Token CKO_DATA object persists after session closes."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("tok-data")
 
@@ -216,6 +218,7 @@ class TestTokenObjectPersistence:
     def test_token_object_value_preserved(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Token object attribute values are preserved across sessions."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("tok-val")
         payload = b"data-integrity-check-12345"
@@ -247,6 +250,7 @@ class TestPrivateVisibility:
     ) -> None:
         """CKA_PRIVATE=True token object not visible in public session."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("priv-hidden")
 
@@ -283,6 +287,7 @@ class TestPrivateVisibility:
     ) -> None:
         """CKA_PRIVATE=False token object visible in public session."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("pub-visible")
 
@@ -320,6 +325,7 @@ class TestPrivateVisibility:
     ) -> None:
         """CKA_PRIVATE=True token object visible after login."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("priv-afterlogin")
 
@@ -349,6 +355,7 @@ class TestCrossSessionModification:
     ) -> None:
         """Modify object attribute in session A, read updated value in B."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("xmod")
         new_label = _ulabel("xmod-updated")
@@ -391,6 +398,7 @@ class TestCrossSessionModification:
         a given object class; this is implementation-defined behaviour.
         """
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("xval")
 
@@ -446,6 +454,7 @@ class TestCrossSessionDestruction:
     def test_destroy_in_a_gone_in_b(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Token object destroyed in session A is gone from session B search."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("xdestroy")
 
@@ -524,7 +533,16 @@ class TestTokenPrivateInteraction:
         """TOKEN=False, PRIVATE=True object visible in same logged-in session."""
         rs = p11_raw_session
         label = _ulabel("priv-sess")
-        h = _create_data_obj(rs.raw, rs.sh, label, b"priv-session", token=False, private=True)
+        try:
+            h = _create_data_obj(
+                rs.raw, rs.sh, label, b"priv-session", token=False, private=True
+            )
+        except AssertionError as exc:
+            if "CKR_ATTRIBUTE_VALUE_INVALID" in str(exc):
+                pytest.skip(
+                    "Module does not support CKA_PRIVATE=True on CKO_DATA objects"
+                )
+            raise
         try:
             found = _find_data_by_label(rs.raw, rs.sh, label)
             assert len(found) >= 1
@@ -534,6 +552,7 @@ class TestTokenPrivateInteraction:
     def test_public_token_obj_persists(self, p11_raw_session: Any, p11_config: Any) -> None:
         """TOKEN=True, PRIVATE=False object persists and is publicly visible."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("pub-tok")
 
@@ -564,6 +583,7 @@ class TestTokenPrivateInteraction:
     ) -> None:
         """TOKEN=True, PRIVATE=True object persists and visible after login."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("priv-tok")
 
@@ -666,6 +686,7 @@ class TestTokenObjectImmediateVisibility:
     def test_token_object_visible_immediately(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Newly created token object visible immediately in another session."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("immed")
 
@@ -688,6 +709,7 @@ class TestTokenObjectImmediateVisibility:
     def test_token_key_usable_immediately(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Token key created in A is usable for crypto in B immediately."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("immed-key")
 
@@ -725,6 +747,7 @@ class TestTokenObjectImmediateVisibility:
     ) -> None:
         """Multiple token objects created in A are all visible in B."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         prefix = _ulabel("multi")
         count = 5
@@ -760,6 +783,7 @@ class TestTokenObjectImmediateVisibility:
     ) -> None:
         """Destroyed token object is gone immediately from other session."""
         rs = p11_raw_session
+        skip_if_token_write_protected(rs.raw, rs.slot_id)
         pin_bytes = get_pin_bytes(p11_config)
         label = _ulabel("immed-destroy")
 
