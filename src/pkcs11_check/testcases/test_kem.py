@@ -8,12 +8,20 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 from __future__ import annotations
 
 import ctypes
+from ctypes import byref
 from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import attr_ulong
+from pkcs11_check.raw.pack import (
+    attr_bytes,
+    attr_ulong,
+    mech_simple,
+    template,
+    template_ptr_count,
+)
 from pkcs11_check.raw.recipes import (
+    _to_ubyte_buf,
     decapsulate_key,
     destroy_quietly,
     encapsulate_key,
@@ -21,9 +29,10 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CK_ULONG,
     CKA_CLASS,
     CKA_DECAPSULATE,
-    CKA_DERIVE,
     CKA_ENCAPSULATE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -53,17 +62,10 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
+    CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
-    CKR_OK,
-    CK_OBJECT_HANDLE,
-    CK_ULONG,
 )
-from ctypes import byref
-from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template, template_ptr_count
-from pkcs11_check.raw.rv import expect_rv
-from pkcs11_check.raw.recipes import _to_ubyte_buf
-import ctypes
 
 pytestmark = [pytest.mark.pqc, pytest.mark.keymgmt, pytest.mark.requires_v32]
 
@@ -90,8 +92,8 @@ def _skip_if_no_ml_kem(rs: Any) -> None:
 def _generate_ml_kem_keypair(
     rs: Any,
     param_set: int | None = None,
-    CKA_ENCAPSULATE_OVERRIDE: bool | None = True,
-    CKA_DECAPSULATE_OVERRIDE: bool | None = True,
+    CKA_ENCAPSULATE_OVERRIDE: bool | None = True,  # noqa: N803
+    CKA_DECAPSULATE_OVERRIDE: bool | None = True,  # noqa: N803
 ) -> tuple[int, int]:
     """Generate an ML-KEM key pair with encapsulate/decapsulate capabilities.
 
@@ -626,9 +628,11 @@ class TestMLKEMNegative:
         try:
             handle = CK_OBJECT_HANDLE(0)
             mech = mech_simple(CKM_ML_KEM)
-            tmpl = template(attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-                            attr_ulong(CKA_KEY_TYPE, CKK_AES),
-                            attr_bytes(CKA_VALUE, b"injected"))
+            tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_AES),
+                attr_bytes(CKA_VALUE, b"injected"),
+            )
             ct_buf = _to_ubyte_buf(ct)
             rv = rs.raw.C_DecapsulateKey(
                 rs.sh,
@@ -660,8 +664,9 @@ class TestMLKEMNegative:
             short_ct = ct[:-1]
             handle = CK_OBJECT_HANDLE(0)
             mech = mech_simple(CKM_ML_KEM)
-            tmpl = template(attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-                            attr_ulong(CKA_KEY_TYPE, CKK_AES))
+            tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY), attr_ulong(CKA_KEY_TYPE, CKK_AES)
+            )
             short_ct_buf = _to_ubyte_buf(short_ct)
             rv = rs.raw.C_DecapsulateKey(
                 rs.sh,
@@ -672,7 +677,12 @@ class TestMLKEMNegative:
                 len(short_ct),
                 byref(handle),
             )
-            assert rv in (CKR_ENCRYPTED_DATA_LEN_RANGE, CKR_ENCRYPTED_DATA_INVALID, CKR_ARGUMENTS_BAD, CKR_DEVICE_ERROR)
+            assert rv in (
+                CKR_ENCRYPTED_DATA_LEN_RANGE,
+                CKR_ENCRYPTED_DATA_INVALID,
+                CKR_ARGUMENTS_BAD,
+                CKR_DEVICE_ERROR,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -722,11 +732,12 @@ class TestMLKEMNegative:
         pub, priv = _generate_ml_kem_keypair(rs, CKA_ENCAPSULATE_OVERRIDE=False)
         try:
             handle = CK_OBJECT_HANDLE(0)
-            ct_buf = (ctypes.c_ubyte * 4096)()
-            ct_len = CK_ULONG(4096)
+            ct_len = CK_ULONG(0)
             mech = mech_simple(CKM_ML_KEM)
-            tmpl = template(attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-                            attr_ulong(CKA_KEY_TYPE, CKK_AES))
+            tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            )
             rv = rs.raw.C_EncapsulateKey(
                 rs.sh,
                 mech.byref(),
@@ -753,11 +764,12 @@ class TestMLKEMNegative:
         try:
             # Try to encapsulate with AES key
             handle = CK_OBJECT_HANDLE(0)
-            ct_buf = (ctypes.c_ubyte * 4096)()
-            ct_len = CK_ULONG(4096)
+            ct_len = CK_ULONG(0)
             mech = mech_simple(CKM_ML_KEM)
-            tmpl = template(attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-                            attr_ulong(CKA_KEY_TYPE, CKK_AES))
+            tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            )
             rv = rs.raw.C_EncapsulateKey(
                 rs.sh,
                 mech.byref(),

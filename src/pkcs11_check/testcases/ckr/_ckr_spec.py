@@ -3497,6 +3497,9 @@ CKR_KEM: dict[str, CkrExpectation] = {
             CKR_ARGUMENTS_BAD,
             CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
+            # NSS-PQC: RSA keys are not visible in the PQC-slot context so the
+            # handle resolves as invalid instead of producing CKR_KEY_TYPE_INCONSISTENT.
+            CKR_KEY_HANDLE_INVALID,
         ),
         spec_ref="PKCS#11 v3.2 Sec.5.14.7",
     ),
