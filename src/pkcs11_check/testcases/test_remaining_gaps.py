@@ -405,6 +405,13 @@ class TestAsyncLifecycle:
     Testing async lifecycle requires a module that actively supports async
     operations. Most current modules report the functions but do not have
     in-flight async ops, so we verify availability and document the limitation.
+
+    TODO: Add full async lifecycle test when a module supports it:
+      1. Start an async operation (e.g., async C_GenerateKeyPair)
+      2. Poll with C_AsyncGetID to get the operation ID
+      3. Complete with C_AsyncComplete or C_AsyncJoin
+      4. Verify the result matches a synchronous equivalent
+    Currently no tested module supports async operations.
     """
 
     @pytest.mark.requires_v30
