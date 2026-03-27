@@ -91,10 +91,10 @@ def _build_pbe_mech(
     keepalive.append(salt_arr)
 
     params = CK_PBE_PARAMS()
-    params.pInitVector = ctypes.cast(iv_buf, ctypes.POINTER(ctypes.c_ubyte))
-    params.pPassword = ctypes.cast(pw_arr, ctypes.POINTER(ctypes.c_ubyte))
+    params.pInitVector = ctypes.cast(iv_buf, ctypes.c_void_p)
+    params.pPassword = ctypes.cast(pw_arr, ctypes.c_void_p)
     params.ulPasswordLen = len(password)
-    params.pSalt = ctypes.cast(salt_arr, ctypes.POINTER(ctypes.c_ubyte))
+    params.pSalt = ctypes.cast(salt_arr, ctypes.c_void_p)
     params.ulSaltLen = len(salt)
     params.ulIteration = iterations
     keepalive.append(params)

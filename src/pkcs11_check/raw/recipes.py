@@ -31,6 +31,7 @@ from .types_std import (
     CKA_ENCRYPT,
     CKA_KEY_TYPE,
     CKA_MODULUS_BITS,
+    CKA_PUBLIC_EXPONENT,
     CKA_SIGN,
     CKA_VALUE,
     CKA_VALUE_LEN,
@@ -207,7 +208,11 @@ def gen_rsa_keypair(
     private_attrs: dict[CKA, Any] | None = None,
 ) -> tuple[int, int]:
     """Generate an RSA key pair. Returns (pub_handle, priv_handle)."""
-    _pub_defaults: dict[CKA, Any] = {CKA_VERIFY: True, CKA_ENCRYPT: True}
+    _pub_defaults: dict[CKA, Any] = {
+        CKA_VERIFY: True,
+        CKA_ENCRYPT: True,
+        CKA_PUBLIC_EXPONENT: b"\x01\x00\x01",  # 65537, required by NSS
+    }
     _priv_defaults: dict[CKA, Any] = {CKA_SIGN: True, CKA_DECRYPT: True}
     if public_attrs:
         _pub_defaults.update(public_attrs)
@@ -1100,7 +1105,9 @@ def encapsulate_key(
         *template_ptr_count(tmpl),
         None,  # pCiphertext
         byref(ct_len),
-        byref(key_handle),  # Some modules (Kryoptic) require this to be non-NULL even for length query
+        byref(
+            key_handle
+        ),  # Some modules (Kryoptic) require this to be non-NULL even for length query
     )
     expect_rv(rv, CKR_OK)
     ct_buf = (ctypes.c_ubyte * ct_len.value)()
