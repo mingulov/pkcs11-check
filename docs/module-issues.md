@@ -106,6 +106,27 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 
 (To be populated during Phases 2-3 investigation)
 
+### Token Write-Protection (Phase 1 findings)
+
+NSS cert DB slot (slot 1) has `CKF_WRITE_PROTECTED` set in `CK_TOKEN_INFO.flags`.
+This is normal NSS behavior — the certificate database slot does not support creating
+arbitrary objects via `C_CreateObject`, `C_GenerateKey`, or `C_GenerateKeyPair` with
+`CKA_TOKEN=True`.
+
+- **CKR_TOKEN_WRITE_PROTECTED** returned for: `gen_aes_key(CKA_TOKEN=True)`,
+  `gen_rsa_keypair(CKA_TOKEN=True)`, `C_DestroyObject` on token objects,
+  `C_SetAttributeValue` on token objects, `C_CopyObject` to token objects,
+  `C_UnwrapKey` with `CKA_TOKEN=True`
+- **CKR_ATTRIBUTE_VALUE_INVALID** returned for: `C_CreateObject` with `CKO_DATA`
+  and `CKA_TOKEN=True` (data objects not supported on cert DB slot)
+- **CKR_ATTRIBUTE_VALUE_INVALID** also for: `CKO_DATA` with `CKA_PRIVATE=True`
+  even on session objects — NSS does not support private data objects
+- **CKR ordering:** NSS validates template completeness before checking session
+  type — `C_GenerateKeyPair` in RO session with incomplete template returns
+  `CKR_TEMPLATE_INCOMPLETE` instead of `CKR_SESSION_READ_ONLY`
+
+Tests requiring token object creation skip with "Token is write-protected" on NSS.
+
 ### Known Limitations
 
 - ML-DSA (FIPS 204) not supported — all ML-DSA tests skip
