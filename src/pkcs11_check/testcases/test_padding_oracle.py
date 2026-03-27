@@ -80,7 +80,7 @@ class TestRSAPaddingOracle:
 
             # All errors should be the same type - if not, there's a potential oracle
             if len(error_types) > 1:
-                pytest.xfail(
+                pytest.fail(
                     f"SECURITY: RSA PKCS#1 v1.5 returns different error codes "
                     f"for invalid ciphertexts: {error_types}"
                 )
@@ -121,7 +121,7 @@ class TestRSAPaddingOracle:
                     error_types.add(_extract_ckr(exc))
 
             if len(error_types) > 1:
-                pytest.xfail(f"SECURITY: RSA-OAEP returns different error codes: {error_types}")
+                pytest.fail(f"SECURITY: RSA-OAEP returns different error codes: {error_types}")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -187,7 +187,7 @@ class TestAESPaddingOracle:
                 error_middle_byte = _extract_ckr(exc)
 
             if error_last_byte and error_middle_byte and error_last_byte != error_middle_byte:
-                pytest.xfail(
+                pytest.fail(
                     f"SECURITY: AES-CBC padding oracle - last byte error "
                     f"({error_last_byte}) differs from middle byte ({error_middle_byte})"
                 )
@@ -249,7 +249,7 @@ class TestTimingBasic:
             if valid_avg > 0 and invalid_avg > 0:
                 ratio = max(valid_avg, invalid_avg) / min(valid_avg, invalid_avg)
                 if ratio > 3.0:
-                    pytest.xfail(
+                    pytest.fail(
                         f"TIMING: RSA decrypt timing ratio {ratio:.1f}x "
                         f"(valid={valid_avg * 1000:.2f}ms, invalid={invalid_avg * 1000:.2f}ms)"
                     )

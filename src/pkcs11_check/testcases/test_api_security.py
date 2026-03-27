@@ -93,7 +93,7 @@ class TestWrapDecryptOracle:
                 try:
                     raw_key = decrypt_single(rs.raw, rs.sh, dual_key_h, CKM_AES_ECB, wrapped)
                     if raw_key and len(raw_key) > 0:
-                        pytest.xfail(
+                        pytest.fail(
                             "SECURITY: Wrap-decrypt oracle possible - "
                             "key has both CKA_WRAP and CKA_DECRYPT"
                         )
@@ -158,7 +158,7 @@ class TestAttributeEscalation:
         try:
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: True})
-                pytest.xfail("SECURITY: CKA_EXTRACTABLE escalated from False to True")
+                pytest.fail("SECURITY: CKA_EXTRACTABLE escalated from False to True")
             except AssertionError:
                 pass  # Module prevented escalation - correct
         finally:
@@ -176,7 +176,7 @@ class TestAttributeEscalation:
         try:
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_SENSITIVE: False})
-                pytest.xfail("SECURITY: CKA_SENSITIVE downgraded from True to False")
+                pytest.fail("SECURITY: CKA_SENSITIVE downgraded from True to False")
             except AssertionError:
                 pass  # Correct
         finally:
@@ -205,7 +205,7 @@ class TestAttributeLaunderingViaCopy:
                 # If copy succeeded, try to read the value
                 try:
                     read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
-                    pytest.xfail("SECURITY: Copy escalated CKA_EXTRACTABLE, key material readable")
+                    pytest.fail("SECURITY: Copy escalated CKA_EXTRACTABLE, key material readable")
                 except AssertionError:
                     pass  # Value still protected despite attribute change
                 finally:
@@ -229,7 +229,7 @@ class TestAttributeLaunderingViaCopy:
                 copy_h = copy_object(rs.raw, rs.sh, key_h, {CKA_SENSITIVE: False})
                 try:
                     read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
-                    pytest.xfail("SECURITY: Copy downgraded CKA_SENSITIVE, key material readable")
+                    pytest.fail("SECURITY: Copy downgraded CKA_SENSITIVE, key material readable")
                 except AssertionError:
                     pass
                 finally:

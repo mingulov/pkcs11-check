@@ -174,7 +174,7 @@ class TestECDSANonceBias:
 
             # Allow 30%-70% range (very generous - real bias would show <10% or >90%)
             if ratio < 0.30 or ratio > 0.70:
-                pytest.xfail(
+                pytest.fail(
                     f"SECURITY: ECDSA nonce MSB bias detected - "
                     f"{msb_set}/{len(r_values)} ({ratio:.1%}) have MSB set "
                     f"(expected ~50%)"
@@ -183,7 +183,7 @@ class TestECDSANonceBias:
             # Check for short nonces (upper bytes all zero)
             short_nonces = sum(1 for r in r_values if r < (1 << 240))
             if short_nonces > 5:
-                pytest.xfail(
+                pytest.fail(
                     f"SECURITY: {short_nonces}/{len(r_values)} signatures have "
                     f"short nonces (<240 bits) - lattice attack may be feasible"
                 )
