@@ -1112,12 +1112,22 @@ def encapsulate_key(
     *,
     mech_param: PackedMechanism | None = None,
 ) -> tuple[int, bytes]:
-    """C_EncapsulateKey — returns (secret_key_handle, ciphertext)."""
+    """C_EncapsulateKey — returns (secret_key_handle, ciphertext).
+
+    Uses the two-call pattern: first call with pCiphertext=NULL to get the required buffer
+    size, second call with a properly allocated buffer.
+
+    NSS-PQC returns CKR_BUFFER_TOO_SMALL (not CKR_OK) on the first NULL-buffer call, which
+    is valid PKCS#11 behavior analogous to C_Encrypt.  Kryoptic may create the key on the
+    first call and return CKR_OK — we preserve that handle and reuse it on the second call.
+    """
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
 
-    # Two-call pattern for ciphertext output
+    # First call: query ciphertext buffer size.
+    # Accept both CKR_OK (Kryoptic: key may already be created) and
+    # CKR_BUFFER_TOO_SMALL (NSS-PQC: standard two-pass indicator).
     ct_len = CK_ULONG(0)
     key_handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_EncapsulateKey(
@@ -1125,13 +1135,19 @@ def encapsulate_key(
         mech.byref(),
         pub_key,
         *template_ptr_count(tmpl),
-        None,  # pCiphertext
+        None,  # pCiphertext — NULL signals size query
         byref(ct_len),
-        byref(
-            key_handle
-        ),  # Some modules (Kryoptic) require this to be non-NULL even for length query
+        byref(key_handle),  # Kryoptic requires non-NULL even for size query
     )
-    expect_rv(rv, CKR_OK)
+    if rv not in (CKR_OK, CKR_BUFFER_TOO_SMALL):
+        expect_rv(rv, CKR_OK)  # raises with descriptive error
+
+    # Second call: pass properly sized buffer.
+    # If the first call already created the key (Kryoptic, CKR_OK + non-zero handle),
+    # reset the handle so the second call can overwrite it safely.
+    first_call_handle = key_handle.value
+    if rv == CKR_BUFFER_TOO_SMALL:
+        key_handle = CK_OBJECT_HANDLE(0)  # NSS: key not yet created
     ct_buf = (ctypes.c_ubyte * ct_len.value)()
     rv = raw.C_EncapsulateKey(
         session,
@@ -1143,7 +1159,9 @@ def encapsulate_key(
         byref(key_handle),
     )
     expect_rv(rv, CKR_OK)
-    return key_handle.value, bytes(ct_buf[: ct_len.value])
+    # Use the handle returned by whichever call actually created the key.
+    final_handle = key_handle.value if key_handle.value else first_call_handle
+    return final_handle, bytes(ct_buf[: ct_len.value])
 
 
 def decapsulate_key(
