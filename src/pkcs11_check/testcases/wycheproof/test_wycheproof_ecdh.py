@@ -148,10 +148,11 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
+    except AssertionError as exc:
+        exc_msg = str(exc)
         if result == "invalid":
             return
-        pytest.skip("Cannot import EC private key for ECDH")
+        pytest.skip(f"Cannot import EC private key for ECDH: {exc_msg}")
 
     # Derive shared secret
     # ECDH1_DERIVE params: (kdf, shared_data, public_data)

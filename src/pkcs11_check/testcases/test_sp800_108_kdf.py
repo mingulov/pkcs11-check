@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_VALUE,
+    CKA_VALUE_LEN,
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKM_SHA256_HMAC,
@@ -310,6 +311,7 @@ def _sp800_derive(
     """Derive a key using an SP800-108 mechanism."""
     attrs = dict(_DERIVE_ATTRS)
     attrs[CKA_KEY_TYPE] = CKK_AES
+    attrs[CKA_VALUE_LEN] = key_bits // 8
     return derive_key(
         rs.raw,
         rs.sh,

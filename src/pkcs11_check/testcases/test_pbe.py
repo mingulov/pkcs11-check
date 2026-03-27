@@ -20,6 +20,7 @@ from pkcs11_check.raw.types_std import (
     CK_MECHANISM,
     CK_OBJECT_HANDLE,
     CK_PBE_PARAMS,
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
@@ -39,6 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKM_PBE_SHA1_DES2_EDE_CBC,
     CKM_PBE_SHA1_DES3_EDE_CBC,
     CKM_PKCS5_PBKD2,
+    CKO_SECRET_KEY,
     CKP_PKCS5_PBKD2_HMAC_SHA1,
     CKP_PKCS5_PBKD2_HMAC_SHA256,
     CKR_FUNCTION_FAILED,
@@ -166,6 +168,7 @@ def _pbkdf2_gen_key(
     from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
 
     packed = [
+        attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
         attr_ulong(CKA_KEY_TYPE, key_type),
         attr_ulong(CKA_VALUE_LEN, key_bits // 8),
         attr_bool(CKA_TOKEN, False),

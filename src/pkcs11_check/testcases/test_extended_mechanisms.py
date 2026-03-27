@@ -25,16 +25,20 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_WRAP,
+    CKK_AES,
     CKM_AES_KEY_WRAP_KWP,
     CKM_SHA512_224,
     CKM_SHA512_256,
+    CKO_SECRET_KEY,
     CKR_MECHANISM_INVALID,
     CKR_OK,
 )
@@ -207,6 +211,8 @@ class TestAESKeyWrapKWP:
                 wrapped,
                 CKM_AES_KEY_WRAP_KWP,
                 attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
                     CKA_EXTRACTABLE: True,
                     CKA_SENSITIVE: False,
                     CKA_TOKEN: False,
@@ -259,6 +265,8 @@ class TestAESKeyWrapKWP:
                 wrapped,
                 CKM_AES_KEY_WRAP_KWP,
                 attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
                     CKA_EXTRACTABLE: True,
                     CKA_SENSITIVE: False,
                     CKA_TOKEN: False,

@@ -302,8 +302,9 @@ class TestECDSAP256Wycheproof:
                     CKA_VERIFY: True,
                 },
             )
-        except AssertionError:
-            pytest.skip("Cannot import EC public key on this module")
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            pytest.skip(f"Cannot import EC public key on this module: {exc_msg}")
 
         # Convert DER signature to raw r||s (32+32 bytes for P-256)
         try:
@@ -441,8 +442,14 @@ class TestECDSAP384Wycheproof:
                     CKA_VERIFY: True,
                 },
             )
-        except AssertionError:
-            pytest.skip("Cannot import EC public key on this module")
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            if "CKR_ATTRIBUTE_VALUE_INVALID" in exc_msg:
+                pytest.xfail(
+                    reason="Module returns CKR_ATTRIBUTE_VALUE_INVALID on "
+                    "EC public key import for secp384r1 (known module bug)"
+                )
+            pytest.skip(f"Cannot import EC public key on this module: {exc_msg}")
 
         # Convert DER sig to raw r||s (48+48 bytes for P-384)
         try:

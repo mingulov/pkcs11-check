@@ -699,7 +699,9 @@ class TestLoginUserWithNameRecipe:
         rs = p11_raw_session
         if not hasattr(rs.raw, "C_LoginUser"):
             pytest.skip("C_LoginUser not available (v2.40 module)")
-        pin = p11_config.pin.get_secret_value() if p11_config.pin is not None else b""
+        pin = (
+            p11_config.pin.get_secret_value().encode("utf-8") if p11_config.pin is not None else b""
+        )
         login_user_with_name(rs.raw, rs.sh, CKU_USER, pin)
         logout_quietly(rs.raw, rs.sh)
 
@@ -714,7 +716,9 @@ class TestLoginUserWithNameRecipe:
         rs = p11_raw_session
         if not hasattr(rs.raw, "C_LoginUser"):
             pytest.skip("C_LoginUser not available (v2.40 module)")
-        pin = p11_config.pin.get_secret_value() if p11_config.pin is not None else b""
+        pin = (
+            p11_config.pin.get_secret_value().encode("utf-8") if p11_config.pin is not None else b""
+        )
         try:
             login_user_with_name(rs.raw, rs.sh, CKU_USER, pin, username=b"testuser")
             logout_quietly(rs.raw, rs.sh)
