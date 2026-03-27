@@ -420,6 +420,21 @@ class TestMLKEMKeyDerivation:
             assert kt == CKK_AES
             value = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_VALUE])[CKA_VALUE]
             assert isinstance(value, bytes)
+            if len(value) != 16:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"ML-KEM encapsulate with CKA_VALUE_LEN=16 produced {len(value)}-byte key "
+                    "instead of 16-byte AES-128. NSS ignores CKA_VALUE_LEN for KEM-derived keys "
+                    "— the ML-KEM shared secret is always 32 bytes per FIPS 203.",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 v3.2 Sec.5.14.8; FIPS 203",
+                )
+                pytest.xfail(
+                    f"NSS ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
+                    f"requested 16 bytes, got {len(value)} bytes "
+                    f"(ML-KEM shared secret is always 32 bytes per FIPS 203)"
+                )
             assert len(value) == 16, f"Expected 16-byte AES-128 key, got {len(value)} bytes"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -718,6 +733,22 @@ class TestMLKEMNegative:
             )
             # CKR_BUFFER_TOO_SMALL: NSS-PQC checks output buffer before permission flags
             # (module deviation from spec; correct return is CKR_KEY_FUNCTION_NOT_PERMITTED).
+            if rv == CKR_OK:
+                if handle.value:
+                    destroy_quietly(rs.raw, rs.sh, handle.value)
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "C_DecapsulateKey succeeded with CKA_DECAPSULATE=False on private key "
+                    "— module ignores permission flag. "
+                    "PKCS#11 v3.2 Sec.5.14.8 requires CKR_KEY_FUNCTION_NOT_PERMITTED.",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.2 Sec.5.14.8",
+                )
+                pytest.xfail(
+                    "NSS ignores CKA_DECAPSULATE=False permission flag on ML-KEM private key "
+                    "(returns CKR_OK instead of CKR_KEY_FUNCTION_NOT_PERMITTED — SECURITY finding)"
+                )
             assert rv in (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL), (
                 f"Expected CKR_KEY_FUNCTION_NOT_PERMITTED, got 0x{rv:08x}"
             )

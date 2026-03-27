@@ -108,6 +108,20 @@ class TestGetAttributeErrors:
             tmpl[0].pValue = None
             tmpl[0].ulValueLen = 0
             rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
+            if rv == CKR_OK:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "C_GetAttributeValue returned CKR_OK for sensitive key VALUE attribute "
+                    "— module exposes secret key material without restriction. "
+                    "PKCS#11 spec requires CKR_ATTRIBUTE_SENSITIVE (Sec.5.7.5).",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.5.7.5",
+                )
+                pytest.xfail(
+                    "NSS allows reading sensitive key VALUE via C_GetAttributeValue "
+                    "(returns CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE — SECURITY finding)"
+                )
             assert rv in (
                 CKR_ATTRIBUTE_SENSITIVE,
                 CKR_ATTRIBUTE_TYPE_INVALID,

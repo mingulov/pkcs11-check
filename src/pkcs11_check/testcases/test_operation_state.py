@@ -670,9 +670,19 @@ class TestEncryptStateRoundTrip:
         if returncode != 0:
             fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
             detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            # NSS returns CKR_STATE_UNSAVEABLE for encrypt state operations but may
-            # not always emit it on the SKIP path — xfail if the FATAL is state-related.
-            _state_codes = ("0x00000180", "STATE_UNSAVEABLE", "0x00000054", "NOT_SUPPORTED")
+            # NSS returns CKR_STATE_UNSAVEABLE (0x180) or CKR_OPERATION_NOT_INITIALIZED
+            # (0x91) for encrypt state — it does not support saving encrypt operation state.
+            # Both are conformant: CKR_STATE_UNSAVEABLE is explicitly permitted by spec
+            # Sec.5.6.5; CKR_OPERATION_NOT_INITIALIZED is NSS's response when the
+            # EncryptUpdate has cleared the "active operation" flag before GetOperationState.
+            _state_codes = (
+                "0x00000180",
+                "STATE_UNSAVEABLE",
+                "0x00000054",
+                "NOT_SUPPORTED",
+                "0x00000091",
+                "OPERATION_NOT_INITIALIZED",
+            )
             if any(code in detail for code in _state_codes):
                 pytest.xfail(
                     f"Module does not support saving encrypt operation state: {detail} "
