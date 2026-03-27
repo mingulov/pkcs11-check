@@ -151,7 +151,82 @@ def test_from_lib_generic_30_interface_loads_v30_but_not_v32_tails() -> None:
     raw._load_v32_from_ptr.assert_not_called()
 
 
-def test_from_lib_loads_v32_when_explicit_32_interface_is_available() -> None:
+def test_call_log_starts_empty_after_reset() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {"C_Initialize": Mock(return_value=0)}
+    from collections import defaultdict
+
+    raw._call_log = defaultdict(int)
+
+    assert raw.call_log == {}
+    assert raw.call_count == 0
+
+
+def test_call_log_increments_on_call() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {"C_Initialize": Mock(return_value=0)}
+    from collections import defaultdict
+
+    raw._call_log = defaultdict(int)
+
+    raw.C_Initialize()
+
+    assert raw.call_log == {"C_Initialize": 1}
+    assert raw.call_count == 1
+
+    raw.C_Initialize()
+    raw.C_Initialize()
+
+    assert raw.call_log == {"C_Initialize": 3}
+    assert raw.call_count == 3
+
+
+def test_call_log_reset_clears_counts() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {"C_Initialize": Mock(return_value=0)}
+    from collections import defaultdict
+
+    raw._call_log = defaultdict(int)
+
+    raw.C_Initialize()
+    assert raw.call_count == 1
+
+    raw.reset_call_log()
+    assert raw.call_log == {}
+    assert raw.call_count == 0
+
+
+def test_available_function_names_returns_set_of_loaded_functions() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {"C_Initialize": object(), "C_Finalize": object(), "C_GetSlotList": object()}
+
+    names = raw.available_function_names()
+    assert isinstance(names, set)
+    assert names == {"C_Initialize", "C_Finalize", "C_GetSlotList"}
+
+
+def test_call_log_returns_copy() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {"C_Initialize": Mock(return_value=0)}
+    from collections import defaultdict
+
+    raw._call_log = defaultdict(int)
+
+    raw.C_Initialize()
+    log_copy = raw.call_log
+    log_copy["FAKE"] = 999
+
+    assert "FAKE" not in raw.call_log
     from pkcs11_check.raw.api import RawPKCS11
     from pkcs11_check.raw.types_std import (
         CK_INTERFACE,

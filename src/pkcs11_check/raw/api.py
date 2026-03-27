@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from collections import defaultdict
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
@@ -54,6 +55,7 @@ class RawPKCS11:
     ) -> None:
         self._funcs: dict[str, Any] = {}
         self._lib: ctypes.CDLL | None = None
+        self._call_log: dict[str, int] = defaultdict(int)
 
         if funclist_ptr:
             self._load_from_ptr(funclist_ptr)
@@ -167,11 +169,23 @@ class RawPKCS11:
             raise RuntimeError("C_GetFunctionList returned NULL pointer")
         self._load_from_ptr(base_ptr)
 
+    @property
+    def call_log(self) -> dict[str, int]:
+        return dict(self._call_log)
+
+    @property
+    def call_count(self) -> int:
+        return sum(self._call_log.values())
+
+    def reset_call_log(self) -> None:
+        self._call_log.clear()
+
     @classmethod
     def from_lib(cls, lib_path: str) -> RawPKCS11:
         return cls(lib_path=lib_path)
 
     def _call(self, name: str, *args: Any) -> int:
+        self._call_log[name] += 1
         func = self._funcs.get(name)
         if func is None:
             raise AttributeError(f"{name} not available in this module")

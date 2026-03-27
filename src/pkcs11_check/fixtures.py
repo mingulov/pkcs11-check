@@ -84,6 +84,7 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
     from pkcs11_check.raw.bootstrap import close_session_quietly
 
     raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
+    raw.reset_call_log()
     try:
         yield RawSession(raw, sh, slot_id)
     finally:
@@ -165,6 +166,7 @@ def p11_raw_session(
     from pkcs11_check.raw.bootstrap import close_session_quietly
 
     raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
+    raw.reset_call_log()
     try:
         yield RawSession(raw, sh, slot_id)
     finally:
