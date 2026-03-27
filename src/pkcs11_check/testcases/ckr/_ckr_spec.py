@@ -38,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_EXCEEDED_MAX_ITERATIONS,
+    CKR_FIPS_SELF_TEST_FAILED,
     CKR_FUNCTION_CANCELED,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -53,18 +54,23 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_KEY_UNEXTRACTABLE,
+    CKR_LIBRARY_LOAD_FAILED,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_NO_EVENT,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED,
+    CKR_OPERATION_NOT_VALIDATED,
     CKR_PARAMETER_SET_NOT_SUPPORTED,
+    CKR_PENDING,
     CKR_PIN_EXPIRED,
     CKR_PIN_INCORRECT,
     CKR_PIN_INVALID,
     CKR_PIN_LEN_RANGE,
     CKR_PIN_LOCKED,
+    CKR_PIN_TOO_WEAK,
+    CKR_PUBLIC_KEY_INVALID,
     CKR_RANDOM_NO_RNG,
     CKR_RANDOM_SEED_NOT_SUPPORTED,
     CKR_SAVED_STATE_INVALID,
@@ -83,6 +89,7 @@ from pkcs11_check.raw.types_std import (
     CKR_STATE_UNSAVEABLE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_TOKEN_NOT_INITIALIZED,
     CKR_TOKEN_NOT_PRESENT,
     CKR_TOKEN_NOT_RECOGNIZED,
     CKR_TOKEN_WRITE_PROTECTED,
@@ -5718,6 +5725,28 @@ CKR_SLOT_TOKEN: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.1 Sec.5.5.8",
         testable=True,  # Testable via RawPKCS11 with R/O session
     ),
+    "init_pin_pin_too_weak": CkrExpectation(
+        function="C_InitPIN",
+        condition="PIN_too_weak",
+        spec_ckr=CKR_PIN_TOO_WEAK,
+        compat_tuple=(
+            CKR_PIN_TOO_WEAK,
+            CKR_PIN_LEN_RANGE,
+            CKR_PIN_INCORRECT,
+            CKR_ARGUMENTS_BAD,
+            CKR_FUNCTION_FAILED,
+        ),
+        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        testable=True,  # Testable via subprocess with 1-byte PIN
+    ),
+    "init_pin_token_not_initialized": CkrExpectation(
+        function="C_InitPIN",
+        condition="token_not_initialized",
+        spec_ckr=CKR_TOKEN_NOT_INITIALIZED,
+        compat_tuple=(CKR_TOKEN_NOT_INITIALIZED, CKR_FUNCTION_FAILED),
+        spec_ref="PKCS#11 v3.1 Sec.5.5.8",
+        testable=True,  # Testable via subprocess on uninitialized token
+    ),
     "set_pin_arguments_bad": CkrExpectation(
         function="C_SetPIN",
         condition="NULL_pointer_argument",
@@ -6235,6 +6264,16 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.2 Sec.5.11.10",
         testable=True,  # Testable on Kryoptic via RawPKCS11 + funclist3_ptr
         spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
+    ),
+    "verify_signature_final_operation_not_validated": CkrExpectation(
+        function="C_VerifySignatureFinal",
+        condition="operation_not_validated",
+        spec_ckr=CKR_OPERATION_NOT_VALIDATED,
+        compat_tuple=(CKR_OPERATION_NOT_VALIDATED, CKR_FUNCTION_FAILED),
+        spec_ref="PKCS#11 v3.2 Sec.5.11.10",
+        testable=False,  # v3.1+ - requires C_Verify without prior validation, not widely supported
+        # Untestable: requires calling C_VerifySignatureFinal on a v3.1+ session
+        # that has not been validated via C_Verify, which is not supported by most modules
     ),
 }
 
@@ -8092,5 +8131,57 @@ CKR_ASYNC: dict[str, CkrExpectation] = {
         compat_tuple=(CKR_SAVED_STATE_INVALID, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.1 Sec.5.21.3",
         testable=True,  # Testable on Kryoptic via funclist32_ptr
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Documented but not practically testable CKR codes
+# ---------------------------------------------------------------------------
+
+CKR_UNTESTABLE: dict[str, CkrExpectation] = {
+    "ckr_pending": CkrExpectation(
+        function="*",
+        condition="async_operation_pending",
+        spec_ckr=CKR_PENDING,
+        compat_tuple=(CKR_PENDING, CKR_FUNCTION_FAILED),
+        spec_ref="PKCS#11 v3.1 Sec.5.1.1",
+        testable=False,  # Requires async-capable token with in-flight operation
+        # Documented for completeness. CKR_PENDING is returned when an async
+        # operation has not yet completed. Requires v3.0+ async session support
+        # which is not widely implemented.
+    ),
+    "ckr_fips_self_test_failed": CkrExpectation(
+        function="C_Initialize",
+        condition="FIPS_self_test_during_init",
+        spec_ckr=CKR_FIPS_SELF_TEST_FAILED,
+        compat_tuple=(CKR_FIPS_SELF_TEST_FAILED, CKR_FUNCTION_FAILED),
+        spec_ref="PKCS#11 v3.1 Sec.5.5",
+        testable=False,  # Requires FIPS module with corrupt integrity check
+        # Documented for completeness. Returned by C_Initialize when the FIPS
+        # module's built-in self-test fails. Cannot trigger without corrupting
+        # a FIPS-certified module's integrity data.
+    ),
+    "ckr_library_load_failed": CkrExpectation(
+        function="C_Initialize",
+        condition="dependent_library_load_failure",
+        spec_ckr=CKR_LIBRARY_LOAD_FAILED,
+        compat_tuple=(CKR_LIBRARY_LOAD_FAILED, CKR_FUNCTION_FAILED),
+        spec_ref="PKCS#11 v3.1 Sec.5.5",
+        testable=False,  # Requires missing/corrupt dependent library
+        # Documented for completeness. Returned by C_Initialize when a required
+        # dependent library cannot be loaded. Cannot trigger without modifying
+        # the module's runtime library path.
+    ),
+    "ckr_public_key_invalid": CkrExpectation(
+        function="C_VerifyInit",
+        condition="malformed_public_key_used_for_verification",
+        spec_ckr=CKR_PUBLIC_KEY_INVALID,
+        compat_tuple=(CKR_PUBLIC_KEY_INVALID, CKR_KEY_HANDLE_INVALID, CKR_FUNCTION_FAILED),
+        spec_ref="PKCS#11 v3.1 Sec.5.11.2",
+        testable=False,  # Requires importing a key with corrupted public key data
+        # Could be tested by creating a key object with corrupted EC point or
+        # RSA modulus via C_CreateObject with invalid CKA_PUBLIC_KEY_VALUE,
+        # but most modules validate at import time and reject with a different CKR.
     ),
 }
