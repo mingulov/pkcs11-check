@@ -139,7 +139,7 @@ class RawSession:
         Includes alias names (e.g. 'EC_KEY_PAIR_GEN' for CKM_ECDSA_KEY_PAIR_GEN).
         """
         if self._mechanisms is None:
-            from importlib import importlib as _importlib
+            import importlib as _importlib
 
             from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
             from pkcs11_check.raw.recipes import get_mechanism_list
