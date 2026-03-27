@@ -30,6 +30,33 @@ from pkcs11_check.raw.types_std import (
     CKM_EDDSA,
 )
 
+_EDDSA_PARAM_XFAIL_MSG = (
+    "Module returns CKR_MECHANISM_PARAM_INVALID for CK_EDDSA_PARAMS; "
+    "NSS softoken rejects explicit CK_EDDSA_PARAMS even though PKCS#11 v3.0 "
+    "mandates them for pure-mode EdDSA (NSS bug)"
+)
+
+
+def _sign_eddsa(rs: Any, priv: int, data: bytes) -> bytes:
+    """Sign data with CKM_EDDSA, xfail on CKR_MECHANISM_PARAM_INVALID."""
+    try:
+        return sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
+    except AssertionError as exc:
+        if "CKR_MECHANISM_PARAM_INVALID" in str(exc):
+            pytest.xfail(_EDDSA_PARAM_XFAIL_MSG)
+        raise
+
+
+def _verify_eddsa(rs: Any, pub: int, data: bytes, sig: bytes) -> bool:
+    """Verify EdDSA signature, xfail on CKR_MECHANISM_PARAM_INVALID."""
+    try:
+        return verify_single(rs.raw, rs.sh, pub, CKM_EDDSA, data, sig)
+    except AssertionError as exc:
+        if "CKR_MECHANISM_PARAM_INVALID" in str(exc):
+            pytest.xfail(_EDDSA_PARAM_XFAIL_MSG)
+        raise
+
+
 pytestmark = pytest.mark.crossverify
 
 ED25519_OID = encode_named_curve_parameters("ed25519")
@@ -105,17 +132,10 @@ class TestEdDSASignVerify:
         pub, priv = ed25519_keypair
         data = b"EdDSA sign-verify test data"
 
-        signature = sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
+        signature = _sign_eddsa(rs, priv, data)
         assert len(signature) == 64  # Ed25519 = 64 bytes
 
-        result = verify_single(
-            rs.raw,
-            rs.sh,
-            pub,
-            CKM_EDDSA,
-            data,
-            signature,
-        )
+        result = _verify_eddsa(rs, pub, data, signature)
         assert result is True
 
     def test_wrong_data_fails(self, p11_raw_session: Any, ed25519_keypair: tuple[int, int]) -> None:
@@ -123,22 +143,9 @@ class TestEdDSASignVerify:
         rs = p11_raw_session
         pub, priv = ed25519_keypair
 
-        sig = sign_single(
-            rs.raw,
-            rs.sh,
-            priv,
-            CKM_EDDSA,
-            b"original data",
-        )
+        sig = _sign_eddsa(rs, priv, b"original data")
 
-        result = verify_single(
-            rs.raw,
-            rs.sh,
-            pub,
-            CKM_EDDSA,
-            b"tampered data",
-            sig,
-        )
+        result = _verify_eddsa(rs, pub, b"tampered data", sig)
         assert result is False
 
     def test_signature_length(self, p11_raw_session: Any, ed25519_keypair: tuple[int, int]) -> None:
@@ -146,7 +153,7 @@ class TestEdDSASignVerify:
         rs = p11_raw_session
         _, priv = ed25519_keypair
         for data in [b"", b"x", b"a" * 1000]:
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
+            sig = _sign_eddsa(rs, priv, data)
             assert len(sig) == 64
 
     def test_different_data_different_signatures(
@@ -155,8 +162,8 @@ class TestEdDSASignVerify:
         """Different messages produce different signatures."""
         rs = p11_raw_session
         _, priv = ed25519_keypair
-        sig1 = sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, b"message one")
-        sig2 = sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, b"message two")
+        sig1 = _sign_eddsa(rs, priv, b"message one")
+        sig2 = _sign_eddsa(rs, priv, b"message two")
         assert sig1 != sig2
 
     def test_deterministic_signatures(
@@ -166,8 +173,8 @@ class TestEdDSASignVerify:
         rs = p11_raw_session
         _, priv = ed25519_keypair
         data = b"determinism test"
-        sig1 = sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
-        sig2 = sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
+        sig1 = _sign_eddsa(rs, priv, data)
+        sig2 = _sign_eddsa(rs, priv, data)
         assert sig1 == sig2
 
     def test_different_keys_different_signatures(self, p11_raw_session: Any) -> None:
@@ -183,8 +190,8 @@ class TestEdDSASignVerify:
             raise  # unreachable
 
         data = b"key independence test"
-        sig1 = sign_single(rs.raw, rs.sh, priv1, CKM_EDDSA, data)
-        sig2 = sign_single(rs.raw, rs.sh, priv2, CKM_EDDSA, data)
+        sig1 = _sign_eddsa(rs, priv1, data)
+        sig2 = _sign_eddsa(rs, priv2, data)
         assert sig1 != sig2
 
 
@@ -201,7 +208,7 @@ class TestEdDSACrossVerify:
         pub, priv = ed25519_keypair
         data = b"Ed25519 cross-verify test"
 
-        sig = sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
+        sig = _sign_eddsa(rs, priv, data)
 
         # Export the public key point
         ec_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]

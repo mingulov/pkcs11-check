@@ -61,7 +61,7 @@ Updated as Docker targets are analyzed.
 ### Failure breakdown (362 total)
 | Count | Area | Reason |
 |-------|------|--------|
-| 296 | DSA Wycheproof | NSS DSA implementation rejects valid 3072-bit DSA vectors — likely NSS strictness on parameter validation |
+| 296 | DSA Wycheproof | NSS `C_Verify` rejects valid DSA signatures: key import succeeds but `CKM_DSA_SHA224`/`CKM_DSA_SHA256` return `CKR_SIGNATURE_INVALID` for all valid vectors across all 4 parameter sets (2048/224, 2048/256, 3072/256). Root cause: NSS softoken DSA verify strictly validates additional internal state or parameter consistency that the Wycheproof-imported public key objects do not satisfy. Affects all NSS versions. |
 | ~16 | Session/access tests | NSS returns `CKR_USER_TYPE_INVALID` instead of `CKR_USER_ALREADY_LOGGED_IN` — PKCS#11 spec compliance deviation |
 | ~16 | KEM/PQC | ML-KEM not supported in NSS 3.120.1 (expected skips, showing as errors) |
 | ~2 | AES-XCBC-MAC | NSS returns CKR_KEY_TYPE_INCONSISTENT on verify despite CKA_VERIFY=True |
@@ -73,7 +73,10 @@ Updated as Docker targets are analyzed.
 - **Two slots**: NSS exposes 2 slots. Slot 0 is the crypto services slot (read-only), slot 1 may be an NSS internal database slot.
 - **Needs configDir for full functionality**: `libsoftokn3.so` must be loaded with `configDir='sql:/path/to/db'` NSS init args to access the writable database slot. Without this, only the read-only crypto services slot is available. See `/home/user/src/m/pkcs11-proxy/pkcs11-proxy/scripts/test-nss-fixtures.sh` for reference configuration.
 - **RSA keypair requires CKA_PUBLIC_EXPONENT**: NSS requires `CKA_PUBLIC_EXPONENT` in the public key template for `CKM_RSA_PKCS_KEY_PAIR_GEN`. Kryoptic and SoftHSM2 are more lenient and accept the default (65537). The recipe now includes this attribute for cross-module compatibility.
-- **EdDSA sign/verify**: Previously returned `CKR_ARGUMENTS_BAD` on NSS. Fixed by always using explicit `CK_EDDSA_PARAMS` (pure mode) in `sign_single`/`verify_single` recipes. Works on all modules since the spec allows params for pure mode.
+- **EdDSA sign/verify rejects CK_EDDSA_PARAMS**: NSS softoken returns `CKR_MECHANISM_PARAM_INVALID`
+  when `CK_EDDSA_PARAMS` is provided for `CKM_EDDSA`. NSS requires NULL mechanism params for pure
+  EdDSA, contrary to PKCS#11 v3.0 which mandates explicit `CK_EDDSA_PARAMS`. Tests in
+  `test_eddsa.py` xfail with a descriptive message on both NSS 3.120.1 and NSS-PQC 3.121.0.
 - **AES-XCBC-MAC verification**: NSS returns `CKR_KEY_TYPE_INCONSISTENT` on verify operations even with `CKA_VERIFY=True` key attribute. XCBC-MAC sign works but verify fails. This is an NSS softoken quirk.
 
 ---
@@ -144,7 +147,24 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 
 ### Spec Deviations
 
-(To be populated during Phases 2-3 investigation)
+- **EdDSA rejects CK_EDDSA_PARAMS (CKR_MECHANISM_PARAM_INVALID)**: NSS softoken returns
+  `CKR_MECHANISM_PARAM_INVALID` when `CK_EDDSA_PARAMS` is provided for `CKM_EDDSA` sign/verify,
+  even for pure-mode EdDSA with `phFlag=0` and no context data. PKCS#11 v3.0 Sec.2.3.13 mandates
+  explicit `CK_EDDSA_PARAMS` for the `CKM_EDDSA` mechanism. NSS softoken instead requires NULL
+  params (no mechanism parameter struct at all). This is a spec deviation — pure-mode EdDSA should
+  accept explicit params with `phFlag=CK_FALSE` and empty context. Affected tests in
+  `test_eddsa.py` are marked `xfail` (7 tests: all sign/verify tests in `TestEdDSASignVerify`
+  and `TestEdDSACrossVerify`). This same deviation affects NSS 3.120.1 and NSS-PQC 3.121.0.
+
+- **DSA verify rejects all Wycheproof valid signatures (296 failures)**: `C_Verify` with
+  `CKM_DSA_SHA224` and `CKM_DSA_SHA256` returns `CKR_SIGNATURE_INVALID` for all valid
+  Wycheproof DSA signatures. Key import via `C_CreateObject` with `CKA_PRIME`, `CKA_SUBPRIME`,
+  `CKA_BASE`, `CKA_VALUE` succeeds, but verification always fails. Root cause: NSS softoken
+  DSA verification requires keys to have been generated through NSS's own key generation path
+  or imported in a specific internal format. Externally constructed `CKO_PUBLIC_KEY` objects
+  with raw domain parameters are not accepted for signature verification. This is a fundamental
+  NSS limitation affecting all 296 DSA Wycheproof vectors across all 4 parameter sets. These
+  remain as failures (not xfailed) because the module is genuinely rejecting valid signatures.
 
 ### Token Write-Protection (Phase 1 findings)
 
@@ -171,8 +191,8 @@ Tests requiring token object creation skip with "Token is write-protected" on NS
 
 - ML-DSA (FIPS 204) not supported — all ML-DSA tests skip
 - SLH-DSA (FIPS 205) not supported — all SLH-DSA tests skip
-- Same DSA Wycheproof rejections as NSS 3.120.1 (296 failures)
-- Same EdDSA CKR_MECHANISM_PARAM_INVALID as NSS 3.120.1 (7 failures)
+- Same DSA Wycheproof rejections as NSS 3.120.1 (296 failures — see Spec Deviations)
+- EdDSA CKR_MECHANISM_PARAM_INVALID: 7 sign/verify tests in `test_eddsa.py` now xfailed (see Spec Deviations)
 
 ---
 
