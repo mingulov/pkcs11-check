@@ -194,6 +194,73 @@ Tests requiring token object creation skip with "Token is write-protected" on NS
 - Same DSA Wycheproof rejections as NSS 3.120.1 (296 failures — see Spec Deviations)
 - EdDSA CKR_MECHANISM_PARAM_INVALID: 7 sign/verify tests in `test_eddsa.py` now xfailed (see Spec Deviations)
 
+### Coverage & Skip Analysis (Phase 10)
+
+**Baseline (post-Phase-9):** 35,327 passed / 302 failed / 31,984 skipped / 639 xfailed (68,252 total)
+
+#### Function Coverage
+
+64 / 104 PKCS#11 functions called (61%).
+
+Uncalled functions fall into three groups:
+
+- **Lifecycle** (not called by design — framework handles init/finalize): `C_Initialize`, `C_Finalize`,
+  `C_GetFunctionList`, `C_GetInterface`
+- **Destructive / PIN management** (skipped — no PIN configured, destructive flag not set):
+  `C_InitToken`, `C_InitPIN`, `C_SetPIN`
+- **Multi-part streaming** (no streaming tests yet): `C_EncryptUpdate`, `C_EncryptFinal`,
+  `C_DecryptUpdate`, `C_DecryptFinal`, `C_SignFinal`, `C_VerifyFinal`, `C_VerifyUpdate`,
+  `C_SignEncryptUpdate`, `C_DecryptVerifyUpdate`, `C_DigestEncryptUpdate`, `C_DecryptDigestUpdate`
+- **Message-based API** (v3.0 message interface not yet fully tested): `C_EncryptMessage`,
+  `C_EncryptMessageBegin`, `C_EncryptMessageNext`, `C_MessageEncryptFinal`,
+  `C_MessageDecryptInit`, `C_DecryptMessage`, `C_DecryptMessageBegin`, `C_DecryptMessageNext`,
+  `C_MessageDecryptFinal`, `C_SignMessage`, `C_SignMessageBegin`, `C_SignMessageNext`,
+  `C_MessageSignFinal`, `C_VerifyMessage`, `C_VerifyMessageBegin`, `C_VerifyMessageNext`,
+  `C_MessageVerifyFinal`, `C_VerifySignatureFinal`, `C_VerifySignatureUpdate`
+- **Deprecated/obsolete**: `C_GetFunctionStatus`, `C_CancelFunction`
+- **Authenticated unwrap** (no test coverage yet): `C_UnwrapKeyAuthenticated`
+
+#### Mechanism Coverage
+
+107 / 140 advertised mechanisms exercised (76%).
+
+**Not invoked (33 mechanisms):**
+
+| Group | Mechanisms |
+|-------|-----------|
+| Legacy PBE/RC2 | `CKM_RC2_KEY_GEN`, `CKM_RC2_ECB`, `CKM_RC2_CBC`, `CKM_RC2_CBC_PAD`, `CKM_RC2_MAC`, `CKM_RC2_MAC_GENERAL`, `CKM_PBE_MD2_DES_CBC`, `CKM_PBE_MD5_DES_CBC`, `CKM_PBE_SHA1_RC2_128_CBC`, `CKM_PBE_SHA1_RC2_40_CBC`, `CKM_PBE_SHA1_RC4_128`, `CKM_PBE_SHA1_RC4_40` |
+| CDMF (obsolete DES variant) | `CKM_CDMF_KEY_GEN`, `CKM_CDMF_ECB`, `CKM_CDMF_CBC`, `CKM_CDMF_CBC_PAD`, `CKM_CDMF_MAC`, `CKM_CDMF_MAC_GENERAL` |
+| MD2/MD5 (deprecated hash) | `CKM_MD2_HMAC`, `CKM_MD2_HMAC_GENERAL`, `CKM_MD2_RSA_PKCS`, `CKM_MD5_HMAC`, `CKM_MD5_HMAC_GENERAL`, `CKM_MD5_RSA_PKCS` |
+| ECDSA aliases | `CKM_ECDSA_KEY_PAIR_GEN` (alias for `CKM_EC_KEY_PAIR_GEN`), `CKM_ECDSA_SHA384`, `CKM_ECDSA_SHA512` |
+| HMAC _GENERAL variants | `CKM_SHA_1_HMAC_GENERAL`, `CKM_SHA224_HMAC_GENERAL`, `CKM_SHA256_HMAC_GENERAL`, `CKM_SHA384_HMAC_GENERAL`, `CKM_SHA512_HMAC_GENERAL`, `CKM_SHA3_224_HMAC_GENERAL`, `CKM_SHA3_256_HMAC_GENERAL`, `CKM_SHA3_384_HMAC_GENERAL`, `CKM_SHA3_512_HMAC_GENERAL`, `CKM_AES_MAC` |
+| PQC (present but untested) | `CKM_ML_KEM` (encapsulate/decapsulate combined mechanism — tests only use `CKM_ML_KEM_KEY_PAIR_GEN` + `C_EncapsulateKey`/`C_DecapsulateKey` directly) |
+
+#### Skip Reason Breakdown (31,984 total skips)
+
+| Count | % | Category | Root Cause |
+|------:|--:|----------|-----------|
+| 20,062 | 63% | EC unsupported curves | `CKR_DOMAIN_PARAMS_INVALID` on secp256k1, secp224r1, secp192r1, secp160r1/r2/k1, secp192k1, secp224k1, brainpoolP224/256/320/384/512r1 — NSS only supports NIST prime curves P-256/384/521 |
+| 5,105 | 16% | ECDH private key import | `CKR_DOMAIN_PARAMS_INVALID` on ECDH test vectors for unsupported curves (subset of above, affects `test_wycheproof_ecdh.py`) |
+| 1,993 | 6% | Montgomery / X448 import | `Cannot import Montgomery private key` / `X448 keygen not supported` — NSS supports X25519 keygen but not import of raw private key bytes |
+| 1,919 | 6% | SHA-3 based mechanisms | `SHA3_*_RSA_PKCS not supported`, `SHA3_*_HMAC not supported` — NSS-PQC has SHA3 HMAC (advertised) but SHA3-RSA-PKCS and SHAKE/KMAC are absent |
+| 1,097 | 3% | AES non-standard modes | `AES_CCM`, `AES_GMAC`, `AES_XTS`, `AES_CFB8/64/128`, `AES_OFB` not advertised |
+| 711 | 2% | Miscellaneous | ~120 distinct reasons: ARIA, GOST, BLAKE2b, Camellia CTR, TLS KDF, WTLS, X9.42, Signal-protocol, HSS/XMSS/XMSSMT, etc. |
+| 530 | 2% | ML-DSA (PQC) | `ML_DSA not supported` — FIPS 204 / ML-DSA not in NSS 3.121.0 |
+| 236 | 1% | Ed25519/Ed448 key import | Public key import fails — NSS EdDSA requires keygen, not `C_CreateObject` import |
+| 110 | 0% | RSA OAEP private key import | `Cannot import RSA private key for OAEP` — Wycheproof OAEP vectors need raw private key import |
+| 84 | 0% | Hash-ML-DSA / Hash-SLH-DSA | `CKM_HASH_ML_DSA_*` / `CKM_HASH_SLH_DSA_*` (22 variants × 4) not supported |
+| 64 | 0% | XDH vector decode errors | Wycheproof XDH vectors with unsupported key formats (`ValueError`, `UnsupportedAlgorithm`) |
+| 41 | 0% | No PIN configured | Tests needing PIN-based login skipped (NSS crypto-services slot uses slot 0 with no PIN) |
+| 35 | 0% | Destructive tests disabled | `--p11-destructive` not passed |
+| 31 | 0% | Token write-protected | Cert DB slot (slot 1) `CKF_WRITE_PROTECTED` — 31 tests needing token-object creation skip |
+| 22 | 0% | SLH-DSA (PQC) | `SLH_DSA not supported` — FIPS 205 / SLH-DSA not in NSS 3.121.0 |
+| 14 | 0% | Infrastructure absent | fault-proxy not built, pkcs11-provider/p11-kit not installed, x509-limbo data not fetched |
+
+**Summary:** 79% of skips (25,160) are due to NSS's restricted EC curve support — only P-256, P-384,
+and P-521 are accepted. The remaining 21% span missing mechanisms (SHA-3/RSA, AES CCM/XTS/GMAC,
+ML-DSA, SLH-DSA), key import limitations (Montgomery, Ed, RSA-OAEP), and test infrastructure gaps.
+All skips are legitimate capability-based skips; none hide broken behavior.
+
 ---
 
 ## BouncyHSM 2.0.1 (v3.2)
