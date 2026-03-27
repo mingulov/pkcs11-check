@@ -121,8 +121,8 @@ class TestCloseAllSessions:
 
         # Close all sessions at once
         rv = rs.raw.C_CloseAllSessions(rs.slot_id)
-        # CKR_OK is expected; some modules may not support it
-        assert rv == CKR_OK or rv != 0  # must not crash
+        # Crash-only check — CKR_OK expected; some modules may return error
+        assert rv is not None
 
         # Verify we can open a new session after closing all
         s_new = raw_open_session(rs.raw, rs.slot_id, flags)

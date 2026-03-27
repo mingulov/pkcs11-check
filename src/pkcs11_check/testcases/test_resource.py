@@ -29,7 +29,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
     CKO_SECRET_KEY,
-    CKR_OK,
 )
 
 pytestmark = pytest.mark.stress
@@ -110,7 +109,8 @@ class TestUseAfterDestroy:
         destroy_quietly(rs.raw, rs.sh, key)
         # Second destroy - should not crash (destroy_quietly swallows errors)
         rv = rs.raw.C_DestroyObject(rs.sh, key)
-        assert rv != CKR_OK or rv == CKR_OK  # any result, just no crash
+        # Crash-only check — any CKR is acceptable
+        assert rv is not None
 
     def test_read_attribute_after_destroy(self, p11_raw_session: Any) -> None:
         """Reading attributes of destroyed object must fail cleanly."""

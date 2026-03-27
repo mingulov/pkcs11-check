@@ -31,11 +31,24 @@ from pkcs11_check.raw.types_std import (
     CK_UTF8CHAR,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
-    CKR_OK,
+    CKR_ARGUMENTS_BAD,
+    CKR_PIN_INCORRECT,
+    CKR_PIN_LOCKED,
+    CKR_USER_ALREADY_LOGGED_IN,
     CKU_SO,
     CKU_USER,
 )
 from pkcs11_check.testcases.conftest import get_pin_bytes
+
+# Acceptable CKR codes for wrong-PIN / credential errors.
+_PIN_ERROR_CKRS = (CKR_PIN_INCORRECT, CKR_PIN_LOCKED, CKR_ARGUMENTS_BAD)
+# When user is already logged in, SO login attempt may return user-conflict or PIN error.
+_SO_CONFLICT_CKRS = (
+    CKR_PIN_INCORRECT,
+    CKR_PIN_LOCKED,
+    CKR_ARGUMENTS_BAD,
+    CKR_USER_ALREADY_LOGGED_IN,
+)
 
 pytestmark = [pytest.mark.security, pytest.mark.destructive]
 
@@ -52,7 +65,7 @@ class TestSOLogin:
             wrong_pin = b"WRONG_SO_PIN_XYZ"
             pin_buf = (CK_UTF8CHAR * len(wrong_pin))(*wrong_pin)
             rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(wrong_pin))
-            assert rv != CKR_OK, f"SO login with wrong PIN should fail, got {ckr_name(rv)}"
+            assert rv in _PIN_ERROR_CKRS, f"Expected PIN error for wrong SO PIN, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, test_sh)
 
@@ -66,7 +79,9 @@ class TestSOLogin:
             pytest.skip("No PIN configured")
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
         rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(pin_bytes))
-        assert rv != CKR_OK, f"SO login while user is logged in should fail, got {ckr_name(rv)}"
+        assert rv in _SO_CONFLICT_CKRS, (
+            f"Expected PIN/conflict error for SO login while user logged in, got {ckr_name(rv)}"
+        )
 
 
 class TestSetPIN:

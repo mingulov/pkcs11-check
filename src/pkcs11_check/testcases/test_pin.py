@@ -35,12 +35,26 @@ from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKO_PRIVATE_KEY,
+    CKR_ARGUMENTS_BAD,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_PIN_LEN_RANGE,
+    CKR_PIN_LOCKED,
     CKR_USER_ALREADY_LOGGED_IN,
     CKU_USER,
 )
 from pkcs11_check.testcases.conftest import get_pin_bytes
+
+# Acceptable CKR codes when an invalid PIN is supplied and rejected.
+# CKR_USER_ALREADY_LOGGED_IN is included because the fixture's slot
+# may already be authenticated; the session still cannot accept a new login.
+_INVALID_PIN_CKRS = (
+    CKR_PIN_INCORRECT,
+    CKR_PIN_LEN_RANGE,
+    CKR_PIN_LOCKED,
+    CKR_ARGUMENTS_BAD,
+    CKR_USER_ALREADY_LOGGED_IN,
+)
 
 pytestmark = [pytest.mark.security, pytest.mark.destructive]
 
@@ -76,9 +90,7 @@ class TestWrongPIN:
         try:
             # Empty PIN - pass NULL pointer with length 0
             rv = rs.raw.C_Login(test_sh, CKU_USER, None, 0)
-            assert rv != CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN, (
-                f"Empty PIN should not be accepted, got {ckr_name(rv)}"
-            )
+            assert rv in _INVALID_PIN_CKRS, f"Empty PIN should not be accepted, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, test_sh)
 
@@ -137,7 +149,7 @@ class TestPINEdgeCases:
         try:
             long_pin = b"A" * 256
             rv = _try_login(rs.raw, test_sh, long_pin)
-            assert rv != CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN, (
+            assert rv in _INVALID_PIN_CKRS, (
                 f"256-char PIN should not be accepted, got {ckr_name(rv)}"
             )
         finally:

@@ -424,7 +424,8 @@ class TestAsyncLifecycle:
         if not hasattr(rs.raw, "C_AsyncComplete"):
             pytest.skip("C_AsyncComplete not available")
         rv = rs.raw.C_AsyncComplete(rs.sh, None, None)
-        assert rv != 0 or True
+        # No CKR assertion — presence check only (function returned without crash)
+        assert rv is not None
 
     @pytest.mark.requires_v30
     def test_async_join_no_active_operation(self, p11_raw_session: Any) -> None:
@@ -433,7 +434,8 @@ class TestAsyncLifecycle:
         if not hasattr(rs.raw, "C_AsyncJoin"):
             pytest.skip("C_AsyncJoin not available")
         rv = rs.raw.C_AsyncJoin(rs.sh, None, 0, None, 0)
-        assert rv != 0 or True
+        # No CKR assertion — presence check only (function returned without crash)
+        assert rv is not None
 
     @pytest.mark.requires_v30
     def test_async_get_id_no_active_operation(self, p11_raw_session: Any) -> None:
@@ -443,7 +445,8 @@ class TestAsyncLifecycle:
             pytest.skip("C_AsyncGetID not available")
         async_id = c_ulong(0)
         rv = rs.raw.C_AsyncGetID(rs.sh, None, byref(async_id))
-        assert rv != 0 or True
+        # No CKR assertion — presence check only (function returned without crash)
+        assert rv is not None
 
 
 # ---------------------------------------------------------------------------
