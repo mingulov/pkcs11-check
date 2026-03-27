@@ -47,7 +47,7 @@ def _find_trust_objects(raw: Any, sh: int) -> list[int]:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_TRUST))
         return find_objects(raw, sh, tmpl)
     except (AssertionError, Exception) as e:
-        pytest.xfail(f"Module does not support CKO_TRUST enumeration: {e}")
+        pytest.skip(f"Module does not support CKO_TRUST enumeration: {e}")
     return []  # unreachable, but keeps type checker happy
 
 

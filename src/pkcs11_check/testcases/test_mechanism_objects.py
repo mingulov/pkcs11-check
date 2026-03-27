@@ -38,7 +38,7 @@ class TestMechanismObjects:
             tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
             mechs = find_objects(rs.raw, rs.sh, tmpl)
         except AssertionError as e:
-            pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
+            pytest.skip(f"Module does not support CKO_MECHANISM enumeration: {e}")
         assert isinstance(mechs, list)
 
     def test_mechanism_objects_have_mechanism_type(self, p11_raw_session: Any) -> None:
@@ -48,7 +48,7 @@ class TestMechanismObjects:
             tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
             mechs = find_objects(rs.raw, rs.sh, tmpl)
         except AssertionError as e:
-            pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
+            pytest.skip(f"Module does not support CKO_MECHANISM enumeration: {e}")
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
         for obj_h in mechs:
@@ -68,7 +68,7 @@ class TestMechanismObjects:
             tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
             mechs = find_objects(rs.raw, rs.sh, tmpl)
         except AssertionError as e:
-            pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
+            pytest.skip(f"Module does not support CKO_MECHANISM enumeration: {e}")
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
         known = set(MECHANISM_NAMES.keys())
@@ -95,7 +95,7 @@ class TestMechanismObjects:
             tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
             mechs = find_objects(rs.raw, rs.sh, tmpl)
         except AssertionError as e:
-            pytest.xfail(f"Module does not support CKO_MECHANISM enumeration: {e}")
+            pytest.skip(f"Module does not support CKO_MECHANISM enumeration: {e}")
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
         obj_h = mechs[0]

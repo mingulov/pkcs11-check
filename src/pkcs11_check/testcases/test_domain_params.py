@@ -173,7 +173,7 @@ class TestDomainParameterEnumeration:
         try:
             params = find_objects(rs.raw, rs.sh, tmpl)
         except (AssertionError, Exception) as e:
-            pytest.xfail(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
+            pytest.skip(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
         assert isinstance(params, list)
 
     def test_domain_params_have_key_type(self, p11_raw_session: Any) -> None:
@@ -183,7 +183,7 @@ class TestDomainParameterEnumeration:
         try:
             params = find_objects(rs.raw, rs.sh, tmpl)
         except (AssertionError, Exception) as e:
-            pytest.xfail(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
+            pytest.skip(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
         if not params:
             pytest.skip("No CKO_DOMAIN_PARAMETERS objects present")
         for handle in params:

@@ -187,7 +187,7 @@ class TestHKDFKeyGen:
 
         handle = _gen_hkdf_key(rs, key_type, 256)
         if handle is None:
-            pytest.xfail(f"CKM_HKDF_KEY_GEN with key_type={key_type:#x} not supported")
+            pytest.skip(f"CKM_HKDF_KEY_GEN with key_type={key_type:#x} not supported")
         try:
             assert handle != 0
             attrs = read_attributes(

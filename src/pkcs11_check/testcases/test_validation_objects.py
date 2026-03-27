@@ -56,7 +56,7 @@ def _find_validation_objects(raw: Any, sh: int) -> list[int]:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_VALIDATION))
         return find_objects(raw, sh, tmpl)
     except (AssertionError, Exception) as e:
-        pytest.xfail(f"Module does not support CKO_VALIDATION enumeration: {e}")
+        pytest.skip(f"Module does not support CKO_VALIDATION enumeration: {e}")
     return []
 
 

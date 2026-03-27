@@ -165,7 +165,7 @@ class TestMLKEMKeyGeneration:
                 val_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_VALUE])[CKA_VALUE]
                 assert val_a != val_b
             except (AssertionError, OSError):
-                pytest.xfail("Module does not expose ML-KEM public key value")
+                pytest.skip("Module does not expose ML-KEM public key value")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_a)
             destroy_quietly(rs.raw, rs.sh, priv_a)
@@ -373,7 +373,7 @@ class TestMLKEMKeyDerivation:
             except (AssertionError, NotImplementedError):
                 pytest.skip("encapsulate_key not available (module not v3.2)")
             except Exception:
-                pytest.xfail("Module does not support direct AES key derivation via encapsulation")
+                pytest.skip("Module does not support direct AES key derivation via encapsulation")
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             assert kt == CKK_AES
@@ -405,7 +405,7 @@ class TestMLKEMKeyDerivation:
             except (AssertionError, NotImplementedError):
                 pytest.skip("encapsulate_key not available (module not v3.2)")
             except Exception:
-                pytest.xfail("Module does not support direct AES key derivation via encapsulation")
+                pytest.skip("Module does not support direct AES key derivation via encapsulation")
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             assert kt == CKK_AES

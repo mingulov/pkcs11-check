@@ -152,7 +152,7 @@ class TestMLDSAKeyGeneration:
         try:
             pub, priv = _generate_ml_dsa_keypair(rs, param_set=param_set)
         except (AssertionError, OSError):
-            pytest.xfail(f"Module does not support CKA_PARAMETER_SET={param_set:#x}")
+            pytest.skip(f"Module does not support CKA_PARAMETER_SET={param_set:#x}")
             raise  # unreachable
         try:
             assert pub != 0 and priv != 0
@@ -281,7 +281,7 @@ class TestSLHDSAKeyGeneration:
         try:
             pub, priv = _generate_slh_dsa_keypair(rs, param_set=param_set)
         except (AssertionError, OSError):
-            pytest.xfail(f"Module does not support CKA_PARAMETER_SET={param_set:#x}")
+            pytest.skip(f"Module does not support CKA_PARAMETER_SET={param_set:#x}")
             raise  # unreachable
         try:
             assert pub != 0 and priv != 0

@@ -55,7 +55,7 @@ class TestHwFeatureEnumeration:
                 template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
             )
         except AssertionError as e:
-            pytest.xfail(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
+            pytest.skip(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
             return []
 
     def test_hw_feature_enumeration(self, p11_raw_session: Any) -> None:
@@ -122,7 +122,7 @@ class TestHwFeatureClock:
                 template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
             )
         except AssertionError as e:
-            pytest.xfail(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
+            pytest.skip(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
             return []
         clocks = []
         for feat in features:
@@ -176,7 +176,7 @@ class TestHwFeatureCounter:
                 template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
             )
         except AssertionError as e:
-            pytest.xfail(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
+            pytest.skip(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
             return []
         counters = []
         for feat in features:
