@@ -120,11 +120,10 @@ class TestSensitiveExtraction:
             attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False},
         )
         try:
-            try:
-                read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
-                pytest.fail("Reading CKA_VALUE on SENSITIVE key should fail")
-            except AssertionError:
-                pass  # Expected
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
+            assert CKA_VALUE not in attrs, (
+                "SECURITY: CKA_VALUE readable on SENSITIVE key — key material exposed"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -133,11 +132,10 @@ class TestSensitiveExtraction:
         rs = p11_raw_session
         pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            try:
-                read_attributes(rs.raw, rs.sh, priv_h, [CKA_PRIVATE_EXPONENT])
-                pytest.fail("Reading CKA_PRIVATE_EXPONENT should fail")
-            except AssertionError:
-                pass  # Expected
+            attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_PRIVATE_EXPONENT])
+            assert CKA_PRIVATE_EXPONENT not in attrs, (
+                "SECURITY: CKA_PRIVATE_EXPONENT readable — private key material exposed"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_h)
             destroy_quietly(rs.raw, rs.sh, priv_h)
@@ -202,12 +200,13 @@ class TestAttributeLaunderingViaCopy:
         try:
             try:
                 copy_h = copy_object(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: True})
-                # If copy succeeded, try to read the value
                 try:
-                    read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
-                    pytest.fail("SECURITY: Copy escalated CKA_EXTRACTABLE, key material readable")
-                except AssertionError:
-                    pass  # Value still protected despite attribute change
+                    # If copy succeeded, check value is still protected
+                    attrs = read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
+                    if CKA_VALUE in attrs:
+                        pytest.fail(
+                            "SECURITY: Copy escalated CKA_EXTRACTABLE, key material readable"
+                        )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, copy_h)
             except AssertionError:
@@ -228,10 +227,11 @@ class TestAttributeLaunderingViaCopy:
             try:
                 copy_h = copy_object(rs.raw, rs.sh, key_h, {CKA_SENSITIVE: False})
                 try:
-                    read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
-                    pytest.fail("SECURITY: Copy downgraded CKA_SENSITIVE, key material readable")
-                except AssertionError:
-                    pass
+                    attrs = read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
+                    if CKA_VALUE in attrs:
+                        pytest.fail(
+                            "SECURITY: Copy downgraded CKA_SENSITIVE, key material readable"
+                        )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, copy_h)
             except AssertionError:
@@ -268,13 +268,10 @@ class TestKeyUsageRestrictions:
             attrs={CKA_EXTRACTABLE: False, CKA_SENSITIVE: True},
         )
         try:
-            try:
-                read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
-                pytest.fail("Reading CKA_VALUE on non-extractable key should fail")
-            except AssertionError as e:
-                if "Reading CKA_VALUE" in str(e):
-                    raise
-                pass  # Expected
+            attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
+            assert CKA_VALUE not in attrs, (
+                "SECURITY: CKA_VALUE readable on non-extractable key — key material exposed"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
