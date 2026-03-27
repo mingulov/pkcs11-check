@@ -14,7 +14,15 @@ from typing import Any
 from .api import RawPKCS11
 from .attr_metadata import ATTR_VALUE_TYPES
 from .bootstrap import get_slot_ids, login_user, open_session
-from .pack import PackedMechanism, attr_bytes, attr_ulong, mech_simple, template, template_ptr_count
+from .pack import (
+    PackedMechanism,
+    attr_bytes,
+    attr_ulong,
+    mech_eddsa,
+    mech_simple,
+    template,
+    template_ptr_count,
+)
 from .rv import expect_rv
 from .types_std import (
     CK_ATTRIBUTE,
@@ -42,6 +50,7 @@ from .types_std import (
     CKM,
     CKM_AES_KEY_GEN,
     CKM_EC_KEY_PAIR_GEN,
+    CKM_EDDSA,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_SENSITIVE,
@@ -65,8 +74,16 @@ def _resolve_mech(
     mechanism: CKM,
     mech_param: PackedMechanism | None,
 ) -> PackedMechanism:
-    """Return mech_param if given, otherwise wrap mechanism as mech_simple."""
-    return mech_param if mech_param is not None else mech_simple(mechanism)
+    """Return mech_param if given, otherwise wrap mechanism as mech_simple.
+
+    For CKM_EDDSA, always use mech_eddsa() with pure mode (no context)
+    since some modules (NSS) require explicit params even for pure EdDSA.
+    """
+    if mech_param is not None:
+        return mech_param
+    if mechanism == CKM_EDDSA:
+        return mech_eddsa(mechanism)
+    return mech_simple(mechanism)
 
 
 def _two_call_output(
