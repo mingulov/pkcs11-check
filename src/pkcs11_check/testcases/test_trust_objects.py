@@ -22,14 +22,27 @@ from pkcs11_check.raw.types_std import (
     CKA_TRUST_EMAIL_PROTECTION,
     CKA_TRUST_SERVER_AUTH,
     CKO_TRUST,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKT_NOT_TRUSTED,
     CKT_TRUST_ANCHOR,
     CKT_TRUST_MUST_VERIFY_TRUST,
     CKT_TRUST_UNKNOWN,
     CKT_TRUSTED,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = [pytest.mark.object]
+
+# CKR codes acceptable when reading vendor-extension trust attributes fails
+_TRUST_ATTR_ERROR_CKRS = (
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+)
 
 # Known CK_TRUST values
 _KNOWN_TRUST_VALUES = {
@@ -71,8 +84,10 @@ class TestTrustObjects:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
                 issuer = attrs[CKA_ISSUER]
                 assert isinstance(issuer, bytes), f"Expected bytes ISSUER, got {type(issuer)}"
-            except (AssertionError, Exception) as e:
-                pytest.xfail(f"Cannot read CKA_ISSUER from trust object: {e}")
+            except (AssertionError, Exception) as exc:
+                xfail_if_known_ckr(
+                    exc, _TRUST_ATTR_ERROR_CKRS, "Cannot read CKA_ISSUER from trust object"
+                )
 
     def test_trust_objects_have_serial_number(self, p11_raw_session: Any) -> None:
         """Each CKO_TRUST object has a readable CKA_SERIAL_NUMBER."""
@@ -87,8 +102,10 @@ class TestTrustObjects:
                 assert isinstance(serial, bytes), (
                     f"Expected bytes SERIAL_NUMBER, got {type(serial)}"
                 )
-            except (AssertionError, Exception) as e:
-                pytest.xfail(f"Cannot read CKA_SERIAL_NUMBER from trust object: {e}")
+            except (AssertionError, Exception) as exc:
+                xfail_if_known_ckr(
+                    exc, _TRUST_ATTR_ERROR_CKRS, "Cannot read CKA_SERIAL_NUMBER from trust object"
+                )
 
     def test_trust_server_auth_is_known_value(self, p11_raw_session: Any) -> None:
         """CKA_TRUST_SERVER_AUTH is a known CK_TRUST value if present."""

@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -157,7 +158,7 @@ class TestConcatenateBaseAndKey:
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_CONCATENATE_BASE_AND_KEY derive failed: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_KEY derive failed")
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -188,7 +189,7 @@ class TestConcatenateBaseAndKey:
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_CONCATENATE_BASE_AND_KEY derive failed: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_KEY derive failed")
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -229,7 +230,9 @@ class TestConcatenateBaseAndData:
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_CONCATENATE_BASE_AND_DATA derive failed: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_DATA derive failed"
+            )
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -270,7 +273,9 @@ class TestConcatenateBaseAndData:
             val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
             assert val_a != val_b
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_CONCATENATE_BASE_AND_DATA derive failed: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_DATA derive failed"
+            )
         finally:
             for h in (derived_a, derived_b):
                 if h:
@@ -311,7 +316,9 @@ class TestConcatenateDataAndBase:
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_CONCATENATE_DATA_AND_BASE derive failed: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_DATA_AND_BASE derive failed"
+            )
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -350,7 +357,7 @@ class TestConcatenateDataAndBase:
             val_db = read_attributes(rs.raw, rs.sh, derived_db, [CKA_VALUE])[CKA_VALUE]
             assert val_bd != val_db
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CONCATENATE ordering test failed: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CONCATENATE ordering test failed")
         finally:
             for h in (derived_bd, derived_db):
                 if h:
@@ -391,7 +398,7 @@ class TestXorBaseAndData:
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_XOR_BASE_AND_DATA derive failed: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_XOR_BASE_AND_DATA derive failed")
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -419,7 +426,7 @@ class TestXorBaseAndData:
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert val == base_bytes
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_XOR_BASE_AND_DATA derive failed: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_XOR_BASE_AND_DATA derive failed")
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -448,7 +455,7 @@ class TestXorBaseAndData:
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert val == expected
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_XOR_BASE_AND_DATA derive failed: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_XOR_BASE_AND_DATA derive failed")
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -487,7 +494,7 @@ class TestExtractKeyFromKey:
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_EXTRACT_KEY_FROM_KEY derive failed: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_EXTRACT_KEY_FROM_KEY derive failed")
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -517,7 +524,7 @@ class TestExtractKeyFromKey:
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_EXTRACT_KEY_FROM_KEY derive failed: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_EXTRACT_KEY_FROM_KEY derive failed")
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -556,7 +563,7 @@ class TestExtractKeyFromKey:
             val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
             assert val_a != val_b
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_EXTRACT_KEY_FROM_KEY derive failed: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_EXTRACT_KEY_FROM_KEY derive failed")
         finally:
             for h in (derived_a, derived_b):
                 if h:

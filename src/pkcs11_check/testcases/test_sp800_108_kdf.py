@@ -56,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -342,7 +343,9 @@ class TestSP800108CounterKDF:
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16, f"Expected 16 bytes, got {len(val)}"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_COUNTER_KDF derivation not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -362,7 +365,11 @@ class TestSP800108CounterKDF:
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32, f"Expected 32 bytes, got {len(val)}"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_COUNTER_KDF 256-bit derivation not operational: {exc}")
+            xfail_if_known_ckr(
+                exc,
+                _DERIVE_ERROR_RVS,
+                "CKM_SP800_108_COUNTER_KDF 256-bit derivation not operational",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -396,7 +403,9 @@ class TestSP800108CounterKDF:
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "Deterministic KDF produced different outputs"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_COUNTER_KDF derivation not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if d1:
@@ -435,7 +444,9 @@ class TestSP800108CounterKDF:
             vb = read_attributes(rs.raw, rs.sh, db, [CKA_VALUE])[CKA_VALUE]
             assert va != vb, "Different labels produced same derived key"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_COUNTER_KDF derivation not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if da:
@@ -468,7 +479,7 @@ class TestSP800108FeedbackKDF:
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_FEEDBACK_KDF not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -492,7 +503,9 @@ class TestSP800108FeedbackKDF:
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_FEEDBACK_KDF with IV not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF with IV not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -524,7 +537,7 @@ class TestSP800108FeedbackKDF:
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 != v2, "Different IVs produced same derived key"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_FEEDBACK_KDF not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if d1:
@@ -558,7 +571,7 @@ class TestSP800108FeedbackKDF:
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "Deterministic KDF produced different outputs"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_FEEDBACK_KDF not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if d1:
@@ -591,7 +604,9 @@ class TestSP800108DoublePipelineKDF:
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -614,7 +629,9 @@ class TestSP800108DoublePipelineKDF:
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_DOUBLE_PIPELINE_KDF 256 not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF 256 not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -646,7 +663,9 @@ class TestSP800108DoublePipelineKDF:
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "Deterministic KDF produced different outputs"
         except (AssertionError, Exception) as exc:
-            pytest.xfail(f"CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if d1:

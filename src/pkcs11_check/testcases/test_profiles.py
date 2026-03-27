@@ -20,9 +20,24 @@ from pkcs11_check.raw.types_std import (
     CKP_BASELINE_PROVIDER,
     CKP_EXTENDED_PROVIDER,
     CKP_VENDOR_DEFINED,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.requires_v30
+
+# CKR codes acceptable when profile attribute reads fail
+_PROFILE_ATTR_ERROR_CKRS = (
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+)
 
 # Known standard profile IDs
 _KNOWN_PROFILE_IDS = {
@@ -73,8 +88,8 @@ class TestProfileObjects:
                 )
                 pid = attrs[CKA_PROFILE_ID]
                 assert pid is not None
-            except (AssertionError, KeyError):
-                pytest.xfail("Cannot read CKA_PROFILE_ID")
+            except (AssertionError, Exception) as exc:
+                xfail_if_known_ckr(exc, _PROFILE_ATTR_ERROR_CKRS, "Cannot read CKA_PROFILE_ID")
 
     def test_known_profile_ids(self, p11_raw_session: Any) -> None:
         """Profile IDs are known PKCS#11 values or vendor-defined."""

@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -225,8 +226,8 @@ class TestHKDFKeyGen:
             derived = _hkdf_derive(rs, base_key, b"salt-value", b"info-value")
             okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(okm) == 32
-        except (AssertionError, Exception) as e:
-            pytest.xfail(f"HKDF_DERIVE with HKDF_KEY_GEN key failed: {e}")
+        except (AssertionError, Exception) as exc:
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF_DERIVE with HKDF_KEY_GEN key failed")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -250,8 +251,8 @@ class TestHKDFData:
             value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(value) == 32  # 256 bits = 32 bytes
             assert value != bytes(32), "Derived value should not be all zeros"
-        except (AssertionError, Exception) as e:
-            pytest.xfail(f"HKDF_DATA derive failed: {e}")
+        except (AssertionError, Exception) as exc:
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF_DATA derive failed")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -272,8 +273,8 @@ class TestHKDFData:
             val_1 = read_attributes(rs.raw, rs.sh, derived_1, [CKA_VALUE])[CKA_VALUE]
             val_2 = read_attributes(rs.raw, rs.sh, derived_2, [CKA_VALUE])[CKA_VALUE]
             assert val_1 == val_2, "HKDF_DATA must be deterministic"
-        except (AssertionError, Exception) as e:
-            pytest.xfail(f"HKDF_DATA derive failed: {e}")
+        except (AssertionError, Exception) as exc:
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF_DATA derive failed")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived_1:
@@ -299,8 +300,8 @@ class TestHKDFData:
             val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
             val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
             assert val_a != val_b, "Different info strings must produce different output"
-        except (AssertionError, Exception) as e:
-            pytest.xfail(f"HKDF_DATA derive failed: {e}")
+        except (AssertionError, Exception) as exc:
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF_DATA derive failed")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived_a:

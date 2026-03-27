@@ -39,9 +39,29 @@ from pkcs11_check.raw.types_std import (
     CKM_IKE2_PRF_PLUS_DERIVE,
     CKM_IKE_PRF_DERIVE,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
+
+_DERIVE_ERROR_CKRS = (
+    CKR_MECHANISM_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_ARGUMENTS_BAD,
+)
 
 # 32-byte base key material (shared secret / SKEYSEED)
 _BASE_KEY_BYTES = bytes(range(32))
@@ -150,7 +170,7 @@ class TestIKE2PRFPlusDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE2_PRF_PLUS_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -172,7 +192,9 @@ class TestIKE2PRFPlusDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE2_PRF_PLUS_DERIVE AES-128 not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE AES-128 not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -191,7 +213,7 @@ class TestIKE2PRFPlusDerive:
                 destroy_quietly(rs.raw, rs.sh, db)
                 destroy_quietly(rs.raw, rs.sh, da)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE2_PRF_PLUS_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -209,7 +231,7 @@ class TestIKE2PRFPlusDerive:
                 destroy_quietly(rs.raw, rs.sh, d2)
                 destroy_quietly(rs.raw, rs.sh, d1)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE2_PRF_PLUS_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -233,7 +255,7 @@ class TestIKEPRFDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE_PRF_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -249,7 +271,9 @@ class TestIKEPRFDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE_PRF_DERIVE AES-128 not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE AES-128 not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -267,7 +291,7 @@ class TestIKEPRFDerive:
                 destroy_quietly(rs.raw, rs.sh, db)
                 destroy_quietly(rs.raw, rs.sh, da)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE_PRF_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -285,7 +309,7 @@ class TestIKEPRFDerive:
                 destroy_quietly(rs.raw, rs.sh, d2)
                 destroy_quietly(rs.raw, rs.sh, d1)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE_PRF_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -309,7 +333,7 @@ class TestIKE1PRFDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE1_PRF_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -325,7 +349,9 @@ class TestIKE1PRFDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE1_PRF_DERIVE AES-128 not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE AES-128 not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -343,7 +369,7 @@ class TestIKE1PRFDerive:
                 destroy_quietly(rs.raw, rs.sh, db)
                 destroy_quietly(rs.raw, rs.sh, da)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE1_PRF_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -361,7 +387,7 @@ class TestIKE1PRFDerive:
                 destroy_quietly(rs.raw, rs.sh, d2)
                 destroy_quietly(rs.raw, rs.sh, d1)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE1_PRF_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -386,7 +412,7 @@ class TestIKE1ExtendedDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE1_EXTENDED_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -403,7 +429,9 @@ class TestIKE1ExtendedDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE1_EXTENDED_DERIVE AES-128 not operational: {exc}")
+            xfail_if_known_ckr(
+                exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE AES-128 not operational"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -423,7 +451,7 @@ class TestIKE1ExtendedDerive:
                 destroy_quietly(rs.raw, rs.sh, db)
                 destroy_quietly(rs.raw, rs.sh, da)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE1_EXTENDED_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -442,6 +470,6 @@ class TestIKE1ExtendedDerive:
                 destroy_quietly(rs.raw, rs.sh, d2)
                 destroy_quietly(rs.raw, rs.sh, d1)
         except AssertionError as exc:
-            pytest.xfail(f"CKM_IKE1_EXTENDED_DERIVE not operational: {exc}")
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
