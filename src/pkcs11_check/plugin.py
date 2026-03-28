@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,11 @@ _CUMULATIVE_USED_MECHANISMS: pytest.StashKey[set[int]] = pytest.StashKey()
 _CUMULATIVE_MECHANISM_DETAILS: pytest.StashKey[set[tuple[int, frozenset[tuple[str, int]]]]] = (
     pytest.StashKey()
 )
+_CUMULATIVE_FUNCTION_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
+_CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
+_CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
+_BOOTSTRAP_FUNCTION_COUNTS: pytest.StashKey[dict[str, int]] = pytest.StashKey()
+_BOOTSTRAP_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -101,6 +107,11 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_COVERAGE_DATA] = {}
     config.stash[_CUMULATIVE_USED_MECHANISMS] = set()
     config.stash[_CUMULATIVE_MECHANISM_DETAILS] = set()
+    config.stash[_CUMULATIVE_FUNCTION_COUNTS] = Counter()
+    config.stash[_CUMULATIVE_MECHANISM_COUNTS] = Counter()
+    config.stash[_CUMULATIVE_DETAIL_COUNTS] = Counter()
+    config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = {}
+    config.stash[_BOOTSTRAP_COLLECTED] = False
 
     # Inject --report-log when PKCS11_CHECK_REPORT_LOG is set (by test_cmd.py for
     # --isolation none JSON runs).  Guard against meta-tests (no --p11-module) and
@@ -311,6 +322,21 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                 cumulative.update(rs.raw.call_log.keys())
                 if raw_ref is None:
                     session.config.stash[_RAW_INSTANCE] = rs.raw
+                # Accumulate function call counts
+                try:
+                    fc = session.config.stash[_CUMULATIVE_FUNCTION_COUNTS]
+                    fc.update(rs.raw.call_log)
+                except KeyError:
+                    pass
+                # Collect bootstrap counts once
+                try:
+                    if not session.config.stash.get(_BOOTSTRAP_COLLECTED, False):
+                        bootstrap = getattr(rs, "bootstrap_call_counts", {})
+                        if bootstrap:
+                            session.config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = dict(bootstrap)
+                            session.config.stash[_BOOTSTRAP_COLLECTED] = True
+                except KeyError:
+                    pass
                 # Collect mechanism names used by this session
                 if hasattr(rs, "mechanisms"):
                     try:
@@ -324,6 +350,12 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                     used.update(rs.raw.used_mechanisms)
                 except (KeyError, AttributeError):
                     pass
+                # Accumulate mechanism counts
+                try:
+                    mc = session.config.stash[_CUMULATIVE_MECHANISM_COUNTS]
+                    mc.update(rs.raw.mechanism_counts)
+                except (KeyError, AttributeError):
+                    pass
                 break
 
     # Drain stacked mechanism details from PackedMechanism.byref() calls
@@ -333,27 +365,35 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
         details = drain_mechanism_details()
         if details:
             detail_set = session.config.stash[_CUMULATIVE_MECHANISM_DETAILS]
+            detail_counts = session.config.stash.get(_CUMULATIVE_DETAIL_COUNTS)
             for mech_id, subs in details:
                 detail_set.add((mech_id, frozenset(subs.items())))
+                if detail_counts is not None:
+                    detail_str = _build_one_stacked_string(mech_id, subs)
+                    detail_counts[detail_str] += 1
     except (KeyError, ImportError):
         pass
+
+
+def _build_one_stacked_string(mech_id: int, subs: dict[str, int]) -> str:
+    """Build one stacked string like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
+    from pkcs11_check.raw.api import ckm_name, sub_param_name
+
+    base = ckm_name(mech_id)
+    if subs:
+        parts = ",".join(f"{k}={sub_param_name(k, v)}" for k, v in sorted(subs.items()))
+        return f"{base}[{parts}]"
+    return base
 
 
 def _build_stacked_strings(
     detail_set: set[tuple[int, frozenset[tuple[str, int]]]],
 ) -> list[str]:
     """Build sorted stacked strings like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
-    from pkcs11_check.raw.api import ckm_name, sub_param_name
-
-    result: list[str] = []
-    for mech_id, subs_frozen in detail_set:
-        base = ckm_name(mech_id)
-        if subs_frozen:
-            parts = ",".join(f"{k}={sub_param_name(k, v)}" for k, v in sorted(subs_frozen))
-            result.append(f"{base}[{parts}]")
-        else:
-            result.append(base)
-    return sorted(result)
+    return sorted(
+        _build_one_stacked_string(mech_id, dict(subs_frozen))
+        for mech_id, subs_frozen in detail_set
+    )
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
@@ -369,8 +409,6 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     # Function coverage
     cumulative = config.stash[_CUMULATIVE_FUNCTIONS]
     available = raw.available_function_names()
-    called = sorted(cumulative & available)
-    uncalled = sorted(available - cumulative)
 
     # Mechanism coverage (available from module info)
     mech_available = config.stash.get(_CUMULATIVE_MECHANISMS, set())
@@ -386,11 +424,30 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     detail_set = config.stash.get(_CUMULATIVE_MECHANISM_DETAILS, set())
     stacked = _build_stacked_strings(detail_set)
 
+    # Call counts
+    func_counts = config.stash.get(_CUMULATIVE_FUNCTION_COUNTS, Counter())
+    mech_counts_raw = config.stash.get(_CUMULATIVE_MECHANISM_COUNTS, Counter())
+    detail_counts = config.stash.get(_CUMULATIVE_DETAIL_COUNTS, Counter())
+    bootstrap = config.stash.get(_BOOTSTRAP_FUNCTION_COUNTS, {})
+
+    # Resolve mechanism int IDs to names for JSON output
+    mech_counts_named: dict[str, int] = {}
+    for mid, count in mech_counts_raw.items():
+        name = ckm_name(mid)
+        mech_counts_named[name] = mech_counts_named.get(name, 0) + count
+
+    # Bootstrap functions join called_names
+    bootstrap_func_names = set(bootstrap.keys())
+    called = sorted((cumulative | bootstrap_func_names) & available)
+    uncalled = sorted(available - cumulative - bootstrap_func_names)
+
     coverage_data: dict[str, Any] = {
         "function_coverage": {
             "available": len(available),
             "called": len(called),
             "called_names": called,
+            "called_counts": dict(sorted(func_counts.items())),
+            "bootstrap_counts": bootstrap,
             "uncalled_names": uncalled,
         },
         "mechanism_coverage": {
@@ -398,9 +455,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             "available_names": mech_ckm,
             "invoked": len(invoked_names),
             "invoked_names": invoked_names,
+            "invoked_counts": dict(sorted(mech_counts_named.items())),
             "not_invoked": len(not_invoked),
             "not_invoked_names": not_invoked,
             "invoked_detail": stacked,
+            "invoked_detail_counts": dict(sorted(detail_counts.items())),
         },
     }
     config.stash[_COVERAGE_DATA] = coverage_data
