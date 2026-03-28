@@ -208,11 +208,6 @@ def _ensure_mechanism_catalog(config: pytest.Config) -> Any:
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """Parametrize mechanism-driven tests from the module's mechanism list."""
-    # Only activate for mechanism test files
-    catalog = _ensure_mechanism_catalog(metafunc.config)
-    if catalog is None:
-        return
-
     from pkcs11_check.raw.types_std import (
         CKF_DERIVE,
         CKF_DIGEST,
@@ -223,7 +218,6 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         CKF_WRAP,
     )
 
-    # Map fixture names to flag filters
     param_map = {
         "mech_encrypt_entry": int(CKF_ENCRYPT),
         "mech_sign_entry": int(CKF_SIGN),
@@ -231,23 +225,36 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         "mech_keygen_entry": int(CKF_GENERATE) | int(CKF_GENERATE_KEY_PAIR),
         "mech_wrap_entry": int(CKF_WRAP),
         "mech_derive_entry": int(CKF_DERIVE),
-        "mech_any_entry": 0,  # all mechanisms
+        "mech_any_entry": 0,
     }
 
-    for fixture_name, flag in param_map.items():
-        if fixture_name in metafunc.fixturenames:
-            if flag:
-                entries = catalog.filter_registered(flag)
-            else:
-                entries = catalog.all_entries()
-            if entries:
-                metafunc.parametrize(
-                    fixture_name,
-                    entries,
-                    ids=[e.mech_name for e in entries],
-                    indirect=False,
-                )
+    # Check if any mechanism fixture is requested
+    requested = None
+    for name in param_map:
+        if name in metafunc.fixturenames:
+            requested = name
             break
+    if requested is None:
+        return
+
+    catalog = _ensure_mechanism_catalog(metafunc.config)
+    if catalog is None:
+        # No catalog available — parametrize with empty list (0 tests, no error)
+        metafunc.parametrize(requested, [], ids=[])
+        return
+
+    flag = param_map[requested]
+    if flag:
+        entries = catalog.filter_registered(flag)
+    else:
+        entries = catalog.all_entries()
+    if entries:
+        metafunc.parametrize(
+            requested,
+            entries,
+            ids=[e.mech_name for e in entries],
+            indirect=False,
+        )
 
 
 def _runtime_skip_reason(
