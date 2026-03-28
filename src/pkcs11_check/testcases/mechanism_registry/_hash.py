@@ -177,7 +177,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     # CKM_SHAKE_128 = 0x00000418, CKM_SHAKE_256 = 0x00000419
-    # Not yet exported from types_std.py (XOF requires C_DigestXof* v3.1 functions)
+    # TODO: not in vendored v3.2 header; expected in a future PKCS#11 spec revision
     registry[0x00000418] = MechConfig(
         key_type=None,
         keygen_mech=None,
