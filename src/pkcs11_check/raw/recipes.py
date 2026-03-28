@@ -193,10 +193,11 @@ def gen_aes_key(
 ) -> int:
     """Generate an AES key with explicit attributes."""
     _defaults: dict[int, Any] = {
-        CKA_KEY_TYPE: CKK_AES,
         CKA_ENCRYPT: True,
         CKA_DECRYPT: True,
     }
+    if mechanism == CKM_AES_KEY_GEN:
+        _defaults[CKA_KEY_TYPE] = CKK_AES
     if attrs:
         _defaults.update(attrs)
     packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
