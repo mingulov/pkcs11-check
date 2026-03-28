@@ -47,6 +47,7 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
     CKA_EC_POINT,
@@ -55,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKA_TOKEN,
+    CKA_UNWRAP,
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_WRAP,
@@ -64,8 +66,8 @@ from pkcs11_check.raw.types_std import (
     CKK_HKDF,
     CKM,
     CKM_AES_ECB,
-    CKM_GENERIC_SECRET_KEY_GEN,
     CKM_SHA256,
+    CKO_SECRET_KEY,
     CKR_OK,
     CKZ_SALT_SPECIFIED,
 )
@@ -91,12 +93,14 @@ class TestAESWrapUnwrapUse:
         except ImportError:
             pytest.skip("CKM_AES_KEY_WRAP not in types_std")
 
-        # Generate wrapping key and target key
+        # Generate wrapping key and target key.
+        # CKA_UNWRAP is required in addition to CKA_WRAP so the same key can be
+        # used for both wrap and unwrap operations.
         wrap_key_handle = gen_aes_key(
             rs.raw,
             rs.sh,
             256,
-            attrs={CKA_WRAP: True, CKA_TOKEN: False},
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_TOKEN: False},
         )
         target = gen_aes_key(
             rs.raw,
@@ -126,7 +130,9 @@ class TestAESWrapUnwrapUse:
             destroy_quietly(rs.raw, rs.sh, target)
             target = 0
 
-            # Unwrap and decrypt to verify key material was preserved
+            # Unwrap and decrypt to verify key material was preserved.
+            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey — Kryoptic
+            # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
             unwrapped_key = unwrap_key(
                 rs.raw,
                 rs.sh,
@@ -134,6 +140,7 @@ class TestAESWrapUnwrapUse:
                 wrapped,
                 CKM(int(CKM_AES_KEY_WRAP)),
                 attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_DECRYPT: True,
                     CKA_ENCRYPT: True,
@@ -195,12 +202,15 @@ class TestECDHDerivedKeyUse:
                 CKM(int(CKM_ECDH1_DERIVE)), kdf=int(CKD_NULL), public_data=peer_point
             )
 
+            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey — Kryoptic
+            # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
             derived = derive_key(
                 rs.raw,
                 rs.sh,
                 priv_a,
                 CKM(int(CKM_ECDH1_DERIVE)),
                 attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_VALUE_LEN: 16,
                     CKA_ENCRYPT: True,
@@ -258,7 +268,12 @@ class TestHKDFDerivedKeyUse:
         derived: int = 0
 
         try:
-            # Generate HKDF base key
+            from pkcs11_check.raw.types_std import CKM_HKDF_KEY_GEN
+
+            # Generate HKDF base key using CKM_HKDF_KEY_GEN + CKK_HKDF.
+            # Using CKM_GENERIC_SECRET_KEY_GEN with CKK_HKDF fails on Kryoptic
+            # with CKR_TEMPLATE_INCONSISTENT — the HKDF keygen mechanism is
+            # required for this key type.
             hkdf_attrs: dict[int, Any] = {
                 CKA_KEY_TYPE: CKK_HKDF,
                 CKA_DERIVE: True,
@@ -269,7 +284,7 @@ class TestHKDFDerivedKeyUse:
             packed = [attr_ulong(CKA_VALUE_LEN, 32)]
             packed.extend(pack_attrs(hkdf_attrs, skip={CKA_VALUE_LEN}))
             tmpl = template(*packed)
-            gen_mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
+            gen_mech = mech_simple(CKM(CKM_HKDF_KEY_GEN))
             handle = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_GenerateKey(  # type: ignore[attr-defined]
                 rs.sh, gen_mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
@@ -287,12 +302,15 @@ class TestHKDFDerivedKeyUse:
                 info=b"pkcs11-check lifecycle test",
             )
 
+            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey — Kryoptic
+            # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
             derived = derive_key(
                 rs.raw,
                 rs.sh,
                 base_key,
                 CKM(int(CKM_HKDF_DERIVE)),
                 attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_VALUE_LEN: 32,
                     CKA_ENCRYPT: True,
@@ -337,8 +355,6 @@ class TestRSAOAEPWrapLifecycle:
         except ImportError:
             pytest.skip("CKM_RSA_PKCS_OAEP not in types_std")
 
-        from pkcs11_check.raw.types_std import CKA_UNWRAP
-
         rsa_pub, rsa_priv = 0, 0
         target: int = 0
         unwrapped_key: int = 0
@@ -375,9 +391,12 @@ class TestRSAOAEPWrapLifecycle:
             destroy_quietly(rs.raw, rs.sh, target)
             target = 0
 
+            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey — Kryoptic
+            # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
             unwrapped_key = unwrap_key(
                 rs.raw, rs.sh, rsa_priv, wrapped, CKM(int(CKM_RSA_PKCS_OAEP)),
                 attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_DECRYPT: True,
                     CKA_ENCRYPT: True,

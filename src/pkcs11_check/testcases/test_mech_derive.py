@@ -43,6 +43,7 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
     CKA_ENCRYPT,
@@ -56,8 +57,8 @@ from pkcs11_check.raw.types_std import (
     CKK_GENERIC_SECRET,
     CKK_HKDF,
     CKM,
-    CKM_GENERIC_SECRET_KEY_GEN,
     CKM_SHA256,
+    CKO_SECRET_KEY,
     CKR_OK,
     CKZ_SALT_SPECIFIED,
 )
@@ -260,7 +261,17 @@ _P256_OID: bytes = encode_named_curve_parameters("secp256r1")
 
 
 def _gen_hkdf_base_key(rs: RawSession) -> int:
-    """Generate a CKK_HKDF key for use as HKDF base key."""
+    """Generate a CKK_HKDF key for use as HKDF base key.
+
+    Must use CKM_HKDF_KEY_GEN (not CKM_GENERIC_SECRET_KEY_GEN) with CKK_HKDF.
+    Kryoptic returns CKR_TEMPLATE_INCONSISTENT for any other combination.
+    """
+    try:
+        from pkcs11_check.raw.types_std import CKM_HKDF_KEY_GEN
+    except ImportError:
+        import pytest
+
+        pytest.skip("CKM_HKDF_KEY_GEN not in types_std — cannot generate HKDF base key")
     attrs: dict[int, Any] = {
         CKA_KEY_TYPE: CKK_HKDF,
         CKA_DERIVE: True,
@@ -271,7 +282,7 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
     packed = [attr_ulong(CKA_VALUE_LEN, 32)]
     packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
     tmpl = template(*packed)
-    mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
+    mech = mech_simple(CKM(CKM_HKDF_KEY_GEN))
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(  # type: ignore[attr-defined]
         rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
@@ -280,8 +291,11 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
     return handle.value
 
 
-# Template for derived AES-128 key
+# Template for derived AES-128 key.
+# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey — some modules (Kryoptic)
+# return CKR_TEMPLATE_INCONSISTENT when it is absent.
 _DERIVED_AES_ATTRS: dict[int, Any] = {
+    CKA_CLASS: CKO_SECRET_KEY,
     CKA_KEY_TYPE: CKK_AES,
     CKA_VALUE_LEN: 16,
     CKA_ENCRYPT: True,
@@ -291,8 +305,11 @@ _DERIVED_AES_ATTRS: dict[int, Any] = {
     CKA_SENSITIVE: False,
 }
 
-# Template for derived generic secret key
+# Template for derived generic secret key.
+# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey — some modules (Kryoptic)
+# return CKR_TEMPLATE_INCONSISTENT when it is absent.
 _DERIVED_GENERIC_ATTRS: dict[int, Any] = {
+    CKA_CLASS: CKO_SECRET_KEY,
     CKA_KEY_TYPE: CKK_GENERIC_SECRET,
     CKA_VALUE_LEN: 16,
     CKA_DERIVE: True,
@@ -336,7 +353,13 @@ def _derive_hkdf(rs: RawSession, entry: MechEntry) -> None:
 
 
 def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
-    """ECDH1 (and cofactor): generate two P-256 keypairs, derive shared secret."""
+    """ECDH1 (and cofactor): generate two P-256 keypairs, derive shared secret.
+
+    The private key must have CKA_DERIVE=True.  The derived key uses
+    CKA_CLASS=CKO_SECRET_KEY (required by the PKCS#11 spec for C_DeriveKey)
+    and no CKA_VALUE_LEN — ECDH with CKD_NULL derives the full curve-output
+    length (32 bytes for P-256) without truncation.
+    """
     mech_id = entry.mech_id
     from pkcs11_check.raw.types_std import CKA_EC_POINT
 
@@ -344,7 +367,9 @@ def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
     priv_b, pub_b = 0, 0
     derived_key: int = 0
     try:
-        pub_a, priv_a = gen_ec_keypair(rs.raw, rs.sh, _P256_OID)
+        pub_a, priv_a = gen_ec_keypair(
+            rs.raw, rs.sh, _P256_OID, private_attrs={CKA_DERIVE: True, CKA_TOKEN: False}
+        )
         pub_b, priv_b = gen_ec_keypair(rs.raw, rs.sh, _P256_OID)
         # Read peer (B's) public point
         peer_attrs = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])
@@ -356,12 +381,21 @@ def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
             kdf=int(CKD_NULL),
             public_data=peer_point,
         )
+        # CKA_CLASS required; no CKA_VALUE_LEN — ECDH output length is curve-fixed
+        ecdh_derived_attrs: dict[int, Any] = {
+            CKA_CLASS: CKO_SECRET_KEY,
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_DERIVE: True,
+            CKA_TOKEN: False,
+            CKA_EXTRACTABLE: True,
+            CKA_SENSITIVE: False,
+        }
         derived_key = derive_key(
             rs.raw,
             rs.sh,
             priv_a,
             CKM(mech_id),
-            attrs=_DERIVED_GENERIC_ATTRS,
+            attrs=ecdh_derived_attrs,
             mech_param=ecdh_param,
         )
         assert derived_key != 0, f"{entry.mech_name}: ECDH derive returned handle 0"
