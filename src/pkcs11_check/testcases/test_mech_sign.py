@@ -14,17 +14,22 @@ Key types covered:
 The tampered-data test verifies that C_Verify returns False (CKR_SIGNATURE_INVALID
 or CKR_SIGNATURE_LEN_RANGE) when the data does not match the signature.
 """
+
 from __future__ import annotations
 
 import pytest
 
 from pkcs11_check.fixtures import RawSession
-from pkcs11_check.raw.recipes import destroy_quietly, sign_single, verify_single
+from pkcs11_check.raw.recipes import destroy_quietly, import_secret_key, sign_single, verify_single
 from pkcs11_check.raw.types_std import (
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKK,
     CKM,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
+    build_params_from_vector,
     generate_key_for_sign,
     make_mech_param_or_skip,
 )
@@ -62,10 +67,7 @@ class TestMechSignRoundtrip:
                 sig,
                 mech_param=mech_param,
             )
-            assert ok, (
-                f"{entry.mech_name}: verify failed after valid sign "
-                f"(sig={sig.hex()!r})"
-            )
+            assert ok, f"{entry.mech_name}: verify failed after valid sign (sig={sig.hex()!r})"
         finally:
             destroy_quietly(rs.raw, rs.sh, sign_key)
             if verify_key is not None:
@@ -109,3 +111,60 @@ class TestMechSignRoundtrip:
             destroy_quietly(rs.raw, rs.sh, sign_key)
             if verify_key is not None:
                 destroy_quietly(rs.raw, rs.sh, verify_key)
+
+
+class TestMechSignKAT:
+    """Known-answer sign/MAC tests from pre-generated vectors."""
+
+    def test_kat_vector(self, p11_raw_session: RawSession, mech_sign_entry: MechEntry) -> None:
+        """Compute MAC with known key and input — verify output matches vector."""
+        rs = p11_raw_session
+        entry = mech_sign_entry
+        config = entry.config
+        if config is None or not config.vector_file:
+            pytest.skip("No KAT vectors for this mechanism")
+
+        from pkcs11_check.testcases.mechanism_vectors import load_positive_vectors
+
+        vectors = load_positive_vectors(config.vector_file)
+        if not vectors:
+            pytest.skip(f"No positive vectors in {config.vector_file}")
+
+        for vec in vectors:
+            # HMAC vector files may contain multiple mechanisms; filter to this one
+            vec_mech = vec.get("mechanism_name")
+            if vec_mech and vec_mech != f"CKM_{entry.mech_name}" and vec_mech != entry.mech_name:
+                continue
+            key_hex = vec.get("key_hex")
+            mac_hex = vec.get("mac_hex")
+            if not key_hex or not mac_hex:
+                continue
+            if config.key_type is None:
+                continue
+            key_bytes = bytes.fromhex(key_hex)
+            key = import_secret_key(
+                rs.raw,
+                rs.sh,
+                CKK(int(config.key_type)),
+                key_bytes,
+                attrs={CKA_SIGN: True, CKA_TOKEN: False},
+            )
+            try:
+                params = build_params_from_vector(entry.mech_id, config.param_recipe, vec)
+                if params == "SKIP":
+                    continue
+                mac = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM(entry.mech_id),
+                    bytes.fromhex(vec["input_hex"]),
+                    mech_param=params,
+                )
+                expected = bytes.fromhex(mac_hex)
+                assert mac == expected, (
+                    f"KAT MAC mismatch for {vec.get('id', '?')}: "
+                    f"got {mac.hex()!r}, expected {expected.hex()!r}"
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, key)

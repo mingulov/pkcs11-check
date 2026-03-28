@@ -13,6 +13,7 @@ XOF mechanisms (SHAKE-128/256) that require C_DigestXof* are skipped here —
 they use a different API not covered by digest_single.
 Mechanisms with param_required=True and no factory (SHA-512/t) are skipped.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -89,8 +90,7 @@ def _check_not_xof(entry: MechEntry) -> None:
     """Skip XOF mechanisms that require C_DigestXof* (SHAKE-128/256)."""
     if entry.mech_id in (_SHAKE_128_ID, _SHAKE_256_ID):
         pytest.skip(
-            f"{entry.mech_name}: XOF mechanism requires C_DigestXof* (v3.1), "
-            "not tested here"
+            f"{entry.mech_name}: XOF mechanism requires C_DigestXof* (v3.1), not tested here"
         )
 
 
@@ -106,9 +106,7 @@ def _check_not_parameterised(entry: MechEntry, config: MechConfig) -> None:
 class TestMechDigest:
     """Digest tests for every advertised digest mechanism with a registry config."""
 
-    def test_known_empty(
-        self, p11_raw_session: RawSession, mech_digest_entry: MechEntry
-    ) -> None:
+    def test_known_empty(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
         """Digest of empty input: verify against hashlib for known algorithms,
         or just check output is non-empty for others."""
         rs = p11_raw_session
@@ -136,9 +134,7 @@ class TestMechDigest:
         else:
             assert len(digest) > 0, f"{entry.mech_name}: empty digest output is zero bytes"
 
-    def test_length(
-        self, p11_raw_session: RawSession, mech_digest_entry: MechEntry
-    ) -> None:
+    def test_length(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
         """Output length matches expected for the algorithm."""
         rs = p11_raw_session
         entry = mech_digest_entry
@@ -161,9 +157,7 @@ class TestMechDigest:
             # Unknown algorithm — just verify output is non-empty
             assert len(digest) > 0, f"{entry.mech_name}: digest output is zero bytes"
 
-    def test_deterministic(
-        self, p11_raw_session: RawSession, mech_digest_entry: MechEntry
-    ) -> None:
+    def test_deterministic(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
         """Same input produces same digest in two consecutive calls."""
         rs = p11_raw_session
         entry = mech_digest_entry
@@ -178,6 +172,43 @@ class TestMechDigest:
         d1 = digest_single(rs.raw, rs.sh, CKM(entry.mech_id), data)
         d2 = digest_single(rs.raw, rs.sh, CKM(entry.mech_id), data)
         assert d1 == d2, (
-            f"{entry.mech_name}: two digests of same input differ: "
-            f"{d1.hex()!r} vs {d2.hex()!r}"
+            f"{entry.mech_name}: two digests of same input differ: {d1.hex()!r} vs {d2.hex()!r}"
         )
+
+
+class TestMechDigestKAT:
+    """Known-answer digest tests from pre-generated vectors."""
+
+    def test_kat_vector(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
+        """Digest known inputs — verify output matches pre-computed vectors."""
+        rs = p11_raw_session
+        entry = mech_digest_entry
+        config = entry.config
+        if config is None or not config.vector_file:
+            pytest.skip("No KAT vectors for this mechanism")
+
+        from pkcs11_check.testcases.mechanism_vectors import load_positive_vectors
+
+        vectors = load_positive_vectors(config.vector_file)
+        if not vectors:
+            pytest.skip(f"No positive vectors in {config.vector_file}")
+
+        _check_not_xof(entry)
+        _check_not_parameterised(entry, config)
+
+        for vec in vectors:
+            # SHA vector files may contain multiple mechanisms; filter to this one
+            vec_mech = vec.get("mechanism_name")
+            if vec_mech and vec_mech != f"CKM_{entry.mech_name}" and vec_mech != entry.mech_name:
+                continue
+            digest = digest_single(
+                rs.raw,
+                rs.sh,
+                CKM(entry.mech_id),
+                bytes.fromhex(vec["input_hex"]),
+            )
+            expected = bytes.fromhex(vec["digest_hex"])
+            assert digest == expected, (
+                f"KAT digest mismatch for {vec.get('id', '?')}: "
+                f"got {digest.hex()!r}, expected {expected.hex()!r}"
+            )
