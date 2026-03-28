@@ -131,6 +131,11 @@ _MECHANISM_ARG_FUNCS = frozenset(
         "C_MessageDecryptInit",
         "C_MessageSignInit",
         "C_MessageVerifyInit",
+        # v3.2 functions that take CK_MECHANISM_PTR
+        "C_EncapsulateKey",
+        "C_DecapsulateKey",
+        "C_WrapKeyAuthenticated",
+        "C_UnwrapKeyAuthenticated",
     }
 )
 
