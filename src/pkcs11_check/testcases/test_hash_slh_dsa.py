@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import attr_ulong
+from pkcs11_check.raw.pack_mechanisms import mech_hash_sign_context
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_keypair,
@@ -29,6 +30,7 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VERIFY,
     CKM,
+    CKM_HASH_SLH_DSA,
     CKM_HASH_SLH_DSA_SHA3_224,
     CKM_HASH_SLH_DSA_SHA3_256,
     CKM_HASH_SLH_DSA_SHA3_384,
@@ -39,6 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKM_HASH_SLH_DSA_SHA512,
     CKM_HASH_SLH_DSA_SHAKE128,
     CKM_HASH_SLH_DSA_SHAKE256,
+    CKM_SHA256,
     CKM_SLH_DSA_KEY_PAIR_GEN,
     CKP_SLH_DSA_SHA2_128S,
 )
@@ -96,26 +99,37 @@ class TestHashSLHDSAGeneric:
     """CKM_HASH_SLH_DSA - generic pre-hash SLH-DSA (single-part only).
 
     This mechanism requires a CK_HASH_SIGN_ADDITIONAL_CONTEXT parameter
-    that includes a hash algorithm field.  Since pkcs11_check.raw does not yet
-    have bindings for this struct, we test mechanism availability only and
-    skip the actual sign/verify with an explanatory note.
+    that specifies which hash algorithm to use.
     """
 
     def test_mechanism_available(self, p11_raw_session: Any) -> None:
         """Check that CKM_HASH_SLH_DSA is advertised by the module."""
         _skip_if_no(p11_raw_session, "HASH_SLH_DSA")
 
-    def test_sign_verify_skipped_no_param_binding(self, p11_raw_session: Any) -> None:
-        """CKM_HASH_SLH_DSA requires CK_HASH_SIGN_ADDITIONAL_CONTEXT param.
+    def test_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
+        """CKM_HASH_SLH_DSA sign + verify with CK_HASH_SIGN_ADDITIONAL_CONTEXT (SHA-256)."""
+        rs = p11_raw_session
+        _skip_if_no(rs, "HASH_SLH_DSA")
+        _skip_if_no(rs, "SLH_DSA")  # need keygen
 
-        The pkcs11_check.raw layer does not yet expose this struct, so we
-        cannot construct the required mechanism_param.  Skip with a note.
-        """
-        _skip_if_no(p11_raw_session, "HASH_SLH_DSA")
-        pytest.skip(
-            "CKM_HASH_SLH_DSA requires CK_HASH_SIGN_ADDITIONAL_CONTEXT param "
-            "not yet available in pkcs11_check.raw bindings"
-        )
+        mech_param = mech_hash_sign_context(CKM_HASH_SLH_DSA, hash_mech=int(CKM_SHA256))
+        pub, priv = _generate_slh_dsa_keypair(rs)
+        try:
+            try:
+                sig = sign_single(
+                    rs.raw, rs.sh, priv, CKM_HASH_SLH_DSA, _MESSAGE, mech_param=mech_param
+                )
+            except AssertionError as exc:
+                pytest.xfail(f"CKM_HASH_SLH_DSA sign failed: {exc!r}")
+                raise  # unreachable
+            assert isinstance(sig, bytes) and len(sig) > 0
+            result = verify_single(
+                rs.raw, rs.sh, pub, CKM_HASH_SLH_DSA, _MESSAGE, sig, mech_param=mech_param
+            )
+            assert result is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
 
 class TestHashSLHDSAVariants:
