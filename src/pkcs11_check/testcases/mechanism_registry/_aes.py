@@ -49,6 +49,12 @@ _AES_ENC = CKF_ENCRYPT | CKF_DECRYPT
 _AES_WRP = CKF_WRAP | CKF_UNWRAP
 _AES_SIG = CKF_SIGN | CKF_VERIFY
 
+# OASIS PKCS#11 spec lists WRP&UWRP for AES block/stream ciphers, but this is
+# an optional capability — modules may implement encrypt/decrypt without wrap.
+# Only dedicated key-wrap mechanisms (CKM_AES_KEY_WRAP*) are required to
+# advertise CKF_WRAP | CKF_UNWRAP.  For all other AES cipher modes the minimum
+# required flag set is CKF_ENCRYPT | CKF_DECRYPT.
+
 
 def populate(registry: dict[int, MechConfig]) -> None:
     """Add AES mechanism entries to the registry."""
@@ -86,7 +92,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=ParamRecipe("none"),
         keygen_recipe=_sym,
         deterministic=True,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         vector_file="aes_ecb.json",
         notes="AES-ECB: block-aligned, no params, deterministic",
     )
@@ -101,7 +107,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=ParamRecipe("iv", {"iv_len": 16}),
         keygen_recipe=_sym,
         deterministic=False,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         vector_file="aes_cbc.json",
         notes="AES-CBC: block-aligned, requires 16-byte IV param",
     )
@@ -116,7 +122,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=ParamRecipe("iv", {"iv_len": 16}),
         keygen_recipe=_sym,
         deterministic=False,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         vector_file="aes_cbc_pad.json",
         notes="AES-CBC with PKCS#7 padding: any-length plaintext, requires IV param",
     )
@@ -131,7 +137,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=ParamRecipe("iv", {"iv_len": 16}),
         keygen_recipe=_sym,
         deterministic=False,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         vector_file="aes_ofb.json",
         notes="AES-OFB: stream mode, any length, requires IV param",
     )
@@ -146,7 +152,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=ParamRecipe("iv", {"iv_len": 16}),
         keygen_recipe=_sym,
         deterministic=False,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         vector_file="aes_cfb8.json",
         notes="AES-CFB8: 8-bit CFB stream mode, requires IV param",
     )
@@ -161,7 +167,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=ParamRecipe("iv", {"iv_len": 16}),
         keygen_recipe=_sym,
         deterministic=False,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         notes="AES-CFB64: 64-bit CFB stream mode, requires IV param",
     )
 
@@ -175,7 +181,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=ParamRecipe("iv", {"iv_len": 16}),
         keygen_recipe=_sym,
         deterministic=False,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         vector_file="aes_cfb128.json",
         notes="AES-CFB128: 128-bit CFB stream mode, requires IV param",
     )
@@ -190,7 +196,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=ParamRecipe("iv", {"iv_len": 16}),
         keygen_recipe=_sym,
         deterministic=False,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         notes="AES-CFB1: bit-level CFB stream mode, requires IV param",
     )
 
@@ -218,7 +224,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=ParamRecipe("ctr", {"counter_bits": 128}),
         keygen_recipe=_sym,
         deterministic=False,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         vector_file="aes_ctr.json",
         notes="AES-CTR: counter mode, requires CK_AES_CTR_PARAMS (counter bits + IV)",
     )
@@ -238,7 +244,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         auth_tag_included=True,
         deterministic=False,
         message_based=True,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         vector_file="aes_gcm.json",
         notes="AES-GCM: AEAD, auth tag appended to ciphertext, NOT multi-part, v3.0 message-based",
     )
@@ -256,7 +262,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         auth_tag_included=True,
         deterministic=False,
         message_based=True,
-        expected_flags=_AES_ENC | _AES_WRP,
+        expected_flags=_AES_ENC,
         vector_file="aes_ccm.json",
         notes="AES-CCM: AEAD, auth tag appended to ciphertext, NOT multi-part, v3.0 message-based",
     )

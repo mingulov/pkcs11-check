@@ -8,9 +8,7 @@ from pkcs11_check.raw.types_std import (
     CKF_ENCRYPT,
     CKF_GENERATE,
     CKF_SIGN,
-    CKF_UNWRAP,
     CKF_VERIFY,
-    CKF_WRAP,
     CKK_DES,
     CKK_DES2,
     CKK_DES3,
@@ -42,6 +40,10 @@ from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, 
 
 _DES_ENC = CKF_ENCRYPT | CKF_DECRYPT
 _DES_SIG = CKF_SIGN | CKF_VERIFY
+
+# OASIS spec lists WRP&UWRP for DES/3DES block ciphers, but this is an optional
+# capability — modules may implement encrypt/decrypt without wrap.  Only the
+# minimum required flags (CKF_ENCRYPT | CKF_DECRYPT) are recorded as expected.
 _DES3_SIZES = (128, 192)  # DES2 (2-key 3DES) and DES3 (3-key 3DES)
 
 _fixed = KeygenRecipe("fixed_length")
@@ -74,7 +76,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         input_constraint="block_aligned",
         deterministic=True,
         keygen_recipe=_fixed,
-        expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+        expected_flags=_DES_ENC,
         vector_file="des_ecb.json",
         notes="DES-ECB: 8-byte block, no padding, deterministic",
     )
@@ -89,7 +91,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_iv8,
         deterministic=False,
         keygen_recipe=_fixed,
-        expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+        expected_flags=_DES_ENC,
         vector_file="des_cbc.json",
         notes="DES-CBC: 8-byte block, requires 8-byte IV param",
     )
@@ -104,7 +106,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_iv8,
         deterministic=False,
         keygen_recipe=_fixed,
-        expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+        expected_flags=_DES_ENC,
         notes="DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
 
@@ -237,7 +239,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         input_constraint="block_aligned",
         deterministic=True,
         keygen_recipe=_fixed,
-        expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+        expected_flags=_DES_ENC,
         vector_file="des3_ecb.json",
         notes="3DES-ECB: 8-byte block, no padding, deterministic",
     )
@@ -252,7 +254,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_iv8,
         deterministic=False,
         keygen_recipe=_fixed,
-        expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+        expected_flags=_DES_ENC,
         vector_file="des3_cbc.json",
         notes="3DES-CBC: 8-byte block, requires 8-byte IV param",
     )
@@ -267,7 +269,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_iv8,
         deterministic=False,
         keygen_recipe=_fixed,
-        expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+        expected_flags=_DES_ENC,
         notes="3DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
 

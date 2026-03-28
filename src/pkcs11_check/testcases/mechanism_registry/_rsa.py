@@ -50,6 +50,10 @@ from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, 
 
 _RSA_SIZES = (2048, 3072, 4096)
 _SIG_VER = CKF_SIGN | CKF_VERIFY
+# OASIS spec lists SIGR&VERR for CKM_RSA_PKCS and CKM_RSA_X_509, but
+# sign-with-message-recovery is an optional capability — modules may omit
+# CKF_SIGN_RECOVER / CKF_VERIFY_RECOVER without violating the spec.
+# _SIG_VER_REC is kept for documentation but not used in expected_flags.
 _SIG_VER_REC = CKF_SIGN | CKF_VERIFY | CKF_SIGN_RECOVER | CKF_VERIFY_RECOVER
 _ENC_DEC = CKF_ENCRYPT | CKF_DECRYPT
 _WRP_UWRP = CKF_WRAP | CKF_UNWRAP
@@ -121,7 +125,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         multi_part_supported=False,
         keygen_recipe=_rsa,
-        expected_flags=_ENC_DEC | _SIG_VER_REC | _WRP_UWRP,
+        expected_flags=_ENC_DEC | _SIG_VER | _WRP_UWRP,
         notes="RSA PKCS#1 v1.5 padding: encrypt/decrypt, sign/verify, wrap/unwrap",
     )
 
@@ -158,7 +162,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         multi_part_supported=False,
         keygen_recipe=_rsa,
-        expected_flags=_ENC_DEC | _SIG_VER_REC,
+        expected_flags=_ENC_DEC | _SIG_VER,
         notes="Raw RSA (no padding): X.509 format",
     )
 
