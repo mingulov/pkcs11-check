@@ -55,8 +55,8 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKK_AES,
     CKM_AES_CBC_PAD,
-    CKM_AES_ECB,
     CKM_AES_KEY_GEN,
+    CKM_AES_KEY_WRAP,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
     CKM_SHA256_HMAC,
@@ -577,8 +577,9 @@ class TestROWrapUnwrapRestrictions:
         """Unwrap with TOKEN=True template in RO session must fail."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
-        if not rs.has_mechanism("AES_ECB"):
-            pytest.skip("CKM_AES_ECB not supported for wrapping")
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            if not rs.has_mechanism("AES_CBC_PAD"):
+                pytest.skip("No AES wrap mechanism supported")
 
         # Create wrapping key and target in RW session
         wrapping_key_h = gen_aes_key(
@@ -607,7 +608,7 @@ class TestROWrapUnwrapRestrictions:
         )
         try:
             try:
-                wrapped = wrap_key(rs.raw, rs.sh, wrapping_key_h, target_h, CKM_AES_ECB)
+                wrapped = wrap_key(rs.raw, rs.sh, wrapping_key_h, target_h, CKM_AES_KEY_WRAP)
             except AssertionError:
                 pytest.skip("Module does not support wrap/unwrap")
             assert len(wrapped) > 0
@@ -624,7 +625,7 @@ class TestROWrapUnwrapRestrictions:
                         ro_sh,
                         found[0],
                         wrapped,
-                        CKM_AES_ECB,
+                        CKM_AES_KEY_WRAP,
                         attrs={
                             CKA_TOKEN: True,
                             CKA_SENSITIVE: False,
@@ -646,8 +647,9 @@ class TestROWrapUnwrapRestrictions:
         """Unwrap with TOKEN=False template in RO session succeeds."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
-        if not rs.has_mechanism("AES_ECB"):
-            pytest.skip("CKM_AES_ECB not supported for wrapping")
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            if not rs.has_mechanism("AES_CBC_PAD"):
+                pytest.skip("No AES wrap mechanism supported")
 
         wrapping_key_h = gen_aes_key(
             rs.raw,
@@ -676,7 +678,7 @@ class TestROWrapUnwrapRestrictions:
         )
         try:
             try:
-                wrapped = wrap_key(rs.raw, rs.sh, wrapping_key_h, target_h, CKM_AES_ECB)
+                wrapped = wrap_key(rs.raw, rs.sh, wrapping_key_h, target_h, CKM_AES_KEY_WRAP)
             except AssertionError:
                 pytest.skip("Module does not support wrap/unwrap")
 
@@ -691,7 +693,7 @@ class TestROWrapUnwrapRestrictions:
                         ro_sh,
                         found[0],
                         wrapped,
-                        CKM_AES_ECB,
+                        CKM_AES_KEY_WRAP,
                         attrs={
                             CKA_TOKEN: False,
                             CKA_SENSITIVE: False,
