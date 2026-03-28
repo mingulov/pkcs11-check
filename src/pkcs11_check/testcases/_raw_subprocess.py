@@ -7,10 +7,16 @@ and any future tests that need to call C_* functions via ctypes subprocess
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
+import tempfile
 import textwrap
+from collections import Counter
+
+_subprocess_call_counts: Counter[str] = Counter()
+_subprocess_mechanism_counts: Counter[str] = Counter()
 
 
 def run_raw_script(
@@ -34,14 +40,44 @@ def run_raw_script(
     if cleanup:
         full_script += textwrap.dedent(cleanup)
 
+    # Create temp file for subprocess coverage data
+    cov_fd, cov_path = tempfile.mkstemp(suffix=".json", prefix="p11cov_")
+    os.close(cov_fd)
+    env = {**os.environ, "_P11CHECK_SUBPROCESS_COVERAGE": cov_path}
+
     result = subprocess.run(
         [sys.executable, "-c", full_script],
         capture_output=True,
         text=True,
         timeout=timeout,
-        env=os.environ.copy(),
+        env=env,
     )
+
+    # Read subprocess coverage (may not exist if subprocess crashed)
+    try:
+        with open(cov_path) as f:
+            data = json.load(f)
+        _subprocess_call_counts.update(data.get("call_log", {}))
+        for k, v in data.get("mechanism_counts", {}).items():
+            _subprocess_mechanism_counts[k] += v
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    finally:
+        try:
+            os.unlink(cov_path)
+        except OSError:
+            pass
+
     return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def get_raw_subprocess_coverage() -> tuple[Counter[str], Counter[str]]:
+    """Return accumulated subprocess coverage and clear it."""
+    func = Counter(_subprocess_call_counts)
+    mech = Counter(_subprocess_mechanism_counts)
+    _subprocess_call_counts.clear()
+    _subprocess_mechanism_counts.clear()
+    return func, mech
 
 
 def parse_output(stdout: str) -> dict[str, str]:

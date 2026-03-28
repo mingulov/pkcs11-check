@@ -6,6 +6,56 @@ Used by test files that need crash-safe isolation via subprocess.run().
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from collections import Counter
+from typing import Any
+
+_subprocess_call_counts: Counter[str] = Counter()
+_subprocess_mechanism_counts: Counter[str] = Counter()
+
+
+def run_with_coverage(
+    script: str, timeout: int = 15
+) -> tuple[int, str, str]:
+    """Run subprocess script with coverage capture."""
+    cov_fd, cov_path = tempfile.mkstemp(suffix=".json", prefix="p11cov_")
+    os.close(cov_fd)
+    env = {**os.environ, "_P11CHECK_SUBPROCESS_COVERAGE": cov_path}
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True, timeout=timeout, env=env,
+    )
+
+    try:
+        with open(cov_path) as f:
+            data: Any = json.load(f)
+        _subprocess_call_counts.update(data.get("call_log", {}))
+        for k, v in data.get("mechanism_counts", {}).items():
+            _subprocess_mechanism_counts[k] += v
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass  # Subprocess may have crashed (segfault) — coverage file not written
+    finally:
+        try:
+            os.unlink(cov_path)
+        except OSError:
+            pass
+
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def get_preamble_subprocess_coverage() -> tuple[Counter[str], Counter[str]]:
+    """Return accumulated subprocess coverage and clear it."""
+    func = Counter(_subprocess_call_counts)
+    mech = Counter(_subprocess_mechanism_counts)
+    _subprocess_call_counts.clear()
+    _subprocess_mechanism_counts.clear()
+    return func, mech
+
 
 def subprocess_session_preamble(
     module_path: str,
@@ -70,6 +120,17 @@ def subprocess_session_preamble(
         f"{login_line}"
         f"\n"
         f"def cleanup():\n"
+        f"    import json as _json, os as _os\n"
+        f"    _cov_path = _os.environ.get('_P11CHECK_SUBPROCESS_COVERAGE')\n"
+        f"    if _cov_path:\n"
+        f"        try:\n"
+        f"            _json.dump({{\n"
+        f"                'call_log': raw.call_log,\n"
+        f"                'mechanism_counts': "
+        f"{{str(k): v for k, v in raw.mechanism_counts.items()}},\n"
+        f"            }}, open(_cov_path, 'w'))\n"
+        f"        except Exception:\n"
+        f"            pass\n"
         f"    close_session_quietly(raw, sh)\n"
         f"    raw.C_Finalize(None)\n"
         f"\n"
