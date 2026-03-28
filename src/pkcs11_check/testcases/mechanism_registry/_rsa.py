@@ -13,6 +13,9 @@ from pkcs11_check.raw.types_std import (
     CKF_VERIFY_RECOVER,
     CKF_WRAP,
     CKK_RSA,
+    CKM_RIPEMD128_RSA_PKCS,
+    CKM_RIPEMD160_RSA_PKCS,
+    CKM_RSA_9796,
     CKM_RSA_AES_KEY_WRAP,
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
@@ -25,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_X_509,
     CKM_SHA1_RSA_PKCS,
     CKM_SHA1_RSA_PKCS_PSS,
+    CKM_SHA1_RSA_X9_31,
     CKM_SHA3_224_RSA_PKCS,
     CKM_SHA3_224_RSA_PKCS_PSS,
     CKM_SHA3_256_RSA_PKCS,
@@ -409,4 +413,47 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_rsa,
         expected_flags=_WRP_UWRP,
         notes="RSA OAEP TPM 1.1 variant for key unwrapping",
+    )
+
+    # -- Legacy RSA signature mechanisms ----------------------------------------
+
+    registry[CKM_RSA_9796] = MechConfig(
+        key_type=CKK_RSA,
+        keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
+        key_sizes=_RSA_SIZES,
+        is_keypair=True,
+        multi_part_supported=False,
+        keygen_recipe=_rsa,
+        expected_flags=_SIG_VER,
+        notes="ISO 9796 RSA signature (legacy, single-part)",
+    )
+
+    registry[CKM_RIPEMD128_RSA_PKCS] = MechConfig(
+        key_type=CKK_RSA,
+        keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
+        key_sizes=_RSA_SIZES,
+        is_keypair=True,
+        keygen_recipe=_rsa,
+        expected_flags=_SIG_VER,
+        notes="RIPEMD-128 + RSA PKCS#1 v1.5 sign/verify (legacy)",
+    )
+
+    registry[CKM_RIPEMD160_RSA_PKCS] = MechConfig(
+        key_type=CKK_RSA,
+        keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
+        key_sizes=_RSA_SIZES,
+        is_keypair=True,
+        keygen_recipe=_rsa,
+        expected_flags=_SIG_VER,
+        notes="RIPEMD-160 + RSA PKCS#1 v1.5 sign/verify (legacy)",
+    )
+
+    registry[CKM_SHA1_RSA_X9_31] = MechConfig(
+        key_type=CKK_RSA,
+        keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
+        key_sizes=_RSA_SIZES,
+        is_keypair=True,
+        keygen_recipe=_rsa,
+        expected_flags=_SIG_VER,
+        notes="SHA-1 + RSA X9.31 hash-and-sign",
     )

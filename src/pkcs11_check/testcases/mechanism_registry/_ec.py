@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_MONTGOMERY,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKM_EC_KEY_PAIR_GEN,
+    CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
     CKM_ECDH1_COFACTOR_DERIVE,
     CKM_ECDH1_DERIVE,
@@ -65,6 +66,16 @@ def populate(registry: dict[int, MechConfig]) -> None:
 
     # Alias: same value as CKM_EC_KEY_PAIR_GEN — only one entry in registry
     # (CKM_ECDSA_KEY_PAIR_GEN == CKM_EC_KEY_PAIR_GEN == 0x1040)
+
+    registry[CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS] = MechConfig(
+        key_type=CKK_EC,
+        keygen_mech=CKM_EC_KEY_PAIR_GEN,
+        key_sizes=(),
+        is_keypair=True,
+        keygen_recipe=_ec,
+        expected_flags=CKF_GENERATE_KEY_PAIR,
+        notes="EC key pair generation with extra random bits (FIPS 186-5 B.4.2)",
+    )
 
     registry[CKM_ECDSA] = MechConfig(
         key_type=CKK_EC,

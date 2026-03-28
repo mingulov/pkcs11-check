@@ -10,6 +10,7 @@ from pkcs11_check.raw.types_std import (
     CKF_DECRYPT,
     CKF_DERIVE,
     CKF_DIGEST,
+    CKF_ENCRYPT,
     CKF_GENERATE,
     CKF_GENERATE_KEY_PAIR,
     CKF_SIGN,
@@ -63,6 +64,8 @@ from pkcs11_check.raw.types_std import (
     CKM_PBE_SHA1_RC4_128,
     CKM_SECURID,
     CKM_SECURID_KEY_GEN,
+    CKM_X2RATCHET_DECRYPT,
+    CKM_X2RATCHET_ENCRYPT,
 )
 from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
@@ -521,4 +524,26 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_required=True,
         expected_flags=_SIG_VER,
         notes="KIP MAC computation",
+    )
+
+    # ---------------------------------------------------------------------------
+    # Signal X2 ratchet encrypt/decrypt
+    # ---------------------------------------------------------------------------
+
+    registry[CKM_X2RATCHET_ENCRYPT] = MechConfig(
+        key_type=None,
+        keygen_mech=None,
+        key_sizes=(),
+        param_required=True,
+        expected_flags=CKF_ENCRYPT,
+        notes="Signal X2 Double Ratchet encrypt (PKCS#11 v3.x)",
+    )
+
+    registry[CKM_X2RATCHET_DECRYPT] = MechConfig(
+        key_type=None,
+        keygen_mech=None,
+        key_sizes=(),
+        param_required=True,
+        expected_flags=CKF_DECRYPT,
+        notes="Signal X2 Double Ratchet decrypt (PKCS#11 v3.x)",
     )

@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKM_CAMELLIA_CBC,
     CKM_CAMELLIA_CBC_ENCRYPT_DATA,
     CKM_CAMELLIA_CBC_PAD,
+    CKM_CAMELLIA_CTR,
     CKM_CAMELLIA_ECB,
     CKM_CAMELLIA_ECB_ENCRYPT_DATA,
     CKM_CAMELLIA_KEY_GEN,
@@ -226,6 +227,19 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="Camellia-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
+    )
+
+    registry[CKM_CAMELLIA_CTR] = MechConfig(
+        key_type=CKK_CAMELLIA,
+        keygen_mech=CKM_CAMELLIA_KEY_GEN,
+        key_sizes=_CAMELLIA_SIZES,
+        block_size=None,
+        input_constraint="any",
+        param_required=True,
+        deterministic=False,
+        keygen_recipe=_sym,
+        expected_flags=_CAMELLIA_ENC,
+        notes="Camellia-CTR: counter mode stream cipher, requires counter block param",
     )
 
     registry[CKM_CAMELLIA_MAC] = MechConfig(

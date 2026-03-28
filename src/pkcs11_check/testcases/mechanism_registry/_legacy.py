@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
     CKF_DECRYPT,
+    CKF_DERIVE,
+    CKF_DIGEST,
     CKF_ENCRYPT,
     CKF_GENERATE,
     CKF_SIGN,
@@ -20,6 +22,7 @@ from pkcs11_check.raw.types_std import (
     CKK_CAST3,
     CKK_CAST128,
     CKK_CDMF,
+    CKK_GOST28147,
     CKK_IDEA,
     CKK_JUNIPER,
     CKK_RC2,
@@ -61,6 +64,12 @@ from pkcs11_check.raw.types_std import (
     CKM_CDMF_KEY_GEN,
     CKM_CDMF_MAC,
     CKM_CDMF_MAC_GENERAL,
+    CKM_FASTHASH,
+    CKM_GOST28147,
+    CKM_GOST28147_ECB,
+    CKM_GOST28147_KEY_GEN,
+    CKM_GOST28147_KEY_WRAP,
+    CKM_GOST28147_MAC,
     CKM_IDEA_CBC,
     CKM_IDEA_CBC_PAD,
     CKM_IDEA_ECB,
@@ -73,6 +82,8 @@ from pkcs11_check.raw.types_std import (
     CKM_JUNIPER_KEY_GEN,
     CKM_JUNIPER_SHUFFLE,
     CKM_JUNIPER_WRAP,
+    CKM_KEY_WRAP_LYNKS,
+    CKM_KEY_WRAP_SET_OAEP,
     CKM_RC2_CBC,
     CKM_RC2_CBC_PAD,
     CKM_RC2_ECB,
@@ -1038,4 +1049,96 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="Twofish-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
+    )
+
+    # ---------------------------------------------------------------------------
+    # Legacy key wrap mechanisms
+    # ---------------------------------------------------------------------------
+
+    registry[CKM_KEY_WRAP_LYNKS] = MechConfig(
+        key_type=None,
+        keygen_mech=None,
+        key_sizes=(),
+        expected_flags=CKF_WRAP | CKF_UNWRAP,
+        notes="Lynks key wrap (legacy proprietary key wrapping scheme)",
+    )
+
+    registry[CKM_KEY_WRAP_SET_OAEP] = MechConfig(
+        key_type=None,
+        keygen_mech=None,
+        key_sizes=(),
+        expected_flags=CKF_WRAP | CKF_UNWRAP,
+        notes="SET OAEP key wrap (legacy SET protocol key wrapping)",
+    )
+
+    # ---------------------------------------------------------------------------
+    # FASTHASH (legacy digest)
+    # ---------------------------------------------------------------------------
+
+    registry[CKM_FASTHASH] = MechConfig(
+        key_type=None,
+        keygen_mech=None,
+        key_sizes=(),
+        input_constraint="any",
+        multi_part_supported=True,
+        expected_flags=CKF_DIGEST,
+        notes="FASTHASH: legacy fast digest mechanism",
+    )
+
+    # ---------------------------------------------------------------------------
+    # GOST 28147-89 mechanisms (Soviet/Russian symmetric cipher)
+    # ---------------------------------------------------------------------------
+
+    _gost28147 = KeygenRecipe("fixed_length")
+
+    registry[CKM_GOST28147_KEY_GEN] = MechConfig(
+        key_type=CKK_GOST28147,
+        keygen_mech=CKM_GOST28147_KEY_GEN,
+        key_sizes=(256,),
+        keygen_recipe=_gost28147,
+        expected_flags=CKF_GENERATE,
+        notes="GOST 28147-89 key generation (256-bit key)",
+    )
+
+    registry[CKM_GOST28147_ECB] = MechConfig(
+        key_type=CKK_GOST28147,
+        keygen_mech=CKM_GOST28147_KEY_GEN,
+        key_sizes=(256,),
+        block_size=8,
+        input_constraint="block_aligned",
+        deterministic=True,
+        keygen_recipe=_gost28147,
+        expected_flags=_ENC_DEC,
+        notes="GOST 28147-89 ECB mode: 8-byte block, no padding",
+    )
+
+    registry[CKM_GOST28147] = MechConfig(
+        key_type=CKK_GOST28147,
+        keygen_mech=CKM_GOST28147_KEY_GEN,
+        key_sizes=(256,),
+        block_size=8,
+        input_constraint="block_aligned",
+        param_required=True,
+        deterministic=False,
+        keygen_recipe=_gost28147,
+        expected_flags=_ENC_DEC,
+        notes="GOST 28147-89 CBC mode: 8-byte block, requires params (S-box + IV)",
+    )
+
+    registry[CKM_GOST28147_MAC] = MechConfig(
+        key_type=CKK_GOST28147,
+        keygen_mech=CKM_GOST28147_KEY_GEN,
+        key_sizes=(256,),
+        keygen_recipe=_gost28147,
+        expected_flags=CKF_SIGN | CKF_VERIFY,
+        notes="GOST 28147-89 MAC (imitovstavka): 32-bit output",
+    )
+
+    registry[CKM_GOST28147_KEY_WRAP] = MechConfig(
+        key_type=CKK_GOST28147,
+        keygen_mech=CKM_GOST28147_KEY_GEN,
+        key_sizes=(256,),
+        keygen_recipe=_gost28147,
+        expected_flags=CKF_WRAP | CKF_UNWRAP | CKF_DERIVE,
+        notes="GOST 28147-89 key wrapping for key export/import",
     )

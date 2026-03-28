@@ -12,7 +12,9 @@ from pkcs11_check.raw.types_std import (
     CKF_VERIFY,
     CKF_WRAP,
     CKK_DES,
+    CKK_DES2,
     CKK_DES3,
+    CKM_DES2_KEY_GEN,
     CKM_DES3_CBC,
     CKM_DES3_CBC_ENCRYPT_DATA,
     CKM_DES3_CBC_PAD,
@@ -201,6 +203,15 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_fixed,
         expected_flags=CKF_DERIVE,
         notes="DES-CBC key derivation: derive key by DES-CBC encrypting data",
+    )
+
+    registry[CKM_DES2_KEY_GEN] = MechConfig(
+        key_type=CKK_DES2,
+        keygen_mech=CKM_DES2_KEY_GEN,
+        key_sizes=(128,),
+        keygen_recipe=_fixed,
+        expected_flags=CKF_GENERATE,
+        notes="2-key Triple-DES key generation (CKK_DES2, 128-bit)",
     )
 
     # ---------------------------------------------------------------------------

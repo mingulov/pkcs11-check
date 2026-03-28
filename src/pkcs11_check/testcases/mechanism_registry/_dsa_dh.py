@@ -15,8 +15,10 @@ from pkcs11_check.raw.types_std import (
     CKM_DH_PKCS_KEY_PAIR_GEN,
     CKM_DH_PKCS_PARAMETER_GEN,
     CKM_DSA,
+    CKM_DSA_FIPS_G_GEN,
     CKM_DSA_KEY_PAIR_GEN,
     CKM_DSA_PARAMETER_GEN,
+    CKM_DSA_PROBABLISTIC_PARAMETER_GEN,
     CKM_DSA_SHA1,
     CKM_DSA_SHA3_224,
     CKM_DSA_SHA3_256,
@@ -26,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKM_DSA_SHA256,
     CKM_DSA_SHA384,
     CKM_DSA_SHA512,
+    CKM_DSA_SHAWE_TAYLOR_PARAMETER_GEN,
     CKM_X9_42_DH_DERIVE,
     CKM_X9_42_DH_HYBRID_DERIVE,
     CKM_X9_42_DH_KEY_PAIR_GEN,
@@ -67,6 +70,36 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_dsa,
         expected_flags=CKF_GENERATE,
         notes="DSA domain parameter generation (p, q, g)",
+    )
+
+    registry[CKM_DSA_PROBABLISTIC_PARAMETER_GEN] = MechConfig(
+        key_type=CKK_DSA,
+        keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+        key_sizes=_DSA_SIZES,
+        is_param_gen=True,
+        keygen_recipe=_dsa,
+        expected_flags=CKF_GENERATE,
+        notes="DSA probabilistic domain parameter generation (FIPS 186-4 A.1.1.2)",
+    )
+
+    registry[CKM_DSA_SHAWE_TAYLOR_PARAMETER_GEN] = MechConfig(
+        key_type=CKK_DSA,
+        keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+        key_sizes=_DSA_SIZES,
+        is_param_gen=True,
+        keygen_recipe=_dsa,
+        expected_flags=CKF_GENERATE,
+        notes="DSA Shawe-Taylor domain parameter generation (FIPS 186-4 A.1.2.1)",
+    )
+
+    registry[CKM_DSA_FIPS_G_GEN] = MechConfig(
+        key_type=CKK_DSA,
+        keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+        key_sizes=_DSA_SIZES,
+        is_param_gen=True,
+        keygen_recipe=_dsa,
+        expected_flags=CKF_GENERATE,
+        notes="DSA FIPS g parameter generation (generator g from p and q)",
     )
 
     registry[CKM_DSA] = MechConfig(

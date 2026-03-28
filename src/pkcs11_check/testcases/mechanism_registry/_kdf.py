@@ -39,7 +39,11 @@ from pkcs11_check.raw.types_std import (
     CKM_SSL3_KEY_AND_MAC_DERIVE,
     CKM_SSL3_MASTER_KEY_DERIVE,
     CKM_SSL3_MASTER_KEY_DERIVE_DH,
+    CKM_SSL3_MD5_MAC,
     CKM_SSL3_PRE_MASTER_KEY_GEN,
+    CKM_SSL3_SHA1_MAC,
+    CKM_TLS10_MAC_CLIENT,
+    CKM_TLS10_MAC_SERVER,
     CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
     CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH,
     CKM_TLS12_KDF,
@@ -49,8 +53,12 @@ from pkcs11_check.raw.types_std import (
     CKM_TLS12_MASTER_KEY_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE_DH,
     CKM_TLS_KDF,
+    CKM_TLS_KEY_AND_MAC_DERIVE,
     CKM_TLS_MAC,
+    CKM_TLS_MASTER_KEY_DERIVE,
+    CKM_TLS_MASTER_KEY_DERIVE_DH,
     CKM_TLS_PRE_MASTER_KEY_GEN,
+    CKM_TLS_PRF,
     CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
     CKM_WTLS_MASTER_KEY_DERIVE,
     CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC,
@@ -315,6 +323,90 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SSL 3.0 key and MAC material derivation: requires CK_SSL3_KEY_MAT_PARAMS",
+    )
+
+    registry[CKM_SSL3_MD5_MAC] = MechConfig(
+        key_type=CKK_GENERIC_SECRET,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+        key_sizes=(),
+        param_required=True,
+        keygen_recipe=_sym,
+        expected_flags=_SIG_VER,
+        notes="SSL 3.0 MD5 MAC: requires CK_MAC_GENERAL_PARAMS for output length",
+    )
+
+    registry[CKM_SSL3_SHA1_MAC] = MechConfig(
+        key_type=CKK_GENERIC_SECRET,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+        key_sizes=(),
+        param_required=True,
+        keygen_recipe=_sym,
+        expected_flags=_SIG_VER,
+        notes="SSL 3.0 SHA-1 MAC: requires CK_MAC_GENERAL_PARAMS for output length",
+    )
+
+    # ---------------------------------------------------------------------------
+    # TLS 1.0 legacy mechanisms (pre-TLS 1.2)
+    # ---------------------------------------------------------------------------
+
+    registry[CKM_TLS_MASTER_KEY_DERIVE] = MechConfig(
+        key_type=CKK_GENERIC_SECRET,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+        key_sizes=(),
+        param_required=True,
+        keygen_recipe=_sym,
+        expected_flags=CKF_DERIVE,
+        notes="TLS 1.0 master key derivation (pre-TLS 1.2): CK_SSL3_MASTER_KEY_DERIVE_PARAMS",
+    )
+
+    registry[CKM_TLS_KEY_AND_MAC_DERIVE] = MechConfig(
+        key_type=CKK_GENERIC_SECRET,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+        key_sizes=(),
+        param_required=True,
+        keygen_recipe=_sym,
+        expected_flags=CKF_DERIVE,
+        notes="TLS 1.0 key and MAC material derivation (pre-TLS 1.2): CK_SSL3_KEY_MAT_PARAMS",
+    )
+
+    registry[CKM_TLS_MASTER_KEY_DERIVE_DH] = MechConfig(
+        key_type=CKK_GENERIC_SECRET,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+        key_sizes=(),
+        param_required=True,
+        keygen_recipe=_sym,
+        expected_flags=CKF_DERIVE,
+        notes="TLS 1.0 master key derivation DH (pre-TLS 1.2): CK_SSL3_MASTER_KEY_DERIVE_PARAMS",
+    )
+
+    registry[CKM_TLS_PRF] = MechConfig(
+        key_type=CKK_GENERIC_SECRET,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+        key_sizes=(),
+        param_required=True,
+        keygen_recipe=_sym,
+        expected_flags=CKF_DERIVE,
+        notes="TLS 1.0 PRF (pseudo-random function): requires CK_TLS_PRF_PARAMS",
+    )
+
+    registry[CKM_TLS10_MAC_SERVER] = MechConfig(
+        key_type=CKK_GENERIC_SECRET,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+        key_sizes=(),
+        param_required=True,
+        keygen_recipe=_sym,
+        expected_flags=_SIG_VER,
+        notes="TLS 1.0 server MAC computation: requires hash algorithm parameter",
+    )
+
+    registry[CKM_TLS10_MAC_CLIENT] = MechConfig(
+        key_type=CKK_GENERIC_SECRET,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+        key_sizes=(),
+        param_required=True,
+        keygen_recipe=_sym,
+        expected_flags=_SIG_VER,
+        notes="TLS 1.0 client MAC computation: requires hash algorithm parameter",
     )
 
     # ---------------------------------------------------------------------------
