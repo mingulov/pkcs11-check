@@ -9,7 +9,7 @@ Three distinct issues discovered during NSS-PQC investigation:
 
 1. **Version markers too broad:** 8 PQC test files have `requires_v32` at file level, blocking ML-DSA/SLH-DSA sign/verify tests on modules that advertise these mechanisms but negotiate v2.40 interface (e.g., SoftHSM2-main). These tests use only v2.40 API functions (C_GenerateKeyPair, C_SignInit, C_VerifyInit); the v3.2 aspect is the mechanism, not the function.
 
-2. **Bootstrap functions invisible to coverage:** C_Initialize, C_GetSlotList, C_GetSlotInfo, C_OpenSession, and C_Login are called in fixture setup before `reset_call_log()` at `fixtures.py:205`, so they never appear in `called_names`. Coverage reports 45/68 functions called, but 5 additional functions are genuinely exercised.
+2. **Bootstrap functions invisible to coverage:** C_Initialize, C_GetSlotList, C_OpenSession, and C_Login are called in fixture setup before `reset_call_log()` at `fixtures.py:205` (and `fixtures.py:87` for `p11_session`), so they never appear in `called_names`. Coverage reports 45/68 functions called, but 4 additional functions are genuinely exercised. Note: `get_slot_ids()` calls C_GetSlotList (not C_GetSlotInfo); C_GetSlotInfo is not in the fixture bootstrap path.
 
 3. **No call counts in coverage.json:** `api.py._call_log` already tracks per-function invocation counts, but `plugin.py:311` uses only `.keys()`, discarding the counts. `_used_mechanisms` is a set (no counts). The file_runner merges coverage with set union, not count summation. Users cannot see how heavily each function/mechanism is exercised.
 
@@ -62,13 +62,16 @@ After the fix, SoftHSM2-main (which advertises CKM_ML_DSA but negotiates v2.40) 
 ### Problem
 
 `fixtures.py` calls these functions before `reset_call_log()`:
-- `C_Initialize` (in loader, before fixture)
-- `C_GetSlotList` (in `get_slot_ids()`)
-- `C_GetSlotInfo` (in `get_slot_ids()`)
-- `C_OpenSession` (in `raw_open_session()`)
-- `C_Login` (in `login_user()`)
+- `C_Initialize` — once per session, in `loader.py:285`
+- `C_GetSlotList` — twice per test, in `bootstrap.get_slot_ids()` (lines 26, 30)
+- `C_OpenSession` — in `bootstrap.open_session()` (line 48)
+- `C_Login` — in `bootstrap.login_user()` (line 73), when PIN is set
 
-After `reset_call_log()` at line 205, these are erased from `_call_log`. Coverage reports them as "uncalled".
+Note: `get_slot_ids()` does NOT call C_GetSlotInfo or C_GetTokenInfo in the default fixture path (no `label` argument). C_GetMechanismList is called lazily AFTER reset (in `RawSession.mechanisms` property) and is already tracked in per-test call_log.
+
+After `reset_call_log()` at both line 87 (`p11_session`) and line 205 (`p11_raw_session`), these are erased from `_call_log`. Coverage reports them as "uncalled".
+
+**Important:** Both `p11_session` (line 87) and `p11_raw_session` (line 205) have `reset_call_log()` calls. The bootstrap snapshot must be applied to BOTH fixtures, or refactored into the shared `_open_raw_session()` helper.
 
 ### Solution
 
@@ -114,7 +117,15 @@ if not config.stash.get(_BOOTSTRAP_COLLECTED, False):
 
 ### Effect on `called_names` / `uncalled_names`
 
-Bootstrap functions join `called_names`. C_Initialize, C_GetSlotList, C_GetSlotInfo, C_OpenSession, C_Login move from `uncalled_names` to `called_names`. Coverage goes from ~45/68 to ~50/68.
+Bootstrap functions join `called_names`. C_Initialize, C_GetSlotList, C_OpenSession, C_Login move from `uncalled_names` to `called_names`. Coverage goes from ~45/68 to ~49/68.
+
+### Accepted limitation: C_Logout / C_CloseSession teardown calls
+
+C_Logout and C_CloseSession are called in the fixture `finally` block AFTER `pytest_runtest_teardown` collects counts. These calls are logged to `_call_log` but wiped by the next test's `reset_call_log()`. Since both functions are also called directly by many tests (not just fixture teardown), they already appear in `called_names`. The teardown invocations are uncounted but the functions are not invisible.
+
+### Behavioral change: `reset_used_mechanisms()`
+
+`reset_used_mechanisms()` exists in `api.py:280` but is currently NEVER called anywhere. Adding it alongside `reset_call_log()` changes mechanism tracking from whole-session accumulation to per-test accumulation. This is safe because `plugin.py` teardown reads `rs.raw.used_mechanisms` and accumulates into the cumulative set BEFORE the next fixture setup resets it. The change must be applied symmetrically to both `p11_session` and `p11_raw_session` fixtures.
 
 ## Component 3: Call Count Enrichment
 
@@ -195,7 +206,7 @@ For mechanism detail counts, change `_CUMULATIVE_MECHANISM_DETAILS` from a set t
 # Build the string immediately and count it:
 detail_counts = session.config.stash[_CUMULATIVE_DETAIL_COUNTS]
 for mech_id, subs in details:
-    detail_str = _build_single_stacked_string(mech_id, subs)
+    detail_str = _build_one_stacked_string(mech_id, dict(subs))  # NEW helper, extracted from _build_stacked_strings
     detail_counts[detail_str] += 1
 ```
 
@@ -268,9 +279,9 @@ Counter addition correctly sums values when the same key appears in multiple fil
     "called_names": ["C_CloseSession", "C_CreateObject", "C_Decrypt", "C_DecryptInit",
                      "C_DestroyObject", "C_Encrypt", "C_EncryptInit", "C_Finalize",
                      "C_GenerateKey", "C_GenerateKeyPair", "C_GetAttributeValue",
-                     "C_GetSlotInfo", "C_GetSlotList", "C_GetTokenInfo",
-                     "C_Initialize", "C_Login", "C_Logout", "C_OpenSession",
-                     "C_Sign", "C_SignInit", "C_Verify", "C_VerifyInit", "..."],
+                     "C_GetSlotList", "C_Initialize", "C_Login", "C_Logout",
+                     "C_OpenSession", "C_Sign", "C_SignInit", "C_Verify",
+                     "C_VerifyInit", "..."],
     "called_counts": {
       "C_CloseSession": 1247,
       "C_CreateObject": 891,
@@ -288,8 +299,6 @@ Counter addition correctly sums values when the same key appears in multiple fil
     "bootstrap_counts": {
       "C_Initialize": 1,
       "C_GetSlotList": 2,
-      "C_GetSlotInfo": 1,
-      "C_GetTokenInfo": 1,
       "C_OpenSession": 1,
       "C_Login": 1
     },
@@ -334,6 +343,37 @@ All existing fields are preserved with identical semantics. Four new fields adde
 - `mechanism_coverage.invoked_detail_counts` — dict of stacked detail string to count
 
 Consumers that only read existing fields are unaffected.
+
+## Additional Fixes (from gap analysis)
+
+### Add v3.2 functions to `_MECHANISM_ARG_FUNCS`
+
+`api.py:116-135` defines `_MECHANISM_ARG_FUNCS` — the set of functions whose mechanism argument is tracked. It is missing v3.2 functions that take `CK_MECHANISM_PTR`:
+
+```python
+# Add to _MECHANISM_ARG_FUNCS:
+"C_EncapsulateKey",
+"C_DecapsulateKey",
+"C_WrapKeyAuthenticated",
+"C_UnwrapKeyAuthenticated",
+```
+
+Without this, KEM and authenticated-wrap mechanism invocations are invisible to mechanism coverage.
+
+### Extract `_build_one_stacked_string` helper
+
+`_build_stacked_strings` (plugin.py:342) operates on a set of tuples. Extract the per-entry logic into `_build_one_stacked_string(mech_id: int, subs: dict[str, int]) -> str` for use by the detail Counter.
+
+### Mechanism name resolution consistency
+
+`invoked_counts` uses string keys (after `ckm_name()` resolution in `plugin.py`). The file_runner merges string keys. This is correct as long as all subprocesses use the same `types_std` module (they do — it's vendored). Unknown mechanisms get hex string keys like `"0x00001234"`, which merge correctly since the hex representation is deterministic.
+
+## Pre-existing Issues (out of scope, noted for awareness)
+
+- `raw_fixtures.py` defines a parallel `raw_pkcs11` / `raw_session` fixture chain whose calls are invisible to plugin.py coverage (it only looks for `p11_raw_session` / `p11_session` funcargs)
+- `defaultdict(int) += 1` in `_call()` is not fully thread-safe under concurrent test threads (GIL makes actual corruption unlikely in CPython, but `Counter` has the same characteristic)
+- `C_GetMechanismList` called lazily per-test inflates function counts (accurate but noisy — each test that checks `has_mechanism()` triggers one call)
+- `test_authenticated_wrap.py` uses runtime `p11_interface_version` checks instead of `requires_v32` marker — functionally equivalent, no change needed
 
 ## Testing
 
