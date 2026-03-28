@@ -44,18 +44,16 @@ from pkcs11_check.raw.types_std import (
     CKK_GENERIC_SECRET,
     CKM,
     CKM_AES_ECB,
+    CKM_ECDSA,
     CKM_GENERIC_SECRET_KEY_GEN,
+    CKM_RSA_PKCS,
+    CKM_SHA256_HMAC,
     CKR_OK,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.negative]
 
 _P256_OID: bytes = encode_named_curve_parameters("secp256r1")
-
-# Hard-coded mechanism IDs for mechanisms used as "wrong" mechanism in negative tests
-_CKM_RSA_PKCS_ID: int = 0x00000001   # CKM_RSA_PKCS
-_CKM_ECDSA_ID: int = 0x00001041       # CKM_ECDSA
-_CKM_SHA256_HMAC_ID: int = 0x00000251  # CKM_SHA256_HMAC
 
 
 class TestWrongKeyType:
@@ -91,7 +89,7 @@ class TestWrongKeyType:
 
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
-            mech = mech_simple(CKM(_CKM_RSA_PKCS_ID))
+            mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)  # type: ignore[attr-defined]
             assert rv != CKR_OK, (
                 "C_EncryptInit(CKM_RSA_PKCS, AES_key) should fail but returned CKR_OK"
@@ -109,7 +107,7 @@ class TestWrongKeyType:
 
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            mech = mech_simple(CKM(_CKM_ECDSA_ID))
+            mech = mech_simple(CKM_ECDSA)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)  # type: ignore[attr-defined]
             assert rv != CKR_OK, (
                 "C_SignInit(CKM_ECDSA, RSA_priv) should fail but returned CKR_OK"
@@ -128,7 +126,7 @@ class TestWrongKeyType:
 
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
-            mech = mech_simple(CKM(_CKM_SHA256_HMAC_ID))
+            mech = mech_simple(CKM_SHA256_HMAC)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)  # type: ignore[attr-defined]
             assert rv != CKR_OK, (
                 "C_SignInit(CKM_SHA256_HMAC, RSA_priv) should fail but returned CKR_OK"
@@ -228,7 +226,7 @@ class TestMissingPermission:
         assert rv == CKR_OK, f"Key gen failed: {rv}"
         key = handle.value
         try:
-            sign_mech = mech_simple(CKM(_CKM_SHA256_HMAC_ID))
+            sign_mech = mech_simple(CKM_SHA256_HMAC)
             rv2 = rs.raw.C_SignInit(rs.sh, sign_mech.byref(), key)  # type: ignore[attr-defined]
             assert rv2 != CKR_OK, (
                 "C_SignInit with CKA_SIGN=False should fail but returned CKR_OK"
@@ -261,7 +259,7 @@ class TestMissingPermission:
         assert rv == CKR_OK, f"Key gen failed: {rv}"
         key = handle.value
         try:
-            verify_mech = mech_simple(CKM(_CKM_SHA256_HMAC_ID))
+            verify_mech = mech_simple(CKM_SHA256_HMAC)
             rv2 = rs.raw.C_VerifyInit(rs.sh, verify_mech.byref(), key)  # type: ignore[attr-defined]
             assert rv2 != CKR_OK, (
                 "C_VerifyInit with CKA_VERIFY=False should fail but returned CKR_OK"

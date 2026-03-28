@@ -48,8 +48,8 @@ from pkcs11_check.testcases.mechanism_registry import MechConfig
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.digest]
 
 # Known CKM IDs for SHAKE (XOF — different API, not tested here)
-_SHAKE_128_ID = 0x00000418
-_SHAKE_256_ID = 0x00000419
+_SHAKE_128_ID = 0x00000418  # Not in vendored v3.2 header — OASIS working spec
+_SHAKE_256_ID = 0x00000419  # Not in vendored v3.2 header — OASIS working spec
 
 # Map CKM mech_id → expected output length in bytes (None = unknown/variable)
 _KNOWN_OUTPUT_LENGTHS: dict[int, int] = {

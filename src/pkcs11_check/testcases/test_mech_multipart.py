@@ -140,8 +140,8 @@ class TestMultipartDigest:
             pytest.skip(f"{entry.mech_name}: no registry config")
 
         # XOF mechanisms (SHAKE) use a different API
-        shake_128_id = 0x00000418
-        shake_256_id = 0x00000419
+        shake_128_id = 0x00000418  # Not in vendored v3.2 header — OASIS working spec
+        shake_256_id = 0x00000419  # Not in vendored v3.2 header — OASIS working spec
         if entry.mech_id in (shake_128_id, shake_256_id):
             pytest.skip(f"{entry.mech_name}: XOF mechanism requires C_DigestXof*")
 
@@ -178,8 +178,8 @@ class TestMultipartDigest:
         if config is None:
             pytest.skip(f"{entry.mech_name}: no registry config")
 
-        shake_128_id = 0x00000418
-        shake_256_id = 0x00000419
+        shake_128_id = 0x00000418  # Not in vendored v3.2 header — OASIS working spec
+        shake_256_id = 0x00000419  # Not in vendored v3.2 header — OASIS working spec
         if entry.mech_id in (shake_128_id, shake_256_id):
             pytest.skip(f"{entry.mech_name}: XOF mechanism requires C_DigestXof*")
 

@@ -58,21 +58,19 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_WRAP,
+    CKD_NULL,
+    CKG_MGF1_SHA256,
     CKK_AES,
     CKK_HKDF,
     CKM,
     CKM_AES_ECB,
     CKM_GENERIC_SECRET_KEY_GEN,
+    CKM_SHA256,
     CKR_OK,
+    CKZ_SALT_SPECIFIED,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.lifecycle]
-
-# -------- Shared constants --------
-_CKM_SHA256 = 0x00000250
-_CKG_MGF1_SHA256 = 0x00000002
-_CKD_NULL = 0x00000001  # CKD_NULL KDF for ECDH
-_CKZ_SALT_SPECIFIED = 0x00000001
 
 
 class TestAESWrapUnwrapUse:
@@ -194,7 +192,7 @@ class TestECDHDerivedKeyUse:
                 pytest.skip("Cannot read CKA_EC_POINT from peer public key")
 
             ecdh_param = mech_ecdh(
-                CKM(int(CKM_ECDH1_DERIVE)), kdf=_CKD_NULL, public_data=peer_point
+                CKM(int(CKM_ECDH1_DERIVE)), kdf=int(CKD_NULL), public_data=peer_point
             )
 
             derived = derive_key(
@@ -281,10 +279,10 @@ class TestHKDFDerivedKeyUse:
 
             hkdf_param = mech_hkdf(
                 CKM(int(CKM_HKDF_DERIVE)),
-                hash_mech=_CKM_SHA256,
+                hash_mech=int(CKM_SHA256),
                 extract=True,
                 expand=True,
-                salt_type=_CKZ_SALT_SPECIFIED,
+                salt_type=int(CKZ_SALT_SPECIFIED),
                 salt=os.urandom(16),
                 info=b"pkcs11-check lifecycle test",
             )
@@ -365,7 +363,7 @@ class TestRSAOAEPWrapLifecycle:
 
             # OAEP param
             oaep_param = mech_oaep(
-                CKM(int(CKM_RSA_PKCS_OAEP)), hash_mech=_CKM_SHA256, mgf=_CKG_MGF1_SHA256
+                CKM(int(CKM_RSA_PKCS_OAEP)), hash_mech=int(CKM_SHA256), mgf=int(CKG_MGF1_SHA256)
             )
 
             wrapped = wrap_key(

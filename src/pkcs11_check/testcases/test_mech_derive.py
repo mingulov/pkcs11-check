@@ -51,12 +51,15 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_VALUE_LEN,
+    CKD_NULL,
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKK_HKDF,
     CKM,
     CKM_GENERIC_SECRET_KEY_GEN,
+    CKM_SHA256,
     CKR_OK,
+    CKZ_SALT_SPECIFIED,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import gen_generic_secret
@@ -253,11 +256,7 @@ try:
 except ImportError:
     pass
 
-# HKDF hash and KDF defaults (SHA-256 family)
-_CKM_SHA256 = 0x00000250
-_CKZ_SALT_SPECIFIED = 0x00000001
 _P256_OID: bytes = encode_named_curve_parameters("secp256r1")
-_CKD_NULL = 0x00000001  # CKD_NULL: no KDF for ECDH
 
 
 def _gen_hkdf_base_key(rs: RawSession) -> int:
@@ -370,10 +369,10 @@ class TestMechDerive:
                 salt = os.urandom(16)
                 hkdf_param = mech_hkdf(
                     CKM(mech_id),
-                    hash_mech=_CKM_SHA256,
+                    hash_mech=int(CKM_SHA256),
                     extract=True,
                     expand=True,
-                    salt_type=_CKZ_SALT_SPECIFIED,
+                    salt_type=int(CKZ_SALT_SPECIFIED),
                     salt=salt,
                     info=b"pkcs11-check derive test",
                 )
@@ -410,7 +409,7 @@ class TestMechDerive:
                     pytest.skip(f"{entry.mech_name}: cannot read CKA_EC_POINT from peer key")
                 ecdh_param = mech_ecdh(
                     CKM(mech_id),
-                    kdf=_CKD_NULL,
+                    kdf=int(CKD_NULL),
                     public_data=peer_point,
                 )
                 derived_key2 = derive_key(

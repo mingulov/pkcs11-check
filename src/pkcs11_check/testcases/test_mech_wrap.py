@@ -44,10 +44,12 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_WRAP,
+    CKG_MGF1_SHA1,
     CKK_AES,
     CKK_RSA,
     CKM,
     CKM_AES_ECB,
+    CKM_SHA_1,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
@@ -115,10 +117,6 @@ try:
 except ImportError:
     pass
 
-# OAEP defaults
-_CKM_SHA1 = 0x00000220
-_CKG_MGF1_SHA1 = 0x00000001
-
 
 def _make_wrap_mech_param(entry: MechEntry) -> Any:
     """Return a mechanism parameter for the wrap mechanism, or None if not needed.
@@ -142,7 +140,7 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
         if mech_id == int(CKM_RSA_PKCS_OAEP):
             from pkcs11_check.raw.pack_mechanisms import mech_oaep
 
-            return mech_oaep(CKM(mech_id), hash_mech=_CKM_SHA1, mgf=_CKG_MGF1_SHA1)
+            return mech_oaep(CKM(mech_id), hash_mech=int(CKM_SHA_1), mgf=int(CKG_MGF1_SHA1))
     except ImportError:
         pass
 
