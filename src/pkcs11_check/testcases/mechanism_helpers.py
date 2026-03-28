@@ -30,8 +30,6 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
-    CKA_MODULUS_BITS,
-    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
@@ -50,16 +48,14 @@ from pkcs11_check.raw.types_std import (
     CKM,
     CKM_AES_KEY_GEN,
     CKM_GENERIC_SECRET_KEY_GEN,
-    CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKR_OK,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
-from pkcs11_check.testcases.mechanism_registry import MechConfig, ParamRecipe
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 # Optional types that may not exist in all PKCS#11 versions
 _CKK_AES_XTS_VAL: int = -1
 _CKM_AES_XTS_KEY_GEN_VAL: int = -1
-_CKM_RSA_X9_31_KEY_PAIR_GEN_VAL: int = -1
 try:
     from pkcs11_check.raw.types_std import CKK_AES_XTS  # noqa: E402
 
@@ -70,12 +66,6 @@ try:
     from pkcs11_check.raw.types_std import CKM_AES_XTS_KEY_GEN  # noqa: E402
 
     _CKM_AES_XTS_KEY_GEN_VAL = int(CKM_AES_XTS_KEY_GEN)
-except ImportError:
-    pass
-try:
-    from pkcs11_check.raw.types_std import CKM_RSA_X9_31_KEY_PAIR_GEN  # noqa: E402
-
-    _CKM_RSA_X9_31_KEY_PAIR_GEN_VAL = int(CKM_RSA_X9_31_KEY_PAIR_GEN)
 except ImportError:
     pass
 
@@ -431,10 +421,79 @@ def test_plaintext_bytes() -> bytes:
 # Encrypt Key Generation
 # ---------------------------------------------------------------------------
 
-# RSA keygen mechanism IDs (computed at import time)
-_RSA_KEYGEN_MECHS: frozenset[int] = frozenset(
-    x for x in [int(CKM_RSA_PKCS_KEY_PAIR_GEN), _CKM_RSA_X9_31_KEY_PAIR_GEN_VAL] if x != -1
-)
+def generate_key_from_recipe(
+    rs: Any,
+    entry: MechEntry,
+    config: MechConfig,
+    *,
+    extra_attrs: dict[int, Any] | None = None,
+) -> tuple[int, int | None]:
+    """Generate key(s) using KeygenRecipe style dispatch.
+
+    Returns (key_or_pub, priv_or_None).
+    For symmetric/fixed_length/generic: (key_handle, None).
+    For asymmetric (rsa/ec/ec_edwards/ec_montgomery/pqc): (pub_handle, priv_handle).
+
+    Raises pytest.skip for:
+    - DSA/DH styles (require external domain parameters)
+    - Unknown styles
+    - Missing keygen_mech for symmetric styles
+    """
+    import pytest
+
+    from pkcs11_check.raw.pack import attr_ulong, template
+    from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
+
+    recipe: KeygenRecipe = config.keygen_recipe
+    style = recipe.style
+
+    if style in ("dsa", "dh"):
+        pytest.skip(f"{entry.mech_name}: {style} requires external domain parameters")
+
+    if style in ("symmetric", "fixed_length", "generic"):
+        if config.key_type is None:
+            pytest.skip(f"{entry.mech_name}: no key_type in registry config")
+        kt = int(config.key_type)
+
+        keygen_mech = config.keygen_mech
+        if keygen_mech is None:
+            if kt == int(CKK_AES):
+                keygen_mech = int(CKM_AES_KEY_GEN)
+            else:
+                keygen_mech = int(CKM_GENERIC_SECRET_KEY_GEN)
+
+        is_fixed = style == "fixed_length" or kt in FIXED_LENGTH_KEY_TYPES
+
+        attrs: dict[int, Any] = {CKA_TOKEN: False, CKA_KEY_TYPE: config.key_type}
+        if extra_attrs:
+            attrs.update(extra_attrs)
+
+        packed: list[Any] = []
+        if not is_fixed:
+            key_size = pick_key_size(entry, config)
+            if key_size is None:
+                if style in ("symmetric", "generic"):
+                    key_size = 256  # sensible default for HMAC/generic with no key_sizes
+                else:
+                    pytest.skip(f"{entry.mech_name}: no usable key size in registry")
+            packed.append(attr_ulong(CKA_VALUE_LEN, key_size // 8))
+            packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
+        else:
+            packed.extend(pack_attrs(attrs))
+
+        tmpl = template(*packed)
+        mech = mech_simple(CKM(keygen_mech))
+        handle = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+        assert rv == CKR_OK, f"C_GenerateKey failed: {rv} for {entry.mech_name}"
+        return handle.value, None
+
+    if style in ("rsa", "ec", "ec_edwards", "ec_montgomery", "pqc"):
+        pub, priv = gen_keypair_for_mech(rs, entry, config)
+        return pub, priv
+
+    pytest.skip(f"{entry.mech_name}: unknown keygen_recipe style {style!r}")
+    return 0, None  # unreachable
 
 
 def generate_key_for_encrypt(
@@ -450,7 +509,7 @@ def generate_key_for_encrypt(
     """
     import pytest
 
-    from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
+    from pkcs11_check.raw.pack import attr_ulong, template
     from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
 
     if config.key_type is None:
@@ -458,37 +517,7 @@ def generate_key_for_encrypt(
 
     kt = int(config.key_type)
 
-    if config.is_keypair:
-        if needs_domain_params(config):
-            pytest.skip(
-                f"{entry.mech_name}: requires external domain parameters (DSA/DH/KEA/GOSTR)"
-            )
-
-        if kt == int(CKK_RSA):
-            keygen = config.keygen_mech
-            if keygen is None or keygen not in _RSA_KEYGEN_MECHS:
-                keygen = int(CKM_RSA_PKCS_KEY_PAIR_GEN)
-            key_size = pick_key_size(entry, config) or 2048
-            pub, priv = gen_keypair(
-                rs.raw,
-                rs.sh,
-                keygen,
-                pub_base=[
-                    attr_ulong(CKA_MODULUS_BITS, key_size),
-                    attr_bytes(CKA_PUBLIC_EXPONENT, b"\x01\x00\x01"),
-                ],
-                priv_base=[],
-                public_attrs={CKA_VERIFY: True, CKA_ENCRYPT: True, CKA_TOKEN: False},
-                private_attrs={CKA_SIGN: True, CKA_DECRYPT: True, CKA_TOKEN: False},
-            )
-            return pub, priv
-
-        pytest.skip(
-            f"{entry.mech_name}: keypair mechanism with key type {config.key_type!r} "
-            "not supported for encrypt/decrypt test"
-        )
-
-    # Symmetric: AES-XTS needs special double-length key
+    # AES-XTS needs a special double-length key via its own keygen mechanism
     if _CKK_AES_XTS_VAL != -1 and kt == _CKK_AES_XTS_VAL:
         keygen = config.keygen_mech or (
             _CKM_AES_XTS_KEY_GEN_VAL if _CKM_AES_XTS_KEY_GEN_VAL != -1 else None
@@ -513,37 +542,9 @@ def generate_key_for_encrypt(
         assert rv == CKR_OK, f"AES-XTS keygen failed: {rv}"
         return handle.value, None
 
-    # Standard symmetric keygen
-    keygen_mech = config.keygen_mech
-    if keygen_mech is None:
-        keygen_mech = int(CKM_AES_KEY_GEN) if kt == int(CKK_AES) else None
-    if keygen_mech is None:
-        pytest.skip(f"{entry.mech_name}: no keygen_mech in registry config")
-
-    is_fixed = kt in FIXED_LENGTH_KEY_TYPES
-
-    attrs2: dict[int, Any] = {
-        CKA_ENCRYPT: True,
-        CKA_DECRYPT: True,
-        CKA_TOKEN: False,
-        CKA_KEY_TYPE: config.key_type,
-    }
-    packed2 = []
-    if not is_fixed:
-        sym_key_size = pick_key_size(entry, config)
-        if sym_key_size is None:
-            pytest.skip(f"{entry.mech_name}: no usable key size in registry")
-        packed2.append(attr_ulong(CKA_VALUE_LEN, sym_key_size // 8))
-        packed2.extend(pack_attrs(attrs2, skip={CKA_VALUE_LEN}))
-    else:
-        packed2.extend(pack_attrs(attrs2))
-
-    tmpl2 = template(*packed2)
-    mech2 = mech_simple(CKM(keygen_mech))
-    handle2 = CK_OBJECT_HANDLE(0)
-    rv2 = rs.raw.C_GenerateKey(rs.sh, mech2.byref(), tmpl2.ptr, tmpl2.count, byref(handle2))
-    assert rv2 == CKR_OK, f"C_GenerateKey failed: {rv2} for {entry.mech_name}"
-    return handle2.value, None
+    # Delegate all other styles to generate_key_from_recipe
+    encrypt_attrs: dict[int, Any] = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
+    return generate_key_from_recipe(rs, entry, config, extra_attrs=encrypt_attrs)
 
 
 # ---------------------------------------------------------------------------
@@ -564,53 +565,17 @@ def generate_key_for_sign(
     """
     import pytest
 
-    from pkcs11_check.raw.pack import attr_ulong, template
-    from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
-
     if config.key_type is None:
         pytest.skip(f"{entry.mech_name}: no key_type in registry config")
 
-    if needs_domain_params(config):
-        pytest.skip(f"{entry.mech_name}: requires external domain parameters (DSA/DH/GOSTR/KEA)")
+    sign_attrs: dict[int, Any] = {CKA_SIGN: True, CKA_VERIFY: True}
+    pub, priv = generate_key_from_recipe(rs, entry, config, extra_attrs=sign_attrs)
 
-    if config.is_keypair:
-        pub, priv = gen_keypair_for_mech(rs, entry, config)
-        return priv, pub  # sign with private, verify with public
+    if priv is not None:
+        # Asymmetric: sign with private, verify with public
+        return priv, pub
 
-    # Symmetric: use keygen_mech from config
-    keygen = config.keygen_mech
-    if keygen is None:
-        kt = int(config.key_type)
-        if kt == int(CKK_AES):
-            keygen = int(CKM_AES_KEY_GEN)
-        else:
-            keygen = int(CKM_GENERIC_SECRET_KEY_GEN)
-
-    kt = int(config.key_type)
-    is_fixed = kt in FIXED_LENGTH_KEY_TYPES
-
-    attrs: dict[int, Any] = {
-        CKA_SIGN: True,
-        CKA_VERIFY: True,
-        CKA_TOKEN: False,
-        CKA_KEY_TYPE: config.key_type,
-    }
-    packed = []
-    key_size = pick_key_size(entry, config)
-    if not is_fixed:
-        if key_size is None:
-            key_size = 256  # For HMAC with no key_sizes, use sensible default
-        packed.append(attr_ulong(CKA_VALUE_LEN, key_size // 8))
-        packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
-    else:
-        packed.extend(pack_attrs(attrs))
-
-    tmpl = template(*packed)
-    mech = mech_simple(CKM(keygen))
-    handle = CK_OBJECT_HANDLE(0)
-    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-    assert rv == CKR_OK, f"C_GenerateKey failed: {rv} for {entry.mech_name}"
-    return handle.value, None
+    return pub, None
 
 
 # ---------------------------------------------------------------------------
