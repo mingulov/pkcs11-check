@@ -386,7 +386,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
         details = drain_mechanism_details()
         if details:
             detail_set = session.config.stash[_CUMULATIVE_MECHANISM_DETAILS]
-            detail_counts = session.config.stash.get(_CUMULATIVE_DETAIL_COUNTS)
+            detail_counts = session.config.stash.get(_CUMULATIVE_DETAIL_COUNTS, None)
             for mech_id, subs in details:
                 detail_set.add((mech_id, frozenset(subs.items())))
                 if detail_counts is not None:
