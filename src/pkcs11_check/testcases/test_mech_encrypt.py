@@ -16,15 +16,13 @@ skipped with a clear message.
 """
 from __future__ import annotations
 
-import os
 from ctypes import byref
 from typing import Any
 
 import pytest
 
 from pkcs11_check.fixtures import RawSession
-from pkcs11_check.raw.pack import attr_bytes, attr_ulong, mech_bytes, mech_simple, template
-from pkcs11_check.raw.pack_mechanisms import mech_ccm, mech_ctr, mech_gcm, mech_oaep
+from pkcs11_check.raw.pack import attr_bytes, attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single, pack_attrs
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
@@ -63,10 +61,6 @@ pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.encrypt]
 # RSA keygen mechanisms (same CKK_RSA key works for encrypt/decrypt)
 _RSA_KEYGEN_MECHS: set[int] = {int(CKM_RSA_PKCS_KEY_PAIR_GEN), int(CKM_RSA_X9_31_KEY_PAIR_GEN)}
 
-# OAEP hash/MGF defaults (SHA-256, MGF1-SHA-256)
-_CKM_SHA256 = 0x00000250
-_CKG_MGF1_SHA256 = 0x00000002
-
 # Fixed-length key types: must not set CKA_VALUE_LEN
 _FIXED_LENGTH_KEY_TYPES: set[int] = {
     int(CKK_DES), int(CKK_DES2), int(CKK_DES3), int(CKK_SEED)
@@ -90,40 +84,20 @@ def _make_mech_param(
     """Create mechanism parameter for the operation, or None for no-param mechanisms.
 
     Returns None for mechanisms that take no parameters (e.g., AES-ECB).
-    Skips with a clear message for mechanisms whose param builder is not yet implemented.
+    Skips with a clear message for mechanisms whose param builder cannot produce
+    test params generically.
     """
-    mech_id = CKM(entry.mech_id)
+    from pkcs11_check.testcases.mechanism_helpers import build_test_params
 
     if not config.param_required:
         return None
 
-    packer = config.param_packer
-    if packer is None:
-        return None
-
-    if packer == "pack_aes_iv":
-        iv = os.urandom(16)
-        return mech_bytes(mech_id, iv)
-
-    if packer == "pack_aes_ctr":
-        return mech_ctr(mech_id, bits=128)
-
-    if packer == "pack_aes_gcm":
-        iv = os.urandom(12)
-        return mech_gcm(mech_id, iv)
-
-    if packer == "pack_aes_ccm":
-        nonce = os.urandom(7)
-        return mech_ccm(mech_id, nonce, data_len=32, mac_len=16)
-
-    if packer == "mech_oaep":
-        return mech_oaep(mech_id, hash_mech=_CKM_SHA256, mgf=_CKG_MGF1_SHA256)
-
-    if packer in ("pack_aes_key_wrap_iv", "pack_aes_key_wrap_kwp"):
-        # Key wrap mechanisms — not suitable for data encrypt roundtrip test
-        pytest.skip(f"{entry.mech_name}: key-wrap mechanism, not tested here")
-
-    pytest.skip(f"{entry.mech_name}: param_packer {packer!r} not yet implemented in this test")
+    result = build_test_params(entry.mech_id, config.param_recipe)
+    if result == "SKIP":
+        pytest.skip(
+            f"{entry.mech_name}: param recipe '{config.param_recipe.style}' needs runtime data"
+        )
+    return result
 
 
 def _generate_key_for_encrypt(

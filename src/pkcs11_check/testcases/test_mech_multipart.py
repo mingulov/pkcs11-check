@@ -144,10 +144,10 @@ class TestMultipartDigest:
         if entry.mech_id in (shake_128_id, shake_256_id):
             pytest.skip(f"{entry.mech_name}: XOF mechanism requires C_DigestXof*")
 
-        # Parameterised digests (SHA-512/t) without a factory
-        if config.param_required and config.param_factory is None and config.param_packer is None:
+        # Parameterised digests (SHA-512/t) without a buildable recipe
+        if config.param_required and config.param_recipe.style == "none":
             pytest.skip(
-                f"{entry.mech_name}: param_required but no factory — cannot build params"
+                f"{entry.mech_name}: param_required but recipe style 'none' — cannot build params"
             )
 
         data = b"multipart digest test input data" * 3  # 96 bytes
@@ -182,8 +182,10 @@ class TestMultipartDigest:
         if entry.mech_id in (shake_128_id, shake_256_id):
             pytest.skip(f"{entry.mech_name}: XOF mechanism requires C_DigestXof*")
 
-        if config.param_required and config.param_factory is None and config.param_packer is None:
-            pytest.skip(f"{entry.mech_name}: parameterised digest without factory")
+        if config.param_required and config.param_recipe.style == "none":
+            pytest.skip(
+                f"{entry.mech_name}: param_required but recipe style 'none' — cannot build params"
+            )
 
         data = b"single chunk multipart test"
         mech_id = CKM(entry.mech_id)

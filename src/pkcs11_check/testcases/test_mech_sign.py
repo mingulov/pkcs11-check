@@ -16,20 +16,16 @@ or CKR_SIGNATURE_LEN_RANGE) when the data does not match the signature.
 """
 from __future__ import annotations
 
-import ctypes
-import os
 from ctypes import byref
 from typing import Any
 
 import pytest
 
 from pkcs11_check.fixtures import RawSession
-from pkcs11_check.raw.pack import attr_ulong, mech_bytes, mech_simple, template
-from pkcs11_check.raw.pack_mechanisms import mech_eddsa, mech_gcm, mech_pss
+from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import destroy_quietly, pack_attrs, sign_single, verify_single
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
-    CK_ULONG,
     CKA_KEY_TYPE,
     CKA_SIGN,
     CKA_TOKEN,
@@ -55,10 +51,6 @@ from pkcs11_check.testcases.test_mech_keygen import (
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.sign]
 
-# PSS defaults: SHA-256 hash, MGF1-SHA-256, salt length = 32
-_CKM_SHA256 = 0x00000250
-_CKG_MGF1_SHA256 = 0x00000002
-
 # Fixed-length key types: must not set CKA_VALUE_LEN
 _FIXED_LENGTH_KEY_TYPES: set[int] = {
     int(CKK_DES), int(CKK_DES2), int(CKK_DES3), int(CKK_SEED)
@@ -69,38 +61,19 @@ def _make_sign_mech_param(entry: MechEntry, config: MechConfig) -> Any:
     """Create mechanism parameter for sign/verify, or None for no-param mechanisms.
 
     Returns None for mechanisms that take no parameters.
-    Skips for param_packer values not yet implemented.
+    Skips for param recipes that need runtime data.
     """
-    mech_id = CKM(entry.mech_id)
+    from pkcs11_check.testcases.mechanism_helpers import build_test_params
 
     if not config.param_required:
         return None
 
-    packer = config.param_packer
-    if packer is None:
-        return None
-
-    if packer == "mech_pss":
-        return mech_pss(mech_id, hash_mech=_CKM_SHA256, mgf=_CKG_MGF1_SHA256, salt_len=32)
-
-    if packer == "pack_mac_general":
-        # CK_MAC_GENERAL_PARAMS: just a CK_ULONG output length (8-byte truncated MAC)
-        mac_len = CK_ULONG(8)
-        return mech_bytes(
-            mech_id,
-            bytes(ctypes.string_at(ctypes.addressof(mac_len), ctypes.sizeof(mac_len))),
+    result = build_test_params(entry.mech_id, config.param_recipe)
+    if result == "SKIP":
+        pytest.skip(
+            f"{entry.mech_name}: param recipe '{config.param_recipe.style}' needs runtime data"
         )
-
-    if packer == "pack_aes_gcm":
-        iv = os.urandom(12)
-        return mech_gcm(mech_id, iv)
-
-    if packer == "mech_eddsa":
-        return mech_eddsa(mech_id)
-
-    pytest.skip(
-        f"{entry.mech_name}: param_packer {packer!r} not yet implemented for sign test"
-    )
+    return result
 
 
 def _generate_key_for_sign(

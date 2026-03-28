@@ -148,7 +148,7 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
 
     # GCM / CCM / AEAD variants — complex, skip
     config = entry.config
-    if config is not None and config.param_packer in ("pack_aes_gcm", "pack_aes_ccm"):
+    if config is not None and config.param_recipe.style in ("gcm", "ccm"):
         pytest.skip(f"{entry.mech_name}: AEAD wrap not covered here")
 
     return None

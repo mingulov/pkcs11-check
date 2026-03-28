@@ -31,7 +31,6 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE_LEN,
     CKA_VERIFY,
-    CKG_MGF1_SHA256,
     CKK_DES,
     CKK_DES2,
     CKK_DES3,
@@ -102,70 +101,13 @@ def make_mech_param(entry: MechEntry) -> Any:
     Returns None for mechanisms that don't need params,
     a PackedMechanism for those that do, or the string "SKIP"
     if params cannot be built generically for this mechanism.
+
+    Delegates to build_test_params() using the entry's param_recipe.
     """
     config = entry.config
     if config is None or not config.param_required:
         return None
-
-    packer = config.param_packer
-    if packer is None:
-        return None
-
-    mech_id = CKM(entry.mech_id)
-
-    if packer == "pack_aes_gcm":
-        return mech_gcm(mech_id, os.urandom(12))
-
-    if packer == "pack_aes_ccm":
-        return mech_ccm(mech_id, os.urandom(7), data_len=32, mac_len=16)
-
-    if packer == "pack_aes_ctr":
-        return mech_ctr(mech_id, bits=128)
-
-    if packer == "mech_oaep":
-        from pkcs11_check.raw.types_std import CKM_SHA256
-
-        return mech_oaep(mech_id, hash_mech=int(CKM_SHA256), mgf=int(CKG_MGF1_SHA256))
-
-    if packer == "mech_pss":
-        from pkcs11_check.raw.types_std import CKM_SHA256
-
-        return mech_pss(
-            mech_id, hash_mech=int(CKM_SHA256), mgf=int(CKG_MGF1_SHA256), salt_len=32
-        )
-
-    if packer == "mech_ecdh":
-        # Needs peer public key — handled in derive tests
-        return "SKIP"
-
-    if packer == "mech_hkdf":
-        # Needs CK_HKDF_PARAMS — handled in derive tests
-        return "SKIP"
-
-    if packer in ("pack_aes_iv", "mech_bytes"):
-        # IV-based mechanisms (CBC, OFB, CFB, etc.)
-        return mech_bytes(mech_id, os.urandom(16))
-
-    if packer == "pack_mac_general":
-        import ctypes
-
-        from pkcs11_check.raw.types_std import CK_ULONG
-
-        mac_len = CK_ULONG(8)
-        return mech_bytes(
-            mech_id,
-            bytes(ctypes.string_at(ctypes.addressof(mac_len), ctypes.sizeof(mac_len))),
-        )
-
-    if packer in ("pack_aes_key_wrap_iv", "pack_aes_key_wrap_kwp"):
-        # Key-wrap-only mechanisms — not usable for data operations
-        return "SKIP"
-
-    if packer == "mech_eddsa":
-        return mech_eddsa(mech_id)
-
-    # Unknown packer
-    return "SKIP"
+    return build_test_params(entry.mech_id, config.param_recipe)
 
 
 # ---------------------------------------------------------------------------

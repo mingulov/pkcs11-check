@@ -96,9 +96,9 @@ def _check_not_xof(entry: MechEntry) -> None:
 
 def _check_not_parameterised(entry: MechEntry, config: MechConfig) -> None:
     """Skip mechanisms that require parameters we can't build generically (e.g. SHA-512/t)."""
-    if config.param_required and config.param_factory is None and config.param_packer is None:
+    if config.param_required and config.param_recipe.style == "none":
         pytest.skip(
-            f"{entry.mech_name}: param_required=True but no param_factory/packer — "
+            f"{entry.mech_name}: param_required=True but recipe style 'none' — "
             "cannot create test params generically"
         )
 
