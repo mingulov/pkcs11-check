@@ -24,6 +24,7 @@ from .types_std import (
     CK_ECDH1_DERIVE_PARAMS,
     CK_EDDSA_PARAMS,
     CK_GCM_MESSAGE_PARAMS,
+    CK_HASH_SIGN_ADDITIONAL_CONTEXT,
     CK_HKDF_PARAMS,
     CK_KEY_DERIVATION_STRING_DATA,
     CK_PKCS5_PBKD2_PARAMS2,
@@ -46,6 +47,7 @@ from .types_std import (
     CK_WTLS_KEY_MAT_PARAMS,
     CK_WTLS_MASTER_KEY_DERIVE_PARAMS,
     CK_WTLS_PRF_PARAMS,
+    CKH_HEDGE_PREFERRED,
     CKM,
     CKZ_DATA_SPECIFIED,
     CKZ_SALT_SPECIFIED,
@@ -717,6 +719,31 @@ def mech_wtls_prf(
     return result
 
 
+def mech_hash_sign_context(
+    mechanism_type: CKM,
+    hash_mech: int,
+    *,
+    hedge: int | None = None,
+    context: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_HASH_SIGN_ADDITIONAL_CONTEXT for CKM_HASH_ML_DSA / CKM_HASH_SLH_DSA.
+
+    The ``hash`` field specifies which hash to use (mandatory for the generic
+    CKM_HASH_ML_DSA and CKM_HASH_SLH_DSA mechanisms).
+    ``hedge`` defaults to CKH_HEDGE_PREFERRED.
+    """
+    ka: list[Any] = []
+    params = CK_HASH_SIGN_ADDITIONAL_CONTEXT()
+    params.hedgeVariant = int(CKH_HEDGE_PREFERRED) if hedge is None else hedge
+    if context is not None:
+        params.pContext, params.ulContextLen = _pack_bytes(context, ka)
+    else:
+        params.pContext = None
+        params.ulContextLen = 0
+    params.hash = hash_mech
+    return _mech_struct(mechanism_type, params, "mech_hash_sign_context", ka)
+
+
 __all__ = [
     "mech_cbc_pad",
     "mech_ccm",
@@ -727,6 +754,7 @@ __all__ = [
     "mech_eddsa",
     "mech_gcm",
     "mech_gcm_message",
+    "mech_hash_sign_context",
     "mech_hkdf",
     "mech_oaep",
     "mech_pbkdf2",
