@@ -120,7 +120,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
                 CKA_TOKEN: False,
             },
         )
-    except (AssertionError, Exception) as exc:
+    except AssertionError as exc:
         if result == "invalid":
             return  # Invalid key correctly rejected
         if is_semi_expanded:
@@ -133,7 +133,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="FIPS 203 Section 6.4; PKCS#11 v3.2",
             )
-            pytest.xfail(
+            pytest.fail(
                 f"NSS does not support ML-KEM 'semi_expanded' (seed-format) private key "
                 f"import: {exc}"
             )
@@ -157,7 +157,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
             # We can't directly compare since the key value is wrapped
             pass  # Key was produced - that's the expected behavior
         destroy_quietly(rs.raw, rs.sh, shared_key)
-    except (AssertionError, Exception) as exc:
+    except AssertionError as exc:
         if result == "valid":
             if is_semi_expanded:
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -168,7 +168,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="FIPS 203 Section 6.4; PKCS#11 v3.2",
                 )
-                pytest.xfail(
+                pytest.fail(
                     f"NSS does not support ML-KEM 'semi_expanded' key format decapsulation: "
                     f"{exc}"
                 )

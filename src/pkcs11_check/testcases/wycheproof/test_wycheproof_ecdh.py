@@ -187,7 +187,7 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         if "mismatch" in exc_msg:
             raise
         if result == "valid":
-            pytest.xfail(f"Valid ECDH derive failed for {vec_id}")
+            pytest.fail(f"Valid ECDH derive failed for {vec_id}")
         # acceptable: reject is fine
         return
     except (TypeError, NotImplementedError):

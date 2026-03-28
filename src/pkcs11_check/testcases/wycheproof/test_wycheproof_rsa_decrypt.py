@@ -116,14 +116,16 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     except AssertionError:
         pytest.skip("Cannot import RSA private key")
 
+    plaintext = None
     try:
         plaintext = decrypt_single(rs.raw, rs.sh, priv_key, CKM_RSA_PKCS, ct)
-        if result == "valid":
-            assert plaintext == msg_expected
     except AssertionError:
         if result == "valid":
-            pytest.xfail(f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt")
+            pytest.fail(f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt")
         # acceptable/invalid: reject is fine (padding oracle resistance)
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, priv_key)
+
+    if result == "valid" and plaintext is not None:
+        assert plaintext == msg_expected

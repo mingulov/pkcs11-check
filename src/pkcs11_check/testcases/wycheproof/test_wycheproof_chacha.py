@@ -90,6 +90,7 @@ def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
     # CK_SALSA20_CHACHA20_POLY1305_PARAMS: (nonce, aad)
     chacha_param = mech_chacha20_poly1305(CKM_CHACHA20_POLY1305, iv, aad=aad if aad else None)
+    ciphertext = None
     try:
         ciphertext = encrypt_single(
             rs.raw,
@@ -99,12 +100,13 @@ def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
             msg,
             mech_param=chacha_param,
         )
-        if result == "valid":
-            assert ciphertext == ct_expected + tag_expected
     except (AssertionError, AttributeError, TypeError):
         if result == "valid":
-            pytest.xfail(f"ChaCha20-Poly1305 encrypt failed for valid vector {vec_id}")
+            pytest.fail(f"ChaCha20-Poly1305 encrypt failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
+
+    if result == "valid" and ciphertext is not None:
+        assert ciphertext == ct_expected + tag_expected

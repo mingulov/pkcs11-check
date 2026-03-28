@@ -94,18 +94,19 @@ def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             return
         raise
 
+    mac = None
     try:
         mac = sign_single(rs.raw, rs.sh, key, CKM_AES_CMAC, msg)
-        truncated = mac[:tag_size]
-        if result == "valid":
-            assert truncated == tag_expected
     except AssertionError:
         if result == "valid":
-            pytest.xfail(f"AES-CMAC failed for valid vector {vec_id}")
+            pytest.fail(f"AES-CMAC failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
+
+    if result == "valid" and mac is not None:
+        assert mac[:tag_size] == tag_expected
 
     generate_random(rs.raw, rs.sh, 64)
 
@@ -168,18 +169,20 @@ def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
         pytest.skip("Cannot import target key")
 
     # Wrap and compare
+    wrapped = None
     try:
         wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP)
-        if result == "valid":
-            assert wrapped == ct_expected
     except AssertionError:
         if result == "valid":
-            pytest.xfail(f"AES-KW wrap failed for valid vector {vec_id}")
+            pytest.fail(f"AES-KW wrap failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, target_key)
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
+
+    if result == "valid" and wrapped is not None:
+        assert wrapped == ct_expected
 
 
 # --- AES Key Wrap with Padding (RFC 5649) ---
@@ -245,21 +248,23 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         pytest.skip("Cannot import target key for KWP")
 
     # Wrap with padding and compare
+    wrapped = None
     try:
         wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP_PAD)
-        if result == "valid" and wrapped != ct_expected:
-            pytest.xfail(
-                f"AES-KWP wrap output differs for {vec_id} "
-                f"(got {len(wrapped)}B, expected {len(ct_expected)}B)"
-            )
     except AssertionError:
         if result == "valid":
-            pytest.xfail(f"AES-KWP wrap failed for valid vector {vec_id}")
+            pytest.fail(f"AES-KWP wrap failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, target_key)
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
+
+    if result == "valid" and wrapped is not None:
+        assert wrapped == ct_expected, (
+            f"AES-KWP wrap output differs for {vec_id} "
+            f"(got {len(wrapped)}B, expected {len(ct_expected)}B)"
+        )
 
 
 # --- AES-CCM ---
@@ -304,6 +309,7 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         raise
 
     # Encrypt and compare
+    ciphertext = None
     try:
         ccm_param = mech_ccm(
             CKM_AES_CCM,
@@ -320,16 +326,17 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             msg,
             mech_param=ccm_param,
         )
-        # AES-CCM output is ct||tag
-        if result == "valid":
-            assert ciphertext == ct_expected + tag_expected
     except (AssertionError, TypeError, NotImplementedError):
         if result == "valid":
-            pytest.xfail(f"AES-CCM encrypt failed for valid vector {vec_id}")
+            pytest.fail(f"AES-CCM encrypt failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
+
+    # AES-CCM output is ct||tag
+    if result == "valid" and ciphertext is not None:
+        assert ciphertext == ct_expected + tag_expected
 
 
 # --- AES-GMAC ---
@@ -371,6 +378,7 @@ def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             return
         raise
 
+    mac = None
     try:
         mac = sign_single(
             rs.raw,
@@ -380,15 +388,16 @@ def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             msg,
             mech_param=mech_bytes(CKM_AES_GMAC, iv),
         )
-        if result == "valid":
-            assert mac == tag_expected
     except (AssertionError, TypeError):
         if result == "valid":
-            pytest.xfail(f"AES-GMAC sign failed for valid vector {vec_id}")
+            pytest.fail(f"AES-GMAC sign failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
+
+    if result == "valid" and mac is not None:
+        assert mac == tag_expected
 
 
 # --- AES-XTS ---
@@ -432,6 +441,7 @@ def test_aes_xts(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             return
         pytest.skip("Cannot import AES-XTS key")
 
+    ct = None
     try:
         ct = encrypt_single(
             rs.raw,
@@ -441,12 +451,13 @@ def test_aes_xts(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             msg,
             mech_param=mech_bytes(CKM_AES_XTS, iv),
         )
-        if result == "valid":
-            assert ct == ct_expected
     except (AssertionError, TypeError):
         if result == "valid":
-            pytest.xfail(f"AES-XTS encrypt failed for valid vector {vec_id}")
+            pytest.fail(f"AES-XTS encrypt failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
+
+    if result == "valid" and ct is not None:
+        assert ct == ct_expected

@@ -123,6 +123,7 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
 
     # Derive shared secret
     ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=public_bytes)
+    shared = None
     try:
         derived = derive_key(
             rs.raw,
@@ -141,13 +142,14 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
         shared = attrs[CKA_VALUE]
         assert isinstance(shared, bytes)
-        if result == "valid":
-            assert shared == shared_expected
         destroy_quietly(rs.raw, rs.sh, derived)
     except (AssertionError, TypeError):
         if result == "valid":
-            pytest.xfail(f"X25519/X448 derive failed for valid vector {vec_id}")
+            pytest.fail(f"X25519/X448 derive failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, priv_key)
+
+    if result == "valid" and shared is not None:
+        assert shared == shared_expected

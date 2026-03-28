@@ -127,6 +127,7 @@ def test_hkdf(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         salt=salt if salt else None,
         info=info if info else None,
     )
+    okm = None
     try:
         derived = derive_key(
             rs.raw,
@@ -145,13 +146,14 @@ def test_hkdf(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
         okm = attrs[CKA_VALUE]
         assert isinstance(okm, bytes)
-        if result == "valid":
-            assert okm == okm_expected
         destroy_quietly(rs.raw, rs.sh, derived)
     except (AssertionError, TypeError, NotImplementedError):
         if result == "valid":
-            pytest.xfail(f"HKDF derive failed for valid vector {vec_id}")
+            pytest.fail(f"HKDF derive failed for valid vector {vec_id}")
         # acceptable: reject is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, ikm_key)
+
+    if result == "valid" and okm is not None:
+        assert okm == okm_expected
