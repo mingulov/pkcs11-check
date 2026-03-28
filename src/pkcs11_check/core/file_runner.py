@@ -633,6 +633,8 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     except (FileNotFoundError, OSError):
         return None
 
+    from collections import Counter
+
     all_called: set[str] = set()
     all_uncalled: set[str] = set()
     func_available = 0
@@ -640,6 +642,10 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     all_not_invoked: set[str] = set()
     all_available_mechs: set[str] = set()
     all_detail: set[str] = set()
+    all_func_counts: Counter[str] = Counter()
+    all_bootstrap_counts: Counter[str] = Counter()
+    all_mech_counts: Counter[str] = Counter()
+    all_detail_counts: Counter[str] = Counter()
     found = False
 
     for line in text.splitlines():
@@ -657,11 +663,15 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         func_available = max(func_available, fc.get("available", 0))
         all_called.update(fc.get("called_names", []))
         all_uncalled.update(fc.get("uncalled_names", []))
+        all_func_counts.update(fc.get("called_counts", {}))
+        all_bootstrap_counts.update(fc.get("bootstrap_counts", {}))
         mc = rec.get("mechanism_coverage", {})
         all_available_mechs.update(mc.get("available_names", []))
         all_invoked.update(mc.get("invoked_names", []))
         all_not_invoked.update(mc.get("not_invoked_names", []))
         all_detail.update(mc.get("invoked_detail", []))
+        all_mech_counts.update(mc.get("invoked_counts", {}))
+        all_detail_counts.update(mc.get("invoked_detail_counts", {}))
 
     if not found:
         return None
@@ -673,6 +683,8 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             "available": func_available,
             "called": len(all_called),
             "called_names": sorted(all_called),
+            "called_counts": dict(all_func_counts),
+            "bootstrap_counts": dict(all_bootstrap_counts),
             "uncalled_names": merged_uncalled,
         },
         "mechanism_coverage": {
@@ -680,9 +692,11 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             "available_names": sorted(all_available_mechs),
             "invoked": len(all_invoked),
             "invoked_names": sorted(all_invoked),
+            "invoked_counts": dict(all_mech_counts),
             "not_invoked": len(merged_not_invoked),
             "not_invoked_names": merged_not_invoked,
             "invoked_detail": sorted(all_detail),
+            "invoked_detail_counts": dict(all_detail_counts),
         },
     }
 
