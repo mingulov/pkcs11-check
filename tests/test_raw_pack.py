@@ -538,11 +538,10 @@ _STANDARD_RAW_MODULES = (
     "raw/metadata_std.py",
 )
 
-_STANDARD_HEADERS = (
-    "pkcs11.h",
-    "pkcs11f.h",
-    "pkcs11t.h",
-)
+_REQUIRED_HEADERS = ("pkcs11.h",)  # Always required — single-file or multi-file
+_OPTIONAL_HEADERS = ("pkcs11f.h", "pkcs11t.h")  # Only in OASIS 3-file format
+
+_HEADERS_SOURCE_DIR = Path(__file__).resolve().parents[1] / "third_party/pkcs11-headers/3.2"
 
 
 def _assert_standard_raw_pack_contents(
@@ -550,8 +549,11 @@ def _assert_standard_raw_pack_contents(
 ) -> None:
     for module in _STANDARD_RAW_MODULES:
         assert f"{module_prefix}/{module}" in archive_names
-    for header in _STANDARD_HEADERS:
+    for header in _REQUIRED_HEADERS:
         assert f"{header_prefix}/{header}" in archive_names
+    for header in _OPTIONAL_HEADERS:
+        if (_HEADERS_SOURCE_DIR / header).exists():
+            assert f"{header_prefix}/{header}" in archive_names
 
 
 def test_sdist_and_wheel_include_vendored_standard_headers_and_generated_raw_modules(
