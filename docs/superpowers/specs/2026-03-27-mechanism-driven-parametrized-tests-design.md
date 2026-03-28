@@ -25,21 +25,23 @@ Layer 1: Test Data (JSON vectors in repo, loaded dynamically)
     testcases/data/mechanism_vectors/*.json
     scripts/generate_mechanism_vectors.py
 
-Layer 2: Mechanism Registry (declarative config, ~250 entries)
+Layer 2: Mechanism Registry (declarative config, ~348 entries + 132 probe-only)
     testcases/mechanism_registry.py
 
-Layer 3: Operation Tests (14 test files)
+Layer 3: Operation Tests (16 test files)
     testcases/test_mech_keygen.py       — CKF_GENERATE / CKF_GENERATE_KEY_PAIR
     testcases/test_mech_encrypt.py      — CKF_ENCRYPT + CKF_DECRYPT (single-part)
     testcases/test_mech_sign.py         — CKF_SIGN + CKF_VERIFY (single-part)
+    testcases/test_mech_sign_recover.py — CKF_SIGN_RECOVER + CKF_VERIFY_RECOVER
     testcases/test_mech_digest.py       — CKF_DIGEST
     testcases/test_mech_wrap.py         — CKF_WRAP + CKF_UNWRAP
     testcases/test_mech_derive.py       — CKF_DERIVE
     testcases/test_mech_kem.py          — CKF_ENCAPSULATE + CKF_DECAPSULATE
+    testcases/test_mech_message.py      — CKF_MESSAGE_ENCRYPT/DECRYPT/SIGN/VERIFY (v3.0+)
     testcases/test_mech_multipart.py    — C_*Update / C_*Final for all operations
     testcases/test_mech_attribute.py    — key attribute verification post-keygen/derive/unwrap
     testcases/test_mech_negative.py     — wrong key types, sizes, permissions, invalid params
-    testcases/test_mech_state.py        — operation state machine violations
+    testcases/test_mech_state.py        — operation state machine violations (dedicated)
     testcases/test_mech_flags.py        — CKF_* flag validation against registry
     testcases/test_mech_probe.py        — unknown/vendor mechanisms: no-crash init
     testcases/test_mech_lifecycle.py    — 11 composite multi-step patterns
@@ -51,41 +53,50 @@ Layer 3: Operation Tests (14 test files)
 
 `@pytest.mark.parametrize` runs at collection time before fixtures are available. But discovering mechanisms requires an active PKCS#11 session (`C_GetMechanismList`, `C_GetMechanismInfo`).
 
-### Solution: Session-scoped catalog fixture + `pytest_generate_tests` hook
+### Solution: Lazy-initialized catalog via extended preflight manifest
 
-**Step 1:** A session-scoped fixture `p11_mechanism_catalog` in `testcases/conftest.py` probes the module once at session start:
+**Timing constraint:** `pytest_generate_tests` runs during collection (per test module), before session-scoped fixtures are available. The catalog must be populated BEFORE `pytest_generate_tests` fires.
+
+**Step 1:** Extend the preflight subprocess (which already runs during `pytest_collection_modifyitems`, i.e., during collection) to also call `C_GetMechanismInfo` for each mechanism. Store results in the extended `CapabilityManifest.mechanism_info` field.
+
+**Step 2:** A lazy initializer in `plugin.py` (similar to existing `_ensure_manifest()`) builds the `MechanismCatalog` from the manifest on first access:
 
 ```python
-@pytest.fixture(scope="session")
-def p11_mechanism_catalog(p11_module: P11Module) -> MechanismCatalog:
-    """Discover all mechanisms and their info. Runs once per session."""
-    raw = p11_module.raw
-    slot_id = _get_slot_id(p11_module)
-    mechs = get_mechanism_list(raw, slot_id)
-    catalog = {}
-    for mech_id in mechs:
-        info = get_mechanism_info(raw, slot_id, mech_id)
-        config = MECHANISM_REGISTRY.get(mech_id)
-        catalog[mech_id] = MechEntry(mech_id, info, config)
-    return MechanismCatalog(catalog)
+def _ensure_mechanism_catalog(config: pytest.Config) -> MechanismCatalog | None:
+    """Lazily build mechanism catalog from preflight manifest."""
+    catalog = config.stash.get(_MECHANISM_CATALOG_KEY, None)
+    if catalog is not None:
+        return catalog
+    manifest = _ensure_manifest(config)
+    if manifest is None or not manifest.mechanism_info:
+        return None
+    catalog = MechanismCatalog.from_manifest(manifest, MECHANISM_REGISTRY)
+    config.stash[_MECHANISM_CATALOG_KEY] = catalog
+    return catalog
 ```
 
-**Step 2:** A `conftest.py` in the `testcases/` directory implements `pytest_generate_tests` to parametrize test functions based on the catalog:
+**Step 3:** `pytest_generate_tests` calls the lazy initializer:
 
 ```python
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """Parametrize mechanism-driven tests from the module's mechanism list."""
+    catalog = _ensure_mechanism_catalog(metafunc.config)
+    if catalog is None:
+        return
     if "mech_encrypt_param" in metafunc.fixturenames:
-        catalog = metafunc.config.stash.get(_MECHANISM_CATALOG_KEY, None)
-        if catalog is None:
-            return
         params = catalog.filter(CKF_ENCRYPT, with_registry=True)
         metafunc.parametrize("mech_encrypt_param", params, ids=_make_ids(params))
 ```
 
-**Step 3:** The catalog is populated during `pytest_collection_finish` (similar to how the preflight manifest works today), stored in `config.stash`, and consumed by `pytest_generate_tests`.
+**Step 4:** A session-scoped fixture `p11_mechanism_catalog` also exists for test functions that need runtime access to the catalog (e.g., lifecycle tests that inspect available mechanisms):
 
-This avoids the collection-time vs runtime conflict because the preflight subprocess (which already runs during collection) can be extended to also collect mechanism info.
+```python
+@pytest.fixture(scope="session")
+def p11_mechanism_catalog(request: pytest.FixtureRequest) -> MechanismCatalog:
+    return _ensure_mechanism_catalog(request.config)
+```
+
+This approach works because the preflight subprocess runs during collection (triggered by `_ensure_manifest` in `pytest_collection_modifyitems`), populating the manifest before `pytest_generate_tests` needs it.
 
 ### Extending CapabilityManifest
 
@@ -214,6 +225,33 @@ Pre-generated KAT vectors in `src/pkcs11_check/testcases/data/mechanism_vectors/
 }
 ```
 
+### Vector JSON Schema — DSA/DH Keys
+
+```json
+{
+  "mechanism": "CKM_DSA",
+  "family": "dsa",
+  "key_type": "CKK_DSA",
+  "vectors": [
+    {
+      "id": "dsa_2048_sha256",
+      "type": "positive",
+      "key_components": {
+        "p_hex": "...",
+        "q_hex": "...",
+        "g_hex": "...",
+        "x_hex": "...",
+        "y_hex": "..."
+      },
+      "message_hex": "...",
+      "signature_hex": "..."
+    }
+  ]
+}
+```
+
+DH vectors use `key_components: {p_hex, g_hex, x_hex, y_hex}` for derive tests.
+
 ### Negative Vector Schema
 
 ```json
@@ -278,22 +316,27 @@ Uses fixed seeds for reproducibility. Idempotent.
 @dataclass(frozen=True)
 class MechConfig:
     """Configuration for testing a specific mechanism."""
-    key_type: int                          # CKK_AES, CKK_RSA, etc.
-    keygen_mech: int                       # mechanism to generate the right key
-    key_sizes: tuple[int, ...]             # valid key sizes in bits
-    is_keypair: bool                       # True for asymmetric (C_GenerateKeyPair)
-    param_packer: str | None               # "mech_gcm", "mech_pss", etc.
-    param_factory: str | None              # function that creates default test params
-    block_size: int | None                 # 16 for AES block modes, None for stream
-    vector_file: str | None                # path to JSON vectors file
-    input_constraint: str                  # "block_aligned", "any", "digest_only", "none"
+    key_type: int | None                   # CKK_AES, CKK_RSA, etc. None for digest-only
+    keygen_mech: int | None                # mechanism to generate the right key. None for digest
+    key_sizes: tuple[int, ...]             # valid key sizes in bits. () for digest-only
+    is_keypair: bool = False               # True for asymmetric (C_GenerateKeyPair)
+    is_param_gen: bool = False             # True for domain parameter generation (DSA/DH)
+    param_packer: str | None = None        # "mech_gcm", "mech_pss", etc.
+    param_factory: str | None = None       # function that creates default test params
+    block_size: int | None = None          # 16 for AES block modes, None for stream
+    vector_file: str | None = None         # path to JSON vectors file
+    input_constraint: str = "any"          # "block_aligned", "any", "digest_only", "none"
     multi_part_supported: bool = True      # False for AEAD (GCM/CCM), raw ECDSA
     param_required: bool = False           # True if C_*Init needs non-NULL params
     auth_tag_included: bool = False        # True for GCM/CCM (ciphertext includes tag)
     deterministic: bool = True             # False for CBC with random IV, RSA-OAEP
+    message_based: bool = False            # True if v3.0 C_Message* APIs supported
     expected_flags: int = 0                # expected CKF_* flags for flag validation
     notes: str = ""
 ```
+
+**Keyless mechanisms** (digest): `key_type=None, keygen_mech=None, key_sizes=()`.
+**Parameter generation** (DSA/DH param gen): `is_param_gen=True` — tested via C_GenerateKey producing CKO_DOMAIN_PARAMETERS, not CKO_SECRET_KEY.
 
 ### Registry Size
 
@@ -317,6 +360,9 @@ Families:
 - ChaCha20/Poly1305 (4 mechanisms)
 - Camellia (8 mechanisms)
 - ARIA (8 mechanisms)
+- DSA (16 mechanisms: key-pair-gen, DSA, DSA-SHA1 through DSA-SHA3-512, param-gen)
+- DH/X9.42 (8 mechanisms: key-pair-gen, derive, hybrid-derive, MQV-derive, param-gen)
+- DES (12 mechanisms: key-gen, ECB, CBC, CBC-PAD, MAC variants, OFB/CFB, encrypt-data)
 - GOST (8 mechanisms)
 - RIPEMD (6 mechanisms)
 - NULL mechanism (1)
@@ -326,6 +372,29 @@ Families:
 ### Fallback
 
 Mechanisms not in the registry (132 legacy/obscure) get probe tests (test_mech_probe.py): call `C_*Init`, verify no crash, verify valid CKR returned. If the module advertises any of these, they get exercised.
+
+### Legacy Mechanism Documentation
+
+The 132 probe-only mechanisms are documented but not fully tested due to limited modern usage. They include:
+
+- **RC2** (6 mechs): ECB, CBC, CBC-PAD, MAC, MAC-GENERAL, KEY-GEN
+- **RC4** (2 mechs): RC4, RC4-KEY-GEN
+- **RC5** (6 mechs): ECB, CBC, CBC-PAD, MAC, MAC-GENERAL, KEY-GEN
+- **IDEA** (6 mechs): ECB, CBC, CBC-PAD, MAC, MAC-GENERAL, KEY-GEN
+- **CAST/CAST3/CAST5/CAST128** (24 mechs): Full cipher sets
+- **CDMF** (6 mechs): ECB, CBC, CBC-PAD, MAC, MAC-GENERAL, KEY-GEN
+- **Skipjack** (11 mechs): ECB64, CBC64, OFB64, CFB variants, WRAP, KEY-GEN
+- **Baton** (7 mechs): ECB128/96, CBC128, COUNTER, SHUFFLE, WRAP, KEY-GEN
+- **Juniper** (6 mechs): ECB128, CBC128, COUNTER, SHUFFLE, WRAP, KEY-GEN
+- **KEA** (2 mechs): KEY-PAIR-GEN, KEY-DERIVE
+- **Fortezza** (1 mech): TIMESTAMP
+- **MD2/MD5** (8 mechs): digest, HMAC, HMAC-GENERAL, KEY-DERIVATION
+- **PBE variants** (14 mechs): SHA1-DES-CBC, SHA1-RC2/4-CBC, SHA1-3DES-CBC, etc.
+- **SecurID/HOTP/ACTI** (6 mechs): OTP mechanisms
+- **KIP/CMS/KRB5** (12 mechs): Protocol-specific mechanisms
+- **Twofish/Blowfish** (4 mechs): CBC, KEY-GEN variants
+
+**TODO:** Upgrade high-value legacy mechanisms (DES3, RC4, Blowfish, Twofish) from probe-only to full registry entries when modules that support them are added to the test matrix. This increases coverage incrementally as demand arises.
 
 ## Layer 3: Operation Tests (14 files)
 
@@ -410,7 +479,24 @@ After each keygen/derive/unwrap operation:
 - **CKA_COPYABLE/CKA_DESTROYABLE:** default values per spec
 - **Key type matches template:** CKA_KEY_TYPE matches what was requested
 
-### test_mech_negative.py — Negative Tests (~140 tests)
+### test_mech_sign_recover.py — Sign-Recover/Verify-Recover (~20 tests)
+
+Per mechanism with CKF_SIGN_RECOVER or CKF_VERIFY_RECOVER (RSA PKCS v1.5, RSA X9.31, RSA raw):
+- **Roundtrip:** C_SignRecoverInit → C_SignRecover → C_VerifyRecoverInit → C_VerifyRecover → verify recovered message matches original
+- **KAT vectors:** sign with known key → verify recovered message
+- **Wrong key recover:** recover with wrong key → failure
+- **Mechanisms:** CKM_RSA_PKCS, CKM_RSA_X_509, CKM_RSA_9796, CKM_RSA_X9_31
+
+### test_mech_message.py — Message-Based Operations (~30 tests)
+
+Per mechanism with CKF_MESSAGE_ENCRYPT, CKF_MESSAGE_DECRYPT, CKF_MESSAGE_SIGN, CKF_MESSAGE_VERIFY (v3.0+):
+- **Single-message roundtrip:** C_MessageEncryptInit → C_EncryptMessage → C_MessageDecryptInit → C_DecryptMessage
+- **Multi-message sequence:** C_MessageEncryptInit → C_EncryptMessageBegin → C_EncryptMessageNext (×N) → C_MessageEncryptFinal
+- **Sign message roundtrip:** C_MessageSignInit → C_SignMessage → C_MessageVerifyInit → C_VerifyMessage
+- **Mechanisms:** AES-GCM (message-based AEAD), ChaCha20-Poly1305, any mechanism with CKF_MESSAGE_* flags
+- **Skip if v2.40:** module must support v3.0+ interface for message-based operations
+
+### test_mech_negative.py — Negative Tests (~90 tests)
 
 **Wrong key type (~25 pairs):**
 Every major operation × incompatible key type:
@@ -442,17 +528,11 @@ For each flag × applicable mechanisms:
 - CKA_ENCAPSULATE=False → C_EncapsulateKey fails
 - CKA_DECAPSULATE=False → C_DecapsulateKey fails
 
-**State machine violations (~50 tests):**
-Per mechanism family (AES, RSA, EC, HMAC, digest):
-- C_Encrypt without C_EncryptInit → CKR_OPERATION_NOT_INITIALIZED
-- C_EncryptInit twice → CKR_OPERATION_ACTIVE
-- C_EncryptUpdate after C_Encrypt → CKR_OPERATION_NOT_INITIALIZED
-- C_EncryptFinal without C_EncryptUpdate → varies
-- C_DecryptUpdate with encrypt active → CKR_OPERATION_NOT_INITIALIZED
+Note: State machine violation tests are in `test_mech_state.py` (below), not here.
 
 ### test_mech_state.py — Operation State Machine (~50 tests)
 
-Dedicated file for state machine tests (separated from negative tests for clarity):
+Dedicated file for operation state machine violations:
 - Init → operation active → complete → operation inactive
 - Double init rejection
 - Cross-operation rejection (encrypt active, try sign)
@@ -518,6 +598,13 @@ Over time, some existing tests may become redundant as the mechanism-driven syst
 | Flag validation | 1 | 348 | compare C_GetMechanismInfo vs registry expected_flags |
 | **Subtotal** | | **~1,973** | |
 
+### Additional per-operation tests
+
+| Category | Tests | Notes |
+|----------|-------|-------|
+| Sign-recover/verify-recover | ~20 | RSA PKCS, X9.31, raw |
+| Message-based (v3.0+) | ~30 | AES-GCM message, ChaCha20 message, sign/verify message |
+
 ### Cross-cutting tests (not per-mechanism)
 
 | Category | Tests | Notes |
@@ -525,11 +612,11 @@ Over time, some existing tests may become redundant as the mechanism-driven syst
 | Negative: wrong key type | 25 | 5 operations × 5 wrong key types |
 | Negative: invalid params | 20 | per mechanism family |
 | Negative: missing permissions | 45 | 9 CKA_* flags × 5 mechanism families |
-| Negative: state machine | 50 | 5 violations × 10 mechanism families |
+| State machine violations | 50 | 5 violations × 10 mechanism families |
 | Probe (132 legacy mechs) | 132 | C_*Init no-crash per advertised legacy mech |
 | Lifecycle (11 patterns) | 22 | composite multi-step workflows |
 | KAT vectors (data-driven) | ~200 | from mechanism_vectors/*.json files |
-| **Subtotal** | **~494** | |
+| **Subtotal** | **~544** | |
 
 ### Per-module runtime (mechanisms skip if not advertised)
 
@@ -544,13 +631,39 @@ Over time, some existing tests may become redundant as the mechanism-driven syst
 
 ### Grand total (all defined tests)
 
-**~2,467 test definitions** across the full PKCS#11 v3.2 standard. On any module, unsupported mechanisms skip cleanly via `has_mechanism()` / `C_GetMechanismList` check.
+**~2,567 test definitions** across the full PKCS#11 v3.2 standard (1,973 registry-driven + 50 sign-recover/message + 544 cross-cutting). On any module, unsupported mechanisms skip cleanly via `has_mechanism()` / `C_GetMechanismList` check.
 
 ## Markers
 
+New markers to register in `markers.py` (`MARKER_DEFINITIONS`):
+
 - `@pytest.mark.mechanism_coverage` — all mechanism-driven tests
-- `@pytest.mark.encrypt`, `@pytest.mark.sign`, `@pytest.mark.digest`, etc. — per operation
-- `@pytest.mark.negative` — negative tests
-- `@pytest.mark.lifecycle` — composite patterns
-- `@pytest.mark.kat` — known-answer tests
+- `@pytest.mark.negative` — negative tests (wrong key type, invalid params, missing perms)
+- `@pytest.mark.lifecycle` — composite multi-step patterns
 - `@pytest.mark.multipart` — multi-part streaming tests
+- `@pytest.mark.keygen` — key generation tests
+- `@pytest.mark.wrap` — wrap/unwrap tests
+- `@pytest.mark.derive` — key derivation tests
+- `@pytest.mark.kem` — encapsulate/decapsulate tests
+- `@pytest.mark.sign_recover` — sign-recover/verify-recover tests
+- `@pytest.mark.message_based` — v3.0 message-based operation tests
+- `@pytest.mark.state_machine` — operation state machine violation tests
+- `@pytest.mark.flag_validation` — CKF_* flag correctness tests
+
+Already registered (reuse): `encrypt`, `sign`, `digest`, `kat`, `access`, `pqc`.
+
+## Final Verification Plan
+
+After implementation, run these Docker tests to verify no regressions:
+
+```bash
+bash docker/test.sh softhsm2-main    # verify no errors from changes
+bash docker/test.sh kryoptic-main     # verify no errors from changes
+bash docker/test.sh nss-pqc           # verify no errors from changes
+```
+
+Check that:
+- No test ERRORS (only pass/fail/skip/xfail)
+- New mechanism_coverage tests appear in results
+- coverage.json shows improved mechanism/function coverage
+- Existing tests unaffected
