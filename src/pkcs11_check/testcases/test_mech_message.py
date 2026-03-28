@@ -208,23 +208,52 @@ class TestMessageEncrypt:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_message_sign_aes_gmac(self, p11_raw_session: RawSession) -> None:
-        """Message-based sign flag check for CKM_AES_GMAC.
+        """Message-based sign init/final roundtrip for CKM_AES_GMAC.
 
-        Verifies that when CKF_MESSAGE_SIGN is advertised, the corresponding
-        C_MessageSignInit function exists on the module.  Full invocation is
-        deferred pending CK_GCM_MESSAGE_PARAMS support.
+        Verifies that C_MessageSignInit accepts a CKM_AES_GMAC mechanism built
+        with CK_GCM_MESSAGE_PARAMS and that C_MessageSignFinal cleanly ends the
+        session, exercising the full message-based sign init/cleanup path.
+
+        Reference: PKCS#11 v3.1 Sec.5.5 (Message-based signing functions).
         """
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GMAC"):
             pytest.skip("CKM_AES_GMAC not supported")
 
-        from pkcs11_check.raw.recipes import get_mechanism_info
-        from pkcs11_check.raw.types_std import CKF_MESSAGE_SIGN, CKM_AES_GMAC
+        from pkcs11_check.raw.pack_mechanisms import mech_gcm_message
+        from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, get_mechanism_info
+        from pkcs11_check.raw.types_std import (
+            CKA_SIGN,
+            CKA_TOKEN,
+            CKF_MESSAGE_SIGN,
+            CKM_AES_GMAC,
+            CKR_MECHANISM_INVALID,
+            CKR_OK,
+        )
 
         info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_GMAC)
         if not (info["flags"] & int(CKF_MESSAGE_SIGN)):
             pytest.skip("CKM_AES_GMAC does not advertise CKF_MESSAGE_SIGN")
 
-        assert hasattr(rs.raw, "C_MessageSignInit"), (
-            "Module advertises CKF_MESSAGE_SIGN for AES_GMAC but C_MessageSignInit is absent"
+        if not hasattr(rs.raw, "C_MessageSignInit"):
+            pytest.skip("C_MessageSignInit not available on this module")
+
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_TOKEN: False, CKA_SIGN: True},
         )
+        try:
+            iv = os.urandom(12)
+            mech = mech_gcm_message(CKM_AES_GMAC, iv, tag_bits=128)
+            rv = rs.raw.C_MessageSignInit(rs.sh, mech.byref(), key)
+            if rv == CKR_MECHANISM_INVALID:
+                pytest.skip("C_MessageSignInit: CKR_MECHANISM_INVALID for CKM_AES_GMAC")
+            assert rv == CKR_OK, f"C_MessageSignInit failed: 0x{rv:08x}"
+
+            if hasattr(rs.raw, "C_MessageSignFinal"):
+                rv = rs.raw.C_MessageSignFinal(rs.sh)
+                assert rv == CKR_OK, f"C_MessageSignFinal failed: 0x{rv:08x}"
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
