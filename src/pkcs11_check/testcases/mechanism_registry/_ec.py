@@ -85,6 +85,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         multi_part_supported=False,
         keygen_recipe=_ec,
         expected_flags=_SIG_VER,
+        vector_file="ecdsa_secp256k1.json",
         notes="Raw ECDSA sign/verify: pre-hashed input only, single-part",
     )
 
@@ -95,6 +96,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_ec,
         expected_flags=_SIG_VER,
+        vector_file="ecdsa_sha1.json",
         notes="ECDSA with SHA-1 hash-and-sign",
     )
 

@@ -75,6 +75,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_fixed,
         expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="des_ecb.json",
         notes="DES-ECB: 8-byte block, no padding, deterministic",
     )
 
@@ -89,6 +90,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="des_cbc.json",
         notes="DES-CBC: 8-byte block, requires 8-byte IV param",
     )
 

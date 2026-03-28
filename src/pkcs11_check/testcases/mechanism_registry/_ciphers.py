@@ -114,6 +114,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         auth_tag_included=True,
         deterministic=False,
         expected_flags=_ENC_DEC,
+        vector_file="chacha20_poly1305.json",
         notes="ChaCha20-Poly1305 AEAD: auth tag appended, requires CK_CHACHA20_POLY1305_PARAMS",
     )
 

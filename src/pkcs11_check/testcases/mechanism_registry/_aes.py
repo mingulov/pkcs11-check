@@ -257,6 +257,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         message_based=True,
         expected_flags=_AES_ENC | _AES_WRP,
+        vector_file="aes_ccm.json",
         notes="AES-CCM: AEAD, auth tag appended to ciphertext, NOT multi-part, v3.0 message-based",
     )
 

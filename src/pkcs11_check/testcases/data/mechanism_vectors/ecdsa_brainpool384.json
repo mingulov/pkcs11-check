@@ -10,9 +10,9 @@
       "mechanism_name": "CKM_ECDSA_SHA384",
       "key_type": "asymmetric",
       "ec_params_hex": "06092b240303020801010b",
-      "ec_private_scalar_hex": "495478e05c2bbad4003f17e87c117beea49f688486f38ef215731a91c342befdab6b81d3acd63909ff61dfb13bdd4a72",
+      "ec_private_scalar_hex": "0848fe79a68007925ee92b89ba236e2c5d366c5b4bf5ae96a31596bd934bb47c515e90837d0d76bfa52ffb7cc29dc5b4",
       "input_hex": "",
-      "signature_hex": "35c2b44d980b46fba7ea6c703f7ce76f700d6d35859faa224f4c0887c6926396f3189b610e77e820a712022d788fe0fb565c9179dd6de947ad708ca25ed68af7745c77725b45d11c7625b1c7e3a2f3241902779abb4cb2e40afa71cf04447159",
+      "signature_hex": "4a8e05eb5ff0c9edb8fb9471b27ca69857b445321aed0787884d95245e1ec3274d79cc789f72f375218362877f64719a5c6b89b7b349d103760405e76426966b13e29cf1a6d160cfee975583d6469cc0a755737407090b8bfe096ab74d14b7f2",
       "verify_only": true,
       "params": {}
     },
@@ -22,9 +22,9 @@
       "mechanism_name": "CKM_ECDSA_SHA384",
       "key_type": "asymmetric",
       "ec_params_hex": "06092b240303020801010b",
-      "ec_private_scalar_hex": "495478e05c2bbad4003f17e87c117beea49f688486f38ef215731a91c342befdab6b81d3acd63909ff61dfb13bdd4a72",
+      "ec_private_scalar_hex": "0848fe79a68007925ee92b89ba236e2c5d366c5b4bf5ae96a31596bd934bb47c515e90837d0d76bfa52ffb7cc29dc5b4",
       "input_hex": "68656c6c6f",
-      "signature_hex": "2811c6ae001d4e0e16b0832e0a588f537968945ad350d9c8c67f4406d267a0e316ef8218fbb34cbcdb8ede986accefa2839799bcd41133a946e4966ef5424eb68d52a112e6f4b079e3d461b7954be976e873f9377b490848432c7dbcac2136ef",
+      "signature_hex": "652853afbd75999a4a4a20c1b59aa07ccab9dd7d05503bdfb27a4ebe2bb63d47a780e0426bd114ced9303567c8ebc7ed5d962ff1871b92440876b4cace7a36ce55300372fbc50921aefce668828710e9f6eff568f0ec95af20ab2e6da8c1a866",
       "verify_only": true,
       "params": {}
     },
@@ -34,9 +34,9 @@
       "mechanism_name": "CKM_ECDSA_SHA384",
       "key_type": "asymmetric",
       "ec_params_hex": "06092b240303020801010b",
-      "ec_private_scalar_hex": "495478e05c2bbad4003f17e87c117beea49f688486f38ef215731a91c342befdab6b81d3acd63909ff61dfb13bdd4a72",
+      "ec_private_scalar_hex": "0848fe79a68007925ee92b89ba236e2c5d366c5b4bf5ae96a31596bd934bb47c515e90837d0d76bfa52ffb7cc29dc5b4",
       "input_hex": "fb9a6f2099c4eb711707419efa465ea6881fd2ee6d27d5a22e7a8c1ee0b362b3cfd387f146de2525e724cfc57616f01365ce4ec16f9b6aa21f2e2d6342b130247fb1791bfef92b4b5d7da3c3964a26ea1fcb768ce97fa850a292c1b5103308eae699895f",
-      "signature_hex": "5d4fb157fcd68d7b86506a0e5b58457b77f6479f8222e9cc3f985878d225c4739ba200c95374bcdebc5653569aa7b08d1c62731011ef9e93338c2b0742a1f9974c8e3ccc0a8e650350e59a1bf1209278eab6adbe2c778a6a5c47639bebf037dc",
+      "signature_hex": "069281c4b7c393a89889274d5135ed3c999406e3ee16eca569d3659cc2769d338bcd47d50fc24450c28b389d30c9da651b38756fec0242cbf25f39ecab12a49a4ef5bafac0d66c5ae270207b686ce44669a06e1dad9b524da114ae361f30454b",
       "verify_only": true,
       "params": {}
     }
