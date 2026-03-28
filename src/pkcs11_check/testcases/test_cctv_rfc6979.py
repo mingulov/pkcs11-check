@@ -138,7 +138,6 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any) -> None:
                     CKA_CLASS: CKO_PRIVATE_KEY,
                     CKA_KEY_TYPE: CKK_EC,
                     CKA_EC_PARAMS: _EC_PARAMS,
-                    CKA_EC_POINT: _EC_POINT_DER,
                     CKA_VALUE: _PRIV_D,
                     CKA_TOKEN: False,
                     CKA_SENSITIVE: False,
