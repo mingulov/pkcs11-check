@@ -175,9 +175,9 @@ def _build_rsa_wrap_pair(rs: RawSession) -> tuple[int, int]:
 
 def _build_aes_wrap_key(rs: RawSession, entry: MechEntry, config: MechConfig) -> int:
     """Generate an AES wrap/unwrap key sized for the mechanism."""
-    from pkcs11_check.testcases.test_mech_keygen import _pick_key_size
+    from pkcs11_check.testcases.mechanism_helpers import pick_key_size
 
-    key_size = _pick_key_size(entry, config) or 256
+    key_size = pick_key_size(entry, config) or 256
     return gen_aes_key(
         rs.raw,
         rs.sh,

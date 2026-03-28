@@ -58,28 +58,6 @@ _CKM_ECDSA_ID: int = 0x00001041       # CKM_ECDSA
 _CKM_SHA256_HMAC_ID: int = 0x00000251  # CKM_SHA256_HMAC
 
 
-def _gen_generic_secret(rs: RawSession, bits: int = 256) -> int:
-    """Generate a generic secret key with sign/verify permissions."""
-    attrs: dict[int, Any] = {
-        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-        CKA_SIGN: True,
-        CKA_VERIFY: True,
-        CKA_TOKEN: False,
-        CKA_EXTRACTABLE: True,
-        CKA_SENSITIVE: False,
-    }
-    packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
-    packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
-    tmpl = template(*packed)
-    mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
-    handle = CK_OBJECT_HANDLE(0)
-    rv = rs.raw.C_GenerateKey(  # type: ignore[attr-defined]
-        rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
-    )
-    assert rv == CKR_OK, f"Generic secret key gen failed: {rv}"
-    return handle.value
-
-
 class TestWrongKeyType:
     """EncryptInit/SignInit with wrong key type must be rejected."""
 

@@ -59,6 +59,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
+from pkcs11_check.testcases.mechanism_helpers import gen_generic_secret
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.derive]
 
@@ -280,27 +281,6 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
     return handle.value
 
 
-def _gen_generic_secret_key(rs: RawSession, bits: int = 256) -> int:
-    """Generate a generic secret key for use as derive base key."""
-    attrs: dict[int, Any] = {
-        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-        CKA_DERIVE: True,
-        CKA_TOKEN: False,
-        CKA_EXTRACTABLE: True,
-        CKA_SENSITIVE: False,
-    }
-    packed = [attr_ulong(CKA_VALUE_LEN, bits // 8)]
-    packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
-    tmpl = template(*packed)
-    mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
-    handle = CK_OBJECT_HANDLE(0)
-    rv = rs.raw.C_GenerateKey(  # type: ignore[attr-defined]
-        rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
-    )
-    assert rv == CKR_OK, f"Generic secret key gen failed: {rv}"
-    return handle.value
-
-
 # Template for derived AES-128 key
 _DERIVED_AES_ATTRS: dict[int, Any] = {
     CKA_KEY_TYPE: CKK_AES,
@@ -484,7 +464,7 @@ class TestMechDerive:
 
         # -- CONCATENATE_BASE_AND_DATA / CONCATENATE_DATA_AND_BASE / XOR_BASE_AND_DATA
         if mech_id in _CONCAT_DATA_MECH_IDS or mech_id == _XOR_MECH_ID:
-            base_key_gs = _gen_generic_secret_key(rs, bits=256)
+            base_key_gs = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
             derived_key4: int = 0
             try:
                 data_param = mech_string_data(CKM(mech_id), os.urandom(16))
@@ -505,7 +485,7 @@ class TestMechDerive:
 
         # -- EXTRACT_KEY_FROM_KEY -------------------------------------------------
         if _EXTRACT_MECH_ID and mech_id == _EXTRACT_MECH_ID:
-            base_key_gs2 = _gen_generic_secret_key(rs, bits=256)
+            base_key_gs2 = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
             derived_key5: int = 0
             try:
                 # CK_EXTRACT_PARAMS is a CK_ULONG bit position (extract from bit 0).
@@ -531,8 +511,8 @@ class TestMechDerive:
 
         # -- CONCATENATE_BASE_AND_KEY ---------------------------------------------
         if _CONCAT_KEY_MECH_ID and mech_id == _CONCAT_KEY_MECH_ID:
-            base_key_gs3 = _gen_generic_secret_key(rs, bits=128)
-            addon_key = _gen_generic_secret_key(rs, bits=128)
+            base_key_gs3 = gen_generic_secret(rs, bits=128, extra_attrs={CKA_DERIVE: True})
+            addon_key = gen_generic_secret(rs, bits=128, extra_attrs={CKA_DERIVE: True})
             derived_key6: int = 0
             try:
                 # CKM_CONCATENATE_BASE_AND_KEY param is a CK_OBJECT_HANDLE
@@ -559,7 +539,7 @@ class TestMechDerive:
 
         # -- SHA key derivation (no params) ---------------------------------------
         if mech_id in _SHA_KEY_DERIV_MECHS:
-            base_key_sha = _gen_generic_secret_key(rs, bits=256)
+            base_key_sha = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
             derived_key7: int = 0
             try:
                 derived_key7 = derive_key(

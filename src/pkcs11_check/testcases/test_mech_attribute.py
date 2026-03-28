@@ -31,10 +31,10 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
-from pkcs11_check.testcases.mechanism_helpers import needs_domain_params
-from pkcs11_check.testcases.test_mech_keygen import (
-    _gen_keypair,
-    _gen_symmetric_key,
+from pkcs11_check.testcases.mechanism_helpers import (
+    gen_keypair_for_mech,
+    gen_symmetric_key,
+    needs_domain_params,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.keygen]
@@ -82,7 +82,7 @@ class TestKeyAttributes:
         expected_kt = int(config.key_type)
 
         if config.is_keypair:
-            pub, priv = _gen_keypair(rs, entry, config)
+            pub, priv = gen_keypair_for_mech(rs, entry, config)
             try:
                 for label, handle in (("public", pub), ("private", priv)):
                     actual = _read_attr_safe(rs, handle, CKA_KEY_TYPE, f"CKA_KEY_TYPE on {label}")
@@ -96,7 +96,7 @@ class TestKeyAttributes:
                 destroy_quietly(rs.raw, rs.sh, pub)
                 destroy_quietly(rs.raw, rs.sh, priv)
         else:
-            key = _gen_symmetric_key(rs, entry, config)
+            key = gen_symmetric_key(rs, entry, config)
             try:
                 actual = _read_attr_safe(rs, key, CKA_KEY_TYPE, "CKA_KEY_TYPE")
                 if actual is not None:
@@ -126,7 +126,7 @@ class TestKeyAttributes:
             pytest.skip(f"{entry.mech_name}: requires domain parameters — skipped")
 
         if config.is_keypair:
-            pub, priv = _gen_keypair(rs, entry, config)
+            pub, priv = gen_keypair_for_mech(rs, entry, config)
             try:
                 for label, handle in (("public", pub), ("private", priv)):
                     local = _read_attr_safe(rs, handle, CKA_LOCAL, f"CKA_LOCAL on {label}")
@@ -139,7 +139,7 @@ class TestKeyAttributes:
                 destroy_quietly(rs.raw, rs.sh, pub)
                 destroy_quietly(rs.raw, rs.sh, priv)
         else:
-            key = _gen_symmetric_key(rs, entry, config)
+            key = gen_symmetric_key(rs, entry, config)
             try:
                 local = _read_attr_safe(rs, key, CKA_LOCAL, "CKA_LOCAL")
                 if local is not None:
@@ -168,7 +168,7 @@ class TestKeyAttributes:
             pytest.skip(f"{entry.mech_name}: requires domain parameters — skipped")
 
         if config.is_keypair:
-            pub, priv = _gen_keypair(rs, entry, config)
+            pub, priv = gen_keypair_for_mech(rs, entry, config)
             try:
                 for label, handle in (("public", pub), ("private", priv)):
                     token = _read_attr_safe(rs, handle, CKA_TOKEN, f"CKA_TOKEN on {label}")
@@ -185,7 +185,7 @@ class TestKeyAttributes:
                 destroy_quietly(rs.raw, rs.sh, pub)
                 destroy_quietly(rs.raw, rs.sh, priv)
         else:
-            key = _gen_symmetric_key(rs, entry, config)
+            key = gen_symmetric_key(rs, entry, config)
             try:
                 token = _read_attr_safe(rs, key, CKA_TOKEN, "CKA_TOKEN")
                 if token is not None:
@@ -219,7 +219,7 @@ class TestKeyAttributes:
             pytest.skip(f"{entry.mech_name}: requires domain parameters — skipped")
 
         if config.is_keypair:
-            pub, priv = _gen_keypair(rs, entry, config)
+            pub, priv = gen_keypair_for_mech(rs, entry, config)
             try:
                 pub_class = _read_attr_safe(rs, pub, CKA_CLASS, "CKA_CLASS on public")
                 priv_class = _read_attr_safe(rs, priv, CKA_CLASS, "CKA_CLASS on private")
@@ -239,7 +239,7 @@ class TestKeyAttributes:
                 destroy_quietly(rs.raw, rs.sh, pub)
                 destroy_quietly(rs.raw, rs.sh, priv)
         else:
-            key = _gen_symmetric_key(rs, entry, config)
+            key = gen_symmetric_key(rs, entry, config)
             try:
                 cls = _read_attr_safe(rs, key, CKA_CLASS, "CKA_CLASS")
                 if cls is not None:

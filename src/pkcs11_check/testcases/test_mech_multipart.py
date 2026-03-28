@@ -33,12 +33,13 @@ from pkcs11_check.raw.types_std import (
     CKM,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
-from pkcs11_check.testcases.mechanism_helpers import make_mech_param
-from pkcs11_check.testcases.test_mech_encrypt import (
-    _generate_key_for_encrypt,
-    _test_plaintext,
+from pkcs11_check.testcases.mechanism_helpers import (
+    generate_key_for_encrypt,
+    generate_key_for_sign,
+    make_mech_param,
+    make_mech_param_or_skip,
+    test_plaintext_bytes,
 )
-from pkcs11_check.testcases.test_mech_sign import _generate_key_for_sign
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.multipart]
 
@@ -76,11 +77,11 @@ class TestMultipartEncrypt:
         if config.input_constraint == "none":
             pytest.skip(f"{entry.mech_name}: wrap-only mechanism")
 
-        enc_key, dec_key = _generate_key_for_encrypt(rs, entry, config)
+        enc_key, dec_key = generate_key_for_encrypt(rs, entry, config)
         dec_key_handle = dec_key if dec_key is not None else enc_key
 
         try:
-            plaintext = _test_plaintext(config)
+            plaintext = test_plaintext_bytes()
             mech_param = make_mech_param(entry)
             if mech_param == "SKIP":
                 pytest.skip(f"{entry.mech_name}: cannot build mech param generically")
@@ -214,15 +215,11 @@ class TestMultipartSign:
         if not config.multi_part_supported:
             pytest.skip(f"{entry.mech_name}: multi-part not supported")
 
-        sign_key, verify_key = _generate_key_for_sign(rs, entry, config)
+        sign_key, verify_key = generate_key_for_sign(rs, entry, config)
         verify_key_handle = verify_key if verify_key is not None else sign_key
 
         try:
-            from pkcs11_check.testcases.test_mech_sign import _make_sign_mech_param
-
-            mech_param = _make_sign_mech_param(entry, config)
-            if mech_param == "SKIP":
-                pytest.skip(f"{entry.mech_name}: cannot build mech param generically")
+            mech_param = make_mech_param_or_skip(entry)
 
             data = b"multipart signing test input data " * 4
             chunk_size = len(data) // 4
