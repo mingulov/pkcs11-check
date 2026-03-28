@@ -8,20 +8,14 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
+    import_ec_public_key,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_EC_PARAMS,
-    CKA_EC_POINT,
-    CKA_KEY_TYPE,
-    CKA_TOKEN,
     CKA_VERIFY,
     CKK_EC_EDWARDS,
     CKM_EDDSA,
-    CKO_PUBLIC_KEY,
 )
 
 pytestmark = pytest.mark.wycheproof
@@ -74,17 +68,11 @@ def test_ed25519_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, An
     ec_point = bytes([0x04, len(pk_bytes)]) + pk_bytes
 
     try:
-        pub_key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_PUBLIC_KEY,
-                CKA_KEY_TYPE: CKK_EC_EDWARDS,
-                CKA_EC_PARAMS: ed25519_oid,
-                CKA_EC_POINT: ec_point,
-                CKA_TOKEN: False,
-                CKA_VERIFY: True,
-            },
+        pub_key = import_ec_public_key(
+            rs.raw, rs.sh,
+            ec_params=ed25519_oid, ec_point=ec_point,
+            key_type=int(CKK_EC_EDWARDS),
+            attrs={CKA_VERIFY: True},
         )
     except AssertionError:
         pytest.skip("Cannot import Ed25519 public key")
@@ -148,17 +136,11 @@ def test_ed448_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
     ec_point = bytes([0x04, len(pk_bytes)]) + pk_bytes
 
     try:
-        pub_key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_PUBLIC_KEY,
-                CKA_KEY_TYPE: CKK_EC_EDWARDS,
-                CKA_EC_PARAMS: ed448_oid,
-                CKA_EC_POINT: ec_point,
-                CKA_TOKEN: False,
-                CKA_VERIFY: True,
-            },
+        pub_key = import_ec_public_key(
+            rs.raw, rs.sh,
+            ec_params=ed448_oid, ec_point=ec_point,
+            key_type=int(CKK_EC_EDWARDS),
+            attrs={CKA_VERIFY: True},
         )
     except AssertionError:
         pytest.skip("Cannot import Ed448 public key")

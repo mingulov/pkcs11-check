@@ -21,32 +21,17 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from cryptography.hazmat.primitives.serialization import load_der_private_key
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
+    import_rsa_private_key,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_COEFFICIENT,
-    CKA_EXPONENT_1,
-    CKA_EXPONENT_2,
-    CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
-    CKA_MODULUS,
-    CKA_PRIME_1,
-    CKA_PRIME_2,
-    CKA_PRIVATE_EXPONENT,
-    CKA_PUBLIC_EXPONENT,
-    CKA_SENSITIVE,
     CKA_SIGN,
-    CKA_TOKEN,
-    CKK_RSA,
     CKM_SHA1_RSA_PKCS,
     CKM_SHA224_RSA_PKCS,
     CKM_SHA256_RSA_PKCS,
     CKM_SHA384_RSA_PKCS,
     CKM_SHA512_RSA_PKCS,
-    CKO_PRIVATE_KEY,
 )
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
@@ -147,25 +132,12 @@ def test_rsa_pkcs1_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
     key_obj = None
     try:
         try:
-            key_obj = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PRIVATE_KEY,
-                    CKA_KEY_TYPE: CKK_RSA,
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                    CKA_SIGN: True,
-                    CKA_MODULUS: _i2b(pub_nums.n),
-                    CKA_PUBLIC_EXPONENT: _i2b(pub_nums.e),
-                    CKA_PRIVATE_EXPONENT: _i2b(nums.d),
-                    CKA_PRIME_1: _i2b(nums.p),
-                    CKA_PRIME_2: _i2b(nums.q),
-                    CKA_EXPONENT_1: _i2b(nums.dmp1),
-                    CKA_EXPONENT_2: _i2b(nums.dmq1),
-                    CKA_COEFFICIENT: _i2b(nums.iqmp),
-                },
+            key_obj = import_rsa_private_key(
+                rs.raw, rs.sh,
+                n=_i2b(pub_nums.n), e=_i2b(pub_nums.e), d=_i2b(nums.d),
+                p=_i2b(nums.p), q=_i2b(nums.q),
+                dmp1=_i2b(nums.dmp1), dmq1=_i2b(nums.dmq1), iqmp=_i2b(nums.iqmp),
+                attrs={CKA_SIGN: True},
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import RSA private key ({key_size}-bit, {sha}): {e}")

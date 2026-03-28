@@ -12,20 +12,14 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
+    import_pqc_private_key,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_KEY_TYPE,
-    CKA_PARAMETER_SET,
     CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VALUE,
     CKK_ML_DSA,
     CKM_ML_DSA,
-    CKO_PRIVATE_KEY,
     CKP_ML_DSA_44,
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
@@ -101,17 +95,12 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) -> N
         pytest.skip("No private key in vector")
 
     try:
-        priv = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_PRIVATE_KEY,
-                CKA_KEY_TYPE: CKK_ML_DSA,
-                CKA_VALUE: private_key_bytes,
-                CKA_PARAMETER_SET: vec["_parameter_set"],
-                CKA_SIGN: True,
-                CKA_TOKEN: False,
-            },
+        priv = import_pqc_private_key(
+            rs.raw, rs.sh,
+            key_type=int(CKK_ML_DSA),
+            value=private_key_bytes,
+            parameter_set=vec["_parameter_set"],
+            attrs={CKA_SIGN: True},
         )
     except AssertionError as exc:
         exc_msg = str(exc)

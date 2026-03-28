@@ -20,20 +20,14 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
+    import_ec_public_key,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_EC_PARAMS,
-    CKA_EC_POINT,
-    CKA_KEY_TYPE,
-    CKA_TOKEN,
     CKA_VERIFY,
     CKK_EC_EDWARDS,
     CKM_EDDSA,
-    CKO_PUBLIC_KEY,
 )
 from pkcs11_check.testcases.data import CCTV_DIR
 
@@ -74,17 +68,12 @@ def test_ed25519_cctv(vec: dict[str, Any], p11_raw_session: Any) -> None:
     pub = 0
     try:
         try:
-            pub = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PUBLIC_KEY,
-                    CKA_KEY_TYPE: CKK_EC_EDWARDS,
-                    CKA_EC_PARAMS: bytes.fromhex("06032b6570"),  # OID for Ed25519
-                    CKA_EC_POINT: pub_key_bytes,
-                    CKA_VERIFY: True,
-                    CKA_TOKEN: False,
-                },
+            pub = import_ec_public_key(
+                rs.raw, rs.sh,
+                ec_params=bytes.fromhex("06032b6570"),  # OID for Ed25519
+                ec_point=pub_key_bytes,
+                key_type=int(CKK_EC_EDWARDS),
+                attrs={CKA_VERIFY: True},
             )
         except AssertionError:
             # Module may reject low-order or malformed public keys - that's fine

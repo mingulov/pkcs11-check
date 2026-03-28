@@ -11,21 +11,17 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     decapsulate_key,
     destroy_quietly,
+    import_pqc_private_key,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECAPSULATE,
     CKA_KEY_TYPE,
-    CKA_PARAMETER_SET,
-    CKA_TOKEN,
-    CKA_VALUE,
     CKK_AES,
     CKK_ML_KEM,
     CKM_ML_KEM,
-    CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
     CKP_ML_KEM_512,
     CKP_ML_KEM_768,
@@ -108,17 +104,12 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
     filename = vec.get("_filename", "")
     is_semi_expanded = "semi_expanded" in filename
     try:
-        priv = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_PRIVATE_KEY,
-                CKA_KEY_TYPE: CKK_ML_KEM,
-                CKA_VALUE: private_key_bytes,
-                CKA_PARAMETER_SET: param_set,
-                CKA_DECAPSULATE: True,
-                CKA_TOKEN: False,
-            },
+        priv = import_pqc_private_key(
+            rs.raw, rs.sh,
+            key_type=int(CKK_ML_KEM),
+            value=private_key_bytes,
+            parameter_set=param_set,
+            attrs={CKA_DECAPSULATE: True},
         )
     except AssertionError as exc:
         if result == "invalid":

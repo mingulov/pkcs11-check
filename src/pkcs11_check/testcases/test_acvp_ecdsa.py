@@ -16,22 +16,15 @@ import pytest
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
+    import_ec_public_key,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_EC_PARAMS,
-    CKA_EC_POINT,
-    CKA_KEY_TYPE,
-    CKA_TOKEN,
     CKA_VERIFY,
-    CKK_EC,
     CKM_ECDSA_SHA256,
     CKM_ECDSA_SHA384,
     CKM_ECDSA_SHA512,
-    CKO_PUBLIC_KEY,
 )
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
@@ -176,17 +169,10 @@ def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     pub_key = 0
     try:
         try:
-            pub_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PUBLIC_KEY,
-                    CKA_KEY_TYPE: CKK_EC,
-                    CKA_EC_PARAMS: vec["ec_params"],
-                    CKA_EC_POINT: vec["ec_point_der"],
-                    CKA_TOKEN: False,
-                    CKA_VERIFY: True,
-                },
+            pub_key = import_ec_public_key(
+                rs.raw, rs.sh,
+                ec_params=vec["ec_params"], ec_point=vec["ec_point_der"],
+                attrs={CKA_VERIFY: True},
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import EC public key for {vec['curve']}: {e}")

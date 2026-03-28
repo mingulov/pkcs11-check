@@ -16,21 +16,14 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
     generate_random,
+    import_ec_public_key,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_EC_PARAMS,
-    CKA_EC_POINT,
-    CKA_KEY_TYPE,
-    CKA_TOKEN,
     CKA_VERIFY,
-    CKK_EC,
     CKM_ECDSA,
-    CKO_PUBLIC_KEY,
 )
 
 pytestmark = pytest.mark.wycheproof
@@ -206,17 +199,10 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
         pytest.skip(f"No EC params for curve {curve}")
 
     try:
-        pub_key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_PUBLIC_KEY,
-                CKA_KEY_TYPE: CKK_EC,
-                CKA_EC_PARAMS: ec_params,
-                CKA_EC_POINT: ec_point_der,
-                CKA_TOKEN: False,
-                CKA_VERIFY: True,
-            },
+        pub_key = import_ec_public_key(
+            rs.raw, rs.sh,
+            ec_params=ec_params, ec_point=ec_point_der,
+            attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:
         exc_msg = str(exc)

@@ -13,17 +13,12 @@ import pytest
 
 from pkcs11_check.raw.pack import mech_pss
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
     generate_random,
+    import_rsa_public_key,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_KEY_TYPE,
-    CKA_MODULUS,
-    CKA_PUBLIC_EXPONENT,
-    CKA_TOKEN,
     CKA_VERIFY,
     CKG_MGF1_SHA1,
     CKG_MGF1_SHA3_224,
@@ -34,7 +29,6 @@ from pkcs11_check.raw.types_std import (
     CKG_MGF1_SHA256,
     CKG_MGF1_SHA384,
     CKG_MGF1_SHA512,
-    CKK_RSA,
     CKM_RSA_PKCS_PSS,
     CKM_SHA1_RSA_PKCS_PSS,
     CKM_SHA3_224,
@@ -54,7 +48,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512,
     CKM_SHA512_RSA_PKCS_PSS,
     CKM_SHA_1,
-    CKO_PUBLIC_KEY,
 )
 
 pytestmark = pytest.mark.wycheproof
@@ -183,17 +176,10 @@ def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     exponent = bytes.fromhex(exp_hex)
 
     try:
-        pub_key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_PUBLIC_KEY,
-                CKA_KEY_TYPE: CKK_RSA,
-                CKA_MODULUS: modulus,
-                CKA_PUBLIC_EXPONENT: exponent,
-                CKA_TOKEN: False,
-                CKA_VERIFY: True,
-            },
+        pub_key = import_rsa_public_key(
+            rs.raw, rs.sh,
+            n=modulus, e=exponent,
+            attrs={CKA_VERIFY: True},
         )
     except AssertionError:
         pytest.skip("Cannot import RSA public key")

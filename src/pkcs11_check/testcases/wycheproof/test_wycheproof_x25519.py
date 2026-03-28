@@ -13,15 +13,13 @@ import pytest
 
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
-    create_object,
     derive_key,
     destroy_quietly,
+    import_ec_private_key,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
     CKA_DERIVE,
-    CKA_EC_PARAMS,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
@@ -32,7 +30,6 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_MONTGOMERY,
     CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
-    CKO_PRIVATE_KEY,
 )
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_xdh_private_bytes,
@@ -103,18 +100,11 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
 
     # Import Montgomery private key
     try:
-        priv_key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_PRIVATE_KEY,
-                CKA_KEY_TYPE: CKK_EC_MONTGOMERY,
-                CKA_EC_PARAMS: oid,
-                CKA_VALUE: private_bytes,
-                CKA_DERIVE: True,
-                CKA_TOKEN: False,
-                CKA_SENSITIVE: False,
-            },
+        priv_key = import_ec_private_key(
+            rs.raw, rs.sh,
+            ec_params=oid, value=private_bytes,
+            key_type=int(CKK_EC_MONTGOMERY),
+            attrs={CKA_DERIVE: True},
         )
     except (AssertionError, AttributeError):
         if result == "invalid":

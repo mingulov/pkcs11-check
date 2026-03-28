@@ -13,25 +13,17 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
+    import_pqc_private_key,
+    import_pqc_public_key,
     sign_single,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
-    CKA_PARAMETER_SET,
-    CKA_SENSITIVE,
     CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VALUE,
     CKA_VERIFY,
     CKK_SLH_DSA,
     CKM_SLH_DSA,
-    CKO_PRIVATE_KEY,
-    CKO_PUBLIC_KEY,
     CKP_SLH_DSA_SHA2_128F,
     CKP_SLH_DSA_SHA2_128S,
     CKP_SLH_DSA_SHA2_192F,
@@ -146,17 +138,12 @@ def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
     pub_key = 0
     try:
         try:
-            pub_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PUBLIC_KEY,
-                    CKA_KEY_TYPE: CKK_SLH_DSA,
-                    CKA_VALUE: vec["pk"],
-                    CKA_PARAMETER_SET: param_set,
-                    CKA_TOKEN: False,
-                    CKA_VERIFY: True,
-                },
+            pub_key = import_pqc_public_key(
+                rs.raw, rs.sh,
+                key_type=int(CKK_SLH_DSA),
+                value=vec["pk"],
+                parameter_set=param_set,
+                attrs={CKA_VERIFY: True},
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import SLH-DSA public key ({vec['param_name']}): {e}")
@@ -208,19 +195,12 @@ def test_slhdsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
     priv_key = 0
     try:
         try:
-            priv_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PRIVATE_KEY,
-                    CKA_KEY_TYPE: CKK_SLH_DSA,
-                    CKA_VALUE: vec["sk"],
-                    CKA_PARAMETER_SET: param_set,
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                    CKA_SIGN: True,
-                },
+            priv_key = import_pqc_private_key(
+                rs.raw, rs.sh,
+                key_type=int(CKK_SLH_DSA),
+                value=vec["sk"],
+                parameter_set=param_set,
+                attrs={CKA_SIGN: True},
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import SLH-DSA private key ({vec['param_name']}): {e}")

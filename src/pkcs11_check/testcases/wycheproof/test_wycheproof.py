@@ -16,38 +16,30 @@ import pytest
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_bytes, mech_gcm
 from pkcs11_check.raw.recipes import (
-    create_object,
     decrypt_single,
     destroy_quietly,
     generate_random,
+    import_ec_public_key,
+    import_rsa_public_key,
     import_secret_key,
     sign_single,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
     CKA_DECRYPT,
-    CKA_EC_PARAMS,
-    CKA_EC_POINT,
     CKA_ENCRYPT,
-    CKA_KEY_TYPE,
-    CKA_MODULUS,
-    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
     CKA_VERIFY,
     CKK_AES,
-    CKK_EC,
     CKK_GENERIC_SECRET,
-    CKK_RSA,
     CKK_SHA256_HMAC,
     CKM_AES_CBC_PAD,
     CKM_AES_GCM,
     CKM_ECDSA,
     CKM_SHA256_HMAC,
     CKM_SHA256_RSA_PKCS,
-    CKO_PUBLIC_KEY,
 )
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: F401
 from pkcs11_check.testcases.wycheproof.wycheproof_loader import load_vectors as load_wycheproof
@@ -274,17 +266,11 @@ class TestECDSAP256Wycheproof:
             ec_point_der = bytes([0x04, 0x81, len(uncompressed)]) + uncompressed
 
         try:
-            pub_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PUBLIC_KEY,
-                    CKA_KEY_TYPE: CKK_EC,
-                    CKA_EC_PARAMS: encode_named_curve_parameters("secp256r1"),
-                    CKA_EC_POINT: ec_point_der,
-                    CKA_TOKEN: False,
-                    CKA_VERIFY: True,
-                },
+            pub_key = import_ec_public_key(
+                rs.raw, rs.sh,
+                ec_params=encode_named_curve_parameters("secp256r1"),
+                ec_point=ec_point_der,
+                attrs={CKA_VERIFY: True},
             )
         except AssertionError as exc:
             exc_msg = str(exc)
@@ -414,17 +400,11 @@ class TestECDSAP384Wycheproof:
             ec_point_der = bytes([0x04, 0x81, len(uncompressed)]) + uncompressed
 
         try:
-            pub_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PUBLIC_KEY,
-                    CKA_KEY_TYPE: CKK_EC,
-                    CKA_EC_PARAMS: encode_named_curve_parameters("secp384r1"),
-                    CKA_EC_POINT: ec_point_der,
-                    CKA_TOKEN: False,
-                    CKA_VERIFY: True,
-                },
+            pub_key = import_ec_public_key(
+                rs.raw, rs.sh,
+                ec_params=encode_named_curve_parameters("secp384r1"),
+                ec_point=ec_point_der,
+                attrs={CKA_VERIFY: True},
             )
         except AssertionError as exc:
             exc_msg = str(exc)
@@ -489,17 +469,10 @@ class TestRSASigWycheproof:
         exponent = bytes.fromhex(exp_hex)
 
         try:
-            pub_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PUBLIC_KEY,
-                    CKA_KEY_TYPE: CKK_RSA,
-                    CKA_MODULUS: modulus,
-                    CKA_PUBLIC_EXPONENT: exponent,
-                    CKA_TOKEN: False,
-                    CKA_VERIFY: True,
-                },
+            pub_key = import_rsa_public_key(
+                rs.raw, rs.sh,
+                n=modulus, e=exponent,
+                attrs={CKA_VERIFY: True},
             )
         except AssertionError:
             pytest.skip("Cannot import RSA public key on this module")

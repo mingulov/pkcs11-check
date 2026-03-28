@@ -22,25 +22,16 @@ import pytest
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
+    import_ec_private_key,
+    import_ec_public_key,
     sign_single,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_EC_PARAMS,
-    CKA_EC_POINT,
-    CKA_KEY_TYPE,
-    CKA_SENSITIVE,
     CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VALUE,
     CKA_VERIFY,
-    CKK_EC,
     CKM_ECDSA_SHA256,
-    CKO_PRIVATE_KEY,
-    CKO_PUBLIC_KEY,
 )
 
 pytestmark = [pytest.mark.kat, pytest.mark.cctv]
@@ -82,17 +73,10 @@ def test_rfc6979_ecdsa_verify(p11_raw_session: Any) -> None:
     pub_key = 0
     try:
         try:
-            pub_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PUBLIC_KEY,
-                    CKA_KEY_TYPE: CKK_EC,
-                    CKA_EC_PARAMS: _EC_PARAMS,
-                    CKA_EC_POINT: _EC_POINT_DER,
-                    CKA_TOKEN: False,
-                    CKA_VERIFY: True,
-                },
+            pub_key = import_ec_public_key(
+                rs.raw, rs.sh,
+                ec_params=_EC_PARAMS, ec_point=_EC_POINT_DER,
+                attrs={CKA_VERIFY: True},
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import P-256 public key: {e}")
@@ -131,18 +115,10 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any) -> None:
     priv_key = 0
     try:
         try:
-            priv_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PRIVATE_KEY,
-                    CKA_KEY_TYPE: CKK_EC,
-                    CKA_EC_PARAMS: _EC_PARAMS,
-                    CKA_VALUE: _PRIV_D,
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_SIGN: True,
-                },
+            priv_key = import_ec_private_key(
+                rs.raw, rs.sh,
+                ec_params=_EC_PARAMS, value=_PRIV_D,
+                attrs={CKA_SIGN: True},
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import P-256 private key: {e}")

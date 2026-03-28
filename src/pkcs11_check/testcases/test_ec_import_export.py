@@ -16,23 +16,18 @@ import pytest
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
     gen_ec_keypair,
+    import_ec_public_key,
     read_attributes,
     sign_single,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
     CKA_EC_PARAMS,
     CKA_EC_POINT,
-    CKA_KEY_TYPE,
-    CKA_TOKEN,
     CKA_VERIFY,
-    CKK_EC,
     CKM_ECDSA,
-    CKO_PUBLIC_KEY,
 )
 
 pytestmark = pytest.mark.keymgmt
@@ -75,17 +70,10 @@ class TestECPublicKeyImport:
             assert len(sig) > 0
 
             # Import the exported public key as a new object
-            imported_pub = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PUBLIC_KEY,
-                    CKA_KEY_TYPE: CKK_EC,
-                    CKA_EC_PARAMS: ec_params,
-                    CKA_EC_POINT: ec_point_der,
-                    CKA_VERIFY: True,
-                    CKA_TOKEN: False,
-                },
+            imported_pub = import_ec_public_key(
+                rs.raw, rs.sh,
+                ec_params=ec_params, ec_point=ec_point_der,
+                attrs={CKA_VERIFY: True},
             )
 
             # Verify signature with imported key

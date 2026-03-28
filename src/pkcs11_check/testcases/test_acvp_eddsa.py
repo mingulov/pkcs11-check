@@ -21,26 +21,17 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
+    import_ec_private_key,
+    import_ec_public_key,
     sign_single,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_EC_PARAMS,
-    CKA_EC_POINT,
-    CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
-    CKA_SENSITIVE,
     CKA_SIGN,
-    CKA_TOKEN,
-    CKA_VALUE,
     CKA_VERIFY,
     CKK_EC_EDWARDS,
     CKM_EDDSA,
-    CKO_PRIVATE_KEY,
-    CKO_PUBLIC_KEY,
 )
 from pkcs11_check.testcases.data import ACVP_DIR
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
@@ -248,17 +239,11 @@ def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     pub_key = 0
     try:
         try:
-            pub_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PUBLIC_KEY,
-                    CKA_KEY_TYPE: CKK_EC_EDWARDS,
-                    CKA_EC_PARAMS: vec["ec_params"],
-                    CKA_EC_POINT: vec["ec_point"],
-                    CKA_TOKEN: False,
-                    CKA_VERIFY: True,
-                },
+            pub_key = import_ec_public_key(
+                rs.raw, rs.sh,
+                ec_params=vec["ec_params"], ec_point=vec["ec_point"],
+                key_type=int(CKK_EC_EDWARDS),
+                attrs={CKA_VERIFY: True},
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import EdDSA public key for {vec['curve']}: {e}")
@@ -333,19 +318,11 @@ def test_acvp_eddsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     priv_key = 0
     try:
         try:
-            priv_key = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_PRIVATE_KEY,
-                    CKA_KEY_TYPE: CKK_EC_EDWARDS,
-                    CKA_EC_PARAMS: vec["ec_params"],
-                    CKA_VALUE: vec["d"],
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                    CKA_SIGN: True,
-                },
+            priv_key = import_ec_private_key(
+                rs.raw, rs.sh,
+                ec_params=vec["ec_params"], value=vec["d"],
+                key_type=int(CKK_EC_EDWARDS),
+                attrs={CKA_SIGN: True},
             )
         except AssertionError as e:
             pytest.skip(f"Cannot import Ed25519 private key for {vec_id}: {e}")

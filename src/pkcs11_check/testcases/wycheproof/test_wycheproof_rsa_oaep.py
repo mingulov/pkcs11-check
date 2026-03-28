@@ -14,37 +14,23 @@ import pytest
 
 from pkcs11_check.raw.pack import mech_oaep
 from pkcs11_check.raw.recipes import (
-    create_object,
     decrypt_single,
     destroy_quietly,
+    import_rsa_private_key,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_CLASS,
-    CKA_COEFFICIENT,
     CKA_DECRYPT,
-    CKA_EXPONENT_1,
-    CKA_EXPONENT_2,
-    CKA_KEY_TYPE,
-    CKA_MODULUS,
-    CKA_PRIME_1,
-    CKA_PRIME_2,
-    CKA_PRIVATE_EXPONENT,
-    CKA_PUBLIC_EXPONENT,
-    CKA_SENSITIVE,
-    CKA_TOKEN,
     CKG_MGF1_SHA1,
     CKG_MGF1_SHA224,
     CKG_MGF1_SHA256,
     CKG_MGF1_SHA384,
     CKG_MGF1_SHA512,
-    CKK_RSA,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA224,
     CKM_SHA256,
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
-    CKO_PRIVATE_KEY,
 )
 
 pytestmark = pytest.mark.wycheproof
@@ -167,24 +153,12 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
     coefficient = bytes.fromhex(pk.get("coefficient", ""))
 
     try:
-        priv_key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_PRIVATE_KEY,
-                CKA_KEY_TYPE: CKK_RSA,
-                CKA_MODULUS: modulus,
-                CKA_PUBLIC_EXPONENT: pub_exponent,
-                CKA_PRIVATE_EXPONENT: priv_exponent,
-                CKA_PRIME_1: prime1,
-                CKA_PRIME_2: prime2,
-                CKA_EXPONENT_1: exp1,
-                CKA_EXPONENT_2: exp2,
-                CKA_COEFFICIENT: coefficient,
-                CKA_TOKEN: False,
-                CKA_DECRYPT: True,
-                CKA_SENSITIVE: False,
-            },
+        priv_key = import_rsa_private_key(
+            rs.raw, rs.sh,
+            n=modulus, e=pub_exponent, d=priv_exponent,
+            p=prime1, q=prime2,
+            dmp1=exp1, dmq1=exp2, iqmp=coefficient,
+            attrs={CKA_DECRYPT: True},
         )
     except AssertionError:
         pytest.skip("Cannot import RSA private key for OAEP")

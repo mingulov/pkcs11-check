@@ -12,24 +12,15 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
     generate_random,
+    import_dsa_public_key,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_BASE,
-    CKA_CLASS,
-    CKA_KEY_TYPE,
-    CKA_PRIME,
-    CKA_SUBPRIME,
-    CKA_TOKEN,
-    CKA_VALUE,
     CKA_VERIFY,
-    CKK_DSA,
     CKM_DSA_SHA224,
     CKM_DSA_SHA256,
-    CKO_PUBLIC_KEY,
 )
 
 pytestmark = pytest.mark.wycheproof
@@ -114,19 +105,10 @@ def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     value = bytes.fromhex(y_hex)
 
     try:
-        pub_key = create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_PUBLIC_KEY,
-                CKA_KEY_TYPE: CKK_DSA,
-                CKA_PRIME: prime,
-                CKA_SUBPRIME: subprime,
-                CKA_BASE: base,
-                CKA_VALUE: value,
-                CKA_TOKEN: False,
-                CKA_VERIFY: True,
-            },
+        pub_key = import_dsa_public_key(
+            rs.raw, rs.sh,
+            prime=prime, subprime=subprime, base_g=base, value=value,
+            attrs={CKA_VERIFY: True},
         )
     except AssertionError:
         pytest.skip("Cannot import DSA public key")
