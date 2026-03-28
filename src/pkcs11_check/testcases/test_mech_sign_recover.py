@@ -6,10 +6,9 @@ live in test_sign_recover.py and testcases/ckr/.
 """
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
+from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
@@ -26,7 +25,7 @@ from pkcs11_check.raw.types_std import (
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.sign_recover]
 
 
-def _rsa_x509_keypair(rs: Any) -> tuple[int, int]:
+def _rsa_x509_keypair(rs: RawSession) -> tuple[int, int]:
     """Generate a 2048-bit RSA keypair with sign-recover/verify-recover attributes."""
     return gen_rsa_keypair(
         rs.raw,
@@ -40,7 +39,7 @@ def _rsa_x509_keypair(rs: Any) -> tuple[int, int]:
 class TestSignRecover:
     """Sign-recover and verify-recover for CKM_RSA_X_509."""
 
-    def test_rsa_x509_sign_recover_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_rsa_x509_sign_recover_roundtrip(self, p11_raw_session: RawSession) -> None:
         """RSA X.509 sign-recover -> verify-recover roundtrip recovers original data.
 
         C_SignRecover (PKCS#11 Sec.5.10.6): embeds the data directly in the RSA
@@ -73,7 +72,7 @@ class TestSignRecover:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_rsa_x509_verify_recover_invalid_sig(self, p11_raw_session: Any) -> None:
+    def test_rsa_x509_verify_recover_invalid_sig(self, p11_raw_session: RawSession) -> None:
         """C_VerifyRecover rejects an all-zero signature as invalid."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_X_509"):

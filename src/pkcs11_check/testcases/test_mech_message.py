@@ -9,9 +9,9 @@ Reference: PKCS#11 v3.1 Sec.5.4 (Message-based encryption functions).
 """
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
+
+from pkcs11_check.fixtures import RawSession
 
 pytestmark = [
     pytest.mark.mechanism_coverage,
@@ -23,7 +23,7 @@ pytestmark = [
 class TestMessageEncrypt:
     """v3.0 C_MessageEncrypt* API tests."""
 
-    def test_message_encrypt_decrypt_aes_gcm(self, p11_raw_session: Any) -> None:
+    def test_message_encrypt_decrypt_aes_gcm(self, p11_raw_session: RawSession) -> None:
         """Single-message AES-GCM encrypt/decrypt roundtrip via message-based API.
 
         Checks that CKF_MESSAGE_ENCRYPT is advertised for CKM_AES_GCM and that
@@ -70,7 +70,7 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_message_sign_aes_gmac(self, p11_raw_session: Any) -> None:
+    def test_message_sign_aes_gmac(self, p11_raw_session: RawSession) -> None:
         """Message-based sign flag check for CKM_AES_GMAC.
 
         Verifies that when CKF_MESSAGE_SIGN is advertised, the corresponding

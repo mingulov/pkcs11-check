@@ -25,7 +25,7 @@ import pytest
 
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import attr_ulong, mech_bytes, mech_simple, template
-from pkcs11_check.raw.pack_mechanisms import mech_gcm, mech_pss
+from pkcs11_check.raw.pack_mechanisms import mech_eddsa, mech_gcm, mech_pss
 from pkcs11_check.raw.recipes import destroy_quietly, pack_attrs, sign_single, verify_single
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
@@ -94,6 +94,9 @@ def _make_sign_mech_param(entry: MechEntry, config: MechConfig) -> Any:
     if packer == "pack_aes_gcm":
         iv = os.urandom(12)
         return mech_gcm(mech_id, iv)
+
+    if packer == "mech_eddsa":
+        return mech_eddsa(mech_id)
 
     pytest.skip(
         f"{entry.mech_name}: param_packer {packer!r} not yet implemented for sign test"

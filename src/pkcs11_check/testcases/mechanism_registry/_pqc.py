@@ -3,11 +3,13 @@
 Covers ML-KEM (FIPS 203), ML-DSA (FIPS 204), SLH-DSA (FIPS 205),
 HSS (SP 800-208), XMSS, and XMSS^MT (RFC 8391).
 """
+
 from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
-    CKF_DERIVE,
+    CKF_DECAPSULATE,
     CKF_DIGEST,
+    CKF_ENCAPSULATE,
     CKF_GENERATE_KEY_PAIR,
     CKF_SIGN,
     CKF_VERIFY,
@@ -81,8 +83,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_ML_KEM_SIZES,
         is_keypair=True,
         multi_part_supported=False,
-        expected_flags=CKF_DERIVE,
-        notes="ML-KEM encapsulation/decapsulation KEM (FIPS 203): CKF_DERIVE via C_DeriveKey",
+        expected_flags=int(CKF_ENCAPSULATE) | int(CKF_DECAPSULATE),
+        notes="ML-KEM (FIPS 203): C_EncapsulateKey / C_DecapsulateKey",
     )
 
     # ---------------------------------------------------------------------------

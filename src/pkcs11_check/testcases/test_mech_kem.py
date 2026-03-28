@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.recipes import (
     decapsulate_key,
@@ -35,7 +36,7 @@ from pkcs11_check.raw.types_std import (
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.kem]
 
 
-def _ml_kem_keypair(rs: Any) -> tuple[int, int]:
+def _ml_kem_keypair(rs: RawSession) -> tuple[int, int]:
     """Generate an ML-KEM-768 keypair. Returns (pub, priv)."""
     return gen_keypair(
         rs.raw,
@@ -62,7 +63,7 @@ _AES_DERIVED_ATTRS: dict[int, Any] = {
 class TestMechKEM:
     """KEM encapsulate/decapsulate tests."""
 
-    def test_ml_kem_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_roundtrip(self, p11_raw_session: RawSession) -> None:
         """ML-KEM encapsulate -> decapsulate produces same shared secret."""
         rs = p11_raw_session
         if not rs.has_mechanism("ML_KEM"):
@@ -96,7 +97,7 @@ class TestMechKEM:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ml_kem_wrong_key_fails(self, p11_raw_session: Any) -> None:
+    def test_ml_kem_wrong_key_fails(self, p11_raw_session: RawSession) -> None:
         """Decapsulate with wrong private key produces a different shared secret.
 
         ML-KEM uses implicit rejection (FIPS 203 Section 6.3): decapsulating a

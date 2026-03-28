@@ -9,7 +9,14 @@ import os
 from typing import Any
 
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
-from pkcs11_check.raw.pack_mechanisms import mech_ccm, mech_ctr, mech_gcm, mech_oaep, mech_pss
+from pkcs11_check.raw.pack_mechanisms import (
+    mech_ccm,
+    mech_ctr,
+    mech_eddsa,
+    mech_gcm,
+    mech_oaep,
+    mech_pss,
+)
 from pkcs11_check.raw.recipes import (
     gen_ec_keypair,
     gen_keypair,
@@ -153,6 +160,9 @@ def make_mech_param(entry: MechEntry) -> Any:
     if packer in ("pack_aes_key_wrap_iv", "pack_aes_key_wrap_kwp"):
         # Key-wrap-only mechanisms — not usable for data operations
         return "SKIP"
+
+    if packer == "mech_eddsa":
+        return mech_eddsa(mech_id)
 
     # Unknown packer
     return "SKIP"

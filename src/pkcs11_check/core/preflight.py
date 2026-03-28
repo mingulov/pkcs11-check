@@ -58,8 +58,11 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
                         "min_key_size": int(info.min_key_length),
                         "max_key_size": int(info.max_key_length),
                     }
-            except Exception:
-                pass
+            except Exception as exc:
+                print(
+                    f"WARNING: get_mechanism_info({_mechanism_name(mech)}) failed: {exc}",
+                    file=sys.stderr,
+                )
         return CapabilityManifest(
             status="ok",
             module_path=str(module),
