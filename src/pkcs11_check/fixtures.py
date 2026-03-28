@@ -84,9 +84,11 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
     from pkcs11_check.raw.bootstrap import close_session_quietly
 
     raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
+    bootstrap_log = dict(raw.call_log)
     raw.reset_call_log()
+    raw.reset_used_mechanisms()
     try:
-        yield RawSession(raw, sh, slot_id)
+        yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
     finally:
         if logged_in:
             raw.C_Logout(sh)  # type: ignore[attr-defined]
@@ -131,6 +133,7 @@ class RawSession:
     sh: int
     slot_id: int
     _mechanisms: frozenset[str] | None = field(default=None, repr=False)
+    bootstrap_call_counts: dict[str, int] = field(default_factory=dict, repr=False)
 
     @property
     def mechanisms(self) -> frozenset[str]:
@@ -202,9 +205,11 @@ def p11_raw_session(
     from pkcs11_check.raw.bootstrap import close_session_quietly
 
     raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
+    bootstrap_log = dict(raw.call_log)
     raw.reset_call_log()
+    raw.reset_used_mechanisms()
     try:
-        yield RawSession(raw, sh, slot_id)
+        yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
     finally:
         if logged_in:
             raw.C_Logout(sh)  # type: ignore[attr-defined]
