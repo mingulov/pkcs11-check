@@ -197,7 +197,10 @@ def _ensure_mechanism_catalog(config: pytest.Config) -> Any:
     if cached is not None:
         return cached
     manifest = _ensure_manifest(config)
-    if manifest is None or not getattr(manifest, "mechanism_info", None):
+    if manifest is None:
+        return None
+    mech_info = getattr(manifest, "mechanism_info", None)
+    if mech_info is None:
         return None
     from pkcs11_check.testcases.mechanism_catalog import MechanismCatalog
 

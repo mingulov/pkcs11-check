@@ -36,10 +36,13 @@ class MechanismCatalog:
         entries: dict[int, MechEntry] = {}
         mech_info = getattr(manifest, "mechanism_info", {}) or {}
 
-        # Build reverse map: name → int
+        # Build reverse map: name → int (accept both "CKM_AES_CBC" and "AES_CBC")
         name_to_id: dict[str, int] = {}
         for mid, mname in MECHANISM_NAMES.items():
             name_to_id[mname] = mid
+            short = mname.removeprefix("CKM_")
+            if short != mname:
+                name_to_id[short] = mid
 
         for mname, info in mech_info.items():
             mech_id = name_to_id.get(mname)
