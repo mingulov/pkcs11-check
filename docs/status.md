@@ -1,10 +1,10 @@
 # pkcs11-check Current Status
 
-Last updated: 2026-03-27
+Last updated: 2026-03-28
 
 ## What Works
 
-- **74,800+ tests** across 194 test files on SoftHSM2 and Kryoptic
+- **75,000+ tests** across 195+ test files on SoftHSM2 and Kryoptic
 - **802/802 CKR spec entries** — every function-specific CKR from OASIS spec documented
 - **148+ CKR error tests** with raw ctypes bypass for wrapper-blocked conditions
 - **v3.0/v3.2 interface negotiation** — tested on Kryoptic
@@ -18,6 +18,8 @@ Last updated: 2026-03-27
 - **Attribute enforcement** — COPYABLE, DESTROYABLE, SENSITIVE, EXTRACTABLE one-way flags, KEY_GEN_MECHANISM, CHECK_VALUE, ALLOWED_MECHANISMS, WRAP_WITH_TRUSTED, ALWAYS_AUTHENTICATE, date ranges, defaults
 - **Session semantics** — state machine, object visibility, RO restrictions, access levels, concurrent sessions
 - **Mechanism breadth** — AES (11 modes), RSA (20+ variants), EC/ECDSA/ECDH/EdDSA, DSA, DH/X9.42, SHA-1/2/3, HMAC, HKDF, SP800-108 KDF, DES/3DES, Camellia, ARIA, SEED, Blowfish, Twofish, GOST, ChaCha20-Poly1305, TLS 1.2, SSL3, WTLS, IKE, PBE, OTP, Salsa20, BLAKE2, misc KDFs
+- **Mechanism-driven test system** — 439-entry registry, MechanismCatalog auto-parametrizes tests from preflight manifest, 12 test_mech_* files covering flags, keygen, encrypt, sign, digest, derive, wrap, lifecycle, multipart, state, negative, message
+- **KAT vectors** — Pre-generated known-answer tests for AES-ECB/CBC/CBC-PAD/CTR/GCM, DES3-ECB/CBC, HMAC-SHA256/384/512 (12 JSON vector files)
 - **Test vectors** — Wycheproof (ECDSA, RSA, ECDH, DSA, AES, HMAC, Ed25519/448, ChaCha20, X25519/X448, HKDF, ML-DSA, ML-KEM, PBES2, PBKDF2), NIST ACVP (AES-GCM, ECDSA, EdDSA, HMAC, SHA-3, SLH-DSA, ML-DSA), CCTV (RFC 6979, ML-DSA benchmark)
 - **X.509 certificate suite** — 8 test files covering CRL, identity, lifecycle, limbo import (9769 certs), attribute parity, core ops, search
 - **CVE regression** — 29 tests covering CVEs across NSS, SoftHSM2, TPM2, OpenCryptoki, BouncyHSM, Kryoptic

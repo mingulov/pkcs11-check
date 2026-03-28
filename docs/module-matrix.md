@@ -1,6 +1,6 @@
 # Module Test Matrix
 
-Test results from local builds and Docker runs. Updated 2026-03-27.
+Test results from local builds and Docker runs. Updated 2026-03-28.
 
 ## Local Build Results (Post Phase A-H)
 
@@ -27,17 +27,16 @@ Test results from local builds and Docker runs. Updated 2026-03-27.
 | Object types tested | 6/12 | 12/12 | +6 types |
 | API functions tested | ~45/68 | ~57/68 | +12 functions |
 
-## Docker Results (need re-run post Phases)
+## Docker Results (2026-03-28, post mechanism-driven tests)
 
-| Module | Version | Interface | Last Run | Notes |
-|--------|---------|-----------|----------|-------|
-| **SoftHSM2** | 2.7.0 | v2.40 | Pre-phase | Needs re-run |
-| **Kryoptic** | 1.5.0 | v3.2 | Pre-phase | Needs re-run |
-| **NSS** | 3.120.1 | v3.0 | Pre-phase | Needs re-run |
-| **NSS-PQC** | 3.121.0 | v3.0 | 2026-03-27 | 35,327/296/31,984/645 — Phases 1-11 complete |
-| **OpenCryptoki** | 3.25 | v3.0 | Pre-phase | Needs re-run |
-| **tpm2-pkcs11** | 1.9.0 | v2.40 | Untested | 26 mechanisms, limited |
-| **BouncyHSM** | 2.0.1 | v3.2 | Untested | Segfault on stale-handle attr read |
+| Module | Version | Interface | Passed | Failed | Skipped | xfail | Error | Total | Mech Tests |
+|--------|---------|-----------|--------|--------|---------|-------|-------|-------|------------|
+| **SoftHSM2-main** | master | v2.40 | 44,358 | 13,214 | 11,429 | 11 | 1 | 69,013 | 160 flags, 29 encrypt, 24 digest, 108 sign |
+| **Kryoptic-main** | main | v3.2 | 28,518 | 11,631 | 29,542 | 38 | 0 | 69,729 | 326 flags, 33 encrypt, 44 digest, 240 sign |
+| **NSS-PQC** | 3.121.0 | v3.0 | 35,840 | 1,010 | 32,624 | 78 | 4 | 69,556 | 276 flags, 65 encrypt, 4 digest, 202 sign |
+| **OpenCryptoki** | 3.25 | v3.0 | — | — | — | — | — | — | Needs re-run |
+| **tpm2-pkcs11** | 1.9.0 | v2.40 | — | — | — | — | — | — | Untested |
+| **BouncyHSM** | 2.0.1 | v3.2 | — | — | — | — | — | — | Untested |
 | **pkcs11-mock** | 2.0.0 | v3.1 | Pre-phase | Mock stub |
 | **qryptotoken** | 0.4.1 | — | Pre-phase | Experimental PQC |
 

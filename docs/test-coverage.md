@@ -75,6 +75,30 @@ Require `src/pkcs11_check/testcases/data/cctv/` directory.
 | test_cctv_rfc6979.py | ECDSA P-256 | RFC 6979 rejection-sampling path; verify is unconditional, sign is xfail |
 | test_cctv_mldsa.py | ML-DSA-44/65/87 | Sign+verify round-trip using CCTV benchmark messages |
 
+### Mechanism-Driven Tests (12 files)
+
+Auto-parametrized from the module's advertised mechanism list. Each test is parametrized
+per mechanism via MechanismCatalog (built from preflight manifest). 439-entry registry
+covers AES, RSA, EC, DES, SHA, HMAC, HKDF, PQC, and more.
+
+| File | Purpose | KAT |
+|------|---------|:---:|
+| test_mech_flags.py | Expected flags present, min≤max key size | - |
+| test_mech_keygen.py | Key generation, key attributes, local flag | - |
+| test_mech_encrypt.py | Encrypt/decrypt roundtrip + KAT vectors | Yes |
+| test_mech_sign.py | Sign/verify roundtrip + KAT vectors (HMAC) | Yes |
+| test_mech_digest.py | Digest known values + KAT vectors | Yes |
+| test_mech_derive.py | Per-family derive (SHA, HKDF, ECDH, CONCAT, AES-ECB) | - |
+| test_mech_wrap.py | Wrap/unwrap round-trip, RSA-OAEP wrap | - |
+| test_mech_lifecycle.py | Key lifecycle, derive chain, re-derive | - |
+| test_mech_multipart.py | Multi-part encrypt/digest/sign | - |
+| test_mech_state.py | Operation state save/restore | - |
+| test_mech_negative.py | Wrong key type, bad param rejection | - |
+| test_mech_message.py | v3.0 message-based AEAD (deferred — needs packer) | - |
+
+KAT vector files (12): AES-ECB/CBC/CBC-PAD/CTR/GCM, DES3-ECB/CBC, HMAC-SHA256/384/512,
+SHA (multi-algorithm), HMAC (multi-algorithm).
+
 ### Classic KAT (2 files — subsumed by ACVP section above)
 
 ### Cryptographic Property Tests (7 files)
