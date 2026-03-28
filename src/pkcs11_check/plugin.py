@@ -24,6 +24,7 @@ from pkcs11_check.fixtures import (  # noqa: F401
 from pkcs11_check.markers import MARKER_DEFINITIONS, should_skip_for_version
 
 _MANIFEST_KEY: pytest.StashKey[CapabilityManifest | None] = pytest.StashKey()
+_MECHANISM_CATALOG_KEY: pytest.StashKey[Any] = pytest.StashKey()
 _CUMULATIVE_FUNCTIONS: pytest.StashKey[set[str]] = pytest.StashKey()
 _CUMULATIVE_MECHANISMS: pytest.StashKey[set[str]] = pytest.StashKey()
 _RAW_INSTANCE: pytest.StashKey[Any] = pytest.StashKey()
@@ -101,6 +102,7 @@ def pytest_configure(config: pytest.Config) -> None:
     for marker in MARKER_DEFINITIONS:
         config.addinivalue_line("markers", f"{marker.name}: {marker.description}")
     config.stash[_MANIFEST_KEY] = None
+    config.stash[_MECHANISM_CATALOG_KEY] = None
     config.stash[_CUMULATIVE_FUNCTIONS] = set()
     config.stash[_CUMULATIVE_MECHANISMS] = set()
     config.stash[_RAW_INSTANCE] = None
@@ -187,6 +189,65 @@ def _ensure_manifest(config: pytest.Config) -> CapabilityManifest | None:
 
     config.stash[_MANIFEST_KEY] = manifest
     return manifest
+
+
+def _ensure_mechanism_catalog(config: pytest.Config) -> Any:
+    """Lazily build mechanism catalog from preflight manifest."""
+    cached = config.stash.get(_MECHANISM_CATALOG_KEY, None)
+    if cached is not None:
+        return cached
+    manifest = _ensure_manifest(config)
+    if manifest is None or not getattr(manifest, "mechanism_info", None):
+        return None
+    from pkcs11_check.testcases.mechanism_catalog import MechanismCatalog
+
+    catalog = MechanismCatalog.from_manifest(manifest)
+    config.stash[_MECHANISM_CATALOG_KEY] = catalog
+    return catalog
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Parametrize mechanism-driven tests from the module's mechanism list."""
+    # Only activate for mechanism test files
+    catalog = _ensure_mechanism_catalog(metafunc.config)
+    if catalog is None:
+        return
+
+    from pkcs11_check.raw.types_std import (
+        CKF_DERIVE,
+        CKF_DIGEST,
+        CKF_ENCRYPT,
+        CKF_GENERATE,
+        CKF_GENERATE_KEY_PAIR,
+        CKF_SIGN,
+        CKF_WRAP,
+    )
+
+    # Map fixture names to flag filters
+    param_map = {
+        "mech_encrypt_entry": int(CKF_ENCRYPT),
+        "mech_sign_entry": int(CKF_SIGN),
+        "mech_digest_entry": int(CKF_DIGEST),
+        "mech_keygen_entry": int(CKF_GENERATE) | int(CKF_GENERATE_KEY_PAIR),
+        "mech_wrap_entry": int(CKF_WRAP),
+        "mech_derive_entry": int(CKF_DERIVE),
+        "mech_any_entry": 0,  # all mechanisms
+    }
+
+    for fixture_name, flag in param_map.items():
+        if fixture_name in metafunc.fixturenames:
+            if flag:
+                entries = catalog.filter_registered(flag)
+            else:
+                entries = catalog.all_entries()
+            if entries:
+                metafunc.parametrize(
+                    fixture_name,
+                    entries,
+                    ids=[e.mech_name for e in entries],
+                    indirect=False,
+                )
+            break
 
 
 def _runtime_skip_reason(

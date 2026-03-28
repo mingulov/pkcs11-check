@@ -6,7 +6,7 @@ import argparse
 import json
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from pkcs11_check.core.loader import load_module
@@ -24,6 +24,7 @@ class CapabilityManifest:
     slot_count: int | None
     mechanisms: list[str]
     error: str | None = None
+    mechanism_info: dict[str, dict] = field(default_factory=dict)
 
 
 def _mechanism_name(value: object) -> str:
@@ -45,7 +46,20 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
         if slot >= len(slots):
             msg = f"slot {slot} not found (token-present slots: {len(slots)})"
             raise IndexError(msg)
-        mechanisms = sorted(_mechanism_name(mech) for mech in slots[slot].get_mechanisms())
+        raw_mechs = slots[slot].get_mechanisms()
+        mechanisms = sorted(_mechanism_name(mech) for mech in raw_mechs)
+        mech_info: dict[str, dict] = {}
+        for mech in raw_mechs:
+            try:
+                info = slots[slot].get_mechanism_info(mech)
+                if info is not None:
+                    mech_info[_mechanism_name(mech)] = {
+                        "flags": int(info.flags),
+                        "min_key_size": int(info.min_key_length),
+                        "max_key_size": int(info.max_key_length),
+                    }
+            except Exception:
+                pass
         return CapabilityManifest(
             status="ok",
             module_path=str(module),
@@ -54,6 +68,7 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
             slot_index=slot,
             slot_count=len(slots),
             mechanisms=mechanisms,
+            mechanism_info=mech_info,
         )
     except Exception as exc:
         return CapabilityManifest(

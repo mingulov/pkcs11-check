@@ -72,6 +72,18 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("object", "Generic PKCS#11 object operation test"),
     MarkerDef("compliance", "PKCS#11 standard or profile compliance verification"),
     MarkerDef("wycheproof", "Wycheproof edge-case vector test"),
+    MarkerDef("mechanism_coverage", "Mechanism-driven parametrized test"),
+    MarkerDef("negative", "Negative test (wrong key type, invalid params, missing perms)"),
+    MarkerDef("lifecycle", "Composite multi-step workflow test"),
+    MarkerDef("keygen", "Key generation test"),
+    MarkerDef("wrap", "Key wrap/unwrap test"),
+    MarkerDef("derive", "Key derivation test"),
+    MarkerDef("kem", "Key encapsulation/decapsulation test"),
+    MarkerDef("sign_recover", "Sign-recover/verify-recover test"),
+    MarkerDef("message_based", "v3.0 message-based operation test"),
+    MarkerDef("state_machine", "Operation state machine violation test"),
+    MarkerDef("flag_validation", "CKF_* flag correctness test"),
+    MarkerDef("digest", "Digest/hash mechanism test"),
 ]
 
 

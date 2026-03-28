@@ -31,15 +31,18 @@ def test_probe_capabilities_returns_manifest(tmp_path: Path) -> None:
     with patch("pkcs11_check.core.preflight.load_module", return_value=mock_module):
         manifest = probe_capabilities(module_path, interface="auto", slot=0)
 
-    assert manifest == CapabilityManifest(
-        status="ok",
-        module_path=str(module_path),
-        requested_interface="auto",
-        interface_version="3.2",
-        slot_index=0,
-        slot_count=1,
-        mechanisms=["CKM_AES_ECB", "CKM_RSA_PKCS"],
-    )
+    assert manifest.status == "ok"
+    assert manifest.module_path == str(module_path)
+    assert manifest.requested_interface == "auto"
+    assert manifest.interface_version == "3.2"
+    assert manifest.slot_index == 0
+    assert manifest.slot_count == 1
+    assert manifest.mechanisms == ["CKM_AES_ECB", "CKM_RSA_PKCS"]
+    assert set(manifest.mechanism_info.keys()) == {"CKM_AES_ECB", "CKM_RSA_PKCS"}
+    for info in manifest.mechanism_info.values():
+        assert "flags" in info
+        assert "min_key_size" in info
+        assert "max_key_size" in info
 
 
 def test_probe_capabilities_returns_error_manifest(tmp_path: Path) -> None:
