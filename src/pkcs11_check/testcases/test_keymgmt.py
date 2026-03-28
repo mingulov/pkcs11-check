@@ -29,6 +29,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
+    CKA_DERIVE,
     CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
@@ -288,7 +289,7 @@ class TestKeyDerive:
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
         curve_oid = encode_named_curve_parameters("secp256r1")
-        _pub_a, priv_a = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        _pub_a, priv_a = gen_ec_keypair(rs.raw, rs.sh, curve_oid, private_attrs={CKA_DERIVE: True})
         pub_b, _priv_b = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
         derived = 0
         try:
