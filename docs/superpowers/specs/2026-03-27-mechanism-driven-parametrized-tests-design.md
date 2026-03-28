@@ -7,7 +7,7 @@
 
 Create a comprehensive, mechanism-driven test system covering ALL 480 CKM_* mechanisms from the OASIS PKCS#11 v3.2 standard. Every mechanism gets either full testing (via registry with KAT vectors, edge cases, negative tests) or probe testing (crash safety). Pre-generated known-answer test vectors verify correctness. Negative tests verify error handling. Multi-part streaming tests exercise C_*Update/C_*Final paths. Composite lifecycle tests exercise multi-step workflows. Mechanism flag validation catches module metadata bugs.
 
-**Registry scope:** 348 mechanisms with full registry entries (all standard mechanisms with enough spec detail for complete testing). 132 probe-only entries (legacy/obscure: RC2, IDEA, CAST, Skipjack, Baton, Juniper, CDMF, etc.).
+**Registry scope:** ALL 480 CKM_* mechanisms from the OASIS PKCS#11 v3.2 standard have registry entries. ~348 with full test configurations (KAT vectors, edge cases, roundtrips). ~132 legacy/obscure mechanisms (RC2, IDEA, CAST, Skipjack, Baton, Juniper, CDMF, etc.) with basic registry entries — they have key types and parameter info from the OASIS spec, enabling roundtrip tests and negative tests when a module advertises them. No mechanism is probe-only.
 
 **Total test definitions:** ~2,600 across the full standard. On any given module, tests for unsupported mechanisms skip cleanly. A module advertising N mechanisms runs approximately `N × 6 + 400` tests (6 tests avg per mechanism + cross-cutting negative/lifecycle/attribute/state tests).
 
@@ -371,7 +371,7 @@ Families:
 
 ### Fallback
 
-Mechanisms not in the registry (132 legacy/obscure) get probe tests (test_mech_probe.py): call `C_*Init`, verify no crash, verify valid CKR returned. If the module advertises any of these, they get exercised.
+ALL 480 mechanisms have registry entries. Legacy mechanisms (132) have basic entries with key type, keygen mechanism, and parameter info from the OASIS spec. They get the same roundtrip + negative + flag-validation tests as modern mechanisms. The probe test file (`test_mech_probe.py`) now focuses on vendor-defined mechanisms (`>= CKM_VENDOR_DEFINED`) that are outside the standard entirely.
 
 ### Legacy Mechanism Documentation
 
@@ -394,7 +394,7 @@ The 132 probe-only mechanisms are documented but not fully tested due to limited
 - **KIP/CMS/KRB5** (12 mechs): Protocol-specific mechanisms
 - **Twofish/Blowfish** (4 mechs): CBC, KEY-GEN variants
 
-**TODO:** Upgrade high-value legacy mechanisms (DES3, RC4, Blowfish, Twofish) from probe-only to full registry entries when modules that support them are added to the test matrix. This increases coverage incrementally as demand arises.
+All legacy mechanisms have basic registry entries. KAT vector files for high-value legacy mechanisms (DES3, RC4, Blowfish, Twofish, RC2, IDEA) can be added incrementally when modules that support them are tested.
 
 ## Layer 3: Operation Tests (14 files)
 
