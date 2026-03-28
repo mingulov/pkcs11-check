@@ -33,14 +33,31 @@ from .types_std import (
     CK_SLOT_INFO,
     CK_ULONG,
     CKA,
+    CKA_BASE,
     CKA_CLASS,
+    CKA_COEFFICIENT,
     CKA_DECRYPT,
     CKA_EC_PARAMS,
+    CKA_EC_POINT,
     CKA_ENCRYPT,
+    CKA_EXPONENT_1,
+    CKA_EXPONENT_2,
+    CKA_EXTRACTABLE,
+    CKA_GOSTR3410_PARAMS,
+    CKA_GOSTR3411_PARAMS,
     CKA_KEY_TYPE,
+    CKA_MODULUS,
     CKA_MODULUS_BITS,
+    CKA_PARAMETER_SET,
+    CKA_PRIME,
+    CKA_PRIME_1,
+    CKA_PRIME_2,
+    CKA_PRIVATE_EXPONENT,
     CKA_PUBLIC_EXPONENT,
+    CKA_SENSITIVE,
     CKA_SIGN,
+    CKA_SUBPRIME,
+    CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_VERIFY,
@@ -48,11 +65,17 @@ from .types_std import (
     CKF_SERIAL_SESSION,
     CKK,
     CKK_AES,
+    CKK_DSA,
+    CKK_EC,
+    CKK_GOSTR3410,
+    CKK_RSA,
     CKM,
     CKM_AES_KEY_GEN,
     CKM_EC_KEY_PAIR_GEN,
     CKM_EDDSA,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
@@ -323,6 +346,252 @@ def import_secret_key(
     expect_rv(rv, CKR_OK)
 
     return handle.value
+
+
+def import_rsa_private_key(
+    raw: Any,
+    session: int,
+    *,
+    n: bytes,
+    e: bytes,
+    d: bytes,
+    p: bytes,
+    q: bytes,
+    dmp1: bytes,
+    dmq1: bytes,
+    iqmp: bytes,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import RSA private key from CRT components."""
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY,
+        CKA_KEY_TYPE: CKK_RSA,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_MODULUS: n,
+        CKA_PUBLIC_EXPONENT: e,
+        CKA_PRIVATE_EXPONENT: d,
+        CKA_PRIME_1: p,
+        CKA_PRIME_2: q,
+        CKA_EXPONENT_1: dmp1,
+        CKA_EXPONENT_2: dmq1,
+        CKA_COEFFICIENT: iqmp,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+
+def import_rsa_public_key(
+    raw: Any,
+    session: int,
+    *,
+    n: bytes,
+    e: bytes,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import RSA public key from modulus + exponent."""
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: CKK_RSA,
+        CKA_TOKEN: False,
+        CKA_MODULUS: n,
+        CKA_PUBLIC_EXPONENT: e,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+
+def import_ec_private_key(
+    raw: Any,
+    session: int,
+    *,
+    ec_params: bytes,
+    value: bytes,
+    key_type: int = int(CKK_EC),
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import EC/Edwards/Montgomery private key from scalar.
+
+    ``ec_params``: DER-encoded curve OID.
+    ``value``: raw big-endian private scalar (or seed for EdDSA).
+    ``key_type``: CKK_EC (default), CKK_EC_EDWARDS, or CKK_EC_MONTGOMERY.
+    """
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_EC_PARAMS: ec_params,
+        CKA_VALUE: value,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+
+def import_ec_public_key(
+    raw: Any,
+    session: int,
+    *,
+    ec_params: bytes,
+    ec_point: bytes,
+    key_type: int = int(CKK_EC),
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import EC/Edwards/Montgomery public key from point.
+
+    ``ec_params``: DER-encoded curve OID.
+    ``ec_point``: DER-wrapped public point (OCTET STRING wrapping).
+    ``key_type``: CKK_EC (default), CKK_EC_EDWARDS, or CKK_EC_MONTGOMERY.
+    """
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_EC_PARAMS: ec_params,
+        CKA_EC_POINT: ec_point,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+
+def import_pqc_private_key(
+    raw: Any,
+    session: int,
+    *,
+    key_type: int,
+    value: bytes,
+    parameter_set: int,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import PQC private key (ML-DSA, ML-KEM, SLH-DSA).
+
+    ``key_type``: CKK_ML_DSA, CKK_ML_KEM, or CKK_SLH_DSA.
+    ``value``: raw private key bytes.
+    ``parameter_set``: CKP_* parameter set constant.
+    """
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_VALUE: value,
+        CKA_PARAMETER_SET: parameter_set,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+
+def import_pqc_public_key(
+    raw: Any,
+    session: int,
+    *,
+    key_type: int,
+    value: bytes,
+    parameter_set: int,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import PQC public key (ML-DSA, SLH-DSA)."""
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_VALUE: value,
+        CKA_PARAMETER_SET: parameter_set,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+
+def import_dsa_public_key(
+    raw: Any,
+    session: int,
+    *,
+    prime: bytes,
+    subprime: bytes,
+    base_g: bytes,
+    value: bytes,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import DSA public key from domain parameters + public value.
+
+    ``prime``: p. ``subprime``: q. ``base_g``: g. ``value``: y.
+    """
+    base_attrs: dict[int, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: CKK_DSA,
+        CKA_TOKEN: False,
+        CKA_PRIME: prime,
+        CKA_SUBPRIME: subprime,
+        CKA_BASE: base_g,
+        CKA_VALUE: value,
+    }
+    if attrs:
+        base_attrs.update(attrs)
+    return create_object(raw, session, base_attrs)
+
+
+def import_gost_private_key(
+    raw: Any,
+    session: int,
+    *,
+    gostr3410_params: bytes,
+    value: bytes,
+    gostr3411_params: bytes | None = None,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import GOST R 34.10-2012 private key.
+
+    ``gostr3410_params``: DER-encoded OID for the curve parameters.
+    ``value``: raw big-endian private key scalar.
+    ``gostr3411_params``: optional DER-encoded hash parameter OID.
+    """
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY,
+        CKA_KEY_TYPE: CKK_GOSTR3410,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_GOSTR3410_PARAMS: gostr3410_params,
+        CKA_VALUE: value,
+    }
+    if gostr3411_params is not None:
+        base[CKA_GOSTR3411_PARAMS] = gostr3411_params
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+
+def import_gost_public_key(
+    raw: Any,
+    session: int,
+    *,
+    gostr3410_params: bytes,
+    value: bytes,
+    gostr3411_params: bytes | None = None,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import GOST R 34.10-2012 public key."""
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: CKK_GOSTR3410,
+        CKA_TOKEN: False,
+        CKA_GOSTR3410_PARAMS: gostr3410_params,
+        CKA_VALUE: value,
+    }
+    if gostr3411_params is not None:
+        base[CKA_GOSTR3411_PARAMS] = gostr3411_params
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
 
 
 def create_object(
