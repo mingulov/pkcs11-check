@@ -117,6 +117,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
+        vector_file="aes_cbc_pad.json",
         notes="AES-CBC with PKCS#7 padding: any-length plaintext, requires IV param",
     )
 
@@ -215,6 +216,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
+        vector_file="aes_ctr.json",
         notes="AES-CTR: counter mode, requires CK_AES_CTR_PARAMS (counter bits + IV)",
     )
 

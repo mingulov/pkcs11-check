@@ -145,6 +145,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="hmac_sha384.json",
         notes="HMAC-SHA-384",
     )
 
@@ -154,6 +155,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="hmac_sha512.json",
         notes="HMAC-SHA-512",
     )
 
