@@ -75,7 +75,8 @@ def mech_gcm(
         params.pAAD = None
         params.ulAADLen = aad_len
     params.ulTagBits = tag_bits
-    return _mech_struct(mechanism_type, params, "mech_gcm", ka)
+    return _mech_struct(mechanism_type, params, "mech_gcm", ka,
+                        sub_mechanisms={"tagBits": tag_bits})
 
 
 def mech_ccm(
@@ -97,7 +98,8 @@ def mech_ccm(
         params.pAAD = None
         params.ulAADLen = 0
     params.ulMACLen = mac_len
-    return _mech_struct(mechanism_type, params, "mech_ccm", ka)
+    return _mech_struct(mechanism_type, params, "mech_ccm", ka,
+                        sub_mechanisms={"macLen": mac_len, "nonceLen": len(nonce)})
 
 
 def mech_pss(
@@ -206,7 +208,8 @@ def mech_ctr(mechanism_type: CKM, bits: int = 128) -> PackedMechanism:
     params.ulCounterBits = bits
     for i in range(16):
         params.cb[i] = 0
-    return _mech_struct(mechanism_type, params, "mech_ctr")
+    return _mech_struct(mechanism_type, params, "mech_ctr",
+                        sub_mechanisms={"counterBits": bits})
 
 
 def mech_chacha20(
@@ -248,7 +251,8 @@ def mech_eddsa(
     params = CK_EDDSA_PARAMS()
     params.phFlag = CK_BBOOL(1 if context_data is not None else 0)
     params.pContextData, params.ulContextDataLen = _pack_bytes(context_data, ka)
-    return _mech_struct(mechanism_type, params, "mech_eddsa", ka)
+    return _mech_struct(mechanism_type, params, "mech_eddsa", ka,
+                        sub_mechanisms={"phFlag": int(params.phFlag)})
 
 
 def mech_pbkdf2(
