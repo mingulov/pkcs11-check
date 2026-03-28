@@ -30,6 +30,13 @@ from pkcs11_check.raw.types_std import (
     CKF_WRAP,
     CKK_AES,
     CKK_AES_XTS,
+    CKK_ARIA,
+    CKK_CAMELLIA,
+    CKK_CHACHA20,
+    CKK_DES,
+    CKK_DES3,
+    CKK_DH,
+    CKK_DSA,
     CKK_EC,
     CKK_EC_EDWARDS,
     CKK_EC_MONTGOMERY,
@@ -38,7 +45,10 @@ from pkcs11_check.raw.types_std import (
     CKK_HSS,
     CKK_ML_DSA,
     CKK_ML_KEM,
+    CKK_POLY1305,
     CKK_RSA,
+    CKK_SALSA20,
+    CKK_SEED,
     CKK_SHA3_224_HMAC,
     CKK_SHA3_256_HMAC,
     CKK_SHA3_384_HMAC,
@@ -52,6 +62,7 @@ from pkcs11_check.raw.types_std import (
     CKK_SHA512_T_HMAC,
     CKK_SHA_1_HMAC,
     CKK_SLH_DSA,
+    CKK_X9_42_DH,
     CKK_XMSS,
     CKK_XMSSMT,
     CKM_AES_CBC,
@@ -82,6 +93,14 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_XCBC_MAC_96,
     CKM_AES_XTS,
     CKM_AES_XTS_KEY_GEN,
+    CKM_ARIA_CBC,
+    CKM_ARIA_CBC_ENCRYPT_DATA,
+    CKM_ARIA_CBC_PAD,
+    CKM_ARIA_ECB,
+    CKM_ARIA_ECB_ENCRYPT_DATA,
+    CKM_ARIA_KEY_GEN,
+    CKM_ARIA_MAC,
+    CKM_ARIA_MAC_GENERAL,
     CKM_BLAKE2B_160,
     CKM_BLAKE2B_160_HMAC,
     CKM_BLAKE2B_160_HMAC_GENERAL,
@@ -102,9 +121,57 @@ from pkcs11_check.raw.types_std import (
     CKM_BLAKE2B_512_HMAC_GENERAL,
     CKM_BLAKE2B_512_KEY_DERIVE,
     CKM_BLAKE2B_512_KEY_GEN,
+    CKM_CAMELLIA_CBC,
+    CKM_CAMELLIA_CBC_ENCRYPT_DATA,
+    CKM_CAMELLIA_CBC_PAD,
+    CKM_CAMELLIA_ECB,
+    CKM_CAMELLIA_ECB_ENCRYPT_DATA,
+    CKM_CAMELLIA_KEY_GEN,
+    CKM_CAMELLIA_MAC,
+    CKM_CAMELLIA_MAC_GENERAL,
+    CKM_CHACHA20,
+    CKM_CHACHA20_KEY_GEN,
+    CKM_CHACHA20_POLY1305,
     CKM_CONCATENATE_BASE_AND_DATA,
     CKM_CONCATENATE_BASE_AND_KEY,
     CKM_CONCATENATE_DATA_AND_BASE,
+    CKM_DES3_CBC,
+    CKM_DES3_CBC_ENCRYPT_DATA,
+    CKM_DES3_CBC_PAD,
+    CKM_DES3_CMAC,
+    CKM_DES3_CMAC_GENERAL,
+    CKM_DES3_ECB,
+    CKM_DES3_ECB_ENCRYPT_DATA,
+    CKM_DES3_KEY_GEN,
+    CKM_DES3_MAC,
+    CKM_DES3_MAC_GENERAL,
+    CKM_DES_CBC,
+    CKM_DES_CBC_ENCRYPT_DATA,
+    CKM_DES_CBC_PAD,
+    CKM_DES_CFB8,
+    CKM_DES_CFB64,
+    CKM_DES_ECB,
+    CKM_DES_ECB_ENCRYPT_DATA,
+    CKM_DES_KEY_GEN,
+    CKM_DES_MAC,
+    CKM_DES_MAC_GENERAL,
+    CKM_DES_OFB8,
+    CKM_DES_OFB64,
+    CKM_DH_PKCS_DERIVE,
+    CKM_DH_PKCS_KEY_PAIR_GEN,
+    CKM_DH_PKCS_PARAMETER_GEN,
+    CKM_DSA,
+    CKM_DSA_KEY_PAIR_GEN,
+    CKM_DSA_PARAMETER_GEN,
+    CKM_DSA_SHA1,
+    CKM_DSA_SHA3_224,
+    CKM_DSA_SHA3_256,
+    CKM_DSA_SHA3_384,
+    CKM_DSA_SHA3_512,
+    CKM_DSA_SHA224,
+    CKM_DSA_SHA256,
+    CKM_DSA_SHA384,
+    CKM_DSA_SHA512,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKM_EC_KEY_PAIR_GEN,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
@@ -164,6 +231,8 @@ from pkcs11_check.raw.types_std import (
     CKM_ML_KEM_KEY_PAIR_GEN,
     CKM_NULL,
     CKM_PKCS5_PBKD2,
+    CKM_POLY1305,
+    CKM_POLY1305_KEY_GEN,
     CKM_PUB_KEY_FROM_PRIV_KEY,
     CKM_RIPEMD128,
     CKM_RIPEMD128_HMAC,
@@ -181,6 +250,17 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_X9_31,
     CKM_RSA_X9_31_KEY_PAIR_GEN,
     CKM_RSA_X_509,
+    CKM_SALSA20,
+    CKM_SALSA20_KEY_GEN,
+    CKM_SALSA20_POLY1305,
+    CKM_SEED_CBC,
+    CKM_SEED_CBC_ENCRYPT_DATA,
+    CKM_SEED_CBC_PAD,
+    CKM_SEED_ECB,
+    CKM_SEED_ECB_ENCRYPT_DATA,
+    CKM_SEED_KEY_GEN,
+    CKM_SEED_MAC,
+    CKM_SEED_MAC_GENERAL,
     CKM_SHA1_KEY_DERIVATION,
     CKM_SHA1_RSA_PKCS,
     CKM_SHA1_RSA_PKCS_PSS,
@@ -291,6 +371,11 @@ from pkcs11_check.raw.types_std import (
     CKM_X2RATCHET_RESPOND,
     CKM_X3DH_INITIALIZE,
     CKM_X3DH_RESPOND,
+    CKM_X9_42_DH_DERIVE,
+    CKM_X9_42_DH_HYBRID_DERIVE,
+    CKM_X9_42_DH_KEY_PAIR_GEN,
+    CKM_X9_42_DH_PARAMETER_GEN,
+    CKM_X9_42_MQV_DERIVE,
     CKM_XEDDSA,
     CKM_XMSS,
     CKM_XMSS_KEY_PAIR_GEN,
@@ -2834,6 +2919,826 @@ MECHANISM_REGISTRY[CKM_NULL] = MechConfig(
     multi_part_supported=False,
     expected_flags=_SIG_VER,
     notes="CKM_NULL: pass-through mechanism, data signed/verified as-is with no hashing",
+)
+
+
+# ---------------------------------------------------------------------------
+# DSA mechanisms — 12 entries
+# ---------------------------------------------------------------------------
+
+_DSA_SIZES = (2048, 3072)
+
+MECHANISM_REGISTRY[CKM_DSA_KEY_PAIR_GEN] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=CKF_GENERATE_KEY_PAIR,
+    notes="DSA key pair generation",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_PARAMETER_GEN] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_param_gen=True,
+    expected_flags=CKF_GENERATE,
+    notes="DSA domain parameter generation (p, q, g)",
+)
+
+MECHANISM_REGISTRY[CKM_DSA] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    multi_part_supported=False,
+    expected_flags=_SIG_VER,
+    notes="DSA sign/verify (raw, single-part): requires pre-hashed input",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_SHA1] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="DSA with SHA-1 hash-and-sign",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_SHA224] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="DSA with SHA-224 hash-and-sign",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_SHA256] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="DSA with SHA-256 hash-and-sign",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_SHA384] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="DSA with SHA-384 hash-and-sign",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_SHA512] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="DSA with SHA-512 hash-and-sign",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_SHA3_224] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="DSA with SHA3-224 hash-and-sign",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_SHA3_256] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="DSA with SHA3-256 hash-and-sign",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_SHA3_384] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="DSA with SHA3-384 hash-and-sign",
+)
+
+MECHANISM_REGISTRY[CKM_DSA_SHA3_512] = MechConfig(
+    key_type=CKK_DSA,
+    keygen_mech=CKM_DSA_KEY_PAIR_GEN,
+    key_sizes=_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="DSA with SHA3-512 hash-and-sign",
+)
+
+
+# ---------------------------------------------------------------------------
+# DH mechanisms — 8 entries
+# ---------------------------------------------------------------------------
+
+_DH_SIZES = (2048, 3072)
+
+MECHANISM_REGISTRY[CKM_DH_PKCS_KEY_PAIR_GEN] = MechConfig(
+    key_type=CKK_DH,
+    keygen_mech=CKM_DH_PKCS_KEY_PAIR_GEN,
+    key_sizes=_DH_SIZES,
+    is_keypair=True,
+    expected_flags=CKF_GENERATE_KEY_PAIR,
+    notes="Diffie-Hellman PKCS key pair generation",
+)
+
+MECHANISM_REGISTRY[CKM_DH_PKCS_PARAMETER_GEN] = MechConfig(
+    key_type=CKK_DH,
+    keygen_mech=CKM_DH_PKCS_KEY_PAIR_GEN,
+    key_sizes=_DH_SIZES,
+    is_param_gen=True,
+    expected_flags=CKF_GENERATE,
+    notes="DH PKCS domain parameter generation (p, g)",
+)
+
+MECHANISM_REGISTRY[CKM_DH_PKCS_DERIVE] = MechConfig(
+    key_type=CKK_DH,
+    keygen_mech=CKM_DH_PKCS_KEY_PAIR_GEN,
+    key_sizes=_DH_SIZES,
+    is_keypair=True,
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="DH PKCS key agreement: derive shared secret, requires peer public key param",
+)
+
+MECHANISM_REGISTRY[CKM_X9_42_DH_KEY_PAIR_GEN] = MechConfig(
+    key_type=CKK_X9_42_DH,
+    keygen_mech=CKM_X9_42_DH_KEY_PAIR_GEN,
+    key_sizes=_DH_SIZES,
+    is_keypair=True,
+    expected_flags=CKF_GENERATE_KEY_PAIR,
+    notes="X9.42 DH key pair generation (CKK_X9_42_DH)",
+)
+
+MECHANISM_REGISTRY[CKM_X9_42_DH_PARAMETER_GEN] = MechConfig(
+    key_type=CKK_X9_42_DH,
+    keygen_mech=CKM_X9_42_DH_KEY_PAIR_GEN,
+    key_sizes=_DH_SIZES,
+    is_param_gen=True,
+    expected_flags=CKF_GENERATE,
+    notes="X9.42 DH domain parameter generation",
+)
+
+MECHANISM_REGISTRY[CKM_X9_42_DH_DERIVE] = MechConfig(
+    key_type=CKK_X9_42_DH,
+    keygen_mech=CKM_X9_42_DH_KEY_PAIR_GEN,
+    key_sizes=_DH_SIZES,
+    is_keypair=True,
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="X9.42 DH key agreement: single-step, requires CK_X9_42_DH1_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_X9_42_DH_HYBRID_DERIVE] = MechConfig(
+    key_type=CKK_X9_42_DH,
+    keygen_mech=CKM_X9_42_DH_KEY_PAIR_GEN,
+    key_sizes=_DH_SIZES,
+    is_keypair=True,
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="X9.42 DH hybrid key agreement: requires CK_X9_42_DH2_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_X9_42_MQV_DERIVE] = MechConfig(
+    key_type=CKK_X9_42_DH,
+    keygen_mech=CKM_X9_42_DH_KEY_PAIR_GEN,
+    key_sizes=_DH_SIZES,
+    is_keypair=True,
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="X9.42 MQV key agreement: requires CK_X9_42_MQV_DERIVE_PARAMS",
+)
+
+
+# ---------------------------------------------------------------------------
+# DES mechanisms — 12 entries
+# ---------------------------------------------------------------------------
+
+_DES_ENC = CKF_ENCRYPT | CKF_DECRYPT
+_DES_SIG = CKF_SIGN | CKF_VERIFY
+
+MECHANISM_REGISTRY[CKM_DES_KEY_GEN] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    expected_flags=CKF_GENERATE,
+    notes="DES single key generation (56-bit effective, 64-bit with parity)",
+)
+
+MECHANISM_REGISTRY[CKM_DES_ECB] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    block_size=8,
+    input_constraint="block_aligned",
+    deterministic=True,
+    expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="DES-ECB: 8-byte block, no padding, deterministic",
+)
+
+MECHANISM_REGISTRY[CKM_DES_CBC] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    block_size=8,
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_des_iv",
+    deterministic=False,
+    expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="DES-CBC: 8-byte block, requires 8-byte IV param",
+)
+
+MECHANISM_REGISTRY[CKM_DES_CBC_PAD] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    block_size=8,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_des_iv",
+    deterministic=False,
+    expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
+)
+
+MECHANISM_REGISTRY[CKM_DES_MAC] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    expected_flags=_DES_SIG,
+    notes="DES-MAC: CBC-MAC with fixed output length",
+)
+
+MECHANISM_REGISTRY[CKM_DES_MAC_GENERAL] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    param_required=True,
+    param_packer="pack_mac_general",
+    expected_flags=_DES_SIG,
+    notes="DES-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
+)
+
+MECHANISM_REGISTRY[CKM_DES_OFB64] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    block_size=None,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_des_iv",
+    deterministic=False,
+    expected_flags=_DES_ENC,
+    notes="DES-OFB64: 64-bit output feedback stream mode, requires 8-byte IV",
+)
+
+MECHANISM_REGISTRY[CKM_DES_OFB8] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    block_size=None,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_des_iv",
+    deterministic=False,
+    expected_flags=_DES_ENC,
+    notes="DES-OFB8: 8-bit output feedback stream mode, requires 8-byte IV",
+)
+
+MECHANISM_REGISTRY[CKM_DES_CFB64] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    block_size=None,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_des_iv",
+    deterministic=False,
+    expected_flags=_DES_ENC,
+    notes="DES-CFB64: 64-bit cipher feedback stream mode, requires 8-byte IV",
+)
+
+MECHANISM_REGISTRY[CKM_DES_CFB8] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    block_size=None,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_des_iv",
+    deterministic=False,
+    expected_flags=_DES_ENC,
+    notes="DES-CFB8: 8-bit cipher feedback stream mode, requires 8-byte IV",
+)
+
+MECHANISM_REGISTRY[CKM_DES_ECB_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    input_constraint="block_aligned",
+    expected_flags=CKF_DERIVE,
+    notes="DES-ECB key derivation: derive key by DES-ECB encrypting data",
+)
+
+MECHANISM_REGISTRY[CKM_DES_CBC_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_DES,
+    keygen_mech=CKM_DES_KEY_GEN,
+    key_sizes=(64,),
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_des_cbc_encrypt_data",
+    expected_flags=CKF_DERIVE,
+    notes="DES-CBC key derivation: derive key by DES-CBC encrypting data",
+)
+
+
+# ---------------------------------------------------------------------------
+# DES3 (Triple-DES) mechanisms — 10 entries
+# ---------------------------------------------------------------------------
+
+_DES3_SIZES = (128, 192)  # DES2 (2-key 3DES) and DES3 (3-key 3DES)
+
+MECHANISM_REGISTRY[CKM_DES3_KEY_GEN] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    expected_flags=CKF_GENERATE,
+    notes="Triple-DES key generation (CKK_DES3): 128-bit (2-key) or 192-bit (3-key)",
+)
+
+MECHANISM_REGISTRY[CKM_DES3_ECB] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    block_size=8,
+    input_constraint="block_aligned",
+    deterministic=True,
+    expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="3DES-ECB: 8-byte block, no padding, deterministic",
+)
+
+MECHANISM_REGISTRY[CKM_DES3_CBC] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    block_size=8,
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_des_iv",
+    deterministic=False,
+    expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="3DES-CBC: 8-byte block, requires 8-byte IV param",
+)
+
+MECHANISM_REGISTRY[CKM_DES3_CBC_PAD] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    block_size=8,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_des_iv",
+    deterministic=False,
+    expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="3DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
+)
+
+MECHANISM_REGISTRY[CKM_DES3_MAC] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    expected_flags=_DES_SIG,
+    notes="3DES-MAC: CBC-MAC with fixed output length",
+)
+
+MECHANISM_REGISTRY[CKM_DES3_MAC_GENERAL] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    param_required=True,
+    param_packer="pack_mac_general",
+    expected_flags=_DES_SIG,
+    notes="3DES-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
+)
+
+MECHANISM_REGISTRY[CKM_DES3_CMAC] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    expected_flags=_DES_SIG,
+    notes="3DES-CMAC: NIST SP 800-38B CMAC, fixed 64-bit output",
+)
+
+MECHANISM_REGISTRY[CKM_DES3_CMAC_GENERAL] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    param_required=True,
+    param_packer="pack_mac_general",
+    expected_flags=_DES_SIG,
+    notes="3DES-CMAC-GENERAL: CMAC with variable output length (CK_MAC_GENERAL_PARAMS)",
+)
+
+MECHANISM_REGISTRY[CKM_DES3_ECB_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    input_constraint="block_aligned",
+    expected_flags=CKF_DERIVE,
+    notes="3DES-ECB key derivation: derive key by 3DES-ECB encrypting data",
+)
+
+MECHANISM_REGISTRY[CKM_DES3_CBC_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_DES3,
+    keygen_mech=CKM_DES3_KEY_GEN,
+    key_sizes=_DES3_SIZES,
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_des_cbc_encrypt_data",
+    expected_flags=CKF_DERIVE,
+    notes="3DES-CBC key derivation: derive key by 3DES-CBC encrypting data",
+)
+
+
+# ---------------------------------------------------------------------------
+# ChaCha20 / Salsa20 / Poly1305 mechanisms — 7 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_CHACHA20_KEY_GEN] = MechConfig(
+    key_type=CKK_CHACHA20,
+    keygen_mech=CKM_CHACHA20_KEY_GEN,
+    key_sizes=(256,),
+    expected_flags=CKF_GENERATE,
+    notes="ChaCha20 key generation (256-bit key)",
+)
+
+MECHANISM_REGISTRY[CKM_CHACHA20] = MechConfig(
+    key_type=CKK_CHACHA20,
+    keygen_mech=CKM_CHACHA20_KEY_GEN,
+    key_sizes=(256,),
+    block_size=None,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_chacha20_params",
+    deterministic=False,
+    expected_flags=_ENC_DEC,
+    notes="ChaCha20 stream cipher: requires CK_CHACHA20_PARAMS (nonce + counter)",
+)
+
+MECHANISM_REGISTRY[CKM_CHACHA20_POLY1305] = MechConfig(
+    key_type=CKK_CHACHA20,
+    keygen_mech=CKM_CHACHA20_KEY_GEN,
+    key_sizes=(256,),
+    block_size=None,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_chacha20_poly1305_params",
+    multi_part_supported=False,
+    auth_tag_included=True,
+    deterministic=False,
+    expected_flags=_ENC_DEC,
+    notes="ChaCha20-Poly1305 AEAD: auth tag appended, requires CK_CHACHA20_POLY1305_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_SALSA20_KEY_GEN] = MechConfig(
+    key_type=CKK_SALSA20,
+    keygen_mech=CKM_SALSA20_KEY_GEN,
+    key_sizes=(256,),
+    expected_flags=CKF_GENERATE,
+    notes="Salsa20 key generation (256-bit key)",
+)
+
+MECHANISM_REGISTRY[CKM_SALSA20] = MechConfig(
+    key_type=CKK_SALSA20,
+    keygen_mech=CKM_SALSA20_KEY_GEN,
+    key_sizes=(256,),
+    block_size=None,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_salsa20_params",
+    deterministic=False,
+    expected_flags=_ENC_DEC,
+    notes="Salsa20 stream cipher: requires CK_SALSA20_PARAMS (nonce + counter)",
+)
+
+MECHANISM_REGISTRY[CKM_SALSA20_POLY1305] = MechConfig(
+    key_type=CKK_SALSA20,
+    keygen_mech=CKM_SALSA20_KEY_GEN,
+    key_sizes=(256,),
+    block_size=None,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_salsa20_poly1305_params",
+    multi_part_supported=False,
+    auth_tag_included=True,
+    deterministic=False,
+    expected_flags=_ENC_DEC,
+    notes="Salsa20-Poly1305 AEAD: auth tag appended, requires CK_SALSA20_POLY1305_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_POLY1305_KEY_GEN] = MechConfig(
+    key_type=CKK_POLY1305,
+    keygen_mech=CKM_POLY1305_KEY_GEN,
+    key_sizes=(256,),
+    expected_flags=CKF_GENERATE,
+    notes="Poly1305 authenticator key generation (256-bit key, CKK_POLY1305)",
+)
+
+MECHANISM_REGISTRY[CKM_POLY1305] = MechConfig(
+    key_type=CKK_POLY1305,
+    keygen_mech=CKM_POLY1305_KEY_GEN,
+    key_sizes=(256,),
+    param_required=True,
+    param_packer="pack_poly1305_params",
+    expected_flags=_SIG_VER,
+    notes="Poly1305 one-time MAC: sign/verify, requires nonce param",
+)
+
+
+# ---------------------------------------------------------------------------
+# Camellia mechanisms — 8 entries
+# ---------------------------------------------------------------------------
+
+_CAMELLIA_SIZES = (128, 192, 256)
+_CAMELLIA_ENC = CKF_ENCRYPT | CKF_DECRYPT
+_CAMELLIA_SIG = CKF_SIGN | CKF_VERIFY
+
+MECHANISM_REGISTRY[CKM_CAMELLIA_KEY_GEN] = MechConfig(
+    key_type=CKK_CAMELLIA,
+    keygen_mech=CKM_CAMELLIA_KEY_GEN,
+    key_sizes=_CAMELLIA_SIZES,
+    expected_flags=CKF_GENERATE,
+    notes="Camellia key generation (128/192/256-bit)",
+)
+
+MECHANISM_REGISTRY[CKM_CAMELLIA_ECB] = MechConfig(
+    key_type=CKK_CAMELLIA,
+    keygen_mech=CKM_CAMELLIA_KEY_GEN,
+    key_sizes=_CAMELLIA_SIZES,
+    block_size=16,
+    input_constraint="block_aligned",
+    deterministic=True,
+    expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="Camellia-ECB: 16-byte block, no padding, deterministic",
+)
+
+MECHANISM_REGISTRY[CKM_CAMELLIA_CBC] = MechConfig(
+    key_type=CKK_CAMELLIA,
+    keygen_mech=CKM_CAMELLIA_KEY_GEN,
+    key_sizes=_CAMELLIA_SIZES,
+    block_size=16,
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_aes_iv",
+    deterministic=False,
+    expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="Camellia-CBC: 16-byte block, requires 16-byte IV param",
+)
+
+MECHANISM_REGISTRY[CKM_CAMELLIA_CBC_PAD] = MechConfig(
+    key_type=CKK_CAMELLIA,
+    keygen_mech=CKM_CAMELLIA_KEY_GEN,
+    key_sizes=_CAMELLIA_SIZES,
+    block_size=16,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_aes_iv",
+    deterministic=False,
+    expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="Camellia-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
+)
+
+MECHANISM_REGISTRY[CKM_CAMELLIA_MAC] = MechConfig(
+    key_type=CKK_CAMELLIA,
+    keygen_mech=CKM_CAMELLIA_KEY_GEN,
+    key_sizes=_CAMELLIA_SIZES,
+    expected_flags=_CAMELLIA_SIG,
+    notes="Camellia-MAC: CBC-MAC with fixed output length",
+)
+
+MECHANISM_REGISTRY[CKM_CAMELLIA_MAC_GENERAL] = MechConfig(
+    key_type=CKK_CAMELLIA,
+    keygen_mech=CKM_CAMELLIA_KEY_GEN,
+    key_sizes=_CAMELLIA_SIZES,
+    param_required=True,
+    param_packer="pack_mac_general",
+    expected_flags=_CAMELLIA_SIG,
+    notes="Camellia-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
+)
+
+MECHANISM_REGISTRY[CKM_CAMELLIA_ECB_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_CAMELLIA,
+    keygen_mech=CKM_CAMELLIA_KEY_GEN,
+    key_sizes=_CAMELLIA_SIZES,
+    input_constraint="block_aligned",
+    expected_flags=CKF_DERIVE,
+    notes="Camellia-ECB key derivation: derive key by Camellia-ECB encrypting data",
+)
+
+MECHANISM_REGISTRY[CKM_CAMELLIA_CBC_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_CAMELLIA,
+    keygen_mech=CKM_CAMELLIA_KEY_GEN,
+    key_sizes=_CAMELLIA_SIZES,
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_aes_cbc_encrypt_data",
+    expected_flags=CKF_DERIVE,
+    notes="Camellia-CBC key derivation: derive key by Camellia-CBC encrypting data",
+)
+
+
+# ---------------------------------------------------------------------------
+# ARIA mechanisms — 8 entries
+# ---------------------------------------------------------------------------
+
+_ARIA_SIZES = (128, 192, 256)
+_ARIA_ENC = CKF_ENCRYPT | CKF_DECRYPT
+_ARIA_SIG = CKF_SIGN | CKF_VERIFY
+
+MECHANISM_REGISTRY[CKM_ARIA_KEY_GEN] = MechConfig(
+    key_type=CKK_ARIA,
+    keygen_mech=CKM_ARIA_KEY_GEN,
+    key_sizes=_ARIA_SIZES,
+    expected_flags=CKF_GENERATE,
+    notes="ARIA key generation (128/192/256-bit, Korean standard KS X 1213)",
+)
+
+MECHANISM_REGISTRY[CKM_ARIA_ECB] = MechConfig(
+    key_type=CKK_ARIA,
+    keygen_mech=CKM_ARIA_KEY_GEN,
+    key_sizes=_ARIA_SIZES,
+    block_size=16,
+    input_constraint="block_aligned",
+    deterministic=True,
+    expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="ARIA-ECB: 16-byte block, no padding, deterministic",
+)
+
+MECHANISM_REGISTRY[CKM_ARIA_CBC] = MechConfig(
+    key_type=CKK_ARIA,
+    keygen_mech=CKM_ARIA_KEY_GEN,
+    key_sizes=_ARIA_SIZES,
+    block_size=16,
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_aes_iv",
+    deterministic=False,
+    expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="ARIA-CBC: 16-byte block, requires 16-byte IV param",
+)
+
+MECHANISM_REGISTRY[CKM_ARIA_CBC_PAD] = MechConfig(
+    key_type=CKK_ARIA,
+    keygen_mech=CKM_ARIA_KEY_GEN,
+    key_sizes=_ARIA_SIZES,
+    block_size=16,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_aes_iv",
+    deterministic=False,
+    expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="ARIA-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
+)
+
+MECHANISM_REGISTRY[CKM_ARIA_MAC] = MechConfig(
+    key_type=CKK_ARIA,
+    keygen_mech=CKM_ARIA_KEY_GEN,
+    key_sizes=_ARIA_SIZES,
+    expected_flags=_ARIA_SIG,
+    notes="ARIA-MAC: CBC-MAC with fixed output length",
+)
+
+MECHANISM_REGISTRY[CKM_ARIA_MAC_GENERAL] = MechConfig(
+    key_type=CKK_ARIA,
+    keygen_mech=CKM_ARIA_KEY_GEN,
+    key_sizes=_ARIA_SIZES,
+    param_required=True,
+    param_packer="pack_mac_general",
+    expected_flags=_ARIA_SIG,
+    notes="ARIA-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
+)
+
+MECHANISM_REGISTRY[CKM_ARIA_ECB_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_ARIA,
+    keygen_mech=CKM_ARIA_KEY_GEN,
+    key_sizes=_ARIA_SIZES,
+    input_constraint="block_aligned",
+    expected_flags=CKF_DERIVE,
+    notes="ARIA-ECB key derivation: derive key by ARIA-ECB encrypting data",
+)
+
+MECHANISM_REGISTRY[CKM_ARIA_CBC_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_ARIA,
+    keygen_mech=CKM_ARIA_KEY_GEN,
+    key_sizes=_ARIA_SIZES,
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_aes_cbc_encrypt_data",
+    expected_flags=CKF_DERIVE,
+    notes="ARIA-CBC key derivation: derive key by ARIA-CBC encrypting data",
+)
+
+
+# ---------------------------------------------------------------------------
+# SEED mechanisms — 8 entries
+# ---------------------------------------------------------------------------
+
+_SEED_ENC = CKF_ENCRYPT | CKF_DECRYPT
+_SEED_SIG = CKF_SIGN | CKF_VERIFY
+
+MECHANISM_REGISTRY[CKM_SEED_KEY_GEN] = MechConfig(
+    key_type=CKK_SEED,
+    keygen_mech=CKM_SEED_KEY_GEN,
+    key_sizes=(128,),
+    expected_flags=CKF_GENERATE,
+    notes="SEED key generation (128-bit, Korean standard TTAS.KO-12.0004)",
+)
+
+MECHANISM_REGISTRY[CKM_SEED_ECB] = MechConfig(
+    key_type=CKK_SEED,
+    keygen_mech=CKM_SEED_KEY_GEN,
+    key_sizes=(128,),
+    block_size=16,
+    input_constraint="block_aligned",
+    deterministic=True,
+    expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="SEED-ECB: 16-byte block, no padding, deterministic",
+)
+
+MECHANISM_REGISTRY[CKM_SEED_CBC] = MechConfig(
+    key_type=CKK_SEED,
+    keygen_mech=CKM_SEED_KEY_GEN,
+    key_sizes=(128,),
+    block_size=16,
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_aes_iv",
+    deterministic=False,
+    expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="SEED-CBC: 16-byte block, requires 16-byte IV param",
+)
+
+MECHANISM_REGISTRY[CKM_SEED_CBC_PAD] = MechConfig(
+    key_type=CKK_SEED,
+    keygen_mech=CKM_SEED_KEY_GEN,
+    key_sizes=(128,),
+    block_size=16,
+    input_constraint="any",
+    param_required=True,
+    param_packer="pack_aes_iv",
+    deterministic=False,
+    expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
+    notes="SEED-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
+)
+
+MECHANISM_REGISTRY[CKM_SEED_MAC] = MechConfig(
+    key_type=CKK_SEED,
+    keygen_mech=CKM_SEED_KEY_GEN,
+    key_sizes=(128,),
+    expected_flags=_SEED_SIG,
+    notes="SEED-MAC: CBC-MAC with fixed output length",
+)
+
+MECHANISM_REGISTRY[CKM_SEED_MAC_GENERAL] = MechConfig(
+    key_type=CKK_SEED,
+    keygen_mech=CKM_SEED_KEY_GEN,
+    key_sizes=(128,),
+    param_required=True,
+    param_packer="pack_mac_general",
+    expected_flags=_SEED_SIG,
+    notes="SEED-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
+)
+
+MECHANISM_REGISTRY[CKM_SEED_ECB_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_SEED,
+    keygen_mech=CKM_SEED_KEY_GEN,
+    key_sizes=(128,),
+    input_constraint="block_aligned",
+    expected_flags=CKF_DERIVE,
+    notes="SEED-ECB key derivation: derive key by SEED-ECB encrypting data",
+)
+
+MECHANISM_REGISTRY[CKM_SEED_CBC_ENCRYPT_DATA] = MechConfig(
+    key_type=CKK_SEED,
+    keygen_mech=CKM_SEED_KEY_GEN,
+    key_sizes=(128,),
+    input_constraint="block_aligned",
+    param_required=True,
+    param_packer="pack_aes_cbc_encrypt_data",
+    expected_flags=CKF_DERIVE,
+    notes="SEED-CBC key derivation: derive key by SEED-CBC encrypting data",
 )
 
 
