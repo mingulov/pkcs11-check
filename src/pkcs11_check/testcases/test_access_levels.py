@@ -54,7 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKM_AES_CBC_PAD,
-    CKM_AES_ECB,
+    CKM_AES_KEY_WRAP,
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
     CKO_DATA,
@@ -762,7 +762,12 @@ class TestTrustedAttribute:
         )
 
         try:
-            mech = mech_simple(CKM_AES_ECB)
+            wrap_mech = CKM_AES_KEY_WRAP
+            if not rs.has_mechanism("AES_KEY_WRAP"):
+                wrap_mech = CKM_AES_CBC_PAD
+            if not rs.has_mechanism("AES_CBC_PAD"):
+                pytest.skip("No AES wrap mechanism available")
+            mech = mech_simple(wrap_mech)
             out_len = CK_ULONG(0)
             rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, None, byref(out_len))
             if rv == CKR_OK:
