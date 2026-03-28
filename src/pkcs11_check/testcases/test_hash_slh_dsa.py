@@ -43,7 +43,7 @@ from pkcs11_check.raw.types_std import (
     CKP_SLH_DSA_SHA2_128S,
 )
 
-pytestmark = [pytest.mark.pqc, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.pqc]
 
 _MESSAGE = b"HashSLH-DSA pre-hash signature test message 2026"
 

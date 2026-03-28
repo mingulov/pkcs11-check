@@ -31,7 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_87,
 )
 
-pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v32, pytest.mark.pqc]
+pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 

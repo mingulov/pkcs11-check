@@ -32,7 +32,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
-pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
 
 
 def _load(filename: str) -> list[dict[str, Any]]:

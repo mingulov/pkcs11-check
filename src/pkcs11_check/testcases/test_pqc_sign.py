@@ -41,7 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKP_SLH_DSA_SHA2_256F,
 )
 
-pytestmark = [pytest.mark.pqc, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.pqc]
 
 _PLAINTEXT = b"post-quantum signature test message 2026"
 

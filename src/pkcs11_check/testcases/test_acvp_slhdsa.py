@@ -47,7 +47,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
-pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.acvp, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.acvp]
 
 if not ACVP_AVAILABLE:
     pytest.skip(

@@ -61,7 +61,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 
-pytestmark = [pytest.mark.pqc, pytest.mark.requires_v32]
+pytestmark = [pytest.mark.pqc]
 
 _MESSAGE = b"stateful hash signature test message 2026"
 

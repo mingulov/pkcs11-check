@@ -37,7 +37,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.data import CCTV_DIR
 
-pytestmark = [pytest.mark.pqc, pytest.mark.requires_v32, pytest.mark.kat, pytest.mark.cctv]
+pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.cctv]
 
 _BENCHMARK_DIR = CCTV_DIR / "ML-DSA" / "benchmark"
 
