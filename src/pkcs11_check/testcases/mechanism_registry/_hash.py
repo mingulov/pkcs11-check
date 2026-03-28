@@ -35,7 +35,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         input_constraint="digest_only",
         expected_flags=CKF_DIGEST,
-        vector_file="sha1.json",
+        vector_file="sha.json",
         notes="SHA-1 digest",
     )
 
@@ -54,7 +54,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         input_constraint="digest_only",
         expected_flags=CKF_DIGEST,
-        vector_file="sha256.json",
+        vector_file="sha.json",
         notes="SHA-256 digest",
     )
 

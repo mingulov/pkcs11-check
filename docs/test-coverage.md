@@ -90,7 +90,7 @@ covers AES, RSA, EC, DES, SHA, HMAC, HKDF, PQC, and more.
 | test_mech_digest.py | Digest known values + KAT vectors | Yes |
 | test_mech_derive.py | Per-family derive (SHA, HKDF, ECDH, CONCAT, AES-ECB) | - |
 | test_mech_wrap.py | Wrap/unwrap round-trip, RSA-OAEP wrap | - |
-| test_mech_lifecycle.py | Key lifecycle, derive chain, re-derive | - |
+| test_mech_lifecycle.py | Wrap/unwrap, derive+use, export-reimport, batch keygen | - |
 | test_mech_multipart.py | Multi-part encrypt/digest/sign | - |
 | test_mech_state.py | Operation state save/restore | - |
 | test_mech_negative.py | Wrong key type, bad param rejection | - |
