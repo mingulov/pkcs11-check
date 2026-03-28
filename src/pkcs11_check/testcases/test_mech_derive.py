@@ -302,6 +302,210 @@ _DERIVED_GENERIC_ATTRS: dict[int, Any] = {
 }
 
 
+def _derive_hkdf(rs: RawSession, entry: MechEntry) -> None:
+    """HKDF_DERIVE: generate HKDF base key, derive AES-128 key via CK_HKDF_PARAMS."""
+    mech_id = entry.mech_id
+    if not rs.has_mechanism("HKDF_KEY_GEN"):
+        pytest.skip("HKDF_KEY_GEN not available — cannot generate HKDF base key")
+    base_key = _gen_hkdf_base_key(rs)
+    derived_key: int = 0
+    try:
+        salt = os.urandom(16)
+        hkdf_param = mech_hkdf(
+            CKM(mech_id),
+            hash_mech=int(CKM_SHA256),
+            extract=True,
+            expand=True,
+            salt_type=int(CKZ_SALT_SPECIFIED),
+            salt=salt,
+            info=b"pkcs11-check derive test",
+        )
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            base_key,
+            CKM(mech_id),
+            attrs=_DERIVED_AES_ATTRS,
+            mech_param=hkdf_param,
+        )
+        assert derived_key != 0, f"{entry.mech_name}: derive returned handle 0"
+    finally:
+        destroy_quietly(rs.raw, rs.sh, base_key)
+        if derived_key != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+
+
+def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
+    """ECDH1 (and cofactor): generate two P-256 keypairs, derive shared secret."""
+    mech_id = entry.mech_id
+    from pkcs11_check.raw.types_std import CKA_EC_POINT
+
+    priv_a, pub_a = 0, 0
+    priv_b, pub_b = 0, 0
+    derived_key: int = 0
+    try:
+        pub_a, priv_a = gen_ec_keypair(rs.raw, rs.sh, _P256_OID)
+        pub_b, priv_b = gen_ec_keypair(rs.raw, rs.sh, _P256_OID)
+        # Read peer (B's) public point
+        peer_attrs = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])
+        peer_point = peer_attrs.get(CKA_EC_POINT)
+        if not peer_point or not isinstance(peer_point, bytes):
+            pytest.skip(f"{entry.mech_name}: cannot read CKA_EC_POINT from peer key")
+        ecdh_param = mech_ecdh(
+            CKM(mech_id),
+            kdf=int(CKD_NULL),
+            public_data=peer_point,
+        )
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            priv_a,
+            CKM(mech_id),
+            attrs=_DERIVED_GENERIC_ATTRS,
+            mech_param=ecdh_param,
+        )
+        assert derived_key != 0, f"{entry.mech_name}: ECDH derive returned handle 0"
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub_a)
+        destroy_quietly(rs.raw, rs.sh, priv_a)
+        destroy_quietly(rs.raw, rs.sh, pub_b)
+        destroy_quietly(rs.raw, rs.sh, priv_b)
+        if derived_key != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+
+
+def _derive_aes_ecb(rs: RawSession, entry: MechEntry) -> None:
+    """AES-ECB-ENCRYPT-DATA: derive by encrypting a 16-byte block with AES base key."""
+    mech_id = entry.mech_id
+    base_key = gen_aes_key(
+        rs.raw,
+        rs.sh,
+        256,
+        attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+    )
+    derived_key: int = 0
+    try:
+        # CK_KEY_DERIVATION_STRING_DATA: 16 bytes (one AES block)
+        data_param = mech_string_data(
+            CKM(mech_id),
+            b"derive__test__01",  # 16 bytes
+        )
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            base_key,
+            CKM(mech_id),
+            attrs=_DERIVED_GENERIC_ATTRS,
+            mech_param=data_param,
+        )
+        assert derived_key != 0, f"{entry.mech_name}: derive returned handle 0"
+    finally:
+        destroy_quietly(rs.raw, rs.sh, base_key)
+        if derived_key != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+
+
+def _derive_concat_data(rs: RawSession, entry: MechEntry) -> None:
+    """CONCATENATE_BASE_AND_DATA / CONCATENATE_DATA_AND_BASE / XOR_BASE_AND_DATA.
+
+    Uses a CK_KEY_DERIVATION_STRING_DATA param with a random 16-byte value.
+    """
+    mech_id = entry.mech_id
+    base_key = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
+    derived_key: int = 0
+    try:
+        data_param = mech_string_data(CKM(mech_id), os.urandom(16))
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            base_key,
+            CKM(mech_id),
+            attrs=_DERIVED_GENERIC_ATTRS,
+            mech_param=data_param,
+        )
+        assert derived_key != 0, f"{entry.mech_name}: derive returned handle 0"
+    finally:
+        destroy_quietly(rs.raw, rs.sh, base_key)
+        if derived_key != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+
+
+def _derive_extract(rs: RawSession, entry: MechEntry) -> None:
+    """EXTRACT_KEY_FROM_KEY: extract a sub-key starting at bit position 0."""
+    mech_id = entry.mech_id
+    base_key = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
+    derived_key: int = 0
+    try:
+        # CK_EXTRACT_PARAMS is a CK_ULONG bit position (extract from bit 0).
+        # Serialise as native byte order CK_ULONG and pass via mech_bytes.
+        bit_index = ctypes.c_ulong(0)
+        param_bytes = bytes(ctypes.string_at(ctypes.addressof(bit_index), ctypes.sizeof(bit_index)))
+        extract_param = mech_bytes(CKM(mech_id), param_bytes)
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            base_key,
+            CKM(mech_id),
+            attrs=_DERIVED_GENERIC_ATTRS,
+            mech_param=extract_param,
+        )
+        assert derived_key != 0, f"{entry.mech_name}: derive returned handle 0"
+    finally:
+        destroy_quietly(rs.raw, rs.sh, base_key)
+        if derived_key != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+
+
+def _derive_concat_key(rs: RawSession, entry: MechEntry) -> None:
+    """CONCATENATE_BASE_AND_KEY: concatenate base key with a second key object."""
+    mech_id = entry.mech_id
+    base_key = gen_generic_secret(rs, bits=128, extra_attrs={CKA_DERIVE: True})
+    addon_key = gen_generic_secret(rs, bits=128, extra_attrs={CKA_DERIVE: True})
+    derived_key: int = 0
+    try:
+        # CKM_CONCATENATE_BASE_AND_KEY param is a CK_OBJECT_HANDLE
+        # (native CK_ULONG). Serialise and pass via mech_bytes.
+        handle_ctype = CK_OBJECT_HANDLE(addon_key)
+        param_bytes = bytes(
+            ctypes.string_at(ctypes.addressof(handle_ctype), ctypes.sizeof(handle_ctype))
+        )
+        concat_param = mech_bytes(CKM(mech_id), param_bytes)
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            base_key,
+            CKM(mech_id),
+            attrs=_DERIVED_GENERIC_ATTRS,
+            mech_param=concat_param,
+        )
+        assert derived_key != 0, f"{entry.mech_name}: derive returned handle 0"
+    finally:
+        destroy_quietly(rs.raw, rs.sh, base_key)
+        destroy_quietly(rs.raw, rs.sh, addon_key)
+        if derived_key != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+
+
+def _derive_sha(rs: RawSession, entry: MechEntry) -> None:
+    """SHA key derivation (no params): generic secret base key → derived key."""
+    mech_id = entry.mech_id
+    base_key = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
+    derived_key: int = 0
+    try:
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            base_key,
+            CKM(mech_id),
+            attrs=_DERIVED_GENERIC_ATTRS,
+        )
+        assert derived_key != 0, f"{entry.mech_name}: derive returned handle 0"
+    finally:
+        destroy_quietly(rs.raw, rs.sh, base_key)
+        if derived_key != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+
+
 class TestMechDerive:
     """Key derivation for every advertised derive mechanism with a registry config."""
 
@@ -318,6 +522,7 @@ class TestMechDerive:
         - CONCATENATE_BASE_AND_DATA / CONCATENATE_DATA_AND_BASE / XOR_BASE_AND_DATA:
           CK_KEY_DERIVATION_STRING_DATA param
         - EXTRACT_KEY_FROM_KEY: CK_ULONG bit position param
+        - CONCATENATE_BASE_AND_KEY: CK_OBJECT_HANDLE param
         - Everything else: skipped with an explanatory message
         """
         rs = p11_raw_session
@@ -359,204 +564,23 @@ class TestMechDerive:
                 "covered in test_aes_kdf.py"
             )
 
-        # -- HKDF_DERIVE ----------------------------------------------------------
+        # Dispatch to per-family helpers
         if _HKDF_DERIVE_ID and mech_id == _HKDF_DERIVE_ID:
-            if not rs.has_mechanism("HKDF_KEY_GEN"):
-                pytest.skip("HKDF_KEY_GEN not available — cannot generate HKDF base key")
-            base_key = _gen_hkdf_base_key(rs)
-            derived_key: int = 0
-            try:
-                salt = os.urandom(16)
-                hkdf_param = mech_hkdf(
-                    CKM(mech_id),
-                    hash_mech=int(CKM_SHA256),
-                    extract=True,
-                    expand=True,
-                    salt_type=int(CKZ_SALT_SPECIFIED),
-                    salt=salt,
-                    info=b"pkcs11-check derive test",
-                )
-                derived_key = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    base_key,
-                    CKM(mech_id),
-                    attrs=_DERIVED_AES_ATTRS,
-                    mech_param=hkdf_param,
-                )
-                assert derived_key != 0, f"{entry.mech_name}: derive returned handle 0"
-            finally:
-                destroy_quietly(rs.raw, rs.sh, base_key)
-                if derived_key != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived_key)
-            return
-
-        # -- ECDH1 (and cofactor) derive ------------------------------------------
-        if mech_id in _ECDH1_MECH_IDS:
-            from pkcs11_check.raw.types_std import CKA_EC_POINT
-
-            # Generate two EC keypairs on P-256; use peer's public point
-            priv_a, pub_a = 0, 0
-            priv_b, pub_b = 0, 0
-            derived_key2: int = 0
-            try:
-                pub_a, priv_a = gen_ec_keypair(rs.raw, rs.sh, _P256_OID)
-                pub_b, priv_b = gen_ec_keypair(rs.raw, rs.sh, _P256_OID)
-                # Read peer (B's) public point
-                peer_attrs = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])
-                peer_point = peer_attrs.get(CKA_EC_POINT)
-                if not peer_point or not isinstance(peer_point, bytes):
-                    pytest.skip(f"{entry.mech_name}: cannot read CKA_EC_POINT from peer key")
-                ecdh_param = mech_ecdh(
-                    CKM(mech_id),
-                    kdf=int(CKD_NULL),
-                    public_data=peer_point,
-                )
-                derived_key2 = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    priv_a,
-                    CKM(mech_id),
-                    attrs=_DERIVED_GENERIC_ATTRS,
-                    mech_param=ecdh_param,
-                )
-                assert derived_key2 != 0, f"{entry.mech_name}: ECDH derive returned handle 0"
-            finally:
-                destroy_quietly(rs.raw, rs.sh, pub_a)
-                destroy_quietly(rs.raw, rs.sh, priv_a)
-                destroy_quietly(rs.raw, rs.sh, pub_b)
-                destroy_quietly(rs.raw, rs.sh, priv_b)
-                if derived_key2 != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived_key2)
-            return
-
-        # -- AES-ECB-ENCRYPT-DATA -------------------------------------------------
-        if _AES_ECB_ENCRYPT_DATA_ID and mech_id == _AES_ECB_ENCRYPT_DATA_ID:
-            # Derive key by AES-ECB encrypting 16-byte block data with base key
-            base_key_aes = gen_aes_key(
-                rs.raw,
-                rs.sh,
-                256,
-                attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+            _derive_hkdf(rs, entry)
+        elif mech_id in _ECDH1_MECH_IDS:
+            _derive_ecdh(rs, entry)
+        elif _AES_ECB_ENCRYPT_DATA_ID and mech_id == _AES_ECB_ENCRYPT_DATA_ID:
+            _derive_aes_ecb(rs, entry)
+        elif mech_id in _CONCAT_DATA_MECH_IDS or mech_id == _XOR_MECH_ID:
+            _derive_concat_data(rs, entry)
+        elif _EXTRACT_MECH_ID and mech_id == _EXTRACT_MECH_ID:
+            _derive_extract(rs, entry)
+        elif _CONCAT_KEY_MECH_ID and mech_id == _CONCAT_KEY_MECH_ID:
+            _derive_concat_key(rs, entry)
+        elif mech_id in _SHA_KEY_DERIV_MECHS:
+            _derive_sha(rs, entry)
+        else:
+            pytest.skip(
+                f"{entry.mech_name}: derive param construction not yet implemented "
+                "in this generic test"
             )
-            derived_key3: int = 0
-            try:
-                # CK_KEY_DERIVATION_STRING_DATA: 16 bytes (one AES block)
-                data_param = mech_string_data(
-                    CKM(mech_id),
-                    b"derive__test__01",  # 16 bytes
-                )
-                derived_key3 = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    base_key_aes,
-                    CKM(mech_id),
-                    attrs=_DERIVED_GENERIC_ATTRS,
-                    mech_param=data_param,
-                )
-                assert derived_key3 != 0, f"{entry.mech_name}: derive returned handle 0"
-            finally:
-                destroy_quietly(rs.raw, rs.sh, base_key_aes)
-                if derived_key3 != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived_key3)
-            return
-
-        # -- CONCATENATE_BASE_AND_DATA / CONCATENATE_DATA_AND_BASE / XOR_BASE_AND_DATA
-        if mech_id in _CONCAT_DATA_MECH_IDS or mech_id == _XOR_MECH_ID:
-            base_key_gs = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
-            derived_key4: int = 0
-            try:
-                data_param = mech_string_data(CKM(mech_id), os.urandom(16))
-                derived_key4 = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    base_key_gs,
-                    CKM(mech_id),
-                    attrs=_DERIVED_GENERIC_ATTRS,
-                    mech_param=data_param,
-                )
-                assert derived_key4 != 0, f"{entry.mech_name}: derive returned handle 0"
-            finally:
-                destroy_quietly(rs.raw, rs.sh, base_key_gs)
-                if derived_key4 != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived_key4)
-            return
-
-        # -- EXTRACT_KEY_FROM_KEY -------------------------------------------------
-        if _EXTRACT_MECH_ID and mech_id == _EXTRACT_MECH_ID:
-            base_key_gs2 = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
-            derived_key5: int = 0
-            try:
-                # CK_EXTRACT_PARAMS is a CK_ULONG bit position (extract from bit 0).
-                # Serialise as native byte order CK_ULONG and pass via mech_bytes.
-                bit_index = ctypes.c_ulong(0)
-                param_bytes = bytes(ctypes.string_at(ctypes.addressof(bit_index),
-                                                     ctypes.sizeof(bit_index)))
-                extract_param = mech_bytes(CKM(mech_id), param_bytes)
-                derived_key5 = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    base_key_gs2,
-                    CKM(mech_id),
-                    attrs=_DERIVED_GENERIC_ATTRS,
-                    mech_param=extract_param,
-                )
-                assert derived_key5 != 0, f"{entry.mech_name}: derive returned handle 0"
-            finally:
-                destroy_quietly(rs.raw, rs.sh, base_key_gs2)
-                if derived_key5 != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived_key5)
-            return
-
-        # -- CONCATENATE_BASE_AND_KEY ---------------------------------------------
-        if _CONCAT_KEY_MECH_ID and mech_id == _CONCAT_KEY_MECH_ID:
-            base_key_gs3 = gen_generic_secret(rs, bits=128, extra_attrs={CKA_DERIVE: True})
-            addon_key = gen_generic_secret(rs, bits=128, extra_attrs={CKA_DERIVE: True})
-            derived_key6: int = 0
-            try:
-                # CKM_CONCATENATE_BASE_AND_KEY param is a CK_OBJECT_HANDLE
-                # (native CK_ULONG). Serialise and pass via mech_bytes.
-                handle_ctype = CK_OBJECT_HANDLE(addon_key)
-                param_bytes2 = bytes(ctypes.string_at(ctypes.addressof(handle_ctype),
-                                                      ctypes.sizeof(handle_ctype)))
-                concat_param = mech_bytes(CKM(mech_id), param_bytes2)
-                derived_key6 = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    base_key_gs3,
-                    CKM(mech_id),
-                    attrs=_DERIVED_GENERIC_ATTRS,
-                    mech_param=concat_param,
-                )
-                assert derived_key6 != 0, f"{entry.mech_name}: derive returned handle 0"
-            finally:
-                destroy_quietly(rs.raw, rs.sh, base_key_gs3)
-                destroy_quietly(rs.raw, rs.sh, addon_key)
-                if derived_key6 != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived_key6)
-            return
-
-        # -- SHA key derivation (no params) ---------------------------------------
-        if mech_id in _SHA_KEY_DERIV_MECHS:
-            base_key_sha = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
-            derived_key7: int = 0
-            try:
-                derived_key7 = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    base_key_sha,
-                    CKM(mech_id),
-                    attrs=_DERIVED_GENERIC_ATTRS,
-                )
-                assert derived_key7 != 0, f"{entry.mech_name}: derive returned handle 0"
-            finally:
-                destroy_quietly(rs.raw, rs.sh, base_key_sha)
-                if derived_key7 != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived_key7)
-            return
-
-        # -- Unknown / unhandled derive mechanism ---------------------------------
-        pytest.skip(
-            f"{entry.mech_name}: derive param construction not yet implemented "
-            "in this generic test"
-        )
