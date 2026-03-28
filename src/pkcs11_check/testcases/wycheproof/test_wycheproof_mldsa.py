@@ -123,10 +123,10 @@ def test_mldsa_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
         verify_single(rs.raw, rs.sh, pub_key, CKM_ML_DSA, msg, sig)
         if result == "invalid":
             pass  # Module accepted edge-case sig
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.xfail(f"Valid ML-DSA sig {vec_id} rejected")
-        # acceptable: reject is fine
+            pytest.fail(f"Valid ML-DSA sig {vec_id} rejected: {exc}")
+        # acceptable: module rejected invalid vector
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)

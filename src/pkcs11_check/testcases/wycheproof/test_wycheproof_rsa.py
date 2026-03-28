@@ -170,10 +170,10 @@ def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) 
         verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
         if result == "invalid":
             pass  # Some modules accept edge-case sigs
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.xfail(f"Valid RSA sig {vec_id} rejected")
-        # acceptable: reject is fine
+            pytest.fail(f"Valid RSA sig {vec_id} rejected: {exc}")
+        # acceptable: module rejected invalid vector
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)

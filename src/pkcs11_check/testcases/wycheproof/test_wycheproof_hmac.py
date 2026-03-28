@@ -173,7 +173,7 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
     if key is None:
         if result == "invalid":
             return
-        pytest.xfail(f"Cannot import {len(key_bytes)}-byte HMAC key")
+        pytest.fail(f"Cannot import {len(key_bytes)}-byte HMAC key")
 
     try:
         mac = sign_single(rs.raw, rs.sh, key, mechanism, msg)
@@ -182,8 +182,8 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
             assert truncated == tag_expected
     except AssertionError as exc:
         if result == "valid":
-            pytest.xfail(f"HMAC failed: {exc}")
-        # acceptable: reject is fine
+            pytest.fail(f"HMAC failed for {vec_id}: {exc}")
+        # acceptable: module rejected invalid vector
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)

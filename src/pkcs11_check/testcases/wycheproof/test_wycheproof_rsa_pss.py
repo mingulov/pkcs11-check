@@ -205,10 +205,10 @@ def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig, mech_param=pss_param)
         if result == "invalid":
             pass  # Some modules accept edge-case signatures
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.xfail(f"Valid RSA-PSS sig {vec_id} rejected (sLen={s_len})")
-        # acceptable: reject is fine
+            pytest.fail(f"Valid RSA-PSS sig {vec_id} rejected (sLen={s_len}): {exc}")
+        # acceptable: module rejected invalid vector
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)

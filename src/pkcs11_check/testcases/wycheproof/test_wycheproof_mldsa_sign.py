@@ -127,7 +127,7 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) -> N
         ):
             if result == "invalid":
                 return
-            pytest.xfail(f"Cannot import ML-DSA private key: {exc_msg}")
+            pytest.fail(f"Cannot import ML-DSA private key: {exc_msg}")
         raise
 
     try:
@@ -136,10 +136,10 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) -> N
             assert len(sig) > 0, "Empty signature"
             # Note: ML-DSA signatures are non-deterministic, so length/non-empty
             # is the meaningful invariant for this path.
-    except (AssertionError, Exception):
+    except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid ML-DSA sign failed: {vec_id}")
-        # acceptable: reject is fine
+            pytest.fail(f"Valid ML-DSA sign failed {vec_id}: {exc}")
+        # acceptable: module rejected invalid vector
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, priv)
