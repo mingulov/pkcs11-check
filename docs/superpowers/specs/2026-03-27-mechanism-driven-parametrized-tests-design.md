@@ -1,13 +1,17 @@
 # Mechanism-Driven Parametrized Tests
 
 **Date:** 2026-03-27
-**Status:** Design, revision 2 (post gap analysis)
+**Status:** Design, revision 3 (full standard coverage)
 
 ## Goal
 
-Create a comprehensive, mechanism-driven test system that automatically tests every advertised PKCS#11 mechanism based on its CKF_* flags. Pre-generated known-answer test vectors verify correctness. Negative tests verify error handling. Multi-part streaming tests exercise C_*Update/C_*Final paths. Composite lifecycle tests exercise multi-step workflows. Mechanism flag validation catches module metadata bugs.
+Create a comprehensive, mechanism-driven test system covering ALL 480 CKM_* mechanisms from the OASIS PKCS#11 v3.2 standard. Every mechanism gets either full testing (via registry with KAT vectors, edge cases, negative tests) or probe testing (crash safety). Pre-generated known-answer test vectors verify correctness. Negative tests verify error handling. Multi-part streaming tests exercise C_*Update/C_*Final paths. Composite lifecycle tests exercise multi-step workflows. Mechanism flag validation catches module metadata bugs.
 
-**Estimated tests per module:** ~1,300 for a full-featured module (Kryoptic 168 mechs), ~600 for a mid-range module (SoftHSM2 80 mechs).
+**Registry scope:** 348 mechanisms with full registry entries (all standard mechanisms with enough spec detail for complete testing). 132 probe-only entries (legacy/obscure: RC2, IDEA, CAST, Skipjack, Baton, Juniper, CDMF, etc.).
+
+**Total test definitions:** ~2,600 across the full standard. On any given module, tests for unsupported mechanisms skip cleanly. A module advertising N mechanisms runs approximately `N × 6 + 400` tests (6 tests avg per mechanism + cross-cutting negative/lifecycle/attribute/state tests).
+
+**Per-module estimates:** ~1,400 for Kryoptic (168 mechs), ~900 for SoftHSM2 (80 mechs), ~1,200 for NSS-PQC (140 mechs).
 
 ## Architecture Overview
 
@@ -293,7 +297,9 @@ class MechConfig:
 
 ### Registry Size
 
-~250 entries covering:
+**348 registerable entries** covering ALL standard mechanisms (not module-specific). The registry is derived from the OASIS PKCS#11 v3.2 header (`pkcs11.h`, 480 CKM_* constants). 132 legacy/obscure mechanisms get probe-only entries.
+
+Families:
 - AES (23 mechanisms: ECB, CBC, CBC-PAD, CTR, GCM, CCM, OFB, CFB variants, CTS, XTS, MAC, CMAC, XCBC-MAC, GMAC, key wraps, key gen)
 - RSA (20+ mechanisms: PKCS, OAEP, PSS, X9.31, hash-specific sign variants, key gen)
 - EC (15+ mechanisms: ECDSA, ECDSA-SHA*, EdDSA, XEdDSA, ECDH variants, key gens)
@@ -311,11 +317,15 @@ class MechConfig:
 - ChaCha20/Poly1305 (4 mechanisms)
 - Camellia (8 mechanisms)
 - ARIA (8 mechanisms)
-- Legacy (probe-only: ~200 mechanisms)
+- GOST (8 mechanisms)
+- RIPEMD (6 mechanisms)
+- NULL mechanism (1)
+- Key concatenation/extraction (5 mechanisms: CONCATENATE_*, EXTRACT_KEY, XOR_BASE)
+- Legacy probe-only (~132 mechanisms: RC2, RC4, RC5, IDEA, CAST variants, CDMF, Skipjack, Baton, Juniper, KEA, Fortezza, SecurID, HOTP, ACTI, KIP, CMS, KRB5, PBE variants, Twofish, Blowfish, MD2, MD5)
 
 ### Fallback
 
-Mechanisms not in the registry get probe tests (test_mech_probe.py): call `C_*Init`, verify no crash, verify valid CKR returned.
+Mechanisms not in the registry (132 legacy/obscure) get probe tests (test_mech_probe.py): call `C_*Init`, verify no crash, verify valid CKR returned. If the module advertises any of these, they get exercised.
 
 ## Layer 3: Operation Tests (14 files)
 
@@ -491,24 +501,50 @@ Over time, some existing tests may become redundant as the mechanism-driven syst
 
 ## Test Count Estimation
 
-| Category | Tests |
-|----------|-------|
-| Keygen + attribute check | 75 |
-| Encrypt/decrypt + edge cases | 240 |
-| Sign/verify + edge cases | 200 |
-| Digest + known vectors | 72 |
-| Wrap/unwrap + corruption | 46 |
-| Derive chains | 59 |
-| KEM roundtrip | 18 |
-| Multi-part streaming | 120 |
-| Attribute verification | 45 |
-| Negative (all categories) | 140 |
-| State machine violations | 50 |
-| Flag validation | 30 |
-| Probe (unknown mechs) | 40 |
-| Lifecycle (11 patterns) | 22 |
-| KAT vectors | 160 |
-| **Total (full module)** | **~1,317** |
+### Registry-defined tests (348 mechanisms × operations)
+
+| Category | Per mechanism | Total (348 mechs) | Notes |
+|----------|-------------|-------------------|-------|
+| Keygen (74 keygen mechs) | 3 | 222 | generate + CKA_LOCAL + CKA_KEY_GEN_MECHANISM |
+| Encrypt/decrypt | 6 | ~180 | roundtrip + KAT + empty + boundary + non-aligned-neg |
+| Sign/verify | 6 | ~240 | roundtrip + KAT + bit-flip + truncated + wrong-key + empty |
+| Digest | 4 | ~172 | KAT + empty + known-string + length-check |
+| MAC/HMAC (85 mechs) | 3 | 255 | roundtrip + KAT + wrong-key |
+| Wrap/unwrap (17 mechs) | 4 | 68 | roundtrip + corruption + non-extractable + hybrid |
+| Derive (58 mechs) | 3 | 174 | derive + KAT + use-derived-key |
+| KEM | 4 | ~16 | roundtrip + use-key + corrupted-ct + wrong-key |
+| Multi-part streaming | 3 | ~150 | stream-roundtrip + chunk-variants + stream-digest |
+| Attribute verification | 2 | ~148 | per keygen mech: CKA_LOCAL + CKA_KEY_GEN_MECHANISM |
+| Flag validation | 1 | 348 | compare C_GetMechanismInfo vs registry expected_flags |
+| **Subtotal** | | **~1,973** | |
+
+### Cross-cutting tests (not per-mechanism)
+
+| Category | Tests | Notes |
+|----------|-------|-------|
+| Negative: wrong key type | 25 | 5 operations × 5 wrong key types |
+| Negative: invalid params | 20 | per mechanism family |
+| Negative: missing permissions | 45 | 9 CKA_* flags × 5 mechanism families |
+| Negative: state machine | 50 | 5 violations × 10 mechanism families |
+| Probe (132 legacy mechs) | 132 | C_*Init no-crash per advertised legacy mech |
+| Lifecycle (11 patterns) | 22 | composite multi-step workflows |
+| KAT vectors (data-driven) | ~200 | from mechanism_vectors/*.json files |
+| **Subtotal** | **~494** | |
+
+### Per-module runtime (mechanisms skip if not advertised)
+
+| Module | Advertised mechs | Estimated tests that run |
+|--------|-----------------|------------------------|
+| Kryoptic-main | 168 | ~1,400 |
+| NSS-PQC | 140 | ~1,200 |
+| SoftHSM2 | 80 | ~900 |
+| SoftHSM2-main | 82 | ~920 |
+| BouncyHSM | 206 | ~1,600 |
+| pkcs11-mock | ~40 | ~500 |
+
+### Grand total (all defined tests)
+
+**~2,467 test definitions** across the full PKCS#11 v3.2 standard. On any module, unsupported mechanisms skip cleanly via `has_mechanism()` / `C_GetMechanismList` check.
 
 ## Markers
 
