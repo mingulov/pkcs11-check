@@ -238,23 +238,23 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         return
 
     catalog = _ensure_mechanism_catalog(metafunc.config)
-    if catalog is None:
-        # No catalog available — parametrize with empty list (0 tests, no error)
-        metafunc.parametrize(requested, [], ids=[])
-        return
 
-    flag = param_map[requested]
-    if flag:
-        entries = catalog.filter_registered(flag)
+    entries: list[Any] = []
+    if catalog is not None:
+        flag = param_map[requested]
+        if flag:
+            entries = catalog.filter_registered(flag)
+        else:
+            entries = [e for e in catalog.all_entries() if e.config is not None]
+
+    if not entries:
+        # No catalog or no matching entries — use a sentinel that triggers skip
+        entries = [pytest.param(None, marks=pytest.mark.skip("No mechanism catalog"))]
+        ids = ["no_catalog"]
     else:
-        entries = catalog.all_entries()
-    if entries:
-        metafunc.parametrize(
-            requested,
-            entries,
-            ids=[e.mech_name for e in entries],
-            indirect=False,
-        )
+        ids = [e.mech_name for e in entries]
+
+    metafunc.parametrize(requested, entries, ids=ids, indirect=False)
 
 
 def _runtime_skip_reason(
