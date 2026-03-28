@@ -464,7 +464,15 @@ def generate_key_from_recipe(
 
         is_fixed = style == "fixed_length" or kt in FIXED_LENGTH_KEY_TYPES
 
-        attrs: dict[int, Any] = {CKA_TOKEN: False, CKA_KEY_TYPE: config.key_type}
+        # CKM_GENERIC_SECRET_KEY_GEN only produces CKK_GENERIC_SECRET keys.
+        # Module-specific HMAC key types (e.g. CKK_SHA256_HMAC) are correct for
+        # import/KAT operations but incompatible with this keygen mechanism —
+        # passing them in the template causes CKR_TEMPLATE_INCONSISTENT.
+        actual_key_type: Any = config.key_type
+        if int(keygen_mech) == int(CKM_GENERIC_SECRET_KEY_GEN):
+            actual_key_type = CKK_GENERIC_SECRET
+
+        attrs: dict[int, Any] = {CKA_TOKEN: False, CKA_KEY_TYPE: actual_key_type}
         if extra_attrs:
             attrs.update(extra_attrs)
 
@@ -473,7 +481,11 @@ def generate_key_from_recipe(
             key_size = pick_key_size(entry, config)
             if key_size is None:
                 if style in ("symmetric", "generic"):
-                    key_size = 256  # sensible default for HMAC/generic with no key_sizes
+                    # Use at least the module's reported minimum key size.
+                    # entry.min_key_size is in bytes (from CK_MECHANISM_INFO.ulMinKeySize);
+                    # convert to bits and take the max with 256 as a floor.
+                    min_bits = entry.min_key_size * 8 if entry.min_key_size > 0 else 0
+                    key_size = max(256, min_bits)
                 else:
                     pytest.skip(f"{entry.mech_name}: no usable key size in registry")
             packed.append(attr_ulong(CKA_VALUE_LEN, key_size // 8))
