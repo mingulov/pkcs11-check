@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ctypes
-from collections import defaultdict
+from collections import Counter, defaultdict
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
@@ -154,6 +154,7 @@ class RawPKCS11:
         self._lib: ctypes.CDLL | None = None
         self._call_log: dict[str, int] = defaultdict(int)
         self._used_mechanisms: set[int] = set()
+        self._mechanism_counts: Counter[int] = Counter()
 
         if funclist_ptr:
             self._load_from_ptr(funclist_ptr)
@@ -282,8 +283,14 @@ class RawPKCS11:
     def used_mechanisms(self) -> set[int]:
         return set(self._used_mechanisms)
 
+    @property
+    def mechanism_counts(self) -> dict[int, int]:
+        """Per-mechanism invocation counts (CKM int -> call count)."""
+        return dict(self._mechanism_counts)
+
     def reset_used_mechanisms(self) -> None:
         self._used_mechanisms.clear()
+        self._mechanism_counts.clear()
 
     @classmethod
     def from_lib(cls, lib_path: str) -> RawPKCS11:
@@ -293,7 +300,9 @@ class RawPKCS11:
         self._call_log[name] += 1
         if name in _MECHANISM_ARG_FUNCS and len(args) >= 2:
             try:
-                self._used_mechanisms.add(args[1]._obj.mechanism)
+                mech_id = args[1]._obj.mechanism
+                self._used_mechanisms.add(mech_id)
+                self._mechanism_counts[mech_id] += 1
             except (AttributeError, TypeError):
                 pass
         func = self._funcs.get(name)
