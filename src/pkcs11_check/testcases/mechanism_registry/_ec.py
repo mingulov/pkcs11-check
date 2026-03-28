@@ -1,4 +1,5 @@
 """EC/EdDSA/ECDH mechanism family registry entries."""
+
 from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
@@ -33,10 +34,16 @@ from pkcs11_check.raw.types_std import (
     CKM_EDDSA,
     CKM_XEDDSA,
 )
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 _SIG_VER = CKF_SIGN | CKF_VERIFY
 _WRP_UWRP = CKF_WRAP | CKF_UNWRAP
+
+_ec = KeygenRecipe("ec", {"curve": "secp256r1"})
+_ec_edwards = KeygenRecipe("ec_edwards", {"curve": "Ed25519"})
+_ec_montgomery = KeygenRecipe("ec_montgomery", {"curve": "X25519"})
+_ecdh = ParamRecipe("ecdh")
+_eddsa = ParamRecipe("eddsa")
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -51,6 +58,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),  # curve-dependent, not bit sizes
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="EC (Weierstrass) key pair generation; alias CKM_ECDSA_KEY_PAIR_GEN",
     )
@@ -64,6 +72,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         is_keypair=True,
         multi_part_supported=False,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         notes="Raw ECDSA sign/verify: pre-hashed input only, single-part",
     )
@@ -73,6 +82,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         notes="ECDSA with SHA-1 hash-and-sign",
     )
@@ -82,6 +92,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         notes="ECDSA with SHA-224 hash-and-sign",
     )
@@ -91,6 +102,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         vector_file="ecdsa_sha256.json",
         notes="ECDSA with SHA-256 hash-and-sign",
@@ -101,6 +113,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         notes="ECDSA with SHA-384 hash-and-sign",
     )
@@ -110,6 +123,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         notes="ECDSA with SHA-512 hash-and-sign",
     )
@@ -119,6 +133,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         notes="ECDSA with SHA3-224 hash-and-sign",
     )
@@ -128,6 +143,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         notes="ECDSA with SHA3-256 hash-and-sign",
     )
@@ -137,6 +153,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         notes="ECDSA with SHA3-384 hash-and-sign",
     )
@@ -146,6 +163,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec,
         expected_flags=_SIG_VER,
         notes="ECDSA with SHA3-512 hash-and-sign",
     )
@@ -155,8 +173,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
-        param_packer="mech_ecdh",
         param_required=True,
+        param_recipe=_ecdh,
+        keygen_recipe=_ec,
         expected_flags=CKF_DERIVE,
         notes="ECDH1 key derivation: requires CK_ECDH1_DERIVE_PARAMS with peer public key",
     )
@@ -166,8 +185,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
-        param_packer="mech_ecdh",
         param_required=True,
+        param_recipe=_ecdh,
+        keygen_recipe=_ec,
         expected_flags=CKF_DERIVE,
         notes="ECDH1 cofactor key derivation: requires CK_ECDH1_DERIVE_PARAMS",
     )
@@ -178,6 +198,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         is_keypair=True,
         param_required=True,
+        keygen_recipe=_ec,
         expected_flags=CKF_DERIVE,
         notes="ECMQV key derivation: MQV protocol, requires CK_ECMQV_DERIVE_PARAMS",
     )
@@ -188,6 +209,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         is_keypair=True,
         param_required=True,
+        keygen_recipe=_ec,
         expected_flags=_WRP_UWRP,
         notes="ECDH-AES hybrid key wrap (deprecated in v3.x)",
     )
@@ -198,6 +220,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         is_keypair=True,
         param_required=True,
+        keygen_recipe=_ec,
         expected_flags=_WRP_UWRP,
         notes="ECDH cofactor + AES hybrid key wrap",
     )
@@ -208,6 +231,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         is_keypair=True,
         param_required=True,
+        keygen_recipe=_ec_montgomery,
         expected_flags=_WRP_UWRP,
         notes="ECDH-X (Montgomery) + AES hybrid key wrap",
     )
@@ -221,6 +245,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_EDWARDS_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec_edwards,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="Edwards-curve key pair generation (Ed25519 / Ed448)",
     )
@@ -230,8 +255,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_EDWARDS_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
-        param_packer="mech_eddsa",
         param_required=True,
+        param_recipe=_eddsa,
+        keygen_recipe=_ec_edwards,
         expected_flags=_SIG_VER,
         notes="EdDSA sign/verify: requires CK_EDDSA_PARAMS specifying curve",
     )
@@ -241,6 +267,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_EDWARDS_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec_edwards,
         expected_flags=_SIG_VER,
         notes="XEdDSA sign/verify (Signal protocol)",
     )
@@ -254,6 +281,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_ec_montgomery,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="Montgomery-curve key pair generation (X25519 / X448)",
     )

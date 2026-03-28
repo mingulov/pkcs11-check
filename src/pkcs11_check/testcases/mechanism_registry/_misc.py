@@ -64,9 +64,14 @@ from pkcs11_check.raw.types_std import (
     CKM_SECURID,
     CKM_SECURID_KEY_GEN,
 )
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 _SIG_VER = CKF_SIGN | CKF_VERIFY
+
+_sym = KeygenRecipe("symmetric")
+_gost = KeygenRecipe("ec", {"curve": "GOST-2001"})
+_kea = KeygenRecipe("ec", {"curve": "KEA-1024"})
+_mac_general = ParamRecipe("mac_general", {"mac_len": 8})
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -90,6 +95,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=None,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="MD2-HMAC: HMAC with MD2, 128-bit output (obsolete)",
     )
@@ -99,7 +105,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="MD2-HMAC-GENERAL: HMAC-MD2 with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -108,6 +115,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=None,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="MD2 key derivation: derive key from MD2 digest of input data",
     )
@@ -130,6 +138,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=None,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="MD5-HMAC: HMAC with MD5, 128-bit output (RFC 2104)",
     )
@@ -139,7 +148,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="MD5-HMAC-GENERAL: HMAC-MD5 with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -148,6 +158,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=None,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="MD5 key derivation: derive key from MD5 digest of input data",
     )
@@ -183,6 +194,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GOSTR3410_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_gost,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="GOST R 34.10-2001 key pair generation (256-bit ECC)",
     )
@@ -193,6 +205,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         is_keypair=True,
         deterministic=False,
+        keygen_recipe=_gost,
         expected_flags=_SIG_VER,
         notes="GOST R 34.10-2001 raw signature (512-bit signature over 256-bit GOST hash)",
     )
@@ -203,6 +216,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         is_keypair=True,
         deterministic=False,
+        keygen_recipe=_gost,
         expected_flags=_SIG_VER,
         notes="GOST R 34.10-2001 signature with GOST R 34.11-94 hash (full sign+digest)",
     )
@@ -212,6 +226,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GOSTR3410_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_gost,
         expected_flags=CKF_WRAP | CKF_DECRYPT,
         notes="GOST R 34.10 key wrapping for key export/import",
     )
@@ -221,6 +236,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GOSTR3410_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_gost,
         expected_flags=CKF_DERIVE,
         notes="GOST R 34.10 key agreement / derivation (VKO GOST R 34.10-2001)",
     )
@@ -239,6 +255,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GOSTR3411,
         keygen_mech=None,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="GOST R 34.11-94 HMAC: 256-bit output",
     )
@@ -374,6 +391,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_KEA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_kea,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="KEA key pair generation (Key Exchange Algorithm, Fortezza/DSS-based)",
     )
@@ -383,6 +401,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_KEA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_kea,
         expected_flags=CKF_DERIVE,
         notes="KEA key derivation (shared secret from KEA key exchange)",
     )
@@ -392,6 +411,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_KEA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_kea,
         expected_flags=CKF_DERIVE,
         notes="KEA derive (v3.x alias for CKM_KEA_KEY_DERIVE)",
     )

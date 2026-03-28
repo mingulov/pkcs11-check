@@ -1,4 +1,5 @@
 """RSA mechanism family registry entries."""
+
 from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
@@ -41,13 +42,45 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS,
     CKM_SHA512_RSA_PKCS_PSS,
 )
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 _RSA_SIZES = (2048, 3072, 4096)
 _SIG_VER = CKF_SIGN | CKF_VERIFY
 _SIG_VER_REC = CKF_SIGN | CKF_VERIFY | CKF_SIGN_RECOVER | CKF_VERIFY_RECOVER
 _ENC_DEC = CKF_ENCRYPT | CKF_DECRYPT
 _WRP_UWRP = CKF_WRAP | CKF_UNWRAP
+
+_rsa = KeygenRecipe("rsa")
+_oaep = ParamRecipe("oaep", {"hash_mech": "CKM_SHA256", "mgf": "CKG_MGF1_SHA256"})
+
+# PSS parameter recipes (one per hash — salt_len matches hash output size)
+_pss_sha1 = ParamRecipe(
+    "pss", {"hash_mech": "CKM_SHA_1", "mgf": "CKG_MGF1_SHA1", "salt_len": 20}
+)
+_pss_sha224 = ParamRecipe(
+    "pss", {"hash_mech": "CKM_SHA224", "mgf": "CKG_MGF1_SHA224", "salt_len": 28}
+)
+_pss_sha256 = ParamRecipe(
+    "pss", {"hash_mech": "CKM_SHA256", "mgf": "CKG_MGF1_SHA256", "salt_len": 32}
+)
+_pss_sha384 = ParamRecipe(
+    "pss", {"hash_mech": "CKM_SHA384", "mgf": "CKG_MGF1_SHA384", "salt_len": 48}
+)
+_pss_sha512 = ParamRecipe(
+    "pss", {"hash_mech": "CKM_SHA512", "mgf": "CKG_MGF1_SHA512", "salt_len": 64}
+)
+_pss_sha3_224 = ParamRecipe(
+    "pss", {"hash_mech": "CKM_SHA3_224", "mgf": "CKG_MGF1_SHA3_224", "salt_len": 28}
+)
+_pss_sha3_256 = ParamRecipe(
+    "pss", {"hash_mech": "CKM_SHA3_256", "mgf": "CKG_MGF1_SHA3_256", "salt_len": 32}
+)
+_pss_sha3_384 = ParamRecipe(
+    "pss", {"hash_mech": "CKM_SHA3_384", "mgf": "CKG_MGF1_SHA3_384", "salt_len": 48}
+)
+_pss_sha3_512 = ParamRecipe(
+    "pss", {"hash_mech": "CKM_SHA3_512", "mgf": "CKG_MGF1_SHA3_512", "salt_len": 64}
+)
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -60,6 +93,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="RSA key pair generation",
     )
@@ -69,6 +103,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_X9_31_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="RSA X9.31 key pair generation",
     )
@@ -81,6 +116,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
+        keygen_recipe=_rsa,
         expected_flags=_ENC_DEC | _SIG_VER_REC | _WRP_UWRP,
         notes="RSA PKCS#1 v1.5 padding: encrypt/decrypt, sign/verify, wrap/unwrap",
     )
@@ -91,8 +127,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
-        param_packer="mech_oaep",
         param_required=True,
+        param_recipe=_oaep,
+        keygen_recipe=_rsa,
         expected_flags=_ENC_DEC | _WRP_UWRP,
         notes="RSA OAEP encryption/wrap: requires CK_RSA_PKCS_OAEP_PARAMS",
     )
@@ -103,8 +140,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha256,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="RSA PSS sign/verify with pre-hash: requires CK_RSA_PKCS_PSS_PARAMS",
     )
@@ -115,6 +153,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
+        keygen_recipe=_rsa,
         expected_flags=_ENC_DEC | _SIG_VER_REC,
         notes="Raw RSA (no padding): X.509 format",
     )
@@ -125,6 +164,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="RSA X9.31 sign/verify with pre-hash",
     )
@@ -136,6 +176,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA-1 + RSA PKCS#1 v1.5 sign/verify",
     )
@@ -145,6 +186,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA-224 + RSA PKCS#1 v1.5 sign/verify",
     )
@@ -154,6 +196,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         vector_file="rsa_pkcs1_sha256.json",
         notes="SHA-256 + RSA PKCS#1 v1.5 sign/verify",
@@ -164,6 +207,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA-384 + RSA PKCS#1 v1.5 sign/verify",
     )
@@ -173,6 +217,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA-512 + RSA PKCS#1 v1.5 sign/verify",
     )
@@ -184,8 +229,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha1,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA-1 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
     )
@@ -195,8 +241,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha224,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA-224 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
     )
@@ -206,8 +253,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha256,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         vector_file="rsa_pss_sha256.json",
         notes="SHA-256 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
@@ -218,8 +266,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha384,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA-384 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
     )
@@ -229,8 +278,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha512,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA-512 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
     )
@@ -242,6 +292,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA3-224 + RSA PKCS#1 v1.5 sign/verify",
     )
@@ -251,6 +302,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA3-256 + RSA PKCS#1 v1.5 sign/verify",
     )
@@ -260,6 +312,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA3-384 + RSA PKCS#1 v1.5 sign/verify",
     )
@@ -269,6 +322,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA3-512 + RSA PKCS#1 v1.5 sign/verify",
     )
@@ -278,8 +332,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha3_224,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA3-224 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
     )
@@ -289,8 +344,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha3_256,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA3-256 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
     )
@@ -300,8 +356,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha3_384,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA3-384 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
     )
@@ -311,8 +368,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_pss",
         param_required=True,
+        param_recipe=_pss_sha3_512,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="SHA3-512 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
     )
@@ -324,8 +382,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
-        param_packer="mech_oaep",
         param_required=True,
+        param_recipe=_oaep,
+        keygen_recipe=_rsa,
         expected_flags=_WRP_UWRP,
         notes="RSA-AES hybrid key wrap: OAEP wraps AES key, AES wraps target key",
     )
@@ -336,6 +395,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
+        keygen_recipe=_rsa,
         expected_flags=_WRP_UWRP,
         notes="RSA PKCS#1 v1.5 TPM 1.1 variant for key unwrapping",
     )
@@ -346,6 +406,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
+        keygen_recipe=_rsa,
         expected_flags=_WRP_UWRP,
         notes="RSA OAEP TPM 1.1 variant for key unwrapping",
     )

@@ -54,11 +54,18 @@ from pkcs11_check.raw.types_std import (
     CKM_XMSSMT,
     CKM_XMSSMT_KEY_PAIR_GEN,
 )
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig
 
 _SIG_VER = CKF_SIGN | CKF_VERIFY
 _ML_KEM_SIZES = (512, 768, 1024)  # security levels (not raw bit sizes)
 _ML_DSA_SIZES = (44, 65, 87)  # security level params (not raw bit sizes)
+
+_ml_kem = KeygenRecipe("pqc", {"parameter_set": "CKP_ML_KEM_768"})
+_ml_dsa = KeygenRecipe("pqc", {"parameter_set": "CKP_ML_DSA_65"})
+_slh_dsa = KeygenRecipe("pqc", {"parameter_set": "CKP_SLH_DSA_SHA2_128S"})
+_hss = KeygenRecipe("pqc", {"parameter_set": "CKP_HSS_LMS_SHA256_M32_H5"})
+_xmss = KeygenRecipe("pqc", {"parameter_set": "CKP_XMSS_SHA2_10_256"})
+_xmssmt = KeygenRecipe("pqc", {"parameter_set": "CKP_XMSSMT_SHA2_20_2_256"})
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -73,6 +80,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_KEM_KEY_PAIR_GEN,
         key_sizes=_ML_KEM_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_kem,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="ML-KEM key pair generation (FIPS 203): parameter sets 512/768/1024",
     )
@@ -83,6 +91,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_ML_KEM_SIZES,
         is_keypair=True,
         multi_part_supported=False,
+        keygen_recipe=_ml_kem,
         expected_flags=int(CKF_ENCAPSULATE) | int(CKF_DECAPSULATE),
         notes="ML-KEM (FIPS 203): C_EncapsulateKey / C_DecapsulateKey",
     )
@@ -96,6 +105,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="ML-DSA key pair generation (FIPS 204): parameter sets 44/65/87",
     )
@@ -105,6 +115,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="ML-DSA sign/verify (FIPS 204): pure ML-DSA, context optional",
     )
@@ -116,6 +127,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
         param_required=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=CKF_DIGEST,
         notes="ML-DSA ExternalMu generation (FIPS 204): digest op producing mu for EXTERNAL_MU",
     )
@@ -127,6 +139,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="ML-DSA ExternalMu sign/verify (FIPS 204): pre-computed mu input",
     )
@@ -137,6 +150,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
         param_required=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA sign/verify (FIPS 204): hash-then-sign, requires hash alg param",
     )
@@ -146,6 +160,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHA-224 (FIPS 204)",
     )
@@ -155,6 +170,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHA-256 (FIPS 204)",
     )
@@ -164,6 +180,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHA-384 (FIPS 204)",
     )
@@ -173,6 +190,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHA-512 (FIPS 204)",
     )
@@ -182,6 +200,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHA3-224 (FIPS 204)",
     )
@@ -191,6 +210,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHA3-256 (FIPS 204)",
     )
@@ -200,6 +220,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHA3-384 (FIPS 204)",
     )
@@ -209,6 +230,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHA3-512 (FIPS 204)",
     )
@@ -218,6 +240,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHAKE-128 (FIPS 204)",
     )
@@ -227,6 +250,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
         notes="HashML-DSA with SHAKE-256 (FIPS 204)",
     )
@@ -240,6 +264,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),  # parameter set embedded in key (SLH-DSA-SHA2-128s etc.)
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="SLH-DSA key pair generation (FIPS 205): parameter set from CKA_PARAMETER_SET",
     )
@@ -249,6 +274,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="SLH-DSA sign/verify (FIPS 205): pure SLH-DSA, optional context",
     )
@@ -259,6 +285,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         is_keypair=True,
         param_required=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA sign/verify (FIPS 205): hash-then-sign, requires hash alg param",
     )
@@ -268,6 +295,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHA-224 (FIPS 205)",
     )
@@ -277,6 +305,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHA-256 (FIPS 205)",
     )
@@ -286,6 +315,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHA-384 (FIPS 205)",
     )
@@ -295,6 +325,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHA-512 (FIPS 205)",
     )
@@ -304,6 +335,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHA3-224 (FIPS 205)",
     )
@@ -313,6 +345,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHA3-256 (FIPS 205)",
     )
@@ -322,6 +355,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHA3-384 (FIPS 205)",
     )
@@ -331,6 +365,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHA3-512 (FIPS 205)",
     )
@@ -340,6 +375,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHAKE-128 (FIPS 205)",
     )
@@ -349,6 +385,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
         notes="HashSLH-DSA with SHAKE-256 (FIPS 205)",
     )
@@ -362,6 +399,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_HSS_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_hss,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="HSS (Hierarchical Signature System, SP 800-208) key pair generation",
     )
@@ -371,6 +409,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_HSS_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_hss,
         expected_flags=_SIG_VER,
         notes="HSS sign/verify (SP 800-208): stateful hash-based signature",
     )
@@ -380,6 +419,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_XMSS_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_xmss,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="XMSS (RFC 8391) key pair generation: stateful hash-based signature",
     )
@@ -389,6 +429,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_XMSS_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_xmss,
         expected_flags=_SIG_VER,
         notes="XMSS sign/verify (RFC 8391): stateful hash-based signature",
     )
@@ -398,6 +439,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_XMSSMT_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_xmssmt,
         expected_flags=CKF_GENERATE_KEY_PAIR,
         notes="XMSS^MT (RFC 8391) multi-tree key pair generation: stateful hash-based signature",
     )
@@ -407,6 +449,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_XMSSMT_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        keygen_recipe=_xmssmt,
         expected_flags=_SIG_VER,
         notes="XMSS^MT sign/verify (RFC 8391): stateful hash-based multi-tree signature",
     )

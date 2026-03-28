@@ -1,4 +1,5 @@
 """ChaCha20, Salsa20, Poly1305, Camellia, ARIA, and SEED mechanism family registry entries."""
+
 from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
@@ -49,7 +50,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SEED_MAC,
     CKM_SEED_MAC_GENERAL,
 )
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 _ENC_DEC = CKF_ENCRYPT | CKF_DECRYPT
 _CAMELLIA_SIZES = (128, 192, 256)
@@ -61,6 +62,12 @@ _ARIA_SIG = CKF_SIGN | CKF_VERIFY
 _SEED_ENC = CKF_ENCRYPT | CKF_DECRYPT
 _SEED_SIG = CKF_SIGN | CKF_VERIFY
 _SIG_VER = CKF_SIGN | CKF_VERIFY
+
+_sym = KeygenRecipe("symmetric")
+_fixed = KeygenRecipe("fixed_length")
+_iv16 = ParamRecipe("iv", {"iv_len": 16})
+_mac_general = ParamRecipe("mac_general", {"mac_len": 8})
+_string_data = ParamRecipe("string_data")
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -74,6 +81,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CHACHA20,
         keygen_mech=CKM_CHACHA20_KEY_GEN,
         key_sizes=(256,),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="ChaCha20 key generation (256-bit key)",
     )
@@ -85,7 +93,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_chacha20_params",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_ENC_DEC,
         notes="ChaCha20 stream cipher: requires CK_CHACHA20_PARAMS (nonce + counter)",
@@ -98,7 +107,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_chacha20_poly1305_params",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         multi_part_supported=False,
         auth_tag_included=True,
         deterministic=False,
@@ -110,6 +120,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SALSA20,
         keygen_mech=CKM_SALSA20_KEY_GEN,
         key_sizes=(256,),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="Salsa20 key generation (256-bit key)",
     )
@@ -121,7 +132,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_salsa20_params",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_ENC_DEC,
         notes="Salsa20 stream cipher: requires CK_SALSA20_PARAMS (nonce + counter)",
@@ -134,7 +146,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_salsa20_poly1305_params",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         multi_part_supported=False,
         auth_tag_included=True,
         deterministic=False,
@@ -146,6 +159,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_POLY1305,
         keygen_mech=CKM_POLY1305_KEY_GEN,
         key_sizes=(256,),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="Poly1305 authenticator key generation (256-bit key, CKK_POLY1305)",
     )
@@ -155,7 +169,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_POLY1305_KEY_GEN,
         key_sizes=(256,),
         param_required=True,
-        param_packer="pack_poly1305_params",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="Poly1305 one-time MAC: sign/verify, requires nonce param",
     )
@@ -168,6 +183,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CAMELLIA,
         keygen_mech=CKM_CAMELLIA_KEY_GEN,
         key_sizes=_CAMELLIA_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="Camellia key generation (128/192/256-bit)",
     )
@@ -179,6 +195,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_sym,
         expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="Camellia-ECB: 16-byte block, no padding, deterministic",
     )
@@ -190,8 +207,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="Camellia-CBC: 16-byte block, requires 16-byte IV param",
     )
@@ -203,8 +221,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="Camellia-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
@@ -213,6 +232,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CAMELLIA,
         keygen_mech=CKM_CAMELLIA_KEY_GEN,
         key_sizes=_CAMELLIA_SIZES,
+        keygen_recipe=_sym,
         expected_flags=_CAMELLIA_SIG,
         notes="Camellia-MAC: CBC-MAC with fixed output length",
     )
@@ -222,7 +242,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_CAMELLIA_KEY_GEN,
         key_sizes=_CAMELLIA_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_CAMELLIA_SIG,
         notes="Camellia-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -232,6 +253,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_CAMELLIA_KEY_GEN,
         key_sizes=_CAMELLIA_SIZES,
         input_constraint="block_aligned",
+        param_recipe=_string_data,
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="Camellia-ECB key derivation: derive key by Camellia-ECB encrypting data",
     )
@@ -242,7 +265,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CAMELLIA_SIZES,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_cbc_encrypt_data",
+        param_recipe=_string_data,
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="Camellia-CBC key derivation: derive key by Camellia-CBC encrypting data",
     )
@@ -255,6 +279,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_ARIA,
         keygen_mech=CKM_ARIA_KEY_GEN,
         key_sizes=_ARIA_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="ARIA key generation (128/192/256-bit, Korean standard KS X 1213)",
     )
@@ -266,6 +291,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_sym,
         expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="ARIA-ECB: 16-byte block, no padding, deterministic",
     )
@@ -277,8 +303,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="ARIA-CBC: 16-byte block, requires 16-byte IV param",
     )
@@ -290,8 +317,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="ARIA-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
@@ -300,6 +328,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_ARIA,
         keygen_mech=CKM_ARIA_KEY_GEN,
         key_sizes=_ARIA_SIZES,
+        keygen_recipe=_sym,
         expected_flags=_ARIA_SIG,
         notes="ARIA-MAC: CBC-MAC with fixed output length",
     )
@@ -309,7 +338,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ARIA_KEY_GEN,
         key_sizes=_ARIA_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_ARIA_SIG,
         notes="ARIA-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -319,6 +349,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ARIA_KEY_GEN,
         key_sizes=_ARIA_SIZES,
         input_constraint="block_aligned",
+        param_recipe=_string_data,
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="ARIA-ECB key derivation: derive key by ARIA-ECB encrypting data",
     )
@@ -329,7 +361,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_ARIA_SIZES,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_cbc_encrypt_data",
+        param_recipe=_string_data,
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="ARIA-CBC key derivation: derive key by ARIA-CBC encrypting data",
     )
@@ -342,6 +375,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SEED,
         keygen_mech=CKM_SEED_KEY_GEN,
         key_sizes=(128,),
+        keygen_recipe=_fixed,
         expected_flags=CKF_GENERATE,
         notes="SEED key generation (128-bit, Korean standard TTAS.KO-12.0004)",
     )
@@ -353,6 +387,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_fixed,
         expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="SEED-ECB: 16-byte block, no padding, deterministic",
     )
@@ -364,8 +399,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="SEED-CBC: 16-byte block, requires 16-byte IV param",
     )
@@ -377,8 +413,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="SEED-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )
@@ -387,6 +424,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SEED,
         keygen_mech=CKM_SEED_KEY_GEN,
         key_sizes=(128,),
+        keygen_recipe=_fixed,
         expected_flags=_SEED_SIG,
         notes="SEED-MAC: CBC-MAC with fixed output length",
     )
@@ -396,7 +434,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SEED_KEY_GEN,
         key_sizes=(128,),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_fixed,
         expected_flags=_SEED_SIG,
         notes="SEED-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -406,6 +445,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SEED_KEY_GEN,
         key_sizes=(128,),
         input_constraint="block_aligned",
+        param_recipe=_string_data,
+        keygen_recipe=_fixed,
         expected_flags=CKF_DERIVE,
         notes="SEED-ECB key derivation: derive key by SEED-ECB encrypting data",
     )
@@ -416,7 +457,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(128,),
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_cbc_encrypt_data",
+        param_recipe=_string_data,
+        keygen_recipe=_fixed,
         expected_flags=CKF_DERIVE,
         notes="SEED-CBC key derivation: derive key by SEED-CBC encrypting data",
     )

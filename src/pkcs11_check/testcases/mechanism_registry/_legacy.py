@@ -102,7 +102,7 @@ from pkcs11_check.raw.types_std import (
     CKM_TWOFISH_CBC_PAD,
     CKM_TWOFISH_KEY_GEN,
 )
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 _ENC_DEC = CKF_ENCRYPT | CKF_DECRYPT
 _SIG_VER = CKF_SIGN | CKF_VERIFY
@@ -121,6 +121,12 @@ _JUNIPER_SIZES = (128,)
 _BLOWFISH_SIZES = (128, 256, 448)
 _TWOFISH_SIZES = (128, 192, 256)
 
+_sym = KeygenRecipe("symmetric")
+_fixed = KeygenRecipe("fixed_length")
+_iv8 = ParamRecipe("iv", {"iv_len": 8})
+_iv16 = ParamRecipe("iv", {"iv_len": 16})
+_mac_general = ParamRecipe("mac_general", {"mac_len": 8})
+
 
 def populate(registry: dict[int, MechConfig]) -> None:
     """Add legacy cipher mechanism entries to the registry."""
@@ -133,6 +139,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_RC2,
         keygen_mech=CKM_RC2_KEY_GEN,
         key_sizes=_RC2_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="RC2 key generation (variable key size 40–128 bits)",
     )
@@ -144,6 +151,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="RC2-ECB: 8-byte block, no padding, requires CK_RC2_PARAMS (effective key bits)",
     )
@@ -155,8 +163,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_rc2_cbc_params",
+        param_recipe=ParamRecipe("none"),
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="RC2-CBC: 8-byte block, requires CK_RC2_CBC_PARAMS (effective bits + 8-byte IV)",
     )
@@ -168,8 +177,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_rc2_cbc_params",
+        param_recipe=ParamRecipe("none"),
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="RC2-CBC with PKCS#7 padding: any-length plaintext, requires CK_RC2_CBC_PARAMS",
     )
@@ -179,7 +189,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RC2_KEY_GEN,
         key_sizes=_RC2_SIZES,
         param_required=True,
-        param_packer="pack_rc2_mac_params",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="RC2-MAC: CBC-MAC with fixed output, requires CK_RC2_PARAMS (effective key bits)",
     )
@@ -189,7 +200,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RC2_KEY_GEN,
         key_sizes=_RC2_SIZES,
         param_required=True,
-        param_packer="pack_rc2_mac_general_params",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="RC2-MAC-GENERAL: variable-length MAC, requires CK_RC2_MAC_GENERAL_PARAMS",
     )
@@ -202,6 +214,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_RC4,
         keygen_mech=CKM_RC4_KEY_GEN,
         key_sizes=_RC4_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="RC4 key generation (variable key size 40–256 bits)",
     )
@@ -213,6 +226,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         deterministic=True,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC,
         notes="RC4 stream cipher: no IV or params needed, stateful (never reuse key+nonce)",
     )
@@ -225,6 +239,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_RC5,
         keygen_mech=CKM_RC5_KEY_GEN,
         key_sizes=_RC5_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="RC5 key generation (128/256-bit keys)",
     )
@@ -235,8 +250,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RC5_SIZES,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_rc5_params",
+        param_recipe=ParamRecipe("none"),
         deterministic=True,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="RC5-ECB: variable block size, requires CK_RC5_PARAMS (wordsize, rounds)",
     )
@@ -247,8 +263,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RC5_SIZES,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_rc5_cbc_params",
+        param_recipe=ParamRecipe("none"),
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="RC5-CBC: requires CK_RC5_CBC_PARAMS (wordsize, rounds, IV)",
     )
@@ -259,8 +276,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RC5_SIZES,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_rc5_cbc_params",
+        param_recipe=ParamRecipe("none"),
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="RC5-CBC with PKCS#7 padding: any-length plaintext, requires CK_RC5_CBC_PARAMS",
     )
@@ -270,7 +288,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RC5_KEY_GEN,
         key_sizes=_RC5_SIZES,
         param_required=True,
-        param_packer="pack_rc5_params",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="RC5-MAC: CBC-MAC with fixed output, requires CK_RC5_PARAMS",
     )
@@ -280,7 +299,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RC5_KEY_GEN,
         key_sizes=_RC5_SIZES,
         param_required=True,
-        param_packer="pack_rc5_mac_general_params",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="RC5-MAC-GENERAL: variable-length MAC, requires CK_RC5_MAC_GENERAL_PARAMS",
     )
@@ -293,6 +313,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_IDEA,
         keygen_mech=CKM_IDEA_KEY_GEN,
         key_sizes=_IDEA_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_GENERATE,
         notes="IDEA key generation (128-bit fixed key size)",
     )
@@ -304,6 +325,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="IDEA-ECB: 8-byte block, no padding, deterministic",
     )
@@ -315,8 +337,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="IDEA-CBC: 8-byte block, requires 8-byte IV param",
     )
@@ -328,8 +351,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="IDEA-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
@@ -338,6 +362,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_IDEA,
         keygen_mech=CKM_IDEA_KEY_GEN,
         key_sizes=_IDEA_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=_SIG_VER,
         notes="IDEA-MAC: CBC-MAC with fixed output length",
     )
@@ -347,7 +372,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_IDEA_KEY_GEN,
         key_sizes=_IDEA_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_fixed,
         expected_flags=_SIG_VER,
         notes="IDEA-MAC-GENERAL: variable-length MAC (CK_MAC_GENERAL_PARAMS)",
     )
@@ -360,6 +386,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CAST,
         keygen_mech=CKM_CAST_KEY_GEN,
         key_sizes=_CAST_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="CAST key generation (40–128 bit variable key size)",
     )
@@ -371,6 +398,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CAST-ECB: 8-byte block, no padding, deterministic",
     )
@@ -382,8 +410,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CAST-CBC: 8-byte block, requires 8-byte IV param",
     )
@@ -395,8 +424,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CAST-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
@@ -405,6 +435,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CAST,
         keygen_mech=CKM_CAST_KEY_GEN,
         key_sizes=_CAST_SIZES,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="CAST-MAC: CBC-MAC with fixed output length",
     )
@@ -414,7 +445,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_CAST_KEY_GEN,
         key_sizes=_CAST_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="CAST-MAC-GENERAL: variable-length MAC (CK_MAC_GENERAL_PARAMS)",
     )
@@ -427,6 +459,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CAST3,
         keygen_mech=CKM_CAST3_KEY_GEN,
         key_sizes=_CAST3_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="CAST3 key generation (40–128 bit variable key size)",
     )
@@ -438,6 +471,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CAST3-ECB: 8-byte block, no padding, deterministic",
     )
@@ -449,8 +483,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CAST3-CBC: 8-byte block, requires 8-byte IV param",
     )
@@ -462,8 +497,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CAST3-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
@@ -472,6 +508,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CAST3,
         keygen_mech=CKM_CAST3_KEY_GEN,
         key_sizes=_CAST3_SIZES,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="CAST3-MAC: CBC-MAC with fixed output length",
     )
@@ -481,7 +518,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_CAST3_KEY_GEN,
         key_sizes=_CAST3_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="CAST3-MAC-GENERAL: variable-length MAC (CK_MAC_GENERAL_PARAMS)",
     )
@@ -494,6 +532,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CAST128,
         keygen_mech=CKM_CAST128_KEY_GEN,
         key_sizes=_CAST128_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="CAST128/CAST5 key generation (40–128 bit); CKM_CAST5_KEY_GEN is an alias",
     )
@@ -505,6 +544,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CAST128-ECB: 8-byte block, no padding; CKM_CAST5_ECB is an alias",
     )
@@ -516,8 +556,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CAST128-CBC: 8-byte block, requires 8-byte IV; CKM_CAST5_CBC is an alias",
     )
@@ -529,8 +570,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CAST128-CBC with PKCS#7 padding; CKM_CAST5_CBC_PAD is an alias",
     )
@@ -539,6 +581,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CAST128,
         keygen_mech=CKM_CAST128_KEY_GEN,
         key_sizes=_CAST128_SIZES,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="CAST128-MAC: CBC-MAC fixed output; CKM_CAST5_MAC is an alias",
     )
@@ -548,7 +591,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_CAST128_KEY_GEN,
         key_sizes=_CAST128_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="CAST128-MAC-GENERAL: variable-length MAC; CKM_CAST5_MAC_GENERAL is an alias",
     )
@@ -561,6 +605,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CDMF,
         keygen_mech=CKM_CDMF_KEY_GEN,
         key_sizes=_CDMF_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_GENERATE,
         notes="CDMF key generation (Content Data Masking Facility, 40-bit key)",
     )
@@ -572,6 +617,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CDMF-ECB: 8-byte block, no padding, deterministic",
     )
@@ -583,8 +629,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CDMF-CBC: 8-byte block, requires 8-byte IV param",
     )
@@ -596,8 +643,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="CDMF-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
@@ -606,6 +654,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_CDMF,
         keygen_mech=CKM_CDMF_KEY_GEN,
         key_sizes=_CDMF_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=_SIG_VER,
         notes="CDMF-MAC: CBC-MAC with fixed output length",
     )
@@ -615,7 +664,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_CDMF_KEY_GEN,
         key_sizes=_CDMF_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_fixed,
         expected_flags=_SIG_VER,
         notes="CDMF-MAC-GENERAL: variable-length MAC (CK_MAC_GENERAL_PARAMS)",
     )
@@ -628,6 +678,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SKIPJACK,
         keygen_mech=CKM_SKIPJACK_KEY_GEN,
         key_sizes=_SKIPJACK_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_GENERATE,
         notes="Skipjack key generation (80-bit NSA Fortezza cipher)",
     )
@@ -639,6 +690,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Skipjack-ECB64: 8-byte block ECB mode",
     )
@@ -650,8 +702,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Skipjack-CBC64: 8-byte block CBC mode, requires 8-byte IV",
     )
@@ -663,8 +716,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Skipjack-OFB64: 64-bit output feedback stream mode",
     )
@@ -676,8 +730,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Skipjack-CFB64: 64-bit cipher feedback stream mode",
     )
@@ -689,8 +744,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Skipjack-CFB32: 32-bit cipher feedback stream mode",
     )
@@ -702,8 +758,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Skipjack-CFB16: 16-bit cipher feedback stream mode",
     )
@@ -715,8 +772,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Skipjack-CFB8: 8-bit cipher feedback stream mode",
     )
@@ -725,6 +783,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SKIPJACK,
         keygen_mech=CKM_SKIPJACK_KEY_GEN,
         key_sizes=_SKIPJACK_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_WRAP | CKF_UNWRAP,
         notes="Skipjack key wrapping (MEK exchange)",
     )
@@ -733,6 +792,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SKIPJACK,
         keygen_mech=CKM_SKIPJACK_KEY_GEN,
         key_sizes=_SKIPJACK_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_WRAP | CKF_UNWRAP,
         notes="Skipjack private-key wrapping",
     )
@@ -741,6 +801,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SKIPJACK,
         keygen_mech=CKM_SKIPJACK_KEY_GEN,
         key_sizes=_SKIPJACK_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_WRAP | CKF_UNWRAP,
         notes="Skipjack RELAYX: re-wrapping with new key (Fortezza relay exchange)",
     )
@@ -753,6 +814,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_BATON,
         keygen_mech=CKM_BATON_KEY_GEN,
         key_sizes=_BATON_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_GENERATE,
         notes="Baton key generation (320-bit NSA Type I cipher key)",
     )
@@ -764,6 +826,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Baton-ECB128: 128-bit (16-byte) block ECB mode",
     )
@@ -775,6 +838,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=12,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Baton-ECB96: 96-bit (12-byte) block ECB mode",
     )
@@ -786,8 +850,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_baton_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Baton-CBC128: 128-bit block CBC mode",
     )
@@ -798,6 +863,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_BATON_SIZES,
         block_size=None,
         input_constraint="any",
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Baton counter mode stream cipher",
     )
@@ -808,6 +874,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_BATON_SIZES,
         block_size=None,
         input_constraint="any",
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Baton shuffle mode",
     )
@@ -816,6 +883,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_BATON,
         keygen_mech=CKM_BATON_KEY_GEN,
         key_sizes=_BATON_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_WRAP | CKF_UNWRAP,
         notes="Baton key wrapping",
     )
@@ -828,6 +896,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_JUNIPER,
         keygen_mech=CKM_JUNIPER_KEY_GEN,
         key_sizes=_JUNIPER_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_GENERATE,
         notes="Juniper key generation (128-bit NSA/NIST Type I cipher)",
     )
@@ -839,6 +908,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Juniper-ECB128: 128-bit (16-byte) block ECB mode",
     )
@@ -850,8 +920,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Juniper-CBC128: 128-bit block CBC mode, requires 16-byte IV",
     )
@@ -862,6 +933,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_JUNIPER_SIZES,
         block_size=None,
         input_constraint="any",
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Juniper counter mode stream cipher",
     )
@@ -872,6 +944,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_JUNIPER_SIZES,
         block_size=None,
         input_constraint="any",
+        keygen_recipe=_fixed,
         expected_flags=_ENC_DEC,
         notes="Juniper shuffle mode",
     )
@@ -880,6 +953,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_JUNIPER,
         keygen_mech=CKM_JUNIPER_KEY_GEN,
         key_sizes=_JUNIPER_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_WRAP | CKF_UNWRAP,
         notes="Juniper key wrapping",
     )
@@ -892,6 +966,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_BLOWFISH,
         keygen_mech=CKM_BLOWFISH_KEY_GEN,
         key_sizes=_BLOWFISH_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="Blowfish key generation (128/256/448-bit variable key size)",
     )
@@ -903,8 +978,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="Blowfish-CBC: 8-byte block, requires 8-byte IV param",
     )
@@ -916,8 +992,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="Blowfish-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
@@ -930,6 +1007,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_TWOFISH,
         keygen_mech=CKM_TWOFISH_KEY_GEN,
         key_sizes=_TWOFISH_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="Twofish key generation (128/192/256-bit variable key size)",
     )
@@ -941,8 +1019,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="Twofish-CBC: 16-byte block, requires 16-byte IV param",
     )
@@ -954,8 +1033,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=_iv16,
         deterministic=False,
+        keygen_recipe=_sym,
         expected_flags=_ENC_DEC | CKF_WRAP | CKF_UNWRAP,
         notes="Twofish-CBC with PKCS#7 padding: any-length plaintext, requires 16-byte IV",
     )

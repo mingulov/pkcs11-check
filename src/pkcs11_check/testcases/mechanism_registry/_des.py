@@ -1,4 +1,5 @@
 """DES and Triple-DES mechanism family registry entries."""
+
 from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
@@ -35,11 +36,16 @@ from pkcs11_check.raw.types_std import (
     CKM_DES_OFB8,
     CKM_DES_OFB64,
 )
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 _DES_ENC = CKF_ENCRYPT | CKF_DECRYPT
 _DES_SIG = CKF_SIGN | CKF_VERIFY
 _DES3_SIZES = (128, 192)  # DES2 (2-key 3DES) and DES3 (3-key 3DES)
+
+_fixed = KeygenRecipe("fixed_length")
+_iv8 = ParamRecipe("iv", {"iv_len": 8})
+_mac_general = ParamRecipe("mac_general", {"mac_len": 8})
+_string_data = ParamRecipe("string_data")
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -53,6 +59,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_DES,
         keygen_mech=CKM_DES_KEY_GEN,
         key_sizes=(64,),
+        keygen_recipe=_fixed,
         expected_flags=CKF_GENERATE,
         notes="DES single key generation (56-bit effective, 64-bit with parity)",
     )
@@ -64,6 +71,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="DES-ECB: 8-byte block, no padding, deterministic",
     )
@@ -75,8 +83,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="DES-CBC: 8-byte block, requires 8-byte IV param",
     )
@@ -88,8 +97,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
@@ -98,6 +108,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_DES,
         keygen_mech=CKM_DES_KEY_GEN,
         key_sizes=(64,),
+        keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
         notes="DES-MAC: CBC-MAC with fixed output length",
     )
@@ -107,7 +118,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_DES_KEY_GEN,
         key_sizes=(64,),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
         notes="DES-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -119,8 +131,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC,
         notes="DES-OFB64: 64-bit output feedback stream mode, requires 8-byte IV",
     )
@@ -132,8 +145,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC,
         notes="DES-OFB8: 8-bit output feedback stream mode, requires 8-byte IV",
     )
@@ -145,8 +159,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC,
         notes="DES-CFB64: 64-bit cipher feedback stream mode, requires 8-byte IV",
     )
@@ -158,8 +173,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC,
         notes="DES-CFB8: 8-bit cipher feedback stream mode, requires 8-byte IV",
     )
@@ -169,6 +185,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_DES_KEY_GEN,
         key_sizes=(64,),
         input_constraint="block_aligned",
+        param_recipe=_string_data,
+        keygen_recipe=_fixed,
         expected_flags=CKF_DERIVE,
         notes="DES-ECB key derivation: derive key by DES-ECB encrypting data",
     )
@@ -179,7 +197,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(64,),
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_cbc_encrypt_data",
+        param_recipe=_string_data,
+        keygen_recipe=_fixed,
         expected_flags=CKF_DERIVE,
         notes="DES-CBC key derivation: derive key by DES-CBC encrypting data",
     )
@@ -192,6 +211,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_DES3,
         keygen_mech=CKM_DES3_KEY_GEN,
         key_sizes=_DES3_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=CKF_GENERATE,
         notes="Triple-DES key generation (CKK_DES3): 128-bit (2-key) or 192-bit (3-key)",
     )
@@ -203,6 +223,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         deterministic=True,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="3DES-ECB: 8-byte block, no padding, deterministic",
     )
@@ -214,8 +235,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="3DES-CBC: 8-byte block, requires 8-byte IV param",
     )
@@ -227,8 +249,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_des_iv",
+        param_recipe=_iv8,
         deterministic=False,
+        keygen_recipe=_fixed,
         expected_flags=_DES_ENC | CKF_WRAP | CKF_UNWRAP,
         notes="3DES-CBC with PKCS#7 padding: any-length plaintext, requires 8-byte IV",
     )
@@ -237,6 +260,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_DES3,
         keygen_mech=CKM_DES3_KEY_GEN,
         key_sizes=_DES3_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
         notes="3DES-MAC: CBC-MAC with fixed output length",
     )
@@ -246,7 +270,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_DES3_KEY_GEN,
         key_sizes=_DES3_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
         notes="3DES-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -255,6 +280,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_DES3,
         keygen_mech=CKM_DES3_KEY_GEN,
         key_sizes=_DES3_SIZES,
+        keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
         notes="3DES-CMAC: NIST SP 800-38B CMAC, fixed 64-bit output",
     )
@@ -264,7 +290,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_DES3_KEY_GEN,
         key_sizes=_DES3_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_fixed,
         expected_flags=_DES_SIG,
         notes="3DES-CMAC-GENERAL: CMAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -274,6 +301,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_DES3_KEY_GEN,
         key_sizes=_DES3_SIZES,
         input_constraint="block_aligned",
+        param_recipe=_string_data,
+        keygen_recipe=_fixed,
         expected_flags=CKF_DERIVE,
         notes="3DES-ECB key derivation: derive key by 3DES-ECB encrypting data",
     )
@@ -284,7 +313,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_DES3_SIZES,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_des_cbc_encrypt_data",
+        param_recipe=_string_data,
+        keygen_recipe=_fixed,
         expected_flags=CKF_DERIVE,
         notes="3DES-CBC key derivation: derive key by 3DES-CBC encrypting data",
     )

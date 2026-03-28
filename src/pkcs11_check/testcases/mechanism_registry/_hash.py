@@ -1,4 +1,5 @@
 """Hash/digest mechanism family registry entries."""
+
 from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (

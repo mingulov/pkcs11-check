@@ -3,6 +3,7 @@
 Includes: HMAC standard, HMAC_GENERAL variants, HMAC keygen, key derivation
 by hash, and BLAKE2b HMAC/keygen/derivation.
 """
+
 from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
@@ -95,9 +96,12 @@ from pkcs11_check.raw.types_std import (
     CKM_SHAKE_128_KEY_DERIVATION,
     CKM_SHAKE_256_KEY_DERIVATION,
 )
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 _SIG_VER = CKF_SIGN | CKF_VERIFY
+
+_sym = KeygenRecipe("symmetric")
+_mac_general = ParamRecipe("mac_general", {"mac_len": 8})
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -111,6 +115,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA_1_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-1",
     )
@@ -119,6 +124,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA224_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-224",
     )
@@ -127,6 +133,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA256_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         vector_file="hmac_sha256.json",
         notes="HMAC-SHA-256",
@@ -136,6 +143,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA384_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-384",
     )
@@ -144,6 +152,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA512_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-512",
     )
@@ -152,6 +161,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA512_224_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-512/224",
     )
@@ -160,6 +170,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA512_256_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-512/256",
     )
@@ -168,6 +179,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA3_224_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA3-224",
     )
@@ -176,6 +188,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA3_256_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA3-256",
     )
@@ -184,6 +197,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA3_384_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA3-384",
     )
@@ -192,6 +206,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA3_512_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA3-512",
     )
@@ -200,6 +215,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-RIPEMD-128",
     )
@@ -208,6 +224,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-RIPEMD-160",
     )
@@ -216,6 +233,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA512_T_HMAC,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-512/t",
     )
@@ -229,7 +247,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-1-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -239,7 +258,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-224-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -249,7 +269,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-256-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -259,7 +280,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-384-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -269,7 +291,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-512-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -279,7 +302,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-512/224-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -289,7 +313,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-512/256-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -299,7 +324,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA3-224-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -309,7 +335,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA3-256-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -319,7 +346,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA3-384-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -329,7 +357,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA3-512-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -339,7 +368,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-RIPEMD-128-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -349,7 +379,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-RIPEMD-160-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -359,7 +390,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-SHA-512/t-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -372,6 +404,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="Generic secret key generation (used for HMAC and derivation keys)",
     )
@@ -380,6 +413,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA_1_HMAC,
         keygen_mech=CKM_SHA_1_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA-1 HMAC key generation",
     )
@@ -388,6 +422,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA224_HMAC,
         keygen_mech=CKM_SHA224_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA-224 HMAC key generation",
     )
@@ -396,6 +431,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA256_HMAC,
         keygen_mech=CKM_SHA256_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA-256 HMAC key generation",
     )
@@ -404,6 +440,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA384_HMAC,
         keygen_mech=CKM_SHA384_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA-384 HMAC key generation",
     )
@@ -412,6 +449,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA512_HMAC,
         keygen_mech=CKM_SHA512_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA-512 HMAC key generation",
     )
@@ -420,6 +458,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA512_224_HMAC,
         keygen_mech=CKM_SHA512_224_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA-512/224 HMAC key generation",
     )
@@ -428,6 +467,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA512_256_HMAC,
         keygen_mech=CKM_SHA512_256_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA-512/256 HMAC key generation",
     )
@@ -436,6 +476,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA512_T_HMAC,
         keygen_mech=CKM_SHA512_T_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA-512/t HMAC key generation",
     )
@@ -444,6 +485,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA3_224_HMAC,
         keygen_mech=CKM_SHA3_224_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA3-224 HMAC key generation",
     )
@@ -452,6 +494,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA3_256_HMAC,
         keygen_mech=CKM_SHA3_256_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA3-256 HMAC key generation",
     )
@@ -460,6 +503,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA3_384_HMAC,
         keygen_mech=CKM_SHA3_384_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA3-384 HMAC key generation",
     )
@@ -468,6 +512,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SHA3_512_HMAC,
         keygen_mech=CKM_SHA3_512_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="SHA3-512 HMAC key generation",
     )
@@ -480,6 +525,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA-1 key derivation: derive symmetric key by hashing base key value",
     )
@@ -488,6 +534,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA-224 key derivation",
     )
@@ -496,6 +543,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA-256 key derivation",
     )
@@ -504,6 +552,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA-384 key derivation",
     )
@@ -512,6 +561,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA-512 key derivation",
     )
@@ -520,6 +570,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA-512/224 key derivation",
     )
@@ -528,6 +579,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA-512/256 key derivation",
     )
@@ -536,6 +588,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA-512/t key derivation",
     )
@@ -544,6 +597,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA3-224 key derivation",
     )
@@ -552,6 +606,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA3-256 key derivation",
     )
@@ -560,6 +615,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA3-384 key derivation",
     )
@@ -568,6 +624,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHA3-512 key derivation",
     )
@@ -576,6 +633,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHAKE-128 key derivation (XOF-based)",
     )
@@ -584,6 +642,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="SHAKE-256 key derivation (XOF-based)",
     )
@@ -596,6 +655,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_160_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-BLAKE2b-160",
     )
@@ -605,7 +665,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_BLAKE2B_160_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-BLAKE2b-160-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -614,6 +675,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_160_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="BLAKE2b-160 key generation",
     )
@@ -622,6 +684,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_160_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="BLAKE2b-160 key derivation",
     )
@@ -630,6 +693,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_256_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-BLAKE2b-256",
     )
@@ -639,7 +703,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_BLAKE2B_256_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-BLAKE2b-256-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -648,6 +713,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_256_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="BLAKE2b-256 key generation",
     )
@@ -656,6 +722,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_256_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="BLAKE2b-256 key derivation",
     )
@@ -664,6 +731,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_384_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-BLAKE2b-384",
     )
@@ -673,7 +741,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_BLAKE2B_384_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-BLAKE2b-384-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -682,6 +751,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_384_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="BLAKE2b-384 key generation",
     )
@@ -690,6 +760,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_384_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="BLAKE2b-384 key derivation",
     )
@@ -698,6 +769,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_512_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-BLAKE2b-512",
     )
@@ -707,7 +779,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_BLAKE2B_512_KEY_GEN,
         key_sizes=(),
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=_mac_general,
+        keygen_recipe=_sym,
         expected_flags=_SIG_VER,
         notes="HMAC-BLAKE2b-512-GENERAL: variable output length via CK_MAC_GENERAL_PARAMS",
     )
@@ -716,6 +789,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_512_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="BLAKE2b-512 key generation",
     )
@@ -724,6 +798,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_GENERIC_SECRET,
         keygen_mech=CKM_BLAKE2B_512_KEY_GEN,
         key_sizes=(),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="BLAKE2b-512 key derivation",
     )
