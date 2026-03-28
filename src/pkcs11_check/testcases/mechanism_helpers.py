@@ -3,6 +3,7 @@
 Provides parameter factories, key generators, and test data helpers
 used by all test_mech_*.py files. Avoids duplicating logic across files.
 """
+
 from __future__ import annotations
 
 import os
@@ -84,9 +85,7 @@ FIXED_LENGTH_KEY_TYPES: frozenset[int] = frozenset(
 )
 
 # EC key types that need CKA_EC_PARAMS
-EC_KEY_TYPES: frozenset[int] = frozenset(
-    [int(CKK_EC), int(CKK_EC_EDWARDS), int(CKK_EC_MONTGOMERY)]
-)
+EC_KEY_TYPES: frozenset[int] = frozenset([int(CKK_EC), int(CKK_EC_EDWARDS), int(CKK_EC_MONTGOMERY)])
 
 # Default curve OIDs
 _P256_OID: bytes | None = None
@@ -303,9 +302,7 @@ def gen_symmetric_key(
     tmpl = template(*packed)
     mech = mech_simple(CKM(entry.mech_id))
     handle = CK_OBJECT_HANDLE(0)
-    rv = rs.raw.C_GenerateKey(
-        rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
-    )
+    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
     assert rv == CKR_OK, f"C_GenerateKey failed: {rv} for {entry.mech_name}"
     return handle.value
 
@@ -416,8 +413,7 @@ def gen_keypair_for_mech(
         pass
 
     pytest.skip(
-        f"{entry.mech_name}: keypair generation for key type {config.key_type!r} "
-        "not yet covered"
+        f"{entry.mech_name}: keypair generation for key type {config.key_type!r} not yet covered"
     )
 
 
@@ -575,9 +571,7 @@ def generate_key_for_sign(
         pytest.skip(f"{entry.mech_name}: no key_type in registry config")
 
     if needs_domain_params(config):
-        pytest.skip(
-            f"{entry.mech_name}: requires external domain parameters (DSA/DH/GOSTR/KEA)"
-        )
+        pytest.skip(f"{entry.mech_name}: requires external domain parameters (DSA/DH/GOSTR/KEA)")
 
     if config.is_keypair:
         pub, priv = gen_keypair_for_mech(rs, entry, config)
@@ -617,6 +611,112 @@ def generate_key_for_sign(
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
     assert rv == CKR_OK, f"C_GenerateKey failed: {rv} for {entry.mech_name}"
     return handle.value, None
+
+
+# ---------------------------------------------------------------------------
+# Vector-based Parameter Builder
+# ---------------------------------------------------------------------------
+
+
+def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, Any]) -> Any:
+    """Build mechanism parameters from a KAT vector entry.
+
+    Reads the ``params`` sub-dict from *vec* and constructs the PKCS#11
+    mechanism parameter struct using values from the vector rather than
+    random data.  When a required field is absent from the vector params,
+    the function falls back to ``build_test_params`` (random generation).
+
+    Styles handled:
+        ``"none"``   — returns None regardless of vector contents.
+        ``"iv"``     — uses ``params["iv_hex"]`` decoded to bytes.
+        ``"gcm"``    — uses ``iv_hex``, ``aad_hex`` (optional), ``tag_bits``.
+        ``"ctr"``    — uses ``params["iv_hex"]`` as the 16-byte counter block.
+        ``"ccm"``    — uses ``iv_hex`` (nonce), ``aad_hex``, ``tag_bits``, ``data_len``.
+        ``"pss"``    — uses ``params["hash_mech_hex"]`` as CKM constant name.
+        ``"oaep"``   — uses ``params["hash_mech_hex"]`` as CKM constant name.
+
+    For all other styles the function delegates to ``build_test_params``.
+
+    Returns the same types as ``build_test_params``: None, a PackedMechanism,
+    or the string ``"SKIP"`` for runtime-data recipes.
+    """
+    style = recipe.style
+    vp: dict[str, Any] = vec.get("params", {})
+    d = recipe.defaults
+
+    if style == "none":
+        return None
+
+    if style == "iv":
+        iv_hex: str | None = vp.get("iv_hex")
+        if iv_hex is None:
+            return build_test_params(mech_id, recipe)
+        return mech_bytes(CKM(mech_id), bytes.fromhex(iv_hex))
+
+    if style == "gcm":
+        iv_hex_gcm: str | None = vp.get("iv_hex")
+        if iv_hex_gcm is None:
+            return build_test_params(mech_id, recipe)
+        iv = bytes.fromhex(iv_hex_gcm)
+        aad_hex: str | None = vp.get("aad_hex")
+        aad: bytes | None = bytes.fromhex(aad_hex) if aad_hex else None
+        tag_bits: int = vp.get("tag_bits", d.get("tag_bits", 128))
+        return mech_gcm(CKM(mech_id), iv=iv, aad=aad, tag_bits=tag_bits)
+
+    if style == "ctr":
+        iv_hex_ctr: str | None = vp.get("iv_hex")
+        if iv_hex_ctr is None:
+            return build_test_params(mech_id, recipe)
+        # Build a CTR PackedMechanism, then overwrite cb with the vector's counter block.
+        # mech_ctr always zeroes cb; we patch it afterwards to match the KAT vector.
+        pm_ctr = mech_ctr(CKM(mech_id), bits=d.get("counter_bits", 128))
+        cb_raw = bytes.fromhex(iv_hex_ctr)
+        cb_bytes = (cb_raw[:16]).ljust(16, b"\x00")
+        if pm_ctr.params is not None:
+            for i, b in enumerate(cb_bytes):
+                pm_ctr.params.cb[i] = b
+        return pm_ctr
+
+    if style == "ccm":
+        iv_hex_ccm: str | None = vp.get("iv_hex")
+        if iv_hex_ccm is None:
+            return build_test_params(mech_id, recipe)
+        nonce = bytes.fromhex(iv_hex_ccm)
+        aad_hex_ccm: str | None = vp.get("aad_hex")
+        aad_ccm: bytes | None = bytes.fromhex(aad_hex_ccm) if aad_hex_ccm else None
+        tag_bits_ccm: int = vp.get("tag_bits", d.get("mac_len", 16) * 8)
+        data_len: int = vp.get("data_len", d.get("data_len", 32))
+        return mech_ccm(
+            CKM(mech_id),
+            nonce=nonce,
+            data_len=data_len,
+            aad=aad_ccm,
+            mac_len=tag_bits_ccm // 8,
+        )
+
+    if style == "pss":
+        hash_mech_name: str | None = vp.get("hash_mech_hex")
+        if hash_mech_name is None:
+            return build_test_params(mech_id, recipe)
+        return mech_pss(
+            CKM(mech_id),
+            hash_mech=_resolve_const(hash_mech_name),
+            mgf=_resolve_const(d.get("mgf", "CKG_MGF1_SHA256")),
+            salt_len=d.get("salt_len", 32),
+        )
+
+    if style == "oaep":
+        hash_mech_name_oaep: str | None = vp.get("hash_mech_hex")
+        if hash_mech_name_oaep is None:
+            return build_test_params(mech_id, recipe)
+        return mech_oaep(
+            CKM(mech_id),
+            hash_mech=_resolve_const(hash_mech_name_oaep),
+            mgf=_resolve_const(d.get("mgf", "CKG_MGF1_SHA256")),
+        )
+
+    # All other styles (eddsa, ecdh, hkdf, etc.) delegate to random generation
+    return build_test_params(mech_id, recipe)
 
 
 # ---------------------------------------------------------------------------
