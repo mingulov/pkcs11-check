@@ -115,7 +115,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_ec,
         expected_flags=_SIG_VER,
-        # vector_file deferred: ECDSA vectors need keypair handling
+        vector_file="ecdsa_sha256.json",
         notes="ECDSA with SHA-256 hash-and-sign",
     )
 

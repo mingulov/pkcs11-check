@@ -202,7 +202,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
-        # vector_file deferred: RSA sign vectors need keypair handling
+        vector_file="rsa_pkcs1_sha256.json",
         notes="SHA-256 + RSA PKCS#1 v1.5 sign/verify",
     )
 
@@ -261,7 +261,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_pss_sha256,
         keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
-        # vector_file deferred: RSA PSS vectors need keypair handling
+        vector_file="rsa_pss_sha256.json",
         notes="SHA-256 + RSA PSS sign/verify: requires CK_RSA_PKCS_PSS_PARAMS",
     )
 
