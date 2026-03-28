@@ -144,14 +144,15 @@ def test_pbkdf2(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
         dk_actual = attrs[CKA_VALUE]
         assert isinstance(dk_actual, bytes)
-        if result == "valid":
-            assert dk_actual == dk_expected, (
-                f"PBKDF2 output mismatch for {vec_id}: "
-                f"got {dk_actual.hex()[:20]}... expected {dk_expected.hex()[:20]}..."
-            )
         destroy_quietly(rs.raw, rs.sh, derived)
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.xfail(f"PBKDF2 generate_key failed for valid vector {vec_id}")
+            pytest.fail(f"PBKDF2 generate_key failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
+
+    if result == "valid":
+        assert dk_actual == dk_expected, (
+            f"PBKDF2 output mismatch for {vec_id}: "
+            f"got {dk_actual.hex()[:20]}... expected {dk_expected.hex()[:20]}..."
+        )

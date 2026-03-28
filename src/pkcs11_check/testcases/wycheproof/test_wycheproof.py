@@ -126,7 +126,7 @@ class TestAESGCMWycheproof:
         except (AssertionError, ValueError, TypeError):
             # Binding rejects non-standard IV/tag sizes
             if result == "valid":
-                pytest.xfail(f"Binding rejects GCM iv={len(iv)}B tag={len(tag_expected)}B")
+                pytest.fail(f"Binding rejects GCM iv={len(iv)}B tag={len(tag_expected)}B")
             return  # invalid vectors correctly rejected
 
         try:
@@ -149,21 +149,11 @@ class TestAESGCMWycheproof:
             exc_msg = str(exc)
             if result == "valid":
                 iv_len = len(iv)
-                if (
-                    any(
-                        name in exc_msg
-                        for name in ("CKR_ENCRYPTED_DATA_INVALID", "CKR_ENCRYPTED_DATA_LEN_RANGE")
-                    )
-                    and iv_len <= 128
-                ):
-                    pytest.fail(f"Valid GCM vector tc{vec['tcId']} rejected: {exc_msg}")
-                else:
-                    # Module limitation (e.g. non-12-byte IV not supported)
-                    tag_len = len(tag_expected)
-                    pytest.xfail(
-                        f"Module limitation: GCM iv={iv_len}B tag={tag_len}B "
-                        f"not supported ({exc_msg})"
-                    )
+                tag_len = len(tag_expected)
+                pytest.fail(
+                    f"Valid GCM vector tc{vec['tcId']} rejected: "
+                    f"iv={iv_len}B tag={tag_len}B ({exc_msg})"
+                )
             # invalid/acceptable failing is expected - good!
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -226,7 +216,7 @@ class TestHMACSHA256Wycheproof:
         if key is None:
             if result == "invalid":
                 return  # Invalid key correctly rejected
-            pytest.xfail(f"Module cannot import {len(key_bytes)}-byte HMAC key")
+            pytest.fail(f"Module cannot import {len(key_bytes)}-byte HMAC key")
 
         try:
             mac = sign_single(rs.raw, rs.sh, key, CKM_SHA256_HMAC, msg)
@@ -237,16 +227,10 @@ class TestHMACSHA256Wycheproof:
         except AssertionError as exc:
             if result == "valid":
                 exc_msg = str(exc)
-                if any(
-                    name in exc_msg
-                    for name in ("CKR_KEY_SIZE_RANGE", "CKR_MECHANISM_PARAM_INVALID")
-                ):
-                    pytest.xfail(
-                        f"Module limitation: {len(key_bytes)}-byte key "
-                        f"too short for SHA256_HMAC ({exc_msg})"
-                    )
-                else:
-                    pytest.fail(f"Valid HMAC vector tc{vec['tcId']} failed: {exc_msg}")
+                pytest.fail(
+                    f"Valid HMAC vector tc{vec['tcId']} failed: "
+                    f"{len(key_bytes)}-byte key ({exc_msg})"
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -445,9 +429,9 @@ class TestECDSAP384Wycheproof:
         except AssertionError as exc:
             exc_msg = str(exc)
             if "CKR_ATTRIBUTE_VALUE_INVALID" in exc_msg:
-                pytest.xfail(
-                    reason="Module returns CKR_ATTRIBUTE_VALUE_INVALID on "
-                    "EC public key import for secp384r1 (known module bug)"
+                pytest.fail(
+                    "Module returns CKR_ATTRIBUTE_VALUE_INVALID on "
+                    f"EC public key import for secp384r1: {exc_msg}"
                 )
             pytest.skip(f"Cannot import EC public key on this module: {exc_msg}")
 

@@ -115,6 +115,7 @@ def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
     if not rs.has_mechanism("AES_CBC_PAD"):
         pytest.skip("AES_CBC_PAD not supported")
 
+    result = vec["result"]
     password = bytes.fromhex(vec["password"])
     salt = bytes.fromhex(vec["salt"])
     iterations = vec["iterationCount"]
@@ -145,9 +146,11 @@ def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
             },
         )
     except AssertionError as exc:
-        pytest.xfail(
-            f"PBES2 key derivation unsupported for {vec['_prf_name']}/{vec['_key_bits']}: {exc}"
-        )
+        if result == "valid":
+            pytest.fail(
+                f"PBES2 key derivation failed for valid vector {vec_id}: {exc}"
+            )
+        return
 
     try:
         plaintext = decrypt_single(
@@ -160,7 +163,9 @@ def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
         )
     except AssertionError as exc:
         destroy_quietly(rs.raw, rs.sh, key)
-        pytest.xfail(f"PBES2 decrypt failed for valid vector {vec_id}: {exc}")
+        if result == "valid":
+            pytest.fail(f"PBES2 decrypt failed for valid vector {vec_id}: {exc}")
+        return
 
     destroy_quietly(rs.raw, rs.sh, key)
     assert plaintext == expected, f"PBES2 plaintext mismatch for {vec_id}"
