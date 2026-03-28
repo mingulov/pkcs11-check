@@ -1,4 +1,5 @@
 """AES mechanism family registry entries."""
+
 from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
@@ -41,7 +42,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_XTS,
     CKM_AES_XTS_KEY_GEN,
 )
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 _AES_SIZES = (128, 192, 256)
 _AES_ENC = CKF_ENCRYPT | CKF_DECRYPT
@@ -52,12 +53,15 @@ _AES_SIG = CKF_SIGN | CKF_VERIFY
 def populate(registry: dict[int, MechConfig]) -> None:
     """Add AES mechanism entries to the registry."""
 
+    _sym = KeygenRecipe("symmetric")
+
     # -- Key generation ----------------------------------------------------------
 
     registry[CKM_AES_KEY_GEN] = MechConfig(
         key_type=CKK_AES,
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="AES secret key generation",
     )
@@ -66,6 +70,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_AES_XTS,
         keygen_mech=CKM_AES_XTS_KEY_GEN,
         key_sizes=(256, 512),  # XTS uses double-length keys: 2×128 or 2×256
+        keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="AES-XTS double-length key generation (CKK_AES_XTS)",
     )
@@ -78,6 +83,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_AES_SIZES,
         block_size=16,
         input_constraint="block_aligned",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         deterministic=True,
         expected_flags=_AES_ENC | _AES_WRP,
         vector_file="aes_ecb.json",
@@ -91,7 +98,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=ParamRecipe("iv", {"iv_len": 16}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
         vector_file="aes_cbc.json",
@@ -105,7 +113,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=ParamRecipe("iv", {"iv_len": 16}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
         notes="AES-CBC with PKCS#7 padding: any-length plaintext, requires IV param",
@@ -118,7 +127,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=ParamRecipe("iv", {"iv_len": 16}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
         notes="AES-OFB: stream mode, any length, requires IV param",
@@ -131,7 +141,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=ParamRecipe("iv", {"iv_len": 16}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
         notes="AES-CFB8: 8-bit CFB stream mode, requires IV param",
@@ -144,7 +155,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=ParamRecipe("iv", {"iv_len": 16}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
         notes="AES-CFB64: 64-bit CFB stream mode, requires IV param",
@@ -157,7 +169,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=ParamRecipe("iv", {"iv_len": 16}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
         notes="AES-CFB128: 128-bit CFB stream mode, requires IV param",
@@ -170,7 +183,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=ParamRecipe("iv", {"iv_len": 16}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
         notes="AES-CFB1: bit-level CFB stream mode, requires IV param",
@@ -183,7 +197,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="any",  # any length >= 1 block
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=ParamRecipe("iv", {"iv_len": 16}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC,  # wrap/unwrap not typically advertised
         notes="AES-CTS: ciphertext stealing, min 1 block, requires IV param",
@@ -196,7 +211,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_ctr",
+        param_recipe=ParamRecipe("ctr", {"counter_bits": 128}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
         notes="AES-CTR: counter mode, requires CK_AES_CTR_PARAMS (counter bits + IV)",
@@ -211,7 +227,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_gcm",
+        param_recipe=ParamRecipe("gcm", {"iv_len": 12, "tag_bits": 128}),
+        keygen_recipe=_sym,
         multi_part_supported=False,
         auth_tag_included=True,
         deterministic=False,
@@ -228,7 +245,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_ccm",
+        param_recipe=ParamRecipe("ccm", {"nonce_len": 7, "data_len": 32, "mac_len": 16}),
+        keygen_recipe=_sym,
         multi_part_supported=False,
         auth_tag_included=True,
         deterministic=False,
@@ -244,7 +262,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_gcm",
+        param_recipe=ParamRecipe("gcm", {"iv_len": 12, "tag_bits": 128}),
+        keygen_recipe=_sym,
         expected_flags=_AES_SIG,
         notes="AES-GMAC: GMAC authentication only (sign/verify), no plaintext encryption",
     )
@@ -258,7 +277,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=16,
         input_constraint="any",
         param_required=True,
-        param_packer="pack_aes_iv",
+        param_recipe=ParamRecipe("iv", {"iv_len": 16}),
+        keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC,
         notes="AES-XTS: requires tweak (IV) and CKK_AES_XTS double-length key",
@@ -270,6 +290,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_AES,
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_AES_SIG,
         notes="AES-MAC: CBC-MAC with fixed output length",
     )
@@ -279,7 +301,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=ParamRecipe("mac_general", {"mac_len": 8}),
+        keygen_recipe=_sym,
         expected_flags=_AES_SIG,
         notes="AES-MAC-GENERAL: CBC-MAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -288,6 +311,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_AES,
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_AES_SIG,
         notes="AES-CMAC: NIST SP 800-38B CMAC, fixed 128-bit output",
     )
@@ -297,7 +322,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
         param_required=True,
-        param_packer="pack_mac_general",
+        param_recipe=ParamRecipe("mac_general", {"mac_len": 8}),
+        keygen_recipe=_sym,
         expected_flags=_AES_SIG,
         notes="AES-CMAC-GENERAL: CMAC with variable output length (CK_MAC_GENERAL_PARAMS)",
     )
@@ -306,6 +332,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_AES,
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=(128,),  # 128-bit keys only per spec
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_AES_SIG,
         notes="AES-XCBC-MAC: RFC 3566, 128-bit key only, 128-bit output",
     )
@@ -314,6 +342,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_AES,
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=(128,),  # 128-bit keys only per spec
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_AES_SIG,
         notes="AES-XCBC-MAC-96: RFC 3566, 128-bit key only, 96-bit output",
     )
@@ -328,6 +358,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         input_constraint="block_aligned",
         param_required=False,  # optional 8-byte IV param (default IV used if absent)
         param_packer="pack_aes_key_wrap_iv",
+        param_recipe=ParamRecipe("none"),  # key-wrap-only, skip for data operations
+        keygen_recipe=_sym,
         expected_flags=_AES_WRP,
         notes="AES Key Wrap (RFC 3394): optional 8-byte IV, wraps 128/192/256-bit keys",
     )
@@ -337,6 +369,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
         block_size=8,
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_AES_WRP,
         notes="AES Key Wrap with Padding (DEPRECATED in PKCS#11 v3.x — use KWP instead)",
     )
@@ -349,6 +383,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         input_constraint="any",
         param_required=False,  # optional 4-byte semi-fixed header
         param_packer="pack_aes_key_wrap_kwp",
+        param_recipe=ParamRecipe("none"),  # key-wrap-only, skip for data operations
+        keygen_recipe=_sym,
         expected_flags=_AES_WRP,
         notes="AES Key Wrap with Padding (RFC 5649): optional 4-byte IV, any-length data",
     )
@@ -359,6 +395,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_AES_SIZES,
         block_size=8,
         input_constraint="any",
+        param_recipe=ParamRecipe("none"),
+        keygen_recipe=_sym,
         expected_flags=_AES_WRP,
         notes="AES Key Wrap with PKCS#7 padding",
     )
@@ -370,6 +408,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
         input_constraint="block_aligned",
+        param_recipe=ParamRecipe("string_data"),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="AES-ECB key derivation: derive key by AES-ECB encrypting data",
     )
@@ -381,6 +421,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         input_constraint="block_aligned",
         param_required=True,
         param_packer="pack_aes_cbc_encrypt_data",
+        param_recipe=ParamRecipe("string_data"),
+        keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,
         notes="AES-CBC key derivation: derive key by AES-CBC encrypting data",
     )

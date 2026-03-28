@@ -44,7 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import MechConfig, ParamRecipe
 
 # Fixed-length symmetric key types: CKA_VALUE_LEN must NOT be set.
 FIXED_LENGTH_KEY_TYPES: frozenset[int] = frozenset(
@@ -165,6 +165,74 @@ def make_mech_param(entry: MechEntry) -> Any:
         return mech_eddsa(mech_id)
 
     # Unknown packer
+    return "SKIP"
+
+
+# ---------------------------------------------------------------------------
+# Recipe-based Parameter Builder
+# ---------------------------------------------------------------------------
+
+
+def _resolve_const(name: str) -> int:
+    """Resolve a CKM_*/CKG_* constant name to its integer value."""
+    from pkcs11_check.raw import types_std
+
+    val = getattr(types_std, name, None)
+    if val is not None:
+        return int(val)
+    raise ValueError(f"Unknown constant: {name}")
+
+
+def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
+    """Build mechanism parameters from a ParamRecipe.
+
+    Returns None for "none" style, a PackedMechanism for concrete styles,
+    or the string "SKIP" if the recipe needs runtime data (ECDH peer key, etc.)
+    """
+    style = recipe.style
+    d = recipe.defaults
+
+    if style == "none":
+        return None
+    elif style == "iv":
+        iv_len = d.get("iv_len", 16)
+        return mech_bytes(CKM(mech_id), os.urandom(iv_len))
+    elif style == "gcm":
+        return mech_gcm(
+            CKM(mech_id),
+            iv=os.urandom(d.get("iv_len", 12)),
+            tag_bits=d.get("tag_bits", 128),
+        )
+    elif style == "ccm":
+        return mech_ccm(
+            CKM(mech_id),
+            nonce=os.urandom(d.get("nonce_len", 12)),
+            data_len=d.get("data_len", 32),
+            mac_len=d.get("mac_len", 16),
+        )
+    elif style == "ctr":
+        return mech_ctr(CKM(mech_id), bits=d.get("counter_bits", 128))
+    elif style == "pss":
+        return mech_pss(
+            CKM(mech_id),
+            hash_mech=_resolve_const(d.get("hash_mech", "CKM_SHA256")),
+            mgf=_resolve_const(d.get("mgf", "CKG_MGF1_SHA256")),
+            salt_len=d.get("salt_len", 32),
+        )
+    elif style == "oaep":
+        return mech_oaep(
+            CKM(mech_id),
+            hash_mech=_resolve_const(d.get("hash_mech", "CKM_SHA256")),
+            mgf=_resolve_const(d.get("mgf", "CKG_MGF1_SHA256")),
+        )
+    elif style == "eddsa":
+        return mech_eddsa(CKM(mech_id))
+    elif style == "mac_general":
+        mac_len = d.get("mac_len", 8)
+        return mech_bytes(CKM(mech_id), mac_len.to_bytes(8, "little"))
+    elif style in ("ecdh", "hkdf", "string_data", "pbkdf2", "tls", "sp800_108"):
+        return "SKIP"  # Needs runtime data
+    # Unknown style
     return "SKIP"
 
 

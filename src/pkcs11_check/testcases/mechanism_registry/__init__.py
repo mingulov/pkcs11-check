@@ -2,7 +2,7 @@
 
 Maps CKM_* mechanism IDs to test configurations. Covers all 480 mechanisms
 from the OASIS PKCS#11 v3.2 standard. Each entry describes how to test
-a mechanism: what key type it needs, what key sizes, what parameter packer,
+a mechanism: what key type it needs, what key sizes, what parameter recipe,
 whether it supports multi-part, etc.
 
 Usage:
@@ -14,7 +14,60 @@ Usage:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass(frozen=True)
+class ParamRecipe:
+    """Declarative recipe for creating mechanism test parameters.
+
+    The 'style' field selects a parameter construction strategy.
+    The 'defaults' dict provides style-specific configuration.
+
+    Styles:
+        "none"         — No params needed (CKM_AES_ECB, CKM_SHA256, etc.)
+        "iv"           — Random IV of iv_len bytes (CBC, OFB, CFB modes)
+        "gcm"          — CK_AES_GCM_PARAMS with iv_len, tag_bits, optional aad
+        "ccm"          — CK_AES_CCM_PARAMS with nonce_len, mac_len, data_len
+        "ctr"          — CK_AES_CTR_PARAMS with counter_bits
+        "pss"          — CK_RSA_PKCS_PSS_PARAMS with hash_mech, mgf, salt_len
+        "oaep"         — CK_RSA_PKCS_OAEP_PARAMS with hash_mech, mgf
+        "eddsa"        — CK_EDDSA_PARAMS (phFlag=0, no context)
+        "ecdh"         — CK_ECDH1_DERIVE_PARAMS (needs peer public key at runtime)
+        "hkdf"         — CK_HKDF_PARAMS (needs salt/info at runtime)
+        "mac_general"  — CK_MAC_GENERAL_PARAMS (mac_len as CK_ULONG)
+        "string_data"  — CK_KEY_DERIVATION_STRING_DATA (data bytes)
+    """
+
+    style: str = "none"
+    defaults: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class KeygenRecipe:
+    """Declarative recipe for key generation template construction.
+
+    Styles:
+        "symmetric"     — CKA_VALUE_LEN from key_size (AES, Camellia, ARIA, etc.)
+        "fixed_length"  — No CKA_VALUE_LEN needed (DES, SEED, etc.)
+        "rsa"           — CKA_MODULUS_BITS + CKA_PUBLIC_EXPONENT
+        "ec"            — CKA_EC_PARAMS with curve OID
+        "ec_edwards"    — CKA_EC_PARAMS with Edwards curve OID
+        "ec_montgomery" — CKA_EC_PARAMS with Montgomery curve OID
+        "pqc"           — CKA_PARAMETER_SET with param set constant
+        "dh"            — Requires domain parameters (skip for now)
+        "dsa"           — Requires domain parameters (skip for now)
+        "generic"       — CKK_GENERIC_SECRET with CKA_VALUE_LEN
+    """
+
+    style: str = "symmetric"
+    defaults: dict[str, Any] = field(default_factory=dict)
+    # defaults examples:
+    # "rsa": {} (uses key_size for MODULUS_BITS, fixed e=65537)
+    # "ec": {"curve": "secp256r1"} (default curve when key_sizes empty)
+    # "ec_edwards": {"curve": "Ed25519"}
+    # "pqc": {"parameter_set": "CKP_ML_DSA_65"}
 
 
 @dataclass(frozen=True)
@@ -27,8 +80,10 @@ class MechConfig:
         key_sizes: Valid key sizes in bits. () for digest or curve-based
         is_keypair: True for asymmetric (uses C_GenerateKeyPair)
         is_param_gen: True for domain parameter generation (DSA/DH param gen)
-        param_packer: Name of packer function in pack_mechanisms.py
-        param_factory: Name of function that creates default test params
+        param_packer: Deprecated string packer name (use param_recipe instead)
+        param_factory: Deprecated string factory name (use param_recipe instead)
+        param_recipe: Declarative recipe for mechanism parameter construction
+        keygen_recipe: Declarative recipe for key generation template construction
         block_size: Block size in bytes (16 for AES block modes, None for stream)
         vector_file: Path to JSON vectors file (relative to data/mechanism_vectors/)
         input_constraint: "block_aligned", "any", "digest_only", "none"
@@ -46,8 +101,10 @@ class MechConfig:
     key_sizes: tuple[int, ...] = ()
     is_keypair: bool = False
     is_param_gen: bool = False
-    param_packer: str | None = None
-    param_factory: str | None = None
+    param_packer: str | None = None  # Deprecated: use param_recipe
+    param_factory: str | None = None  # Deprecated: use param_recipe
+    param_recipe: ParamRecipe = field(default_factory=ParamRecipe)
+    keygen_recipe: KeygenRecipe = field(default_factory=KeygenRecipe)
     block_size: int | None = None
     vector_file: str | None = None
     input_constraint: str = "any"
