@@ -143,6 +143,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
+        vector_file="hmac_md5.json",
         notes="MD5-HMAC: HMAC with MD5, 128-bit output (RFC 2104)",
     )
 

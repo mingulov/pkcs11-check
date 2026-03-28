@@ -132,6 +132,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
+        vector_file="aes_ofb.json",
         notes="AES-OFB: stream mode, any length, requires IV param",
     )
 
@@ -146,6 +147,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
+        vector_file="aes_cfb8.json",
         notes="AES-CFB8: 8-bit CFB stream mode, requires IV param",
     )
 
@@ -174,6 +176,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC | _AES_WRP,
+        vector_file="aes_cfb128.json",
         notes="AES-CFB128: 128-bit CFB stream mode, requires IV param",
     )
 

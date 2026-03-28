@@ -182,6 +182,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
+        vector_file="rsa_pkcs1_sha1.json",
         notes="SHA-1 + RSA PKCS#1 v1.5 sign/verify",
     )
 
@@ -213,6 +214,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
+        vector_file="rsa_pkcs1_sha384.json",
         notes="SHA-384 + RSA PKCS#1 v1.5 sign/verify",
     )
 
@@ -223,6 +225,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
+        vector_file="rsa_pkcs1_sha512.json",
         notes="SHA-512 + RSA PKCS#1 v1.5 sign/verify",
     )
 

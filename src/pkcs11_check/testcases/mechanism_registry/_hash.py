@@ -85,6 +85,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         input_constraint="digest_only",
         expected_flags=CKF_DIGEST,
+        vector_file="sha512_truncated.json",
         notes="SHA-512/224 truncated digest",
     )
 
@@ -94,6 +95,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         input_constraint="digest_only",
         expected_flags=CKF_DIGEST,
+        vector_file="sha512_truncated.json",
         notes="SHA-512/256 truncated digest",
     )
 
@@ -113,6 +115,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         input_constraint="digest_only",
         expected_flags=CKF_DIGEST,
+        vector_file="sha3.json",
         notes="SHA3-224 digest",
     )
 
@@ -122,6 +125,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         input_constraint="digest_only",
         expected_flags=CKF_DIGEST,
+        vector_file="sha3.json",
         notes="SHA3-256 digest",
     )
 
@@ -131,6 +135,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         input_constraint="digest_only",
         expected_flags=CKF_DIGEST,
+        vector_file="sha3.json",
         notes="SHA3-384 digest",
     )
 
@@ -140,6 +145,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=(),
         input_constraint="digest_only",
         expected_flags=CKF_DIGEST,
+        vector_file="sha3.json",
         notes="SHA3-512 digest",
     )
 

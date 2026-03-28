@@ -198,6 +198,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="camellia_ecb.json",
         notes="Camellia-ECB: 16-byte block, no padding, deterministic",
     )
 
@@ -212,6 +213,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="camellia_cbc.json",
         notes="Camellia-CBC: 16-byte block, requires 16-byte IV param",
     )
 
@@ -307,6 +309,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_sym,
         expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="aria_ecb.json",
         notes="ARIA-ECB: 16-byte block, no padding, deterministic",
     )
 
@@ -321,6 +324,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_ARIA_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="aria_cbc.json",
         notes="ARIA-CBC: 16-byte block, requires 16-byte IV param",
     )
 
@@ -403,6 +407,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=True,
         keygen_recipe=_fixed,
         expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="seed_ecb.json",
         notes="SEED-ECB: 16-byte block, no padding, deterministic",
     )
 
@@ -417,6 +422,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         deterministic=False,
         keygen_recipe=_fixed,
         expected_flags=_SEED_ENC | CKF_WRAP | CKF_UNWRAP,
+        vector_file="seed_cbc.json",
         notes="SEED-CBC: 16-byte block, requires 16-byte IV param",
     )
 

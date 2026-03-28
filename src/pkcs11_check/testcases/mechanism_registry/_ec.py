@@ -105,6 +105,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_ec,
         expected_flags=_SIG_VER,
+        vector_file="ecdsa_p224.json",
         notes="ECDSA with SHA-224 hash-and-sign",
     )
 
@@ -126,6 +127,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_ec,
         expected_flags=_SIG_VER,
+        vector_file="ecdsa_p384.json",
         notes="ECDSA with SHA-384 hash-and-sign",
     )
 
@@ -136,6 +138,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_ec,
         expected_flags=_SIG_VER,
+        vector_file="ecdsa_p521.json",
         notes="ECDSA with SHA-512 hash-and-sign",
     )
 
@@ -270,6 +273,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_eddsa,
         keygen_recipe=_ec_edwards,
         expected_flags=_SIG_VER,
+        vector_file="eddsa_ed25519.json",
         notes="EdDSA sign/verify: requires CK_EDDSA_PARAMS specifying curve",
     )
 
