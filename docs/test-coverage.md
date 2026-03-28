@@ -78,8 +78,8 @@ Require `src/pkcs11_check/testcases/data/cctv/` directory.
 ### Mechanism-Driven Tests (12 files)
 
 Auto-parametrized from the module's advertised mechanism list. Each test is parametrized
-per mechanism via MechanismCatalog (built from preflight manifest). 439-entry registry
-covers AES, RSA, EC, DES, SHA, HMAC, HKDF, PQC, and more.
+per mechanism via MechanismCatalog (built from preflight manifest). 467-entry registry
+covers all MECHANISM_NAMES: AES, RSA, EC, DES, SHA, HMAC, HKDF, PQC, TLS/SSL, GOST, and more.
 
 | File | Purpose | KAT |
 |------|---------|:---:|
