@@ -291,6 +291,27 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         pytest.skip(reason)
 
 
+def _build_one_stacked_string(mech_id: int, subs: dict[str, int]) -> str:
+    """Build one stacked string like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
+    from pkcs11_check.raw.api import ckm_name, sub_param_name
+
+    base = ckm_name(mech_id)
+    if subs:
+        parts = ",".join(f"{k}={sub_param_name(k, v)}" for k, v in sorted(subs.items()))
+        return f"{base}[{parts}]"
+    return base
+
+
+def _build_stacked_strings(
+    detail_set: set[tuple[int, frozenset[tuple[str, int]]]],
+) -> list[str]:
+    """Build sorted stacked strings like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
+    return sorted(
+        _build_one_stacked_string(mech_id, dict(subs_frozen))
+        for mech_id, subs_frozen in detail_set
+    )
+
+
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
     """Clear compliance notes after each testcase item to prevent leakage."""
     if not _is_testcase_item(item):
@@ -373,27 +394,6 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                     detail_counts[detail_str] += 1
     except (KeyError, ImportError):
         pass
-
-
-def _build_one_stacked_string(mech_id: int, subs: dict[str, int]) -> str:
-    """Build one stacked string like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
-    from pkcs11_check.raw.api import ckm_name, sub_param_name
-
-    base = ckm_name(mech_id)
-    if subs:
-        parts = ",".join(f"{k}={sub_param_name(k, v)}" for k, v in sorted(subs.items()))
-        return f"{base}[{parts}]"
-    return base
-
-
-def _build_stacked_strings(
-    detail_set: set[tuple[int, frozenset[tuple[str, int]]]],
-) -> list[str]:
-    """Build sorted stacked strings like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
-    return sorted(
-        _build_one_stacked_string(mech_id, dict(subs_frozen))
-        for mech_id, subs_frozen in detail_set
-    )
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
