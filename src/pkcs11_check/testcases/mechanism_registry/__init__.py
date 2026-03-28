@@ -80,8 +80,6 @@ class MechConfig:
         key_sizes: Valid key sizes in bits. () for digest or curve-based
         is_keypair: True for asymmetric (uses C_GenerateKeyPair)
         is_param_gen: True for domain parameter generation (DSA/DH param gen)
-        param_packer: Deprecated string packer name (use param_recipe instead)
-        param_factory: Deprecated string factory name (use param_recipe instead)
         param_recipe: Declarative recipe for mechanism parameter construction
         keygen_recipe: Declarative recipe for key generation template construction
         block_size: Block size in bytes (16 for AES block modes, None for stream)
@@ -101,8 +99,6 @@ class MechConfig:
     key_sizes: tuple[int, ...] = ()
     is_keypair: bool = False
     is_param_gen: bool = False
-    param_packer: str | None = None  # Deprecated: use param_recipe
-    param_factory: str | None = None  # Deprecated: use param_recipe
     param_recipe: ParamRecipe = field(default_factory=ParamRecipe)
     keygen_recipe: KeygenRecipe = field(default_factory=KeygenRecipe)
     block_size: int | None = None

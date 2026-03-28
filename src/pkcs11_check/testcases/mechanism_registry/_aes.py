@@ -357,7 +357,6 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,  # RFC 3394: operates on 64-bit blocks
         input_constraint="block_aligned",
         param_required=False,  # optional 8-byte IV param (default IV used if absent)
-        param_packer="pack_aes_key_wrap_iv",
         param_recipe=ParamRecipe("none"),  # key-wrap-only, skip for data operations
         keygen_recipe=_sym,
         expected_flags=_AES_WRP,
@@ -382,7 +381,6 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         input_constraint="any",
         param_required=False,  # optional 4-byte semi-fixed header
-        param_packer="pack_aes_key_wrap_kwp",
         param_recipe=ParamRecipe("none"),  # key-wrap-only, skip for data operations
         keygen_recipe=_sym,
         expected_flags=_AES_WRP,
@@ -420,7 +418,6 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_AES_SIZES,
         input_constraint="block_aligned",
         param_required=True,
-        param_packer="pack_aes_cbc_encrypt_data",
         param_recipe=ParamRecipe("string_data"),
         keygen_recipe=_sym,
         expected_flags=CKF_DERIVE,

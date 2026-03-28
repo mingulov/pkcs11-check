@@ -2,18 +2,18 @@
 set -euo pipefail
 
 ALL_PROVIDERS=(
-    kryoptic
-    kryoptic-fips
     kryoptic-main
-    softhsm2
     softhsm2-main
-    nss
     nss-pqc
-    nss-main
-    opencryptoki
     opencryptoki-master
     tpm2
     bouncyhsm
+    kryoptic
+    kryoptic-fips
+    softhsm2
+    nss
+    nss-main
+    opencryptoki
     pkcs11-mock
     qryptotoken
 )
