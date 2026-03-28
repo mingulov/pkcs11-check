@@ -379,6 +379,32 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                     pass
                 break
 
+    # Drain subprocess coverage (from _raw_subprocess and _subprocess_preamble tests)
+    try:
+        from pkcs11_check.testcases._raw_subprocess import get_raw_subprocess_coverage
+
+        sub_func, sub_mech = get_raw_subprocess_coverage()
+        if sub_func:
+            cumulative.update(sub_func.keys())
+            try:
+                session.config.stash[_CUMULATIVE_FUNCTION_COUNTS].update(sub_func)
+            except KeyError:
+                pass
+    except ImportError:
+        pass
+    try:
+        from pkcs11_check.testcases._subprocess_preamble import get_preamble_subprocess_coverage
+
+        sub_func, sub_mech = get_preamble_subprocess_coverage()
+        if sub_func:
+            cumulative.update(sub_func.keys())
+            try:
+                session.config.stash[_CUMULATIVE_FUNCTION_COUNTS].update(sub_func)
+            except KeyError:
+                pass
+    except ImportError:
+        pass
+
     # Drain stacked mechanism details from PackedMechanism.byref() calls
     try:
         from pkcs11_check.raw.pack import drain_mechanism_details
