@@ -441,3 +441,21 @@ Check:
 ```bash
 git commit --allow-empty -m 'chore: mechanism-driven test system v1.0 — fully verified'
 ```
+
+---
+
+## Known Deferred Items (Future Sessions)
+
+These are NOT in scope for this plan but should be tracked:
+
+1. **CK_GCM_MESSAGE_PARAMS packer** — `test_mech_message.py` skips both tests because `mech_gcm_message()` doesn't exist in `pack_mechanisms.py`. Needed for v3.0 message-based AEAD tests.
+
+2. **CK_HASH_SIGN_ADDITIONAL_CONTEXT packer** — `test_hash_ml_dsa.py` and `test_hash_slh_dsa.py` skip CKM_HASH_ML_DSA/CKM_HASH_SLH_DSA because this v3.2 parameter type isn't in the raw bindings.
+
+3. **SHAKE_128/SHAKE_256 CKM constants** — Not in vendored v3.2 header (`pkcs11.h`). Will be available when the OASIS working draft header is adopted. Currently using integer literals 0x0418/0x0419.
+
+4. **Pre-existing test_raw_pack.py failure** — `pkcs11f.h` not in vendored headers. NOT from our changes.
+
+5. **Mechanism-driven parametrized tests spec 3** — The full-standard mechanism coverage idea (all 480 CKM, ~2,500 tests) is designed and infrastructure built. The continuation plan wires it up and verifies. A future spec could add protocol-specific composite tests (full TLS 1.2 handshake, X3DH key exchange, etc.).
+
+6. **Update memory** — At end of next session, update `project_mechanism_tests_progress.md` with final status.
