@@ -13,7 +13,7 @@ All Wycheproof test files use `pytest.xfail()` when a valid test vector fails. T
 
 pkcs11-check exists to FIND bugs. Hiding them as xfails defeats its purpose.
 
-**Scope:** 26+ xfail call sites across 15+ Wycheproof test files. 11,418 xfails on kryoptic-main that should be real failures.
+**Scope:** 31 xfail call sites across 16 Wycheproof test files. 11,418 xfails on kryoptic-main that should be real failures.
 
 **Two distinct sub-bugs:**
 
@@ -77,6 +77,41 @@ Every Wycheproof test file with the xfail pattern. Complete list from investigat
 | `test_wycheproof_mlkem.py` | ~1 | Check actual count |
 
 Each site needs individual attention — the exact code structure varies per file.
+
+### Gap Analysis Findings
+
+**Complete file list (31 sites across 16 files):**
+
+| File | xfail sites | Exception types | Notes |
+|------|------------|-----------------|-------|
+| `test_wycheproof.py` | 5 | `AssertionError` | Main file — has `"acceptable"` handling |
+| `test_wycheproof_aes.py` | 7 | `AssertionError` | CMAC, KW, KWP(2), CCM, GMAC, XTS |
+| `test_wycheproof_ecdh.py` | 1 | `AssertionError` | Has partial mismatch guard |
+| `test_wycheproof_ecdsa.py` | 1 | `AssertionError` | Line 205 uses bare `except Exception` |
+| `test_wycheproof_x25519.py` | 1 | `(AssertionError, TypeError)` | |
+| `test_wycheproof_pbes2.py` | 2 | `AssertionError` | Unconditional — no result check |
+| `test_wycheproof_pbkdf2.py` | 1 | `AssertionError` | |
+| `test_wycheproof_hkdf.py` | 1 | `AssertionError` | |
+| `test_wycheproof_chacha.py` | 1 | `AssertionError` | |
+| `test_wycheproof_hmac.py` | 2 | `AssertionError` | Import-phase xfails |
+| `test_wycheproof_rsa.py` | 1 | `AssertionError` | |
+| `test_wycheproof_rsa_oaep.py` | 1 | `AssertionError` | |
+| `test_wycheproof_rsa_decrypt.py` | 1 | `AssertionError` | |
+| `test_wycheproof_rsa_pss.py` | 1 | `AssertionError` | |
+| `test_wycheproof_mldsa.py` | 1 | `AssertionError` | |
+| `test_wycheproof_mldsa_sign.py` | 1 | `AssertionError` | Import-phase xfail |
+| `test_wycheproof_mlkem.py` | 2 | `(AssertionError, Exception)` | Bare Exception! |
+| `test_wycheproof_ed25519.py` | 1 | `AssertionError` | |
+
+**Additional patterns to handle:**
+
+1. **"acceptable" result type:** `test_wycheproof.py` treats `result == "acceptable"` same as `"valid"`. Fix must handle all three result types: valid→fail, acceptable→fail, invalid→return.
+
+2. **Bare `except Exception` catches** in `test_wycheproof_mlkem.py` and `test_wycheproof_ecdsa.py:205`. These hide ANY Python error. Must be narrowed to `AssertionError` only.
+
+3. **Import-phase xfails** (3 sites in `test_wycheproof_hmac.py` and `test_wycheproof_mldsa_sign.py`). Key import failure on valid vectors is also a finding — should become `pytest.fail()`.
+
+4. **Unconditional xfails** in `test_wycheproof_pbes2.py` (no `if result == "valid"` check). Both sites xfail regardless of vector validity.
 
 ### Impact
 
@@ -146,26 +181,58 @@ finally:
 
 ### Scope
 
-This affects the shared preamble and the `_run()` helpers in:
-- `ckr/_subprocess_preamble.py`
-- `ckr/test_ckr_raw_args_bad.py`
-- `ckr/test_ckr_raw_attrs.py`
-- `ckr/test_ckr_raw_buffer.py`
-- `ckr/test_ckr_universal.py`
-- Any other test using `subprocess_session_preamble()`
+Two subprocess frameworks exist:
+
+**Framework 1: `_subprocess_preamble.py`** (generates setup code string)
+Consumers: `ckr/test_ckr_raw_args_bad.py`, `ckr/test_ckr_raw_attrs.py`, `ckr/test_ckr_raw_buffer.py`, `test_remaining_gaps.py`, `test_cve_regression.py`
+
+**Framework 2: `_raw_subprocess.py`** (`run_raw_script()` function)
+Consumers: `test_operation_state.py`, `test_sign_recover.py`, `test_dual_function.py`, `test_protocol_edge_cases.py`
+
+**Additional subprocess users** (build own scripts, ~10 CKR files):
+`ckr/test_ckr_universal.py`, `ckr/test_ckr_destructive.py`, `ckr/test_ckr_dual.py`,
+`ckr/test_ckr_general.py`, `ckr/test_ckr_null_params.py`, `ckr/test_ckr_raw_multipart.py`,
+`ckr/test_ckr_raw_state.py`, `ckr/test_ckr_v30_raw.py`, `ckr/test_ckr_v32_raw.py`
+
+Total: ~20 test files using subprocess.
+
+**Segfault handling:** CKR tests intentionally trigger segfaults. When subprocess crashes, `cleanup()` never runs. The coverage file won't be written — handle gracefully with `try/except FileNotFoundError`.
 
 ### Expected improvement
 
 Function coverage: ~62/104 → ~97/104 (the remaining 7 are behind `--p11-destructive` flag or genuinely untested).
 
+## Component 3: Mechanism Detail Tracking Enhancements
+
+### Problem
+
+Several mechanism packers don't populate `sub_mechanisms`, so their parameter details are invisible in `invoked_detail`. Adding detail to high-value mechanisms improves coverage visibility.
+
+### Changes
+
+Add `sub_mechanisms` to these packers in `pack_mechanisms.py`:
+
+| Packer | New sub_mechanisms | Example detail string |
+|--------|-------------------|----------------------|
+| `mech_gcm` | `{"tagBits": tag_bits}` | `CKM_AES_GCM[tagBits=128]` |
+| `mech_ccm` | `{"tagLen": tag_len, "nonceLen": nonce_len}` | `CKM_AES_CCM[nonceLen=12,tagLen=16]` |
+| `mech_eddsa` | `{"phFlag": ph_flag}` | `CKM_EDDSA[phFlag=0]` |
+| `mech_ctr` | `{"bits": bits}` | `CKM_AES_CTR[bits=128]` |
+
+**Not adding sub_mechanisms to `mech_simple`**: ML-KEM, ML-DSA, AES-ECB, SHA-*, HMAC, keygen mechanisms genuinely have no parameters. They already appear in `invoked_names`/`invoked_counts`. Adding them to `invoked_detail` would just duplicate without additional granularity.
+
+**ML-KEM "encapsulated AES" detail**: The encapsulated key type comes from template attributes (`CKA_KEY_TYPE=CKK_AES`), not mechanism parameters. This needs template-based tracking — noted as future enhancement, out of scope for this spec.
+
 ## Testing
 
 1. **Wycheproof fix verification:** Run kryoptic-main Docker — the 11,418 xfails should become failures
-2. **SoftHSM2 regression:** Run SoftHSM2 — existing pass/fail/skip counts should not change (SoftHSM2 has no Wycheproof xfails)
-3. **Subprocess coverage:** After fix, run with coverage and verify C_EncryptInit, C_DecryptInit etc. appear in called_names from CKR tests
-4. **Meta-tests:** `uv run python -m pytest tests/ -x -q` must pass
+2. **SoftHSM2 regression:** Run SoftHSM2 — existing pass/fail/skip counts should not change (SoftHSM2 has no Wycheproof xfails on non-ChaCha/HKDF mechanisms)
+3. **Subprocess coverage:** After fix, run with coverage and verify previously-uncalled functions appear in called_names
+4. **Detail tracking:** Verify `CKM_AES_GCM[tagBits=128]` appears in invoked_detail after fix
+5. **Meta-tests:** `uv run python -m pytest tests/ -x -q` must pass
 
 ## Out of Scope
 
 - Mechanism-driven parametrized tests (separate spec)
-- ML-KEM invoked_detail tracking (separate spec — needs template-based tracking)
+- ML-KEM template-based invoked_detail (needs template attribute inspection)
+- Non-Wycheproof xfails (NSS-PQC Phase 2-8 xfails are targeted and correct)
