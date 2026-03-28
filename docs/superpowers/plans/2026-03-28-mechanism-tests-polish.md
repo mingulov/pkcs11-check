@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Use **Sonnet 4.6** for implementation tasks, **Opus 4.6** for review tasks.
 
-**Goal:** Close four remaining gaps: (1) exercise the GMAC message-sign test, (2) wire KeygenRecipe into key generation dispatch, (3) add RSA/ECDSA KAT sign vectors with private key import, (4) fix SHA-224/384/512 vector_file references.
+**Goal:** Close remaining gaps: (1) exercise GMAC message-sign, (2) wire KeygenRecipe into dispatch, (3) add 9 typed key import helpers for all key types (RSA, EC, EdDSA, Montgomery, PQC, DSA, GOST), (4) add RSA/ECDSA KAT sign vectors, (5) fix SHA vector_file refs.
 
-**Architecture:** 4 independent items. Item 3 (RSA/ECDSA vectors) is the largest — requires a vector generator, a private key import helper in recipes.py, and a branch in TestMechSignKAT. Items 1, 2, 4 are small.
+**Architecture:** 5 items. Item 3 (import helpers) is foundational — used by item 4 (vectors) and consolidates duplication across 15+ test files. Items 1, 2, 5 are small.
 
 **Tech Stack:** Python 3.11+, ctypes, pytest, `cryptography` library (for vector generation)
 
@@ -180,99 +180,221 @@ git commit -m 'refactor: add generate_key_from_recipe() using KeygenRecipe dispa
 
 ## Item 3: RSA/ECDSA KAT Sign Vectors (Tasks 4-7)
 
-### Task 4: Add import_rsa_private_key and import_ec_private_key to recipes.py
+### Task 4: Add complete typed key import helpers to recipes.py
 
-**Goal:** DRY helpers for importing known private keys into a PKCS#11 session.
+**Goal:** Add 9 typed import helpers covering every key type used across the codebase. These consolidate inlined 4-12 attribute dicts from 15+ test files into reusable functions matching the existing `import_secret_key` pattern.
 
 **Files:**
 - Modify: `src/pkcs11_check/raw/recipes.py`
 
-The pattern already exists in `test_wycheproof_rsa_siggen.py` and `test_cctv_rfc6979.py` but is inlined. Extract into reusable helpers.
+**Audit summary:** Currently only `import_secret_key` (CKO_SECRET_KEY) exists. RSA private import is inlined in 4 files, EC private in 2 files, EC public in 4-5 files, RSA public in 3-4 files, PQC private in 3 files, EdDSA/Montgomery in 1-2 files each, DSA public in 1 file, GOST in 0 files (but the key types exist in types_std).
 
-- [ ] **Step 1:** Read `src/pkcs11_check/raw/recipes.py` — find `import_secret_key` (line 303) and `create_object` (line 328). The new functions go right after `import_secret_key`.
+- [ ] **Step 1:** Read `src/pkcs11_check/raw/recipes.py` — find `import_secret_key` (line 303) and `create_object` (line 328). All new functions go between them.
 
-- [ ] **Step 2:** Add RSA private key import helper:
+- [ ] **Step 2:** Add all 9 helpers. Each follows the same pattern: build a base attrs dict with CLASS+KEY_TYPE+type-specific fields, merge caller attrs, call `create_object`. Group them logically:
+
+**RSA (2 helpers):**
 
 ```python
 def import_rsa_private_key(
-    raw: Any,
-    session: int,
-    *,
-    n: bytes,
-    e: bytes,
-    d: bytes,
-    p: bytes,
-    q: bytes,
-    dmp1: bytes,
-    dmq1: bytes,
-    iqmp: bytes,
+    raw: Any, session: int, *,
+    n: bytes, e: bytes, d: bytes,
+    p: bytes, q: bytes,
+    dmp1: bytes, dmq1: bytes, iqmp: bytes,
     attrs: dict[int, Any] | None = None,
 ) -> int:
-    """Import an RSA private key from CRT components via C_CreateObject.
-
-    All component bytes must be big-endian unsigned, with no leading zero padding
-    beyond what the modulus size requires.
-    Returns the object handle.
-    """
+    """Import RSA private key from CRT components."""
     base: dict[int, Any] = {
-        CKA_CLASS: CKO_PRIVATE_KEY,
-        CKA_KEY_TYPE: CKK_RSA,
-        CKA_TOKEN: False,
-        CKA_SENSITIVE: False,
-        CKA_EXTRACTABLE: True,
-        CKA_MODULUS: n,
-        CKA_PUBLIC_EXPONENT: e,
+        CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: CKK_RSA,
+        CKA_TOKEN: False, CKA_SENSITIVE: False, CKA_EXTRACTABLE: True,
+        CKA_MODULUS: n, CKA_PUBLIC_EXPONENT: e,
         CKA_PRIVATE_EXPONENT: d,
-        CKA_PRIME_1: p,
-        CKA_PRIME_2: q,
-        CKA_EXPONENT_1: dmp1,
-        CKA_EXPONENT_2: dmq1,
+        CKA_PRIME_1: p, CKA_PRIME_2: q,
+        CKA_EXPONENT_1: dmp1, CKA_EXPONENT_2: dmq1,
         CKA_COEFFICIENT: iqmp,
     }
     if attrs:
         base.update(attrs)
     return create_object(raw, session, base)
-```
 
-Import the needed CKA/CKO/CKK constants at the top of the function (they should already be imported in recipes.py; check first).
-
-- [ ] **Step 3:** Add EC private key import helper:
-
-```python
-def import_ec_private_key(
-    raw: Any,
-    session: int,
-    *,
-    ec_params: bytes,
-    value: bytes,
+def import_rsa_public_key(
+    raw: Any, session: int, *,
+    n: bytes, e: bytes,
     attrs: dict[int, Any] | None = None,
 ) -> int:
-    """Import an EC private key from raw scalar via C_CreateObject.
-
-    ``ec_params`` is the DER-encoded curve OID (e.g., from
-    ``encode_named_curve_parameters("secp256r1")``).
-    ``value`` is the raw big-endian private scalar.
-    Returns the object handle.
-    """
+    """Import RSA public key from modulus + exponent."""
     base: dict[int, Any] = {
-        CKA_CLASS: CKO_PRIVATE_KEY,
-        CKA_KEY_TYPE: CKK_EC,
+        CKA_CLASS: CKO_PUBLIC_KEY, CKA_KEY_TYPE: CKK_RSA,
         CKA_TOKEN: False,
-        CKA_SENSITIVE: False,
-        CKA_EXTRACTABLE: True,
-        CKA_EC_PARAMS: ec_params,
-        CKA_VALUE: value,
+        CKA_MODULUS: n, CKA_PUBLIC_EXPONENT: e,
     }
     if attrs:
         base.update(attrs)
     return create_object(raw, session, base)
 ```
 
+**EC — covers Weierstrass, Edwards (EdDSA), Montgomery (X25519/X448) (2 helpers):**
+
+```python
+def import_ec_private_key(
+    raw: Any, session: int, *,
+    ec_params: bytes, value: bytes,
+    key_type: int = int(CKK_EC),
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import EC/Edwards/Montgomery private key from scalar.
+
+    ``ec_params``: DER-encoded curve OID.
+    ``value``: raw big-endian private scalar (or seed for EdDSA).
+    ``key_type``: CKK_EC (default), CKK_EC_EDWARDS, or CKK_EC_MONTGOMERY.
+    """
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False, CKA_SENSITIVE: False, CKA_EXTRACTABLE: True,
+        CKA_EC_PARAMS: ec_params, CKA_VALUE: value,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+def import_ec_public_key(
+    raw: Any, session: int, *,
+    ec_params: bytes, ec_point: bytes,
+    key_type: int = int(CKK_EC),
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import EC/Edwards/Montgomery public key from point.
+
+    ``ec_params``: DER-encoded curve OID.
+    ``ec_point``: DER-wrapped public point (OCTET STRING wrapping).
+    ``key_type``: CKK_EC (default), CKK_EC_EDWARDS, or CKK_EC_MONTGOMERY.
+    """
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY, CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_EC_PARAMS: ec_params, CKA_EC_POINT: ec_point,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+```
+
+**PQC — covers ML-DSA, ML-KEM, SLH-DSA (2 helpers):**
+
+```python
+def import_pqc_private_key(
+    raw: Any, session: int, *,
+    key_type: int, value: bytes, parameter_set: int,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import PQC private key (ML-DSA, ML-KEM, SLH-DSA).
+
+    ``key_type``: CKK_ML_DSA, CKK_ML_KEM, or CKK_SLH_DSA.
+    ``value``: raw private key bytes.
+    ``parameter_set``: CKP_* parameter set constant.
+    """
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False, CKA_SENSITIVE: False, CKA_EXTRACTABLE: True,
+        CKA_VALUE: value, CKA_PARAMETER_SET: parameter_set,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+def import_pqc_public_key(
+    raw: Any, session: int, *,
+    key_type: int, value: bytes, parameter_set: int,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import PQC public key (ML-DSA, SLH-DSA)."""
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY, CKA_KEY_TYPE: key_type,
+        CKA_TOKEN: False,
+        CKA_VALUE: value, CKA_PARAMETER_SET: parameter_set,
+    }
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+```
+
+**DSA (1 helper — public key only, private key import not used anywhere):**
+
+```python
+def import_dsa_public_key(
+    raw: Any, session: int, *,
+    prime: bytes, subprime: bytes, base_g: bytes, value: bytes,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import DSA public key from domain parameters + public value.
+
+    ``prime``: p. ``subprime``: q. ``base_g``: g. ``value``: y.
+    """
+    base_attrs: dict[int, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY, CKA_KEY_TYPE: CKK_DSA,
+        CKA_TOKEN: False,
+        CKA_PRIME: prime, CKA_SUBPRIME: subprime,
+        CKA_BASE: base_g, CKA_VALUE: value,
+    }
+    if attrs:
+        base_attrs.update(attrs)
+    return create_object(raw, session, base_attrs)
+```
+
+**GOST R 34.10 (2 helpers — for future use, no existing callers yet):**
+
+```python
+def import_gost_private_key(
+    raw: Any, session: int, *,
+    gostr3410_params: bytes, value: bytes,
+    gostr3411_params: bytes | None = None,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import GOST R 34.10-2012 private key.
+
+    ``gostr3410_params``: DER-encoded OID for the curve parameters.
+    ``value``: raw big-endian private key scalar.
+    ``gostr3411_params``: optional DER-encoded hash parameter OID.
+    """
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: CKK_GOSTR3410,
+        CKA_TOKEN: False, CKA_SENSITIVE: False, CKA_EXTRACTABLE: True,
+        CKA_GOSTR3410_PARAMS: gostr3410_params,
+        CKA_VALUE: value,
+    }
+    if gostr3411_params is not None:
+        base[CKA_GOSTR3411_PARAMS] = gostr3411_params
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+
+def import_gost_public_key(
+    raw: Any, session: int, *,
+    gostr3410_params: bytes, value: bytes,
+    gostr3411_params: bytes | None = None,
+    attrs: dict[int, Any] | None = None,
+) -> int:
+    """Import GOST R 34.10-2012 public key."""
+    base: dict[int, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY, CKA_KEY_TYPE: CKK_GOSTR3410,
+        CKA_TOKEN: False,
+        CKA_GOSTR3410_PARAMS: gostr3410_params,
+        CKA_VALUE: value,
+    }
+    if gostr3411_params is not None:
+        base[CKA_GOSTR3411_PARAMS] = gostr3411_params
+    if attrs:
+        base.update(attrs)
+    return create_object(raw, session, base)
+```
+
+- [ ] **Step 3:** Add all needed CKA/CKO/CKK imports to the `types_std` import block at the top of `recipes.py`. Check which already exist first. You'll need at minimum: `CKO_PRIVATE_KEY`, `CKO_PUBLIC_KEY`, `CKK_RSA`, `CKK_EC`, `CKK_EC_EDWARDS`, `CKK_EC_MONTGOMERY`, `CKK_DSA`, `CKK_GOSTR3410`, `CKA_MODULUS`, `CKA_PUBLIC_EXPONENT`, `CKA_PRIVATE_EXPONENT`, `CKA_PRIME_1`, `CKA_PRIME_2`, `CKA_EXPONENT_1`, `CKA_EXPONENT_2`, `CKA_COEFFICIENT`, `CKA_EC_PARAMS`, `CKA_EC_POINT`, `CKA_PARAMETER_SET`, `CKA_PRIME`, `CKA_SUBPRIME`, `CKA_BASE`, `CKA_GOSTR3410_PARAMS`, `CKA_GOSTR3411_PARAMS`.
+
 - [ ] **Step 4:** Lint: `uv run ruff check src/pkcs11_check/raw/recipes.py`
 
 - [ ] **Step 5:** Commit:
 ```bash
-git commit -m 'feat: add import_rsa_private_key and import_ec_private_key helpers'
+git commit -m 'feat: add 9 typed key import helpers (RSA, EC, PQC, DSA, GOST)'
 ```
 
 ---
