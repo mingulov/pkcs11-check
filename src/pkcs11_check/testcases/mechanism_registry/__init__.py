@@ -1,7 +1,8 @@
 """Mechanism registry for mechanism-driven parametrized tests.
 
 Maps CKM_* mechanism IDs to test configurations. Covers all 467 mechanisms
-from the OASIS PKCS#11 v3.2 standard (464 in MECHANISM_NAMES + 3 pre-standard). Each entry describes how to test
+from the OASIS PKCS#11 v3.2 standard (464 in MECHANISM_NAMES + 3 extra).
+Each entry describes how to test
 a mechanism: what key type it needs, what key sizes, what parameter recipe,
 whether it supports multi-part, etc.
 
