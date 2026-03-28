@@ -23,6 +23,7 @@ from .types_std import (
     CK_CHACHA20_PARAMS,
     CK_ECDH1_DERIVE_PARAMS,
     CK_EDDSA_PARAMS,
+    CK_GCM_MESSAGE_PARAMS,
     CK_HKDF_PARAMS,
     CK_KEY_DERIVATION_STRING_DATA,
     CK_PKCS5_PBKD2_PARAMS2,
@@ -75,8 +76,35 @@ def mech_gcm(
         params.pAAD = None
         params.ulAADLen = aad_len
     params.ulTagBits = tag_bits
-    return _mech_struct(mechanism_type, params, "mech_gcm", ka,
-                        sub_mechanisms={"tagBits": tag_bits})
+    return _mech_struct(
+        mechanism_type, params, "mech_gcm", ka, sub_mechanisms={"tagBits": tag_bits}
+    )
+
+
+def mech_gcm_message(
+    mechanism_type: CKM,
+    iv: bytes,
+    *,
+    iv_fixed_bits: int = 0,
+    iv_generator: int = 0,
+    tag_bits: int = 128,
+) -> PackedMechanism:
+    """Pack CK_GCM_MESSAGE_PARAMS for v3.0 message-based AEAD.
+
+    The ``pTag`` field is a pre-allocated output buffer (tag_bits // 8 bytes)
+    that the token writes the authentication tag to.
+    """
+    ka: list[Any] = []
+    params = CK_GCM_MESSAGE_PARAMS()
+    params.pIv, params.ulIvLen = _pack_bytes(iv, ka)
+    params.ulIvFixedBits = iv_fixed_bits
+    params.ivGenerator = iv_generator
+    tag_len = tag_bits // 8
+    tag_buf = (ctypes.c_ubyte * tag_len)()
+    ka.append(tag_buf)
+    params.pTag = ctypes.cast(tag_buf, ctypes.c_void_p)
+    params.ulTagBits = tag_bits
+    return _mech_struct(mechanism_type, params, "mech_gcm_message", ka)
 
 
 def mech_ccm(
@@ -98,8 +126,13 @@ def mech_ccm(
         params.pAAD = None
         params.ulAADLen = 0
     params.ulMACLen = mac_len
-    return _mech_struct(mechanism_type, params, "mech_ccm", ka,
-                        sub_mechanisms={"macLen": mac_len, "nonceLen": len(nonce)})
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ccm",
+        ka,
+        sub_mechanisms={"macLen": mac_len, "nonceLen": len(nonce)},
+    )
 
 
 def mech_pss(
@@ -208,8 +241,7 @@ def mech_ctr(mechanism_type: CKM, bits: int = 128) -> PackedMechanism:
     params.ulCounterBits = bits
     for i in range(16):
         params.cb[i] = 0
-    return _mech_struct(mechanism_type, params, "mech_ctr",
-                        sub_mechanisms={"counterBits": bits})
+    return _mech_struct(mechanism_type, params, "mech_ctr", sub_mechanisms={"counterBits": bits})
 
 
 def mech_chacha20(
@@ -251,8 +283,9 @@ def mech_eddsa(
     params = CK_EDDSA_PARAMS()
     params.phFlag = CK_BBOOL(1 if context_data is not None else 0)
     params.pContextData, params.ulContextDataLen = _pack_bytes(context_data, ka)
-    return _mech_struct(mechanism_type, params, "mech_eddsa", ka,
-                        sub_mechanisms={"phFlag": int(params.phFlag)})
+    return _mech_struct(
+        mechanism_type, params, "mech_eddsa", ka, sub_mechanisms={"phFlag": int(params.phFlag)}
+    )
 
 
 def mech_pbkdf2(
@@ -693,6 +726,7 @@ __all__ = [
     "mech_ecdh",
     "mech_eddsa",
     "mech_gcm",
+    "mech_gcm_message",
     "mech_hkdf",
     "mech_oaep",
     "mech_pbkdf2",
