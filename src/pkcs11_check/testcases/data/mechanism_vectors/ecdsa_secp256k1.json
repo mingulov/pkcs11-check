@@ -10,9 +10,9 @@
       "mechanism_name": "CKM_ECDSA_SHA256",
       "key_type": "asymmetric",
       "ec_params_hex": "06052b8104000a",
-      "ec_private_scalar_hex": "810627c8d13fe5a83d650548bd9a21bf11a8ae44aa475b0183b84b8989bc9c76",
+      "ec_private_scalar_hex": "bd0f2454a5296f9a2e7ce721d65bc617be46722ef9479fd15ebea59b7c188266",
       "input_hex": "",
-      "signature_hex": "5d41b22b623327f1c0465d6472f4bac7cbe885911ff7e3cc3e741a820c03f40d186dde7a70d2e55eab22b268a5e471426331f65dc3e50b509bff63a9b1a3b0f2",
+      "signature_hex": "3e658640c5fd7a61cdc379669f67e45b2e11184f56bb9fee355a17464e3e010ef2426270441fe2b15ce971b6e7375980dbb8403afbeb4ad633bf7c88e887bc9c",
       "verify_only": true,
       "params": {}
     },
@@ -22,9 +22,9 @@
       "mechanism_name": "CKM_ECDSA_SHA256",
       "key_type": "asymmetric",
       "ec_params_hex": "06052b8104000a",
-      "ec_private_scalar_hex": "810627c8d13fe5a83d650548bd9a21bf11a8ae44aa475b0183b84b8989bc9c76",
+      "ec_private_scalar_hex": "bd0f2454a5296f9a2e7ce721d65bc617be46722ef9479fd15ebea59b7c188266",
       "input_hex": "68656c6c6f",
-      "signature_hex": "43df4cd142012f3405cbf0963afea1ab2a9a4187cda61bd232145ac7f6fb639c97cbb33a937002240a07f7e621dc92284a88fed17b0437aee69e61279759737e",
+      "signature_hex": "2959952c8e034abf65e4075d737b97833cbeb939561b6de86f251624bc5b55e8e5ea9fd653892edeb7d3c05f4edbf33ccb8ec1b690f2e0a6ff843e3b0940d8e8",
       "verify_only": true,
       "params": {}
     },
@@ -34,9 +34,9 @@
       "mechanism_name": "CKM_ECDSA_SHA256",
       "key_type": "asymmetric",
       "ec_params_hex": "06052b8104000a",
-      "ec_private_scalar_hex": "810627c8d13fe5a83d650548bd9a21bf11a8ae44aa475b0183b84b8989bc9c76",
+      "ec_private_scalar_hex": "bd0f2454a5296f9a2e7ce721d65bc617be46722ef9479fd15ebea59b7c188266",
       "input_hex": "c0e08a8cdc9b1922a28fd23a9efa95bb3ba5d9a5a4ee16b3f8c18b83ee2cd2287c8ebe5ebc21bbd151b0991403b413337d10706b265b17ad1cd3710f2c9d47976cbd60d7f94f4bcd42ec630c5bcb88b09c6965f143c256fe278200d6d2d59fc88a77d520",
-      "signature_hex": "8f1fc28b5ff0e01f36ef5c889834a2a26c7cc06ddbe8c532aab3fd888507ffb199b2482ea6c351a96d1944bcbc5f7c5282ff808012d8130b7d6e804806e61bab",
+      "signature_hex": "fd38990e1fb32e6678f532497c2c49ae998860660545920838285349f8610175577ea5c23dc1d1d952ab47397197164b5bc1dfe01757e16e4a1dce1c0d5d1ab9",
       "verify_only": true,
       "params": {}
     }

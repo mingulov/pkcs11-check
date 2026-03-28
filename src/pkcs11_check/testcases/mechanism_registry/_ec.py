@@ -275,7 +275,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_eddsa,
         keygen_recipe=_ec_edwards,
         expected_flags=_SIG_VER,
-        vector_file="eddsa_ed25519.json",
+        vector_file="eddsa.json",
         notes="EdDSA sign/verify: requires CK_EDDSA_PARAMS specifying curve",
     )
 
@@ -286,7 +286,8 @@ def populate(registry: dict[int, MechConfig]) -> None:
         is_keypair=True,
         keygen_recipe=_ec_edwards,
         expected_flags=_SIG_VER,
-        notes="XEdDSA sign/verify (Signal protocol)",
+        vector_file="eddsa.json",
+        notes="XEdDSA sign/verify (Signal protocol); uses same EdDSA KAT vectors",
     )
 
     # ---------------------------------------------------------------------------

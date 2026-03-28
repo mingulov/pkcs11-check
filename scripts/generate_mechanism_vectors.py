@@ -665,21 +665,24 @@ def generate_rsa_pss_sha256() -> dict:
 
 
 def generate_ecdsa_sha256() -> dict:
+    """ECDSA-SHA256 vectors: P-256 (secp256r1) and BrainpoolP256r1.
+
+    Both curves use CKM_ECDSA_SHA256; they are distinguished by ec_params_hex.
+    BrainpoolP256r1 vectors are merged here because they share the same mechanism.
+    """
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-    key = ec.generate_private_key(ec.SECP256R1())
-    priv_numbers = key.private_numbers()
-    scalar_hex = _i2b(priv_numbers.private_value, 32)
-
-    # P-256 curve OID in DER: OBJECT IDENTIFIER 1.2.840.10045.3.1.7
-    ec_params_hex = "06082a8648ce3d030107"
-
-    messages = [b"", b"hello", b"A" * 245]
     vectors = []
-    for i, msg in enumerate(messages):
-        sig_der = key.sign(msg, ec.ECDSA(hashes.SHA256()))
+
+    # P-256 (secp256r1) — OID 1.2.840.10045.3.1.7
+    key_p256 = ec.generate_private_key(ec.SECP256R1())
+    priv_p256 = key_p256.private_numbers()
+    scalar_p256 = _i2b(priv_p256.private_value, 32)
+    ec_params_p256 = "06082a8648ce3d030107"
+    for i, msg in enumerate([b"", b"hello", b"A" * 245]):
+        sig_der = key_p256.sign(msg, ec.ECDSA(hashes.SHA256()))
         r, s = decode_dss_signature(sig_der)
         sig_p11 = r.to_bytes(32, "big") + s.to_bytes(32, "big")
         vectors.append(
@@ -688,14 +691,39 @@ def generate_ecdsa_sha256() -> dict:
                 "type": "positive",
                 "mechanism_name": "CKM_ECDSA_SHA256",
                 "key_type": "asymmetric",
-                "ec_params_hex": ec_params_hex,
-                "ec_private_scalar_hex": scalar_hex,
+                "ec_params_hex": ec_params_p256,
+                "ec_private_scalar_hex": scalar_p256,
                 "input_hex": msg.hex(),
                 "signature_hex": sig_p11.hex(),
                 "verify_only": True,
                 "params": {},
             }
         )
+
+    # BrainpoolP256r1 — OID 1.3.36.3.3.2.8.1.1.7
+    key_bp256 = ec.generate_private_key(ec.BrainpoolP256R1())
+    priv_bp256 = key_bp256.private_numbers()
+    scalar_bp256 = _i2b(priv_bp256.private_value, 32)
+    ec_params_bp256 = "06092b2403030208010107"
+    for i, msg in enumerate([b"", b"hello", _fixed_bytes(100, seed=7600)]):
+        sig_der = key_bp256.sign(msg, ec.ECDSA(hashes.SHA256()))
+        r, s = decode_dss_signature(sig_der)
+        sig_p11 = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+        vectors.append(
+            {
+                "id": f"ecdsa_brainpool256_{i}",
+                "type": "positive",
+                "mechanism_name": "CKM_ECDSA_SHA256",
+                "key_type": "asymmetric",
+                "ec_params_hex": ec_params_bp256,
+                "ec_private_scalar_hex": scalar_bp256,
+                "input_hex": msg.hex(),
+                "signature_hex": sig_p11.hex(),
+                "verify_only": True,
+                "params": {},
+            }
+        )
+
     return {
         "mechanism": "CKM_ECDSA_SHA256",
         "family": "ecdsa_sha256",
@@ -705,19 +733,22 @@ def generate_ecdsa_sha256() -> dict:
     }
 
 
-def generate_eddsa_ed25519() -> dict:
-    from cryptography.hazmat.primitives.asymmetric import ed25519
+def generate_eddsa() -> dict:
+    """EdDSA vectors: Ed25519 and Ed448 combined in one file (eddsa.json).
+
+    Both curves use CKM_EDDSA; they are distinguished by ec_params_hex.
+    Ed448 vectors are merged here because they share the same mechanism.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed448, ed25519
     from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
-    # Ed25519 OID in DER: OBJECT IDENTIFIER 1.3.101.112
-    ec_params_hex = "06032b6570"
-
-    messages = [b"", b"hello", _fixed_bytes(100, seed=7000)]
     vectors = []
-    for i, msg in enumerate(messages):
+
+    # Ed25519 — OID 1.3.101.112
+    ec_params_ed25519 = "06032b6570"
+    for i, msg in enumerate([b"", b"hello", _fixed_bytes(100, seed=7000)]):
         key = ed25519.Ed25519PrivateKey.generate()
         sig = key.sign(msg)
-        # Extract raw 32-byte private scalar
         raw_priv = key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
         vectors.append(
             {
@@ -725,35 +756,19 @@ def generate_eddsa_ed25519() -> dict:
                 "type": "positive",
                 "mechanism_name": "CKM_EDDSA",
                 "key_type": "asymmetric",
-                "ec_params_hex": ec_params_hex,
+                "ec_params_hex": ec_params_ed25519,
                 "ec_private_scalar_hex": raw_priv.hex(),
                 "input_hex": msg.hex(),
                 "signature_hex": sig.hex(),
                 "params": {},
             }
         )
-    return {
-        "mechanism": "CKM_EDDSA",
-        "family": "eddsa_ed25519",
-        "key_type": "CKK_EC_EDWARDS",
-        "source": "generated by scripts/generate_mechanism_vectors.py",
-        "vectors": vectors,
-    }
 
-
-def generate_eddsa_ed448() -> dict:
-    from cryptography.hazmat.primitives.asymmetric import ed448
-    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
-
-    # Ed448 OID in DER: OBJECT IDENTIFIER 1.3.101.113
-    ec_params_hex = "06032b6571"
-
-    messages = [b"", b"hello", _fixed_bytes(100, seed=7100)]
-    vectors = []
-    for i, msg in enumerate(messages):
+    # Ed448 — OID 1.3.101.113
+    ec_params_ed448 = "06032b6571"
+    for i, msg in enumerate([b"", b"hello", _fixed_bytes(100, seed=7100)]):
         key = ed448.Ed448PrivateKey.generate()
         sig = key.sign(msg)
-        # Extract raw 57-byte private key
         raw_priv = key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
         vectors.append(
             {
@@ -761,20 +776,26 @@ def generate_eddsa_ed448() -> dict:
                 "type": "positive",
                 "mechanism_name": "CKM_EDDSA",
                 "key_type": "asymmetric",
-                "ec_params_hex": ec_params_hex,
+                "ec_params_hex": ec_params_ed448,
                 "ec_private_scalar_hex": raw_priv.hex(),
                 "input_hex": msg.hex(),
                 "signature_hex": sig.hex(),
                 "params": {},
             }
         )
+
     return {
         "mechanism": "CKM_EDDSA",
-        "family": "eddsa_ed448",
+        "family": "eddsa",
         "key_type": "CKK_EC_EDWARDS",
         "source": "generated by scripts/generate_mechanism_vectors.py",
         "vectors": vectors,
     }
+
+
+# Kept as aliases for backward compatibility with --family selection
+generate_eddsa_ed25519 = generate_eddsa
+generate_eddsa_ed448 = generate_eddsa
 
 
 def generate_rsa_pkcs1_sha1() -> dict:
@@ -944,36 +965,65 @@ def generate_ecdsa_p224() -> dict:
 
 
 def generate_ecdsa_p384() -> dict:
+    """ECDSA-SHA384 vectors: P-384 (secp384r1) and BrainpoolP384r1.
+
+    Both curves use CKM_ECDSA_SHA384; they are distinguished by ec_params_hex.
+    BrainpoolP384r1 vectors are merged here because they share the same mechanism.
+    """
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-    key = ec.generate_private_key(ec.SECP384R1())
-    priv_numbers = key.private_numbers()
-    scalar_size = 48
-    scalar_hex = _i2b(priv_numbers.private_value, scalar_size)
-    ec_params_hex = "06052b81040022"
-
-    messages = [b"", b"hello", _fixed_bytes(100, seed=7300)]
     vectors = []
-    for i, msg in enumerate(messages):
-        sig_der = key.sign(msg, ec.ECDSA(hashes.SHA384()))
+
+    # P-384 (secp384r1) — OID 1.3.132.0.34
+    key_p384 = ec.generate_private_key(ec.SECP384R1())
+    priv_p384 = key_p384.private_numbers()
+    scalar_p384 = _i2b(priv_p384.private_value, 48)
+    ec_params_p384 = "06052b81040022"
+    for i, msg in enumerate([b"", b"hello", _fixed_bytes(100, seed=7300)]):
+        sig_der = key_p384.sign(msg, ec.ECDSA(hashes.SHA384()))
         r, s = decode_dss_signature(sig_der)
-        sig_p11 = r.to_bytes(scalar_size, "big") + s.to_bytes(scalar_size, "big")
+        sig_p11 = r.to_bytes(48, "big") + s.to_bytes(48, "big")
         vectors.append(
             {
                 "id": f"ecdsa_p384_{i}",
                 "type": "positive",
                 "mechanism_name": "CKM_ECDSA_SHA384",
                 "key_type": "asymmetric",
-                "ec_params_hex": ec_params_hex,
-                "ec_private_scalar_hex": scalar_hex,
+                "ec_params_hex": ec_params_p384,
+                "ec_private_scalar_hex": scalar_p384,
                 "input_hex": msg.hex(),
                 "signature_hex": sig_p11.hex(),
                 "verify_only": True,
                 "params": {},
             }
         )
+
+    # BrainpoolP384r1 — OID 1.3.36.3.3.2.8.1.1.11
+    key_bp384 = ec.generate_private_key(ec.BrainpoolP384R1())
+    priv_bp384 = key_bp384.private_numbers()
+    scalar_bp384 = _i2b(priv_bp384.private_value, 48)
+    ec_params_bp384 = "06092b240303020801010b"
+    for i, msg in enumerate([b"", b"hello", _fixed_bytes(100, seed=7700)]):
+        sig_der = key_bp384.sign(msg, ec.ECDSA(hashes.SHA384()))
+        r, s = decode_dss_signature(sig_der)
+        sig_p11 = r.to_bytes(48, "big") + s.to_bytes(48, "big")
+        vectors.append(
+            {
+                "id": f"ecdsa_brainpool384_{i}",
+                "type": "positive",
+                "mechanism_name": "CKM_ECDSA_SHA384",
+                "key_type": "asymmetric",
+                "ec_params_hex": ec_params_bp384,
+                "ec_private_scalar_hex": scalar_bp384,
+                "input_hex": msg.hex(),
+                "signature_hex": sig_p11.hex(),
+                "verify_only": True,
+                "params": {},
+            }
+        )
+
     return {
         "mechanism": "CKM_ECDSA_SHA384",
         "family": "ecdsa_p384",
@@ -984,36 +1034,65 @@ def generate_ecdsa_p384() -> dict:
 
 
 def generate_ecdsa_p521() -> dict:
+    """ECDSA-SHA512 vectors: P-521 (secp521r1) and BrainpoolP512r1.
+
+    Both curves use CKM_ECDSA_SHA512; they are distinguished by ec_params_hex.
+    BrainpoolP512r1 vectors are merged here because they share the same mechanism.
+    """
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-    key = ec.generate_private_key(ec.SECP521R1())
-    priv_numbers = key.private_numbers()
-    scalar_size = 66
-    scalar_hex = _i2b(priv_numbers.private_value, scalar_size)
-    ec_params_hex = "06052b81040023"
-
-    messages = [b"", b"hello", _fixed_bytes(100, seed=7400)]
     vectors = []
-    for i, msg in enumerate(messages):
-        sig_der = key.sign(msg, ec.ECDSA(hashes.SHA512()))
+
+    # P-521 (secp521r1) — OID 1.3.132.0.35
+    key_p521 = ec.generate_private_key(ec.SECP521R1())
+    priv_p521 = key_p521.private_numbers()
+    scalar_p521 = _i2b(priv_p521.private_value, 66)
+    ec_params_p521 = "06052b81040023"
+    for i, msg in enumerate([b"", b"hello", _fixed_bytes(100, seed=7400)]):
+        sig_der = key_p521.sign(msg, ec.ECDSA(hashes.SHA512()))
         r, s = decode_dss_signature(sig_der)
-        sig_p11 = r.to_bytes(scalar_size, "big") + s.to_bytes(scalar_size, "big")
+        sig_p11 = r.to_bytes(66, "big") + s.to_bytes(66, "big")
         vectors.append(
             {
                 "id": f"ecdsa_p521_{i}",
                 "type": "positive",
                 "mechanism_name": "CKM_ECDSA_SHA512",
                 "key_type": "asymmetric",
-                "ec_params_hex": ec_params_hex,
-                "ec_private_scalar_hex": scalar_hex,
+                "ec_params_hex": ec_params_p521,
+                "ec_private_scalar_hex": scalar_p521,
                 "input_hex": msg.hex(),
                 "signature_hex": sig_p11.hex(),
                 "verify_only": True,
                 "params": {},
             }
         )
+
+    # BrainpoolP512r1 — OID 1.3.36.3.3.2.8.1.1.13
+    key_bp512 = ec.generate_private_key(ec.BrainpoolP512R1())
+    priv_bp512 = key_bp512.private_numbers()
+    scalar_bp512 = _i2b(priv_bp512.private_value, 64)
+    ec_params_bp512 = "06092b240303020801010d"
+    for i, msg in enumerate([b"", b"hello", _fixed_bytes(100, seed=7800)]):
+        sig_der = key_bp512.sign(msg, ec.ECDSA(hashes.SHA512()))
+        r, s = decode_dss_signature(sig_der)
+        sig_p11 = r.to_bytes(64, "big") + s.to_bytes(64, "big")
+        vectors.append(
+            {
+                "id": f"ecdsa_brainpool512_{i}",
+                "type": "positive",
+                "mechanism_name": "CKM_ECDSA_SHA512",
+                "key_type": "asymmetric",
+                "ec_params_hex": ec_params_bp512,
+                "ec_private_scalar_hex": scalar_bp512,
+                "input_hex": msg.hex(),
+                "signature_hex": sig_p11.hex(),
+                "verify_only": True,
+                "params": {},
+            }
+        )
+
     return {
         "mechanism": "CKM_ECDSA_SHA512",
         "family": "ecdsa_p521",
@@ -1063,124 +1142,8 @@ def generate_ecdsa_secp256k1() -> dict:
     }
 
 
-def generate_ecdsa_brainpool256() -> dict:
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-
-    key = ec.generate_private_key(ec.BrainpoolP256R1())
-    priv_numbers = key.private_numbers()
-    scalar_size = 32
-    scalar_hex = _i2b(priv_numbers.private_value, scalar_size)
-    ec_params_hex = "06092b2403030208010107"
-
-    messages = [b"", b"hello", _fixed_bytes(100, seed=7600)]
-    vectors = []
-    for i, msg in enumerate(messages):
-        sig_der = key.sign(msg, ec.ECDSA(hashes.SHA256()))
-        r, s = decode_dss_signature(sig_der)
-        sig_p11 = r.to_bytes(scalar_size, "big") + s.to_bytes(scalar_size, "big")
-        vectors.append(
-            {
-                "id": f"ecdsa_brainpool256_{i}",
-                "type": "positive",
-                "mechanism_name": "CKM_ECDSA_SHA256",
-                "key_type": "asymmetric",
-                "ec_params_hex": ec_params_hex,
-                "ec_private_scalar_hex": scalar_hex,
-                "input_hex": msg.hex(),
-                "signature_hex": sig_p11.hex(),
-                "verify_only": True,
-                "params": {},
-            }
-        )
-    return {
-        "mechanism": "CKM_ECDSA_SHA256",
-        "family": "ecdsa_brainpool256",
-        "key_type": "CKK_EC",
-        "source": "generated by scripts/generate_mechanism_vectors.py",
-        "vectors": vectors,
-    }
-
-
-def generate_ecdsa_brainpool384() -> dict:
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-
-    key = ec.generate_private_key(ec.BrainpoolP384R1())
-    priv_numbers = key.private_numbers()
-    scalar_size = 48
-    scalar_hex = _i2b(priv_numbers.private_value, scalar_size)
-    ec_params_hex = "06092b240303020801010b"
-
-    messages = [b"", b"hello", _fixed_bytes(100, seed=7700)]
-    vectors = []
-    for i, msg in enumerate(messages):
-        sig_der = key.sign(msg, ec.ECDSA(hashes.SHA384()))
-        r, s = decode_dss_signature(sig_der)
-        sig_p11 = r.to_bytes(scalar_size, "big") + s.to_bytes(scalar_size, "big")
-        vectors.append(
-            {
-                "id": f"ecdsa_brainpool384_{i}",
-                "type": "positive",
-                "mechanism_name": "CKM_ECDSA_SHA384",
-                "key_type": "asymmetric",
-                "ec_params_hex": ec_params_hex,
-                "ec_private_scalar_hex": scalar_hex,
-                "input_hex": msg.hex(),
-                "signature_hex": sig_p11.hex(),
-                "verify_only": True,
-                "params": {},
-            }
-        )
-    return {
-        "mechanism": "CKM_ECDSA_SHA384",
-        "family": "ecdsa_brainpool384",
-        "key_type": "CKK_EC",
-        "source": "generated by scripts/generate_mechanism_vectors.py",
-        "vectors": vectors,
-    }
-
-
-def generate_ecdsa_brainpool512() -> dict:
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-
-    key = ec.generate_private_key(ec.BrainpoolP512R1())
-    priv_numbers = key.private_numbers()
-    scalar_size = 64
-    scalar_hex = _i2b(priv_numbers.private_value, scalar_size)
-    ec_params_hex = "06092b240303020801010d"
-
-    messages = [b"", b"hello", _fixed_bytes(100, seed=7800)]
-    vectors = []
-    for i, msg in enumerate(messages):
-        sig_der = key.sign(msg, ec.ECDSA(hashes.SHA512()))
-        r, s = decode_dss_signature(sig_der)
-        sig_p11 = r.to_bytes(scalar_size, "big") + s.to_bytes(scalar_size, "big")
-        vectors.append(
-            {
-                "id": f"ecdsa_brainpool512_{i}",
-                "type": "positive",
-                "mechanism_name": "CKM_ECDSA_SHA512",
-                "key_type": "asymmetric",
-                "ec_params_hex": ec_params_hex,
-                "ec_private_scalar_hex": scalar_hex,
-                "input_hex": msg.hex(),
-                "signature_hex": sig_p11.hex(),
-                "verify_only": True,
-                "params": {},
-            }
-        )
-    return {
-        "mechanism": "CKM_ECDSA_SHA512",
-        "family": "ecdsa_brainpool512",
-        "key_type": "CKK_EC",
-        "source": "generated by scripts/generate_mechanism_vectors.py",
-        "vectors": vectors,
-    }
+# generate_ecdsa_brainpool256/384/512 removed — vectors merged into
+# generate_ecdsa_sha256, generate_ecdsa_p384, generate_ecdsa_p521 respectively.
 
 
 def generate_aes_ofb() -> dict:
@@ -1770,7 +1733,66 @@ def generate_ecdsa_sha1() -> dict:
     }
 
 
-# AES-XTS: deferred — requires CK_AES_XTS_PARAMS tweak handling (dual-key, per-sector tweak)
+def generate_aes_xts() -> dict:
+    """AES-XTS vectors.
+
+    AES-128-XTS uses a 256-bit double-key (2×128-bit), AES-256-XTS uses 512-bit (2×256-bit).
+    The tweak (data unit identifier) is a 16-byte value passed as the IV/mechanism parameter.
+    Plaintext must be at least one 16-byte block for XTS.
+    The cryptography library requires that the two 128-bit (or 256-bit) sub-keys differ.
+    """
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    tweak = _fixed_bytes(16, seed=9600)
+    vectors = []
+
+    # AES-128-XTS: 32-byte key (two distinct 128-bit keys)
+    key32 = _fixed_bytes(32, seed=9500)
+    pt32 = _fixed_bytes(32, seed=9700)
+    cipher = Cipher(algorithms.AES(key32), modes.XTS(tweak))
+    enc = cipher.encryptor()
+    ct32 = enc.update(pt32) + enc.finalize()
+    vectors.append(
+        {
+            "id": "aes_xts_128_32bytes",
+            "type": "positive",
+            "mechanism_name": "CKM_AES_XTS",
+            "key_type": "symmetric",
+            "key_bits": 256,  # double-length: 2×128
+            "key_hex": key32.hex(),
+            "params": {"iv_hex": tweak.hex()},
+            "plaintext_hex": pt32.hex(),
+            "ciphertext_hex": ct32.hex(),
+        }
+    )
+
+    # AES-256-XTS: 64-byte key (two distinct 256-bit keys)
+    key64 = _fixed_bytes(64, seed=9800)
+    pt64 = _fixed_bytes(32, seed=9900)
+    cipher2 = Cipher(algorithms.AES(key64), modes.XTS(tweak))
+    enc2 = cipher2.encryptor()
+    ct64 = enc2.update(pt64) + enc2.finalize()
+    vectors.append(
+        {
+            "id": "aes_xts_256_32bytes",
+            "type": "positive",
+            "mechanism_name": "CKM_AES_XTS",
+            "key_type": "symmetric",
+            "key_bits": 512,  # double-length: 2×256
+            "key_hex": key64.hex(),
+            "params": {"iv_hex": tweak.hex()},
+            "plaintext_hex": pt64.hex(),
+            "ciphertext_hex": ct64.hex(),
+        }
+    )
+
+    return {
+        "mechanism": "CKM_AES_XTS",
+        "family": "aes_xts",
+        "key_type": "CKK_AES_XTS",
+        "source": "generated by scripts/generate_mechanism_vectors.py",
+        "vectors": vectors,
+    }
 
 
 def generate_aria_cbc() -> dict:
@@ -1827,9 +1849,10 @@ GENERATORS = {
     "aes_cbc": generate_aes_cbc,
     "aes_gcm": generate_aes_gcm,
     "sha": generate_sha,
-    "hmac": generate_hmac,
+    # "hmac" removed — superseded by hmac_sha256/sha384/sha512 per-mechanism files
     "aes_cbc_pad": generate_aes_cbc_pad,
     "aes_ctr": generate_aes_ctr,
+    "aes_xts": generate_aes_xts,
     "des3_ecb": generate_des3_ecb,
     "des3_cbc": generate_des3_cbc,
     "hmac_sha256": generate_hmac_sha256,
@@ -1837,19 +1860,20 @@ GENERATORS = {
     "hmac_sha512": generate_hmac_sha512,
     "rsa_pkcs1_sha256": generate_rsa_pkcs1_sha256,
     "rsa_pss_sha256": generate_rsa_pss_sha256,
+    # ecdsa_sha256 now includes BrainpoolP256r1 vectors (merged, same mechanism)
     "ecdsa_sha256": generate_ecdsa_sha256,
-    "eddsa_ed25519": generate_eddsa_ed25519,
-    "eddsa_ed448": generate_eddsa_ed448,
+    # eddsa now includes Ed25519 and Ed448 (merged, same mechanism)
+    "eddsa": generate_eddsa,
     "rsa_pkcs1_sha1": generate_rsa_pkcs1_sha1,
     "rsa_pkcs1_sha384": generate_rsa_pkcs1_sha384,
     "rsa_pkcs1_sha512": generate_rsa_pkcs1_sha512,
     "ecdsa_p224": generate_ecdsa_p224,
+    # ecdsa_p384 now includes BrainpoolP384r1 vectors (merged, same mechanism)
     "ecdsa_p384": generate_ecdsa_p384,
+    # ecdsa_p521 now includes BrainpoolP512r1 vectors (merged, same mechanism)
     "ecdsa_p521": generate_ecdsa_p521,
     "ecdsa_secp256k1": generate_ecdsa_secp256k1,
-    "ecdsa_brainpool256": generate_ecdsa_brainpool256,
-    "ecdsa_brainpool384": generate_ecdsa_brainpool384,
-    "ecdsa_brainpool512": generate_ecdsa_brainpool512,
+    # ecdsa_brainpool{256,384,512} removed — merged into ecdsa_sha256/p384/p521
     "sha3": generate_sha3,
     "sha512_truncated": generate_sha512_truncated,
     "hmac_sha1": generate_hmac_sha1,

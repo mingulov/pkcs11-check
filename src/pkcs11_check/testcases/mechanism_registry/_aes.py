@@ -287,6 +287,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         deterministic=False,
         expected_flags=_AES_ENC,
+        vector_file="aes_xts.json",
         notes="AES-XTS: requires tweak (IV) and CKK_AES_XTS double-length key",
     )
 
