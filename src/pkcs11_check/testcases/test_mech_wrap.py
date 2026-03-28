@@ -36,6 +36,7 @@ from pkcs11_check.raw.recipes import (
     wrap_key,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
@@ -46,10 +47,14 @@ from pkcs11_check.raw.types_std import (
     CKA_WRAP,
     CKG_MGF1_SHA1,
     CKK_AES,
+    CKK_DES,
+    CKK_DES2,
+    CKK_DES3,
     CKK_RSA,
     CKM,
     CKM_AES_ECB,
     CKM_SHA_1,
+    CKO_SECRET_KEY,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
@@ -82,6 +87,18 @@ try:
 except ImportError:
     pass
 
+# RSA_AES hybrid — needs CK_RSA_AES_KEY_WRAP_PARAMS which is beyond this test's scope
+_RSA_AES_KEY_WRAP_MECH_ID: int = 0
+try:
+    from pkcs11_check.raw.types_std import CKM_RSA_AES_KEY_WRAP
+
+    _RSA_AES_KEY_WRAP_MECH_ID = int(CKM_RSA_AES_KEY_WRAP)
+except ImportError:
+    pass
+
+# DES/3DES key types — these mechanisms need a DES key, not an AES key, as the wrapping key
+_DES_KEY_TYPES: set[int] = {int(CKK_DES), int(CKK_DES2), int(CKK_DES3)}
+
 # AES block/stream encrypt mechanisms that also have CKF_WRAP and require an IV param.
 # These need a 16-byte IV passed as raw bytes to mech_bytes().
 _AES_IV_WRAP_MECHS: set[int] = set()
@@ -108,6 +125,25 @@ try:
 except ImportError:
     pass
 
+# DES/3DES block cipher mechanisms that have CKF_WRAP and require an 8-byte IV param.
+_DES_IV_WRAP_MECHS: set[int] = set()
+try:
+    from pkcs11_check.raw.types_std import (
+        CKM_DES3_CBC,
+        CKM_DES3_CBC_PAD,
+        CKM_DES_CBC,
+        CKM_DES_CBC_PAD,
+    )
+
+    _DES_IV_WRAP_MECHS = {
+        int(CKM_DES_CBC),
+        int(CKM_DES_CBC_PAD),
+        int(CKM_DES3_CBC),
+        int(CKM_DES3_CBC_PAD),
+    }
+except ImportError:
+    pass
+
 # AES CTR — needs CK_AES_CTR_PARAMS struct, skip here
 _AES_CTR_MECH_ID: int = 0
 try:
@@ -126,8 +162,16 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
     """
     mech_id = entry.mech_id
 
+    # RSA_AES hybrid requires CK_RSA_AES_KEY_WRAP_PARAMS — not covered here
+    if _RSA_AES_KEY_WRAP_MECH_ID and mech_id == _RSA_AES_KEY_WRAP_MECH_ID:
+        pytest.skip(f"{entry.mech_name}: RSA_AES hybrid wrap needs CK_RSA_AES_KEY_WRAP_PARAMS")
+
     if mech_id in _AES_IV_WRAP_MECHS:
         iv = os.urandom(16)
+        return mech_bytes(CKM(mech_id), iv)
+
+    if mech_id in _DES_IV_WRAP_MECHS:
+        iv = os.urandom(8)
         return mech_bytes(CKM(mech_id), iv)
 
     if _AES_CTR_MECH_ID and mech_id == _AES_CTR_MECH_ID:
@@ -184,6 +228,52 @@ def _build_aes_wrap_key(rs: RawSession, entry: MechEntry, config: MechConfig) ->
     )
 
 
+def _build_des_wrap_key(rs: RawSession, config: MechConfig) -> int:
+    """Generate a DES/3DES wrap/unwrap key matching the mechanism's key type.
+
+    DES mechanisms require a DES key as the wrapping key, not AES.
+    Uses fixed-length keygen (no CKA_VALUE_LEN needed).
+    """
+    from ctypes import byref
+
+    from pkcs11_check.raw.pack import mech_simple, template
+    from pkcs11_check.raw.recipes import pack_attrs
+    from pkcs11_check.raw.rv import expect_rv
+    from pkcs11_check.raw.types_std import (
+        CK_OBJECT_HANDLE,
+        CKM_DES2_KEY_GEN,
+        CKM_DES3_KEY_GEN,
+        CKM_DES_KEY_GEN,
+        CKR_OK,
+    )
+
+    key_type = config.key_type
+    kt = int(key_type) if key_type is not None else int(CKK_DES3)
+
+    if kt == int(CKK_DES):
+        keygen_id = int(CKM_DES_KEY_GEN)
+    elif kt == int(CKK_DES2):
+        keygen_id = int(CKM_DES2_KEY_GEN)
+    else:
+        keygen_id = int(CKM_DES3_KEY_GEN)
+
+    attrs: dict[int, Any] = {
+        CKA_KEY_TYPE: key_type,
+        CKA_WRAP: True,
+        CKA_UNWRAP: True,
+        CKA_ENCRYPT: True,
+        CKA_DECRYPT: True,
+        CKA_TOKEN: False,
+    }
+    packed = pack_attrs(attrs)
+    tmpl = template(*packed)
+    mech = mech_simple(CKM(keygen_id))
+    handle = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+    expect_rv(rv, CKR_OK)
+    return handle.value
+
+
 def _build_target_aes_key(rs: RawSession) -> int:
     """Generate an extractable AES-128 target key for wrapping."""
     return gen_aes_key(
@@ -238,11 +328,17 @@ class TestMechWrapRoundtrip:
 
         # Build the wrapping key(s)
         is_rsa = config.key_type is not None and int(config.key_type) == int(CKK_RSA)
+        is_des = config.key_type is not None and int(config.key_type) in _DES_KEY_TYPES
 
         if is_rsa:
             wrap_pub, wrap_priv = _build_rsa_wrap_pair(rs)
             wrap_handle = wrap_pub
             unwrap_handle = wrap_priv
+        elif is_des:
+            # DES/3DES mechanisms need a DES key as the wrapping key, not AES
+            wrap_handle = _build_des_wrap_key(rs, config)
+            unwrap_handle = wrap_handle
+            wrap_priv = None
         else:
             # Default to AES wrapping key
             wrap_handle = _build_aes_wrap_key(rs, entry, config)
@@ -278,7 +374,11 @@ class TestMechWrapRoundtrip:
             destroy_quietly(rs.raw, rs.sh, target_key)
             target_key = 0
 
-            # Unwrap to get a new key handle
+            # Unwrap to get a new key handle.
+            # CKA_CLASS + CKA_KEY_TYPE are required to identify the object type.
+            # CKA_VALUE_LEN must NOT be set — it is a read-only attribute for
+            # C_UnwrapKey; the module derives the key length from the decrypted
+            # blob regardless of mechanism (SoftHSM2, Kryoptic, etc.).
             unwrapped_key = unwrap_key(
                 rs.raw,
                 rs.sh,
@@ -286,6 +386,7 @@ class TestMechWrapRoundtrip:
                 wrapped_blob,
                 CKM(mech_id),
                 attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_DECRYPT: True,
                     CKA_ENCRYPT: True,
