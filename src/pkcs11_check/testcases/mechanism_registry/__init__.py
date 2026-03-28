@@ -11,6 +11,7 @@ Usage:
     if config and config.key_type == CKK_AES:
         ...
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -84,6 +85,8 @@ from pkcs11_check.testcases.mechanism_registry._ec import populate as _pop_ec  #
 from pkcs11_check.testcases.mechanism_registry._hash import populate as _pop_hash  # noqa: E402
 from pkcs11_check.testcases.mechanism_registry._hmac import populate as _pop_hmac  # noqa: E402
 from pkcs11_check.testcases.mechanism_registry._kdf import populate as _pop_kdf  # noqa: E402
+from pkcs11_check.testcases.mechanism_registry._legacy import populate as _pop_legacy  # noqa: E402
+from pkcs11_check.testcases.mechanism_registry._misc import populate as _pop_misc  # noqa: E402
 from pkcs11_check.testcases.mechanism_registry._pqc import populate as _pop_pqc  # noqa: E402
 from pkcs11_check.testcases.mechanism_registry._rsa import populate as _pop_rsa  # noqa: E402
 
@@ -97,3 +100,5 @@ _pop_kdf(MECHANISM_REGISTRY)
 _pop_dsa_dh(MECHANISM_REGISTRY)
 _pop_des(MECHANISM_REGISTRY)
 _pop_ciphers(MECHANISM_REGISTRY)
+_pop_legacy(MECHANISM_REGISTRY)
+_pop_misc(MECHANISM_REGISTRY)
