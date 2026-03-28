@@ -34,6 +34,10 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_EDWARDS,
     CKK_EC_MONTGOMERY,
     CKK_GENERIC_SECRET,
+    CKK_HKDF,
+    CKK_HSS,
+    CKK_ML_DSA,
+    CKK_ML_KEM,
     CKK_RSA,
     CKK_SHA3_224_HMAC,
     CKK_SHA3_256_HMAC,
@@ -47,6 +51,9 @@ from pkcs11_check.raw.types_std import (
     CKK_SHA512_HMAC,
     CKK_SHA512_T_HMAC,
     CKK_SHA_1_HMAC,
+    CKK_SLH_DSA,
+    CKK_XMSS,
+    CKK_XMSSMT,
     CKM_AES_CBC,
     CKM_AES_CBC_ENCRYPT_DATA,
     CKM_AES_CBC_PAD,
@@ -95,6 +102,9 @@ from pkcs11_check.raw.types_std import (
     CKM_BLAKE2B_512_HMAC_GENERAL,
     CKM_BLAKE2B_512_KEY_DERIVE,
     CKM_BLAKE2B_512_KEY_GEN,
+    CKM_CONCATENATE_BASE_AND_DATA,
+    CKM_CONCATENATE_BASE_AND_KEY,
+    CKM_CONCATENATE_DATA_AND_BASE,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKM_EC_KEY_PAIR_GEN,
     CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
@@ -115,7 +125,46 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDSA_SHA512,
     CKM_ECMQV_DERIVE,
     CKM_EDDSA,
+    CKM_EXTRACT_KEY_FROM_KEY,
     CKM_GENERIC_SECRET_KEY_GEN,
+    CKM_HASH_ML_DSA,
+    CKM_HASH_ML_DSA_SHA3_224,
+    CKM_HASH_ML_DSA_SHA3_256,
+    CKM_HASH_ML_DSA_SHA3_384,
+    CKM_HASH_ML_DSA_SHA3_512,
+    CKM_HASH_ML_DSA_SHA224,
+    CKM_HASH_ML_DSA_SHA256,
+    CKM_HASH_ML_DSA_SHA384,
+    CKM_HASH_ML_DSA_SHA512,
+    CKM_HASH_ML_DSA_SHAKE128,
+    CKM_HASH_ML_DSA_SHAKE256,
+    CKM_HASH_SLH_DSA,
+    CKM_HASH_SLH_DSA_SHA3_224,
+    CKM_HASH_SLH_DSA_SHA3_256,
+    CKM_HASH_SLH_DSA_SHA3_384,
+    CKM_HASH_SLH_DSA_SHA3_512,
+    CKM_HASH_SLH_DSA_SHA224,
+    CKM_HASH_SLH_DSA_SHA256,
+    CKM_HASH_SLH_DSA_SHA384,
+    CKM_HASH_SLH_DSA_SHA512,
+    CKM_HASH_SLH_DSA_SHAKE128,
+    CKM_HASH_SLH_DSA_SHAKE256,
+    CKM_HKDF_DATA,
+    CKM_HKDF_DERIVE,
+    CKM_HKDF_KEY_GEN,
+    CKM_HSS,
+    CKM_HSS_KEY_PAIR_GEN,
+    CKM_IKE1_EXTENDED_DERIVE,
+    CKM_IKE1_PRF_DERIVE,
+    CKM_IKE2_PRF_PLUS_DERIVE,
+    CKM_IKE_PRF_DERIVE,
+    CKM_ML_DSA,
+    CKM_ML_DSA_KEY_PAIR_GEN,
+    CKM_ML_KEM,
+    CKM_ML_KEM_KEY_PAIR_GEN,
+    CKM_NULL,
+    CKM_PKCS5_PBKD2,
+    CKM_PUB_KEY_FROM_PRIV_KEY,
     CKM_RIPEMD128,
     CKM_RIPEMD128_HMAC,
     CKM_RIPEMD128_HMAC_GENERAL,
@@ -212,7 +261,42 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA_1_KEY_GEN,
     CKM_SHAKE_128_KEY_DERIVATION,
     CKM_SHAKE_256_KEY_DERIVATION,
+    CKM_SLH_DSA,
+    CKM_SLH_DSA_KEY_PAIR_GEN,
+    CKM_SP800_108_COUNTER_KDF,
+    CKM_SP800_108_DOUBLE_PIPELINE_KDF,
+    CKM_SP800_108_FEEDBACK_KDF,
+    CKM_SSL3_KEY_AND_MAC_DERIVE,
+    CKM_SSL3_MASTER_KEY_DERIVE,
+    CKM_SSL3_MASTER_KEY_DERIVE_DH,
+    CKM_SSL3_PRE_MASTER_KEY_GEN,
+    CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
+    CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH,
+    CKM_TLS12_KDF,
+    CKM_TLS12_KEY_AND_MAC_DERIVE,
+    CKM_TLS12_KEY_SAFE_DERIVE,
+    CKM_TLS12_MAC,
+    CKM_TLS12_MASTER_KEY_DERIVE,
+    CKM_TLS12_MASTER_KEY_DERIVE_DH,
+    CKM_TLS_KDF,
+    CKM_TLS_MAC,
+    CKM_TLS_PRE_MASTER_KEY_GEN,
+    CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
+    CKM_WTLS_MASTER_KEY_DERIVE,
+    CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC,
+    CKM_WTLS_PRE_MASTER_KEY_GEN,
+    CKM_WTLS_PRF,
+    CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
+    CKM_X2RATCHET_INITIALIZE,
+    CKM_X2RATCHET_RESPOND,
+    CKM_X3DH_INITIALIZE,
+    CKM_X3DH_RESPOND,
     CKM_XEDDSA,
+    CKM_XMSS,
+    CKM_XMSS_KEY_PAIR_GEN,
+    CKM_XMSSMT,
+    CKM_XMSSMT_KEY_PAIR_GEN,
+    CKM_XOR_BASE_AND_DATA,
 )
 
 
@@ -1955,6 +2039,801 @@ MECHANISM_REGISTRY[CKM_BLAKE2B_512_KEY_DERIVE] = MechConfig(
     key_sizes=(),
     expected_flags=CKF_DERIVE,
     notes="BLAKE2b-512 key derivation",
+)
+
+
+# ---------------------------------------------------------------------------
+# PQC — ML-KEM (CRYSTALS-Kyber, FIPS 203) — 2 entries
+# ---------------------------------------------------------------------------
+
+_ML_KEM_SIZES = (512, 768, 1024)  # security levels (not raw bit sizes)
+
+MECHANISM_REGISTRY[CKM_ML_KEM_KEY_PAIR_GEN] = MechConfig(
+    key_type=CKK_ML_KEM,
+    keygen_mech=CKM_ML_KEM_KEY_PAIR_GEN,
+    key_sizes=_ML_KEM_SIZES,
+    is_keypair=True,
+    expected_flags=CKF_GENERATE_KEY_PAIR,
+    notes="ML-KEM key pair generation (FIPS 203): parameter sets 512/768/1024",
+)
+
+MECHANISM_REGISTRY[CKM_ML_KEM] = MechConfig(
+    key_type=CKK_ML_KEM,
+    keygen_mech=CKM_ML_KEM_KEY_PAIR_GEN,
+    key_sizes=_ML_KEM_SIZES,
+    is_keypair=True,
+    multi_part_supported=False,
+    expected_flags=CKF_DERIVE,
+    notes="ML-KEM encapsulation/decapsulation KEM (FIPS 203): CKF_DERIVE via C_DeriveKey",
+)
+
+
+# ---------------------------------------------------------------------------
+# PQC — ML-DSA (CRYSTALS-Dilithium, FIPS 204) — 14 entries
+# ---------------------------------------------------------------------------
+
+_ML_DSA_SIZES = (44, 65, 87)  # security level params (not raw bit sizes)
+
+MECHANISM_REGISTRY[CKM_ML_DSA_KEY_PAIR_GEN] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=CKF_GENERATE_KEY_PAIR,
+    notes="ML-DSA key pair generation (FIPS 204): parameter sets 44/65/87",
+)
+
+MECHANISM_REGISTRY[CKM_ML_DSA] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="ML-DSA sign/verify (FIPS 204): pure ML-DSA, context optional",
+)
+
+# CKM_ML_DSA_EXTERNAL_MU_GEN = 0x0000001e (gaps in types_std.py around ML_DSA=0x1d)
+MECHANISM_REGISTRY[0x0000001E] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    param_required=True,
+    expected_flags=CKF_DIGEST,
+    notes="ML-DSA ExternalMu generation (FIPS 204): digest op producing mu for EXTERNAL_MU",
+)
+
+# CKM_ML_DSA_EXTERNAL_MU = 0x00000022 (gap between DH_PKCS_DERIVE=0x21 and HASH_ML_DSA_SHA224=0x23)
+MECHANISM_REGISTRY[0x00000022] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    multi_part_supported=False,
+    expected_flags=_SIG_VER,
+    notes="ML-DSA ExternalMu sign/verify (FIPS 204): pre-computed mu input",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    param_required=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA sign/verify (FIPS 204): hash-then-sign, requires hash alg param",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHA224] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHA-224 (FIPS 204)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHA256] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHA-256 (FIPS 204)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHA384] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHA-384 (FIPS 204)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHA512] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHA-512 (FIPS 204)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHA3_224] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHA3-224 (FIPS 204)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHA3_256] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHA3-256 (FIPS 204)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHA3_384] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHA3-384 (FIPS 204)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHA3_512] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHA3-512 (FIPS 204)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHAKE128] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHAKE-128 (FIPS 204)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_ML_DSA_SHAKE256] = MechConfig(
+    key_type=CKK_ML_DSA,
+    keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
+    key_sizes=_ML_DSA_SIZES,
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashML-DSA with SHAKE-256 (FIPS 204)",
+)
+
+
+# ---------------------------------------------------------------------------
+# PQC — SLH-DSA (SPHINCS+, FIPS 205) — 13 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_SLH_DSA_KEY_PAIR_GEN] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),  # parameter set embedded in key (SLH-DSA-SHA2-128s etc.)
+    is_keypair=True,
+    expected_flags=CKF_GENERATE_KEY_PAIR,
+    notes="SLH-DSA key pair generation (FIPS 205): parameter set from CKA_PARAMETER_SET",
+)
+
+MECHANISM_REGISTRY[CKM_SLH_DSA] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="SLH-DSA sign/verify (FIPS 205): pure SLH-DSA, optional context",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    param_required=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA sign/verify (FIPS 205): hash-then-sign, requires hash alg param",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHA224] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHA-224 (FIPS 205)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHA256] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHA-256 (FIPS 205)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHA384] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHA-384 (FIPS 205)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHA512] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHA-512 (FIPS 205)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHA3_224] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHA3-224 (FIPS 205)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHA3_256] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHA3-256 (FIPS 205)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHA3_384] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHA3-384 (FIPS 205)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHA3_512] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHA3-512 (FIPS 205)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHAKE128] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHAKE-128 (FIPS 205)",
+)
+
+MECHANISM_REGISTRY[CKM_HASH_SLH_DSA_SHAKE256] = MechConfig(
+    key_type=CKK_SLH_DSA,
+    keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HashSLH-DSA with SHAKE-256 (FIPS 205)",
+)
+
+
+# ---------------------------------------------------------------------------
+# PQC — HSS / XMSS / XMSSMT (hash-based signatures) — 6 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_HSS_KEY_PAIR_GEN] = MechConfig(
+    key_type=CKK_HSS,
+    keygen_mech=CKM_HSS_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=CKF_GENERATE_KEY_PAIR,
+    notes="HSS (Hierarchical Signature System, SP 800-208) key pair generation",
+)
+
+MECHANISM_REGISTRY[CKM_HSS] = MechConfig(
+    key_type=CKK_HSS,
+    keygen_mech=CKM_HSS_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="HSS sign/verify (SP 800-208): stateful hash-based signature",
+)
+
+MECHANISM_REGISTRY[CKM_XMSS_KEY_PAIR_GEN] = MechConfig(
+    key_type=CKK_XMSS,
+    keygen_mech=CKM_XMSS_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=CKF_GENERATE_KEY_PAIR,
+    notes="XMSS (RFC 8391) key pair generation: stateful hash-based signature",
+)
+
+MECHANISM_REGISTRY[CKM_XMSS] = MechConfig(
+    key_type=CKK_XMSS,
+    keygen_mech=CKM_XMSS_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="XMSS sign/verify (RFC 8391): stateful hash-based signature",
+)
+
+MECHANISM_REGISTRY[CKM_XMSSMT_KEY_PAIR_GEN] = MechConfig(
+    key_type=CKK_XMSSMT,
+    keygen_mech=CKM_XMSSMT_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=CKF_GENERATE_KEY_PAIR,
+    notes="XMSS^MT (RFC 8391) multi-tree key pair generation: stateful hash-based signature",
+)
+
+MECHANISM_REGISTRY[CKM_XMSSMT] = MechConfig(
+    key_type=CKK_XMSSMT,
+    keygen_mech=CKM_XMSSMT_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    expected_flags=_SIG_VER,
+    notes="XMSS^MT sign/verify (RFC 8391): stateful hash-based multi-tree signature",
+)
+
+
+# ---------------------------------------------------------------------------
+# KDF — HKDF (RFC 5869) — 3 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_HKDF_KEY_GEN] = MechConfig(
+    key_type=CKK_HKDF,
+    keygen_mech=CKM_HKDF_KEY_GEN,
+    key_sizes=(),
+    expected_flags=CKF_GENERATE,
+    notes="HKDF key generation: generate raw IKM (input keying material) key",
+)
+
+MECHANISM_REGISTRY[CKM_HKDF_DERIVE] = MechConfig(
+    key_type=CKK_HKDF,
+    keygen_mech=CKM_HKDF_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="HKDF key derivation (RFC 5869): extract-and-expand, requires CK_HKDF_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_HKDF_DATA] = MechConfig(
+    key_type=CKK_HKDF,
+    keygen_mech=CKM_HKDF_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="HKDF data derivation (RFC 5869): produces raw data output rather than key object",
+)
+
+
+# ---------------------------------------------------------------------------
+# KDF — PBKDF2 (RFC 2898) — 1 entry
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_PKCS5_PBKD2] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_PKCS5_PBKD2,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_GENERATE,
+    notes="PBKDF2 (RFC 2898): password-based key derivation, requires CK_PKCS5_PBKD2_PARAMS",
+)
+
+
+# ---------------------------------------------------------------------------
+# KDF — SP800-108 counter/feedback/pipeline KDFs — 3 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_SP800_108_COUNTER_KDF] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="SP800-108 counter-mode KDF: requires CK_SP800_108_KDF_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_SP800_108_FEEDBACK_KDF] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="SP800-108 feedback-mode KDF: requires CK_SP800_108_KDF_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_SP800_108_DOUBLE_PIPELINE_KDF] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="SP800-108 double-pipeline KDF: requires CK_SP800_108_KDF_PARAMS",
+)
+
+
+# ---------------------------------------------------------------------------
+# TLS 1.2 protocol mechanisms — 9 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_TLS_PRE_MASTER_KEY_GEN] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_TLS_PRE_MASTER_KEY_GEN,
+    key_sizes=(384,),  # 48-byte pre-master secret
+    param_required=True,
+    expected_flags=CKF_GENERATE,
+    notes="TLS pre-master secret generation: requires TLS version param",
+)
+
+MECHANISM_REGISTRY[CKM_TLS12_MASTER_KEY_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="TLS 1.2 master key derivation: requires CK_TLS12_MASTER_KEY_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_TLS12_MASTER_KEY_DERIVE_DH] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="TLS 1.2 master key derivation (DH): requires CK_TLS12_MASTER_KEY_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_TLS12_KEY_AND_MAC_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="TLS 1.2 key and MAC material derivation: requires CK_TLS12_KEY_MAT_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_TLS12_KEY_SAFE_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="TLS 1.2 safe key derivation: same as KEY_AND_MAC_DERIVE but SENSITIVE flag preserved",
+)
+
+MECHANISM_REGISTRY[CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="TLS 1.2 extended master secret (RFC 7627): requires session hash param",
+)
+
+MECHANISM_REGISTRY[CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="TLS 1.2 extended master secret DH variant (RFC 7627)",
+)
+
+MECHANISM_REGISTRY[CKM_TLS_MAC] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=_SIG_VER,
+    notes="TLS MAC: requires CK_TLS_MAC_PARAMS (hash alg + label)",
+)
+
+MECHANISM_REGISTRY[CKM_TLS_KDF] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="TLS KDF (generic PRF): requires CK_TLS_KDF_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_TLS12_MAC] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=_SIG_VER,
+    notes="TLS 1.2 MAC: requires hash algorithm parameter",
+)
+
+MECHANISM_REGISTRY[CKM_TLS12_KDF] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="TLS 1.2 KDF (PRF): requires CK_TLS12_KDF_PARAMS",
+)
+
+
+# ---------------------------------------------------------------------------
+# SSL 3.0 protocol mechanisms — 4 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_SSL3_PRE_MASTER_KEY_GEN] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_SSL3_PRE_MASTER_KEY_GEN,
+    key_sizes=(384,),  # 48-byte pre-master secret
+    param_required=True,
+    expected_flags=CKF_GENERATE,
+    notes="SSL 3.0 pre-master secret generation: requires TLS version param",
+)
+
+MECHANISM_REGISTRY[CKM_SSL3_MASTER_KEY_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="SSL 3.0 master key derivation: requires CK_SSL3_MASTER_KEY_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_SSL3_MASTER_KEY_DERIVE_DH] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="SSL 3.0 master key derivation (DH): requires CK_SSL3_MASTER_KEY_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_SSL3_KEY_AND_MAC_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="SSL 3.0 key and MAC material derivation: requires CK_SSL3_KEY_MAT_PARAMS",
+)
+
+
+# ---------------------------------------------------------------------------
+# WTLS (WAP TLS) protocol mechanisms — 6 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_WTLS_PRE_MASTER_KEY_GEN] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_WTLS_PRE_MASTER_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_GENERATE,
+    notes="WTLS pre-master secret generation",
+)
+
+MECHANISM_REGISTRY[CKM_WTLS_MASTER_KEY_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="WTLS master key derivation: requires CK_WTLS_MASTER_KEY_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="WTLS master key derivation (DH/ECC): requires CK_WTLS_MASTER_KEY_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="WTLS client key and MAC material derivation",
+)
+
+MECHANISM_REGISTRY[CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="WTLS server key and MAC material derivation",
+)
+
+MECHANISM_REGISTRY[CKM_WTLS_PRF] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="WTLS PRF (pseudo-random function)",
+)
+
+
+# ---------------------------------------------------------------------------
+# IKE (IPsec key exchange) KDFs — 4 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_IKE_PRF_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="IKE PRF key derivation: requires CK_IKE_PRF_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_IKE1_PRF_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="IKEv1 PRF key derivation: requires CK_IKE1_PRF_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_IKE1_EXTENDED_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="IKEv1 extended key derivation: requires CK_IKE1_EXTENDED_DERIVE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_IKE2_PRF_PLUS_DERIVE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="IKEv2 PRF+ key derivation: requires CK_IKE2_PRF_PLUS_DERIVE_PARAMS",
+)
+
+
+# ---------------------------------------------------------------------------
+# Miscellaneous derivation mechanisms — 6 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_CONCATENATE_BASE_AND_KEY] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="Concatenate base key value with another key value to derive new key",
+)
+
+MECHANISM_REGISTRY[CKM_CONCATENATE_BASE_AND_DATA] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="Concatenate base key value with data bytes to derive new key",
+)
+
+MECHANISM_REGISTRY[CKM_CONCATENATE_DATA_AND_BASE] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="Concatenate data bytes with base key value to derive new key",
+)
+
+MECHANISM_REGISTRY[CKM_XOR_BASE_AND_DATA] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="XOR base key value with data bytes to derive new key",
+)
+
+MECHANISM_REGISTRY[CKM_EXTRACT_KEY_FROM_KEY] = MechConfig(
+    key_type=CKK_GENERIC_SECRET,
+    keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+    key_sizes=(),
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="Extract a subset of bytes from key value to create new key",
+)
+
+MECHANISM_REGISTRY[CKM_PUB_KEY_FROM_PRIV_KEY] = MechConfig(
+    key_type=CKK_EC,
+    keygen_mech=CKM_EC_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=False,
+    expected_flags=CKF_DERIVE,
+    notes="Derive public key object from existing private key: works for EC/EdDSA/Montgomery",
+)
+
+
+# ---------------------------------------------------------------------------
+# Signal protocol mechanisms — 4 entries
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_X3DH_INITIALIZE] = MechConfig(
+    key_type=CKK_EC_MONTGOMERY,
+    keygen_mech=CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="X3DH key agreement — initiator side (Signal protocol): requires CK_X3DH_INITIATE_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_X3DH_RESPOND] = MechConfig(
+    key_type=CKK_EC_MONTGOMERY,
+    keygen_mech=CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="X3DH key agreement — responder side (Signal protocol): requires CK_X3DH_RESPOND_PARAMS",
+)
+
+MECHANISM_REGISTRY[CKM_X2RATCHET_INITIALIZE] = MechConfig(
+    key_type=CKK_EC_MONTGOMERY,
+    keygen_mech=CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="Double Ratchet initialization — sender side (Signal protocol)",
+)
+
+MECHANISM_REGISTRY[CKM_X2RATCHET_RESPOND] = MechConfig(
+    key_type=CKK_EC_MONTGOMERY,
+    keygen_mech=CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
+    key_sizes=(),
+    is_keypair=True,
+    param_required=True,
+    expected_flags=CKF_DERIVE,
+    notes="Double Ratchet initialization — receiver side (Signal protocol)",
+)
+
+
+# ---------------------------------------------------------------------------
+# CKM_NULL — 1 entry
+# ---------------------------------------------------------------------------
+
+MECHANISM_REGISTRY[CKM_NULL] = MechConfig(
+    key_type=None,
+    keygen_mech=None,
+    key_sizes=(),
+    multi_part_supported=False,
+    expected_flags=_SIG_VER,
+    notes="CKM_NULL: pass-through mechanism, data signed/verified as-is with no hashing",
 )
 
 
