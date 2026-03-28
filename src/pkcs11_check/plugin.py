@@ -383,7 +383,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     try:
         from pkcs11_check.testcases._raw_subprocess import get_raw_subprocess_coverage
 
-        sub_func, sub_mech = get_raw_subprocess_coverage()
+        sub_func, _sub_mech = get_raw_subprocess_coverage()
         if sub_func:
             cumulative.update(sub_func.keys())
             try:
@@ -395,7 +395,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     try:
         from pkcs11_check.testcases._subprocess_preamble import get_preamble_subprocess_coverage
 
-        sub_func, sub_mech = get_preamble_subprocess_coverage()
+        sub_func, _sub_mech = get_preamble_subprocess_coverage()
         if sub_func:
             cumulative.update(sub_func.keys())
             try:
