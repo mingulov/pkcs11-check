@@ -26,9 +26,6 @@ Updated as Docker targets are analyzed.
   `CKF_WRAP` and `CKF_UNWRAP` for `CKM_DES_CBC_PAD` and `CKM_DES3_CBC_PAD`, but `C_WrapKey`
   returns `CKR_MECHANISM_INVALID` even when called with matching DES-family wrapping keys and
   DES-family target keys. Detected by: `test_mech_wrap.py`.
-- **EDDSA multipart sign/verify returns CKR_OPERATION_NOT_INITIALIZED**: SoftHSM2 fails
-  multipart `CKM_EDDSA` sign/verify roundtrips with `CKR_OPERATION_NOT_INITIALIZED` during
-  `C_SignUpdate`/`C_SignFinal`. Detected by: `test_mech_multipart.py`.
 
 ### Known quirks
 - `C_GetObjectSize` returns `CK_UNAVAILABLE_INFORMATION` (not implemented)
