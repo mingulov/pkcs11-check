@@ -71,6 +71,16 @@ class MechanismCatalog:
             if (e.flags & flag) and e.config is not None
         ]
 
+    def filter_for_scenario(self, scenario: str) -> list[MechEntry]:
+        """Return entries selected for a semantic scenario."""
+        from pkcs11_check.testcases.mechanism_selection import select_for_scenario
+
+        return [
+            entry
+            for entry in self._entries.values()
+            if select_for_scenario(entry, scenario).selected
+        ]
+
     def filter_unregistered(self) -> list[MechEntry]:
         """Return entries with no registry config (vendor/unknown)."""
         return [e for e in self._entries.values() if e.config is None]
