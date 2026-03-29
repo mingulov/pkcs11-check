@@ -53,8 +53,7 @@ class TestMechSignRoundtrip:
         rs = p11_raw_session
         entry = mech_sign_entry
         config = entry.config
-        if config is None:
-            pytest.skip(f"{entry.mech_name}: no registry config")
+        assert config is not None
 
         sign_key, verify_key = generate_key_for_sign(rs, entry, config)
         verify_key_handle = verify_key if verify_key is not None else sign_key
@@ -93,8 +92,7 @@ class TestMechSignRoundtrip:
         rs = p11_raw_session
         entry = mech_sign_entry
         config = entry.config
-        if config is None:
-            pytest.skip(f"{entry.mech_name}: no registry config")
+        assert config is not None
 
         sign_key, verify_key = generate_key_for_sign(rs, entry, config)
         verify_key_handle = verify_key if verify_key is not None else sign_key

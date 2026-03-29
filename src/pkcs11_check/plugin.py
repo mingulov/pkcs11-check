@@ -34,6 +34,8 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.mechanism_selection import (
     ENCRYPT_ROUNDTRIP,
+    MULTIPART_ENCRYPT_ROUNDTRIP,
+    MULTIPART_SIGN_VERIFY_ROUNDTRIP,
     SIGN_VERIFY_ROUNDTRIP,
     WRAP_ROUNDTRIP,
     select_for_scenario,
@@ -61,6 +63,8 @@ _SCENARIO_BY_FIXTURE: dict[str, str] = {
     "mech_wrap_entry": WRAP_ROUNDTRIP,
     "mech_encrypt_entry": ENCRYPT_ROUNDTRIP,
     "mech_sign_entry": SIGN_VERIFY_ROUNDTRIP,
+    "mech_multipart_encrypt_entry": MULTIPART_ENCRYPT_ROUNDTRIP,
+    "mech_multipart_sign_entry": MULTIPART_SIGN_VERIFY_ROUNDTRIP,
 }
 
 _LEGACY_FLAG_BY_FIXTURE: dict[str, int] = {

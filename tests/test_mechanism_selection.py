@@ -119,6 +119,30 @@ def test_multipart_encrypt_roundtrip_accepts_multi_part_supported_mechanism() ->
     assert decision.reasons == ()
 
 
+def test_multipart_sign_verify_rejects_disabled_multi_part_support() -> None:
+    decision = selection.select_for_scenario(
+        _entry(flags=int(CKF_SIGN) | int(CKF_VERIFY), multi_part_supported=False),
+        selection.MULTIPART_SIGN_VERIFY_ROUNDTRIP,
+    )
+
+    assert decision.scenario == selection.MULTIPART_SIGN_VERIFY_ROUNDTRIP
+    assert not decision.selected
+    assert decision.reasons[0].code == "unsupported_multi_part"
+    assert decision.reasons[0].field == "multi_part_supported"
+    assert decision.reasons[0].expected is True
+    assert decision.reasons[0].actual is False
+
+
+def test_multipart_sign_verify_roundtrip_accepts_multi_part_supported_mechanism() -> None:
+    decision = selection.select_for_scenario(
+        _entry(flags=int(CKF_SIGN) | int(CKF_VERIFY), multi_part_supported=True),
+        selection.MULTIPART_SIGN_VERIFY_ROUNDTRIP,
+    )
+
+    assert decision.selected
+    assert decision.reasons == ()
+
+
 def test_select_for_scenario_returns_machine_readable_reasons() -> None:
     decision = selection.select_for_scenario(
         _entry(flags=int(CKF_WRAP)),

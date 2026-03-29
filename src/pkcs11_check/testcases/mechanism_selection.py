@@ -24,12 +24,14 @@ ScenarioName = Literal[
     "encrypt_roundtrip",
     "sign_verify_roundtrip",
     "multipart_encrypt_roundtrip",
+    "multipart_sign_verify_roundtrip",
 ]
 
 WRAP_ROUNDTRIP: ScenarioName = "wrap_roundtrip"
 ENCRYPT_ROUNDTRIP: ScenarioName = "encrypt_roundtrip"
 SIGN_VERIFY_ROUNDTRIP: ScenarioName = "sign_verify_roundtrip"
 MULTIPART_ENCRYPT_ROUNDTRIP: ScenarioName = "multipart_encrypt_roundtrip"
+MULTIPART_SIGN_VERIFY_ROUNDTRIP: ScenarioName = "multipart_sign_verify_roundtrip"
 
 SelectionDetail = tuple[str, ...] | bool | str | None
 
@@ -140,6 +142,16 @@ def _select_required_flags(
     )
 
 
+def _retag_decision(decision: SelectionDecision, scenario: str) -> SelectionDecision:
+    """Return a copy of a decision with a different scenario label."""
+
+    return SelectionDecision(
+        scenario=scenario,
+        selected=decision.selected,
+        reasons=decision.reasons,
+    )
+
+
 def wrap_roundtrip(entry: _EntryLike) -> SelectionDecision:
     """Select mechanisms that support wrap and unwrap semantics."""
 
@@ -180,9 +192,31 @@ def sign_verify_roundtrip(entry: _EntryLike) -> SelectionDecision:
 def multipart_encrypt_roundtrip(entry: _EntryLike) -> SelectionDecision:
     """Select mechanisms that can encrypt/decrypt in multi-part mode."""
 
-    decision = _select_required_flags(
-        entry, MULTIPART_ENCRYPT_ROUNDTRIP, int(CKF_ENCRYPT) | int(CKF_DECRYPT)
+    decision = _retag_decision(encrypt_roundtrip(entry), MULTIPART_ENCRYPT_ROUNDTRIP)
+    config = entry.config
+    if config is None or config.multi_part_supported:
+        return decision
+
+    reasons = list(decision.reasons)
+    reasons.append(
+        SelectionReason(
+            code="unsupported_multi_part",
+            field="multi_part_supported",
+            expected=True,
+            actual=False,
+        )
     )
+    return SelectionDecision(
+        scenario=decision.scenario,
+        selected=False,
+        reasons=tuple(reasons),
+    )
+
+
+def multipart_sign_verify_roundtrip(entry: _EntryLike) -> SelectionDecision:
+    """Select mechanisms that can sign/verify in multi-part mode."""
+
+    decision = _retag_decision(sign_verify_roundtrip(entry), MULTIPART_SIGN_VERIFY_ROUNDTRIP)
     config = entry.config
     if config is None or config.multi_part_supported:
         return decision
@@ -217,4 +251,6 @@ def select_for_scenario(
         return sign_verify_roundtrip(entry)
     if scenario == MULTIPART_ENCRYPT_ROUNDTRIP:
         return multipart_encrypt_roundtrip(entry)
+    if scenario == MULTIPART_SIGN_VERIFY_ROUNDTRIP:
+        return multipart_sign_verify_roundtrip(entry)
     raise ValueError(f"unknown scenario: {scenario}")
