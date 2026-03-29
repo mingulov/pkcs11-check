@@ -150,7 +150,13 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 
 ## Coding Rules
 
-### Test coverage philosophy — CRITICAL
+### Documentation updates -- DO NOT update statistics after every change
+- Do NOT update `docs/status.md`, `docs/module-matrix.md`, `docs/test-coverage.md` with exact test counts, pass/fail numbers, or Docker results after each code change
+- Statistics in these files are for OFFICIAL RELEASES only -- they get stale immediately and cause unnecessary churn
+- Exception: adding NEW sections or features to docs is fine (e.g., documenting a new test category)
+- Exception: updating the module-matrix Docker results table after a deliberate full Docker validation run is fine
+
+### Test coverage philosophy -- CRITICAL
 - **NEVER skip, disable, or suppress real failures or crashes.** pkcs11-check exists to find and report module bugs. A segfault IS the finding.
 - If a module crashes on valid parameters, that is a module bug to be reported, not a test to be skipped.
 - Tests may only be skipped for **missing capabilities** (mechanism not advertised, interface version too old) - never to hide broken behavior.
