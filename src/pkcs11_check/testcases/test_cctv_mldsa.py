@@ -90,7 +90,6 @@ def _gen_mldsa_keypair(rs: Any, param_set: int) -> tuple[int, int]:
     )
     priv_tmpl = template(
         attr_bool(CKA_SIGN, True),
-        attr_ulong(CKA_PARAMETER_SET, param_set),
         attr_bool(CKA_TOKEN, False),
     )
     mech = mech_simple(CKM_ML_DSA_KEY_PAIR_GEN)
