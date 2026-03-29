@@ -20,10 +20,12 @@ from pkcs11_check.raw.types_std import (
     CKK_GOSTR3410,
     CKK_GOSTR3411,
     CKK_KEA,
+    CKK_RSA,
     CKM_ACTI,
     CKM_ACTI_KEY_GEN,
     CKM_CMS_SIG,
     CKM_FORTEZZA_TIMESTAMP,
+    CKM_GENERIC_SECRET_KEY_GEN,
     CKM_GOSTR3410,
     CKM_GOSTR3410_DERIVE,
     CKM_GOSTR3410_KEY_PAIR_GEN,
@@ -62,6 +64,7 @@ from pkcs11_check.raw.types_std import (
     CKM_PBE_SHA1_RC2_128_CBC,
     CKM_PBE_SHA1_RC4_40,
     CKM_PBE_SHA1_RC4_128,
+    CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SECURID,
     CKM_SECURID_KEY_GEN,
     CKM_X2RATCHET_DECRYPT,
@@ -71,6 +74,9 @@ from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, 
 
 _SIG_VER = CKF_SIGN | CKF_VERIFY
 
+_RSA_SIZES = (2048, 3072, 4096)
+
+_rsa = KeygenRecipe("rsa")
 _sym = KeygenRecipe("symmetric")
 _gost = KeygenRecipe("ec", {"curve": "GOST-2001"})
 _kea = KeygenRecipe("ec", {"curve": "KEA-1024"})
@@ -96,7 +102,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
 
     registry[CKM_MD2_HMAC] = MechConfig(
         key_type=CKK_GENERIC_SECRET,
-        keygen_mech=None,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
@@ -105,7 +111,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
 
     registry[CKM_MD2_HMAC_GENERAL] = MechConfig(
         key_type=CKK_GENERIC_SECRET,
-        keygen_mech=None,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
         param_recipe=_mac_general,
@@ -149,7 +155,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
 
     registry[CKM_MD5_HMAC_GENERAL] = MechConfig(
         key_type=CKK_GENERIC_SECRET,
-        keygen_mech=None,
+        keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
         key_sizes=(),
         param_required=True,
         param_recipe=_mac_general,
@@ -172,19 +178,21 @@ def populate(registry: dict[int, MechConfig]) -> None:
     # ---------------------------------------------------------------------------
 
     registry[CKM_MD2_RSA_PKCS] = MechConfig(
-        key_type=None,
-        keygen_mech=None,
-        key_sizes=(),
+        key_type=CKK_RSA,
+        keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
+        key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="MD2withRSA PKCS#1 v1.5 signature (obsolete)",
     )
 
     registry[CKM_MD5_RSA_PKCS] = MechConfig(
-        key_type=None,
-        keygen_mech=None,
-        key_sizes=(),
+        key_type=CKK_RSA,
+        keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
+        key_sizes=_RSA_SIZES,
         is_keypair=True,
+        keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="MD5withRSA PKCS#1 v1.5 signature (deprecated for security use)",
     )
