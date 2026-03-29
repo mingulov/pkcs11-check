@@ -223,6 +223,75 @@ def test_pytest_generate_tests_records_selection_telemetry(
     )
 
 
+def test_pytest_generate_tests_caches_selection_aggregation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    entries = [
+        _fake_entry("CKM_SIGN_OK"),
+        _fake_entry("CKM_SIGN_REJECT"),
+    ]
+
+    def fake_select(entry: MechEntry, scenario: str) -> selection.SelectionDecision:
+        calls.append(entry.mech_name)
+        if entry.mech_name == "CKM_SIGN_OK":
+            return selection.SelectionDecision(scenario=scenario, selected=True)
+        return selection.SelectionDecision(
+            scenario=scenario,
+            selected=False,
+            reasons=(
+                selection.SelectionReason(
+                    code="missing_flags",
+                    field="flags",
+                    expected=("CKF_SIGN", "CKF_VERIFY"),
+                    actual=("CKF_SIGN",),
+                    missing=("CKF_VERIFY",),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(plugin_mod, "select_for_scenario", fake_select)
+    monkeypatch.setattr(
+        plugin_mod,
+        "_ensure_mechanism_catalog",
+        lambda config: _FakeCatalog(entries),
+    )
+    config = SimpleNamespace(stash={})
+    metafunc = _FakeMetafunc(config=config, fixturenames=["mech_sign_entry"])
+
+    plugin_mod.pytest_generate_tests(metafunc)
+    telemetry_key = getattr(plugin_mod, "_SELECTION_TELEMETRY_KEY", None)
+    assert telemetry_key is not None
+    telemetry = config.stash[telemetry_key]
+    first_snapshot = {
+        scenario: {
+            "selected_mechanisms": set(data["selected_mechanisms"]),
+            "rejected_mechanisms": set(data["rejected_mechanisms"]),
+            "rejected_reason_counts": Counter(data["rejected_reason_counts"]),
+        }
+        for scenario, data in telemetry.items()
+    }
+
+    plugin_mod.pytest_generate_tests(metafunc)
+
+    assert calls == ["CKM_SIGN_OK", "CKM_SIGN_REJECT"]
+    assert telemetry["sign_verify_roundtrip"]["selected_mechanisms"] == {"CKM_SIGN_OK"}
+    assert telemetry["sign_verify_roundtrip"]["rejected_mechanisms"] == {"CKM_SIGN_REJECT"}
+    assert telemetry["sign_verify_roundtrip"]["rejected_reason_counts"] == Counter(
+        {"missing_flags": 1}
+    )
+    assert {
+        scenario: {
+            "selected_mechanisms": set(data["selected_mechanisms"]),
+            "rejected_mechanisms": set(data["rejected_mechanisms"]),
+            "rejected_reason_counts": Counter(data["rejected_reason_counts"]),
+        }
+        for scenario, data in telemetry.items()
+    } == first_snapshot
+    assert len(metafunc.calls) == 2
+    assert metafunc.calls[0]["ids"] == metafunc.calls[1]["ids"] == ["CKM_SIGN_OK"]
+
+
 def test_sessionfinish_emits_selection_report(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -251,9 +320,9 @@ def test_sessionfinish_emits_selection_report(
     assert telemetry_key is not None
     config.stash[telemetry_key] = {
         "encrypt_roundtrip": {
-            "selected_mechanisms": ["CKM_ENCRYPT_OK"],
-            "rejected_mechanisms": ["CKM_ENCRYPT_REJECT"],
-            "rejected_reason_counts": {"unsupported_multi_part": 1},
+            "selected_mechanisms": {"CKM_ENCRYPT_OK"},
+            "rejected_mechanisms": {"CKM_ENCRYPT_REJECT"},
+            "rejected_reason_counts": Counter({"unsupported_multi_part": 1}),
         }
     }
     session = SimpleNamespace(config=config)
