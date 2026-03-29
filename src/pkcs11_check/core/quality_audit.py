@@ -90,6 +90,21 @@ def classify_skip_reason(reason: str | None) -> SkipReasonCategory:
     ):
         return "test_data_missing"
 
+    if lower.startswith(("cannot import", "cannot decode")):
+        if any(
+            needle in lower
+            for needle in (
+                "not supported",
+                "not available",
+                "does not support",
+                "mechanism not available",
+                "requires pkcs#11 v3",
+                "module has v",
+            )
+        ):
+            return "missing_capability"
+        return "unknown"
+
     if any(
         needle in lower
         for needle in (
@@ -101,7 +116,6 @@ def classify_skip_reason(reason: str | None) -> SkipReasonCategory:
             "requires pkcs#11 v3",
             "module has v",
             "cannot generate",
-            "cannot import",
             "mechanism not available",
             "curve ",
             "key pair generation not supported",
@@ -130,9 +144,9 @@ def build_quality_audit(
     (
         explicit_outcomes,
         explicit_skip_buckets,
-        explicit_skip_units,
+        explicit_skip_reasons,
         warnings,
-        explicit_test_count,
+        _explicit_test_events,
     ) = _collect_results_details(
         results_map,
         seen_record_keys=seen_record_keys,
@@ -141,8 +155,8 @@ def build_quality_audit(
     (
         report_outcomes,
         report_skip_buckets,
-        report_skip_units,
-        report_test_count,
+        report_skip_reasons,
+        _report_test_events,
         report_warnings,
     ) = _collect_report_log_details(
         report_records,
@@ -153,11 +167,11 @@ def build_quality_audit(
     warnings.extend(report_warnings)
     _merge_outcomes(explicit_outcomes, report_outcomes)
     _merge_skip_buckets(explicit_skip_buckets, report_skip_buckets)
-    explicit_skip_units.update(report_skip_units)
+    explicit_skip_reasons.update(report_skip_reasons)
 
     aggregated_skip_buckets, aggregated_warnings = _collect_results_skip_reasons(
         results_map,
-        blocked_units=explicit_skip_units,
+        blocked_reasons=explicit_skip_reasons,
     )
     warnings.extend(aggregated_warnings)
     _merge_skip_buckets(explicit_skip_buckets, aggregated_skip_buckets)
@@ -184,7 +198,7 @@ def build_quality_audit(
         **summary_counts,
         "total": sum(summary_counts.values()),
         "units": _count_units(results_map),
-        "test_records": explicit_test_count + report_test_count,
+        "test_records": len(explicit_outcomes),
         "selection_scenarios": len(selection_findings),
         "mechanisms_available": len(_mechanism_available_names(coverage_map)),
         "mechanisms_invoked": len(_mechanism_invoked_names(coverage_map)),
@@ -252,7 +266,7 @@ def _collect_results_details(
 ) -> tuple[
     dict[str, set[str]],
     dict[tuple[str, str], dict[str, Any]],
-    set[str],
+    set[tuple[str, str]],
     list[str],
     int,
 ]:
@@ -271,19 +285,19 @@ def _collect_results_details_with_dedup(
 ) -> tuple[
     dict[str, set[str]],
     dict[tuple[str, str], dict[str, Any]],
-    set[str],
+    set[tuple[str, str]],
     list[str],
     int,
 ]:
     outcomes_by_nodeid: dict[str, set[str]] = defaultdict(set)
     skip_buckets: dict[tuple[str, str], dict[str, Any]] = {}
-    explicit_skip_units: set[str] = set()
+    explicit_skip_reasons: set[tuple[str, str]] = set()
     warnings: list[str] = []
     test_record_count = 0
 
     units = results.get("units")
     if not isinstance(units, list):
-        return outcomes_by_nodeid, skip_buckets, explicit_skip_units, warnings, test_record_count
+        return outcomes_by_nodeid, skip_buckets, explicit_skip_reasons, warnings, test_record_count
 
     for unit in units:
         if not isinstance(unit, Mapping):
@@ -298,7 +312,7 @@ def _collect_results_details_with_dedup(
                 if not isinstance(record, Mapping):
                     warnings.append("results.json contains a non-mapping test entry")
                     continue
-                seen, is_skip = _observe_test_record(
+                seen, skip_reason = _observe_test_record(
                     record,
                     outcomes_by_nodeid,
                     skip_buckets,
@@ -308,8 +322,8 @@ def _collect_results_details_with_dedup(
                 )
                 if seen:
                     test_record_count += 1
-                if is_skip:
-                    explicit_skip_units.add(unit_key)
+                if skip_reason is not None:
+                    explicit_skip_reasons.add((unit_key, skip_reason))
         else:
             if unit.get("skip_reasons"):
                 warnings.append(
@@ -320,13 +334,13 @@ def _collect_results_details_with_dedup(
     if not outcomes_by_nodeid and not skip_buckets:
         warnings.append("results.json did not expose per-test details")
 
-    return outcomes_by_nodeid, skip_buckets, explicit_skip_units, warnings, test_record_count
+    return outcomes_by_nodeid, skip_buckets, explicit_skip_reasons, warnings, test_record_count
 
 
 def _collect_results_skip_reasons(
     results: Mapping[str, Any],
     *,
-    blocked_units: set[str],
+    blocked_reasons: set[tuple[str, str]],
 ) -> tuple[dict[tuple[str, str], dict[str, Any]], list[str]]:
     skip_buckets: dict[tuple[str, str], dict[str, Any]] = {}
     warnings: list[str] = []
@@ -340,15 +354,14 @@ def _collect_results_skip_reasons(
             continue
 
         unit_key = _unit_key_from_target(str(unit.get("target", "")))
-        if unit_key in blocked_units:
-            continue
-
         skip_reasons = unit.get("skip_reasons")
         if not isinstance(skip_reasons, Mapping):
             continue
 
         for raw_reason, raw_count in skip_reasons.items():
             reason = _normalize_reason_text(str(raw_reason))
+            if (unit_key, reason) in blocked_reasons:
+                continue
             category = classify_skip_reason(reason)
             bucket = _ensure_skip_bucket(skip_buckets, reason, category)
             bucket["count"] += _coerce_int(raw_count, default=1)
@@ -366,7 +379,7 @@ def _collect_report_log_details(
 ) -> tuple[
     dict[str, set[str]],
     dict[tuple[str, str], dict[str, Any]],
-    set[str],
+    set[tuple[str, str]],
     int,
     list[str],
 ]:
@@ -387,13 +400,13 @@ def _collect_report_log_details_with_dedup(
 ) -> tuple[
     dict[str, set[str]],
     dict[tuple[str, str], dict[str, Any]],
-    set[str],
+    set[tuple[str, str]],
     int,
     list[str],
 ]:
     outcomes_by_nodeid: dict[str, set[str]] = defaultdict(set)
     skip_buckets: dict[tuple[str, str], dict[str, Any]] = {}
-    explicit_skip_units: set[str] = set()
+    explicit_skip_reasons: set[tuple[str, str]] = set()
     warnings: list[str] = []
     test_record_count = 0
 
@@ -412,7 +425,7 @@ def _collect_report_log_details_with_dedup(
             continue
 
         unit_key = _unit_key_from_nodeid(str(record.get("nodeid", "")).strip())
-        seen, is_skip = _observe_test_record(
+        seen, skip_reason = _observe_test_record(
             record,
             outcomes_by_nodeid,
             skip_buckets,
@@ -423,9 +436,9 @@ def _collect_report_log_details_with_dedup(
         if not seen:
             continue
         test_record_count += 1
-        if is_skip:
-            explicit_skip_units.add(unit_key)
-    return outcomes_by_nodeid, skip_buckets, explicit_skip_units, test_record_count, warnings
+        if skip_reason is not None:
+            explicit_skip_reasons.add((unit_key, skip_reason))
+    return outcomes_by_nodeid, skip_buckets, explicit_skip_reasons, test_record_count, warnings
 
 
 def _observe_test_record(
@@ -436,33 +449,33 @@ def _observe_test_record(
     unit_key: str,
     seen_record_keys: set[tuple[str, str, str, str, str]],
     seen_skip_keys: set[tuple[str, str, str, str, str]],
-) -> tuple[bool, bool]:
+) -> tuple[bool, str | None]:
     nodeid = str(record.get("nodeid", "")).strip()
     if not nodeid:
-        return False, False
+        return False, None
 
     when = str(record.get("when", ""))
     outcome = _normalized_outcome(str(record.get("outcome", "")), record.get("wasxfail"))
     if outcome not in _KNOWN_OUTCOMES:
-        return False, False
+        return False, None
 
     reason = _normalize_reason_text(_reason_text_from_record(record))
     record_phase = when if outcome != "skipped" else ""
     record_key = (unit_key, nodeid, record_phase, outcome, reason)
     if record_key in seen_record_keys:
-        return False, False
+        return False, None
     seen_record_keys.add(record_key)
 
     outcomes_by_nodeid[nodeid].add(outcome)
 
     if outcome != "skipped":
-        return True, False
+        return True, None
 
     if when == "teardown":
-        return True, False
+        return True, None
 
     if record_key in seen_skip_keys:
-        return True, False
+        return True, None
     seen_skip_keys.add(record_key)
 
     category = classify_skip_reason(reason)
@@ -470,7 +483,7 @@ def _observe_test_record(
     bucket["count"] += 1
     bucket["nodeids"].add(nodeid)
     bucket["sources"].add("test_record")
-    return True, True
+    return True, reason
 
 
 def _reason_text_from_record(record: Mapping[str, Any]) -> str:

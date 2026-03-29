@@ -9,6 +9,14 @@ def test_classify_skip_reason_falls_back_to_unknown() -> None:
     assert classify_skip_reason("something unexpected happened") == "unknown"
 
 
+def test_classify_skip_reason_is_conservative_for_ambiguous_import_decode_failures() -> None:
+    assert (
+        classify_skip_reason("Cannot import Ed25519 public key: Unexpected CK_RV 0x00000030")
+        == "unknown"
+    )
+    assert classify_skip_reason("Cannot decode asn XDH vector: ValueError") == "unknown"
+
+
 def test_build_quality_audit_results_only_degrades_gracefully() -> None:
     results = {
         "tool": "pkcs11-check",
@@ -243,6 +251,80 @@ def test_build_quality_audit_dedupes_skip_evidence_across_artifacts() -> None:
     assert len(candidates) == 1
     assert candidates[0]["count"] == 1
     assert candidates[0]["category"] == "missing_capability"
+
+
+def test_build_quality_audit_keeps_distinct_aggregated_skip_reasons_for_same_unit() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 2, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [
+            {
+                "target": "src/pkcs11_check/testcases/test_demo.py",
+                "status": "passed",
+                "counts": {
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 2,
+                    "xfailed": 0,
+                    "xpassed": 0,
+                    "error": 0,
+                },
+                "tests": [
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_skip",
+                        "outcome": "skipped",
+                        "longrepr": "Skipped: CKM_AES_CBC not supported",
+                    }
+                ],
+                "skip_reasons": {
+                    "CKM_AES_CBC not supported": 1,
+                    "No mechanism catalog": 1,
+                },
+            }
+        ],
+    }
+
+    report = build_quality_audit(results=results)
+
+    by_reason = {
+        finding["reason"]: finding for finding in report["framework_skip_candidates"]
+    }
+    assert by_reason["CKM_AES_CBC not supported"]["count"] == 1
+    assert by_reason["No mechanism catalog"]["count"] == 1
+    assert by_reason["No mechanism catalog"]["category"] == "framework_constraint"
+
+
+def test_build_quality_audit_counts_multi_phase_failure_once_in_summary() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "error": 1},
+        "units": [],
+    }
+    report_records = [
+        {
+            "$report_type": "TestReport",
+            "nodeid": "src/pkcs11_check/testcases/test_cleanup.py::test_teardown",
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "AssertionError: call failed",
+        },
+        {
+            "$report_type": "TestReport",
+            "nodeid": "src/pkcs11_check/testcases/test_cleanup.py::test_teardown",
+            "when": "teardown",
+            "outcome": "failed",
+            "longrepr": "AssertionError: teardown failed",
+        },
+    ]
+
+    report = build_quality_audit(results=results, report_log_records=report_records)
+
+    assert report["summary"]["test_records"] == 1
+    assert report["never_passed_nodeids"] == [
+        "src/pkcs11_check/testcases/test_cleanup.py::test_teardown",
+    ]
 
 
 def test_build_quality_audit_never_passed_nodeids_are_conservative() -> None:
