@@ -163,19 +163,30 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
 
     try:
         priv_key = import_rsa_private_key(
-            rs.raw, rs.sh,
-            n=modulus, e=pub_exponent, d=priv_exponent,
-            p=prime1, q=prime2,
-            dmp1=exp1, dmq1=exp2, iqmp=coefficient,
+            rs.raw,
+            rs.sh,
+            n=modulus,
+            e=pub_exponent,
+            d=priv_exponent,
+            p=prime1,
+            q=prime2,
+            dmp1=exp1,
+            dmq1=exp2,
+            iqmp=coefficient,
             attrs={CKA_DECRYPT: True},
         )
     except AssertionError as exc:
         exc_msg = str(exc)
         # Only cache permanent key-size rejections, not transient errors.
-        if any(code in exc_msg for code in (
-            "CKR_KEY_SIZE_RANGE", "CKR_ATTRIBUTE_VALUE_INVALID",
-            "CKR_TEMPLATE_INCONSISTENT", "CKR_TEMPLATE_INCOMPLETE",
-        )):
+        if any(
+            code in exc_msg
+            for code in (
+                "CKR_KEY_SIZE_RANGE",
+                "CKR_ATTRIBUTE_VALUE_INVALID",
+                "CKR_TEMPLATE_INCONSISTENT",
+                "CKR_TEMPLATE_INCOMPLETE",
+            )
+        ):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
         pytest.skip(f"Cannot import RSA {key_bits}-bit private key for OAEP: {exc_msg}")
 
@@ -191,7 +202,12 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
         )
     except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt: {exc}")
+            sha = vec.get("_sha", "unknown")
+            mgf_sha = vec.get("_mgf_sha", "unknown")
+            pytest.fail(
+                f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt "
+                f"(sha={sha}, mgf={mgf_sha}): {exc}"
+            )
         # acceptable: reject is fine
         return
     finally:
