@@ -18,6 +18,7 @@
   - translates environment variables into a `pkcs11-check test` invocation
   - writes `results.json`, `coverage.json`, `quality.json`, `state.json`, and `policy.json` when `PKCS11_CHECK_ARTIFACT_DIR` is set
   - writes `report.jsonl` as the first-class machine-readable test log when machine-readable output is enabled
+  - derives `quality.json` from `report.jsonl` when present, and otherwise falls back to the available `results.json` and `coverage.json` inputs
 
 ## Artifact Layout
 

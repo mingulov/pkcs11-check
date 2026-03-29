@@ -155,7 +155,6 @@ The report should include:
 - selected mechanism names
 - rejected mechanism names with reason codes
 - counts by rejection code
-- catalog size after `-k` / `-m` filtering
 
 This gives post-run audit enough information to answer:
 

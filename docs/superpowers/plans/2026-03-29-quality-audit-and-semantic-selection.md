@@ -6,7 +6,7 @@
 
 **Architecture:** Introduce a dedicated mechanism-selection layer outside the pytest plugin, emit aggregated selection telemetry plus optional per-test mechanism traces, and derive a new `quality.json` artifact from `results.json`, `coverage.json`, and `report.jsonl`. Migrate wrap and encrypt first, then extend the same pattern to sign and multipart tests.
 
-**Tech Stack:** Python 3.12, pytest, pytest-reportlog JSONL, typer CLI, existing isolated runner/reporting stack
+**Tech Stack:** Python 3.11+, pytest, pytest-reportlog JSONL, typer CLI, existing isolated runner/reporting stack
 
 ---
 
