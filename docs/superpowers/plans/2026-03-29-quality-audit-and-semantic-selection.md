@@ -124,7 +124,9 @@ Example assertion target:
 
 ```python
 assert record["$report_type"] == "SelectionReport"
-assert record["scenarios"]["wrap_roundtrip"]["rejected_counts"]["missing_unwrap_flag"] == 1
+assert record["selection_coverage"]["wrap_roundtrip"]["selected_mechanisms"] == ["CKM_AES_KEY_WRAP"]
+assert record["selection_coverage"]["wrap_roundtrip"]["rejected_mechanisms"] == ["CKM_AES_ECB"]
+assert record["selection_coverage"]["wrap_roundtrip"]["rejected_reason_counts"]["missing_unwrap_flag"] == 1
 ```
 
 - [ ] **Step 2: Run the targeted plugin tests and confirm failure**
