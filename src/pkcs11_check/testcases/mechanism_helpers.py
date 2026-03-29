@@ -13,11 +13,15 @@ from typing import Any
 from pkcs11_check.raw.pack import attr_bytes, mech_bytes, mech_simple
 from pkcs11_check.raw.pack_mechanisms import (
     mech_ccm,
+    mech_chacha20,
+    mech_chacha20_poly1305,
     mech_ctr,
     mech_eddsa,
     mech_gcm,
     mech_oaep,
     mech_pss,
+    mech_rc2,
+    mech_rc2_cbc,
 )
 from pkcs11_check.raw.recipes import (
     gen_keypair,
@@ -190,6 +194,19 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
             hash_mech=_resolve_const(d.get("hash_mech", "CKM_SHA256")),
             mgf=_resolve_const(d.get("mgf", "CKG_MGF1_SHA256")),
         )
+    elif style == "chacha20":
+        nonce = os.urandom(12)
+        return mech_chacha20(CKM(mech_id), nonce=nonce)
+    elif style == "chacha20_poly1305":
+        nonce = os.urandom(12)
+        return mech_chacha20_poly1305(CKM(mech_id), nonce=nonce)
+    elif style == "rc2":
+        effective_bits = d.get("effective_bits", 128)
+        return mech_rc2(CKM(mech_id), effective_bits=effective_bits)
+    elif style == "rc2_cbc":
+        effective_bits = d.get("effective_bits", 128)
+        iv = os.urandom(8)
+        return mech_rc2_cbc(CKM(mech_id), effective_bits=effective_bits, iv=iv)
     elif style == "eddsa":
         return mech_eddsa(CKM(mech_id))
     elif style == "mac_general":

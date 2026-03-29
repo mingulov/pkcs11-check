@@ -486,6 +486,8 @@ from .pack_mechanisms import (  # noqa: E402, F401
     mech_oaep,
     mech_pbkdf2,
     mech_pss,
+    mech_rc2,
+    mech_rc2_cbc,
     mech_ssl3_key_mat,
     mech_ssl3_master_key_derive,
     mech_string_data,

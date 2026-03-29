@@ -20,6 +20,7 @@ from .types_std import (
     CK_AES_CTR_PARAMS,
     CK_AES_GCM_PARAMS,
     CK_BBOOL,
+    CK_BYTE,
     CK_CHACHA20_PARAMS,
     CK_ECDH1_DERIVE_PARAMS,
     CK_EDDSA_PARAMS,
@@ -28,6 +29,7 @@ from .types_std import (
     CK_HKDF_PARAMS,
     CK_KEY_DERIVATION_STRING_DATA,
     CK_PKCS5_PBKD2_PARAMS2,
+    CK_RC2_CBC_PARAMS,
     CK_RSA_PKCS_OAEP_PARAMS,
     CK_RSA_PKCS_PSS_PARAMS,
     CK_SALSA20_CHACHA20_POLY1305_PARAMS,
@@ -281,6 +283,33 @@ def mech_chacha20_poly1305(
     params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
     params.pAAD, params.ulAADLen = _pack_bytes(aad, ka)
     return _mech_struct(mechanism_type, params, "mech_chacha20_poly1305", ka)
+
+
+def mech_rc2(
+    mechanism_type: CKM,
+    effective_bits: int = 128,
+) -> PackedMechanism:
+    """Pack CK_RC2_PARAMS (a single CK_ULONG: ulEffectiveBits)."""
+    value = CK_ULONG(effective_bits)
+    return mech_bytes(
+        mechanism_type,
+        bytes(value),
+    )
+
+
+def mech_rc2_cbc(
+    mechanism_type: CKM,
+    effective_bits: int = 128,
+    iv: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_RC2_CBC_PARAMS (ulEffectiveBits + 8-byte IV)."""
+    params = CK_RC2_CBC_PARAMS()
+    params.ulEffectiveBits = effective_bits
+    if iv is None:
+        iv = bytes(8)
+    for i in range(8):
+        params.iv[i] = CK_BYTE(iv[i])
+    return _mech_struct(mechanism_type, params, "mech_rc2_cbc")
 
 
 def mech_eddsa(
@@ -767,6 +796,8 @@ __all__ = [
     "mech_oaep",
     "mech_pbkdf2",
     "mech_pss",
+    "mech_rc2",
+    "mech_rc2_cbc",
     "mech_ssl3_key_mat",
     "mech_ssl3_master_key_derive",
     "mech_string_data",
