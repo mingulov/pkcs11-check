@@ -214,6 +214,8 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
         return mech_bytes(CKM(mech_id), mac_len.to_bytes(8, "little"))
     elif style in ("ecdh", "hkdf", "string_data", "pbkdf2", "tls", "sp800_108"):
         return "SKIP"  # Needs runtime data
+    elif style in ("rc2_mac_general", "rc5_mac_general"):
+        return "SKIP"  # Needs CK_RC2/RC5_MAC_GENERAL_PARAMS (multi-field struct)
     # Unknown style
     return "SKIP"
 
