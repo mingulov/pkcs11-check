@@ -143,6 +143,21 @@ def test_multipart_sign_verify_roundtrip_accepts_multi_part_supported_mechanism(
     assert decision.reasons == ()
 
 
+def test_multipart_sign_verify_treats_eddsa_and_xeddsa_differently() -> None:
+    eddsa = selection.select_for_scenario(
+        _entry(flags=int(CKF_SIGN) | int(CKF_VERIFY), multi_part_supported=True),
+        selection.MULTIPART_SIGN_VERIFY_ROUNDTRIP,
+    )
+    xeddsa = selection.select_for_scenario(
+        _entry(flags=int(CKF_SIGN) | int(CKF_VERIFY), multi_part_supported=False),
+        selection.MULTIPART_SIGN_VERIFY_ROUNDTRIP,
+    )
+
+    assert eddsa.selected
+    assert xeddsa.rejected
+    assert xeddsa.reasons[0].code == "unsupported_multi_part"
+
+
 def test_select_for_scenario_returns_machine_readable_reasons() -> None:
     decision = selection.select_for_scenario(
         _entry(flags=int(CKF_WRAP)),
