@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_UNWRAP,
+    CKA_VALUE_LEN,
     CKA_WRAP,
     CKG_MGF1_SHA1,
     CKK_AES,
@@ -58,6 +59,9 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
+
+# Integer value for CKK_AES — used for dispatch in the wrapping-key builder.
+_AES_KEY_TYPE: int = int(CKK_AES)
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.wrap]
 
@@ -99,9 +103,9 @@ except ImportError:
 # DES/3DES key types — these mechanisms need a DES key, not an AES key, as the wrapping key
 _DES_KEY_TYPES: set[int] = {int(CKK_DES), int(CKK_DES2), int(CKK_DES3)}
 
-# AES block/stream encrypt mechanisms that also have CKF_WRAP and require an IV param.
-# These need a 16-byte IV passed as raw bytes to mech_bytes().
-_AES_IV_WRAP_MECHS: set[int] = set()
+# Block cipher mechanisms (AES, Camellia, ARIA, SEED) that have CKF_WRAP and
+# require a 16-byte IV passed as raw bytes to mech_bytes().
+_IV16_WRAP_MECHS: set[int] = set()
 try:
     from pkcs11_check.raw.types_std import (
         CKM_AES_CBC,
@@ -113,7 +117,7 @@ try:
         CKM_AES_OFB,
     )
 
-    _AES_IV_WRAP_MECHS = {
+    _IV16_WRAP_MECHS = {
         int(CKM_AES_CBC),
         int(CKM_AES_CBC_PAD),
         int(CKM_AES_OFB),
@@ -125,7 +129,40 @@ try:
 except ImportError:
     pass
 
-# DES/3DES block cipher mechanisms that have CKF_WRAP and require an 8-byte IV param.
+try:
+    from pkcs11_check.raw.types_std import (
+        CKM_CAMELLIA_CBC,
+        CKM_CAMELLIA_CBC_PAD,
+    )
+
+    _IV16_WRAP_MECHS |= {int(CKM_CAMELLIA_CBC), int(CKM_CAMELLIA_CBC_PAD)}
+except ImportError:
+    pass
+
+try:
+    from pkcs11_check.raw.types_std import (
+        CKM_ARIA_CBC,
+        CKM_ARIA_CBC_PAD,
+    )
+
+    _IV16_WRAP_MECHS |= {int(CKM_ARIA_CBC), int(CKM_ARIA_CBC_PAD)}
+except ImportError:
+    pass
+
+try:
+    from pkcs11_check.raw.types_std import (
+        CKM_SEED_CBC,
+        CKM_SEED_CBC_PAD,
+    )
+
+    _IV16_WRAP_MECHS |= {int(CKM_SEED_CBC), int(CKM_SEED_CBC_PAD)}
+except ImportError:
+    pass
+
+# Keep the old name as an alias so _make_wrap_mech_param() still works
+_AES_IV_WRAP_MECHS = _IV16_WRAP_MECHS
+
+# DES/3DES/CDMF block cipher mechanisms that have CKF_WRAP and require an 8-byte IV param.
 _DES_IV_WRAP_MECHS: set[int] = set()
 try:
     from pkcs11_check.raw.types_std import (
@@ -141,6 +178,16 @@ try:
         int(CKM_DES3_CBC),
         int(CKM_DES3_CBC_PAD),
     }
+except ImportError:
+    pass
+
+try:
+    from pkcs11_check.raw.types_std import (
+        CKM_CDMF_CBC,
+        CKM_CDMF_CBC_PAD,
+    )
+
+    _DES_IV_WRAP_MECHS |= {int(CKM_CDMF_CBC), int(CKM_CDMF_CBC_PAD)}
 except ImportError:
     pass
 
@@ -274,6 +321,60 @@ def _build_des_wrap_key(rs: RawSession, config: MechConfig) -> int:
     return handle.value
 
 
+def _build_generic_cipher_wrap_key(
+    rs: RawSession, entry: MechEntry, config: MechConfig
+) -> int:
+    """Generate a wrapping key for non-AES, non-DES, non-RSA cipher mechanisms.
+
+    Uses config.keygen_mech and config.key_type from the registry to produce the
+    correct key type (e.g. CKK_CAMELLIA, CKK_ARIA, CKK_SEED, CKK_CDMF).
+    Handles both variable-length (symmetric: Camellia, ARIA) and fixed-length
+    (fixed_length: SEED, CDMF) key types.
+    """
+    from ctypes import byref
+
+    from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
+    from pkcs11_check.raw.recipes import pack_attrs
+    from pkcs11_check.raw.rv import expect_rv
+    from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CKR_OK
+    from pkcs11_check.testcases.mechanism_helpers import (
+        FIXED_LENGTH_KEY_TYPES,
+        pick_key_size,
+    )
+
+    keygen_mech = config.keygen_mech
+    if keygen_mech is None:
+        pytest.skip(f"{entry.mech_name}: no keygen_mech in registry config for wrapping key")
+
+    key_type = config.key_type
+    kt = int(key_type) if key_type is not None else 0
+    is_fixed = kt in FIXED_LENGTH_KEY_TYPES
+
+    attrs: dict[int, Any] = {
+        CKA_KEY_TYPE: key_type,
+        CKA_WRAP: True,
+        CKA_UNWRAP: True,
+        CKA_ENCRYPT: True,
+        CKA_DECRYPT: True,
+        CKA_TOKEN: False,
+    }
+
+    packed: list[Any] = []
+    if not is_fixed:
+        key_size = pick_key_size(entry, config) or 128
+        packed.append(attr_ulong(CKA_VALUE_LEN, key_size // 8))
+        packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
+    else:
+        packed.extend(pack_attrs(attrs))
+
+    tmpl = template(*packed)
+    mech = mech_simple(CKM(int(keygen_mech)))
+    handle = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+    expect_rv(rv, CKR_OK)
+    return handle.value
+
+
 def _build_target_aes_key(rs: RawSession) -> int:
     """Generate an extractable AES-128 target key for wrapping."""
     return gen_aes_key(
@@ -330,6 +431,8 @@ class TestMechWrapRoundtrip:
         is_rsa = config.key_type is not None and int(config.key_type) == int(CKK_RSA)
         is_des = config.key_type is not None and int(config.key_type) in _DES_KEY_TYPES
 
+        is_aes = config.key_type is not None and int(config.key_type) == _AES_KEY_TYPE
+
         if is_rsa:
             wrap_pub, wrap_priv = _build_rsa_wrap_pair(rs)
             wrap_handle = wrap_pub
@@ -339,9 +442,15 @@ class TestMechWrapRoundtrip:
             wrap_handle = _build_des_wrap_key(rs, config)
             unwrap_handle = wrap_handle
             wrap_priv = None
-        else:
-            # Default to AES wrapping key
+        elif is_aes or config.key_type is None:
+            # AES wrapping key (or unknown key type — fall back to AES)
             wrap_handle = _build_aes_wrap_key(rs, entry, config)
+            unwrap_handle = wrap_handle
+            wrap_priv = None
+        else:
+            # Generic cipher wrapping key: Camellia, ARIA, SEED, CDMF, etc.
+            # Use config.keygen_mech and config.key_type to generate the correct type.
+            wrap_handle = _build_generic_cipher_wrap_key(rs, entry, config)
             unwrap_handle = wrap_handle
             wrap_priv = None
 
