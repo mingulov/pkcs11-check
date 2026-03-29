@@ -608,8 +608,10 @@ def _collect_selection_findings(
 
     invoked_names = _mechanism_invoked_names(coverage)
     coverage_has_invoked = bool(invoked_names)
-    findings: list[dict[str, Any]] = []
-    selected_mechanisms_by_scenario: dict[str, set[str]] = {}
+    scenario_names: set[str] = set()
+    selected_mechanisms_by_scenario: dict[str, set[str]] = defaultdict(set)
+    rejected_mechanisms_by_scenario: dict[str, set[str]] = defaultdict(set)
+    rejected_reason_counts_by_scenario: dict[str, Counter[str]] = defaultdict(Counter)
 
     for record in selection_records:
         selection_coverage = record.get("selection_coverage")
@@ -621,28 +623,43 @@ def _collect_selection_findings(
                 continue
 
             scenario_name = str(scenario)
-            selected = _string_list(raw_data.get("selected_mechanisms"))
-            rejected = _string_list(raw_data.get("rejected_mechanisms"))
-            rejected_reason_counts = _string_counter(raw_data.get("rejected_reason_counts"))
-            selected_mechanisms_by_scenario.setdefault(scenario_name, set()).update(selected)
-
-            selected_but_not_invoked = (
-                sorted(mech for mech in selected if mech not in invoked_names)
-                if coverage_has_invoked
-                else []
+            scenario_names.add(scenario_name)
+            selected_mechanisms_by_scenario[scenario_name].update(
+                _string_list(raw_data.get("selected_mechanisms"))
+            )
+            rejected_mechanisms_by_scenario[scenario_name].update(
+                _string_list(raw_data.get("rejected_mechanisms"))
+            )
+            rejected_reason_counts_by_scenario[scenario_name].update(
+                _string_counter(raw_data.get("rejected_reason_counts"))
             )
 
-            finding: dict[str, Any] = {
+    findings: list[dict[str, Any]] = []
+    for scenario_name in sorted(scenario_names):
+        selected = sorted(selected_mechanisms_by_scenario.get(scenario_name, set()))
+        rejected = sorted(rejected_mechanisms_by_scenario.get(scenario_name, set()))
+        rejected_reason_counts = dict(
+            sorted(rejected_reason_counts_by_scenario.get(scenario_name, Counter()).items())
+        )
+        selected_but_not_invoked = (
+            sorted(mech for mech in selected if mech not in invoked_names)
+            if coverage_has_invoked
+            else []
+        )
+
+        findings.append(
+            {
                 "scenario": scenario_name,
                 "selected_mechanisms": selected,
                 "rejected_mechanisms": rejected,
                 "selected_but_not_invoked": selected_but_not_invoked,
                 "rejected_reason_counts": rejected_reason_counts,
-                "rejected_reason_categories": _classify_reason_code_counts(rejected_reason_counts),
+                "rejected_reason_categories": _classify_reason_code_counts(
+                    rejected_reason_counts
+                ),
             }
-            findings.append(finding)
+        )
 
-    findings.sort(key=lambda item: str(item["scenario"]))
     return findings, None, selected_mechanisms_by_scenario
 
 

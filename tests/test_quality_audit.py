@@ -177,6 +177,114 @@ def test_build_quality_audit_selection_report_enables_selected_but_not_invoked()
     assert finding["rejected_reason_categories"] == {"framework_constraint": 2}
 
 
+def test_build_quality_audit_merges_selection_reports_by_scenario() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [],
+    }
+    coverage = {
+        "mechanism_coverage": {
+            "available": 4,
+            "available_names": [
+                "CKM_AES_CBC",
+                "CKM_AES_GCM",
+                "CKM_AES_CMAC",
+                "CKM_AES_XTS",
+            ],
+            "invoked": 1,
+            "invoked_names": ["CKM_AES_CBC"],
+            "invoked_counts": {"CKM_AES_CBC": 1},
+            "not_invoked": 3,
+            "not_invoked_names": ["CKM_AES_CMAC", "CKM_AES_GCM", "CKM_AES_XTS"],
+            "invoked_detail": ["encrypt_roundtrip"],
+            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+        },
+    }
+    report_records = [
+        {
+            "$report_type": "SelectionReport",
+            "selection_coverage": {
+                "encrypt_roundtrip": {
+                    "selected_mechanisms": ["CKM_AES_CBC"],
+                    "rejected_mechanisms": ["CKM_AES_XTS"],
+                    "rejected_reason_counts": {"unsupported_multi_part": 1},
+                }
+            },
+        },
+        {
+            "$report_type": "SelectionReport",
+            "selection_coverage": {
+                "encrypt_roundtrip": {
+                    "selected_mechanisms": ["CKM_AES_GCM"],
+                    "rejected_mechanisms": ["CKM_AES_CMAC", "CKM_AES_XTS"],
+                    "rejected_reason_counts": {
+                        "unsupported_multi_part": 2,
+                        "not_implemented": 1,
+                    },
+                }
+            },
+        },
+    ]
+
+    report = build_quality_audit(
+        results=results,
+        coverage=coverage,
+        report_log_records=report_records,
+    )
+
+    assert report["summary"]["selection_scenarios"] == 1
+    assert len(report["selection_findings"]) == 1
+
+    finding = report["selection_findings"][0]
+    assert finding["scenario"] == "encrypt_roundtrip"
+    assert finding["selected_mechanisms"] == ["CKM_AES_CBC", "CKM_AES_GCM"]
+    assert finding["rejected_mechanisms"] == ["CKM_AES_CMAC", "CKM_AES_XTS"]
+    assert finding["selected_but_not_invoked"] == ["CKM_AES_GCM"]
+    assert finding["rejected_reason_counts"] == {
+        "not_implemented": 1,
+        "unsupported_multi_part": 3,
+    }
+    assert finding["rejected_reason_categories"] == {
+        "framework_constraint": 3,
+        "not_implemented": 1,
+    }
+    mechanism_findings = {
+        finding["mechanism"]: finding for finding in report["mechanism_findings"]
+    }
+    assert mechanism_findings == {
+        "CKM_AES_CBC": {
+            "mechanism": "CKM_AES_CBC",
+            "status": "invoked",
+            "selected_in_scenarios": ["encrypt_roundtrip"],
+            "available": True,
+            "invoked": True,
+        },
+        "CKM_AES_CMAC": {
+            "mechanism": "CKM_AES_CMAC",
+            "status": "not_invoked",
+            "selected_in_scenarios": [],
+            "available": True,
+            "invoked": False,
+        },
+        "CKM_AES_GCM": {
+            "mechanism": "CKM_AES_GCM",
+            "status": "selected_but_not_invoked",
+            "selected_in_scenarios": ["encrypt_roundtrip"],
+            "available": True,
+            "invoked": False,
+        },
+        "CKM_AES_XTS": {
+            "mechanism": "CKM_AES_XTS",
+            "status": "not_invoked",
+            "selected_in_scenarios": [],
+            "available": True,
+            "invoked": False,
+        },
+    }
+
+
 def test_build_quality_audit_classifies_input_constraint_rejections() -> None:
     results = {
         "tool": "pkcs11-check",
