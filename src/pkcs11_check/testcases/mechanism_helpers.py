@@ -290,8 +290,6 @@ def gen_symmetric_key(
     """
     from ctypes import byref
 
-    import pytest
-
     from pkcs11_check.raw.pack import attr_ulong, template
 
     key_type = config.key_type
@@ -307,7 +305,11 @@ def gen_symmetric_key(
     if not is_fixed:
         key_size = pick_key_size(entry, config)
         if key_size is None:
-            pytest.skip(f"{entry.mech_name}: no usable key size in registry")
+            # Some variable-length secret-key generators intentionally leave
+            # registry sizes open-ended. Fall back to the mechanism's reported
+            # minimum size instead of self-skipping advertised coverage.
+            min_bits = entry.min_key_size * 8 if entry.min_key_size > 0 else 0
+            key_size = max(256, min_bits)
         packed.append(attr_ulong(CKA_VALUE_LEN, key_size // 8))
         packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
     else:

@@ -20,6 +20,10 @@ Updated as Docker targets are analyzed.
 ### Known bugs
 - **ECDSA_SHA* accepts invalid signatures (ACVP SigVer)**: `C_Verify` with `CKM_ECDSA_SHA256`, `CKM_ECDSA_SHA384`, `CKM_ECDSA_SHA512` accepts NIST ACVP `testPassed=False` vectors (modified r, modified s, zero r, zero s, modified message, modified key). 17/17 invalid vectors in `test_acvp_ecdsa.py` return `CKR_OK` instead of `CKR_SIGNATURE_INVALID`. Only valid vectors (tc54, tc62, tc103) produce the correct result. Detected by: `test_acvp_ecdsa_sigver`.
 - **EDDSA accepts invalid signatures (ACVP SigVer)**: `C_Verify` with `CKM_EDDSA` accepts NIST ACVP `testPassed=False` vectors for both Ed25519 and Ed448. 8/8 invalid vectors return `CKR_OK` instead of `CKR_SIGNATURE_INVALID`. Detected by: `test_acvp_eddsa_sigver`.
+- **DES_CBC_PAD / DES3_CBC_PAD wrap advertised but not operational**: SoftHSM2 advertises
+  `CKF_WRAP` and `CKF_UNWRAP` for `CKM_DES_CBC_PAD` and `CKM_DES3_CBC_PAD`, but `C_WrapKey`
+  returns `CKR_MECHANISM_INVALID` even when called with matching DES-family wrapping keys and
+  DES-family target keys. Detected by: `test_mech_wrap.py`.
 
 ### Known quirks
 - `C_GetObjectSize` returns `CK_UNAVAILABLE_INFORMATION` (not implemented)
@@ -73,6 +77,10 @@ Updated as Docker targets are analyzed.
 - **Two slots**: NSS exposes 2 slots. Slot 0 is the crypto services slot (read-only), slot 1 may be an NSS internal database slot.
 - **Needs configDir for full functionality**: `libsoftokn3.so` must be loaded with `configDir='sql:/path/to/db'` NSS init args to access the writable database slot. Without this, only the read-only crypto services slot is available. See `/home/user/src/m/pkcs11-proxy/pkcs11-proxy/scripts/test-nss-fixtures.sh` for reference configuration.
 - **RSA keypair requires CKA_PUBLIC_EXPONENT**: NSS requires `CKA_PUBLIC_EXPONENT` in the public key template for `CKM_RSA_PKCS_KEY_PAIR_GEN`. Kryoptic and SoftHSM2 are more lenient and accept the default (65537). The recipe now includes this attribute for cross-module compatibility.
+- **CKM_RSA_X_509 unwrap takes the wrong end of the raw RSA block**: For raw RSA unwrap,
+  PKCS#11 requires the key bytes to be taken from the trailing end of the decrypted modulus-sized
+  block. NSS softoken instead appears to derive the unwrapped key from the leading bytes, which
+  yields the wrong AES key value and breaks roundtrip decrypt in `test_mech_wrap.py`.
 - **EdDSA sign/verify rejects CK_EDDSA_PARAMS**: NSS softoken returns `CKR_MECHANISM_PARAM_INVALID`
   when `CK_EDDSA_PARAMS` is provided for `CKM_EDDSA`. NSS requires NULL mechanism params for pure
   EdDSA, contrary to PKCS#11 v3.0 which mandates explicit `CK_EDDSA_PARAMS`. Tests in

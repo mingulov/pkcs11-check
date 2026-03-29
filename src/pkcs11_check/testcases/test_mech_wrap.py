@@ -32,6 +32,7 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_aes_key,
     gen_rsa_keypair,
+    read_attributes,
     unwrap_key,
     wrap_key,
 )
@@ -44,8 +45,10 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_UNWRAP,
+    CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_WRAP,
+    CKF_UNWRAP,
     CKG_MGF1_SHA1,
     CKK_AES,
     CKK_DES,
@@ -390,6 +393,63 @@ def _build_target_aes_key(rs: RawSession) -> int:
     )
 
 
+def _target_unwrap_attrs(entry: MechEntry) -> dict[int, Any]:
+    """Build the unwrap template for the AES-128 target key.
+
+    CKM_RSA_X_509 wraps only the raw key bytes. The application must supply the
+    key length separately when unwrapping, so include CKA_VALUE_LEN for that
+    case.
+    """
+    attrs: dict[int, Any] = {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_AES,
+        CKA_DECRYPT: True,
+        CKA_ENCRYPT: True,
+        CKA_TOKEN: False,
+    }
+    config = entry.config
+    if config is not None and config.input_constraint == "raw_block":
+        attrs[CKA_VALUE_LEN] = 16
+    return attrs
+
+
+def _require_wrap_roundtrip_support(entry: MechEntry) -> None:
+    """Skip mechanisms that can wrap but do not advertise unwrap support."""
+    if not (entry.flags & int(CKF_UNWRAP)):
+        pytest.skip(f"{entry.mech_name}: CKF_UNWRAP not advertised")
+
+
+def _raw_rsa_unwrap_hint(
+    original_value: bytes,
+    decrypted_block: bytes,
+    unwrapped_value: bytes | None,
+) -> str:
+    """Diagnose modules that unwrap CKM_RSA_X_509 from the wrong end of the block."""
+    key_len = len(original_value)
+    if key_len == 0 or len(decrypted_block) < key_len:
+        return ""
+
+    trailing = decrypted_block[-key_len:]
+    if trailing != original_value:
+        return ""
+
+    leading = decrypted_block[:key_len]
+    if unwrapped_value is None:
+        return (
+            " Raw RSA unwrap hint: the decrypted RSA block ends with the original key "
+            "bytes. CKM_RSA_X_509 requires deriving the key from the trailing bytes."
+        )
+
+    if unwrapped_value == leading and unwrapped_value != trailing:
+        return (
+            " Raw RSA unwrap hint: the module appears to derive the unwrapped key from "
+            "the leading bytes of the decrypted RSA block, but CKM_RSA_X_509 requires "
+            "the trailing bytes."
+        )
+
+    return ""
+
+
 class TestMechWrapRoundtrip:
     """Wrap/unwrap roundtrip for every advertised wrap mechanism with a registry config."""
 
@@ -425,6 +485,7 @@ class TestMechWrapRoundtrip:
         if not rs.has_mechanism(mech_short):
             pytest.skip(f"{entry.mech_name}: mechanism not available")
 
+        _require_wrap_roundtrip_support(entry)
         mech_param = _make_wrap_mech_param(entry)
 
         # Build the wrapping key(s)
@@ -456,10 +517,15 @@ class TestMechWrapRoundtrip:
 
         target_key = _build_target_aes_key(rs)
         unwrapped_key: int = 0
+        original_value: bytes | None = None
 
         try:
             # Encrypt some data with the target key
             plaintext = b"\x5a\xa5\x5a\xa5" * 4  # 16 bytes, one AES block
+            original_attrs = read_attributes(rs.raw, rs.sh, target_key, [CKA_VALUE])
+            original_candidate = original_attrs.get(CKA_VALUE)
+            if isinstance(original_candidate, bytes):
+                original_value = original_candidate
             ciphertext = encrypt_single(
                 rs.raw,
                 rs.sh,
@@ -484,23 +550,15 @@ class TestMechWrapRoundtrip:
             target_key = 0
 
             # Unwrap to get a new key handle.
-            # CKA_CLASS + CKA_KEY_TYPE are required to identify the object type.
-            # CKA_VALUE_LEN must NOT be set — it is a read-only attribute for
-            # C_UnwrapKey; the module derives the key length from the decrypted
-            # blob regardless of mechanism (SoftHSM2, Kryoptic, etc.).
+            # Raw RSA unwrap needs the key length supplied in the template
+            # because CKM_RSA_X_509 wraps only the raw key value bytes.
             unwrapped_key = unwrap_key(
                 rs.raw,
                 rs.sh,
                 unwrap_handle,
                 wrapped_blob,
                 CKM(mech_id),
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_AES,
-                    CKA_DECRYPT: True,
-                    CKA_ENCRYPT: True,
-                    CKA_TOKEN: False,
-                },
+                attrs=_target_unwrap_attrs(entry),
                 mech_param=mech_param,
             )
             assert unwrapped_key != 0, f"{entry.mech_name}: unwrap returned handle 0"
@@ -513,9 +571,29 @@ class TestMechWrapRoundtrip:
                 CKM_AES_ECB,
                 ciphertext,
             )
+            diagnostic = ""
+            if (
+                recovered != plaintext
+                and config.input_constraint == "raw_block"
+                and original_value is not None
+            ):
+                decrypted_block = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    unwrap_handle,
+                    CKM(mech_id),
+                    wrapped_blob,
+                    mech_param=mech_param,
+                )
+                unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped_key, [CKA_VALUE])
+                unwrapped_candidate = unwrapped_attrs.get(CKA_VALUE)
+                unwrapped_value = (
+                    unwrapped_candidate if isinstance(unwrapped_candidate, bytes) else None
+                )
+                diagnostic = _raw_rsa_unwrap_hint(original_value, decrypted_block, unwrapped_value)
             assert recovered == plaintext, (
                 f"{entry.mech_name}: decrypt mismatch after unwrap — "
-                f"expected {plaintext.hex()!r}, got {recovered.hex()!r}"
+                f"expected {plaintext.hex()!r}, got {recovered.hex()!r}{diagnostic}"
             )
 
         finally:

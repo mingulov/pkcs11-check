@@ -372,6 +372,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_required=False,  # optional 8-byte IV param (default IV used if absent)
         param_recipe=ParamRecipe("none"),  # key-wrap-only, skip for data operations
         keygen_recipe=_sym,
+        multi_part_supported=False,
         expected_flags=_AES_WRP,
         notes="AES Key Wrap (RFC 3394): optional 8-byte IV, wraps 128/192/256-bit keys",
     )
@@ -383,6 +384,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=8,
         param_recipe=ParamRecipe("none"),
         keygen_recipe=_sym,
+        multi_part_supported=False,
         expected_flags=_AES_WRP,
         notes="AES Key Wrap with Padding (DEPRECATED in PKCS#11 v3.x — use KWP instead)",
     )
@@ -396,6 +398,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_required=False,  # optional 4-byte semi-fixed header
         param_recipe=ParamRecipe("none"),  # key-wrap-only, skip for data operations
         keygen_recipe=_sym,
+        multi_part_supported=False,
         expected_flags=_AES_WRP,
         notes="AES Key Wrap with Padding (RFC 5649): optional 4-byte IV, any-length data",
     )
@@ -408,6 +411,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         input_constraint="any",
         param_recipe=ParamRecipe("none"),
         keygen_recipe=_sym,
+        multi_part_supported=False,
         expected_flags=_AES_WRP,
         notes="AES Key Wrap with PKCS#7 padding",
     )

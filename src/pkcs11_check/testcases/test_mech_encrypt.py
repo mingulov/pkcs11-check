@@ -84,9 +84,15 @@ class TestMechEncryptRoundtrip:
                 ct,
                 mech_param=mech_param,
             )
-            assert pt == plaintext, (
+            if config.input_constraint == "raw_block":
+                expected = plaintext.lstrip(b"\x00")
+                actual = pt.lstrip(b"\x00")
+            else:
+                expected = plaintext
+                actual = pt
+            assert actual == expected, (
                 f"Decrypt mismatch for {entry.mech_name}: "
-                f"expected {plaintext.hex()!r}, got {pt.hex()!r}"
+                f"expected {expected.hex()!r}, got {actual.hex()!r}"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, enc_key)

@@ -62,9 +62,7 @@ _rsa = KeygenRecipe("rsa")
 _oaep = ParamRecipe("oaep", {"hash_mech": "CKM_SHA256", "mgf": "CKG_MGF1_SHA256"})
 
 # PSS parameter recipes (one per hash — salt_len matches hash output size)
-_pss_sha1 = ParamRecipe(
-    "pss", {"hash_mech": "CKM_SHA_1", "mgf": "CKG_MGF1_SHA1", "salt_len": 20}
-)
+_pss_sha1 = ParamRecipe("pss", {"hash_mech": "CKM_SHA_1", "mgf": "CKG_MGF1_SHA1", "salt_len": 20})
 _pss_sha224 = ParamRecipe(
     "pss", {"hash_mech": "CKM_SHA224", "mgf": "CKG_MGF1_SHA224", "salt_len": 28}
 )
@@ -162,9 +160,10 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
+        input_constraint="raw_block",
         keygen_recipe=_rsa,
         expected_flags=_ENC_DEC | _SIG_VER,
-        notes="Raw RSA (no padding): X.509 format",
+        notes="Raw RSA (no padding): X.509 format; leading zeros are modulus padding",
     )
 
     registry[CKM_RSA_X9_31] = MechConfig(
