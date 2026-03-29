@@ -501,6 +501,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if raw is None:
         return
 
+    from pkcs11_check.fixtures import _build_ckm_alias_map
     from pkcs11_check.raw.api import ckm_name
 
     # Function coverage
@@ -512,10 +513,19 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     mech_ckm = sorted(n for n in mech_available if n.startswith("CKM_"))
 
     # Actually-invoked mechanisms (from _call() tracking)
+    # Expand each invoked ID to all its alias names so that alias mechanisms
+    # (e.g. CKM_ECDSA_KEY_PAIR_GEN == CKM_EC_KEY_PAIR_GEN) are not falsely
+    # listed as not_invoked when their canonical name was invoked.
     used_ids = config.stash.get(_CUMULATIVE_USED_MECHANISMS, set())
-    invoked_names = sorted({ckm_name(m) for m in used_ids})
+    ckm_alias_map = _build_ckm_alias_map()
+    invoked_names_set: set[str] = set()
+    for mid in used_ids:
+        invoked_names_set.add(ckm_name(mid))
+        for alias in ckm_alias_map.get(mid, []):
+            invoked_names_set.add(alias)
+    invoked_names = sorted(invoked_names_set)
     available_set = set(mech_ckm)
-    not_invoked = sorted(available_set - set(invoked_names))
+    not_invoked = sorted(available_set - invoked_names_set)
 
     # Stacked mechanism details
     detail_set = config.stash.get(_CUMULATIVE_MECHANISM_DETAILS, set())
