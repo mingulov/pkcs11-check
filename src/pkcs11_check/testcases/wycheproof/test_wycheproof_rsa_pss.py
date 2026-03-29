@@ -29,7 +29,6 @@ from pkcs11_check.raw.types_std import (
     CKG_MGF1_SHA256,
     CKG_MGF1_SHA384,
     CKG_MGF1_SHA512,
-    CKM_RSA_PKCS_PSS,
     CKM_SHA1_RSA_PKCS_PSS,
     CKM_SHA3_224,
     CKM_SHA3_224_RSA_PKCS_PSS,
@@ -125,7 +124,7 @@ def _load_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
         for group in data["testGroups"]:
             sha = group.get("sha", "")
             mgf_sha = group.get("mgfSha", sha)
-            mechanism = _SHA_MECHANISMS.get(sha) if sha == mgf_sha else CKM_RSA_PKCS_PSS
+            mechanism = _SHA_MECHANISMS.get(sha)
             hash_mech = _SHA_HASH_MECHS.get(sha)
             mgf = _SHA_MGFS.get(mgf_sha)
             if mechanism is None or hash_mech is None or mgf is None:
