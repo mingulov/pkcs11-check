@@ -53,6 +53,11 @@ pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
+# Cache of RSA key sizes (in bits) that the module rejected on import.
+# Populated on first failure; subsequent tests with the same key size skip
+# immediately without attempting another C_CreateObject probe.
+_UNSUPPORTED_RSA_KEY_SIZES: set[int] = set()
+
 # Map hash names to PKCS#11 mechanisms and hash mechanisms for PSS params
 _SHA_MECHANISMS: dict[str, int] = {
     "SHA-1": CKM_SHA1_RSA_PKCS_PSS,
@@ -173,6 +178,10 @@ def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
 
     modulus = bytes.fromhex(modulus_hex)
     exponent = bytes.fromhex(exp_hex)
+    key_bits = len(modulus) * 8
+
+    if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
+        pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
 
     try:
         pub_key = import_rsa_public_key(
@@ -180,8 +189,9 @@ def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             n=modulus, e=exponent,
             attrs={CKA_VERIFY: True},
         )
-    except AssertionError:
-        pytest.skip("Cannot import RSA public key")
+    except AssertionError as exc:
+        _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
+        pytest.skip(f"Cannot import RSA {key_bits}-bit public key: {exc}")
 
     # Build PSS params
     pss_param = mech_pss(mechanism, hash_mech=hash_mech, mgf=mgf, salt_len=s_len)

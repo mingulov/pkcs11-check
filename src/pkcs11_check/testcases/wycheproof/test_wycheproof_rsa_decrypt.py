@@ -25,6 +25,11 @@ pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
+# Cache of RSA key sizes (in bits) that the module rejected on import.
+# Populated on first failure; subsequent tests with the same key size skip
+# immediately without attempting another C_CreateObject probe.
+_UNSUPPORTED_RSA_KEY_SIZES: set[int] = set()
+
 _DECRYPT_FILES = [
     "rsa_pkcs1_2048_test.json",
     "rsa_pkcs1_3072_test.json",
@@ -78,6 +83,10 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     exp1 = bytes.fromhex(pk.get("exponent1", ""))
     exp2 = bytes.fromhex(pk.get("exponent2", ""))
     coefficient = bytes.fromhex(pk.get("coefficient", ""))
+    key_bits = len(modulus) * 8
+
+    if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
+        pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
 
     try:
         priv_key = import_rsa_private_key(
@@ -87,8 +96,9 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
             dmp1=exp1, dmq1=exp2, iqmp=coefficient,
             attrs={CKA_DECRYPT: True},
         )
-    except AssertionError:
-        pytest.skip("Cannot import RSA private key")
+    except AssertionError as exc:
+        _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
+        pytest.skip(f"Cannot import RSA {key_bits}-bit private key: {exc}")
 
     plaintext = None
     try:

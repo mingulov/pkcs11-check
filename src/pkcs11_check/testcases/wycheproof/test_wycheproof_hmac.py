@@ -41,6 +41,12 @@ from pkcs11_check.raw.types_std import (
 
 pytestmark = pytest.mark.wycheproof
 
+# Cache of (mechanism, key_size_bytes) pairs for which the module rejected all
+# key import attempts (both typed and GENERIC_SECRET fallback). Populated on
+# first total failure; subsequent tests with the same pair skip immediately
+# without attempting C_CreateObject probes.
+_UNSUPPORTED_HMAC_KEYS: set[tuple[int, int]] = set()
+
 # Map mechanisms to their name for availability checking
 _MECH_NAMES: dict[int, str] = {
     CKM_SHA_1_HMAC: "SHA_1_HMAC",
@@ -151,6 +157,12 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
     if not rs.has_mechanism(mech_display):
         pytest.skip(f"{mech_display} not supported by module")
 
+    cache_key = (mechanism, len(key_bytes))
+    if cache_key in _UNSUPPORTED_HMAC_KEYS:
+        pytest.skip(
+            f"{mech_display} {len(key_bytes)}-byte key not supported (cached)"
+        )
+
     # Try typed key, fall back to GENERIC_SECRET
     key = None
     for kt in (vec["_key_type"], vec["_fallback_type"]):
@@ -171,6 +183,7 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
             continue
 
     if key is None:
+        _UNSUPPORTED_HMAC_KEYS.add(cache_key)
         if result == "invalid":
             return
         pytest.fail(f"Cannot import {len(key_bytes)}-byte HMAC key")

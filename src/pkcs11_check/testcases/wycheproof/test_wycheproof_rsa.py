@@ -33,6 +33,11 @@ pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
+# Cache of RSA key sizes (in bits) that the module rejected on import.
+# Populated on first failure; subsequent tests with the same key size skip
+# immediately without attempting another C_CreateObject probe.
+_UNSUPPORTED_RSA_KEY_SIZES: set[int] = set()
+
 # Mechanism display names for availability checking
 _MECH_DISPLAY: dict[int, str] = {
     CKM_SHA224_RSA_PKCS: "SHA224_RSA_PKCS",
@@ -142,6 +147,10 @@ def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) 
 
     modulus = bytes.fromhex(modulus_hex)
     exponent = bytes.fromhex(exp_hex)
+    key_bits = len(modulus) * 8
+
+    if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
+        pytest.skip(f"RSA {key_bits}-bit keys not supported (cached)")
 
     try:
         pub_key = import_rsa_public_key(
@@ -149,8 +158,9 @@ def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) 
             n=modulus, e=exponent,
             attrs={CKA_VERIFY: True},
         )
-    except AssertionError:
-        pytest.skip("Cannot import RSA public key")
+    except AssertionError as exc:
+        _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
+        pytest.skip(f"Cannot import RSA {key_bits}-bit public key: {exc}")
 
     try:
         verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
