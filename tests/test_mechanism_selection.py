@@ -11,10 +11,12 @@ from pkcs11_check.raw.types_std import (
     CKF_UNWRAP,
     CKF_VERIFY,
     CKF_WRAP,
+    CKM_EDDSA,
+    CKM_XEDDSA,
 )
 from pkcs11_check.testcases import mechanism_selection as selection
 from pkcs11_check.testcases.mechanism_catalog import MechanismCatalog, MechEntry
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import MECHANISM_REGISTRY, MechConfig
 
 _UNSET = object()
 
@@ -143,13 +145,24 @@ def test_multipart_sign_verify_roundtrip_accepts_multi_part_supported_mechanism(
     assert decision.reasons == ()
 
 
-def test_multipart_sign_verify_treats_eddsa_and_xeddsa_differently() -> None:
+def test_multipart_sign_verify_uses_real_eddsa_and_xeddsa_registry_config() -> None:
+    eddsa_config = MECHANISM_REGISTRY[CKM_EDDSA]
+    xeddsa_config = MECHANISM_REGISTRY[CKM_XEDDSA]
+    assert eddsa_config.multi_part_supported is True
+    assert xeddsa_config.multi_part_supported is False
+
     eddsa = selection.select_for_scenario(
-        _entry(flags=int(CKF_SIGN) | int(CKF_VERIFY), multi_part_supported=True),
+        _entry(
+            flags=int(CKF_SIGN) | int(CKF_VERIFY),
+            config=eddsa_config,
+        ),
         selection.MULTIPART_SIGN_VERIFY_ROUNDTRIP,
     )
     xeddsa = selection.select_for_scenario(
-        _entry(flags=int(CKF_SIGN) | int(CKF_VERIFY), multi_part_supported=False),
+        _entry(
+            flags=int(CKF_SIGN) | int(CKF_VERIFY),
+            config=xeddsa_config,
+        ),
         selection.MULTIPART_SIGN_VERIFY_ROUNDTRIP,
     )
 
