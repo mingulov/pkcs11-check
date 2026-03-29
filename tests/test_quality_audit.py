@@ -169,6 +169,82 @@ def test_build_quality_audit_selection_report_enables_selected_but_not_invoked()
     assert finding["rejected_reason_categories"] == {"framework_constraint": 2}
 
 
+def test_build_quality_audit_includes_teardown_only_failure() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [],
+    }
+    report_records = [
+        {
+            "$report_type": "TestReport",
+            "nodeid": "src/pkcs11_check/testcases/test_cleanup.py::test_teardown",
+            "when": "teardown",
+            "outcome": "failed",
+            "longrepr": "AssertionError: teardown failed",
+        }
+    ]
+
+    report = build_quality_audit(results=results, report_log_records=report_records)
+
+    assert report["never_passed_nodeids"] == [
+        "src/pkcs11_check/testcases/test_cleanup.py::test_teardown",
+    ]
+
+
+def test_build_quality_audit_dedupes_skip_evidence_across_artifacts() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 1, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [
+            {
+                "target": "src/pkcs11_check/testcases/test_demo.py",
+                "status": "passed",
+                "counts": {
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 1,
+                    "xfailed": 0,
+                    "xpassed": 0,
+                    "error": 0,
+                },
+                "tests": [
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_skip",
+                        "outcome": "skipped",
+                        "longrepr": "Skipped: CKM_AES_CBC not supported",
+                    }
+                ],
+                "skip_reasons": {
+                    "CKM_AES_CBC not supported": 1,
+                },
+            }
+        ],
+    }
+    report_records = [
+        {
+            "$report_type": "TestReport",
+            "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_skip",
+            "when": "call",
+            "outcome": "skipped",
+            "longrepr": "Skipped: CKM_AES_CBC not supported",
+        }
+    ]
+
+    report = build_quality_audit(results=results, report_log_records=report_records)
+
+    candidates = [
+        finding
+        for finding in report["framework_skip_candidates"]
+        if finding["reason"] == "CKM_AES_CBC not supported"
+    ]
+    assert len(candidates) == 1
+    assert candidates[0]["count"] == 1
+    assert candidates[0]["category"] == "missing_capability"
+
+
 def test_build_quality_audit_never_passed_nodeids_are_conservative() -> None:
     results = {
         "tool": "pkcs11-check",
