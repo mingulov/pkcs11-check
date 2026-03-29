@@ -152,6 +152,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_recipe=_pss_sha256,
         keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
+        input_constraint="prehash",
         notes="RSA PSS sign/verify with pre-hash: requires CK_RSA_PKCS_PSS_PARAMS",
     )
 

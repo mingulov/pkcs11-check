@@ -61,6 +61,11 @@ class TestMechSignRoundtrip:
 
         try:
             data = b"hello pkcs11 sign test" * 2
+            # Raw PSS/ECDSA expect pre-hashed input (digest-size bytes).
+            # Hash the test data so these mechanisms get correctly-sized input.
+            if config.input_constraint == "prehash":
+                import hashlib
+                data = hashlib.sha256(data).digest()
             mech_param = make_mech_param_or_skip(entry)
 
             sig = sign_single(
@@ -97,6 +102,10 @@ class TestMechSignRoundtrip:
         try:
             data_a = b"original data for signing"
             data_b = b"tampered data XXXXXXXXXXX"
+            if config.input_constraint == "prehash":
+                import hashlib
+                data_a = hashlib.sha256(data_a).digest()
+                data_b = hashlib.sha256(data_b).digest()
             mech_param = make_mech_param_or_skip(entry)
 
             sig = sign_single(
