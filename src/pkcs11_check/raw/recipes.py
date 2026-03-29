@@ -732,6 +732,8 @@ def sign_recover_single(
     """Sign and recover data in a single operation (C_SignRecoverInit + C_SignRecover)."""
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_SignRecoverInit(session, mech.byref(), key)
+    if rv == CKR_FUNCTION_NOT_SUPPORTED:
+        raise NotImplementedError("C_SignRecover not supported by this module")
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(data)
     return _two_call_output(raw, "C_SignRecover", session, in_buf, len(data))
@@ -755,6 +757,8 @@ def verify_recover_single(
     """
     mech = _resolve_mech(mechanism, None)
     rv = raw.C_VerifyRecoverInit(session, mech.byref(), key)
+    if rv == CKR_FUNCTION_NOT_SUPPORTED:
+        raise NotImplementedError("C_VerifyRecover not supported by this module")
     expect_rv(rv, CKR_OK)
     sig_buf = _to_ubyte_buf(signature)
     rec_len = CK_ULONG(0)
