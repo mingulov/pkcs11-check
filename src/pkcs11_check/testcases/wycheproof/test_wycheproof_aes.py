@@ -97,9 +97,9 @@ def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
     mac = None
     try:
         mac = sign_single(rs.raw, rs.sh, key, CKM_AES_CMAC, msg)
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"AES-CMAC failed for valid vector {vec_id}")
+            pytest.fail(f"AES-CMAC failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:
@@ -172,9 +172,9 @@ def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
     wrapped = None
     try:
         wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP)
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"AES-KW wrap failed for valid vector {vec_id}")
+            pytest.fail(f"AES-KW wrap failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:
@@ -251,9 +251,9 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     wrapped = None
     try:
         wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP_PAD)
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"AES-KWP wrap failed for valid vector {vec_id}")
+            pytest.fail(f"AES-KWP wrap failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:
@@ -326,9 +326,9 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             msg,
             mech_param=ccm_param,
         )
-    except (AssertionError, TypeError, NotImplementedError):
+    except (AssertionError, TypeError, NotImplementedError) as exc:
         if result == "valid":
-            pytest.fail(f"AES-CCM encrypt failed for valid vector {vec_id}")
+            pytest.fail(f"AES-CCM encrypt failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:
@@ -388,9 +388,9 @@ def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             msg,
             mech_param=mech_bytes(CKM_AES_GMAC, iv),
         )
-    except (AssertionError, TypeError):
+    except (AssertionError, TypeError) as exc:
         if result == "valid":
-            pytest.fail(f"AES-GMAC sign failed for valid vector {vec_id}")
+            pytest.fail(f"AES-GMAC sign failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:
@@ -451,9 +451,9 @@ def test_aes_xts(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             msg,
             mech_param=mech_bytes(CKM_AES_XTS, iv),
         )
-    except (AssertionError, TypeError):
+    except (AssertionError, TypeError) as exc:
         if result == "valid":
-            pytest.fail(f"AES-XTS encrypt failed for valid vector {vec_id}")
+            pytest.fail(f"AES-XTS encrypt failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:

@@ -81,9 +81,9 @@ def test_ed25519_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, An
         verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, msg, sig)
         if result == "invalid":
             pass  # Some modules accept edge-case sigs
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid Ed25519 sig {vec_id} rejected")
+            pytest.fail(f"Valid Ed25519 sig {vec_id} rejected: {exc}")
         # acceptable: reject is fine
         return
     finally:

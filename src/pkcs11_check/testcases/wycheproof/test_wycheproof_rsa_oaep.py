@@ -173,9 +173,9 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             ct,
             mech_param=oaep_param,
         )
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt")
+            pytest.fail(f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt: {exc}")
         # acceptable: reject is fine
         return
     finally:

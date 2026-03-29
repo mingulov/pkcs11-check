@@ -25,6 +25,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CKA_CLASS,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
@@ -33,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKK_GENERIC_SECRET,
     CKM_PKCS5_PBKD2,
+    CKO_SECRET_KEY,
     CKP_PKCS5_PBKD2_HMAC_SHA1,
     CKP_PKCS5_PBKD2_HMAC_SHA224,
     CKP_PKCS5_PBKD2_HMAC_SHA256,
@@ -134,6 +136,7 @@ def test_pbkdf2(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             rs.sh,
             pbkdf2_param,
             {
+                CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_VALUE_LEN: dk_len,
                 CKA_SENSITIVE: False,

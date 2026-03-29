@@ -100,9 +100,9 @@ def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
             msg,
             mech_param=chacha_param,
         )
-    except (AssertionError, AttributeError, TypeError):
+    except (AssertionError, AttributeError, TypeError) as exc:
         if result == "valid":
-            pytest.fail(f"ChaCha20-Poly1305 encrypt failed for valid vector {vec_id}")
+            pytest.fail(f"ChaCha20-Poly1305 encrypt failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:

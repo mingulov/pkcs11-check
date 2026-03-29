@@ -117,9 +117,9 @@ def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
         if result == "invalid":
             pass  # Some modules accept edge-case signatures
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid DSA sig {vec_id} rejected")
+            pytest.fail(f"Valid DSA sig {vec_id} rejected: {exc}")
         # acceptable: reject is fine
         return
     finally:

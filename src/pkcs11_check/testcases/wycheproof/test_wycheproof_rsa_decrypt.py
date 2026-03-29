@@ -93,9 +93,9 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     plaintext = None
     try:
         plaintext = decrypt_single(rs.raw, rs.sh, priv_key, CKM_RSA_PKCS, ct)
-    except AssertionError:
+    except AssertionError as exc:
         if result == "valid":
-            pytest.fail(f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt")
+            pytest.fail(f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt: {exc}")
         # acceptable/invalid: reject is fine (padding oracle resistance)
         return
     finally:

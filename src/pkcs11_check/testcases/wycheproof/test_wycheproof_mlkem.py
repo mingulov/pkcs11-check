@@ -163,7 +163,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
                     f"NSS does not support ML-KEM 'semi_expanded' key format decapsulation: "
                     f"{exc}"
                 )
-            pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}")
+            pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}: {exc}")
         # acceptable/invalid: reject is fine
         return
     finally:

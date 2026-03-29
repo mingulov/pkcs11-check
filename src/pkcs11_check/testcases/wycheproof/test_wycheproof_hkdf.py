@@ -147,9 +147,9 @@ def test_hkdf(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         okm = attrs[CKA_VALUE]
         assert isinstance(okm, bytes)
         destroy_quietly(rs.raw, rs.sh, derived)
-    except (AssertionError, TypeError, NotImplementedError):
+    except (AssertionError, TypeError, NotImplementedError) as exc:
         if result == "valid":
-            pytest.fail(f"HKDF derive failed for valid vector {vec_id}")
+            pytest.fail(f"HKDF derive failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:

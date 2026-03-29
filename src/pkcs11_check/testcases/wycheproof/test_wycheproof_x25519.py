@@ -19,6 +19,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
     CKA_DERIVE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -30,6 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_MONTGOMERY,
     CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
+    CKO_SECRET_KEY,
 )
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_xdh_private_bytes,
@@ -121,6 +123,7 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             priv_key,
             CKM_ECDH1_DERIVE,
             attrs={
+                CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_VALUE_LEN: key_size,
                 CKA_SENSITIVE: False,
@@ -133,9 +136,9 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         shared = attrs[CKA_VALUE]
         assert isinstance(shared, bytes)
         destroy_quietly(rs.raw, rs.sh, derived)
-    except (AssertionError, TypeError):
+    except (AssertionError, TypeError) as exc:
         if result == "valid":
-            pytest.fail(f"X25519/X448 derive failed for valid vector {vec_id}")
+            pytest.fail(f"X25519/X448 derive failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:

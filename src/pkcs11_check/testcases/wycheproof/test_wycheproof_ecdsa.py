@@ -227,10 +227,10 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
         try:
             r_int, s_int = decode_dss_signature(sig_der)
             raw_sig = r_int.to_bytes(coord_size, "big") + s_int.to_bytes(coord_size, "big")
-        except (ValueError, OverflowError):
+        except (ValueError, OverflowError) as exc:
             if result == "invalid":
                 return
-            pytest.fail(f"Cannot decode valid DER sig for {vec_id}")
+            pytest.fail(f"Cannot decode valid DER sig for {vec_id}: {exc}")
 
     digest = hash_fn(msg).digest()
 
