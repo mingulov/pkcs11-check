@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -9,8 +7,6 @@ from pkcs11_check.raw.types_std import (
     CKA_KEY_TYPE,
     CKA_TOKEN,
     CKA_VALUE_LEN,
-    CKF_UNWRAP,
-    CKF_WRAP,
     CKK_AES,
     CKO_SECRET_KEY,
 )
@@ -53,19 +49,6 @@ def test_target_unwrap_attrs_omit_value_len_for_non_raw_rsa() -> None:
         CKA_ENCRYPT: True,
         CKA_TOKEN: False,
     }
-
-
-def test_require_wrap_roundtrip_support_skips_wrap_only_mechanism() -> None:
-    entry = _entry("any", flags=int(CKF_WRAP))
-
-    with pytest.raises(pytest.skip.Exception, match="CKF_UNWRAP"):
-        test_mech_wrap._require_wrap_roundtrip_support(entry)
-
-
-def test_require_wrap_roundtrip_support_accepts_wrap_and_unwrap() -> None:
-    entry = _entry("any", flags=int(CKF_WRAP) | int(CKF_UNWRAP))
-
-    test_mech_wrap._require_wrap_roundtrip_support(entry)
 
 
 def test_raw_rsa_unwrap_hint_identifies_leading_bytes_bug() -> None:

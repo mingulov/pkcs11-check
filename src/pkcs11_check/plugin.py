@@ -244,7 +244,7 @@ def _ensure_mechanism_catalog(config: pytest.Config) -> Any:
 
 def _selection_telemetry_store(config: pytest.Config) -> dict[str, dict[str, Any]]:
     """Return the per-scenario selection telemetry store, creating it if needed."""
-    telemetry = config.stash.get(_SELECTION_TELEMETRY_KEY)
+    telemetry = config.stash.get(_SELECTION_TELEMETRY_KEY, None)
     if telemetry is None:
         telemetry = {}
         config.stash[_SELECTION_TELEMETRY_KEY] = telemetry
@@ -253,7 +253,7 @@ def _selection_telemetry_store(config: pytest.Config) -> dict[str, dict[str, Any
 
 def _selection_param_cache(config: pytest.Config) -> dict[str, list[Any]]:
     """Return the scenario parametrization cache, creating it if needed."""
-    cache = config.stash.get(_SELECTION_PARAM_CACHE_KEY)
+    cache = config.stash.get(_SELECTION_PARAM_CACHE_KEY, None)
     if cache is None:
         cache = {}
         config.stash[_SELECTION_PARAM_CACHE_KEY] = cache

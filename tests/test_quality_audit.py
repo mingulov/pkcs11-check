@@ -177,6 +177,48 @@ def test_build_quality_audit_selection_report_enables_selected_but_not_invoked()
     assert finding["rejected_reason_categories"] == {"framework_constraint": 2}
 
 
+def test_build_quality_audit_classifies_input_constraint_rejections() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [],
+    }
+    coverage = {
+        "mechanism_coverage": {
+            "available": 1,
+            "available_names": ["CKM_AES_KEY_WRAP"],
+            "invoked": 0,
+            "invoked_names": [],
+            "invoked_counts": {},
+            "not_invoked": 1,
+            "not_invoked_names": ["CKM_AES_KEY_WRAP"],
+            "invoked_detail": ["encrypt_roundtrip"],
+            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+        },
+    }
+    selection_record = {
+        "$report_type": "SelectionReport",
+        "selection_coverage": {
+            "encrypt_roundtrip": {
+                "selected_mechanisms": [],
+                "rejected_mechanisms": ["CKM_AES_KEY_WRAP"],
+                "rejected_reason_counts": {"unsupported_input_constraint": 1},
+            }
+        },
+    }
+
+    report = build_quality_audit(
+        results=results,
+        coverage=coverage,
+        report_log_records=[selection_record],
+    )
+
+    assert report["selection_findings"][0]["rejected_reason_categories"] == {
+        "framework_constraint": 1
+    }
+
+
 def test_build_quality_audit_includes_teardown_only_failure() -> None:
     results = {
         "tool": "pkcs11-check",

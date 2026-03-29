@@ -149,6 +149,21 @@ def wrap_roundtrip(entry: _EntryLike) -> SelectionDecision:
 def encrypt_roundtrip(entry: _EntryLike) -> SelectionDecision:
     """Select mechanisms that support encrypt and decrypt semantics."""
 
+    config = entry.config
+    if config is not None and config.input_constraint == "none":
+        return SelectionDecision(
+            scenario=ENCRYPT_ROUNDTRIP,
+            selected=False,
+            reasons=(
+                SelectionReason(
+                    code="unsupported_input_constraint",
+                    field="input_constraint",
+                    expected="data-capable",
+                    actual="none",
+                ),
+            ),
+        )
+
     return _select_required_flags(
         entry, ENCRYPT_ROUNDTRIP, int(CKF_ENCRYPT) | int(CKF_DECRYPT)
     )

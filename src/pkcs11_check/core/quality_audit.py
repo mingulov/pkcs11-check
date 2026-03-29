@@ -25,6 +25,7 @@ _SELECTED_REASON_CATEGORY = {
     "missing_registry_config": "framework_constraint",
     "no_registry_config": "framework_constraint",
     "unsupported_multi_part": "framework_constraint",
+    "unsupported_input_constraint": "framework_constraint",
     "missing_test_data": "test_data_missing",
     "not_implemented": "not_implemented",
 }

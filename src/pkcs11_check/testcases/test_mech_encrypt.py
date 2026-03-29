@@ -37,8 +37,8 @@ from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
     generate_key_for_encrypt,
-    make_mech_param_or_skip,
     get_test_plaintext_bytes,
+    make_mech_param_or_skip,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.encrypt]
@@ -52,12 +52,7 @@ class TestMechEncryptRoundtrip:
         rs = p11_raw_session
         entry = mech_encrypt_entry
         config = entry.config
-        if config is None:
-            pytest.skip(f"{entry.mech_name}: no registry config")
-
-        # Key-wrap only mechanisms — not testing data encrypt here
-        if config.input_constraint == "none":
-            pytest.skip(f"{entry.mech_name}: wrap-only mechanism, no data encrypt test")
+        assert config is not None
 
         enc_key, dec_key = generate_key_for_encrypt(rs, entry, config)
         dec_key_handle = dec_key if dec_key is not None else enc_key

@@ -76,6 +76,21 @@ def test_encrypt_roundtrip_accepts_encrypt_and_decrypt_mechanism() -> None:
     assert decision.reasons == ()
 
 
+def test_encrypt_roundtrip_rejects_input_constraint_none_mechanism() -> None:
+    decision = selection.encrypt_roundtrip(
+        _entry(
+            flags=int(CKF_ENCRYPT) | int(CKF_DECRYPT),
+            config=MechConfig(input_constraint="none"),
+        )
+    )
+
+    assert not decision.selected
+    assert decision.reasons[0].code == "unsupported_input_constraint"
+    assert decision.reasons[0].field == "input_constraint"
+    assert decision.reasons[0].expected == "data-capable"
+    assert decision.reasons[0].actual == "none"
+
+
 def test_sign_verify_roundtrip_accepts_sign_and_verify_mechanism() -> None:
     decision = selection.sign_verify_roundtrip(_entry(flags=int(CKF_SIGN) | int(CKF_VERIFY)))
 
