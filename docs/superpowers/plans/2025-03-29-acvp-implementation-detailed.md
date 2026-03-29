@@ -1034,6 +1034,227 @@ docker compose -f docker/docker-compose.test.yml run --rm test-kryoptic
 
 ---
 
+## Task 14: Full Docker Cross-Module Validation
+
+**Goal:** Run comprehensive Docker-based testing across all PKCS#11 providers to ensure ACVP tests execute correctly (pass or properly skip) on all supported modules.
+
+**Prerequisites:**
+- All Tasks 1-13 completed and committed
+- All ACVP test files pass ruff/mypy checks
+- Local testing against Kryoptic, SoftHSM2, and NSS-PQC completed
+
+**Validation Strategy:**
+This task ensures that:
+1. Tests **actually execute** on each module (not deferred or silently skipped)
+2. **Proper skip behavior** - tests skip when mechanism unavailable (expected)
+3. **Pass behavior** - tests pass when mechanism works correctly
+4. **No silent failures** - all tests are accounted for in results
+
+---
+
+### Subtask 14.1: Run Full Docker Test Suite
+
+**Steps:**
+
+- [ ] **Step 1: Execute docker/test-all.sh**
+
+```bash
+cd /home/user/src/m/pkcs11-check
+bash docker/test-all.sh
+```
+
+This will run tests against all Docker providers:
+- test-kryoptic
+- test-kryoptic-main
+- test-kryoptic-fips
+- test-softhsm2
+- test-softhsm2-main
+- test-nss
+- test-nss-pqc
+- test-opencryptoki
+- test-tpm2
+- test-bouncyhsm
+- test-pkcs11-mock
+- test-qryptotoken
+
+- [ ] **Step 2: Verify ACVP test execution on each module**
+
+For each provider, verify:
+```bash
+# Check that ACVP tests ran (not skipped entirely)
+docker logs <container> | grep -i "acvp"
+
+# Verify test counts are reasonable (not 0 tests)
+docker logs <container> | grep -E "(passed|failed|skipped|xfailed)"
+```
+
+Expected behavior per module:
+- **Kryoptic**: High pass rate on PQC (ML-DSA, ML-KEM, SLH-DSA), good AES coverage
+- **SoftHSM2**: Good pass rate on legacy (RSA, ECDSA, AES-GCM), skips on PQC
+- **NSS-PQC**: Passes PQC tests, skips legacy unsupported features
+- **OpenCryptoki**: Moderate coverage, some skips expected
+- **BouncyHSM**: May have skips or failures due to security model differences
+- **Others**: Document behavior
+
+- [ ] **Step 3: Analyze results per module**
+
+Check `artifacts/<provider>/` for:
+- `console.log` - full test output
+- `results.json` - structured test results
+- `state.json` - test execution state
+
+Verify:
+- No unexpected failures (only documented xfails)
+- Skips are due to missing mechanisms (expected)
+- No tests silently deferred or skipped at collection time
+
+- [ ] **Step 4: Document Docker findings**
+
+Update `docs/module-issues.md` with Docker-specific findings:
+- Which ACVP tests pass/fail/skip per module
+- Any Docker-specific issues (network, container limits)
+- Performance observations
+
+---
+
+### Subtask 14.2: Verify Test Execution Integrity
+
+**Steps:**
+
+- [ ] **Step 1: Check for silent skips**
+
+```bash
+# Look for tests that were collected but never executed
+for provider in kryoptic softhsm2 nss-pqc; do
+    echo "=== $provider ==="
+    grep -E "(test_acvp_|::Test)" artifacts/$provider/console.log | head -20
+done
+```
+
+- [ ] **Step 2: Validate skip reasons**
+
+Ensure skips are legitimate:
+```python
+# Check skip reasons in test output
+# Should see: "CKM_AES_CCM not supported" - GOOD
+# Should NOT see: "Module crashed" or "Import error" - BAD
+```
+
+- [ ] **Step 3: Verify no test collection failures**
+
+```bash
+# Check for import errors or collection failures
+grep -i "error\|failed\|import" artifacts/*/console.log | grep -v "test_passed"
+```
+
+- [ ] **Step 4: Cross-reference with local builds**
+
+Ensure Docker results match local build results:
+```bash
+# Local results should match Docker results
+# If mismatch, investigate environment differences
+```
+
+---
+
+### Subtask 14.3: Final Validation Report
+
+**Steps:**
+
+- [ ] **Step 1: Generate summary report**
+
+Create report showing:
+```
+ACVP Test Coverage Summary (Docker)
+====================================
+
+Module            | Tests | Pass | Skip  | Fail | XFail
+------------------|-------|------|-------|------|-------
+Kryoptic          | XXX   | XXX  | XXX   | 0    | XXX
+SoftHSM2          | XXX   | XXX  | XXX   | 0    | XXX
+NSS-PQC           | XXX   | XXX  | XXX   | XXX  | XXX
+OpenCryptoki      | XXX   | XXX  | XXX   | XXX  | XXX
+BouncyHSM         | XXX   | XXX  | XXX   | XXX  | XXX
+...               | ...   | ...  | ...   | ...  | ...
+```
+
+- [ ] **Step 2: Identify gaps**
+
+Note any modules with:
+- 0 ACVP tests running (investigate why)
+- Unexpected failures (not documented xfails)
+- High skip rate (may indicate test setup issues)
+
+- [ ] **Step 3: Update documentation**
+
+Add to `docs/superpowers/plans/2025-03-29-acvp-gap-analysis.md`:
+- Docker test results summary
+- Any modules that couldn't run ACVP tests and why
+
+- [ ] **Step 4: Commit validation results**
+
+```bash
+git add docs/module-issues.md
+git add docs/superpowers/plans/2025-03-29-acvp-gap-analysis.md
+git commit -m "docs: add Docker validation results for ACVP tests
+
+- Full docker/test-all.sh execution completed
+- Test execution verified on all providers
+- Results documented per module
+- No silent skips or collection failures"
+```
+
+---
+
+### Docker Testing Commands Reference
+
+**Full suite:**
+```bash
+# Run all Docker tests
+bash docker/test-all.sh
+
+# Run specific provider
+bash docker/test.sh kryoptic
+bash docker/test.sh softhsm2
+bash docker/test.sh nss-pqc
+
+# Run with verbose ACVP output
+bash docker/test.sh kryoptic -v -m acvp
+```
+
+**Analyzing results:**
+```bash
+# Check specific test results
+docker logs test-kryoptic | grep "test_acvp_aes"
+
+# View artifacts
+ls -la artifacts/kryoptic/
+cat artifacts/kryoptic/results.json | jq '.summary'
+```
+
+**Cleanup:**
+```bash
+# Clean up Docker containers and artifacts
+docker compose -f docker/docker-compose.test.yml down
+rm -rf artifacts/
+```
+
+---
+
+## Success Criteria (Updated)
+
+- [ ] All 126 fully mappable directories have test coverage
+- [ ] Tests pass on at least 2 of 3 target modules
+- [ ] Proper skip logic for unsupported mechanisms
+- [ ] Module-specific findings documented
+- [ ] Code passes ruff and mypy checks
+- [ ] No regressions in existing tests
+- [ ] **Docker test-all.sh passes** - All ACVP tests execute correctly across all providers
+- [ ] **No silent skips** - All tests either pass, skip with reason, or fail visibly
+- [ ] **Cross-module validation** - Results consistent between local and Docker runs
+
+---
+
 **Total Estimated Time:** 4-6 weeks  
 **Test Files to Create/Modify:** ~15  
 **Directories Covered:** 126 fully mappable + selective partial
