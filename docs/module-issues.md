@@ -18,6 +18,7 @@ Updated as Docker targets are analyzed.
 | 1 | test_wycheproof_ecdh.py | ECDH with invalid curve point handling |
 
 ### Known bugs
+- **RSA-PSS with distinct hash/MGF not supported**: SoftHSM2 (both 2.7.0 and main/dev branch) rejects RSA-PSS signatures when the message hash algorithm differs from the MGF hash algorithm (e.g., SHA-384 for hash with MGF1-SHA512). Returns `CKR_ARGUMENTS_BAD` with error message "Hash and MGF don't match" (SoftHSM.cpp:4303-4306). RFC 8017 allows distinct hashes, but SoftHSM2 enforces identical hashes. Affects Wycheproof vectors with "DistinctHash" flag. Detected by: `test_wycheproof_rsa_pss.py` (tc116 and other parameterized tests).
 - **ECDSA_SHA* accepts invalid signatures (ACVP SigVer)**: `C_Verify` with `CKM_ECDSA_SHA256`, `CKM_ECDSA_SHA384`, `CKM_ECDSA_SHA512` accepts NIST ACVP `testPassed=False` vectors (modified r, modified s, zero r, zero s, modified message, modified key). 17/17 invalid vectors in `test_acvp_ecdsa.py` return `CKR_OK` instead of `CKR_SIGNATURE_INVALID`. Only valid vectors (tc54, tc62, tc103) produce the correct result. Detected by: `test_acvp_ecdsa_sigver`.
 - **EDDSA accepts invalid signatures (ACVP SigVer)**: `C_Verify` with `CKM_EDDSA` accepts NIST ACVP `testPassed=False` vectors for both Ed25519 and Ed448. 8/8 invalid vectors return `CKR_OK` instead of `CKR_SIGNATURE_INVALID`. Detected by: `test_acvp_eddsa_sigver`.
 - **DES_CBC_PAD / DES3_CBC_PAD wrap advertised but not operational**: SoftHSM2 advertises
