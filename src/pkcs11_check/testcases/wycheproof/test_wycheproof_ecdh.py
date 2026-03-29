@@ -43,6 +43,10 @@ pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
+# Module-level cache of curves that failed C_CreateObject with a domain/curve error.
+# Avoids thousands of redundant probe calls when a module does not support a curve.
+_UNSUPPORTED_CURVES: set[str] = set()
+
 _ECDH_FILES = [
     ("ecdh_brainpoolP224r1_test.json", "brainpoolP224r1", "asn"),
     ("ecdh_brainpoolP256r1_test.json", "brainpoolP256r1", "asn"),
@@ -121,6 +125,9 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     except Exception:
         pytest.skip(f"No EC params mapping for curve {curve}")
 
+    if curve in _UNSUPPORTED_CURVES:
+        pytest.skip(f"Curve {curve} not supported (cached)")
+
     try:
         public_point = decode_ec_public_point(vec["public"], encoding_name, curve)
         private_scalar = decode_ec_private_scalar(vec["private"], encoding_name, curve)
@@ -140,6 +147,14 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         )
     except AssertionError as exc:
         exc_msg = str(exc)
+        if any(
+            name in exc_msg
+            for name in (
+                "CKR_CURVE_NOT_SUPPORTED",
+                "CKR_DOMAIN_PARAMS_INVALID",
+            )
+        ):
+            _UNSUPPORTED_CURVES.add(curve)
         if result == "invalid":
             return
         pytest.skip(f"Cannot import EC private key for ECDH: {exc_msg}")
