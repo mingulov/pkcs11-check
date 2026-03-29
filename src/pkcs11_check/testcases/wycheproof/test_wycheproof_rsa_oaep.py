@@ -170,8 +170,14 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             attrs={CKA_DECRYPT: True},
         )
     except AssertionError as exc:
-        _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.skip(f"Cannot import RSA {key_bits}-bit private key for OAEP: {exc}")
+        exc_msg = str(exc)
+        # Only cache permanent key-size rejections, not transient errors.
+        if any(code in exc_msg for code in (
+            "CKR_KEY_SIZE_RANGE", "CKR_ATTRIBUTE_VALUE_INVALID",
+            "CKR_TEMPLATE_INCONSISTENT", "CKR_TEMPLATE_INCOMPLETE",
+        )):
+            _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
+        pytest.skip(f"Cannot import RSA {key_bits}-bit private key for OAEP: {exc_msg}")
 
     plaintext = None
     try:

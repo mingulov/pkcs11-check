@@ -165,6 +165,12 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
 
     # Try typed key, fall back to GENERIC_SECRET
     key = None
+    _permanent_ckr = (
+        "CKR_KEY_SIZE_RANGE", "CKR_ATTRIBUTE_VALUE_INVALID",
+        "CKR_TEMPLATE_INCONSISTENT", "CKR_TEMPLATE_INCOMPLETE",
+    )
+    saw_permanent_rejection = False
+    last_exc_msg = ""
     for kt in (vec["_key_type"], vec["_fallback_type"]):
         try:
             key = import_secret_key(
@@ -179,14 +185,19 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
                 },
             )
             break
-        except AssertionError:
+        except AssertionError as exc:
+            last_exc_msg = str(exc)
+            if any(code in last_exc_msg for code in _permanent_ckr):
+                saw_permanent_rejection = True
             continue
 
     if key is None:
-        _UNSUPPORTED_HMAC_KEYS.add(cache_key)
+        # Only cache permanent key rejections, not transient errors.
+        if saw_permanent_rejection:
+            _UNSUPPORTED_HMAC_KEYS.add(cache_key)
         if result == "invalid":
             return
-        pytest.fail(f"Cannot import {len(key_bytes)}-byte HMAC key")
+        pytest.fail(f"Cannot import {len(key_bytes)}-byte HMAC key: {last_exc_msg}")
 
     try:
         mac = sign_single(rs.raw, rs.sh, key, mechanism, msg)
