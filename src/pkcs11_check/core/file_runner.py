@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -21,6 +21,7 @@ from xml.etree import ElementTree as ET
 from rich.console import Console
 
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.quality_audit import build_quality_audit
 
 IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
@@ -411,9 +412,24 @@ def write_isolated_json_report(
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
-) -> None:
+) -> dict[str, Any]:
     """Write an aggregated JSON report for an isolated run in unified format."""
+    payload = _build_isolated_json_payload(
+        state,
+        per_unit_details=per_unit_details,
+        coverage=coverage,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
+
+
+def _build_isolated_json_payload(
+    state: FileRunState,
+    *,
+    per_unit_details: dict[str, dict[str, Any]] | None = None,
+    coverage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     details = per_unit_details or {}
 
     summary: dict[str, int] = {
@@ -469,7 +485,7 @@ def write_isolated_json_report(
     }
     if coverage:
         payload["coverage"] = coverage
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
 
 
 def _junit_case_identity(target: str) -> tuple[str, str]:
@@ -598,6 +614,45 @@ def write_isolated_report(
     write_isolated_junit_report(config.output_path, state)
 
 
+def extract_quality_report_records_from_jsonl(jsonl_path: Path) -> list[dict[str, Any]]:
+    """Extract report-log records relevant to the quality audit from JSONL."""
+    try:
+        text = jsonl_path.read_text()
+    except (FileNotFoundError, OSError):
+        return []
+
+    records: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        report_type = rec.get("$report_type", "TestReport")
+        if report_type in {"TestReport", "SelectionReport"}:
+            records.append(rec)
+    return records
+
+
+def write_quality_json_report(
+    path: Path,
+    results: Mapping[str, Any],
+    *,
+    coverage: Mapping[str, Any] | None = None,
+    report_log_records: Iterable[Mapping[str, Any]] | None = None,
+) -> None:
+    """Write the quality audit artifact."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_quality_audit(
+        results=results,
+        coverage=coverage,
+        report_log_records=report_log_records,
+    )
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
     """Stream-concatenate per-unit JSONL temp files into a single artifact.
 
@@ -701,7 +756,7 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     }
 
 
-def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
+def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[str, Any] | None:
     """Convert a pytest-reportlog JSONL file to pkcs11-check unified format.
 
     Groups tests by file and writes the unified JSON report.
@@ -709,7 +764,7 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
     """
     detail = _read_jsonl_results(jsonl_path)
     if detail is None:
-        return
+        return None
 
     # Group tests by file
     by_file: dict[str, list[dict[str, Any]]] = {}
@@ -796,6 +851,7 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
 
 
 def load_run_state(path: Path) -> FileRunState | None:
@@ -2095,19 +2151,30 @@ def run_isolated_pytest_units(
                     unit_jsonl_path.unlink(missing_ok=True)
     finally:
         coverage_data: dict[str, Any] | None = None
+        quality_records: list[dict[str, Any]] = []
         if report_config is not None:
             if report_config.jsonl_path is not None:
                 write_report_jsonl(jsonl_paths, report_config.jsonl_path)
                 coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
+                quality_records = extract_quality_report_records_from_jsonl(
+                    report_config.jsonl_path
+                )
                 if coverage_data:
                     coverage_path = report_config.jsonl_path.parent / "coverage.json"
                     coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
             if report_config.output_format == "json":
-                write_isolated_json_report(
+                results_payload = write_isolated_json_report(
                     report_config.output_path,
                     state,
                     per_unit_details=per_unit_details,
                     coverage=coverage_data,
+                )
+                quality_path = report_config.output_path.parent / "quality.json"
+                write_quality_json_report(
+                    quality_path,
+                    results_payload,
+                    coverage=coverage_data,
+                    report_log_records=quality_records,
                 )
             else:
                 write_isolated_report(

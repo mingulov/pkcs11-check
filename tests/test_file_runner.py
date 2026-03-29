@@ -1050,6 +1050,91 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
     assert report["units"][0]["counts"]["passed"] == 1
 
 
+def test_run_isolated_pytest_units_writes_quality_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                jsonl_path = Path(cmd[i + 1])
+                jsonl_path.write_text(
+                    "\n".join(
+                        [
+                            json.dumps(
+                                {
+                                    "$report_type": "TestReport",
+                                    "nodeid": "test_a.py::test_ok",
+                                    "when": "call",
+                                    "outcome": "passed",
+                                    "duration": 0.1,
+                                }
+                            ),
+                            json.dumps(
+                                {
+                                    "$report_type": "CoverageReport",
+                                    "function_coverage": {
+                                        "available": 1,
+                                        "called_names": ["C_Encrypt"],
+                                        "uncalled_names": [],
+                                        "called_counts": {"C_Encrypt": 1},
+                                        "bootstrap_counts": {},
+                                    },
+                                    "mechanism_coverage": {
+                                        "available": 2,
+                                        "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                                        "invoked": 1,
+                                        "invoked_names": ["CKM_AES_CBC"],
+                                        "invoked_counts": {"CKM_AES_CBC": 1},
+                                        "not_invoked": 1,
+                                        "not_invoked_names": ["CKM_AES_GCM"],
+                                        "invoked_detail": ["encrypt_roundtrip"],
+                                        "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                                    },
+                                }
+                            ),
+                        ]
+                    )
+                    + "\n"
+                )
+                break
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    report_path = tmp_path / "results.json"
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json",
+            report_path,
+            jsonl_path=tmp_path / "report.jsonl",
+        ),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert (tmp_path / "coverage.json").exists()
+    quality_path = tmp_path / "quality.json"
+    assert quality_path.exists()
+    report = json.loads(quality_path.read_text())
+    assert report["schema_version"] == "1"
+    assert report["selection_findings"] == []
+    assert "selection telemetry not provided" in report["data_quality_warnings"]
+
+
 def test_run_isolated_pytest_units_keeps_output_for_xfailed_unit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

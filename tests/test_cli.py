@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -617,6 +618,114 @@ class TestTestCommand:
 
         assert result.exit_code == 2
         assert "belongs to a different isolated run" in " ".join(result.output.split())
+
+    def test_test_none_json_writes_quality_report(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        results_path = tmp_path / "artifacts" / "results.json"
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            report_log = os.environ["PKCS11_CHECK_REPORT_LOG"]
+            Path(report_log).write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "$report_type": "TestReport",
+                                "nodeid": "test_demo.py::test_ok",
+                                "when": "call",
+                                "outcome": "passed",
+                                "duration": 0.1,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "$report_type": "SelectionReport",
+                                "selection_coverage": {
+                                    "encrypt_roundtrip": {
+                                        "selected_mechanisms": [
+                                            "CKM_AES_CBC",
+                                            "CKM_AES_GCM",
+                                        ],
+                                        "rejected_mechanisms": [],
+                                        "rejected_reason_counts": {},
+                                    }
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "$report_type": "CoverageReport",
+                                "function_coverage": {
+                                    "available": 1,
+                                    "called_names": ["C_Encrypt"],
+                                    "uncalled_names": [],
+                                    "called_counts": {"C_Encrypt": 1},
+                                    "bootstrap_counts": {},
+                                },
+                                "mechanism_coverage": {
+                                    "available": 2,
+                                    "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                                    "invoked": 1,
+                                    "invoked_names": ["CKM_AES_CBC"],
+                                    "invoked_counts": {"CKM_AES_CBC": 1},
+                                    "not_invoked": 1,
+                                    "not_invoked_names": ["CKM_AES_GCM"],
+                                    "invoked_detail": ["encrypt_roundtrip"],
+                                    "invoked_detail_counts": {"encrypt_roundtrip": 1},
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            return 0
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--isolation",
+                "none",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert results_path.exists()
+        assert results_path.parent.joinpath("coverage.json").exists()
+        quality_path = results_path.parent / "quality.json"
+        assert quality_path.exists()
+        report = json.loads(quality_path.read_text())
+        assert report["schema_version"] == "1"
+        assert report["selection_findings"][0]["selected_but_not_invoked"] == ["CKM_AES_GCM"]
 
     def test_test_preflight_failure_is_reported(self, tmp_path: Path, monkeypatch: object) -> None:
         module = tmp_path / "dummy.so"
