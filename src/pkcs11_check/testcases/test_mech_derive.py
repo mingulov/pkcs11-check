@@ -18,7 +18,7 @@ Mechanisms skipped here (too complex for generic parametrized tests):
 - ECDH cofactor, ECMQV: variants of ECDH handled separately
 - AES-CBC-ENCRYPT-DATA: needs custom struct (CK_AES_CBC_ENCRYPT_DATA_PARAMS)
 - DES-CBC-ENCRYPT-DATA / DES3-CBC-ENCRYPT-DATA: need CK_DES_CBC_ENCRYPT_DATA_PARAMS
-- PUB_KEY_FROM_PRIV_KEY: not a typical derive — skipped here
+- PUB_KEY_FROM_PRIV_KEY: derives public key from existing private key (EC)
 """
 
 from __future__ import annotations
@@ -58,12 +58,14 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKK_DES,
     CKK_DES3,
+    CKK_EC,
     CKK_GENERIC_SECRET,
     CKK_HKDF,
     CKM,
     CKM_DES3_KEY_GEN,
     CKM_DES_KEY_GEN,
     CKM_SHA256,
+    CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_OK,
     CKZ_SALT_SPECIFIED,
@@ -622,6 +624,56 @@ def _derive_sha(rs: RawSession, entry: MechEntry) -> None:
             destroy_quietly(rs.raw, rs.sh, derived_key)
 
 
+def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
+    """CKM_PUB_KEY_FROM_PRIV_KEY: derive a public key from an EC private key.
+
+    Generates a P-256 EC key pair, then uses C_DeriveKey with the private key
+    to produce a new public key object. Verifies the derived handle is non-zero
+    and has CKA_CLASS == CKO_PUBLIC_KEY.
+    """
+    mech_id = entry.mech_id
+    if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
+        pytest.skip(f"{entry.mech_name}: EC_KEY_PAIR_GEN not available")
+    pub_a, priv_a = 0, 0
+    derived_pub: int = 0
+    try:
+        pub_a, priv_a = gen_ec_keypair(
+            rs.raw,
+            rs.sh,
+            _P256_OID,
+            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+        )
+        # CKM_PUB_KEY_FROM_PRIV_KEY takes no mechanism params (NULL)
+        derive_mech = mech_simple(CKM(mech_id))
+        # Template for the derived public key
+        derive_attrs: dict[int, Any] = {
+            CKA_CLASS: CKO_PUBLIC_KEY,
+            CKA_KEY_TYPE: CKK_EC,
+            CKA_TOKEN: False,
+        }
+        derived_pub = derive_key(
+            rs.raw,
+            rs.sh,
+            priv_a,
+            CKM(mech_id),
+            attrs=derive_attrs,
+            mech_param=derive_mech,
+        )
+        assert derived_pub != 0, f"{entry.mech_name}: derive returned handle 0"
+        # Verify the derived object is a public key
+        result = read_attributes(rs.raw, rs.sh, derived_pub, [CKA_CLASS])
+        obj_class_raw = result.get(CKA_CLASS)
+        if obj_class_raw is not None and isinstance(obj_class_raw, int):
+            assert obj_class_raw == int(CKO_PUBLIC_KEY), (
+                f"{entry.mech_name}: derived object class {obj_class_raw:#x} != CKO_PUBLIC_KEY"
+            )
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub_a)
+        destroy_quietly(rs.raw, rs.sh, priv_a)
+        if derived_pub != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_pub)
+
+
 class TestMechDerive:
     """Key derivation for every advertised derive mechanism with a registry config."""
 
@@ -666,9 +718,10 @@ class TestMechDerive:
         if _HKDF_DATA_ID and mech_id == _HKDF_DATA_ID:
             pytest.skip(f"{entry.mech_name}: produces raw data output, not a key handle")
 
-        # Skip PUB_KEY_FROM_PRIV_KEY (not a typical derive)
+        # CKM_PUB_KEY_FROM_PRIV_KEY: derive public key from private key
         if _PUB_KEY_FROM_PRIV_KEY_ID and mech_id == _PUB_KEY_FROM_PRIV_KEY_ID:
-            pytest.skip(f"{entry.mech_name}: derive-public-from-private not covered here")
+            _derive_pub_from_priv(rs, entry)
+            return
 
         # Skip CKM_NULL (no derivation semantics)
         if _CKM_NULL_ID and mech_id == _CKM_NULL_ID:
@@ -683,13 +736,9 @@ class TestMechDerive:
 
         # Skip DES-CBC-ENCRYPT-DATA (needs CK_DES_CBC_ENCRYPT_DATA_PARAMS struct with IV)
         if _DES_CBC_ENCRYPT_DATA_ID and mech_id == _DES_CBC_ENCRYPT_DATA_ID:
-            pytest.skip(
-                f"{entry.mech_name}: needs CK_DES_CBC_ENCRYPT_DATA_PARAMS struct with IV"
-            )
+            pytest.skip(f"{entry.mech_name}: needs CK_DES_CBC_ENCRYPT_DATA_PARAMS struct with IV")
         if _DES3_CBC_ENCRYPT_DATA_ID and mech_id == _DES3_CBC_ENCRYPT_DATA_ID:
-            pytest.skip(
-                f"{entry.mech_name}: needs CK_DES_CBC_ENCRYPT_DATA_PARAMS struct with IV"
-            )
+            pytest.skip(f"{entry.mech_name}: needs CK_DES_CBC_ENCRYPT_DATA_PARAMS struct with IV")
 
         # Dispatch to per-family helpers
         if _HKDF_DERIVE_ID and mech_id == _HKDF_DERIVE_ID:
