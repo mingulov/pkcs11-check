@@ -184,7 +184,10 @@ class TestECDHDerive:
 
     def _generate_ec_keypair(self, rs: Any) -> tuple[int, int]:
         curve_oid = encode_named_curve_parameters("secp256r1")
-        return gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        return gen_ec_keypair(
+            rs.raw, rs.sh, curve_oid,
+            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+        )
 
     def _extract_ec_point(self, rs: Any, pub_handle: int) -> bytes:
         ec_point_raw = read_attributes(rs.raw, rs.sh, pub_handle, [CKA_EC_POINT])[CKA_EC_POINT]
