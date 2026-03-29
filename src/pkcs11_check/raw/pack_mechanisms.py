@@ -208,12 +208,20 @@ def mech_hkdf(
     hash_mech: int,
     extract: bool = True,
     expand: bool = True,
-    salt_type: int = 1,
+    salt_type: int | None = None,
     salt: bytes | None = None,
     salt_key: int = 0,
     info: bytes | None = None,
 ) -> PackedMechanism:
-    """Pack CK_HKDF_PARAMS."""
+    """Pack CK_HKDF_PARAMS.
+
+    ``salt_type`` defaults to CKF_HKDF_SALT_DATA (2) when ``salt`` is provided
+    and CKF_HKDF_SALT_NULL (1) when it is not.  Pass an explicit value to
+    override (e.g. CKF_HKDF_SALT_KEY = 3).
+    """
+    # CKF_HKDF_SALT_NULL = 1, CKF_HKDF_SALT_DATA = 2, CKF_HKDF_SALT_KEY = 3
+    if salt_type is None:
+        salt_type = 2 if salt is not None else 1
     ka: list[Any] = []
     params = CK_HKDF_PARAMS()
     params.bExtract = 1 if extract else 0
