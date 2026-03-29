@@ -112,6 +112,11 @@ def _build_ckm_alias_map() -> dict[int, list[str]]:
 
 _CKM_ALIAS_MAP: dict[int, list[str]] | None = None
 
+# Module-level mechanism cache: populated after the first C_GetMechanismList call
+# and reused by all subsequent RawSession instances in the same process.
+# The mechanism list is a slot property that does not change between tests.
+_MECHANISM_CACHE: frozenset[str] | None = None
+
 
 def _get_ckm_aliases(types_std_mod: Any, mech_int: int) -> list[str]:
     """Return alias CKM names for a mechanism value (empty if no aliases)."""
@@ -140,27 +145,35 @@ class RawSession:
         """Cached mechanism name set (both 'CKM_AES_ECB' and 'AES_ECB' forms).
 
         Includes alias names (e.g. 'EC_KEY_PAIR_GEN' for CKM_ECDSA_KEY_PAIR_GEN).
+        The result is stored in a module-level cache after the first call so that
+        subsequent RawSession instances (one per test function) skip the
+        C_GetMechanismList round-trips entirely.
         """
+        global _MECHANISM_CACHE
         if self._mechanisms is None:
-            import importlib as _importlib
+            if _MECHANISM_CACHE is not None:
+                self._mechanisms = _MECHANISM_CACHE
+            else:
+                import importlib as _importlib
 
-            from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
-            from pkcs11_check.raw.recipes import get_mechanism_list
+                from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+                from pkcs11_check.raw.recipes import get_mechanism_list
 
-            _ts = _importlib.import_module("pkcs11_check.raw.types_std")
-            mechs = get_mechanism_list(self.raw, self.slot_id)
-            names: set[str] = set()
-            for m in mechs:
-                mname = MECHANISM_NAMES.get(m, "")
-                if mname:
-                    names.add(mname)
-                    if mname.startswith("CKM_"):
-                        names.add(mname[4:])
-                for alias in _get_ckm_aliases(_ts, int(m)):
-                    names.add(alias)
-                    if alias.startswith("CKM_"):
-                        names.add(alias[4:])
-            self._mechanisms = frozenset(names)
+                _ts = _importlib.import_module("pkcs11_check.raw.types_std")
+                mechs = get_mechanism_list(self.raw, self.slot_id)
+                names: set[str] = set()
+                for m in mechs:
+                    mname = MECHANISM_NAMES.get(m, "")
+                    if mname:
+                        names.add(mname)
+                        if mname.startswith("CKM_"):
+                            names.add(mname[4:])
+                    for alias in _get_ckm_aliases(_ts, int(m)):
+                        names.add(alias)
+                        if alias.startswith("CKM_"):
+                            names.add(alias[4:])
+                self._mechanisms = frozenset(names)
+                _MECHANISM_CACHE = self._mechanisms
         return self._mechanisms
 
     def has_mechanism(self, name: str) -> bool:
