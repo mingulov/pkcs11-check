@@ -14,6 +14,7 @@ Test patterns:
 AEAD mechanisms (GCM, CCM) do not support multi-part — they are skipped
 here with a clear message (config.multi_part_supported == False).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -38,7 +39,7 @@ from pkcs11_check.testcases.mechanism_helpers import (
     generate_key_for_sign,
     make_mech_param,
     make_mech_param_or_skip,
-    test_plaintext_bytes,
+    get_test_plaintext_bytes,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.multipart]
@@ -81,7 +82,7 @@ class TestMultipartEncrypt:
         dec_key_handle = dec_key if dec_key is not None else enc_key
 
         try:
-            plaintext = test_plaintext_bytes()
+            plaintext = get_test_plaintext_bytes()
             mech_param = make_mech_param(entry)
             if mech_param == "SKIP":
                 pytest.skip(f"{entry.mech_name}: cannot build mech param generically")
@@ -98,7 +99,7 @@ class TestMultipartEncrypt:
 
             if config.deterministic and mech_param is None:
                 # Multi-part must produce identical ciphertext
-                chunks = [plaintext[:len(plaintext) // 2], plaintext[len(plaintext) // 2:]]
+                chunks = [plaintext[: len(plaintext) // 2], plaintext[len(plaintext) // 2 :]]
                 ct_multi = encrypt_multipart(
                     rs.raw, rs.sh, enc_key, mech_id, chunks, mech_param=mech_param
                 )
@@ -109,12 +110,23 @@ class TestMultipartEncrypt:
                 # Non-deterministic: just verify roundtrip via decrypt
                 overhead = 16 if config.auth_tag_included else 0
                 ct_multi_enc = encrypt_single(
-                    rs.raw, rs.sh, enc_key, mech_id, plaintext,
-                    mech_param=mech_param, output_overhead=overhead,
+                    rs.raw,
+                    rs.sh,
+                    enc_key,
+                    mech_id,
+                    plaintext,
+                    mech_param=mech_param,
+                    output_overhead=overhead,
                 )
                 pt = decrypt_multipart(
-                    rs.raw, rs.sh, dec_key_handle, mech_id,
-                    [ct_multi_enc[:len(ct_multi_enc) // 2], ct_multi_enc[len(ct_multi_enc) // 2:]],
+                    rs.raw,
+                    rs.sh,
+                    dec_key_handle,
+                    mech_id,
+                    [
+                        ct_multi_enc[: len(ct_multi_enc) // 2],
+                        ct_multi_enc[len(ct_multi_enc) // 2 :],
+                    ],
                     mech_param=mech_param,
                 )
                 assert pt == plaintext, (
@@ -160,7 +172,7 @@ class TestMultipartDigest:
 
         # Multi-part (3 chunks)
         chunk_size = len(data) // 3
-        chunks = [data[:chunk_size], data[chunk_size:2 * chunk_size], data[2 * chunk_size:]]
+        chunks = [data[:chunk_size], data[chunk_size : 2 * chunk_size], data[2 * chunk_size :]]
         multi = digest_multipart(rs.raw, rs.sh, mech_id, chunks)
 
         assert multi == single, (
@@ -194,9 +206,7 @@ class TestMultipartDigest:
         single = digest_single(rs.raw, rs.sh, mech_id, data)
         multi = digest_multipart(rs.raw, rs.sh, mech_id, [data])
 
-        assert multi == single, (
-            f"{entry.mech_name}: 1-chunk multipart digest != single-part"
-        )
+        assert multi == single, f"{entry.mech_name}: 1-chunk multipart digest != single-part"
 
 
 class TestMultipartSign:
@@ -227,20 +237,15 @@ class TestMultipartSign:
                 data[:chunk_size],
                 data[chunk_size : 2 * chunk_size],
                 data[2 * chunk_size : 3 * chunk_size],
-                data[3 * chunk_size:],
+                data[3 * chunk_size :],
             ]
             mech_id = CKM(entry.mech_id)
 
-            sig = sign_multipart(
-                rs.raw, rs.sh, sign_key, mech_id, chunks, mech_param=mech_param
-            )
+            sig = sign_multipart(rs.raw, rs.sh, sign_key, mech_id, chunks, mech_param=mech_param)
             ok = verify_multipart(
                 rs.raw, rs.sh, verify_key_handle, mech_id, chunks, sig, mech_param=mech_param
             )
-            assert ok, (
-                f"{entry.mech_name}: multipart sign/verify failed "
-                f"(sig={sig.hex()!r})"
-            )
+            assert ok, f"{entry.mech_name}: multipart sign/verify failed (sig={sig.hex()!r})"
         finally:
             destroy_quietly(rs.raw, rs.sh, sign_key)
             if verify_key is not None:

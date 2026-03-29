@@ -449,7 +449,7 @@ def gen_keypair_for_mech(
 # ---------------------------------------------------------------------------
 
 
-def test_plaintext_bytes() -> bytes:
+def get_test_plaintext_bytes() -> bytes:
     """Return 32 bytes of fixed test plaintext for encrypt/sign tests."""
     return b"\xab\xcd\xef\x01" * 8
 

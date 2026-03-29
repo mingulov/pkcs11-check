@@ -38,7 +38,7 @@ from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
     generate_key_for_encrypt,
     make_mech_param_or_skip,
-    test_plaintext_bytes,
+    get_test_plaintext_bytes,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.encrypt]
@@ -63,7 +63,7 @@ class TestMechEncryptRoundtrip:
         dec_key_handle = dec_key if dec_key is not None else enc_key
 
         try:
-            plaintext = test_plaintext_bytes()
+            plaintext = get_test_plaintext_bytes()
             mech_param = make_mech_param_or_skip(entry)
 
             overhead = 16 if config.auth_tag_included else 0
