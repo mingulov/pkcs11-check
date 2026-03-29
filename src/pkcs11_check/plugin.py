@@ -10,7 +10,11 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.core.preflight import CapabilityManifest, load_manifest, run_preflight_subprocess
+from pkcs11_check.core.preflight import (
+    CapabilityManifest,
+    load_manifest,
+    run_preflight_subprocess,
+)
 
 # Re-export fixtures so pytest discovers them
 from pkcs11_check.fixtures import (  # noqa: F401
@@ -22,9 +26,23 @@ from pkcs11_check.fixtures import (  # noqa: F401
     p11_session,
 )
 from pkcs11_check.markers import MARKER_DEFINITIONS, should_skip_for_version
+from pkcs11_check.raw.types_std import (
+    CKF_DERIVE,
+    CKF_DIGEST,
+    CKF_GENERATE,
+    CKF_GENERATE_KEY_PAIR,
+)
+from pkcs11_check.testcases.mechanism_selection import (
+    ENCRYPT_ROUNDTRIP,
+    SIGN_VERIFY_ROUNDTRIP,
+    WRAP_ROUNDTRIP,
+    select_for_scenario,
+)
 
 _MANIFEST_KEY: pytest.StashKey[CapabilityManifest | None] = pytest.StashKey()
 _MECHANISM_CATALOG_KEY: pytest.StashKey[Any] = pytest.StashKey()
+_SELECTION_TELEMETRY_KEY: pytest.StashKey[dict[str, dict[str, Any]]] = pytest.StashKey()
+_SELECTION_PARAM_CACHE_KEY: pytest.StashKey[dict[str, list[Any]]] = pytest.StashKey()
 _CUMULATIVE_FUNCTIONS: pytest.StashKey[set[str]] = pytest.StashKey()
 _CUMULATIVE_MECHANISMS: pytest.StashKey[set[str]] = pytest.StashKey()
 _RAW_INSTANCE: pytest.StashKey[Any] = pytest.StashKey()
@@ -38,6 +56,19 @@ _CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
 _CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _BOOTSTRAP_FUNCTION_COUNTS: pytest.StashKey[dict[str, int]] = pytest.StashKey()
 _BOOTSTRAP_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
+
+_SCENARIO_BY_FIXTURE: dict[str, str] = {
+    "mech_wrap_entry": WRAP_ROUNDTRIP,
+    "mech_encrypt_entry": ENCRYPT_ROUNDTRIP,
+    "mech_sign_entry": SIGN_VERIFY_ROUNDTRIP,
+}
+
+_LEGACY_FLAG_BY_FIXTURE: dict[str, int] = {
+    "mech_digest_entry": int(CKF_DIGEST),
+    "mech_keygen_entry": int(CKF_GENERATE) | int(CKF_GENERATE_KEY_PAIR),
+    "mech_derive_entry": int(CKF_DERIVE),
+    "mech_any_entry": 0,
+}
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -114,6 +145,8 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_CUMULATIVE_DETAIL_COUNTS] = Counter()
     config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = {}
     config.stash[_BOOTSTRAP_COLLECTED] = False
+    config.stash[_SELECTION_TELEMETRY_KEY] = {}
+    config.stash[_SELECTION_PARAM_CACHE_KEY] = {}
 
     # Inject --report-log when PKCS11_CHECK_REPORT_LOG is set (by test_cmd.py for
     # --isolation none JSON runs).  Guard against meta-tests (no --p11-module) and
@@ -209,31 +242,88 @@ def _ensure_mechanism_catalog(config: pytest.Config) -> Any:
     return catalog
 
 
+def _selection_telemetry_store(config: pytest.Config) -> dict[str, dict[str, Any]]:
+    """Return the per-scenario selection telemetry store, creating it if needed."""
+    telemetry = config.stash.get(_SELECTION_TELEMETRY_KEY)
+    if telemetry is None:
+        telemetry = {}
+        config.stash[_SELECTION_TELEMETRY_KEY] = telemetry
+    return telemetry
+
+
+def _selection_param_cache(config: pytest.Config) -> dict[str, list[Any]]:
+    """Return the scenario parametrization cache, creating it if needed."""
+    cache = config.stash.get(_SELECTION_PARAM_CACHE_KEY)
+    if cache is None:
+        cache = {}
+        config.stash[_SELECTION_PARAM_CACHE_KEY] = cache
+    return cache
+
+
+def _record_selection_decision(
+    config: pytest.Config,
+    scenario: str,
+    entry: Any,
+    decision: Any,
+) -> None:
+    """Accumulate scenario-level selection telemetry for later reporting."""
+    telemetry = _selection_telemetry_store(config)
+    scenario_data = telemetry.setdefault(
+        scenario,
+        {
+            "selected_mechanisms": set(),
+            "rejected_mechanisms": set(),
+            "rejected_reason_counts": Counter(),
+        },
+    )
+    if decision.selected:
+        scenario_data["selected_mechanisms"].add(entry.mech_name)
+        return
+
+    scenario_data["rejected_mechanisms"].add(entry.mech_name)
+    scenario_data["rejected_reason_counts"].update(reason.code for reason in decision.reasons)
+
+
+def _serialize_selection_telemetry(
+    telemetry: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Convert selection telemetry to report-log friendly data."""
+    selection_coverage: dict[str, dict[str, Any]] = {}
+    for scenario, data in sorted(telemetry.items()):
+        selection_coverage[scenario] = {
+            "selected_mechanisms": sorted(data["selected_mechanisms"]),
+            "rejected_mechanisms": sorted(data["rejected_mechanisms"]),
+            "rejected_reason_counts": dict(sorted(data["rejected_reason_counts"].items())),
+        }
+    return selection_coverage
+
+
+def _selected_entries_for_scenario(
+    catalog: Any,
+    config: pytest.Config,
+    scenario: str,
+) -> list[Any]:
+    """Select and cache mechanism entries for a semantic scenario."""
+    cache = _selection_param_cache(config)
+    cached = cache.get(scenario)
+    if cached is not None:
+        return cached
+
+    entries: list[Any] = []
+    for entry in catalog.all_entries():
+        decision = select_for_scenario(entry, scenario)
+        _record_selection_decision(config, scenario, entry, decision)
+        if decision.selected:
+            entries.append(entry)
+
+    cache[scenario] = entries
+    return entries
+
+
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """Parametrize mechanism-driven tests from the module's mechanism list."""
-    from pkcs11_check.raw.types_std import (
-        CKF_DERIVE,
-        CKF_DIGEST,
-        CKF_ENCRYPT,
-        CKF_GENERATE,
-        CKF_GENERATE_KEY_PAIR,
-        CKF_SIGN,
-        CKF_WRAP,
-    )
-
-    param_map = {
-        "mech_encrypt_entry": int(CKF_ENCRYPT),
-        "mech_sign_entry": int(CKF_SIGN),
-        "mech_digest_entry": int(CKF_DIGEST),
-        "mech_keygen_entry": int(CKF_GENERATE) | int(CKF_GENERATE_KEY_PAIR),
-        "mech_wrap_entry": int(CKF_WRAP),
-        "mech_derive_entry": int(CKF_DERIVE),
-        "mech_any_entry": 0,
-    }
-
-    # Check if any mechanism fixture is requested
     requested = None
-    for name in param_map:
+    for name in (*_SCENARIO_BY_FIXTURE, *_LEGACY_FLAG_BY_FIXTURE):
         if name in metafunc.fixturenames:
             requested = name
             break
@@ -244,11 +334,18 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 
     entries: list[Any] = []
     if catalog is not None:
-        flag = param_map[requested]
-        if flag:
-            entries = catalog.filter_registered(flag)
+        if requested in _SCENARIO_BY_FIXTURE:
+            entries = _selected_entries_for_scenario(
+                catalog,
+                metafunc.config,
+                _SCENARIO_BY_FIXTURE[requested],
+            )
         else:
-            entries = [e for e in catalog.all_entries() if e.config is not None]
+            flag = _LEGACY_FLAG_BY_FIXTURE[requested]
+            if flag == 0:
+                entries = [e for e in catalog.all_entries() if e.config is not None]
+            else:
+                entries = catalog.filter_registered(flag)
 
     if not entries:
         # No catalog or no matching entries — use a sentinel that triggers skip
@@ -497,6 +594,21 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     config = session.config
     if config.getoption("p11_module", default=None) is None:
         return
+
+    selection_telemetry = config.stash.get(_SELECTION_TELEMETRY_KEY, {})
+    if selection_telemetry:
+        selection_report = {
+            "selection_coverage": _serialize_selection_telemetry(selection_telemetry),
+        }
+        report_log_plugin = getattr(config, "_report_log_plugin", None)
+        if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
+            report_log_plugin._write_json_data(
+                {
+                    "$report_type": "SelectionReport",
+                    **selection_report,
+                }
+            )
+
     raw = config.stash.get(_RAW_INSTANCE, None)
     if raw is None:
         return
