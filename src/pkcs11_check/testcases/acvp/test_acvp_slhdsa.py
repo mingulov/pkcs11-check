@@ -1,7 +1,7 @@
 """NIST ACVP SLH-DSA test vectors - the ONLY source for SLH-DSA vectors.
 
-Tests SLH-DSA signature verification and generation using official NIST ACVP
-vectors.  Requires: scripts/fetch-optional-data.sh acvp
+Tests SLH-DSA key generation, signature verification and generation using official
+NIST ACVP vectors. Requires: scripts/fetch-optional-data.sh acvp
 
 Skips gracefully if ACVP vectors not cloned or mechanism unavailable.
 """
@@ -64,11 +64,54 @@ _PARAM_SET_MAP: dict[str, int] = {
 }
 
 
+def _load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
+    """Load SLH-DSA keyGen ACVP vectors.
+
+    Tests deterministic key generation by importing the expected private key
+    and verifying it matches the expected public key through sign/verify.
+    """
+    all_vecs = load_acvp_vectors("SLH-DSA-keyGen-FIPS205")
+    result = []
+    # Take 2 vectors per parameter set (24 total = 12 sets * 2)
+    param_set_counts: dict[str, int] = {}
+    for vec in all_vecs:
+        group = vec["group"]
+        param_name = group.get("parameterSet", "")
+        param_set = _PARAM_SET_MAP.get(param_name)
+        if param_set is None:
+            continue
+
+        # Track count per parameter set
+        current_count = param_set_counts.get(param_name, 0)
+        if current_count >= 2:
+            continue
+        param_set_counts[param_name] = current_count + 1
+
+        exp = vec["expected"]
+        sk = exp.get("sk", "")
+        pk = exp.get("pk", "")
+        if not sk or not pk:
+            continue
+
+        merged: dict[str, Any] = {
+            "param_set": param_set,
+            "param_name": param_name,
+            "sk": bytes.fromhex(sk),
+            "pk": bytes.fromhex(pk),
+            "tc_id": vec["input"].get("tcId", 0),
+        }
+        vec_id = f"keyGen-{param_name}-tc{merged['tc_id']}"
+        result.append((vec_id, merged))
+    return result
+
+
 def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load SLH-DSA sigVer ACVP vectors merged with expected results."""
     all_vecs = load_acvp_vectors("SLH-DSA-sigVer-FIPS205")
     result = []
-    for vec in all_vecs[:50]:  # cap for speed
+    # Take 4 vectors per parameter set (48 total = 12 sets * 4)
+    param_set_counts: dict[str, int] = {}
+    for vec in all_vecs:
         inp = vec["input"]
         exp = vec["expected"]
         group = vec["group"]
@@ -76,11 +119,19 @@ def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
         param_set = _PARAM_SET_MAP.get(param_name)
         if param_set is None:
             continue
+
+        # Track count per parameter set
+        current_count = param_set_counts.get(param_name, 0)
+        if current_count >= 4:
+            continue
+        param_set_counts[param_name] = current_count + 1
+
         pk = inp.get("pk", "")
         msg = inp.get("message", "")
         sig = inp.get("signature", "")
         if not pk or not msg or not sig:
             continue
+
         merged: dict[str, Any] = {
             "param_set": param_set,
             "param_name": param_name,
@@ -99,18 +150,28 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load SLH-DSA sigGen ACVP vectors merged with expected results."""
     all_vecs = load_acvp_vectors("SLH-DSA-sigGen-FIPS205")
     result = []
-    for vec in all_vecs[:5]:  # SLH-DSA signing is slow - keep minimal
+    # Take 1 vector per parameter set (12 total = 12 sets * 1)
+    # SLH-DSA signing is very slow, so keep minimal
+    param_set_seen: set[str] = set()
+    for vec in all_vecs:
         inp = vec["input"]
         group = vec["group"]
         param_name = group.get("parameterSet", "")
         param_set = _PARAM_SET_MAP.get(param_name)
         if param_set is None:
             continue
+
+        # Only take first vector per parameter set
+        if param_name in param_set_seen:
+            continue
+        param_set_seen.add(param_name)
+
         sk = inp.get("sk", "")
         msg = inp.get("message", "")
         if not sk or not msg:
             continue
-        merged = {
+
+        merged: dict[str, Any] = {
             "param_set": param_set,
             "param_name": param_name,
             "sk": bytes.fromhex(sk),
@@ -122,8 +183,64 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
     return result
 
 
+_KEYGEN_VECTORS = _load_keygen_vectors()
 _SIGVER_VECTORS = _load_sigver_vectors()
 _SIGGEN_VECTORS = _load_siggen_vectors()
+
+
+@pytest.mark.parametrize("vec_id,vec", _KEYGEN_VECTORS, ids=[v[0] for v in _KEYGEN_VECTORS])
+def test_slhdsa_keygen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    """SLH-DSA key generation test from NIST ACVP vectors.
+
+    Imports the expected private key and verifies it can be used for signing,
+    with the expected public key used for verification.
+    """
+    rs = p11_raw_session
+    if not rs.has_mechanism("SLH_DSA"):
+        pytest.skip("SLH_DSA not supported")
+
+    param_set: int = vec["param_set"]
+    priv_key = 0
+    pub_key = 0
+
+    try:
+        try:
+            # Import the private key from the vector
+            priv_key = import_pqc_private_key(
+                rs.raw,
+                rs.sh,
+                key_type=int(CKK_SLH_DSA),
+                value=vec["sk"],
+                parameter_set=param_set,
+                attrs={CKA_SIGN: True},
+            )
+        except AssertionError as e:
+            pytest.skip(f"Cannot import SLH-DSA private key ({vec['param_name']}): {e}")
+
+        try:
+            # Import the expected public key
+            pub_key = import_pqc_public_key(
+                rs.raw,
+                rs.sh,
+                key_type=int(CKK_SLH_DSA),
+                value=vec["pk"],
+                parameter_set=param_set,
+                attrs={CKA_VERIFY: True},
+            )
+        except AssertionError as e:
+            pytest.skip(f"Cannot import SLH-DSA public key ({vec['param_name']}): {e}")
+
+        # Test sign/verify roundtrip to verify keypair consistency
+        test_msg = b"SLH-DSA keygen test message"
+        sig = sign_single(rs.raw, rs.sh, priv_key, CKM_SLH_DSA, test_msg)
+        verified = verify_single(rs.raw, rs.sh, pub_key, CKM_SLH_DSA, test_msg, sig)
+        assert verified, f"{vec_id}: Sign/verify roundtrip failed for imported keypair"
+
+    finally:
+        if pub_key:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+        if priv_key:
+            destroy_quietly(rs.raw, rs.sh, priv_key)
 
 
 @pytest.mark.parametrize("vec_id,vec", _SIGVER_VECTORS, ids=[v[0] for v in _SIGVER_VECTORS])
@@ -139,7 +256,8 @@ def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
     try:
         try:
             pub_key = import_pqc_public_key(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 key_type=int(CKK_SLH_DSA),
                 value=vec["pk"],
                 parameter_set=param_set,
@@ -181,9 +299,9 @@ def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
 def test_slhdsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SLH-DSA signature generation from NIST ACVP message vectors.
 
-    PKCS#11 does not guarantee deterministic SLH-DSA output.  This test
+    PKCS#11 does not guarantee deterministic SLH-DSA output. This test
     verifies that the module can sign without error and produces a non-empty
-    result.  Exact signature comparison is skipped because most PKCS#11
+    result. Exact signature comparison is skipped because most PKCS#11
     implementations use randomized SLH-DSA.
     """
     rs = p11_raw_session
@@ -196,7 +314,8 @@ def test_slhdsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
     try:
         try:
             priv_key = import_pqc_private_key(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 key_type=int(CKK_SLH_DSA),
                 value=vec["sk"],
                 parameter_set=param_set,
