@@ -66,15 +66,19 @@ def load_acvp_vectors(algorithm: str) -> list[dict[str, Any]]:
         for pg, rg in zip(p_groups, r_groups):
             p_tests = pg.get("tests", [])
             r_tests = rg.get("tests", [])
+            # Merge metadata from both prompt and results groups
             group_meta = {k: v for k, v in pg.items() if k != "tests"}
+            group_meta.update({k: v for k, v in rg.items() if k != "tests" and k not in group_meta})
 
             for pt, rt in zip(p_tests, r_tests):
-                vectors.append({
-                    "input": pt,
-                    "expected": rt,
-                    "group": group_meta,
-                    "algorithm": algorithm,
-                })
+                vectors.append(
+                    {
+                        "input": pt,
+                        "expected": rt,
+                        "group": group_meta,
+                        "algorithm": algorithm,
+                    }
+                )
 
     return vectors
 
