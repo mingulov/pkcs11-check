@@ -10,7 +10,7 @@ import os
 from ctypes import byref
 from typing import Any
 
-from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.pack import attr_bytes, mech_bytes, mech_simple
 from pkcs11_check.raw.pack_mechanisms import (
     mech_ccm,
     mech_ctr,
@@ -20,13 +20,13 @@ from pkcs11_check.raw.pack_mechanisms import (
     mech_pss,
 )
 from pkcs11_check.raw.recipes import (
-    gen_ec_keypair,
     gen_keypair,
     gen_rsa_keypair,
     pack_attrs,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
+    CKA_EC_PARAMS,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -47,6 +47,7 @@ from pkcs11_check.raw.types_std import (
     CKK_SEED,
     CKM,
     CKM_AES_KEY_GEN,
+    CKM_EC_KEY_PAIR_GEN,
     CKM_GENERIC_SECRET_KEY_GEN,
     CKR_OK,
 )
@@ -346,12 +347,21 @@ def gen_keypair_for_mech(
             curve_oid = x25519_oid
         else:
             curve_oid = p256_oid
-        return gen_ec_keypair(
+        # Use the keygen mechanism from the registry: Weierstrass uses
+        # CKM_EC_KEY_PAIR_GEN, Edwards uses CKM_EC_EDWARDS_KEY_PAIR_GEN,
+        # Montgomery uses CKM_EC_MONTGOMERY_KEY_PAIR_GEN.
+        keygen_mech = (
+            int(config.keygen_mech) if config.keygen_mech is not None else int(CKM_EC_KEY_PAIR_GEN)
+        )
+        return gen_keypair(
             rs.raw,
             rs.sh,
-            curve_oid,
+            keygen_mech,
+            pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+            priv_base=[],
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+            pub_skip={int(CKA_EC_PARAMS)},
         )
 
     # PQC key types
