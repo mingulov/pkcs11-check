@@ -7,7 +7,7 @@ scenario, and return structured reasons when it is rejected.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pkcs11_check.raw.types_std import (
     CKF_DECRYPT,
@@ -18,6 +18,18 @@ from pkcs11_check.raw.types_std import (
     CKF_WRAP,
 )
 from pkcs11_check.testcases.mechanism_registry import MechConfig
+
+ScenarioName = Literal[
+    "wrap_roundtrip",
+    "encrypt_roundtrip",
+    "sign_verify_roundtrip",
+    "multipart_encrypt_roundtrip",
+]
+
+WRAP_ROUNDTRIP: ScenarioName = "wrap_roundtrip"
+ENCRYPT_ROUNDTRIP: ScenarioName = "encrypt_roundtrip"
+SIGN_VERIFY_ROUNDTRIP: ScenarioName = "sign_verify_roundtrip"
+MULTIPART_ENCRYPT_ROUNDTRIP: ScenarioName = "multipart_encrypt_roundtrip"
 
 SelectionDetail = tuple[str, ...] | bool | str | None
 
@@ -31,28 +43,12 @@ _FLAG_VALUES: tuple[int, ...] = (
 )
 
 _FLAG_NAME_BY_VALUE: dict[int, str] = {
-    0x00000001: "CKF_HW",
-    0x00000002: "CKF_MESSAGE_ENCRYPT",
-    0x00000004: "CKF_MESSAGE_DECRYPT",
-    0x00000008: "CKF_MESSAGE_SIGN",
-    0x00000010: "CKF_MESSAGE_VERIFY",
-    0x00000020: "CKF_MULTI_MESSAGE",
-    0x00000040: "CKF_FIND_OBJECTS",
     0x00000100: "CKF_ENCRYPT",
     0x00000200: "CKF_DECRYPT",
-    0x00000400: "CKF_DIGEST",
     0x00000800: "CKF_SIGN",
-    0x00001000: "CKF_SIGN_RECOVER",
     0x00002000: "CKF_VERIFY",
-    0x00004000: "CKF_VERIFY_RECOVER",
-    0x00008000: "CKF_GENERATE",
-    0x00010000: "CKF_GENERATE_KEY_PAIR",
     0x00020000: "CKF_WRAP",
     0x00040000: "CKF_UNWRAP",
-    0x00080000: "CKF_DERIVE",
-    0x10000000: "CKF_ENCAPSULATE",
-    0x20000000: "CKF_DECAPSULATE",
-    0x80000000: "CKF_EXTENSION",
 }
 
 
@@ -72,7 +68,6 @@ class SelectionReason:
     expected: SelectionDetail = None
     actual: SelectionDetail = None
     missing: tuple[str, ...] = ()
-    message: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,32 +133,40 @@ def _select_required_flags(
     if reason is not None:
         reasons.append(reason)
 
-    return SelectionDecision(scenario=scenario, selected=not reasons, reasons=tuple(reasons))
+    return SelectionDecision(
+        scenario=scenario,
+        selected=not reasons,
+        reasons=tuple(reasons),
+    )
 
 
 def wrap_roundtrip(entry: _EntryLike) -> SelectionDecision:
     """Select mechanisms that support wrap and unwrap semantics."""
 
-    return _select_required_flags(entry, "wrap_roundtrip", int(CKF_WRAP) | int(CKF_UNWRAP))
+    return _select_required_flags(entry, WRAP_ROUNDTRIP, int(CKF_WRAP) | int(CKF_UNWRAP))
 
 
 def encrypt_roundtrip(entry: _EntryLike) -> SelectionDecision:
     """Select mechanisms that support encrypt and decrypt semantics."""
 
-    return _select_required_flags(entry, "encrypt_roundtrip", int(CKF_ENCRYPT) | int(CKF_DECRYPT))
+    return _select_required_flags(
+        entry, ENCRYPT_ROUNDTRIP, int(CKF_ENCRYPT) | int(CKF_DECRYPT)
+    )
 
 
 def sign_verify_roundtrip(entry: _EntryLike) -> SelectionDecision:
     """Select mechanisms that support sign and verify semantics."""
 
-    return _select_required_flags(entry, "sign_verify_roundtrip", int(CKF_SIGN) | int(CKF_VERIFY))
+    return _select_required_flags(
+        entry, SIGN_VERIFY_ROUNDTRIP, int(CKF_SIGN) | int(CKF_VERIFY)
+    )
 
 
 def multipart_encrypt_roundtrip(entry: _EntryLike) -> SelectionDecision:
     """Select mechanisms that can encrypt/decrypt in multi-part mode."""
 
     decision = _select_required_flags(
-        entry, "multipart_encrypt_roundtrip", int(CKF_ENCRYPT) | int(CKF_DECRYPT)
+        entry, MULTIPART_ENCRYPT_ROUNDTRIP, int(CKF_ENCRYPT) | int(CKF_DECRYPT)
     )
     config = entry.config
     if config is None or config.multi_part_supported:
@@ -185,15 +188,18 @@ def multipart_encrypt_roundtrip(entry: _EntryLike) -> SelectionDecision:
     )
 
 
-def select_for_scenario(entry: _EntryLike, scenario: str) -> SelectionDecision:
+def select_for_scenario(
+    entry: _EntryLike,
+    scenario: ScenarioName | str,
+) -> SelectionDecision:
     """Dispatch to the scenario-specific selector."""
 
-    if scenario == "wrap_roundtrip":
+    if scenario == WRAP_ROUNDTRIP:
         return wrap_roundtrip(entry)
-    if scenario == "encrypt_roundtrip":
+    if scenario == ENCRYPT_ROUNDTRIP:
         return encrypt_roundtrip(entry)
-    if scenario == "sign_verify_roundtrip":
+    if scenario == SIGN_VERIFY_ROUNDTRIP:
         return sign_verify_roundtrip(entry)
-    if scenario == "multipart_encrypt_roundtrip":
+    if scenario == MULTIPART_ENCRYPT_ROUNDTRIP:
         return multipart_encrypt_roundtrip(entry)
-    raise ValueError(f"Unknown mechanism selection scenario: {scenario}")
+    raise ValueError(f"unknown scenario: {scenario}")
