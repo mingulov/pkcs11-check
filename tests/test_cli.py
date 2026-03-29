@@ -727,6 +727,57 @@ class TestTestCommand:
         assert report["schema_version"] == "1"
         assert report["selection_findings"][0]["selected_but_not_invoked"] == ["CKM_AES_GCM"]
 
+    def test_test_none_json_writes_quality_report_when_jsonl_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        results_path = tmp_path / "artifacts" / "results.json"
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            return 0
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--isolation",
+                "none",
+            ],
+        )
+
+        assert result.exit_code == 0
+        quality_path = results_path.parent / "quality.json"
+        assert quality_path.exists()
+        report = json.loads(quality_path.read_text())
+        assert report["schema_version"] == "1"
+        assert "selection telemetry not provided" in report["data_quality_warnings"]
+
     def test_test_preflight_failure_is_reported(self, tmp_path: Path, monkeypatch: object) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("")

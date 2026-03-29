@@ -264,14 +264,13 @@ def test_command(
                 coverage_path = unified_path.parent / "coverage.json"
                 coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
             results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path)
-            if results_payload is not None:
-                quality_path = unified_path.parent / "quality.json"
-                write_quality_json_report(
-                    quality_path,
-                    results_payload,
-                    coverage=coverage_data,
-                    report_log_records=quality_records,
-                )
+            quality_path = unified_path.parent / "quality.json"
+            write_quality_json_report(
+                quality_path,
+                results_payload or {},
+                coverage=coverage_data,
+                report_log_records=quality_records,
+            )
             jsonl_p.unlink(missing_ok=True)
         raise typer.Exit(code=int(exit_code))
     finally:
