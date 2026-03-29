@@ -556,6 +556,7 @@ def _assert_standard_raw_pack_contents(
             assert f"{header_prefix}/{header}" in archive_names
 
 
+@pytest.mark.timeout(300)
 def test_sdist_and_wheel_include_vendored_standard_headers_and_generated_raw_modules(
     tmp_path: Path,
 ) -> None:
