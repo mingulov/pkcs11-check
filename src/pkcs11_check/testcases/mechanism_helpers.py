@@ -19,6 +19,7 @@ from pkcs11_check.raw.pack_mechanisms import (
     mech_eddsa,
     mech_gcm,
     mech_oaep,
+    mech_pbe,
     mech_pss,
     mech_rc2,
     mech_rc2_cbc,
@@ -212,6 +213,11 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
     elif style == "mac_general":
         mac_len = d.get("mac_len", 8)
         return mech_bytes(CKM(mech_id), mac_len.to_bytes(8, "little"))
+    elif style == "pbe":
+        password = b"test1234"
+        salt = os.urandom(8)
+        iteration = d.get("iteration", 1000)
+        return mech_pbe(CKM(mech_id), password=password, salt=salt, iteration=iteration)
     elif style in ("ecdh", "hkdf", "string_data", "pbkdf2", "tls", "sp800_108"):
         return "SKIP"  # Needs runtime data
     elif style in ("rc2_mac_general", "rc5_mac_general"):
@@ -449,6 +455,7 @@ def test_plaintext_bytes() -> bytes:
 # ---------------------------------------------------------------------------
 # Encrypt Key Generation
 # ---------------------------------------------------------------------------
+
 
 def generate_key_from_recipe(
     rs: Any,

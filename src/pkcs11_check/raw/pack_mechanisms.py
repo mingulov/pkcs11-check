@@ -28,6 +28,7 @@ from .types_std import (
     CK_HASH_SIGN_ADDITIONAL_CONTEXT,
     CK_HKDF_PARAMS,
     CK_KEY_DERIVATION_STRING_DATA,
+    CK_PBE_PARAMS,
     CK_PKCS5_PBKD2_PARAMS2,
     CK_RC2_CBC_PARAMS,
     CK_RSA_PKCS_OAEP_PARAMS,
@@ -352,6 +353,27 @@ def mech_pbkdf2(
         ka,
         sub_mechanisms={"prf": prf},
     )
+
+
+def mech_pbe(
+    mechanism_type: CKM,
+    *,
+    password: bytes,
+    salt: bytes,
+    iteration: int,
+) -> PackedMechanism:
+    """Pack CK_PBE_PARAMS for password-based encryption/key derivation.
+
+    Fields: pInitVector (NULL -- module fills it), pPassword, ulPasswordLen,
+    pSalt, ulSaltLen, ulIteration.
+    """
+    ka: list[Any] = []
+    params = CK_PBE_PARAMS()
+    params.pInitVector = None  # module allocates/fills the IV
+    params.pPassword, params.ulPasswordLen = _pack_bytes(password, ka)
+    params.pSalt, params.ulSaltLen = _pack_bytes(salt, ka)
+    params.ulIteration = iteration
+    return _mech_struct(mechanism_type, params, "mech_pbe", ka)
 
 
 def mech_string_data(mechanism_type: CKM, data: bytes) -> PackedMechanism:
@@ -794,6 +816,7 @@ __all__ = [
     "mech_hash_sign_context",
     "mech_hkdf",
     "mech_oaep",
+    "mech_pbe",
     "mech_pbkdf2",
     "mech_pss",
     "mech_rc2",

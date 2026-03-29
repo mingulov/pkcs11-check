@@ -484,6 +484,7 @@ from .pack_mechanisms import (  # noqa: E402, F401
     mech_gcm,
     mech_hkdf,
     mech_oaep,
+    mech_pbe,
     mech_pbkdf2,
     mech_pss,
     mech_rc2,

@@ -282,6 +282,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: MD2 + DES-CBC key/IV derivation (PKCS#5 v1, obsolete)",
     )
@@ -291,6 +292,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: MD5 + DES-CBC key/IV derivation (PKCS#5 v1, deprecated)",
     )
@@ -336,6 +338,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: SHA-1 + RC4-128 key derivation (PKCS#12)",
     )
@@ -345,6 +348,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: SHA-1 + RC4-40 key derivation (PKCS#12)",
     )
@@ -372,6 +376,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: SHA-1 + RC2-128-CBC key/IV derivation (PKCS#12)",
     )
@@ -381,6 +386,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=None,
         key_sizes=(),
         param_required=True,
+        param_recipe=ParamRecipe("pbe"),
         expected_flags=CKF_GENERATE,
         notes="PBE: SHA-1 + RC2-40-CBC key/IV derivation (PKCS#12)",
     )
