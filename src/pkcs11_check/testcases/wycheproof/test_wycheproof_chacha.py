@@ -99,6 +99,7 @@ def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
             CKM_CHACHA20_POLY1305,
             msg,
             mech_param=chacha_param,
+            output_overhead=16,
         )
     except (AssertionError, AttributeError, TypeError) as exc:
         if result == "valid":
