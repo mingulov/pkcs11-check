@@ -19,6 +19,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
     CKA_DERIVE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -29,6 +30,7 @@ from pkcs11_check.raw.types_std import (
     CKD_NULL,
     CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
+    CKO_SECRET_KEY,
 )
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_ec_private_scalar,
@@ -153,6 +155,7 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             priv_key,
             CKM_ECDH1_DERIVE,
             attrs={
+                CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_VALUE_LEN: key_bits // 8,
                 CKA_SENSITIVE: False,
@@ -175,7 +178,7 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         if "mismatch" in exc_msg:
             raise
         if result == "valid":
-            pytest.fail(f"Valid ECDH derive failed for {vec_id}")
+            pytest.fail(f"Valid ECDH derive failed for {vec_id}: {exc_msg}")
         # acceptable: reject is fine
         return
     except (TypeError, NotImplementedError):
