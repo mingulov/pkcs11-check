@@ -7,7 +7,8 @@ Derivation categories handled:
 - SHA key derivation (no params): base generic secret key → derived key
 - HKDF (CK_HKDF_PARAMS): HKDF base key → AES-128 derived key
 - ECDH1 (CK_ECDH1_DERIVE_PARAMS): EC keypair → shared secret
-- AES-ECB/CBC encrypt-data derivation: AES base key → derived key
+- AES-ECB encrypt-data derivation: AES base key → derived key
+- DES-ECB / DES3-ECB encrypt-data derivation: DES/DES3 base key → derived key
 - CONCATENATE / XOR / EXTRACT: generic secret base key → derived key
 
 Mechanisms skipped here (too complex for generic parametrized tests):
@@ -16,6 +17,7 @@ Mechanisms skipped here (too complex for generic parametrized tests):
 - Signal protocol (X3DH, X2Ratchet): need protocol state machines
 - ECDH cofactor, ECMQV: variants of ECDH handled separately
 - AES-CBC-ENCRYPT-DATA: needs custom struct (CK_AES_CBC_ENCRYPT_DATA_PARAMS)
+- DES-CBC-ENCRYPT-DATA / DES3-CBC-ENCRYPT-DATA: need CK_DES_CBC_ENCRYPT_DATA_PARAMS
 - PUB_KEY_FROM_PRIV_KEY: not a typical derive — skipped here
 """
 
@@ -54,9 +56,13 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKD_NULL,
     CKK_AES,
+    CKK_DES,
+    CKK_DES3,
     CKK_GENERIC_SECRET,
     CKK_HKDF,
     CKM,
+    CKM_DES3_KEY_GEN,
+    CKM_DES_KEY_GEN,
     CKM_SHA256,
     CKO_SECRET_KEY,
     CKR_OK,
@@ -167,6 +173,26 @@ try:
 
     _AES_ECB_ENCRYPT_DATA_ID = int(CKM_AES_ECB_ENCRYPT_DATA)
     _AES_CBC_ENCRYPT_DATA_ID = int(CKM_AES_CBC_ENCRYPT_DATA)
+except ImportError:
+    pass
+
+# DES / DES3 ECB and CBC encrypt-data derive mechanisms
+_DES_ECB_ENCRYPT_DATA_ID: int = 0
+_DES_CBC_ENCRYPT_DATA_ID: int = 0
+_DES3_ECB_ENCRYPT_DATA_ID: int = 0
+_DES3_CBC_ENCRYPT_DATA_ID: int = 0
+try:
+    from pkcs11_check.raw.types_std import (
+        CKM_DES3_CBC_ENCRYPT_DATA,
+        CKM_DES3_ECB_ENCRYPT_DATA,
+        CKM_DES_CBC_ENCRYPT_DATA,
+        CKM_DES_ECB_ENCRYPT_DATA,
+    )
+
+    _DES_ECB_ENCRYPT_DATA_ID = int(CKM_DES_ECB_ENCRYPT_DATA)
+    _DES_CBC_ENCRYPT_DATA_ID = int(CKM_DES_CBC_ENCRYPT_DATA)
+    _DES3_ECB_ENCRYPT_DATA_ID = int(CKM_DES3_ECB_ENCRYPT_DATA)
+    _DES3_CBC_ENCRYPT_DATA_ID = int(CKM_DES3_CBC_ENCRYPT_DATA)
 except ImportError:
     pass
 
@@ -439,6 +465,62 @@ def _derive_aes_ecb(rs: RawSession, entry: MechEntry) -> None:
             destroy_quietly(rs.raw, rs.sh, derived_key)
 
 
+def _gen_des_base_key(rs: RawSession, des3: bool) -> int:
+    """Generate a DES or DES3 base key with CKA_DERIVE=True.
+
+    DES and DES3 keys have fixed lengths (no CKA_VALUE_LEN).
+    """
+    from ctypes import byref
+
+    key_type = CKK_DES3 if des3 else CKK_DES
+    keygen_ckm = CKM(CKM_DES3_KEY_GEN) if des3 else CKM(CKM_DES_KEY_GEN)
+    attrs: dict[int, Any] = {
+        CKA_KEY_TYPE: key_type,
+        CKA_DERIVE: True,
+        CKA_TOKEN: False,
+        CKA_EXTRACTABLE: True,
+        CKA_SENSITIVE: False,
+    }
+    packed = pack_attrs(attrs)
+    tmpl = template(*packed)
+    mech = mech_simple(keygen_ckm)
+    handle = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_GenerateKey(  # type: ignore[attr-defined]
+        rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
+    )
+    assert rv == CKR_OK, f"DES{'3' if des3 else ''} base key gen failed: {rv}"
+    return handle.value
+
+
+def _derive_des_ecb(rs: RawSession, entry: MechEntry, des3: bool) -> None:
+    """DES[3]_ECB_ENCRYPT_DATA: derive by encrypting an 8-byte block with a DES[3] base key."""
+    mech_id = entry.mech_id
+    keygen_name = "DES3_KEY_GEN" if des3 else "DES_KEY_GEN"
+    if not rs.has_mechanism(keygen_name):
+        pytest.skip(f"{entry.mech_name}: {keygen_name} not available")
+    base_key = _gen_des_base_key(rs, des3=des3)
+    derived_key: int = 0
+    try:
+        # CK_KEY_DERIVATION_STRING_DATA: 8 bytes (one DES block)
+        data_param = mech_string_data(
+            CKM(mech_id),
+            b"derive08",  # 8 bytes
+        )
+        derived_key = derive_key(
+            rs.raw,
+            rs.sh,
+            base_key,
+            CKM(mech_id),
+            attrs=_DERIVED_GENERIC_ATTRS,
+            mech_param=data_param,
+        )
+        assert derived_key != 0, f"{entry.mech_name}: derive returned handle 0"
+    finally:
+        destroy_quietly(rs.raw, rs.sh, base_key)
+        if derived_key != 0:
+            destroy_quietly(rs.raw, rs.sh, derived_key)
+
+
 def _derive_concat_data(rs: RawSession, entry: MechEntry) -> None:
     """CONCATENATE_BASE_AND_DATA / CONCATENATE_DATA_AND_BASE / XOR_BASE_AND_DATA.
 
@@ -552,7 +634,8 @@ class TestMechDerive:
         - SHA key derivation: no params, generic secret base key
         - HKDF_DERIVE: CK_HKDF_PARAMS, HKDF base key
         - ECDH1/cofactor: CK_ECDH1_DERIVE_PARAMS from peer public key
-        - AES_ECB_ENCRYPT_DATA: block-aligned data string param
+        - AES_ECB_ENCRYPT_DATA: 16-byte block data string param, AES base key
+        - DES_ECB_ENCRYPT_DATA / DES3_ECB_ENCRYPT_DATA: 8-byte block string param, DES/DES3 base key
         - CONCATENATE_BASE_AND_DATA / CONCATENATE_DATA_AND_BASE / XOR_BASE_AND_DATA:
           CK_KEY_DERIVATION_STRING_DATA param
         - EXTRACT_KEY_FROM_KEY: CK_ULONG bit position param
@@ -591,11 +674,21 @@ class TestMechDerive:
         if _CKM_NULL_ID and mech_id == _CKM_NULL_ID:
             pytest.skip(f"{entry.mech_name}: null mechanism — no derivation semantics")
 
-        # Skip AES-CBC-ENCRYPT-DATA (needs custom struct)
+        # Skip AES-CBC-ENCRYPT-DATA (needs custom struct with IV)
         if _AES_CBC_ENCRYPT_DATA_ID and mech_id == _AES_CBC_ENCRYPT_DATA_ID:
             pytest.skip(
                 f"{entry.mech_name}: needs CK_AES_CBC_ENCRYPT_DATA_PARAMS struct — "
                 "covered in test_aes_kdf.py"
+            )
+
+        # Skip DES-CBC-ENCRYPT-DATA (needs CK_DES_CBC_ENCRYPT_DATA_PARAMS struct with IV)
+        if _DES_CBC_ENCRYPT_DATA_ID and mech_id == _DES_CBC_ENCRYPT_DATA_ID:
+            pytest.skip(
+                f"{entry.mech_name}: needs CK_DES_CBC_ENCRYPT_DATA_PARAMS struct with IV"
+            )
+        if _DES3_CBC_ENCRYPT_DATA_ID and mech_id == _DES3_CBC_ENCRYPT_DATA_ID:
+            pytest.skip(
+                f"{entry.mech_name}: needs CK_DES_CBC_ENCRYPT_DATA_PARAMS struct with IV"
             )
 
         # Dispatch to per-family helpers
@@ -605,6 +698,10 @@ class TestMechDerive:
             _derive_ecdh(rs, entry)
         elif _AES_ECB_ENCRYPT_DATA_ID and mech_id == _AES_ECB_ENCRYPT_DATA_ID:
             _derive_aes_ecb(rs, entry)
+        elif _DES_ECB_ENCRYPT_DATA_ID and mech_id == _DES_ECB_ENCRYPT_DATA_ID:
+            _derive_des_ecb(rs, entry, des3=False)
+        elif _DES3_ECB_ENCRYPT_DATA_ID and mech_id == _DES3_ECB_ENCRYPT_DATA_ID:
+            _derive_des_ecb(rs, entry, des3=True)
         elif mech_id in _CONCAT_DATA_MECH_IDS or mech_id == _XOR_MECH_ID:
             _derive_concat_data(rs, entry)
         elif _EXTRACT_MECH_ID and mech_id == _EXTRACT_MECH_ID:
