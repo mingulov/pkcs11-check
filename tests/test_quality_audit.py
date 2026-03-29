@@ -1,0 +1,213 @@
+"""Tests for the quality audit analysis core."""
+
+from __future__ import annotations
+
+from pkcs11_check.core.quality_audit import build_quality_audit, classify_skip_reason
+
+
+def test_classify_skip_reason_falls_back_to_unknown() -> None:
+    assert classify_skip_reason("something unexpected happened") == "unknown"
+
+
+def test_build_quality_audit_results_only_degrades_gracefully() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {
+            "passed": 1,
+            "failed": 1,
+            "skipped": 2,
+            "xfailed": 0,
+            "xpassed": 0,
+            "error": 0,
+            "total": 4,
+        },
+        "units": [
+            {
+                "target": "src/pkcs11_check/testcases/test_demo.py",
+                "status": "failed",
+                "counts": {
+                    "passed": 1,
+                    "failed": 1,
+                    "skipped": 2,
+                    "xfailed": 0,
+                    "xpassed": 0,
+                    "error": 0,
+                },
+                "tests": [
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_flaky",
+                        "outcome": "skipped",
+                        "longrepr": "Skipped: CKM_AES_CBC not supported",
+                    },
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_flaky",
+                        "outcome": "passed",
+                    },
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_never_passed",
+                        "outcome": "skipped",
+                        "longrepr": "Skipped: No --p11-module specified",
+                    },
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_fails",
+                        "outcome": "failed",
+                        "longrepr": "AssertionError: boom",
+                    },
+                ],
+                "skip_reasons": {
+                    "CKM_AES_CBC not supported": 1,
+                    "No --p11-module specified": 1,
+                },
+            }
+        ],
+    }
+
+    report = build_quality_audit(results=results)
+
+    assert report["schema_version"] == "1"
+    assert report["summary"]["passed"] == 1
+    assert report["summary"]["failed"] == 1
+    assert report["summary"]["skipped"] == 2
+    assert report["never_passed_nodeids"] == [
+        "src/pkcs11_check/testcases/test_demo.py::test_fails",
+        "src/pkcs11_check/testcases/test_demo.py::test_never_passed",
+    ]
+    assert any(
+        finding["category"] == "missing_capability"
+        and finding["reason"] == "CKM_AES_CBC not supported"
+        for finding in report["framework_skip_candidates"]
+    )
+    assert any(
+        finding["category"] == "framework_constraint"
+        and finding["reason"] == "No --p11-module specified"
+        for finding in report["framework_skip_candidates"]
+    )
+    assert any("coverage" in warning.lower() for warning in report["data_quality_warnings"])
+
+
+def test_build_quality_audit_uses_coverage_for_mechanism_findings() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [],
+    }
+    coverage = {
+        "function_coverage": {
+            "available": 1,
+            "called": 1,
+            "called_names": ["C_Encrypt"],
+            "called_counts": {"C_Encrypt": 1},
+            "bootstrap_counts": {},
+            "uncalled_names": [],
+        },
+        "mechanism_coverage": {
+            "available": 2,
+            "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+            "invoked": 1,
+            "invoked_names": ["CKM_AES_CBC"],
+            "invoked_counts": {"CKM_AES_CBC": 1},
+            "not_invoked": 1,
+            "not_invoked_names": ["CKM_AES_GCM"],
+            "invoked_detail": ["encrypt_roundtrip"],
+            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+        },
+    }
+
+    report = build_quality_audit(results=results, coverage=coverage)
+
+    assert any(
+        finding["mechanism"] == "CKM_AES_GCM" and finding["status"] == "not_invoked"
+        for finding in report["mechanism_findings"]
+    )
+    assert report["selection_findings"] == []
+    assert "selection telemetry not provided" in report["data_quality_warnings"]
+
+
+def test_build_quality_audit_selection_report_enables_selected_but_not_invoked() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [],
+    }
+    coverage = {
+        "mechanism_coverage": {
+            "available": 2,
+            "available_names": ["CKM_AES_CBC", "CKM_AES_GCM"],
+            "invoked": 1,
+            "invoked_names": ["CKM_AES_CBC"],
+            "invoked_counts": {"CKM_AES_CBC": 1},
+            "not_invoked": 1,
+            "not_invoked_names": ["CKM_AES_GCM"],
+            "invoked_detail": ["encrypt_roundtrip"],
+            "invoked_detail_counts": {"encrypt_roundtrip": 1},
+        },
+    }
+    selection_record = {
+        "$report_type": "SelectionReport",
+        "selection_coverage": {
+            "encrypt_roundtrip": {
+                "selected_mechanisms": ["CKM_AES_CBC", "CKM_AES_GCM"],
+                "rejected_mechanisms": ["CKM_AES_XTS"],
+                "rejected_reason_counts": {"unsupported_multi_part": 2},
+            }
+        },
+    }
+
+    report = build_quality_audit(
+        results=results,
+        coverage=coverage,
+        report_log_records=[selection_record],
+    )
+
+    assert report["selection_findings"]
+    finding = report["selection_findings"][0]
+    assert finding["scenario"] == "encrypt_roundtrip"
+    assert finding["selected_but_not_invoked"] == ["CKM_AES_GCM"]
+    assert finding["rejected_reason_categories"] == {"framework_constraint": 2}
+
+
+def test_build_quality_audit_never_passed_nodeids_are_conservative() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {"passed": 1, "failed": 1, "skipped": 1, "xfailed": 0, "xpassed": 0, "error": 0},
+        "units": [
+            {
+                "target": "src/pkcs11_check/testcases/test_demo.py",
+                "status": "passed",
+                "counts": {
+                    "passed": 1,
+                    "failed": 1,
+                    "skipped": 1,
+                    "xfailed": 0,
+                    "xpassed": 0,
+                    "error": 0,
+                },
+                "tests": [
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_flaky",
+                        "outcome": "skipped",
+                        "longrepr": "Skipped: CKM_AES_CBC not supported",
+                    },
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_flaky",
+                        "outcome": "passed",
+                    },
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_failed",
+                        "outcome": "failed",
+                        "longrepr": "AssertionError: boom",
+                    },
+                ],
+            }
+        ],
+    }
+
+    report = build_quality_audit(results=results)
+
+    assert report["never_passed_nodeids"] == [
+        "src/pkcs11_check/testcases/test_demo.py::test_failed",
+    ]
