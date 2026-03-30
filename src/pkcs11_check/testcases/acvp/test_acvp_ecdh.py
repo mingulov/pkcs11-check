@@ -62,6 +62,29 @@ def _der_octet_string(data: bytes) -> bytes:
         return bytes([0x04, 0x82, n >> 8, n & 0xFF]) + data
 
 
+def _strip_der_octet_string(data: bytes) -> bytes:
+    """Strip DER OCTET STRING wrapper and return inner data.
+
+    Handles short form (length < 128) and long form (1-2 byte length).
+    Returns original data if not a valid DER OCTET STRING.
+    """
+    if len(data) < 2 or data[0] != 0x04:
+        return data  # Not a DER OCTET STRING
+
+    length_byte = data[1]
+    if length_byte < 0x80:
+        # Short form: tag (1) + length (1) + data
+        return data[2:]
+    elif length_byte == 0x81 and len(data) >= 3:
+        # Long form, 1 byte length: tag (1) + 0x81 (1) + length (1) + data
+        return data[3:]
+    elif length_byte == 0x82 and len(data) >= 4:
+        # Long form, 2 byte length: tag (1) + 0x82 (1) + length (2) + data
+        return data[4:]
+    else:
+        return data  # Unsupported or invalid format
+
+
 def _pad_coordinate(hex_str: str, coord_len: int) -> bytes:
     """Pad hex coordinate to specified byte length."""
     return bytes.fromhex(hex_str.zfill(coord_len * 2))
@@ -357,11 +380,14 @@ class TestEcdhKeyAgreement:
             if not bob_ec_point:
                 pytest.skip("Cannot extract public key point for ECDH")
 
+            # CKA_EC_POINT is DER-encoded; ECDH1_DERIVE requires raw point per OASIS spec
+            bob_point_raw = _strip_der_octet_string(bob_ec_point)
+
             # Derive shared secrets
             mech_param_alice = mech_ecdh(
                 CKM_ECDH1_DERIVE,
                 kdf=int(CKD_NULL),
-                public_data=bob_ec_point,
+                public_data=bob_point_raw,
             )
 
             alice_secret = derive_key(
@@ -371,6 +397,7 @@ class TestEcdhKeyAgreement:
                 mechanism=CKM_ECDH1_DERIVE,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                     CKA_SENSITIVE: False,
                     CKA_EXTRACTABLE: True,
                 },
