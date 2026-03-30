@@ -12,7 +12,7 @@ FROM quay.io/fedora/fedora:44 AS builder
 ARG NSS_TAG=tip
 
 RUN dnf -y install git gcc gcc-c++ make cmake ninja-build \
-    zlib-devel python3 python3-pip mercurial \
+    zlib-devel python3.14 python3.14-pip mercurial \
     && pip3 install gyp-next \
     && dnf clean all
 
@@ -36,7 +36,7 @@ RUN ls -lh /build/dist/Release/lib/libsoftokn3.so \
 # ---------- runtime ----------
 FROM quay.io/fedora/fedora:44
 
-RUN dnf -y install python3 python3-devel gcc git nss-tools sqlite \
+RUN dnf -y install python3.14 python3.14-devel gcc git nss-tools sqlite \
     && dnf clean all
 
 # Test tooling: fault-proxy, pkcs11-provider, p11-kit

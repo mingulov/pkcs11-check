@@ -4,7 +4,7 @@ FROM fedora:44
 
 RUN dnf install -y \
     nss nss-tools nss-softokn \
-    python3 python3-devel \
+    python3.14 python3.14-devel \
     gcc openssl-devel git \
     && dnf clean all
 
@@ -29,7 +29,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
 COPY third_party/ third_party/
-RUN uv python pin 3.12 && uv sync --frozen
+RUN uv sync --frozen --python python3.14
 
 # Copy test code (changes frequently, does not invalidate deps cache)
 COPY . .
