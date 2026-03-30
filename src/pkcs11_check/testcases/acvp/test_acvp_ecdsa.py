@@ -239,9 +239,6 @@ def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
                 for name in (
                     "CKR_SIGNATURE_INVALID",
                     "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DATA_INVALID",
-                    "CKR_FUNCTION_FAILED",
-                    "CKR_DEVICE_ERROR",
                 )
             ):
                 verified = False

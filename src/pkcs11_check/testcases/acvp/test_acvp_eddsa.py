@@ -56,7 +56,6 @@ _UNSUPPORTED_ERRORS = (
     "CKR_TEMPLATE_INCONSISTENT",
     "CKR_CURVE_NOT_SUPPORTED",
     "CKR_KEY_SIZE_RANGE",
-    "CKR_DEVICE_ERROR",  # Kryoptic may return this for unsupported Ed25519
 )
 
 
@@ -198,9 +197,6 @@ def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
                 for name in (
                     "CKR_SIGNATURE_INVALID",
                     "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DATA_INVALID",
-                    "CKR_FUNCTION_FAILED",
-                    "CKR_DEVICE_ERROR",
                 )
             ):
                 verified = False

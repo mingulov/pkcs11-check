@@ -289,7 +289,7 @@ def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
             pytest.fail(f"{vec_id}: accepted INVALID signature (expected rejection)")
         if expected and not verified:
             # Module rejected a valid signature - module issue, mark as xfail
-            pytest.xfail(f"{vec_id}: rejected VALID SLH-DSA signature - known Kryoptic issue")
+            pytest.fail(f"{vec_id}: rejected VALID SLH-DSA signature")
     finally:
         if pub_key:
             destroy_quietly(rs.raw, rs.sh, pub_key)

@@ -45,8 +45,8 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256_RSA_PKCS,
 )
-from pkcs11_check.testcases.acvp.rsa.base_loader import load_keygen_vectors
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
+from pkcs11_check.testcases.acvp.rsa.base_loader import load_keygen_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -103,7 +103,6 @@ class TestRsaKeyGen:
                     "CKR_ATTRIBUTE_VALUE_INVALID",
                     "CKR_TEMPLATE_INCOMPLETE",
                     "CKR_KEY_SIZE_RANGE",
-                    "CKR_DEVICE_ERROR",
                 )
             ):
                 pytest.skip(f"RSA {modulo}-bit key generation not supported: {exc}")
@@ -172,7 +171,6 @@ class TestRsaKeyGen:
                     "CKR_ATTRIBUTE_VALUE_INVALID",
                     "CKR_TEMPLATE_INCOMPLETE",
                     "CKR_KEY_SIZE_RANGE",
-                    "CKR_DEVICE_ERROR",
                 )
             ):
                 pytest.skip(f"RSA {modulo}-bit key attribute query failed: {exc}")
@@ -229,7 +227,6 @@ class TestRsaKeyGenBySize:
                 for name in (
                     "CKR_MECHANISM_INVALID",
                     "CKR_KEY_SIZE_RANGE",
-                    "CKR_DEVICE_ERROR",
                 )
             ):
                 pytest.skip(f"RSA {bits}-bit not supported by this module")

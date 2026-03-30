@@ -65,7 +65,6 @@ _UNSUPPORTED_ERRORS = (
     "CKR_ATTRIBUTE_VALUE_INVALID",
     "CKR_TEMPLATE_INCONSISTENT",
     "CKR_KEY_SIZE_RANGE",
-    "CKR_DEVICE_ERROR",
     "CKR_MECHANISM_PARAM_INVALID",
 )
 
@@ -179,18 +178,19 @@ class TestMlDsaSigGen:
             mech = get_mldsa_mechanism(pre_hash)
 
             # Sign the message
-            try:
-                sig = sign_single(rs.raw, rs.sh, priv_key, mech, vec["msg"])
-            except AssertionError as e:
-                pytest.xfail(f"{vec_id}: ML-DSA sign raised unexpected error: {e}")
+            sig = sign_single(rs.raw, rs.sh, priv_key, mech, vec["msg"])
 
             # Note: ML-DSA is probabilistic, so we can't compare signatures
-            # Instead, verify the signature we just generated
+            # Instead, verify the signature we just generated (if pk available)
+            pk_bytes = vec.get("pk", b"")
+            if not pk_bytes:
+                return
+
             pub_key = import_pqc_public_key(
                 rs.raw,
                 rs.sh,
                 key_type=int(CKK_ML_DSA),
-                value=vec.get("pk", b""),
+                value=pk_bytes,
                 parameter_set=vec["parameter_set"],
                 attrs={CKA_VERIFY: True},
             )
@@ -198,7 +198,7 @@ class TestMlDsaSigGen:
             try:
                 verified = verify_single(rs.raw, rs.sh, pub_key, mech, vec["msg"], sig)
                 if not verified:
-                    pytest.xfail(f"{vec_id}: Generated signature failed verification")
+                    pytest.fail(f"{vec_id}: Generated signature failed verification")
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub_key)
 
@@ -253,9 +253,6 @@ class TestMlDsaSigVer:
                     for name in (
                         "CKR_SIGNATURE_INVALID",
                         "CKR_SIGNATURE_LEN_RANGE",
-                        "CKR_DATA_INVALID",
-                        "CKR_FUNCTION_FAILED",
-                        "CKR_DEVICE_ERROR",
                     )
                 ):
                     verified = False
@@ -267,7 +264,7 @@ class TestMlDsaSigVer:
             if not vec["expected_pass"] and verified:
                 pytest.fail(f"{vec_id}: module ACCEPTED an INVALID ML-DSA signature")
             if vec["expected_pass"] and not verified:
-                pytest.xfail(f"{vec_id}: module rejected a VALID ML-DSA signature")
+                pytest.fail(f"{vec_id}: module rejected a VALID ML-DSA signature")
         except AssertionError as exc:
             _handle_unsupported(exc, vec["param_set"])
         finally:
