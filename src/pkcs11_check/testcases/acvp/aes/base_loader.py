@@ -72,10 +72,14 @@ def _load_vectors(
                     valid = False
                     break
 
-                if value and transform:
+                if transform is not None:
                     value = transform(value)
-                elif value and src_key in ("key", "iv", "pt", "ct", "aad", "nonce"):
-                    value = bytes.fromhex(value)
+                elif (
+                    value
+                    and isinstance(value, str)
+                    and src_key in ("key", "iv", "pt", "ct", "aad", "nonce")
+                ):
+                    value = bytes.fromhex(value) if value else b""
 
                 merged[field_name] = value
 
@@ -114,10 +118,14 @@ def _load_vectors(
                     valid = False
                     break
 
-                if value and transform:
+                if transform is not None:
                     value = transform(value)
-                elif value and src_key in ("key", "iv", "pt", "ct", "aad", "nonce", "tag"):
-                    value = bytes.fromhex(value)
+                elif (
+                    value
+                    and isinstance(value, str)
+                    and src_key in ("key", "iv", "pt", "ct", "aad", "nonce", "tag")
+                ):
+                    value = bytes.fromhex(value) if value else b""
 
                 merged[field_name] = value
 

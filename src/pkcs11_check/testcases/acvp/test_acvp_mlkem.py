@@ -93,7 +93,6 @@ class TestMlKemKeyGen:
                 priv_base=[attr_ulong(CKA_PARAMETER_SET, vec["parameter_set"])],
                 public_attrs={CKA_ENCRYPT: True},
                 private_attrs={CKA_DERIVE: True},
-                pub_skip={CKA_PARAMETER_SET},
             )
             assert pub_key != 0, f"{vec_id}: Public key handle is zero"
             assert priv_key != 0, f"{vec_id}: Private key handle is zero"
