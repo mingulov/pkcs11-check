@@ -395,6 +395,7 @@ class TestEcdhKeyAgreement:
                 err in str(exc)
                 for err in [
                     "CKR_MECHANISM_INVALID",
+                    "CKR_MECHANISM_PARAM_INVALID",
                     "CKR_ATTRIBUTE_VALUE_INVALID",
                     "CKR_CURVE_NOT_SUPPORTED",
                 ]
