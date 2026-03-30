@@ -30,6 +30,11 @@ bash local-builds/test.sh softhsm2 -m "not (wycheproof or acvp or cctv or stress
 bash local-builds/test.sh softhsm2 -m "wycheproof or acvp or cctv"       # ~72K vectors only
 bash local-builds/test.sh softhsm2                                        # full: ~75K tests, ~5min
 
+# Test vector data (third-party, fetched separately)
+bash scripts/fetch-data.sh --status          # show what's present/missing
+bash scripts/fetch-data.sh all               # fetch all sources (~800 MB)
+bash scripts/fetch-data.sh wycheproof        # fetch individual source
+
 # Standard commands — ALWAYS use "uv run" prefix, tools are NOT on PATH
 uv run pkcs11-check version              # check CLI works
 uv run python -m pytest tests/      # run meta-tests (pkcs11-check's own tests)
@@ -50,6 +55,13 @@ docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
 ### Two test directories
 - `src/pkcs11_check/testcases/` — the PRODUCT: PKCS#11 tests run against hardware/software modules
 - `tests/` — META-TESTS: tests for pkcs11-check's own code (config parsing, markers, CLI)
+
+### Test vector data (`data/`)
+- `data/sources.toml` — tracked manifest: pinned commits, SHA-256 checksums, include filters
+- `data/.gitignore` — tracked, ignores extracted directories
+- `data/wycheproof/`, `data/cctv/`, `data/acvp/`, `data/x509-limbo/` — gitignored, fetched by `scripts/fetch-data.sh`
+- Own test data (mechanism_vectors, KAT JSONs) stays in `src/pkcs11_check/testcases/data/` (tracked)
+- Override data location with `PKCS11_CHECK_DATA_DIR` env var
 
 ### Core modules
 - `core/loader.py` — PKCS#11 module loading with v2.40/v3.0/v3.1/v3.2 interface negotiation
@@ -131,6 +143,8 @@ rv = raw.C_GetSlotList(1, None, byref(count))  # NULL pSlotList
 - Docker runs write artifacts under `artifacts/<provider>/`
 - Standard artifact files are `console.log`, `results.json`, and `state.json`
 - Shared container-side runners are [docker/run-with-artifacts.sh](/home/user/src/m/pkcs11-check/docker/run-with-artifacts.sh) and [docker/run-pkcs11-check.sh](/home/user/src/m/pkcs11-check/docker/run-pkcs11-check.sh)
+- Test vector data is bind-mounted read-only from host `data/` into containers — NOT copied into images
+- Run `bash scripts/fetch-data.sh all` before Docker tests to populate data
 
 ### Git workflow — CRITICAL
 - **Development branch:** `dev` — ALL work merges here. NEVER merge directly to `main`.
