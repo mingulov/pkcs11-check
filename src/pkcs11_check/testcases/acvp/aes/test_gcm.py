@@ -9,6 +9,7 @@ import pytest
 from pkcs11_check.raw.pack_mechanisms import mech_gcm
 from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single
 from pkcs11_check.raw.types_std import CKM_AES_GMAC
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 from pkcs11_check.testcases.acvp.aes.base import (
     CKM_AES_GCM_SIV,
     _import_aes_key,
@@ -16,7 +17,6 @@ from pkcs11_check.testcases.acvp.aes.base import (
     run_gcm_decrypt_test,
     run_gcm_encrypt_test,
 )
-from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -35,7 +35,7 @@ def _load_gcm_vectors() -> tuple[
         "pt": "pt",
         "aad": "aad",
         "ct_expected": ("ct", lambda x: bytes.fromhex(x) if x else b""),
-        "tag_expected": "tag",
+        "tag_expected": ("tag", lambda x: bytes.fromhex(x) if x else b""),
     }
     decrypt_fields = {
         "key": "key",
