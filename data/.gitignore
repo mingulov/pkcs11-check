@@ -1,0 +1,6 @@
+# Extracted third-party data (fetched by scripts/fetch-data.sh)
+# Only sources.toml and this .gitignore are tracked.
+wycheproof/
+cctv/
+acvp/
+x509-limbo/
