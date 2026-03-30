@@ -154,3 +154,150 @@ def run_simple_decrypt_test(
     finally:
         if key:
             destroy_quietly(rs.raw, rs.sh, key)
+
+
+def run_multiblock_encrypt_test(
+    p11_raw_session: Any,
+    vec_id: str,
+    vec: dict[str, Any],
+    mech_name: str,
+    mech_constant: CKM,
+    mech_param_func: Callable[[], Any] | None = None,
+) -> None:
+    """Run multi-block CFB encryption test with chaining.
+
+    Processes all blocks sequentially with a single context,
+    verifying each intermediate result matches ACVP expectations.
+    CFB chaining: block N+1 uses ciphertext of block N as IV.
+    """
+    rs = p11_raw_session
+    if not rs.has_mechanism(mech_name):
+        pytest.skip(f"{mech_name} not supported by module")
+
+    blocks = vec.get("blocks", [])
+    if not blocks:
+        pytest.fail(f"{vec_id}: No blocks found in multi-block test")
+
+    # Import key from first block (all blocks use same key in CFB tests)
+    key = 0
+    try:
+        key = _import_aes_key(rs, blocks[0]["key"], encrypt=True, decrypt=False)
+
+        # Initialize encryption context once for all blocks
+        if mech_param_func:
+            mech = mech_param_func()
+        else:
+            mech = mech_bytes(mech_constant, blocks[0]["iv"])
+
+        rv = rs.raw.C_EncryptInit(rs.sh, mech.mech, key)
+        if rv != 0:
+            pytest.xfail(f"Module limitation: {mech_name} encrypt_init failed with CKR={rv}")
+
+        # Process each block with C_EncryptUpdate (maintains CFB state)
+        for block in blocks:
+            from ctypes import byref, c_ubyte, create_string_buffer
+
+            pt = block["pt"]
+            outlen = rs.raw.encryption_len(len(pt), False)
+
+            # Prepare output buffer
+            ct_buf = create_string_buffer(outlen)
+            ct_len = c_ubyte(outlen)
+
+            rv = rs.raw.C_EncryptUpdate(
+                rs.sh, (c_ubyte * len(pt))(*pt), len(pt), ct_buf, byref(ct_len)
+            )
+            if rv != 0:
+                pytest.xfail(
+                    f"Module limitation: {mech_name} encrypt_update failed at block {block['block_index']} with CKR={rv}"
+                )
+                return
+
+            ct = bytes(ct_buf[: ct_len.value])
+
+            assert ct == block["ct_expected"], (
+                f"{vec_id}: block {block['block_index']} ciphertext mismatch: "
+                f"got {ct.hex()}, expected {block['ct_expected'].hex()}"
+            )
+
+        # Finalize (CFB returns 0 bytes)
+        rv = rs.raw.C_EncryptFinal(rs.sh, None, None)
+        if rv != 0:
+            pytest.xfail(f"Module limitation: {mech_name} encrypt_final failed with CKR={rv}")
+
+    finally:
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+
+def run_multiblock_decrypt_test(
+    p11_raw_session: Any,
+    vec_id: str,
+    vec: dict[str, Any],
+    mech_name: str,
+    mech_constant: CKM,
+    mech_param_func: Callable[[], Any] | None = None,
+) -> None:
+    """Run multi-block CFB decryption test with chaining.
+
+    Processes all blocks sequentially with a single context,
+    verifying each intermediate result matches ACVP expectations.
+    """
+    rs = p11_raw_session
+    if not rs.has_mechanism(mech_name):
+        pytest.skip(f"{mech_name} not supported by module")
+
+    blocks = vec.get("blocks", [])
+    if not blocks:
+        pytest.fail(f"{vec_id}: No blocks found in multi-block test")
+
+    # Import key from first block
+    key = 0
+    try:
+        key = _import_aes_key(rs, blocks[0]["key"], encrypt=False, decrypt=True)
+
+        # Initialize decryption context once for all blocks
+        if mech_param_func:
+            mech = mech_param_func()
+        else:
+            mech = mech_bytes(mech_constant, blocks[0]["iv"])
+
+        rv = rs.raw.C_DecryptInit(rs.sh, mech.mech, key)
+        if rv != 0:
+            pytest.xfail(f"Module limitation: {mech_name} decrypt_init failed with CKR={rv}")
+
+        # Process each block with C_DecryptUpdate (maintains CFB state)
+        for block in blocks:
+            from ctypes import byref, c_ubyte, create_string_buffer
+
+            ct = block["ct"]
+            outlen = rs.raw.decryption_len(len(ct), False)
+
+            # Prepare output buffer
+            pt_buf = create_string_buffer(outlen)
+            pt_len = c_ubyte(outlen)
+
+            rv = rs.raw.C_DecryptUpdate(
+                rs.sh, (c_ubyte * len(ct))(*ct), len(ct), pt_buf, byref(pt_len)
+            )
+            if rv != 0:
+                pytest.xfail(
+                    f"Module limitation: {mech_name} decrypt_update failed at block {block['block_index']} with CKR={rv}"
+                )
+                return
+
+            pt = bytes(pt_buf[: pt_len.value])
+
+            assert pt == block["pt_expected"], (
+                f"{vec_id}: block {block['block_index']} plaintext mismatch: "
+                f"got {pt.hex()}, expected {block['pt_expected'].hex()}"
+            )
+
+        # Finalize (CFB returns 0 bytes)
+        rv = rs.raw.C_DecryptFinal(rs.sh, None, None)
+        if rv != 0:
+            pytest.xfail(f"Module limitation: {mech_name} decrypt_final failed with CKR={rv}")
+
+    finally:
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)

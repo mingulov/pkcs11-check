@@ -6,8 +6,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git pkg-config libssl-dev clang make \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy and apply patches from pkcs11-check patches directory
+# Bust cache if patches change: 2026-03-30-05
+COPY patches/kryoptic/*.patch /tmp/patches/
+
 RUN git clone --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
 WORKDIR /build/kryoptic
+RUN for p in /tmp/patches/*.patch; do \
+        if [ -f "$p" ]; then \
+            echo "Applying patch: $p"; \
+            git apply --ignore-space-change --ignore-whitespace "$p" || echo "Warning: Failed to apply $p"; \
+        fi; \
+    done
 RUN cargo build --release --features pqc 2>&1 | tail -3
 
 FROM python:3.14-slim

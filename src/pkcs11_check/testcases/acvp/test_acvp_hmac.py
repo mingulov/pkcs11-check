@@ -93,6 +93,9 @@ _ALG_MAP: dict[str, tuple[int, int, str]] = {
     ),
 }
 
+# Maximum vectors per algorithm (None = no limit)
+_MAX_PER_ALG: int | None = None
+
 
 def _load_hmac_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load HMAC ACVP vectors from all supported algorithms.
@@ -102,7 +105,10 @@ def _load_hmac_vectors() -> list[tuple[str, dict[str, Any]]]:
     all_vecs = []
     for alg_name, (key_type, mechanism, mech_display) in _ALG_MAP.items():
         vecs = load_acvp_vectors(alg_name)
-        for vec in vecs[:20]:  # cap per algorithm for speed
+        # Apply limit if set
+        if _MAX_PER_ALG is not None:
+            vecs = vecs[:_MAX_PER_ALG]
+        for vec in vecs:
             inp = vec["input"]
             exp = vec["expected"]
             key_hex = inp.get("key", "")

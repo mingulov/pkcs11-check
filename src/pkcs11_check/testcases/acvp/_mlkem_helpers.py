@@ -45,7 +45,7 @@ def get_mlkem_mechanism(param_set: str) -> CKM:
     return _ML_KEM_MECHANISMS[param_set]
 
 
-def load_mlkem_keygen_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]]]:
+def load_mlkem_keygen_vectors(limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
     """Load ML-KEM KeyGen ACVP vectors.
 
     Uses internalProjection.json which contains the expected key pairs
@@ -96,13 +96,13 @@ def load_mlkem_keygen_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]
             vec_id = f"ML-KEM-keyGen-{param_set}-tc{tc_id}"
             result.append((vec_id, vec_data))
 
-            if len(result) >= limit:
+            if limit is not None and len(result) >= limit:
                 return result
 
     return result
 
 
-def load_mlkem_encap_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]]]:
+def load_mlkem_encap_vectors(limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
     """Load ML-KEM Encapsulation ACVP vectors.
 
     Uses internalProjection.json which contains the public key (ek),
@@ -156,13 +156,13 @@ def load_mlkem_encap_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]]
             vec_id = f"ML-KEM-encap-{param_set}-tc{tc_id}"
             result.append((vec_id, vec_data))
 
-            if len(result) >= limit:
+            if limit is not None and len(result) >= limit:
                 return result
 
     return result
 
 
-def load_mlkem_decap_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]]]:
+def load_mlkem_decap_vectors(limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
     """Load ML-KEM Decapsulation ACVP vectors.
 
     Uses internalProjection.json which contains the private key (dk),
@@ -213,7 +213,7 @@ def load_mlkem_decap_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]]
             vec_id = f"ML-KEM-decap-{param_set}-tc{tc_id}"
             result.append((vec_id, vec_data))
 
-            if len(result) >= limit:
+            if limit is not None and len(result) >= limit:
                 return result
 
     return result

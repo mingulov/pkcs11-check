@@ -106,8 +106,8 @@ _HASH_TO_MGF: dict[str, int] = {
     "SHA3-512": CKG_MGF1_SHA3_512,
 }
 
-# Maximum vectors per algorithm for speed
-_MAX_VECTORS_PER_SET = 15
+# Maximum vectors per algorithm for speed (None = no limit)
+_MAX_VECTORS_PER_SET: int | None = None
 
 
 def load_siggen_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -118,7 +118,7 @@ def load_siggen_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
         raw = load_acvp_vectors(algorithm)
 
         for vec in raw:
-            if len(result) >= _MAX_VECTORS_PER_SET:
+            if _MAX_VECTORS_PER_SET is not None and len(result) >= _MAX_VECTORS_PER_SET:
                 break
 
             group = vec["group"]
@@ -171,7 +171,7 @@ def load_siggen_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
         raw = load_acvp_vectors(algorithm)
 
         for vec in raw:
-            if len(result) >= _MAX_VECTORS_PER_SET:
+            if _MAX_VECTORS_PER_SET is not None and len(result) >= _MAX_VECTORS_PER_SET:
                 break
 
             group = vec["group"]
@@ -235,7 +235,7 @@ def load_sigver_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
 
         count = 0
         for vec in raw:
-            if count >= _MAX_VECTORS_PER_SET:
+            if _MAX_VECTORS_PER_SET is not None and count >= _MAX_VECTORS_PER_SET:
                 break
 
             group = vec["group"]
@@ -292,7 +292,7 @@ def load_sigver_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
 
         count = 0
         for vec in raw:
-            if count >= _MAX_VECTORS_PER_SET:
+            if _MAX_VECTORS_PER_SET is not None and count >= _MAX_VECTORS_PER_SET:
                 break
 
             group = vec["group"]

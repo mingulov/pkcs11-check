@@ -26,8 +26,8 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
 )
-from pkcs11_check.testcases.data import ACVP_DIR
 from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
+from pkcs11_check.testcases.data import ACVP_DIR
 
 # Parameter set mapping
 _ML_DSA_PARAM_MAP: dict[str, int] = {
@@ -136,7 +136,7 @@ def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
     return result
 
 
-def load_mldsa_keygen_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]]]:
+def load_mldsa_keygen_vectors(limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
     """Load ML-DSA KeyGen ACVP vectors.
 
     Uses internalProjection.json which contains the expected key pairs
@@ -184,23 +184,25 @@ def load_mldsa_keygen_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]
             vec_id = f"ML-DSA-keyGen-{param_set}-tc{tc_id}"
             result.append((vec_id, vec_data))
 
-            if len(result) >= limit:
+            if limit is not None and len(result) >= limit:
                 return result
 
     return result
 
 
-def load_mldsa_siggen_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]]]:
+def load_mldsa_siggen_vectors(limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
     """Load ML-DSA SigGen ACVP vectors.
 
     Uses internalProjection.json which contains the private key and
     expected signatures for deterministic signature generation testing.
     """
     all_vecs = _load_internal_vectors("ML-DSA-sigGen-FIPS204")
+    if limit is None:
+        return all_vecs
     return all_vecs[:limit]
 
 
-def load_mldsa_sigver_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]]]:
+def load_mldsa_sigver_vectors(limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
     """Load ML-DSA SigVer ACVP vectors.
 
     Loads from prompt.json and expectedResults.json.
@@ -250,7 +252,7 @@ def load_mldsa_sigver_vectors(limit: int = 15) -> list[tuple[str, dict[str, Any]
         vec_id = f"ML-DSA-sigVer-{param_set}-tc{tc_id}"
         result.append((vec_id, vec_data))
 
-        if len(result) >= limit:
+        if limit is not None and len(result) >= limit:
             break
 
     return result

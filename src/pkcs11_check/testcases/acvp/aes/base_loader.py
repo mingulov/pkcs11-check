@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
 # Maximum vectors per direction for speed
-_MAX_PER_DIRECTION = 10
+_MAX_PER_DIRECTION: Optional[int] = None
 
 # Module-level skip if ACVP data not available
 if not ACVP_AVAILABLE:
@@ -52,14 +52,41 @@ def _load_vectors(
         tc_id = inp.get("tcId", 0)
 
         if direction == "encrypt":
-            if len(encrypt_vecs) >= _MAX_PER_DIRECTION:
+            if _MAX_PER_DIRECTION is not None and len(encrypt_vecs) >= _MAX_PER_DIRECTION:
                 continue
 
             merged: dict[str, Any] = {"tc_id": tc_id}
             valid = True
 
+            # Handle multi-block resultsArray format for encrypt
+            if "resultsArray" in exp:
+                # Multi-block CFB test with chaining
+                blocks = []
+                for idx, block in enumerate(exp["resultsArray"]):
+                    block_data = {
+                        "block_index": idx,
+                        "key": bytes.fromhex(block["key"]) if block.get("key") else b"",
+                        "iv": bytes.fromhex(block["iv"]) if block.get("iv") else b"",
+                        "pt": bytes.fromhex(block["pt"]) if block.get("pt") else b"",
+                        "ct_expected": bytes.fromhex(block["ct"]) if block.get("ct") else b"",
+                    }
+                    blocks.append(block_data)
+                merged["blocks"] = blocks
+                merged["is_multiblock"] = True
+                # Use first block's key/iv for the main vector
+                if blocks:
+                    merged["key"] = blocks[0]["key"]
+                    merged["iv"] = blocks[0]["iv"]
+            else:
+                merged["is_multiblock"] = False
+
             # Extract fields for encrypt direction
+            # Skip pt/ct for multiblock vectors - they use blocks instead
             for field_name, field_spec in encrypt_fields.items():
+                # Skip pt/ct_expected extraction for multiblock vectors
+                if merged.get("is_multiblock") and field_name in ("pt", "ct_expected"):
+                    continue
+
                 if isinstance(field_spec, tuple):
                     src_key, transform = field_spec
                 else:
@@ -98,14 +125,40 @@ def _load_vectors(
             encrypt_vecs.append((vec_id, merged))
 
         elif direction == "decrypt":
-            if len(decrypt_vecs) >= _MAX_PER_DIRECTION:
+            if _MAX_PER_DIRECTION is not None and len(decrypt_vecs) >= _MAX_PER_DIRECTION:
                 continue
 
             merged = {"tc_id": tc_id}
             valid = True
 
+            # Handle multi-block resultsArray format for decrypt
+            if "resultsArray" in exp:
+                # Multi-block CFB test with chaining
+                blocks = []
+                for idx, block in enumerate(exp["resultsArray"]):
+                    block_data = {
+                        "block_index": idx,
+                        "key": bytes.fromhex(block["key"]) if block.get("key") else b"",
+                        "iv": bytes.fromhex(block["iv"]) if block.get("iv") else b"",
+                        "ct": bytes.fromhex(block["ct"]) if block.get("ct") else b"",
+                        "pt_expected": bytes.fromhex(block["pt"]) if block.get("pt") else b"",
+                    }
+                    blocks.append(block_data)
+                merged["blocks"] = blocks
+                merged["is_multiblock"] = True
+                # Use first block's key/iv for the main vector
+                if blocks:
+                    merged["key"] = blocks[0]["key"]
+                    merged["iv"] = blocks[0]["iv"]
+            else:
+                merged["is_multiblock"] = False
+
             # Extract fields for decrypt direction
+            # Skip ct/pt_expected extraction for multiblock vectors
             for field_name, field_spec in decrypt_fields.items():
+                if merged.get("is_multiblock") and field_name in ("ct", "pt_expected"):
+                    continue
+
                 if isinstance(field_spec, tuple):
                     src_key, transform = field_spec
                 else:
