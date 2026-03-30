@@ -28,7 +28,7 @@ RUN ls -lh /build/dist/Release/lib/libsoftokn3.so \
 # ---------- runtime ----------
 FROM quay.io/fedora/fedora:44
 
-RUN dnf -y install python3.12 python3.12-devel gcc git nss-tools sqlite \
+RUN dnf -y install python3 python3-devel gcc git nss-tools sqlite \
     && dnf clean all
 
 # Test tooling: fault-proxy, pkcs11-provider, p11-kit
@@ -55,12 +55,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
 COPY third_party/ third_party/
-RUN uv sync --frozen --python python3.12
+RUN uv sync --frozen
 
 # Copy test code (changes frequently, does not invalidate deps cache)
 COPY . .
 
 ENV PKCS11_CHECK_MODULE=/usr/lib64/libsoftokn3.so
-ENV PKCS11_CHECK_PYTHON=python3.12
 
 CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/run-pkcs11-check.sh"]

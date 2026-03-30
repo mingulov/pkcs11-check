@@ -12,7 +12,7 @@ FROM fedora:44
 
 RUN dnf install -y \
     git gcc \
-    python3.12 python3.12-devel \
+    python3 python3-devel \
     openssl-devel \
     && dnf clean all
 

@@ -6,7 +6,7 @@ FROM fedora:44
 RUN dnf install -y \
     tpm2-pkcs11 tpm2-pkcs11-tools tpm2-tools \
     tpm2-abrmd swtpm swtpm-tools \
-    python3.12 python3.12-devel \
+    python3 python3-devel \
     gcc openssl-devel git dbus-daemon \
     && dnf clean all
 

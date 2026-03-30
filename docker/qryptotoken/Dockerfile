@@ -12,7 +12,7 @@ FROM fedora:44
 RUN dnf install -y \
     git gcc openssl-devel pkg-config curl \
     clang-devel sqlite-devel \
-    python3.12 python3.12-devel \
+    python3 python3-devel \
     && dnf clean all
 
 # Install latest stable Rust via rustup

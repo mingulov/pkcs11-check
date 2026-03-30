@@ -4,7 +4,7 @@ FROM fedora:44
 
 RUN dnf install -y \
     nss nss-tools nss-softokn \
-    python3.12 python3.12-devel \
+    python3 python3-devel \
     gcc openssl-devel git \
     && dnf clean all
 

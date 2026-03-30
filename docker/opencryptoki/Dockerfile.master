@@ -59,7 +59,7 @@ RUN VER=$(grep -oP '\[openCryptoki\],\[\K[0-9.]+' /build/opencryptoki/configure.
 # ---------- runtime ----------
 FROM quay.io/fedora/fedora:44
 
-RUN dnf -y install python3.12 python3.12-devel gcc git procps-ng libcap sqlite \
+RUN dnf -y install python3 python3-devel gcc git procps-ng libcap sqlite \
     && dnf clean all
 
 # Test tooling: fault-proxy, pkcs11-provider, p11-kit
@@ -118,7 +118,6 @@ ENV LD_LIBRARY_PATH=/opt/openssl/lib64
 ENV OPENSSL_CONF=/opt/openssl/ssl/openssl.cnf
 ENV PKCS11_CHECK_MODULE=/usr/lib64/pkcs11/libopencryptoki.so
 ENV PKCS11_CHECK_PIN=1234
-ENV PKCS11_CHECK_PYTHON=python3.12
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -126,7 +125,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
 COPY third_party/ third_party/
-RUN uv sync --frozen --python python3.12
+RUN uv sync --frozen
 
 COPY . .
 
