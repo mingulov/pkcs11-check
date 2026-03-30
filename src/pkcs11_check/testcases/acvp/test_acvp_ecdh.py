@@ -35,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKD_NULL,
     CKK_EC,
+    CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
 )
@@ -258,7 +259,7 @@ def test_acvp_ecdh_shared_secret(
             mechanism=CKM_ECDH1_DERIVE,
             attrs={
                 CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_EC,  # Generic secret would be better but EC is safe
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,  # Derived shared secret, not EC key
                 CKA_SENSITIVE: False,
                 CKA_EXTRACTABLE: True,
                 CKA_VALUE_LEN: len(vec["expected_shared"]),
