@@ -21,17 +21,25 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
+    CKK_SHA3_224_HMAC,
     CKK_SHA3_256_HMAC,
     CKK_SHA3_384_HMAC,
     CKK_SHA3_512_HMAC,
+    CKK_SHA224_HMAC,
     CKK_SHA256_HMAC,
     CKK_SHA384_HMAC,
+    CKK_SHA512_224_HMAC,
+    CKK_SHA512_256_HMAC,
     CKK_SHA512_HMAC,
+    CKM_SHA3_224_HMAC,
     CKM_SHA3_256_HMAC,
     CKM_SHA3_384_HMAC,
     CKM_SHA3_512_HMAC,
+    CKM_SHA224_HMAC,
     CKM_SHA256_HMAC,
     CKM_SHA384_HMAC,
+    CKM_SHA512_224_HMAC,
+    CKM_SHA512_256_HMAC,
     CKM_SHA512_HMAC,
 )
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
@@ -46,9 +54,28 @@ if not ACVP_AVAILABLE:
 
 # ACVP algorithm name -> (CKK key type, CKM mechanism, display name)
 _ALG_MAP: dict[str, tuple[int, int, str]] = {
+    # SHA-2 HMAC
+    "HMAC-SHA2-224-2.0": (CKK_SHA224_HMAC, CKM_SHA224_HMAC, "SHA224_HMAC"),
     "HMAC-SHA2-256-2.0": (CKK_SHA256_HMAC, CKM_SHA256_HMAC, "SHA256_HMAC"),
     "HMAC-SHA2-384-2.0": (CKK_SHA384_HMAC, CKM_SHA384_HMAC, "SHA384_HMAC"),
     "HMAC-SHA2-512-2.0": (CKK_SHA512_HMAC, CKM_SHA512_HMAC, "SHA512_HMAC"),
+    # Truncated SHA-2 HMAC (512 -> 224/256)
+    "HMAC-SHA2-512-224-2.0": (
+        CKK_SHA512_224_HMAC,
+        CKM_SHA512_224_HMAC,
+        "SHA512_224_HMAC",
+    ),
+    "HMAC-SHA2-512-256-2.0": (
+        CKK_SHA512_256_HMAC,
+        CKM_SHA512_256_HMAC,
+        "SHA512_256_HMAC",
+    ),
+    # SHA-3 HMAC
+    "HMAC-SHA3-224-2.0": (
+        CKK_SHA3_224_HMAC,
+        CKM_SHA3_224_HMAC,
+        "SHA3_224_HMAC",
+    ),
     "HMAC-SHA3-256-2.0": (
         CKK_SHA3_256_HMAC,
         CKM_SHA3_256_HMAC,
