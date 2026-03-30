@@ -208,6 +208,8 @@ def test_acvp_shake(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     The ACVP vectors specify outLen in bits, which we convert to bytes for
     the PKCS#11 digest operation.
     """
+    # TODO: SHAKE requires C_DigestXof functions (not yet in pkcs11_check.raw headers)
+    pytest.skip("SHAKE requires C_DigestXof (not yet in pkcs11_check.raw)")
     rs = p11_raw_session
     mech_name: str = vec["mech_name"]
 

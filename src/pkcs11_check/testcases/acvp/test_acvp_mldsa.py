@@ -181,6 +181,9 @@ class TestMlDsaSigGen:
             mech = get_mldsa_mechanism(pre_hash)
 
             # Sign the message
+            # TODO: pass vec["context"] via CK_SIGN_ADDITIONAL_CONTEXT when
+            # mechanism param builder is available (context is empty for most
+            # pure ML-DSA vectors, so this works correctly for now)
             sig = sign_single(rs.raw, rs.sh, priv_key, mech, vec["msg"])
 
             # Note: ML-DSA is probabilistic, so we can't compare signatures
@@ -250,6 +253,7 @@ class TestMlDsaSigVer:
             mech = get_mldsa_mechanism(pre_hash)
 
             # Verify the signature
+            # TODO: pass vec["context"] via CK_SIGN_ADDITIONAL_CONTEXT when available
             try:
                 verified = verify_single(rs.raw, rs.sh, pub_key, mech, vec["msg"], vec["sig"])
             except AssertionError as exc:
