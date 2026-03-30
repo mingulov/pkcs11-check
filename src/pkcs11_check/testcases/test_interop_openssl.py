@@ -22,14 +22,36 @@ import pytest
 pytestmark = [pytest.mark.interop, pytest.mark.stress]
 
 
+_PKCS11_PROVIDER_PATHS = [
+    "/usr/lib/x86_64-linux-gnu/ossl-modules/pkcs11.so",  # Debian x86_64
+    "/usr/lib64/ossl-modules/pkcs11.so",                   # Fedora/RHEL x86_64
+    "/usr/lib/ossl-modules/pkcs11.so",                     # Fedora multilib
+]
+
+_P11KIT_PROXY_PATHS = [
+    "/usr/lib/x86_64-linux-gnu/p11-kit-proxy.so",         # Debian x86_64
+    "/usr/lib64/p11-kit-proxy.so",                          # Fedora/RHEL x86_64
+    "/usr/lib/p11-kit-proxy.so",                            # Fedora multilib
+]
+
+
+def _find_lib(candidates: list[str]) -> Path | None:
+    """Find the first existing library path from candidates."""
+    for c in candidates:
+        p = Path(c)
+        if p.exists():
+            return p
+    return None
+
+
 def _have_pkcs11_provider() -> bool:
     """Check if OpenSSL pkcs11-provider is installed."""
-    return Path("/usr/lib/x86_64-linux-gnu/ossl-modules/pkcs11.so").exists()
+    return _find_lib(_PKCS11_PROVIDER_PATHS) is not None
 
 
 def _have_p11kit() -> bool:
     """Check if p11-kit proxy is installed."""
-    return Path("/usr/lib/x86_64-linux-gnu/p11-kit-proxy.so").exists()
+    return _find_lib(_P11KIT_PROXY_PATHS) is not None
 
 
 def _run(cmd: str, env: dict[str, str] | None = None, timeout: int = 30) -> tuple[int, str, str]:
@@ -124,28 +146,23 @@ class TestP11KitProxy:
 
     def test_load_module_via_p11kit(self, p11_config: Any) -> None:
         """Load our module through p11-kit-proxy - must not crash."""
-        if not _have_p11kit():
+        proxy_path = _find_lib(_P11KIT_PROXY_PATHS)
+        if proxy_path is None:
             pytest.skip("p11-kit not installed")
 
-        proxy = "/usr/lib/x86_64-linux-gnu/p11-kit-proxy.so"
-
-        # Use subprocess.run with Python -c and proper escaping
+        # Use raw PKCS#11 API via subprocess to avoid crash contamination
+        script = textwrap.dedent(f"""\
+            from pkcs11_check.raw.api import RawPKCS11
+            try:
+                raw = RawPKCS11.from_lib("{proxy_path}")
+                raw.C_Initialize()
+                print("OK: p11-kit proxy loaded and initialized")
+                raw.C_Finalize()
+            except Exception as e:
+                print(f"ERROR: {{type(e).__name__}}: {{e}}")
+        """)
         result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                textwrap.dedent(f"""
-                import pkcs11
-                try:
-                    lib = pkcs11.lib("{proxy}")
-                    lib.initialize()
-                    slots = lib.get_slots()
-                    print(f"OK: {{len(slots)}} slots via p11-kit proxy")
-                    lib.finalize()
-                except Exception as e:
-                    print(f"ERROR: {{type(e).__name__}}: {{e}}")
-            """),
-            ],
+            [sys.executable, "-c", script],
             capture_output=True,
             text=True,
             timeout=30,

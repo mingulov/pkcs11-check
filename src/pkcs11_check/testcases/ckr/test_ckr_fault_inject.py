@@ -19,13 +19,20 @@ import pytest
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
-_PROXY_PATH = Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so"
+_FAULT_PROXY_PATHS = [
+    Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so",
+    Path("/usr/lib/pkcs11/fault-proxy.so"),
+]
+
+_PROXY_PATH = next((p for p in _FAULT_PROXY_PATHS if p.exists()), None)
 
 
 def _skip_if_no_proxy() -> None:
     """Skip if fault-proxy.so is not built."""
-    if not _PROXY_PATH.exists():
-        pytest.skip("fault-proxy not built (run: bash local-builds/build.sh fault-proxy)")
+    if _PROXY_PATH is None or not _PROXY_PATH.exists():
+        pytest.skip(
+            "fault-proxy not built (run: bash local-builds/build.sh fault-proxy)"
+        )
 
 
 class TestFaultInjection:

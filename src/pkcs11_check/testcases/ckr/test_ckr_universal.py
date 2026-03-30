@@ -154,8 +154,12 @@ class TestUniversalRealTriggers:
         import os
         from pathlib import Path
 
-        proxy = Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so"
-        if not proxy.exists():
+        proxy_candidates = [
+            Path(__file__).parents[4] / "local-builds" / "fault-proxy" / "fault-proxy.so",
+            Path("/usr/lib/pkcs11/fault-proxy.so"),
+        ]
+        proxy = next((p for p in proxy_candidates if p.exists()), None)
+        if proxy is None:
             pytest.skip("fault-proxy not built")
 
         script = textwrap.dedent(f"""\
