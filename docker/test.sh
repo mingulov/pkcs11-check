@@ -47,7 +47,6 @@ fi
 
 option_args=()
 target_args=()
-build_flag=""
 rebuild_flag=""
 split_targets=0
 
@@ -59,11 +58,6 @@ for arg in "$@"; do
 
     if [[ "$arg" == "--rebuild" && $split_targets -eq 0 ]]; then
         rebuild_flag="--rebuild"
-        continue
-    fi
-
-    if [[ "$arg" == "--build" && $split_targets -eq 0 ]]; then
-        build_flag="--build"
         continue
     fi
 
@@ -87,12 +81,11 @@ if [[ ${#target_args[@]} -gt 0 ]]; then
 fi
 
 if [[ -n "$rebuild_flag" ]]; then
-    build_flag="--build"
-    echo "Removing existing image for $service..."
+    echo "Rebuilding $service from scratch (no cache)..."
     docker compose -f docker/docker-compose.test.yml rm --force --stop "$service" 2>/dev/null || true
-    docker rmi "docker-test-${service#test-}" 2>/dev/null || true
+    docker compose -f docker/docker-compose.test.yml build --no-cache "$service"
 fi
 
-compose_args+=($build_flag "$service")
+compose_args+=(--build "$service")
 
 exec "${compose_args[@]}"
