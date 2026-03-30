@@ -11,12 +11,17 @@ from typing import Any
 
 from pkcs11_check.raw.types_std import (
     CKM,
-    CKM_HASH_ML_DSA_44,
-    CKM_HASH_ML_DSA_65,
-    CKM_HASH_ML_DSA_87,
-    CKM_ML_DSA_44,
-    CKM_ML_DSA_65,
-    CKM_ML_DSA_87,
+    CKM_HASH_ML_DSA_SHA3_224,
+    CKM_HASH_ML_DSA_SHA3_256,
+    CKM_HASH_ML_DSA_SHA3_384,
+    CKM_HASH_ML_DSA_SHA3_512,
+    CKM_HASH_ML_DSA_SHA224,
+    CKM_HASH_ML_DSA_SHA256,
+    CKM_HASH_ML_DSA_SHA384,
+    CKM_HASH_ML_DSA_SHA512,
+    CKM_HASH_ML_DSA_SHAKE128,
+    CKM_HASH_ML_DSA_SHAKE256,
+    CKM_ML_DSA,
     CKP_ML_DSA_44,
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
@@ -31,49 +36,40 @@ _ML_DSA_PARAM_MAP: dict[str, int] = {
     "ML-DSA-87": int(CKP_ML_DSA_87),
 }
 
-# Parameter set mechanism mapping
-_ML_DSA_MECHANISMS: dict[str, CKM] = {
-    "ML-DSA-44": CKM_ML_DSA_44,
-    "ML-DSA-65": CKM_ML_DSA_65,
-    "ML-DSA-87": CKM_ML_DSA_87,
-}
-
-# Hash-ML-DSA mechanism mapping
+# Pre-hash to hash-specific ML-DSA mechanism mapping
+# Per OASIS PKCS#11 v3.2 spec, Hash-ML-DSA uses hash-specific mechanisms
 _HASH_ML_DSA_MECHANISMS: dict[str, CKM] = {
-    "ML-DSA-44": CKM_HASH_ML_DSA_44,
-    "ML-DSA-65": CKM_HASH_ML_DSA_65,
-    "ML-DSA-87": CKM_HASH_ML_DSA_87,
-}
-
-# Pre-hash to mechanism suffix mapping
-_PREHASH_MAP: dict[str, str | None] = {
-    "pure": None,
-    "SHA-224": "SHA224",
-    "SHA-256": "SHA256",
-    "SHA-384": "SHA384",
-    "SHA-512": "SHA512",
-    "SHA3-224": "SHA3_224",
-    "SHA3-256": "SHA3_256",
-    "SHA3-384": "SHA3_384",
-    "SHA3-512": "SHA3_512",
-    "SHAKE128": "SHAKE128",
-    "SHAKE256": "SHAKE256",
+    "SHA-224": CKM_HASH_ML_DSA_SHA224,
+    "SHA-256": CKM_HASH_ML_DSA_SHA256,
+    "SHA-384": CKM_HASH_ML_DSA_SHA384,
+    "SHA-512": CKM_HASH_ML_DSA_SHA512,
+    "SHA3-224": CKM_HASH_ML_DSA_SHA3_224,
+    "SHA3-256": CKM_HASH_ML_DSA_SHA3_256,
+    "SHA3-384": CKM_HASH_ML_DSA_SHA3_384,
+    "SHA3-512": CKM_HASH_ML_DSA_SHA3_512,
+    "SHAKE128": CKM_HASH_ML_DSA_SHAKE128,
+    "SHAKE256": CKM_HASH_ML_DSA_SHAKE256,
 }
 
 
-def get_mldsa_mechanism(param_set: str, pre_hash: str = "pure") -> CKM:
-    """Get the ML-DSA mechanism for a parameter set and pre-hash mode.
+def get_mldsa_mechanism(pre_hash: str = "pure") -> CKM:
+    """Get the ML-DSA mechanism for a pre-hash mode.
+
+    Per OASIS PKCS#11 v3.2 spec:
+    - Pure ML-DSA uses CKM_ML_DSA mechanism with CKA_PARAMETER_SET attribute
+    - Hash-ML-DSA uses hash-specific mechanisms (CKM_HASH_ML_DSA_SHA256, etc.)
 
     Args:
-        param_set: Parameter set name ("ML-DSA-44", "ML-DSA-65", "ML-DSA-87")
-        pre_hash: Pre-hash mode ("pure" or hash algorithm name)
+        pre_hash: Pre-hash mode ("pure" or hash algorithm name like "SHA-256")
 
     Returns:
-        The CKM_ML_DSA_* or CKM_HASH_ML_DSA_* mechanism constant
+        The CKM_ML_DSA or CKM_HASH_ML_DSA_* mechanism constant
     """
     if pre_hash == "pure":
-        return _ML_DSA_MECHANISMS[param_set]
-    return _HASH_ML_DSA_MECHANISMS[param_set]
+        return CKM_ML_DSA
+    if pre_hash in _HASH_ML_DSA_MECHANISMS:
+        return _HASH_ML_DSA_MECHANISMS[pre_hash]
+    raise ValueError(f"Unknown pre-hash mode: {pre_hash}")
 
 
 def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:

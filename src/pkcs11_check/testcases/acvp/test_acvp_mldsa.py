@@ -38,7 +38,6 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_87,
 )
 from pkcs11_check.testcases.acvp._mldsa_helpers import (
-    _PREHASH_MAP,
     get_mldsa_mechanism,
     load_mldsa_keygen_vectors,
     load_mldsa_siggen_vectors,
@@ -73,10 +72,25 @@ _UNSUPPORTED_ERRORS = (
 
 def _get_mech_name(pre_hash: str) -> str:
     """Get mechanism name from pre-hash type."""
-    suffix = _PREHASH_MAP.get(pre_hash)
-    if suffix is None:
+    if pre_hash == "pure":
         return "ML_DSA"
-    return f"HASH_ML_DSA_{suffix}"
+    # Map hash algorithm names to mechanism suffixes
+    hash_suffix_map = {
+        "SHA-224": "SHA224",
+        "SHA-256": "SHA256",
+        "SHA-384": "SHA384",
+        "SHA-512": "SHA512",
+        "SHA3-224": "SHA3_224",
+        "SHA3-256": "SHA3_256",
+        "SHA3-384": "SHA3_384",
+        "SHA3-512": "SHA3_512",
+        "SHAKE128": "SHAKE128",
+        "SHAKE256": "SHAKE256",
+    }
+    suffix = hash_suffix_map.get(pre_hash)
+    if suffix:
+        return f"HASH_ML_DSA_{suffix}"
+    return "ML_DSA"
 
 
 def _handle_unsupported(exc: AssertionError, param_set: str) -> None:
@@ -119,9 +133,9 @@ class TestMlDsaKeyGen:
             assert pub_key != 0, f"{vec_id}: Public key handle is zero"
             assert priv_key != 0, f"{vec_id}: Private key handle is zero"
 
-            # Test roundtrip sign/verify using specific parameter-set mechanism
+            # Test roundtrip sign/verify using pure ML-DSA mechanism
             test_msg = b"ML-DSA keygen test message"
-            mech = get_mldsa_mechanism(param_set_name)
+            mech = get_mldsa_mechanism("pure")  # Pure ML-DSA
             sig = sign_single(rs.raw, rs.sh, priv_key, mech, test_msg)
             verified = verify_single(rs.raw, rs.sh, pub_key, mech, test_msg, sig)
             assert verified, f"{vec_id}: Roundtrip sign/verify failed"
@@ -158,8 +172,8 @@ class TestMlDsaSigGen:
                 attrs={CKA_SIGN: True},
             )
 
-            # Get the mechanism for signing using specific parameter-set
-            mech = get_mldsa_mechanism(vec["param_set"], vec["pre_hash"])
+            # Get the mechanism for signing (pure or hash-specific)
+            mech = get_mldsa_mechanism(vec["pre_hash"])
 
             # Sign the message
             try:
@@ -202,26 +216,10 @@ class TestMlDsaSigVer:
         """ML-DSA signature verification from NIST ACVP SigVer vectors."""
         rs = p11_raw_session
         mech_name = _get_mech_name(vec["pre_hash"])
-        param_set = vec["param_set"]
 
-        # Check for specific parameter-set mechanism
-        if vec["pre_hash"] == "pure":
-            specific_mech_map = {
-                "ML-DSA-44": "ML_DSA_44",
-                "ML-DSA-65": "ML_DSA_65",
-                "ML-DSA-87": "ML_DSA_87",
-            }
-        else:
-            specific_mech_map = {
-                "ML-DSA-44": "HASH_ML_DSA_44",
-                "ML-DSA-65": "HASH_ML_DSA_65",
-                "ML-DSA-87": "HASH_ML_DSA_87",
-            }
-
-        specific_mech = specific_mech_map.get(param_set)
-        if specific_mech and not rs.has_mechanism(specific_mech):
-            pytest.skip(f"{specific_mech} mechanism not supported by module")
-        elif not rs.has_mechanism(mech_name):
+        # Check if the mechanism is supported
+        # Pure ML-DSA uses CKM_ML_DSA, Hash-ML-DSA uses hash-specific mechanisms
+        if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} mechanism not supported by module")
 
         pub_key = 0
@@ -236,8 +234,8 @@ class TestMlDsaSigVer:
                 attrs={CKA_VERIFY: True},
             )
 
-            # Get the mechanism for verification using specific parameter-set
-            mech = get_mldsa_mechanism(param_set, vec["pre_hash"])
+            # Get the mechanism for verification (pure or hash-specific)
+            mech = get_mldsa_mechanism(vec["pre_hash"])
 
             # Verify the signature
             try:
