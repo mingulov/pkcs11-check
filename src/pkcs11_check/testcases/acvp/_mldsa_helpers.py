@@ -37,7 +37,23 @@ _ML_DSA_PARAM_MAP: dict[str, int] = {
 }
 
 # Pre-hash to hash-specific ML-DSA mechanism mapping
-# Per OASIS PKCS#11 v3.2 spec, Hash-ML-DSA uses hash-specific mechanisms
+# Per OASIS PKCS#11 v3.2 spec and FIPS 204, only these hash functions
+# are valid for Hash-ML-DSA. SHA-512/224 and SHA-512/256 are NOT supported.
+_SUPPORTED_MLDSA_HASH_ALGS: frozenset[str] = frozenset(
+    {
+        "SHA2-224",
+        "SHA2-256",
+        "SHA2-384",
+        "SHA2-512",
+        "SHA3-224",
+        "SHA3-256",
+        "SHA3-384",
+        "SHA3-512",
+        "SHAKE-128",
+        "SHAKE-256",
+        "none",  # ACVP uses "none" for non-prehashed (same as "pure")
+    }
+)
 _HASH_ML_DSA_MECHANISMS: dict[str, CKM] = {
     "SHA-224": CKM_HASH_ML_DSA_SHA224,
     "SHA-256": CKM_HASH_ML_DSA_SHA256,
@@ -70,16 +86,10 @@ def get_mldsa_mechanism(pre_hash: str = "pure") -> CKM:
 
     # Normalize ACVP hash names to PKCS#11 mechanism names
     # ACVP: "SHA2-256" -> PKCS#11: "SHA-256"
-    # ACVP: "SHA2-512/224" -> PKCS#11: "SHA-512/224" -> use SHA-224
     # ACVP: "SHAKE-256" -> PKCS#11: "SHAKE256"
     normalized = pre_hash
     normalized = normalized.replace("SHA2-", "SHA-")
     normalized = normalized.replace("SHAKE-", "SHAKE")
-    # SHA2-512/224 and SHA2-512/256 are truncated SHA-512 variants
-    if normalized == "SHA-512/224":
-        normalized = "SHA-224"
-    elif normalized == "SHA-512/256":
-        normalized = "SHA-256"
 
     if normalized in _HASH_ML_DSA_MECHANISMS:
         return _HASH_ML_DSA_MECHANISMS[normalized]
@@ -102,17 +112,21 @@ def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
         if param_set not in _ML_DSA_PARAM_MAP:
             continue
 
-        # Get group-level data
-        d_hex = tg.get("d", "")  # seed for key generation
-        sk_hex = tg.get("sk", "")  # private key for sigGen
-
         for test in tg.get("tests", []):
             tc_id = test.get("tcId", 0)
             msg_hex = test.get("message", "")
             sig_hex = test.get("signature", "")
             ctx_hex = test.get("context", "")
+            sk_hex = test.get("sk", "")
+            pk_hex = test.get("pk", "")
 
-            if not msg_hex or not sig_hex:
+            if not msg_hex or not sig_hex or not sk_hex:
+                continue
+
+            # Skip unsupported hash algorithms (e.g. SHA2-512/224, SHA2-512/256)
+            # not defined by PKCS#11 v3.2 or FIPS 204 for Hash-ML-DSA
+            test_hash_alg = test.get("hashAlg", "")
+            if test_hash_alg and test_hash_alg not in _SUPPORTED_MLDSA_HASH_ALGS:
                 continue
 
             try:
@@ -133,15 +147,14 @@ def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
                 "hash_alg": test.get("hashAlg", ""),
             }
 
-            # Add key material if available
-            if sk_hex:
+            # Add key material from test level
+            try:
+                vec_data["sk"] = bytes.fromhex(sk_hex)
+            except ValueError:
+                pass
+            if pk_hex:
                 try:
-                    vec_data["sk"] = bytes.fromhex(sk_hex)
-                except ValueError:
-                    pass
-            if d_hex:
-                try:
-                    vec_data["seed"] = bytes.fromhex(d_hex)
+                    vec_data["pk"] = bytes.fromhex(pk_hex)
                 except ValueError:
                     pass
 
@@ -233,6 +246,12 @@ def load_mldsa_sigver_vectors(limit: int | None = None) -> list[tuple[str, dict[
 
         param_set = group.get("parameterSet", "")
         if param_set not in _ML_DSA_PARAM_MAP:
+            continue
+
+        # Skip unsupported hash algorithms (e.g. SHA2-512/224, SHA2-512/256)
+        # not defined by PKCS#11 v3.2 or FIPS 204 for Hash-ML-DSA
+        hash_alg = inp.get("hashAlg", "")
+        if hash_alg and hash_alg not in _SUPPORTED_MLDSA_HASH_ALGS:
             continue
 
         tc_id = inp.get("tcId", 0)

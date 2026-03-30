@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
 # Maximum vectors per direction for speed
-_MAX_PER_DIRECTION: Optional[int] = None
+_MAX_PER_DIRECTION: int | None = None
 
 # Module-level skip if ACVP data not available
 if not ACVP_AVAILABLE:

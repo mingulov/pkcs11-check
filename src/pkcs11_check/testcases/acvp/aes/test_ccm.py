@@ -11,12 +11,12 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 from pkcs11_check.testcases.acvp.aes.base import (
     _load_vectors,
     run_ccm_decrypt_test,
     run_ccm_encrypt_test,
 )
-from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 

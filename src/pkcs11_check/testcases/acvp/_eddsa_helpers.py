@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pkcs11_check.testcases.data import ACVP_DIR
 from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
+from pkcs11_check.testcases.data import ACVP_DIR
 
 # OID for Ed25519 (1.3.101.112) and Ed448 (1.3.101.113)
 _ED25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x70])
