@@ -26,7 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHAKE128,
     CKM_SHAKE256,
 )
-from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 

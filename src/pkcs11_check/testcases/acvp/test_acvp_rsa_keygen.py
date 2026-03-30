@@ -46,7 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
 )
 from pkcs11_check.testcases.acvp.rsa.base_loader import load_keygen_vectors
-from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE
+from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 

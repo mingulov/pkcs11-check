@@ -27,7 +27,7 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_87,
 )
 from pkcs11_check.testcases.data import ACVP_DIR
-from pkcs11_check.testcases.data.acvp_loader import load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 
 # Parameter set mapping
 _ML_DSA_PARAM_MAP: dict[str, int] = {

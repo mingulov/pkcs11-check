@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
 # Maximum vectors per direction for speed
 _MAX_PER_DIRECTION = 10

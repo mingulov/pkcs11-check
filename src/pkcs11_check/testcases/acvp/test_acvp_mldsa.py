@@ -43,7 +43,7 @@ from pkcs11_check.testcases.acvp._mldsa_helpers import (
     load_mldsa_siggen_vectors,
     load_mldsa_sigver_vectors,
 )
-from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE
+from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp, pytest.mark.pqc]
 

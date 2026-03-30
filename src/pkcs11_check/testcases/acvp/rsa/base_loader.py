@@ -52,7 +52,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS_PSS,
     CKM_SHA_1,
 )
-from pkcs11_check.testcases.data.acvp_loader import load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 
 # ACVP hashAlg -> PKCS#1 v1.5 mechanism mapping
 _HASH_TO_PKCS15_MECH: dict[str, tuple[Any, str]] = {

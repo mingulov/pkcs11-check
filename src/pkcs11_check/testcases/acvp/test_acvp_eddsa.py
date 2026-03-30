@@ -40,7 +40,7 @@ from pkcs11_check.testcases.acvp._eddsa_helpers import (
     load_eddsa_siggen_vectors,
     load_eddsa_sigver_vectors,
 )
-from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE
+from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 

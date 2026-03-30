@@ -38,7 +38,7 @@ from pkcs11_check.testcases.acvp._mlkem_helpers import (
     load_mlkem_encap_vectors,
     load_mlkem_keygen_vectors,
 )
-from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE
+from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp, pytest.mark.pqc]
 

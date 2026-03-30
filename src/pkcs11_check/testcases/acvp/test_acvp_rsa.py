@@ -35,7 +35,7 @@ from pkcs11_check.testcases.acvp.rsa.base_loader import (
     load_sigver_pkcs15_vectors,
     load_sigver_pss_vectors,
 )
-from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE
+from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 

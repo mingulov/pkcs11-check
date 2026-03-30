@@ -4,7 +4,7 @@ ACVP format: each algorithm has prompt.json (inputs) + expectedResults.json (out
 This loader merges them into a unified list of test dicts.
 
 Usage:
-    from pkcs11_check.testcases.data.acvp_loader import load_acvp_vectors, ACVP_AVAILABLE
+    from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors, ACVP_AVAILABLE
 
     if not ACVP_AVAILABLE:
         pytest.skip("ACVP vectors not cloned")

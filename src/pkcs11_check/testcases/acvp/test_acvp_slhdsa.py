@@ -37,7 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKP_SLH_DSA_SHAKE_256F,
     CKP_SLH_DSA_SHAKE_256S,
 )
-from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
 pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.acvp]
 
