@@ -152,7 +152,10 @@ class TestMlDsaSigGen:
     def test_mldsa_siggen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         """Test ML-DSA signature generation from NIST ACVP SigGen vectors."""
         rs = p11_raw_session
-        mech_name = _get_mech_name(vec["pre_hash"])
+        pre_hash_for_check = vec["pre_hash"]
+        if pre_hash_for_check == "preHash":
+            pre_hash_for_check = vec.get("hash_alg", "pure")
+        mech_name = _get_mech_name(pre_hash_for_check)
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} mechanism not supported by module")
 
@@ -218,7 +221,10 @@ class TestMlDsaSigVer:
     ) -> None:
         """ML-DSA signature verification from NIST ACVP SigVer vectors."""
         rs = p11_raw_session
-        mech_name = _get_mech_name(vec["pre_hash"])
+        pre_hash_for_check = vec["pre_hash"]
+        if pre_hash_for_check == "preHash":
+            pre_hash_for_check = vec.get("hash_alg", "pure")
+        mech_name = _get_mech_name(pre_hash_for_check)
 
         # Check if the mechanism is supported
         # Pure ML-DSA uses CKM_ML_DSA, Hash-ML-DSA uses hash-specific mechanisms

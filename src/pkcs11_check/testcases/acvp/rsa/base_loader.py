@@ -179,7 +179,7 @@ def load_siggen_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
             exp = vec["expected"]
 
             sig_type = group.get("sigType", "")
-            if sig_type not in ("pss", "ansx9.31"):
+            if sig_type != "pss":
                 continue
 
             hash_alg = group.get("hashAlg", "")
@@ -300,7 +300,7 @@ def load_sigver_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
             exp = vec["expected"]
 
             sig_type = group.get("sigType", "")
-            if sig_type not in ("pss", "ansx9.31"):
+            if sig_type != "pss":
                 continue
 
             hash_alg = group.get("hashAlg", "")

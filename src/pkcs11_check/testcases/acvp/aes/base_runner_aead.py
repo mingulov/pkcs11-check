@@ -78,7 +78,7 @@ def run_gcm_encrypt_test(
         pytest.skip("AES_GCM not supported by module")
 
     tag_bytes = vec["tag_len_bits"] // 8
-    iv = vec["iv"]
+    iv = vec.get("extended_nonce", vec["iv"])
     aad = vec.get("aad") or None
 
     try:
@@ -142,7 +142,7 @@ def run_gcm_decrypt_test(
         pytest.skip("AES_GCM not supported by module")
 
     tag_bytes = vec["tag_len_bits"] // 8
-    iv = vec["iv"]
+    iv = vec.get("extended_nonce", vec["iv"])
     aad = vec.get("aad") or None
     test_passed = vec["test_passed"]
 

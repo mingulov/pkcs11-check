@@ -281,7 +281,7 @@ def test_acvp_aes_cbc_cs1_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[s
     SoftHSM2: Advertises CKM_AES_CTS but may not be operational - skip expected.
     Kryoptic: Supports CTS modes.
     """
-    _run_cbc_cs_encrypt_test(p11_raw_session, vec_id, vec)
+    pytest.skip("CBC-CS1 not mappable to CKM_AES_CTS (CS3 only per PKCS#11 spec)")
 
 
 @pytest.mark.parametrize(
@@ -289,7 +289,7 @@ def test_acvp_aes_cbc_cs1_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[s
 )
 def test_acvp_aes_cbc_cs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CBC-CS1 decryption from NIST ACVP vectors."""
-    _run_cbc_cs_decrypt_test(p11_raw_session, vec_id, vec)
+    pytest.skip("CBC-CS1 not mappable to CKM_AES_CTS (CS3 only per PKCS#11 spec)")
 
 
 # CS2 Tests
@@ -298,7 +298,7 @@ def test_acvp_aes_cbc_cs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[s
 )
 def test_acvp_aes_cbc_cs2_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CBC-CS2 encryption from NIST ACVP vectors."""
-    _run_cbc_cs_encrypt_test(p11_raw_session, vec_id, vec)
+    pytest.skip("CBC-CS2 not mappable to CKM_AES_CTS (CS3 only per PKCS#11 spec)")
 
 
 @pytest.mark.parametrize(
@@ -306,7 +306,7 @@ def test_acvp_aes_cbc_cs2_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[s
 )
 def test_acvp_aes_cbc_cs2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """AES-CBC-CS2 decryption from NIST ACVP vectors."""
-    _run_cbc_cs_decrypt_test(p11_raw_session, vec_id, vec)
+    pytest.skip("CBC-CS2 not mappable to CKM_AES_CTS (CS3 only per PKCS#11 spec)")
 
 
 # CS3 Tests
