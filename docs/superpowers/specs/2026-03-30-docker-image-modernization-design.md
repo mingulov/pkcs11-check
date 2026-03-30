@@ -6,7 +6,7 @@
 
 ## Problem
 
-1. **Skipped tests in Docker runs** — fault-proxy (5 tests), pkcs11-provider (3 tests), p11-kit (3 tests) are not installed in any Docker image, causing 11+ skips per run across all modules
+1. **Skipped tests in Docker runs** — fault-proxy (6 tests), pkcs11-provider (3 tests), p11-kit (3 tests) are not installed in any Docker image, causing 12 skips per run across all modules
 2. **Python 3.12** — Debian-based images use `python:3.12-slim`, now outdated
 3. **Hardcoded Debian paths** — `test_interop_openssl.py` uses `/usr/lib/x86_64-linux-gnu/...` paths that don't exist on Fedora images
 4. **Build context bloat** — `docs/`, `tests/`, `scripts/`, `.claude/`, investigation reports all copied into every image (~5 MB of unnecessary files, some containing dev-only content)
@@ -16,6 +16,9 @@
 ### Python 3.14 base images
 
 - Debian-based images: `python:3.12-slim` → `python:3.14-slim`
+- **Note:** `python:3.14-slim` uses Debian Trixie (13), not Bookworm (12). This is a
+  Debian major version change. `pkcs11-provider` is available in Trixie but NOT Bookworm,
+  so this upgrade is actually required for the pkcs11-provider install to work on Debian.
 - Fedora-based images: unchanged (Fedora 43 ships Python 3.13, Fedora 44 ships 3.14 natively)
 - `pyproject.toml` `target-version` stays at `"py311"` — project minimum unchanged
 
@@ -50,7 +53,7 @@ fi
 case $DISTRO in
     debian) apt-get update && apt-get install -y --no-install-recommends \
                 p11-kit p11-kit-modules ;;
-    fedora) dnf install -y p11-kit p11-kit-server ;;
+    fedora) dnf install -y p11-kit ;;  # proxy module is in base p11-kit on Fedora
 esac
 
 # --- pkcs11-provider (OpenSSL 3.x PKCS#11 provider) ---
@@ -75,31 +78,31 @@ case $DISTRO in
 esac
 ```
 
+#### Fault-proxy source location
+
+**IMPORTANT:** `local-builds/` is excluded by `.dockerignore`, so `COPY local-builds/fault-proxy/fault-proxy.c`
+would fail. The fault-proxy C source must be copied to a Docker-accessible location first:
+
+```
+docker/fault-proxy.c    # copy of local-builds/fault-proxy/fault-proxy.c, tracked in git
+```
+
+This is a 326-line C file (~10 KB). Keeping a copy under `docker/` avoids `.dockerignore` conflicts.
+
 #### Integration into each Dockerfile
 
-Each Dockerfile adds these lines in its runtime stage, after `gcc` is available
-(most images already have `gcc` for building the PKCS#11 module itself):
+Each Dockerfile adds these lines in its runtime stage, after system deps are installed
+(including `gcc`) and before the `uv sync` / `COPY . .` layer:
 
 ```dockerfile
 # Test tooling: fault-proxy, pkcs11-provider, p11-kit
-COPY local-builds/fault-proxy/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
 COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
 RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
 ```
 
-For images that don't have `gcc` in the runtime stage (e.g., `python:3.14-slim`), the
-fault-proxy compilation is done in the builder stage and the `.so` is copied:
-
-```dockerfile
-# In builder stage:
-COPY local-builds/fault-proxy/fault-proxy.c /tmp/fault-proxy.c
-RUN gcc -shared -fPIC -o /tmp/fault-proxy.so /tmp/fault-proxy.c -ldl
-
-# In runtime stage:
-COPY --from=builder /tmp/fault-proxy.so /usr/lib/pkcs11/fault-proxy.so
-COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
-RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
-```
+All 15 Dockerfiles already have `gcc` in their runtime stage (verified), so fault-proxy
+compiles in-place. No builder-stage workaround needed.
 
 #### Package availability matrix
 
@@ -132,7 +135,6 @@ _P11KIT_PROXY_PATHS = [
     "/usr/lib/x86_64-linux-gnu/p11-kit-proxy.so",         # Debian x86_64
     "/usr/lib64/p11-kit-proxy.so",                          # Fedora/RHEL x86_64
     "/usr/lib/p11-kit-proxy.so",                            # Fedora multilib
-    "/usr/lib/pkcs11/p11-kit-proxy.so",                     # Some distributions
 ]
 
 def _find_lib(candidates: list[str]) -> Path | None:
@@ -194,7 +196,7 @@ INVESTIGATION*.md
 - `docker/run-with-artifacts.sh`, `docker/run-pkcs11-check.sh` — container CMD entrypoints
 - `docker/<provider>/run-*.sh` — provider-specific startup scripts
 - `pyproject.toml`, `uv.lock`, `README.md` — package metadata
-- `local-builds/fault-proxy/fault-proxy.c` — compiled inside container
+- `docker/fault-proxy.c` — compiled inside container
 - `docker/install-test-tools.sh` — shared install script
 - `data/sources.toml`, `data/.gitignore` — manifest (data itself is bind-mounted)
 
@@ -217,17 +219,32 @@ INVESTIGATION*.md
 | `docker/softhsm2/Dockerfile.main` | Add test tools install |
 | `docker/kryoptic/Dockerfile.fips` | Add test tools install |
 | `docker/tpm2-pkcs11/Dockerfile` | Add test tools install |
-| `src/pkcs11_check/testcases/test_interop_openssl.py` | Platform-aware lib detection |
+| `docker/nss-softoken/Dockerfile.stable` | Add test tools install (orphan, near-identical to main) |
+| `src/pkcs11_check/testcases/test_interop_openssl.py` | Platform-aware lib detection (both detection AND usage sites) |
 | `src/pkcs11_check/testcases/ckr/test_ckr_fault_inject.py` | Multi-path fault-proxy detection |
 | `src/pkcs11_check/testcases/ckr/test_ckr_universal.py` | Multi-path fault-proxy detection |
 | `.dockerignore` | Add docs/, scripts/, tests/, .claude/, Dockerfile patterns |
 
 ### Expected impact
 
-- **11 previously-skipped tests now run** in all Docker targets (5 fault-proxy + 3 pkcs11-provider + 3 p11-kit)
+- **12 previously-skipped tests now run** in all Docker targets (6 fault-proxy + 3 pkcs11-provider + 3 p11-kit)
 - **Build context reduced** by ~5 MB per image (docs, tests, scripts, dev files excluded)
 - **Python 3.14** in 4 Debian-based images (performance, newer stdlib)
 - **No dev files leak** into container images (investigation reports, CLAUDE.md, etc.)
+
+### Known issues to address during implementation
+
+1. **`test_load_module_via_p11kit` uses `import pkcs11`** — the `python-pkcs11` library is
+   not a project dependency. This test has a pre-existing ImportError bug. Fix: rewrite
+   to use `pkcs11_check.raw` API instead of the removed `python-pkcs11` library.
+
+2. **`test_load_module_via_p11kit` hardcoded path at line ~130** — uses the Debian p11-kit
+   path as a string argument to `pkcs11.lib()`, not just for detection. Must use the
+   `_find_p11kit_proxy()` result here too.
+
+3. **tpm2-pkcs11 p11-kit interaction** — p11-kit auto-discovers PKCS#11 modules. In the
+   tpm2 container, this could interact with `tpm2-abrmd` daemon startup. Test carefully
+   after adding p11-kit to the tpm2 image.
 
 ## Non-goals
 
