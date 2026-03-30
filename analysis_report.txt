@@ -1,0 +1,568 @@
+Loaded data for 5 providers: bouncyhsm, kryoptic-main, nss-pqc, opencryptoki-master, softhsm2-main
+
+====================================================================================================
+REAL FAILURES - Tests that FAILED (not xfailed) on at least one provider
+====================================================================================================
+Total: 15189
+
+Top 50 by failure count:
+
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignKAT::test_kat_vector[EDDSA]
+  Failed: 5/5 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_KEY_TYPE_INCONSISTENT; expected one of: CKR_OK
+    opencryptoki-master: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_CURVE_NOT_SUPPORTED; expected one of: CKR_OK
+    softhsm2-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_KEY_TYPE_INCONSISTENT; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_encrypt.py::TestMechEncryptRoundtrip::test_roundtrip[RSA_X_509]
+  Failed: 4/4 providers, XFailed: 0
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    nss-pqc: FAILED
+      -> AssertionError: Decrypt mismatch for RSA_X_509: expected 'abcdef01abcdef01abcdef01abcdef01abcdef01abcdef01abcdef01abcdef
+    opencryptoki-master: FAILED
+      -> AssertionError: Decrypt mismatch for RSA_X_509: expected 'abcdef01abcdef01abcdef01abcdef01abcdef01abcdef01abcdef01abcdef
+    softhsm2-main: FAILED
+      -> AssertionError: Decrypt mismatch for RSA_X_509: expected 'abcdef01abcdef01abcdef01abcdef01abcdef01abcdef01abcdef01abcdef
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[EDDSA]
+  Failed: 4/4 providers, XFailed: 0
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DEVICE_ERROR; expected one of: CKR_OK
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID; expected one of: CKR_OK
+    opencryptoki-master: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    softhsm2-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_OPERATION_NOT_INITIALIZED; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[ML_DSA]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    softhsm2-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignRoundtrip::test_roundtrip[ML_DSA]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    softhsm2-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignRoundtrip::test_tampered_data_fails_verify[ML_DSA]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    softhsm2-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignRoundtrip::test_tampered_data_fails_verify[RSA_PKCS]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DATA_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DEVICE_ERROR; expected one of: CKR_OK
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DEVICE_ERROR; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignKAT::test_kat_vector[ECDSA_SHA224]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DOMAIN_PARAMS_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignKAT::test_kat_vector[ECDSA_SHA256]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DOMAIN_PARAMS_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignKAT::test_kat_vector[ECDSA_SHA384]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DOMAIN_PARAMS_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignKAT::test_kat_vector[ECDSA_SHA512]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID; expected one of: CKR_OK
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DOMAIN_PARAMS_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_v30_session.py::TestLoginUserWithNameRecipe::test_login_user_with_name_empty_username
+  Failed: 3/4 providers, XFailed: 1
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED; expected one of: CKR_OK, CKR_USER_ALREADY_LOGGED_IN
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED; expected one of: CKR_OK, CKR_USER_ALREADY_LOGGED_IN
+    opencryptoki-master: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED; expected one of: CKR_OK, CKR_USER_ALREADY_LOGGED_IN
+
+src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_pss.py::test_rsa_pss[rsa_pss_2048_sha256_mgf1sha1_20_test.json:tc1-valid]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> Failed: Valid RSA-PSS sig rsa_pss_2048_sha256_mgf1sha1_20_test.json:tc1-valid rejected (sLen=20): Unexpected CK_RV CKR_A
+    opencryptoki-master: FAILED
+      -> Failed: Valid RSA-PSS sig rsa_pss_2048_sha256_mgf1sha1_20_test.json:tc1-valid rejected (sLen=20): Unexpected CK_RV CKR_M
+    softhsm2-main: FAILED
+      -> Failed: Valid RSA-PSS sig rsa_pss_2048_sha256_mgf1sha1_20_test.json:tc1-valid rejected (sLen=20): Unexpected CK_RV CKR_A
+
+src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_pss.py::test_rsa_pss[rsa_pss_2048_sha512_mgf1sha256_32_params_test.json:tc1-valid]
+  Failed: 3/3 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> Failed: Valid RSA-PSS sig rsa_pss_2048_sha512_mgf1sha256_32_params_test.json:tc1-valid rejected (sLen=32): Unexpected CK
+    opencryptoki-master: FAILED
+      -> Failed: Valid RSA-PSS sig rsa_pss_2048_sha512_mgf1sha256_32_params_test.json:tc1-valid rejected (sLen=32): Unexpected CK
+    softhsm2-main: FAILED
+      -> Failed: Valid RSA-PSS sig rsa_pss_2048_sha512_mgf1sha256_32_params_test.json:tc1-valid rejected (sLen=32): Unexpected CK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartEncrypt::test_streaming_equals_single[AES_KEY_WRAP]
+  Failed: 3/3 providers, XFailed: 0
+    kryoptic-main: FAILED
+      -> AssertionError: AES_KEY_WRAP: multipart ciphertext differs from single-part
+assert b'q\x1dt(K\xe...7\xa3\x0e\xba' == b'R
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_OPERATION_NOT_INITIALIZED; expected one of: CKR_OK
+    opencryptoki-master: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartEncrypt::test_streaming_equals_single[AES_KEY_WRAP_KWP]
+  Failed: 3/3 providers, XFailed: 0
+    kryoptic-main: FAILED
+      -> AssertionError: AES_KEY_WRAP_KWP: multipart ciphertext differs from single-part
+assert b'5\xc39\xdfK...2\xc3\xfd\xd3' ==
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_BUFFER_TOO_SMALL; expected one of: CKR_OK
+    opencryptoki-master: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_wrap.py::TestMechWrapRoundtrip::test_wrap_unwrap_aes_key[RSA_X_509]
+  Failed: 3/3 providers, XFailed: 0
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_KEY_SIZE_RANGE; expected one of: CKR_OK
+    opencryptoki-master: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_WRAPPED_KEY_LEN_RANGE; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/wycheproof/test_wycheproof.py::TestAESGCMWycheproof::test_aes_gcm[tc268-valid]
+  Failed: 3/3 providers, XFailed: 0
+    kryoptic-main: FAILED
+      -> Failed: Valid GCM vector tc268 rejected: iv=257B tag=16B (Unexpected CK_RV CKR_DEVICE_ERROR; expected one of: CKR_OK)
+    opencryptoki-master: FAILED
+      -> Failed: Valid GCM vector tc268 rejected: iv=257B tag=16B (Unexpected CK_RV CKR_FUNCTION_FAILED; expected one of: CKR_OK)
+    softhsm2-main: FAILED
+      -> Failed: Valid GCM vector tc268 rejected: iv=257B tag=16B (Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID; expected one of: 
+
+src/pkcs11_check/testcases/wycheproof/test_wycheproof.py::TestAESGCMWycheproof::test_aes_gcm[tc272-valid]
+  Failed: 3/3 providers, XFailed: 0
+    kryoptic-main: FAILED
+      -> Failed: Valid GCM vector tc272 rejected: iv=257B tag=16B (Unexpected CK_RV CKR_DEVICE_ERROR; expected one of: CKR_OK)
+    opencryptoki-master: FAILED
+      -> Failed: Valid GCM vector tc272 rejected: iv=257B tag=16B (Unexpected CK_RV CKR_FUNCTION_FAILED; expected one of: CKR_OK)
+    softhsm2-main: FAILED
+      -> Failed: Valid GCM vector tc272 rejected: iv=257B tag=16B (Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID; expected one of: 
+
+src/pkcs11_check/testcases/wycheproof/test_wycheproof.py::TestAESGCMWycheproof::test_aes_gcm[tc276-valid]
+  Failed: 3/3 providers, XFailed: 0
+    kryoptic-main: FAILED
+      -> Failed: Valid GCM vector tc276 rejected: iv=257B tag=16B (Unexpected CK_RV CKR_DEVICE_ERROR; expected one of: CKR_OK)
+    opencryptoki-master: FAILED
+      -> Failed: Valid GCM vector tc276 rejected: iv=257B tag=16B (Unexpected CK_RV CKR_FUNCTION_FAILED; expected one of: CKR_OK)
+    softhsm2-main: FAILED
+      -> Failed: Valid GCM vector tc276 rejected: iv=257B tag=16B (Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID; expected one of: 
+
+src/pkcs11_check/testcases/test_access_levels.py::TestTrustedAttribute::test_wrap_with_trusted_rejects_untrusted
+  Failed: 2/3 providers, XFailed: 1
+    bouncyhsm: FAILED
+      -> AssertionError: Expected wrap rejection, got CKR_MECHANISM_PARAM_INVALID
+assert <CKR_MECHANISM_PARAM_INVALID: 0x00000071
+    kryoptic-main: FAILED
+      -> AssertionError: Expected wrap rejection, got CKR_WRAPPING_KEY_HANDLE_INVALID
+assert <CKR_WRAPPING_KEY_HANDLE_INVALID: 0x
+
+src/pkcs11_check/testcases/test_aes_modes.py::TestAESCTR::test_aes_ctr_different_keys
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    opencryptoki-master: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DATA_LEN_RANGE; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_aes_modes.py::TestAESCTR::test_aes_ctr_non_block_aligned
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    opencryptoki-master: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DATA_LEN_RANGE; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_api_security.py::TestSensitiveExtraction::test_private_key_not_extractable
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: SECURITY: CKA_PRIVATE_EXPONENT readable — private key material exposed
+assert <CKA_PRIVATE_EXPONENT: 0x0
+    opencryptoki-master: FAILED
+      -> AssertionError: SECURITY: CKA_PRIVATE_EXPONENT readable — private key material exposed
+assert <CKA_PRIVATE_EXPONENT: 0x0
+
+src/pkcs11_check/testcases/test_eddsa.py::TestEdDSASignVerify::test_signature_length
+  Failed: 2/3 providers, XFailed: 1
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DEVICE_ERROR; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_eddsa.py::TestEdDSACrossVerify::test_sign_p11_verify_crypto
+  Failed: 2/3 providers, XFailed: 1
+    bouncyhsm: FAILED
+      -> cryptography.exceptions.InvalidSignature
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_DEVICE_ERROR; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_encrypt.py::TestMechEncryptRoundtrip::test_roundtrip[AES_CCM]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_encrypt.py::TestMechEncryptKAT::test_kat_vector[AES_CCM]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_GENERAL_ERROR; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_encrypt.py::TestMechEncryptKAT::test_kat_vector[CHACHA20_POLY1305]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: KAT ciphertext mismatch for chacha20_poly1305_256_with_aad: got '2a3364b5243e01dffef4dbfbc0e5af0a23af705
+    nss-pqc: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_BUFFER_TOO_SMALL; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_ML_DSA]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_ML_DSA_SHA224]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_ML_DSA_SHA256]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_ML_DSA_SHA384]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_ML_DSA_SHA3_224]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_ML_DSA_SHA3_256]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_ML_DSA_SHA3_384]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_ML_DSA_SHA3_512]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_ML_DSA_SHA512]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_SLH_DSA]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_SLH_DSA_SHA224]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_SLH_DSA_SHA256]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_SLH_DSA_SHA384]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_SLH_DSA_SHA3_224]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_SLH_DSA_SHA3_256]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_SLH_DSA_SHA3_384]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_SLH_DSA_SHA3_512]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[HASH_SLH_DSA_SHA512]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_multipart.py::TestMultipartSign::test_multipart_sign_verify[SLH_DSA]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignRoundtrip::test_roundtrip[HASH_ML_DSA]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+src/pkcs11_check/testcases/test_mech_sign.py::TestMechSignRoundtrip::test_roundtrip[HASH_ML_DSA_SHA224]
+  Failed: 2/2 providers, XFailed: 0
+    bouncyhsm: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+    kryoptic-main: FAILED
+      -> AssertionError: Unexpected CK_RV CKR_MECHANISM_INVALID; expected one of: CKR_OK
+
+====================================================================================================
+UNIVERSAL XFAILS - Tests that are XFailed on ALL providers (Known Issues)
+====================================================================================================
+Total: 131
+
+Top 30:
+
+  src/pkcs11_check/testcases/test_cctv_rfc6979.py::test_rfc6979_ecdsa_sign_deterministic
+    XFailed on 5/5 providers
+    Reason: Most PKCS#11 modules use random nonces rather than RFC 6979 deterministic k - si
+  src/pkcs11_check/testcases/test_sensitivity.py::TestSensitiveKeyValue::test_sensitive_aes_value_not_readable
+    XFailed on 5/5 providers
+    Reason: SECURITY: NSS allows reading sensitive AES key material (CKR_OK instead of CKR_A
+  src/pkcs11_check/testcases/test_sensitivity.py::TestSensitiveKeyValue::test_sensitive_rsa_private_exponent_not_readable
+    XFailed on 5/5 providers
+    Reason: SECURITY: NSS allows reading sensitive RSA private key material (CKR_OK instead 
+  src/pkcs11_check/testcases/test_api_security.py::TestWrapDecryptOracle::test_wrap_decrypt_combination_prevented
+    XFailed on 4/4 providers
+    Reason: SECURITY: NSS wrap-decrypt oracle possible — key has both CKA_WRAP and CKA_DECRY
+  src/pkcs11_check/testcases/test_v30_session.py::TestSessionCancel::test_cancel_after_digest_init_subprocess
+    XFailed on 4/4 providers
+    Reason: Module returns non-conformant CKR for C_SessionCancel(flags=0): CANCEL:0x0000005
+  src/pkcs11_check/testcases/ckr/test_ckr_codes.py::TestCKRAttributeErrors::test_ckr_attribute_sensitive
+    XFailed on 3/3 providers
+    Reason: SECURITY: NSS returns CKR_OK for sensitive CKA_VALUE read (expected CKR_ATTRIBUT
+  src/pkcs11_check/testcases/ckr/test_ckr_object.py::TestGetAttributeErrors::test_sensitive_value
+    XFailed on 3/3 providers
+    Reason: NSS allows reading sensitive key VALUE via C_GetAttributeValue (returns CKR_OK i
+  src/pkcs11_check/testcases/ckr/test_ckr_spec_compliance.py::TestCKRAttributeCompliance::test_sensitive_value_returns_attribute_sensitive
+    XFailed on 3/3 providers
+    Reason: SECURITY: NSS returns CKR_OK for sensitive CKA_VALUE read (expected CKR_ATTRIBUT
+  src/pkcs11_check/testcases/test_padding_oracle.py::TestRSAPaddingOracle::test_oaep_error_uniformity
+    XFailed on 3/3 providers
+    Reason: SECURITY: NSS RSA-OAEP padding oracle — non-uniform error codes: {'CKR_OPERATION
+  src/pkcs11_check/testcases/test_remaining_gaps.py::TestTier1Stragglers::test_aes_cmac_general_availability
+    XFailed on 3/3 providers
+    Reason: AES_CMAC_GENERAL sign failed: Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID; expe
+  src/pkcs11_check/testcases/test_v30_session.py::TestCLoginUser::test_c_login_user_empty_username_user_type
+    XFailed on 3/3 providers
+    Reason: Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED
+  src/pkcs11_check/testcases/test_v30_session.py::TestCLoginUser::test_c_login_user_non_empty_username
+    XFailed on 3/3 providers
+    Reason: Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED
+  src/pkcs11_check/testcases/test_ro_session_restrictions.py::TestROWrapUnwrapRestrictions::test_unwrap_to_session_object_in_ro_succeeds
+    XFailed on 3/3 providers
+    Reason: Module overly restricts RO session unwrap (Unexpected CK_RV CKR_TEMPLATE_INCONSI
+  src/pkcs11_check/testcases/ckr/test_ckr_universal.py::TestUniversalRealTriggers::test_cryptoki_not_initialized_via_subprocess
+    XFailed on 2/2 providers
+    Reason: NSS vendor extension: auto-initializes after C_Finalize, returns CKR_OK instead 
+  src/pkcs11_check/testcases/test_access_control.py::TestPrivateAttribute::test_private_key_default_is_private
+    XFailed on 2/2 providers
+    Reason: Module defaults CKA_PRIVATE=False for secret keys (spec violation)
+  src/pkcs11_check/testcases/test_api_security.py::TestAttributeLaunderingViaCopy::test_copy_cannot_escalate_extractable
+    XFailed on 2/2 providers
+    Reason: SECURITY: NSS Copy escalated CKA_EXTRACTABLE (False->True) via C_CopyObject — ke
+  src/pkcs11_check/testcases/test_attribute_defaults.py::TestSecretKeyDefaults::test_private_default
+    XFailed on 2/2 providers
+    Reason: Module defaults CKA_PRIVATE=False for secret keys (spec violation)
+  src/pkcs11_check/testcases/test_attribute_defaults.py::TestKeyPairDefaults::test_private_key_private
+    XFailed on 2/2 providers
+    Reason: Module defaults CKA_PRIVATE=False for RSA private key (spec violation)
+  src/pkcs11_check/testcases/test_attribute_enforcement.py::TestCopyableOneWay::test_copyable_false_cannot_be_set_true
+    XFailed on 2/2 providers
+    Reason: SECURITY: CKA_COPYABLE escalated from False to True - one-way rule violated
+  src/pkcs11_check/testcases/test_hash_ml_dsa.py::TestHashMLDSAGeneric::test_sign_verify_roundtrip
+    XFailed on 2/2 providers
+    Reason: CKM_HASH_ML_DSA sign failed: AssertionError('Unexpected CK_RV CKR_GENERAL_ERROR;
+  src/pkcs11_check/testcases/test_hash_slh_dsa.py::TestHashSLHDSAGeneric::test_sign_verify_roundtrip
+    XFailed on 2/2 providers
+    Reason: CKM_HASH_SLH_DSA sign failed: AssertionError('Unexpected CK_RV CKR_GENERAL_ERROR
+  src/pkcs11_check/testcases/test_tookan.py::TestSensitivePreservation::test_extractable_cannot_escalate_on_copy
+    XFailed on 2/2 providers
+    Reason: SECURITY: NSS allows CKA_EXTRACTABLE escalation FALSE->TRUE via C_CopyObject — O
+  src/pkcs11_check/testcases/test_hkdf_extended.py::TestHKDFData::test_hkdf_data_derive
+    XFailed on 2/2 providers
+    Reason: HKDF_DATA derive failed: CKR_TEMPLATE_INCONSISTENT
+  src/pkcs11_check/testcases/test_hkdf_extended.py::TestHKDFData::test_hkdf_data_deterministic
+    XFailed on 2/2 providers
+    Reason: HKDF_DATA derive failed: CKR_TEMPLATE_INCONSISTENT
+  src/pkcs11_check/testcases/test_hkdf_extended.py::TestHKDFData::test_hkdf_data_different_info_different_output
+    XFailed on 2/2 providers
+    Reason: HKDF_DATA derive failed: CKR_TEMPLATE_INCONSISTENT
+  src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108FeedbackKDF::test_derive_aes128
+    XFailed on 2/2 providers
+    Reason: CKM_SP800_108_FEEDBACK_KDF not operational: CKR_MECHANISM_PARAM_INVALID
+  src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108FeedbackKDF::test_derive_with_iv
+    XFailed on 2/2 providers
+    Reason: CKM_SP800_108_FEEDBACK_KDF with IV not operational: CKR_MECHANISM_PARAM_INVALID
+  src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108FeedbackKDF::test_iv_affects_output
+    XFailed on 2/2 providers
+    Reason: CKM_SP800_108_FEEDBACK_KDF not operational: CKR_MECHANISM_PARAM_INVALID
+  src/pkcs11_check/testcases/test_sp800_108_kdf.py::TestSP800108FeedbackKDF::test_derive_deterministic
+    XFailed on 2/2 providers
+    Reason: CKM_SP800_108_FEEDBACK_KDF not operational: CKR_MECHANISM_PARAM_INVALID
+  src/pkcs11_check/testcases/test_attribute_defaults.py::TestKeyPairDefaults::test_private_key_extractable
+    XFailed on 2/2 providers
+    Reason: Module defaults CKA_EXTRACTABLE=True for RSA private key (spec violation)
+
+====================================================================================================
+FAILURES BY TEST FILE (Real failures only)
+====================================================================================================
+  11977 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdh.py
+    887 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_pss.py
+    722 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_oaep.py
+    715 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py
+    467 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py
+    296 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_dsa.py
+    210 failures: src/pkcs11_check/testcases/test_mech_sign.py
+    204 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_hmac.py
+    118 failures: src/pkcs11_check/testcases/test_mech_multipart.py
+     31 failures: src/pkcs11_check/testcases/test_mech_digest.py
+     30 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa.py
+     29 failures: src/pkcs11_check/testcases/test_mech_wrap.py
+     27 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_mldsa_sign.py
+     25 failures: src/pkcs11_check/testcases/test_mech_encrypt.py
+     22 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof.py
+     21 failures: src/pkcs11_check/testcases/test_mech_attribute.py
+     17 failures: src/pkcs11_check/testcases/test_mech_keygen.py
+     10 failures: src/pkcs11_check/testcases/test_aes_modes.py
+     10 failures: src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_siggen.py
+      9 failures: src/pkcs11_check/testcases/test_eddsa.py
+
+====================================================================================================
+SUMMARY
+====================================================================================================
+
+Total unique tests with results: 15321
+Tests with real failures: 15189 (99.1%)
+Universal xfails (known issues): 131 (0.9%)
+Partial xfails: 0 (0.0%)
+
+====================================================================================================
+MOST COMMON FAILURE PATTERNS (Real failures)
+====================================================================================================
+  11945x: test_ecdh
+   678x: test_rsa_oaep
+   467x: test_ecdsa_wycheproof
+   450x: test_rsa_pss
+   405x: test_aes_ccm
+   296x: test_dsa
+   196x: test_hmac_wycheproof
+    84x: test_tampered_data_fails_verify
+    80x: test_aes_xts
+    77x: test_aes_kwp
+    68x: test_roundtrip
+    59x: test_multipart_sign_verify
+    30x: test_rsa_wycheproof
+    28x: test_kat_vector
+    27x: test_mldsa_sign
+    26x: test_streaming_equals_single
+    26x: test_wrap_unwrap_aes_key
+    20x: test_known_empty
+    15x: test_local_flag_on_generated_key
+    15x: test_local_flag

@@ -6,6 +6,8 @@ Vector sources:
 - RSA-SigVer-FIPS186-2: Signature verification (legacy)
 - RSA-SigVer-FIPS186-4: Signature verification (FIPS 186-4)
 - RSA-SigVer-FIPS186-5: Signature verification (FIPS 186-5)
+- RSA-KeyGen-FIPS186-4: Key generation (FIPS 186-4)
+- RSA-KeyGen-FIPS186-5: Key generation (FIPS 186-5)
 """
 
 from __future__ import annotations
@@ -344,5 +346,75 @@ def load_sigver_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
             vec_id = f"{algorithm.split('-')[1]}-pss-ver-{hash_alg}-tc{tc_id}"
             result.append((vec_id, merged))
             count += 1
+
+    return result
+
+
+def load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
+    """Load RSA KeyGen vectors from FIPS186-4 and FIPS186-5 internalProjection files.
+
+    Returns vectors with expected key parameters (modulus size, public exponent).
+    Note: PKCS#11 does not support deterministic key generation from seeds,
+    so these vectors are used to verify key generation produces valid keys
+    with the expected properties.
+    """
+    import json
+
+    from pkcs11_check.testcases.data import ACVP_DIR
+
+    result: list[tuple[str, dict[str, Any]]] = []
+
+    for algorithm in ["RSA-KeyGen-FIPS186-4", "RSA-KeyGen-FIPS186-5"]:
+        vec_dir = ACVP_DIR / algorithm
+        if not vec_dir.exists():
+            continue
+
+        # Load internalProjection.json for deterministic key data
+        proj_file = vec_dir / "internalProjection.json"
+        if not proj_file.exists():
+            continue
+
+        with open(proj_file) as f:
+            data = json.load(f)
+
+        for group in data.get("testGroups", []):
+            modulo = group.get("modulo", 0)
+            if modulo not in (2048, 3072, 4096):
+                continue
+
+            for test in group.get("tests", []):
+                tc_id = test.get("tcId", 0)
+                n_hex = test.get("n", "")
+                e_hex = test.get("e", "")
+
+                if not n_hex:
+                    continue
+
+                # Parse public exponent
+                try:
+                    e_bytes = bytes.fromhex(e_hex) if e_hex else b"\x01\x00\x01"
+                    e_int = int.from_bytes(e_bytes, "big")
+                except ValueError:
+                    e_int = 65537  # Default F4
+
+                merged: dict[str, Any] = {
+                    "algorithm": algorithm,
+                    "revision": data.get("revision", algorithm.split("-")[-1]),
+                    "tc_id": tc_id,
+                    "modulo": modulo,
+                    "expected_n": bytes.fromhex(n_hex),
+                    "expected_e": e_int,
+                    "e_hex": e_hex,
+                    "tg_id": group.get("tgId", 0),
+                    "pub_exp_mode": group.get("pubExp", "random"),
+                    "rand_pq": group.get("randPQ", ""),
+                }
+
+                vec_id = f"{algorithm.replace('RSA-KeyGen-', '')}-{modulo}-tc{tc_id}"
+                result.append((vec_id, merged))
+
+                # Limit total vectors for speed
+                if len(result) >= 30:
+                    return result
 
     return result
