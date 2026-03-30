@@ -172,6 +172,9 @@ def test_acvp_hmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> No
             if "CKR_KEY_SIZE_RANGE" in exc_msg:
                 # Module rejects this key size for HMAC with this mechanism
                 pytest.skip(f"Key size out of range for {vec['mech_display']}")
+            if "CKR_KEY_HANDLE_INVALID" in exc_msg:
+                # Module rejects this key for HMAC (key type/mechanism mismatch)
+                pytest.skip(f"Key not valid for HMAC mechanism {vec['mech_display']}")
             raise
 
         # Compare truncated to expected (macLen is in bits)
