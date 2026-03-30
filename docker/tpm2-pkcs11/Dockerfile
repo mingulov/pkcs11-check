@@ -12,6 +12,11 @@ RUN dnf install -y \
 
 RUN rpm -q tpm2-pkcs11 swtpm tpm2-abrmd
 
+# Test tooling: fault-proxy, pkcs11-provider, p11-kit
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
+RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
 RUN mkdir -p /tmp/swtpm /var/lib/tpm2_pkcs11 /run/dbus
 
 RUN find /usr/lib64 /usr/lib -name "libtpm2_pkcs11.so" 2>/dev/null | head -1 > /tmp/module_path

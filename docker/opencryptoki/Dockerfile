@@ -11,6 +11,11 @@ RUN dnf install -y \
 
 RUN rpm -q opencryptoki opencryptoki-swtok
 
+# Test tooling: fault-proxy, pkcs11-provider, p11-kit
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
+RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
 # OpenCryptoki runtime directories
 RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ \
     /var/lock/opencryptoki /var/run/opencryptoki && \

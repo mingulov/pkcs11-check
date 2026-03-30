@@ -29,6 +29,11 @@ RUN git clone --depth 1 https://github.com/Pkcs11Interop/pkcs11-mock.git \
 
 ENV PKCS11_CHECK_MODULE=/usr/lib64/libpkcs11-mock.so
 
+# Test tooling: fault-proxy, pkcs11-provider, p11-kit
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
+RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app

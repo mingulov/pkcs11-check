@@ -35,6 +35,11 @@ FROM quay.io/fedora/fedora:44
 RUN dnf -y install python3.12 python3.12-devel gcc git opensc sqlite-devel && \
     dnf clean all
 
+# Test tooling: fault-proxy, pkcs11-provider, p11-kit
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
+RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
 # Copy Kryoptic FIPS module + HMAC file
 COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so /usr/lib64/
 COPY --from=builder /build/kryoptic/target/debug/libkryoptic_pkcs11.so.hmac /usr/lib64/
