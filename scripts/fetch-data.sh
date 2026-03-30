@@ -24,12 +24,13 @@ fi
 # Returns the value of sources[name][field], or empty string if missing.
 _parse_source() {
     local name="$1" field="$2"
+    _P11_MANIFEST="$MANIFEST" _P11_NAME="$name" _P11_FIELD="$field" \
     uv run python -c "
-import tomllib, sys, json
-with open('$MANIFEST', 'rb') as f:
+import tomllib, json, os
+with open(os.environ['_P11_MANIFEST'], 'rb') as f:
     sources = tomllib.load(f)
-src = sources.get('$name', {})
-val = src.get('$field', '')
+src = sources.get(os.environ['_P11_NAME'], {})
+val = src.get(os.environ['_P11_FIELD'], '')
 if isinstance(val, list):
     print(json.dumps(val))
 else:
@@ -39,9 +40,10 @@ else:
 
 # Get all source names from the manifest.
 _list_sources() {
+    _P11_MANIFEST="$MANIFEST" \
     uv run python -c "
-import tomllib
-with open('$MANIFEST', 'rb') as f:
+import tomllib, os
+with open(os.environ['_P11_MANIFEST'], 'rb') as f:
     sources = tomllib.load(f)
 for name in sources:
     print(name)
@@ -122,13 +124,14 @@ _fetch_one() {
     if [ -n "$include_json" ] && [ "$include_json" != "" ]; then
         mkdir -p "$tmpdir/filtered"
         # Parse JSON array of include paths via Python
+        _P11_INCLUDE="$include_json" _P11_SRC="$prefix_dir" _P11_DST="$tmpdir/filtered" \
         uv run python -c "
-import json, shutil, sys
+import json, shutil, sys, os
 from pathlib import Path
 
-include = json.loads('$include_json')
-src = Path('$prefix_dir')
-dst = Path('$tmpdir/filtered')
+include = json.loads(os.environ['_P11_INCLUDE'])
+src = Path(os.environ['_P11_SRC'])
+dst = Path(os.environ['_P11_DST'])
 
 for pattern in include:
     source = src / pattern.rstrip('/')
