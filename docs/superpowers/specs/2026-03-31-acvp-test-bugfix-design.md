@@ -74,11 +74,11 @@ Analysis method: all 27 ACVP test files cross-referenced with OASIS PKCS#11 v3.2
 
 **Files and lines:**
 - `test_acvp_mldsa.py:258-263` — accepts `CKR_SIGNATURE_INVALID`, `CKR_SIGNATURE_LEN_RANGE`, `CKR_DATA_INVALID`, `CKR_FUNCTION_FAILED`, `CKR_DEVICE_ERROR`
-- `test_acvp_ecdsa.py:243-244` — accepts `CKR_FUNCTION_FAILED`, `CKR_DEVICE_ERROR`
-- `test_acvp_eddsa.py:202-203` — accepts `CKR_FUNCTION_FAILED`, `CKR_DEVICE_ERROR`
+- `test_acvp_ecdsa.py:240-245` — accepts `CKR_SIGNATURE_INVALID`, `CKR_SIGNATURE_LEN_RANGE`, `CKR_DATA_INVALID`, `CKR_FUNCTION_FAILED`, `CKR_DEVICE_ERROR`
+- `test_acvp_eddsa.py:200-205` — accepts `CKR_SIGNATURE_INVALID`, `CKR_SIGNATURE_LEN_RANGE`, `CKR_FUNCTION_FAILED`, `CKR_DEVICE_ERROR`
 
-**Bug:** Per OASIS spec (`functions_for_verifying_signatures_and_macs.md:67-72`), C_Verify returns `CKR_OK`, `CKR_SIGNATURE_INVALID`, or `CKR_SIGNATURE_LEN_RANGE` for signature verification results. `CKR_FUNCTION_FAILED` and `CKR_DEVICE_ERROR` are unexpected errors that should not be treated as "invalid signature."
-**Fix:** Keep only `CKR_SIGNATURE_INVALID` and `CKR_SIGNATURE_LEN_RANGE` in verify error lists. For `CKR_DATA_INVALID` in ML-DSA: remove it (it means the input data is malformed, not that the signature is invalid).
+**Bug:** Per OASIS spec (`functions_for_verifying_signatures_and_macs.md:67-72`), C_Verify returns `CKR_OK`, `CKR_SIGNATURE_INVALID`, or `CKR_SIGNATURE_LEN_RANGE` for signature verification results. `CKR_DATA_INVALID`, `CKR_FUNCTION_FAILED`, and `CKR_DEVICE_ERROR` are unexpected errors that should not be treated as "invalid signature."
+**Fix:** Keep only `CKR_SIGNATURE_INVALID` and `CKR_SIGNATURE_LEN_RANGE` in all three verify error lists. Remove `CKR_DATA_INVALID`, `CKR_FUNCTION_FAILED`, and `CKR_DEVICE_ERROR` from all of them.
 
 ### 3c. RSA verify exception fall-through
 
