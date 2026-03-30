@@ -23,8 +23,8 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
-    CKM_SHAKE_128_KEY_DERIVATION,
-    CKM_SHAKE_256_KEY_DERIVATION,
+    CKM_SHAKE128,
+    CKM_SHAKE256,
 )
 from pkcs11_check.testcases.data.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
@@ -53,10 +53,11 @@ _ALG_MAP: dict[str, tuple[Any, str, int]] = {
 }
 
 
-# SHAKE algorithms use key derivation mechanisms
+# SHAKE algorithms use extendable-output functions (XOF) with variable output length
+# Each entry: (algorithm_name, (mechanism, mechanism_name))
 _SHAKE_ALG_MAP: dict[str, tuple[Any, str]] = {
-    "SHAKE-128-1.0": (CKM_SHAKE_128_KEY_DERIVATION, "SHAKE_128_KEY_DERIVATION"),
-    "SHAKE-256-1.0": (CKM_SHAKE_256_KEY_DERIVATION, "SHAKE_256_KEY_DERIVATION"),
+    "SHAKE-128-1.0": (CKM_SHAKE128, "SHAKE128"),
+    "SHAKE-256-1.0": (CKM_SHAKE256, "SHAKE256"),
 }
 
 
@@ -201,14 +202,11 @@ def test_acvp_hash(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> No
 
 @pytest.mark.parametrize("vec_id,vec", _SHAKE_VECTORS, ids=[v[0] for v in _SHAKE_VECTORS])
 def test_acvp_shake(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """SHAKE XOF via key derivation from NIST ACVP vectors.
+    """SHAKE XOF (extendable-output function) from NIST ACVP vectors.
 
-    SHAKE is tested via C_DeriveKey using the SHAKE key derivation mechanism,
-    which produces variable-length output suitable for XOF verification.
-
-    Note: SHAKE XOF extraction is module-specific. Most modules don't support
-    direct XOF output reading. This test verifies the mechanism is available
-    and can be initialized.
+    SHAKE produces variable-length output based on the requested output length.
+    The ACVP vectors specify outLen in bits, which we convert to bytes for
+    the PKCS#11 digest operation.
     """
     rs = p11_raw_session
     mech_name: str = vec["mech_name"]
@@ -217,7 +215,15 @@ def test_acvp_shake(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     if not rs.has_mechanism(mech_name):
         pytest.skip(f"{mech_name} not supported")
 
-    # SHAKE XOF testing via PKCS#11 key derivation produces output within
-    # the key object, which cannot be directly compared to ACVP vectors.
-    # Mark as xfail - would need module-specific extraction support.
-    pytest.xfail("SHAKE XOF verification requires module-specific key value extraction")
+    mech: Any = vec["mech_int"]
+    msg: bytes = vec["msg"]
+    expected_md: bytes = vec["expected_md"]
+
+    try:
+        digest = digest_single(rs.raw, rs.sh, mech, msg)
+    except AssertionError as e:
+        pytest.fail(f"SHAKE digest failed for {vec_id}: {e}")
+
+    assert digest == expected_md, (
+        f"{vec_id}: SHAKE XOF mismatch\n  expected: {expected_md.hex()}\n  got:      {digest.hex()}"
+    )
