@@ -16,6 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 git gcc python3-dev libssl-dev opensc \
     && rm -rf /var/lib/apt/lists/*
 
+# Test tooling: fault-proxy, pkcs11-provider, p11-kit
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
+RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
 COPY --from=kryoptic-builder /build/kryoptic/target/release/libkryoptic_pkcs11.so /usr/lib/
 
 # Create Kryoptic config with SQLite backend

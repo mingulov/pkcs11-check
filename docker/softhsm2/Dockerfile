@@ -25,6 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 libsqlite3-0 git gcc python3-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Test tooling: fault-proxy, pkcs11-provider, p11-kit
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
+RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
 # Set up token
 ENV SOFTHSM2_CONF=/etc/softhsm2.conf
 RUN mkdir -p /var/lib/softhsm/tokens && \

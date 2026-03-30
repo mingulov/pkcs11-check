@@ -25,6 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git gcc python3-dev libssl-dev curl libicu-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Test tooling: fault-proxy, pkcs11-provider, p11-kit
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
+RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
 COPY --from=mcr.microsoft.com/dotnet/aspnet:10.0 /usr/share/dotnet /usr/share/dotnet
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PATH=$PATH:/usr/share/dotnet
