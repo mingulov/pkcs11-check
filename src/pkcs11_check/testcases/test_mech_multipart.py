@@ -1,8 +1,8 @@
 """Multi-part streaming operation tests.
 
-Parametrized by mech_encrypt_entry / mech_sign_entry / mech_digest_entry —
-verifies that multi-part operations produce the same result as the
-equivalent single-part operation.
+Parametrized by mech_multipart_encrypt_entry / mech_multipart_sign_entry /
+mech_digest_entry — verifies that multi-part operations produce the same
+result as the equivalent single-part operation.
 
 Test patterns:
 - Encrypt: C_EncryptUpdate chunks → C_EncryptFinal, result matches C_Encrypt
@@ -11,8 +11,9 @@ Test patterns:
 - Verify: C_VerifyUpdate chunks → C_VerifyFinal, validates multipart sig
 - Digest: C_DigestUpdate chunks → C_DigestFinal, result matches C_Digest
 
-AEAD mechanisms (GCM, CCM) do not support multi-part — they are skipped
-here with a clear message (config.multi_part_supported == False).
+Selector-backed multipart fixtures cover multi-part capability. Runtime guards
+remain only for helper coverage gaps and operation-specific limitations such as
+AES-XTS multipart, XOF digest APIs, and unbuildable parameter recipes.
 """
 
 from __future__ import annotations
@@ -37,9 +38,9 @@ from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     generate_key_for_encrypt,
     generate_key_for_sign,
+    get_test_plaintext_bytes,
     make_mech_param,
     make_mech_param_or_skip,
-    get_test_plaintext_bytes,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.multipart]
@@ -58,25 +59,17 @@ class TestMultipartEncrypt:
     """C_EncryptUpdate chunks → C_EncryptFinal matches C_Encrypt."""
 
     def test_streaming_equals_single(
-        self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_multipart_encrypt_entry: MechEntry
     ) -> None:
         """Multi-part encrypt output must equal single-part encrypt for the same input."""
         rs = p11_raw_session
-        entry = mech_encrypt_entry
+        entry = mech_multipart_encrypt_entry
         config = entry.config
-        if config is None:
-            pytest.skip(f"{entry.mech_name}: no registry config")
-
-        if not config.multi_part_supported:
-            pytest.skip(f"{entry.mech_name}: multi-part not supported (AEAD/stream)")
+        assert config is not None
 
         # XTS: multipart unsupported on most modules, skip
         if config.key_type is not None and int(config.key_type) == _CKK_AES_XTS_ID:
             pytest.skip(f"{entry.mech_name}: AES-XTS multipart not widely supported")
-
-        # Wrap-only mechanisms
-        if config.input_constraint == "none":
-            pytest.skip(f"{entry.mech_name}: wrap-only mechanism")
 
         enc_key, dec_key = generate_key_for_encrypt(rs, entry, config)
         dec_key_handle = dec_key if dec_key is not None else enc_key
@@ -213,17 +206,13 @@ class TestMultipartSign:
     """C_SignUpdate chunks → C_SignFinal — multipart signature verifies."""
 
     def test_multipart_sign_verify(
-        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_multipart_sign_entry: MechEntry
     ) -> None:
         """Multi-part sign then verify with the same multi-part verify."""
         rs = p11_raw_session
-        entry = mech_sign_entry
+        entry = mech_multipart_sign_entry
         config = entry.config
-        if config is None:
-            pytest.skip(f"{entry.mech_name}: no registry config")
-
-        if not config.multi_part_supported:
-            pytest.skip(f"{entry.mech_name}: multi-part not supported")
+        assert config is not None
 
         sign_key, verify_key = generate_key_for_sign(rs, entry, config)
         verify_key_handle = verify_key if verify_key is not None else sign_key

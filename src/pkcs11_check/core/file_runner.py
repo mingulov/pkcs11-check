@@ -12,8 +12,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 from xml.etree import ElementTree as ET
@@ -21,6 +21,7 @@ from xml.etree import ElementTree as ET
 from rich.console import Console
 
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.quality_audit import build_quality_audit
 
 IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
@@ -67,6 +68,7 @@ class FileRunState:
     units: list[str]
     fingerprint: str
     results: list[FileRunResult]
+    report_records_by_unit: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -411,9 +413,24 @@ def write_isolated_json_report(
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
-) -> None:
+) -> dict[str, Any]:
     """Write an aggregated JSON report for an isolated run in unified format."""
+    payload = _build_isolated_json_payload(
+        state,
+        per_unit_details=per_unit_details,
+        coverage=coverage,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
+
+
+def _build_isolated_json_payload(
+    state: FileRunState,
+    *,
+    per_unit_details: dict[str, dict[str, Any]] | None = None,
+    coverage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     details = per_unit_details or {}
 
     summary: dict[str, int] = {
@@ -469,7 +486,7 @@ def write_isolated_json_report(
     }
     if coverage:
         payload["coverage"] = coverage
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
 
 
 def _junit_case_identity(target: str) -> tuple[str, str]:
@@ -598,6 +615,89 @@ def write_isolated_report(
     write_isolated_junit_report(config.output_path, state)
 
 
+def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
+    """Load parseable JSONL report-log records from disk."""
+    try:
+        text = jsonl_path.read_text()
+    except (FileNotFoundError, OSError):
+        return []
+
+    records: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            records.append(rec)
+    return records
+
+
+def _report_record_cache_dir(state_file: Path) -> Path:
+    return state_file.parent / f".{state_file.name}.report-records"
+
+
+def _report_record_cache_path(state_file: Path, unit: str) -> Path:
+    digest = hashlib.sha256(unit.encode("utf-8")).hexdigest()
+    return _report_record_cache_dir(state_file) / f"{digest}.jsonl"
+
+
+def _write_unit_report_record_cache(
+    state_file: Path,
+    unit: str,
+    records: list[Mapping[str, Any]],
+) -> None:
+    cache_path = _report_record_cache_path(state_file, unit)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+
+def _delete_unit_report_record_cache(state_file: Path, unit: str) -> None:
+    _report_record_cache_path(state_file, unit).unlink(missing_ok=True)
+
+
+def _load_cached_report_records_by_unit(
+    state_file: Path,
+    units: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    cached: dict[str, list[dict[str, Any]]] = {}
+    for unit in units:
+        records = _load_report_log_records(_report_record_cache_path(state_file, unit))
+        if records:
+            cached[unit] = records
+    return cached
+
+
+def extract_quality_report_records_from_jsonl(jsonl_path: Path) -> list[dict[str, Any]]:
+    """Extract report-log records relevant to the quality audit from JSONL."""
+    records: list[dict[str, Any]] = []
+    for rec in _load_report_log_records(jsonl_path):
+        report_type = rec.get("$report_type", "TestReport")
+        if report_type in {"TestReport", "SelectionReport"}:
+            records.append(rec)
+    return records
+
+
+def write_quality_json_report(
+    path: Path,
+    results: Mapping[str, Any],
+    *,
+    coverage: Mapping[str, Any] | None = None,
+    report_log_records: Iterable[Mapping[str, Any]] | None = None,
+) -> None:
+    """Write the quality audit artifact."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_quality_audit(
+        results=results,
+        coverage=coverage,
+        report_log_records=report_log_records,
+    )
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
     """Stream-concatenate per-unit JSONL temp files into a single artifact.
 
@@ -620,6 +720,270 @@ def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
         tmp_path.unlink(missing_ok=True)
         for src in jsonl_paths:
             src.unlink(missing_ok=True)
+
+
+def _infer_unit_target_from_records(
+    records: list[Mapping[str, Any]],
+    candidate_targets: set[str],
+) -> str | None:
+    nodeids = [
+        str(record.get("nodeid", "")).strip()
+        for record in records
+        if record.get("$report_type", "TestReport") in {"TestReport", "CollectReport"}
+        and str(record.get("nodeid", "")).strip()
+    ]
+    if not nodeids:
+        return None
+
+    unique_nodeids = sorted(set(nodeids))
+    file_targets = sorted({nodeid.split("::", 1)[0] for nodeid in unique_nodeids})
+
+    if len(unique_nodeids) == 1 and unique_nodeids[0] in candidate_targets:
+        return unique_nodeids[0]
+    if len(file_targets) == 1 and file_targets[0] in candidate_targets:
+        return file_targets[0]
+    if len(unique_nodeids) == 1:
+        return unique_nodeids[0]
+    if len(file_targets) == 1:
+        return file_targets[0]
+    return None
+
+
+def _unit_candidate_from_record(
+    record: Mapping[str, Any],
+    candidate_targets: set[str],
+) -> str | None:
+    report_type = record.get("$report_type", "TestReport")
+    if report_type not in {"TestReport", "CollectReport"}:
+        return None
+    nodeid = str(record.get("nodeid", "")).strip()
+    if not nodeid:
+        return None
+    file_target = nodeid.split("::", 1)[0]
+    if file_target in candidate_targets and nodeid not in candidate_targets:
+        return file_target
+    if nodeid in candidate_targets:
+        return nodeid
+    if file_target in candidate_targets:
+        return file_target
+    return nodeid
+
+
+def _extract_unit_report_records_from_jsonl(
+    jsonl_path: Path,
+    *,
+    candidate_targets: set[str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Split a merged report.jsonl back into per-unit record chunks."""
+    records = _load_report_log_records(jsonl_path)
+    if not records:
+        return {}
+
+    chunks: list[list[dict[str, Any]]] = []
+    current_chunk: list[dict[str, Any]] = []
+    current_target: str | None = None
+    for record in records:
+        record_target = _unit_candidate_from_record(record, candidate_targets)
+        if (
+            current_chunk
+            and current_target is not None
+            and record_target is not None
+            and record_target != current_target
+        ):
+            chunks.append(current_chunk)
+            current_chunk = []
+            current_target = None
+        current_chunk.append(record)
+        if current_target is None and record_target is not None:
+            current_target = record_target
+        if record.get("$report_type") == "CoverageReport":
+            chunks.append(current_chunk)
+            current_chunk = []
+            current_target = None
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    records_by_unit: dict[str, list[dict[str, Any]]] = {}
+    for chunk in chunks:
+        unit_target = _infer_unit_target_from_records(chunk, candidate_targets)
+        if unit_target is None:
+            continue
+        records_by_unit.setdefault(unit_target, []).extend(chunk)
+    return records_by_unit
+
+
+def _write_report_jsonl_from_record_map(
+    report_records_by_unit: Mapping[str, list[Mapping[str, Any]]],
+    *,
+    units: list[str],
+    output_path: Path,
+) -> None:
+    """Write a merged report.jsonl from in-memory per-unit record groups."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_suffix(".jsonl.tmp")
+    written_units: set[str] = set()
+    try:
+        with tmp_path.open("w", encoding="utf-8") as out_fh:
+            for unit in units:
+                for record in report_records_by_unit.get(unit, []):
+                    out_fh.write(json.dumps(record) + "\n")
+                written_units.add(unit)
+            for unit in sorted(report_records_by_unit):
+                if unit in written_units:
+                    continue
+                for record in report_records_by_unit[unit]:
+                    out_fh.write(json.dumps(record) + "\n")
+        tmp_path.rename(output_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _build_detail_from_report_records(records: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Build per-unit detail payload from parsed report-log records."""
+    if not records:
+        return None
+
+    counts: dict[str, int] = {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+        "error": 0,
+    }
+    non_passing: list[dict[str, Any]] = []
+    skip_reasons: dict[str, int] = {}
+    seen_call: set[str] = set()
+    setup_events: list[Mapping[str, Any]] = []
+    call_events: list[Mapping[str, Any]] = []
+    collect_errors: list[Mapping[str, Any]] = []
+
+    for rec in records:
+        if not isinstance(rec, Mapping):
+            continue
+
+        report_type = rec.get("$report_type", "TestReport")
+        when = rec.get("when", "")
+        outcome = rec.get("outcome", "")
+        nodeid = rec.get("nodeid", "")
+
+        if report_type == "CollectReport":
+            if outcome == "passed":
+                continue
+            collect_errors.append(rec)
+            continue
+
+        if report_type != "TestReport":
+            continue
+
+        if when == "call":
+            seen_call.add(str(nodeid))
+            call_events.append(rec)
+        elif when == "setup" and outcome in ("skipped", "failed", "error"):
+            setup_events.append(rec)
+
+    for rec in call_events:
+        nodeid = rec.get("nodeid", "")
+        raw_outcome = rec.get("outcome", "passed")
+        wasxfail = rec.get("wasxfail")
+        mapped = _map_outcome(raw_outcome, wasxfail)
+        counts[mapped] = counts.get(mapped, 0) + 1
+
+        if mapped == "skipped":
+            reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
+            if reason.startswith("(") and "Skipped:" in reason:
+                parts = reason.split("Skipped:", 1)
+                if len(parts) > 1:
+                    reason = parts[1].strip().rstrip("')")
+            elif reason.startswith("Skipped:"):
+                reason = reason[8:].strip()
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+            continue
+        if mapped == "passed":
+            continue
+
+        entry: dict[str, Any] = {
+            "nodeid": nodeid,
+            "outcome": mapped,
+            "duration": rec.get("duration", 0.0),
+        }
+        if rec.get("start") is not None:
+            entry["start"] = rec["start"]
+        if wasxfail is not None:
+            entry["wasxfail"] = wasxfail
+        flat = _flatten_longrepr(rec.get("longrepr"))
+        if flat:
+            entry["longrepr"] = flat
+        if rec.get("location"):
+            entry["location"] = rec["location"]
+        for section in rec.get("sections", []):
+            if isinstance(section, list) and len(section) >= 2:
+                name, content = section[0], section[1]
+                if "stdout" in name.lower():
+                    entry["stdout"] = content
+                elif "stderr" in name.lower():
+                    entry["stderr"] = content
+        non_passing.append(entry)
+
+    seen_error_reprs: set[str] = set()
+    for rec in setup_events:
+        nodeid = rec.get("nodeid", "")
+        if nodeid in seen_call:
+            continue
+        raw_outcome = rec.get("outcome", "")
+        if raw_outcome == "skipped":
+            counts["skipped"] = counts.get("skipped", 0) + 1
+            reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
+            if "Skipped:" in reason:
+                parts = reason.split("Skipped:", 1)
+                reason = parts[1].strip().rstrip("')")
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+            continue
+
+        counts["error"] = counts.get("error", 0) + 1
+        flat = _flatten_longrepr(rec.get("longrepr"))
+        dedup_key = flat or str(nodeid)
+        if dedup_key in seen_error_reprs:
+            continue
+        seen_error_reprs.add(dedup_key)
+        entry = {
+            "nodeid": nodeid,
+            "outcome": "error",
+            "duration": rec.get("duration", 0.0),
+        }
+        if flat:
+            entry["longrepr"] = flat
+        non_passing.append(entry)
+
+    for rec in collect_errors:
+        counts["error"] = counts.get("error", 0) + 1
+        entry = {
+            "nodeid": rec.get("nodeid", ""),
+            "outcome": "error",
+            "duration": rec.get("duration", 0.0),
+        }
+        flat = _flatten_longrepr(rec.get("longrepr"))
+        if flat:
+            entry["longrepr"] = flat
+        non_passing.append(entry)
+
+    if not any(counts.values()):
+        return None
+    result: dict[str, Any] = {"counts": counts, "tests": non_passing}
+    if skip_reasons:
+        result["skip_reasons"] = skip_reasons
+    return result
+
+
+def _build_per_unit_details_from_record_map(
+    report_records_by_unit: Mapping[str, list[Mapping[str, Any]]],
+) -> dict[str, dict[str, Any]]:
+    details: dict[str, dict[str, Any]] = {}
+    for unit, records in report_records_by_unit.items():
+        detail = _build_detail_from_report_records(records)
+        if detail is not None:
+            details[unit] = detail
+    return details
 
 
 def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
@@ -701,7 +1065,7 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     }
 
 
-def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
+def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[str, Any] | None:
     """Convert a pytest-reportlog JSONL file to pkcs11-check unified format.
 
     Groups tests by file and writes the unified JSON report.
@@ -709,7 +1073,7 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
     """
     detail = _read_jsonl_results(jsonl_path)
     if detail is None:
-        return
+        return None
 
     # Group tests by file
     by_file: dict[str, list[dict[str, Any]]] = {}
@@ -796,6 +1160,7 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> None:
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
 
 
 def load_run_state(path: Path) -> FileRunState | None:
@@ -805,10 +1170,20 @@ def load_run_state(path: Path) -> FileRunState | None:
 
     raw = json.loads(path.read_text())
     results = [FileRunResult(**item) for item in raw.get("results", [])]
+    report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
+    raw_records = raw.get("report_records_by_unit", {})
+    if isinstance(raw_records, dict):
+        for unit, records in raw_records.items():
+            if not isinstance(unit, str) or not isinstance(records, list):
+                continue
+            parsed_records = [record for record in records if isinstance(record, dict)]
+            if parsed_records:
+                report_records_by_unit[unit] = parsed_records
     return FileRunState(
         units=list(raw.get("units", [])),
         fingerprint=str(raw.get("fingerprint", "")),
         results=results,
+        report_records_by_unit=report_records_by_unit,
     )
 
 
@@ -819,6 +1194,7 @@ def save_run_state(path: Path, state: FileRunState) -> None:
         "fingerprint": state.fingerprint,
         "units": state.units,
         "results": [asdict(result) for result in state.results],
+        "report_records_by_unit": state.report_records_by_unit,
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -1131,161 +1507,6 @@ def _identify_crash_culprit(jsonl_path: Path) -> tuple[str | None, list[str]]:
     return culprit, completed
 
 
-def _read_jsonl_results_text(text: str) -> dict[str, Any] | None:
-    """Read pytest-reportlog JSONL text and return per-test outcomes."""
-    if not text.strip():
-        return None
-
-    counts: dict[str, int] = {
-        "passed": 0,
-        "failed": 0,
-        "skipped": 0,
-        "xfailed": 0,
-        "xpassed": 0,
-        "error": 0,
-    }
-    non_passing: list[dict[str, Any]] = []
-    skip_reasons: dict[str, int] = {}
-    # Track nodeids that had a when=call record, so we know if a setup
-    # skip/error is standalone.
-    seen_call: set[str] = set()
-    # First pass: collect when=call records; second pass not needed if we
-    # process in order and handle setup records that lack a following call.
-    # Instead, buffer setup skip/error and resolve after full scan.
-    setup_events: list[dict[str, Any]] = []
-    call_events: list[dict[str, Any]] = []
-    collect_errors: list[dict[str, Any]] = []
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue  # skip truncated lines
-
-        report_type = rec.get("$report_type", "TestReport")
-        when = rec.get("when", "")
-        outcome = rec.get("outcome", "")
-        nodeid = rec.get("nodeid", "")
-
-        # CollectReport handling
-        if report_type == "CollectReport":
-            if outcome == "passed":
-                continue  # skip successful collection
-            # Collection error (import/syntax error)
-            collect_errors.append(rec)
-            continue
-
-        # TestReport handling
-        if when == "call":
-            seen_call.add(nodeid)
-            call_events.append(rec)
-        elif when == "setup" and outcome in ("skipped", "failed", "error"):
-            setup_events.append(rec)
-        # when=teardown is ignored
-
-    # Process call events (primary source of truth)
-    for rec in call_events:
-        nodeid = rec.get("nodeid", "")
-        raw_outcome = rec.get("outcome", "passed")
-        wasxfail = rec.get("wasxfail")
-        mapped = _map_outcome(raw_outcome, wasxfail)
-        counts[mapped] = counts.get(mapped, 0) + 1
-
-        if mapped == "skipped":
-            reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
-            # Normalize: extract just the reason text from tuple-style longrepr
-            # e.g. "('path.py', 10, 'Skipped: reason')" -> "reason"
-            if reason.startswith("(") and "Skipped:" in reason:
-                parts = reason.split("Skipped:", 1)
-                if len(parts) > 1:
-                    reason = parts[1].strip().rstrip("')")
-            elif reason.startswith("Skipped:"):
-                reason = reason[8:].strip()
-            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
-            continue
-        if mapped == "passed":
-            continue
-
-        entry: dict[str, Any] = {
-            "nodeid": nodeid,
-            "outcome": mapped,
-            "duration": rec.get("duration", 0.0),
-        }
-        if rec.get("start") is not None:
-            entry["start"] = rec["start"]
-        if wasxfail is not None:
-            entry["wasxfail"] = wasxfail
-        longrepr = rec.get("longrepr")
-        flat = _flatten_longrepr(longrepr)
-        if flat:
-            entry["longrepr"] = flat
-        if rec.get("location"):
-            entry["location"] = rec["location"]
-        # Extract stdout/stderr from sections
-        for section in rec.get("sections", []):
-            if isinstance(section, list) and len(section) >= 2:
-                name, content = section[0], section[1]
-                if "stdout" in name.lower():
-                    entry["stdout"] = content
-                elif "stderr" in name.lower():
-                    entry["stderr"] = content
-        non_passing.append(entry)
-
-    # Process setup events for tests that never got a call record.
-    # Deduplicate fixture errors: if a session-scoped fixture fails,
-    # many tests get identical setup/error - report detail once, count all.
-    seen_error_reprs: set[str] = set()
-    for rec in setup_events:
-        nodeid = rec.get("nodeid", "")
-        if nodeid in seen_call:
-            continue  # call record already handled this test
-        raw_outcome = rec.get("outcome", "")
-        if raw_outcome == "skipped":
-            counts["skipped"] = counts.get("skipped", 0) + 1
-            reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
-            if "Skipped:" in reason:
-                parts = reason.split("Skipped:", 1)
-                reason = parts[1].strip().rstrip("')")
-            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
-            continue  # skipped tests excluded from non-passing list per spec
-
-        counts["error"] = counts.get("error", 0) + 1
-        flat = _flatten_longrepr(rec.get("longrepr"))
-        dedup_key = flat or nodeid
-        if dedup_key in seen_error_reprs:
-            continue  # duplicate fixture error - counted but not listed again
-        seen_error_reprs.add(dedup_key)
-        entry = {
-            "nodeid": nodeid,
-            "outcome": "error",
-            "duration": rec.get("duration", 0.0),
-        }
-        if flat:
-            entry["longrepr"] = flat
-        non_passing.append(entry)
-
-    # Process collect errors
-    for rec in collect_errors:
-        counts["error"] = counts.get("error", 0) + 1
-        entry = {
-            "nodeid": rec.get("nodeid", ""),
-            "outcome": "error",
-            "duration": rec.get("duration", 0.0),
-        }
-        flat = _flatten_longrepr(rec.get("longrepr"))
-        if flat:
-            entry["longrepr"] = flat
-        non_passing.append(entry)
-
-    result: dict[str, Any] = {"counts": counts, "tests": non_passing}
-    if skip_reasons:
-        result["skip_reasons"] = skip_reasons
-    return result
-
-
 def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
     """Read a pytest-reportlog JSONL file and return per-test outcomes.
 
@@ -1293,101 +1514,10 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
     only non-passing entries (failed, xfailed, xpassed, error).
     Returns ``None`` if the file is missing or empty.
     """
-    try:
-        text = jsonl_path.read_text()
-    except (FileNotFoundError, OSError):
+    records = _load_report_log_records(jsonl_path)
+    if not records:
         return None
-    return _read_jsonl_results_text(text)
-
-
-def _jsonl_record_matches_unit(unit: str, record: Mapping[str, Any]) -> bool:
-    nodeid = str(record.get("nodeid", ""))
-    if not nodeid:
-        return False
-
-    unit_file = _unit_file_key(unit)
-    record_file = normalize_policy_file_key(nodeid.split("::", 1)[0])
-    if "::" in unit:
-        return nodeid == unit or nodeid.startswith(unit + "[")
-    return record_file == unit_file
-
-
-def _read_jsonl_results_for_unit(jsonl_path: Path, unit: str) -> dict[str, Any] | None:
-    """Read report-log outcomes for one isolated unit from JSONL text."""
-    try:
-        text = jsonl_path.read_text()
-    except (FileNotFoundError, OSError):
-        return None
-    if not text.strip():
-        return None
-
-    unit_lines: list[str] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(rec, dict) and _jsonl_record_matches_unit(unit, rec):
-            unit_lines.append(line)
-
-    if not unit_lines:
-        return None
-    return _read_jsonl_results_text("\n".join(unit_lines) + "\n")
-
-
-def _build_per_unit_details_from_jsonl(
-    jsonl_path: Path, units: list[str]
-) -> dict[str, dict[str, Any]]:
-    """Rebuild per-unit details from a merged JSONL artifact."""
-    details: dict[str, dict[str, Any]] = {}
-    for unit in units:
-        detail = _read_jsonl_results_for_unit(jsonl_path, unit)
-        if detail is not None:
-            details[unit] = detail
-    return details
-
-
-def _quality_summary_from_state(state: FileRunState) -> dict[str, int]:
-    summary = _state_summary(state)
-    return {
-        "total": summary.get("total", 0),
-        "passed": summary.get("passed", 0),
-        "failed": summary.get("failed", 0),
-        "skipped": summary.get("skipped", 0),
-        "xfailed": summary.get("xfailed", 0),
-        "xpassed": summary.get("xpassed", 0),
-        "error": summary.get("error", 0),
-    }
-
-
-def _write_quality_json_report(
-    path: Path,
-    state: FileRunState,
-    *,
-    per_unit_details: dict[str, dict[str, Any]] | None = None,
-    coverage: dict[str, Any] | None = None,
-) -> None:
-    """Write a small quality artifact alongside the isolated JSON report."""
-    details = per_unit_details or {}
-    never_passed_nodeids = sorted(
-        unit for unit, detail in details.items() if detail.get("counts", {}).get("passed", 0) == 0
-    )
-    payload: dict[str, Any] = {
-        "schema_version": 1,
-        "summary": _quality_summary_from_state(state),
-        "never_passed_nodeids": never_passed_nodeids,
-        "framework_skip_candidates": [],
-        "selection_findings": [],
-        "mechanism_findings": [],
-        "data_quality_warnings": [],
-    }
-    if coverage is not None:
-        payload["coverage"] = coverage
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    return _build_detail_from_report_records(records)
 
 
 def _unit_timeout_seconds(test_timeout: int, granularity: IsolationGranularity) -> int:
@@ -1671,9 +1801,6 @@ def run_isolated_pytest_units(
 
     state = previous_state or FileRunState(units=units, fingerprint=fingerprint, results=[])
     pending_units = units_remaining_for_resume(units, previous_state)
-    exit_code = 0
-    per_unit_details: dict[str, dict[str, Any]] = {}
-    jsonl_paths: list[Path] = []
 
     if resume:
         if previous_state is None:
@@ -1701,68 +1828,73 @@ def run_isolated_pytest_units(
             f"(state: [bold]{state_file}[/bold])"
         )
 
-    def _finalize_reports() -> None:
-        coverage_data: dict[str, Any] | None = None
-        if report_config is None:
-            return
-
-        per_unit_details_final = dict(per_unit_details)
-        jsonl_source_paths = list(jsonl_paths)
-        if (
-            report_config.jsonl_path is not None
-            and resume
-            and previous_state is not None
-            and report_config.jsonl_path.exists()
-        ):
-            existing_jsonl_path = report_config.jsonl_path
-            prior_jsonl_fd, prior_jsonl_raw = tempfile.mkstemp(
-                prefix="pkcs11-check-jsonl-resume-",
-                suffix=".jsonl",
-            )
-            os.close(prior_jsonl_fd)
-            prior_jsonl_path = Path(prior_jsonl_raw)
-            shutil.copyfile(existing_jsonl_path, prior_jsonl_path)
-            jsonl_source_paths = [prior_jsonl_path, *jsonl_source_paths]
-            for unit in state.units:
-                if unit in per_unit_details_final:
-                    continue
-                detail = _read_jsonl_results_for_unit(existing_jsonl_path, unit)
-                if detail is not None:
-                    per_unit_details_final[unit] = detail
-
-        if report_config.jsonl_path is not None:
-            write_report_jsonl(jsonl_source_paths, report_config.jsonl_path)
-            coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
-            if coverage_data:
-                coverage_path = report_config.jsonl_path.parent / "coverage.json"
-                coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
-
-        if report_config.output_format == "json":
-            write_isolated_json_report(
-                report_config.output_path,
-                state,
-                per_unit_details=per_unit_details_final,
-                coverage=coverage_data,
-            )
-            quality_path = report_config.output_path.with_name("quality.json")
-            _write_quality_json_report(
-                quality_path,
-                state,
-                per_unit_details=per_unit_details_final,
-                coverage=coverage_data,
-            )
-        else:
-            write_isolated_report(
-                report_config,
-                state,
-                per_unit_details=per_unit_details_final,
-            )
+    per_unit_details: dict[str, dict[str, Any]] = {}
+    report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
+    executed_units: set[str] = set()
 
     if not pending_units:
         console.print("[green]Nothing to do[/green] - all isolated units already completed.")
-        _finalize_reports()
+        if report_config is not None:
+            coverage_data: dict[str, Any] | None = None
+            quality_records: list[dict[str, Any]] = []
+            merged_report_records_by_unit = _load_cached_report_records_by_unit(
+                state_file, state.units
+            )
+            for unit, records in state.report_records_by_unit.items():
+                merged_report_records_by_unit.setdefault(unit, records)
+            if (
+                resume
+                and report_config.jsonl_path is not None
+                and report_config.jsonl_path.exists()
+            ):
+                candidate_targets = set(state.units) | {result.target for result in state.results}
+                parsed_report_records = _extract_unit_report_records_from_jsonl(
+                    report_config.jsonl_path,
+                    candidate_targets=candidate_targets,
+                )
+                for unit, records in parsed_report_records.items():
+                    merged_report_records_by_unit.setdefault(unit, records)
+            merged_details = _build_per_unit_details_from_record_map(
+                merged_report_records_by_unit
+            )
+            if report_config.jsonl_path is not None:
+                if merged_report_records_by_unit:
+                    _write_report_jsonl_from_record_map(
+                        merged_report_records_by_unit,
+                        units=state.units,
+                        output_path=report_config.jsonl_path,
+                    )
+                if report_config.jsonl_path.exists():
+                    coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
+                    quality_records = extract_quality_report_records_from_jsonl(
+                        report_config.jsonl_path
+                    )
+                    if coverage_data:
+                        coverage_path = report_config.jsonl_path.parent / "coverage.json"
+                        coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+            if report_config.output_format == "json":
+                results_payload = write_isolated_json_report(
+                    report_config.output_path,
+                    state,
+                    per_unit_details=merged_details,
+                    coverage=coverage_data,
+                )
+                quality_path = report_config.output_path.parent / "quality.json"
+                write_quality_json_report(
+                    quality_path,
+                    results_payload,
+                    coverage=coverage_data,
+                    report_log_records=quality_records,
+                )
+            else:
+                write_isolated_report(
+                    report_config,
+                    state,
+                    per_unit_details=merged_details,
+                )
         return 0
 
+    exit_code = 0
     index = 0
     try:
         while index < len(units):
@@ -1771,15 +1903,21 @@ def run_isolated_pytest_units(
                 index += 1
                 continue
 
+            executed_units.add(unit)
+            if report_config is not None and report_config.jsonl_path is not None:
+                _delete_unit_report_record_cache(state_file, unit)
+                state.report_records_by_unit.pop(unit, None)
             console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
             start = time.monotonic()
             unit_granularity = _effective_granularity(unit, granularity)
-            needs_jsonl_report = report_config is not None and report_config.jsonl_path is not None
 
-            # Inject --report-log for file-level units, and for test-level
-            # units only when the merged JSONL artifact is requested.
+            # File-level runs always benefit from JSONL detail. Test-level runs
+            # only need it when we are building merged JSON artifacts.
             unit_jsonl_path: Path | None = None
-            if unit_granularity == "file" or needs_jsonl_report:
+            collect_report_log = unit_granularity == "file" or (
+                report_config is not None and report_config.jsonl_path is not None
+            )
+            if collect_report_log:
                 unit_jsonl_fd, unit_jsonl_raw = tempfile.mkstemp(
                     prefix="pkcs11-check-jsonl-", suffix=".jsonl"
                 )
@@ -1807,6 +1945,13 @@ def run_isolated_pytest_units(
                     status = _status_from_returncode(returncode)
                 except subprocess.TimeoutExpired:
                     duration_s = time.monotonic() - start
+                    if unit_jsonl_path is not None:
+                        unit_records = _load_report_log_records(unit_jsonl_path)
+                        if unit_records:
+                            report_records_by_unit[unit] = unit_records
+                            state.report_records_by_unit[unit] = unit_records
+                            if report_config is not None and report_config.jsonl_path is not None:
+                                _write_unit_report_record_cache(state_file, unit, unit_records)
                     result = FileRunResult(
                         target=unit,
                         status="timeout",
@@ -1890,13 +2035,14 @@ def run_isolated_pytest_units(
                 crash_jsonl_path: Path | None = unit_jsonl_path
                 detail: dict[str, Any] | None = None
                 if unit_jsonl_path is not None:
+                    unit_records = _load_report_log_records(unit_jsonl_path)
+                    report_records_by_unit[unit] = unit_records
+                    state.report_records_by_unit[unit] = unit_records
+                    if report_config is not None and report_config.jsonl_path is not None:
+                        _write_unit_report_record_cache(state_file, unit, unit_records)
                     detail = _read_jsonl_results(unit_jsonl_path)
                     if status not in ("crashed", "timeout"):
-                        # Safe to clean up - no crash recovery needed
-                        if report_config is not None and report_config.jsonl_path is not None:
-                            jsonl_paths.append(unit_jsonl_path)
-                        else:
-                            unit_jsonl_path.unlink(missing_ok=True)
+                        unit_jsonl_path.unlink(missing_ok=True)
                         crash_jsonl_path = None
                     unit_jsonl_path = None
 
@@ -2165,15 +2311,21 @@ def run_isolated_pytest_units(
                                 # Continue the while loop
 
                         finally:
-                            # Accumulate JSONL files for report.jsonl artifact
                             all_iter_jsonls = (
                                 [crash_jsonl_path] if crash_jsonl_path else []
                             ) + retry_temp_files
                             if report_config is not None and report_config.jsonl_path is not None:
-                                jsonl_paths.extend(p for p in all_iter_jsonls if p.exists())
-                            else:
+                                unit_records: list[dict[str, Any]] = []
                                 for tmp in all_iter_jsonls:
-                                    tmp.unlink(missing_ok=True)
+                                    if not tmp.exists():
+                                        continue
+                                    unit_records.extend(_load_report_log_records(tmp))
+                                report_records_by_unit[unit] = unit_records
+                                state.report_records_by_unit[unit] = unit_records
+                                _write_unit_report_record_cache(state_file, unit, unit_records)
+                                save_run_state(state_file, state)
+                            for tmp in all_iter_jsonls:
+                                tmp.unlink(missing_ok=True)
 
                         if not escalate:
                             # Deselect loop broke via successful retry
@@ -2242,7 +2394,66 @@ def run_isolated_pytest_units(
                 if unit_jsonl_path is not None:
                     unit_jsonl_path.unlink(missing_ok=True)
     finally:
-        _finalize_reports()
+        coverage_data: dict[str, Any] | None = None
+        quality_records: list[dict[str, Any]] = []
+        merged_details = dict(per_unit_details)
+        if report_config is not None:
+            if report_config.jsonl_path is not None:
+                merged_report_records_by_unit = _load_cached_report_records_by_unit(
+                    state_file, state.units
+                )
+                for unit, records in state.report_records_by_unit.items():
+                    merged_report_records_by_unit.setdefault(unit, records)
+                if resume and report_config.jsonl_path.exists():
+                    candidate_targets = (
+                        set(state.units) | {result.target for result in state.results}
+                    )
+                    parsed_report_records = _extract_unit_report_records_from_jsonl(
+                        report_config.jsonl_path,
+                        candidate_targets=candidate_targets,
+                    )
+                    for unit, records in parsed_report_records.items():
+                        merged_report_records_by_unit.setdefault(unit, records)
+                    for unit in executed_units:
+                        merged_report_records_by_unit.pop(unit, None)
+                    merged_report_records_by_unit.update(report_records_by_unit)
+                if merged_report_records_by_unit:
+                    _write_report_jsonl_from_record_map(
+                        merged_report_records_by_unit,
+                        units=state.units,
+                        output_path=report_config.jsonl_path,
+                    )
+                if report_config.jsonl_path.exists():
+                    merged_details = _build_per_unit_details_from_record_map(
+                        merged_report_records_by_unit
+                    )
+                    coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
+                    quality_records = extract_quality_report_records_from_jsonl(
+                        report_config.jsonl_path
+                    )
+                if coverage_data:
+                    coverage_path = report_config.jsonl_path.parent / "coverage.json"
+                    coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+            if report_config.output_format == "json":
+                results_payload = write_isolated_json_report(
+                    report_config.output_path,
+                    state,
+                    per_unit_details=merged_details,
+                    coverage=coverage_data,
+                )
+                quality_path = report_config.output_path.parent / "quality.json"
+                write_quality_json_report(
+                    quality_path,
+                    results_payload,
+                    coverage=coverage_data,
+                    report_log_records=quality_records,
+                )
+            else:
+                write_isolated_report(
+                    report_config,
+                    state,
+                    per_unit_details=per_unit_details,
+                )
 
     return exit_code
 

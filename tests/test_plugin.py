@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,8 @@ import pytest
 import pkcs11_check.plugin as plugin_mod
 from pkcs11_check.core.preflight import CapabilityManifest
 from pkcs11_check.fixtures import p11_config
+from pkcs11_check.testcases import mechanism_selection as selection
+from pkcs11_check.testcases.mechanism_catalog import MechEntry
 
 
 class TestPluginRegistration:
@@ -71,6 +74,322 @@ class _FakeItem:
 
     def add_marker(self, marker: object) -> None:
         self.added.append(marker)
+
+
+class _FakeCatalog:
+    def __init__(self, entries: list[MechEntry]) -> None:
+        self._entries = entries
+
+    def all_entries(self) -> list[MechEntry]:
+        return list(self._entries)
+
+    def filter_registered(self, flag: int) -> list[MechEntry]:
+        raise AssertionError("legacy flag routing should not be used")
+
+
+class _FakeMetafunc:
+    def __init__(self, config: object, fixturenames: list[str]) -> None:
+        self.config = config
+        self.fixturenames = fixturenames
+        self.calls: list[dict[str, object]] = []
+
+    def parametrize(
+        self,
+        argnames: str,
+        argvalues: list[object],
+        ids: list[str],
+        indirect: bool = False,
+    ) -> None:
+        self.calls.append(
+            {
+                "argnames": argnames,
+                "argvalues": argvalues,
+                "ids": ids,
+                "indirect": indirect,
+            }
+        )
+
+
+class _FakeReportLogPlugin:
+    def __init__(self) -> None:
+        self.records: list[dict[str, object]] = []
+
+    def _write_json_data(self, payload: dict[str, object]) -> None:
+        self.records.append(payload)
+
+
+def _fake_entry(name: str, *, flags: int = 0, config: object | None = object()) -> MechEntry:
+    return MechEntry(
+        mech_id=1,
+        mech_name=name,
+        flags=flags,
+        min_key_size=0,
+        max_key_size=0,
+        config=config,  # type: ignore[arg-type]
+    )
+
+
+def test_pytest_generate_tests_maps_fixture_to_selection_scenario(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    entries = [
+        _fake_entry("CKM_WRAP_OK"),
+        _fake_entry("CKM_WRAP_REJECT"),
+    ]
+
+    def fake_select(entry: MechEntry, scenario: str) -> selection.SelectionDecision:
+        calls.append((entry.mech_name, scenario))
+        if entry.mech_name == "CKM_WRAP_OK":
+            return selection.SelectionDecision(scenario=scenario, selected=True)
+        return selection.SelectionDecision(
+            scenario=scenario,
+            selected=False,
+            reasons=(
+                selection.SelectionReason(
+                    code="missing_flags",
+                    field="flags",
+                    expected=("CKF_WRAP", "CKF_UNWRAP"),
+                    actual=("CKF_WRAP",),
+                    missing=("CKF_UNWRAP",),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(plugin_mod, "select_for_scenario", fake_select)
+    monkeypatch.setattr(
+        plugin_mod,
+        "_ensure_mechanism_catalog",
+        lambda config: _FakeCatalog(entries),
+    )
+    metafunc = _FakeMetafunc(
+        config=SimpleNamespace(stash={}),
+        fixturenames=["mech_wrap_entry"],
+    )
+
+    plugin_mod.pytest_generate_tests(metafunc)
+
+    assert calls == [
+        ("CKM_WRAP_OK", selection.WRAP_ROUNDTRIP),
+        ("CKM_WRAP_REJECT", selection.WRAP_ROUNDTRIP),
+    ]
+    assert metafunc.calls[0]["argnames"] == "mech_wrap_entry"
+    assert metafunc.calls[0]["ids"] == ["CKM_WRAP_OK"]
+
+
+def test_pytest_generate_tests_records_multipart_encrypt_selection_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = [
+        _fake_entry("CKM_ENCRYPT_OK"),
+        _fake_entry("CKM_ENCRYPT_REJECT"),
+    ]
+
+    def fake_select(entry: MechEntry, scenario: str) -> selection.SelectionDecision:
+        if entry.mech_name == "CKM_ENCRYPT_OK":
+            return selection.SelectionDecision(scenario=scenario, selected=True)
+        return selection.SelectionDecision(
+            scenario=scenario,
+            selected=False,
+            reasons=(
+                selection.SelectionReason(
+                    code="unsupported_multi_part",
+                    field="multi_part_supported",
+                    expected=True,
+                    actual=False,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(plugin_mod, "select_for_scenario", fake_select)
+    monkeypatch.setattr(
+        plugin_mod,
+        "_ensure_mechanism_catalog",
+        lambda config: _FakeCatalog(entries),
+    )
+    config = SimpleNamespace(stash={})
+    metafunc = _FakeMetafunc(config=config, fixturenames=["mech_multipart_encrypt_entry"])
+
+    plugin_mod.pytest_generate_tests(metafunc)
+
+    telemetry_key = getattr(plugin_mod, "_SELECTION_TELEMETRY_KEY", None)
+    assert telemetry_key is not None
+    telemetry = config.stash.get(telemetry_key)
+    assert telemetry is not None
+    assert telemetry["multipart_encrypt_roundtrip"]["selected_mechanisms"] == {
+        "CKM_ENCRYPT_OK"
+    }
+    assert telemetry["multipart_encrypt_roundtrip"]["rejected_mechanisms"] == {
+        "CKM_ENCRYPT_REJECT"
+    }
+    assert telemetry["multipart_encrypt_roundtrip"]["rejected_reason_counts"] == Counter(
+        {"unsupported_multi_part": 1}
+    )
+
+
+def test_pytest_generate_tests_records_multipart_sign_selection_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = [
+        _fake_entry("CKM_SIGN_OK"),
+        _fake_entry("CKM_SIGN_REJECT"),
+    ]
+
+    def fake_select(entry: MechEntry, scenario: str) -> selection.SelectionDecision:
+        if entry.mech_name == "CKM_SIGN_OK":
+            return selection.SelectionDecision(scenario=scenario, selected=True)
+        return selection.SelectionDecision(
+            scenario=scenario,
+            selected=False,
+            reasons=(
+                selection.SelectionReason(
+                    code="unsupported_multi_part",
+                    field="multi_part_supported",
+                    expected=True,
+                    actual=False,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(plugin_mod, "select_for_scenario", fake_select)
+    monkeypatch.setattr(
+        plugin_mod,
+        "_ensure_mechanism_catalog",
+        lambda config: _FakeCatalog(entries),
+    )
+    config = SimpleNamespace(stash={})
+    metafunc = _FakeMetafunc(config=config, fixturenames=["mech_multipart_sign_entry"])
+
+    plugin_mod.pytest_generate_tests(metafunc)
+
+    telemetry_key = getattr(plugin_mod, "_SELECTION_TELEMETRY_KEY", None)
+    assert telemetry_key is not None
+    telemetry = config.stash.get(telemetry_key)
+    assert telemetry is not None
+    assert telemetry["multipart_sign_verify_roundtrip"]["selected_mechanisms"] == {
+        "CKM_SIGN_OK"
+    }
+    assert telemetry["multipart_sign_verify_roundtrip"]["rejected_mechanisms"] == {
+        "CKM_SIGN_REJECT"
+    }
+    assert telemetry["multipart_sign_verify_roundtrip"]["rejected_reason_counts"] == Counter(
+        {"unsupported_multi_part": 1}
+    )
+
+
+def test_pytest_generate_tests_caches_selection_aggregation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    entries = [
+        _fake_entry("CKM_SIGN_OK"),
+        _fake_entry("CKM_SIGN_REJECT"),
+    ]
+
+    def fake_select(entry: MechEntry, scenario: str) -> selection.SelectionDecision:
+        calls.append(entry.mech_name)
+        if entry.mech_name == "CKM_SIGN_OK":
+            return selection.SelectionDecision(scenario=scenario, selected=True)
+        return selection.SelectionDecision(
+            scenario=scenario,
+            selected=False,
+            reasons=(
+                selection.SelectionReason(
+                    code="missing_flags",
+                    field="flags",
+                    expected=("CKF_SIGN", "CKF_VERIFY"),
+                    actual=("CKF_SIGN",),
+                    missing=("CKF_VERIFY",),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(plugin_mod, "select_for_scenario", fake_select)
+    monkeypatch.setattr(
+        plugin_mod,
+        "_ensure_mechanism_catalog",
+        lambda config: _FakeCatalog(entries),
+    )
+    config = SimpleNamespace(stash={})
+    metafunc = _FakeMetafunc(config=config, fixturenames=["mech_sign_entry"])
+
+    plugin_mod.pytest_generate_tests(metafunc)
+    telemetry_key = getattr(plugin_mod, "_SELECTION_TELEMETRY_KEY", None)
+    assert telemetry_key is not None
+    telemetry = config.stash[telemetry_key]
+    first_snapshot = {
+        scenario: {
+            "selected_mechanisms": set(data["selected_mechanisms"]),
+            "rejected_mechanisms": set(data["rejected_mechanisms"]),
+            "rejected_reason_counts": Counter(data["rejected_reason_counts"]),
+        }
+        for scenario, data in telemetry.items()
+    }
+
+    plugin_mod.pytest_generate_tests(metafunc)
+
+    assert calls == ["CKM_SIGN_OK", "CKM_SIGN_REJECT"]
+    assert telemetry["sign_verify_roundtrip"]["selected_mechanisms"] == {"CKM_SIGN_OK"}
+    assert telemetry["sign_verify_roundtrip"]["rejected_mechanisms"] == {"CKM_SIGN_REJECT"}
+    assert telemetry["sign_verify_roundtrip"]["rejected_reason_counts"] == Counter(
+        {"missing_flags": 1}
+    )
+    assert {
+        scenario: {
+            "selected_mechanisms": set(data["selected_mechanisms"]),
+            "rejected_mechanisms": set(data["rejected_mechanisms"]),
+            "rejected_reason_counts": Counter(data["rejected_reason_counts"]),
+        }
+        for scenario, data in telemetry.items()
+    } == first_snapshot
+    assert len(metafunc.calls) == 2
+    assert metafunc.calls[0]["ids"] == metafunc.calls[1]["ids"] == ["CKM_SIGN_OK"]
+
+
+def test_sessionfinish_emits_selection_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_log = _FakeReportLogPlugin()
+    config = SimpleNamespace(
+        stash={
+            plugin_mod._CUMULATIVE_FUNCTIONS: set(),
+            plugin_mod._RAW_INSTANCE: SimpleNamespace(
+                available_function_names=lambda: set(),
+                call_log={},
+                used_mechanisms=set(),
+                mechanism_counts={},
+            ),
+            plugin_mod._CUMULATIVE_MECHANISMS: set(),
+            plugin_mod._CUMULATIVE_USED_MECHANISMS: set(),
+            plugin_mod._CUMULATIVE_MECHANISM_DETAILS: set(),
+            plugin_mod._CUMULATIVE_FUNCTION_COUNTS: {},
+            plugin_mod._CUMULATIVE_MECHANISM_COUNTS: {},
+            plugin_mod._CUMULATIVE_DETAIL_COUNTS: {},
+            plugin_mod._BOOTSTRAP_FUNCTION_COUNTS: {},
+        },
+        getoption=lambda name, default=None: {"p11_module": "/tmp/module.so"}.get(name, default),
+        _report_log_plugin=report_log,
+    )
+    telemetry_key = getattr(plugin_mod, "_SELECTION_TELEMETRY_KEY", None)
+    assert telemetry_key is not None
+    config.stash[telemetry_key] = {
+        "encrypt_roundtrip": {
+            "selected_mechanisms": {"CKM_ENCRYPT_OK"},
+            "rejected_mechanisms": {"CKM_ENCRYPT_REJECT"},
+            "rejected_reason_counts": Counter({"unsupported_multi_part": 1}),
+        }
+    }
+    session = SimpleNamespace(config=config)
+
+    plugin_mod.pytest_sessionfinish(session, 0)
+
+    selection_reports = [
+        record for record in report_log.records if record.get("$report_type") == "SelectionReport"
+    ]
+    assert selection_reports
+    assert selection_reports[0]["selection_coverage"]["encrypt_roundtrip"][
+        "selected_mechanisms"
+    ] == ["CKM_ENCRYPT_OK"]
 
 
 def test_collection_modifyitems_applies_only_static_skips() -> None:

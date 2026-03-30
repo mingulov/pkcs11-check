@@ -16,7 +16,9 @@
   - if `PKCS11_CHECK_ARTIFACT_DIR` is set, it writes combined stdout/stderr to `console.log`
 - [docker/run-pkcs11-check.sh](/home/user/src/m/pkcs11-check/docker/run-pkcs11-check.sh)
   - translates environment variables into a `pkcs11-check test` invocation
-  - writes `results.json`, `state.json`, and `policy.json` when `PKCS11_CHECK_ARTIFACT_DIR` is set
+  - writes `results.json`, `coverage.json`, `quality.json`, `state.json`, and `policy.json` when `PKCS11_CHECK_ARTIFACT_DIR` is set
+  - writes `report.jsonl` as the first-class machine-readable test log when machine-readable output is enabled
+  - derives `quality.json` from `report.jsonl` when present, and otherwise falls back to the available `results.json` and `coverage.json` inputs
 
 ## Artifact Layout
 
@@ -25,7 +27,10 @@ Each Compose test service mounts host `artifacts/` into container `/artifacts`.
 Per-service output goes to:
 
 - `artifacts/<service>/console.log`
+- `artifacts/<service>/report.jsonl`
 - `artifacts/<service>/results.json`
+- `artifacts/<service>/coverage.json`
+- `artifacts/<service>/quality.json`
 - `artifacts/<service>/state.json`
 - `artifacts/<service>/policy.json`
 

@@ -17,9 +17,11 @@ from pkcs11_check.core.file_runner import (
     discover_auto_isolation_units,
     discover_pytest_units,
     extract_coverage_from_jsonl,
+    extract_quality_report_records_from_jsonl,
     load_run_state,
     postprocess_jsonl_to_unified,
     run_isolated_pytest_units,
+    write_quality_json_report,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
 
@@ -255,11 +257,20 @@ def test_command(
         if output == "json" and jsonl_raw is not None:
             jsonl_p = Path(jsonl_raw)
             unified_path = Path(output_file or "pkcs11-check-results.json")
+            unified_path.parent.mkdir(parents=True, exist_ok=True)
             coverage_data = extract_coverage_from_jsonl(jsonl_p)
+            quality_records = extract_quality_report_records_from_jsonl(jsonl_p)
             if coverage_data:
                 coverage_path = unified_path.parent / "coverage.json"
                 coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
-            postprocess_jsonl_to_unified(jsonl_p, unified_path)
+            results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path)
+            quality_path = unified_path.parent / "quality.json"
+            write_quality_json_report(
+                quality_path,
+                results_payload or {},
+                coverage=coverage_data,
+                report_log_records=quality_records,
+            )
             jsonl_p.unlink(missing_ok=True)
         raise typer.Exit(code=int(exit_code))
     finally:

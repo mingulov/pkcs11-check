@@ -284,6 +284,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_EDWARDS_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        multi_part_supported=False,
         keygen_recipe=_ec_edwards,
         expected_flags=_SIG_VER,
         vector_file="eddsa.json",

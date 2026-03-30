@@ -368,7 +368,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
         block_size=8,  # RFC 3394: operates on 64-bit blocks
-        input_constraint="block_aligned",
+        input_constraint="none",
         param_required=False,  # optional 8-byte IV param (default IV used if absent)
         param_recipe=ParamRecipe("none"),  # key-wrap-only, skip for data operations
         keygen_recipe=_sym,
@@ -382,6 +382,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
         block_size=8,
+        input_constraint="none",
         param_recipe=ParamRecipe("none"),
         keygen_recipe=_sym,
         multi_part_supported=False,
@@ -394,7 +395,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
         block_size=8,
-        input_constraint="any",
+        input_constraint="none",
         param_required=False,  # optional 4-byte semi-fixed header
         param_recipe=ParamRecipe("none"),  # key-wrap-only, skip for data operations
         keygen_recipe=_sym,
@@ -408,7 +409,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_AES_KEY_GEN,
         key_sizes=_AES_SIZES,
         block_size=8,
-        input_constraint="any",
+        input_constraint="none",
         param_recipe=ParamRecipe("none"),
         keygen_recipe=_sym,
         multi_part_supported=False,

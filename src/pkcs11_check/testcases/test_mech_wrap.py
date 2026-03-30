@@ -48,7 +48,6 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_WRAP,
-    CKF_UNWRAP,
     CKG_MGF1_SHA1,
     CKK_AES,
     CKK_DES,
@@ -413,12 +412,6 @@ def _target_unwrap_attrs(entry: MechEntry) -> dict[int, Any]:
     return attrs
 
 
-def _require_wrap_roundtrip_support(entry: MechEntry) -> None:
-    """Skip mechanisms that can wrap but do not advertise unwrap support."""
-    if not (entry.flags & int(CKF_UNWRAP)):
-        pytest.skip(f"{entry.mech_name}: CKF_UNWRAP not advertised")
-
-
 def _raw_rsa_unwrap_hint(
     original_value: bytes,
     decrypted_block: bytes,
@@ -473,8 +466,7 @@ class TestMechWrapRoundtrip:
         config = entry.config
         mech_id = entry.mech_id
 
-        if config is None:
-            pytest.skip(f"{entry.mech_name}: no registry config")
+        assert config is not None
 
         # Skip hybrid wraps (ECDH-AES) — need ECDH parameter construction
         if mech_id in _HYBRID_WRAP_MECH_IDS:
@@ -485,7 +477,6 @@ class TestMechWrapRoundtrip:
         if not rs.has_mechanism(mech_short):
             pytest.skip(f"{entry.mech_name}: mechanism not available")
 
-        _require_wrap_roundtrip_support(entry)
         mech_param = _make_wrap_mech_param(entry)
 
         # Build the wrapping key(s)
