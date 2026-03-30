@@ -1,6 +1,6 @@
-# NSS softoken — stable (Fedora 43, latest release)
+# NSS softoken — stable (Fedora 44, latest release)
 # Well-tested NSS with v3.0 support
-FROM fedora:43
+FROM fedora:44
 
 RUN dnf install -y \
     nss nss-tools nss-softokn \

@@ -6,7 +6,7 @@
 # function correctly.  Failures are handled gracefully: if the build or init
 # fails the CMD exits with a clear message rather than a hard error.
 
-FROM fedora:43
+FROM fedora:44
 
 # Rust toolchain via rustup (Fedora rustc may be too old for this crate)
 RUN dnf install -y \

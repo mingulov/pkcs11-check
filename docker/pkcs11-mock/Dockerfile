@@ -8,7 +8,7 @@
 # No token initialization needed — the mock accepts any call and returns
 # canned values.
 
-FROM fedora:43
+FROM fedora:44
 
 RUN dnf install -y \
     git gcc \
