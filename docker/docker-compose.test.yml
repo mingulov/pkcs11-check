@@ -19,9 +19,10 @@
 #   docker compose -f docker/docker-compose.test.yml run test-pkcs11-mock
 #   docker compose -f docker/docker-compose.test.yml run test-qryptotoken
 
-x-artifacts: &artifacts
+x-common: &common
   volumes:
     - ../artifacts:/artifacts
+    - ../data:/app/data:ro
 
 services:
 
@@ -31,7 +32,7 @@ services:
 
   # SoftHSM2 2.7.0 (v2.40, OpenSSL)
   test-softhsm2:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/softhsm2/Dockerfile
@@ -41,7 +42,7 @@ services:
 
   # Kryoptic v1.5.0 (v3.2, Rust)
   test-kryoptic:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/kryoptic/Dockerfile
@@ -51,7 +52,7 @@ services:
 
   # NSS stable (Fedora 43, v3.0)
   test-nss:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile
@@ -61,7 +62,7 @@ services:
   # NSS PQC (Fedora Rawhide, v3.2 PQC)
   # NSS PQC (source build, configurable tag, default: tip)
   test-nss-pqc:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile.rawhide
@@ -72,7 +73,7 @@ services:
 
   # OpenCryptoki 3.26 (IBM, v3.0)
   test-opencryptoki:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/opencryptoki/Dockerfile
@@ -86,7 +87,7 @@ services:
 
   # OpenCryptoki master branch (built from source + custom OpenSSL)
   test-opencryptoki-master:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/opencryptoki/Dockerfile.master
@@ -101,7 +102,7 @@ services:
 
   # NSS main branch (built from source, full PQC)
   test-nss-main:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile.main
@@ -110,7 +111,7 @@ services:
 
   # SoftHSM2 main branch (latest development + custom OpenSSL)
   test-softhsm2-main:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/softhsm2/Dockerfile.main
@@ -122,7 +123,7 @@ services:
 
   # Kryoptic main branch (latest dev, default features)
   test-kryoptic-main:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/kryoptic/Dockerfile.main
@@ -133,7 +134,7 @@ services:
   # Kryoptic FIPS (main + simo5/openssl kryoptic_ossl40, --features fips,pqc)
   # Based on: github.com/parallaxsecond/rust-cryptoki/pull/362
   test-kryoptic-fips:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/kryoptic/Dockerfile.fips
@@ -147,7 +148,7 @@ services:
 
   # tpm2-pkcs11 with swtpm + tpm2-abrmd
   test-tpm2:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/tpm2-pkcs11/Dockerfile
@@ -157,7 +158,7 @@ services:
 
   # BouncyHSM (.NET/BouncyCastle, v3.2, 206 mechanisms)
   test-bouncyhsm:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/bouncyhsm/Dockerfile
@@ -167,7 +168,7 @@ services:
 
   # pkcs11-mock — minimal v3.1 stub
   test-pkcs11-mock:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/pkcs11-mock/Dockerfile
@@ -176,7 +177,7 @@ services:
 
   # qryptotoken — experimental Rust PQC token (QUBIP)
   test-qryptotoken:
-    <<: *artifacts
+    <<: *common
     build:
       context: ..
       dockerfile: docker/qryptotoken/Dockerfile

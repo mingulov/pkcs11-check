@@ -1,6 +1,5 @@
-# Large opt-in test vector submodules
-src/pkcs11_check/testcases/data/acvp/
-src/pkcs11_check/testcases/data/x509-limbo/
+# Third-party test vector data (bind-mounted at runtime, not copied)
+data/
 
 # Local builds (large, not needed in Docker)
 local-builds/
