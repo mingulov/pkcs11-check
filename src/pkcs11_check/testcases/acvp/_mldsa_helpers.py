@@ -60,16 +60,30 @@ def get_mldsa_mechanism(pre_hash: str = "pure") -> CKM:
     - Hash-ML-DSA uses hash-specific mechanisms (CKM_HASH_ML_DSA_SHA256, etc.)
 
     Args:
-        pre_hash: Pre-hash mode ("pure" or hash algorithm name like "SHA-256")
+        pre_hash: Pre-hash mode ("pure", "none", or hash algorithm name)
 
     Returns:
         The CKM_ML_DSA or CKM_HASH_ML_DSA_* mechanism constant
     """
-    if pre_hash == "pure":
+    if pre_hash in ("pure", "none"):
         return CKM_ML_DSA
-    if pre_hash in _HASH_ML_DSA_MECHANISMS:
-        return _HASH_ML_DSA_MECHANISMS[pre_hash]
-    raise ValueError(f"Unknown pre-hash mode: {pre_hash}")
+
+    # Normalize ACVP hash names to PKCS#11 mechanism names
+    # ACVP: "SHA2-256" -> PKCS#11: "SHA-256"
+    # ACVP: "SHA2-512/224" -> PKCS#11: "SHA-512/224" -> use SHA-224
+    # ACVP: "SHAKE-256" -> PKCS#11: "SHAKE256"
+    normalized = pre_hash
+    normalized = normalized.replace("SHA2-", "SHA-")
+    normalized = normalized.replace("SHAKE-", "SHAKE")
+    # SHA2-512/224 and SHA2-512/256 are truncated SHA-512 variants
+    if normalized == "SHA-512/224":
+        normalized = "SHA-224"
+    elif normalized == "SHA-512/256":
+        normalized = "SHA-256"
+
+    if normalized in _HASH_ML_DSA_MECHANISMS:
+        return _HASH_ML_DSA_MECHANISMS[normalized]
+    raise ValueError(f"Unknown pre-hash mode: {pre_hash} (normalized: {normalized})")
 
 
 def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
@@ -116,6 +130,7 @@ def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
                 "expected_sig": sig_bytes,
                 "context": ctx_bytes,
                 "pre_hash": tg.get("preHash", "pure"),
+                "hash_alg": test.get("hashAlg", ""),
             }
 
             # Add key material if available
@@ -248,6 +263,7 @@ def load_mldsa_sigver_vectors(limit: int | None = None) -> list[tuple[str, dict[
             "context": ctx_bytes,
             "expected_pass": expected_pass,
             "pre_hash": group.get("preHash", "pure"),
+            "hash_alg": inp.get("hashAlg", ""),
         }
         vec_id = f"ML-DSA-sigVer-{param_set}-tc{tc_id}"
         result.append((vec_id, vec_data))

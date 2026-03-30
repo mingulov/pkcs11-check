@@ -173,7 +173,10 @@ class TestMlDsaSigGen:
             )
 
             # Get the mechanism for signing (pure or hash-specific)
-            mech = get_mldsa_mechanism(vec["pre_hash"])
+            pre_hash = vec["pre_hash"]
+            if pre_hash == "preHash":
+                pre_hash = vec.get("hash_alg", "pure")
+            mech = get_mldsa_mechanism(pre_hash)
 
             # Sign the message
             try:
@@ -235,7 +238,10 @@ class TestMlDsaSigVer:
             )
 
             # Get the mechanism for verification (pure or hash-specific)
-            mech = get_mldsa_mechanism(vec["pre_hash"])
+            pre_hash = vec["pre_hash"]
+            if pre_hash == "preHash":
+                pre_hash = vec.get("hash_alg", "pure")
+            mech = get_mldsa_mechanism(pre_hash)
 
             # Verify the signature
             try:
