@@ -26,8 +26,9 @@ from pkcs11_check.raw.recipes import (
     import_pqc_public_key,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_DECAPSULATE,
     CKA_DERIVE,
-    CKA_ENCRYPT,
+    CKA_ENCAPSULATE,
     CKA_PARAMETER_SET,
     CKK_ML_KEM,
     CKM_ML_KEM_KEY_PAIR_GEN,
@@ -91,8 +92,8 @@ class TestMlKemKeyGen:
                 mechanism=int(CKM_ML_KEM_KEY_PAIR_GEN),
                 pub_base=[attr_ulong(CKA_PARAMETER_SET, vec["parameter_set"])],
                 priv_base=[attr_ulong(CKA_PARAMETER_SET, vec["parameter_set"])],
-                public_attrs={CKA_ENCRYPT: True},
-                private_attrs={CKA_DERIVE: True},
+                public_attrs={CKA_ENCAPSULATE: True},
+                private_attrs={CKA_DECAPSULATE: True},
             )
             assert pub_key != 0, f"{vec_id}: Public key handle is zero"
             assert priv_key != 0, f"{vec_id}: Private key handle is zero"
@@ -161,7 +162,7 @@ class TestMlKemEncapsulate:
                 key_type=int(CKK_ML_KEM),
                 value=vec["ek"],
                 parameter_set=vec["parameter_set"],
-                attrs={CKA_ENCRYPT: True},
+                attrs={CKA_ENCAPSULATE: True},
             )
 
             # Get the mechanism for encapsulation
@@ -221,7 +222,7 @@ class TestMlKemDecapsulate:
                 key_type=int(CKK_ML_KEM),
                 value=vec["dk"],
                 parameter_set=vec["parameter_set"],
-                attrs={CKA_DERIVE: True},
+                attrs={CKA_DECAPSULATE: True},
             )
 
             # Get the mechanism for decapsulation
