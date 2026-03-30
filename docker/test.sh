@@ -33,6 +33,18 @@ if [[ "$service" != test-* ]]; then
     service="test-$service"
 fi
 
+# Warn if test vector data is not present
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ ! -f "$PROJECT_ROOT/data/sources.toml" ]; then
+    echo "Warning: data/sources.toml not found. Test vector data may be missing." >&2
+    echo "  Run: bash scripts/fetch-data.sh all" >&2
+    echo "" >&2
+elif [ ! -d "$PROJECT_ROOT/data/wycheproof" ] && [ ! -d "$PROJECT_ROOT/data/acvp" ]; then
+    echo "Warning: No test vector data found in data/. Vector tests will be skipped." >&2
+    echo "  Run: bash scripts/fetch-data.sh all" >&2
+    echo "" >&2
+fi
+
 option_args=()
 target_args=()
 split_targets=0
