@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Denis Mingulov", email = "denis@mingulov.com" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 license = "MIT"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -64,7 +64,7 @@ packages = ["src/pkcs11_check"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 exclude = [
     "src/pkcs11_check/testcases/data/",
     "src/pkcs11_check/raw/metadata_std.py",
@@ -79,7 +79,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 "src/pkcs11_check/raw/api.py" = ["F405"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
 packages = ["pkcs11_check"]
 mypy_path = "src"
@@ -95,7 +95,7 @@ ignore_errors = true
 
 [tool.pyright]
 typeCheckingMode = "basic"
-pythonVersion = "3.11"
+pythonVersion = "3.13"
 pythonPlatform = "Linux"
 reportMissingImports = false
 reportAttributeAccessIssue = false
