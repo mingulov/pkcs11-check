@@ -1,5 +1,5 @@
 # Stage 1: Build SoftHSM2 2.7.0
-FROM python:3.12-slim AS softhsm-builder
+FROM python:3.14-slim AS softhsm-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git make g++ libssl-dev libsqlite3-dev \
@@ -16,7 +16,7 @@ RUN sh autogen.sh \
     && make DESTDIR=/install install
 
 # Stage 2: Runtime with tests
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Copy only the built SoftHSM2 binaries + libs (no build tools)
 COPY --from=softhsm-builder /install/usr /usr

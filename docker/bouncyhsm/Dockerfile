@@ -19,7 +19,7 @@ RUN git apply --ignore-space-change --ignore-whitespace \
     make -C build_linux CC=gcc && \
     cp build_linux/BouncyHsm.Pkcs11Lib-x64.so /app/libbouncyhsm_pkcs11.so
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git gcc python3-dev libssl-dev curl libicu-dev \

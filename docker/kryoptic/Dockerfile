@@ -10,7 +10,7 @@ WORKDIR /build/kryoptic
 RUN cargo build --release --features pqc
 
 # Stage 2: Runtime with tests
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 git gcc python3-dev libssl-dev opensc \
