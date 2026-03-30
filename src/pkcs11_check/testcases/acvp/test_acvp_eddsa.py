@@ -136,7 +136,8 @@ class TestEdDsaKeyVer:
 
             try:
                 dummy_msg = b"x" * 32
-                dummy_sig = b"\x00" * 64
+                sig_len = 64 if "25519" in vec["curve"] else 114
+                dummy_sig = b"\x00" * sig_len
                 verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, dummy_msg, dummy_sig)
                 key_usable = True
             except AssertionError as exc:

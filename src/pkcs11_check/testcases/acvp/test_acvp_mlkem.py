@@ -24,12 +24,16 @@ from pkcs11_check.raw.recipes import (
     gen_keypair,
     import_pqc_private_key,
     import_pqc_public_key,
+    read_attributes,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECAPSULATE,
     CKA_DERIVE,
     CKA_ENCAPSULATE,
+    CKA_EXTRACTABLE,
     CKA_PARAMETER_SET,
+    CKA_SENSITIVE,
+    CKA_VALUE,
     CKK_ML_KEM,
     CKM_ML_KEM_KEY_PAIR_GEN,
 )
@@ -169,7 +173,8 @@ class TestMlKemEncapsulate:
 
             # Encapsulate to generate ciphertext and shared secret
             secret_handle, ciphertext = encapsulate_key(
-                rs.raw, rs.sh, pub_key, mech, attrs={CKA_DERIVE: True}
+                rs.raw, rs.sh, pub_key, mech,
+                attrs={CKA_DERIVE: True, CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
             )
 
             assert secret_handle != 0, f"{vec_id}: Secret key handle is zero"
@@ -178,6 +183,15 @@ class TestMlKemEncapsulate:
                 f"{vec_id}: Ciphertext len mismatch: expected {len(vec['c'])}, "
                 f"got {len(ciphertext)}"
             )
+
+            # Validate shared secret matches expected value
+            if "k" in vec:
+                secret_attrs = read_attributes(rs.raw, rs.sh, secret_handle, [CKA_VALUE])
+                secret_value = secret_attrs.get(CKA_VALUE, b"")
+                assert secret_value == vec["k"], (
+                    f"{vec_id}: shared secret mismatch: "
+                    f"expected {vec['k'][:16].hex()}..., got {secret_value[:16].hex()}..."
+                )
 
         except AssertionError as exc:
             _handle_unsupported(exc, param_set)
@@ -234,10 +248,19 @@ class TestMlKemDecapsulate:
                 priv_key,
                 mech,
                 vec["c"],
-                attrs={CKA_DERIVE: True},
+                attrs={CKA_DERIVE: True, CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
             )
 
             assert decap_handle != 0, f"{vec_id}: Decapsulated key handle is zero"
+
+            # Validate recovered shared secret matches expected value
+            if "k" in vec:
+                secret_attrs = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])
+                secret_value = secret_attrs.get(CKA_VALUE, b"")
+                assert secret_value == vec["k"], (
+                    f"{vec_id}: shared secret mismatch: "
+                    f"expected {vec['k'][:16].hex()}..., got {secret_value[:16].hex()}..."
+                )
 
         except AssertionError as exc:
             _handle_unsupported(exc, param_set)

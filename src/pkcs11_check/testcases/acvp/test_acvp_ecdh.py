@@ -231,19 +231,8 @@ def test_acvp_ecdh_shared_secret(
 
         # Prepare ECDH1_DERIVE mechanism parameters
         # The public data is the peer's public key point
-        peer_public_data = vec["ec_point_der"]
-        # Strip the DER OCTET STRING wrapper for the mechanism params
-        if peer_public_data[0] == 0x04:
-            if peer_public_data[1] < 0x80:
-                point_data = peer_public_data[2:]
-            elif peer_public_data[1] == 0x81:
-                point_data = peer_public_data[3:]
-            elif peer_public_data[1] == 0x82:
-                point_data = peer_public_data[4:]
-            else:
-                point_data = peer_public_data
-        else:
-            point_data = peer_public_data
+        # Strip DER OCTET STRING wrapper — ECDH1_DERIVE needs raw point
+        point_data = decode_ec_point(vec["ec_point_der"])
 
         mech_param = mech_ecdh(
             CKM_ECDH1_DERIVE,
