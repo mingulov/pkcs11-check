@@ -189,7 +189,7 @@ def run_multiblock_encrypt_test(
         else:
             mech = mech_bytes(mech_constant, blocks[0]["iv"])
 
-        rv = rs.raw.C_EncryptInit(rs.sh, mech.mech, key)
+        rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
         if rv != 0:
             pytest.xfail(f"Module limitation: {mech_name} encrypt_init failed with CKR={rv}")
 
@@ -262,7 +262,7 @@ def run_multiblock_decrypt_test(
         else:
             mech = mech_bytes(mech_constant, blocks[0]["iv"])
 
-        rv = rs.raw.C_DecryptInit(rs.sh, mech.mech, key)
+        rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
         if rv != 0:
             pytest.xfail(f"Module limitation: {mech_name} decrypt_init failed with CKR={rv}")
 

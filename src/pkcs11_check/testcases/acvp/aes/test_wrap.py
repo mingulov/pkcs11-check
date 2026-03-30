@@ -18,7 +18,7 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_SENSITIVE,
     CKA_TOKEN,
-    CKK_AES,
+    CKK_GENERIC_SECRET,
     CKM_AES_KEY_WRAP,
     CKM_AES_KEY_WRAP_KWP,
 )
@@ -71,7 +71,7 @@ def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
         key_to_wrap = import_secret_key(
             rs.raw,
             rs.sh,
-            CKK_AES,
+            CKK_GENERIC_SECRET,
             vec["pt"],
             attrs={
                 CKA_TOKEN: False,
@@ -191,7 +191,7 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
         key_to_wrap = import_secret_key(
             rs.raw,
             rs.sh,
-            CKK_AES,
+            CKK_GENERIC_SECRET,
             vec["pt"],
             attrs={
                 CKA_TOKEN: False,
