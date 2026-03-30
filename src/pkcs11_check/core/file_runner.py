@@ -1131,17 +1131,8 @@ def _identify_crash_culprit(jsonl_path: Path) -> tuple[str | None, list[str]]:
     return culprit, completed
 
 
-def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
-    """Read a pytest-reportlog JSONL file and return per-test outcomes.
-
-    Returns ``{"counts": {...}, "tests": [...]}`` where ``tests`` contains
-    only non-passing entries (failed, xfailed, xpassed, error).
-    Returns ``None`` if the file is missing or empty.
-    """
-    try:
-        text = jsonl_path.read_text()
-    except (FileNotFoundError, OSError):
-        return None
+def _read_jsonl_results_text(text: str) -> dict[str, Any] | None:
+    """Read pytest-reportlog JSONL text and return per-test outcomes."""
     if not text.strip():
         return None
 
@@ -1293,6 +1284,110 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
     if skip_reasons:
         result["skip_reasons"] = skip_reasons
     return result
+
+
+def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
+    """Read a pytest-reportlog JSONL file and return per-test outcomes.
+
+    Returns ``{"counts": {...}, "tests": [...]}`` where ``tests`` contains
+    only non-passing entries (failed, xfailed, xpassed, error).
+    Returns ``None`` if the file is missing or empty.
+    """
+    try:
+        text = jsonl_path.read_text()
+    except (FileNotFoundError, OSError):
+        return None
+    return _read_jsonl_results_text(text)
+
+
+def _jsonl_record_matches_unit(unit: str, record: Mapping[str, Any]) -> bool:
+    nodeid = str(record.get("nodeid", ""))
+    if not nodeid:
+        return False
+
+    unit_file = _unit_file_key(unit)
+    record_file = normalize_policy_file_key(nodeid.split("::", 1)[0])
+    if "::" in unit:
+        return nodeid == unit or nodeid.startswith(unit + "[")
+    return record_file == unit_file
+
+
+def _read_jsonl_results_for_unit(jsonl_path: Path, unit: str) -> dict[str, Any] | None:
+    """Read report-log outcomes for one isolated unit from JSONL text."""
+    try:
+        text = jsonl_path.read_text()
+    except (FileNotFoundError, OSError):
+        return None
+    if not text.strip():
+        return None
+
+    unit_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict) and _jsonl_record_matches_unit(unit, rec):
+            unit_lines.append(line)
+
+    if not unit_lines:
+        return None
+    return _read_jsonl_results_text("\n".join(unit_lines) + "\n")
+
+
+def _build_per_unit_details_from_jsonl(
+    jsonl_path: Path, units: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Rebuild per-unit details from a merged JSONL artifact."""
+    details: dict[str, dict[str, Any]] = {}
+    for unit in units:
+        detail = _read_jsonl_results_for_unit(jsonl_path, unit)
+        if detail is not None:
+            details[unit] = detail
+    return details
+
+
+def _quality_summary_from_state(state: FileRunState) -> dict[str, int]:
+    summary = _state_summary(state)
+    return {
+        "total": summary.get("total", 0),
+        "passed": summary.get("passed", 0),
+        "failed": summary.get("failed", 0),
+        "skipped": summary.get("skipped", 0),
+        "xfailed": summary.get("xfailed", 0),
+        "xpassed": summary.get("xpassed", 0),
+        "error": summary.get("error", 0),
+    }
+
+
+def _write_quality_json_report(
+    path: Path,
+    state: FileRunState,
+    *,
+    per_unit_details: dict[str, dict[str, Any]] | None = None,
+    coverage: dict[str, Any] | None = None,
+) -> None:
+    """Write a small quality artifact alongside the isolated JSON report."""
+    details = per_unit_details or {}
+    never_passed_nodeids = sorted(
+        unit for unit, detail in details.items() if detail.get("counts", {}).get("passed", 0) == 0
+    )
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "summary": _quality_summary_from_state(state),
+        "never_passed_nodeids": never_passed_nodeids,
+        "framework_skip_candidates": [],
+        "selection_findings": [],
+        "mechanism_findings": [],
+        "data_quality_warnings": [],
+    }
+    if coverage is not None:
+        payload["coverage"] = coverage
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
 def _unit_timeout_seconds(test_timeout: int, granularity: IsolationGranularity) -> int:
@@ -1576,6 +1671,9 @@ def run_isolated_pytest_units(
 
     state = previous_state or FileRunState(units=units, fingerprint=fingerprint, results=[])
     pending_units = units_remaining_for_resume(units, previous_state)
+    exit_code = 0
+    per_unit_details: dict[str, dict[str, Any]] = {}
+    jsonl_paths: list[Path] = []
 
     if resume:
         if previous_state is None:
@@ -1603,19 +1701,68 @@ def run_isolated_pytest_units(
             f"(state: [bold]{state_file}[/bold])"
         )
 
-    if not pending_units:
-        console.print("[green]Nothing to do[/green] - all isolated units already completed.")
-        if report_config is not None:
+    def _finalize_reports() -> None:
+        coverage_data: dict[str, Any] | None = None
+        if report_config is None:
+            return
+
+        per_unit_details_final = dict(per_unit_details)
+        jsonl_source_paths = list(jsonl_paths)
+        if (
+            report_config.jsonl_path is not None
+            and resume
+            and previous_state is not None
+            and report_config.jsonl_path.exists()
+        ):
+            existing_jsonl_path = report_config.jsonl_path
+            prior_jsonl_fd, prior_jsonl_raw = tempfile.mkstemp(
+                prefix="pkcs11-check-jsonl-resume-",
+                suffix=".jsonl",
+            )
+            os.close(prior_jsonl_fd)
+            prior_jsonl_path = Path(prior_jsonl_raw)
+            shutil.copyfile(existing_jsonl_path, prior_jsonl_path)
+            jsonl_source_paths = [prior_jsonl_path, *jsonl_source_paths]
+            for unit in state.units:
+                if unit in per_unit_details_final:
+                    continue
+                detail = _read_jsonl_results_for_unit(existing_jsonl_path, unit)
+                if detail is not None:
+                    per_unit_details_final[unit] = detail
+
+        if report_config.jsonl_path is not None:
+            write_report_jsonl(jsonl_source_paths, report_config.jsonl_path)
+            coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
+            if coverage_data:
+                coverage_path = report_config.jsonl_path.parent / "coverage.json"
+                coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+
+        if report_config.output_format == "json":
+            write_isolated_json_report(
+                report_config.output_path,
+                state,
+                per_unit_details=per_unit_details_final,
+                coverage=coverage_data,
+            )
+            quality_path = report_config.output_path.with_name("quality.json")
+            _write_quality_json_report(
+                quality_path,
+                state,
+                per_unit_details=per_unit_details_final,
+                coverage=coverage_data,
+            )
+        else:
             write_isolated_report(
                 report_config,
                 state,
-                per_unit_details={},
+                per_unit_details=per_unit_details_final,
             )
+
+    if not pending_units:
+        console.print("[green]Nothing to do[/green] - all isolated units already completed.")
+        _finalize_reports()
         return 0
 
-    exit_code = 0
-    per_unit_details: dict[str, dict[str, Any]] = {}
-    jsonl_paths: list[Path] = []
     index = 0
     try:
         while index < len(units):
@@ -1627,11 +1774,12 @@ def run_isolated_pytest_units(
             console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
             start = time.monotonic()
             unit_granularity = _effective_granularity(unit, granularity)
+            needs_jsonl_report = report_config is not None and report_config.jsonl_path is not None
 
-            # Inject --report-log for file-level units only
-            # (spec guard: 75K temp files for test-level units is unacceptable).
+            # Inject --report-log for file-level units, and for test-level
+            # units only when the merged JSONL artifact is requested.
             unit_jsonl_path: Path | None = None
-            if unit_granularity == "file":
+            if unit_granularity == "file" or needs_jsonl_report:
                 unit_jsonl_fd, unit_jsonl_raw = tempfile.mkstemp(
                     prefix="pkcs11-check-jsonl-", suffix=".jsonl"
                 )
@@ -2094,27 +2242,7 @@ def run_isolated_pytest_units(
                 if unit_jsonl_path is not None:
                     unit_jsonl_path.unlink(missing_ok=True)
     finally:
-        coverage_data: dict[str, Any] | None = None
-        if report_config is not None:
-            if report_config.jsonl_path is not None:
-                write_report_jsonl(jsonl_paths, report_config.jsonl_path)
-                coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
-                if coverage_data:
-                    coverage_path = report_config.jsonl_path.parent / "coverage.json"
-                    coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
-            if report_config.output_format == "json":
-                write_isolated_json_report(
-                    report_config.output_path,
-                    state,
-                    per_unit_details=per_unit_details,
-                    coverage=coverage_data,
-                )
-            else:
-                write_isolated_report(
-                    report_config,
-                    state,
-                    per_unit_details=per_unit_details,
-                )
+        _finalize_reports()
 
     return exit_code
 

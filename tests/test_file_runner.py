@@ -1149,6 +1149,267 @@ def test_run_isolated_pytest_units_skips_report_log_for_test_level(
     assert "--report-log" not in cmd
 
 
+def test_run_isolated_pytest_units_uses_report_log_for_test_level_when_merging_jsonl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test-level units need report-log detail when JSONL artifacts are enabled."""
+    seen_cmds: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        seen_cmds.append(list(cmd))
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                jsonl_path = Path(cmd[i + 1])
+                jsonl_path.write_text(
+                    json.dumps(
+                        {
+                            "nodeid": "test_a.py::test_case",
+                            "when": "call",
+                            "outcome": "passed",
+                            "duration": 0.1,
+                        }
+                    )
+                    + "\n"
+                )
+                break
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    report_path = tmp_path / "results.json"
+    report_jsonl = tmp_path / "report.jsonl"
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py::test_case"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path, jsonl_path=report_jsonl),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="test",
+    )
+
+    assert exit_code == 0
+    cmd = seen_cmds[0]
+    assert "--report-log" in cmd
+    assert report_jsonl.exists()
+    report = json.loads(report_path.read_text())
+    assert report["units"][0]["counts"]["passed"] == 1
+
+
+def test_run_isolated_pytest_units_resume_regenerates_json_artifacts_when_complete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report_path = tmp_path / "results.json"
+    report_jsonl = tmp_path / "report.jsonl"
+    coverage_path = tmp_path / "coverage.json"
+    report_jsonl.write_text(
+        "\n".join(
+            [
+                _jsonl_line(nodeid="test_a.py::test_one", outcome="passed"),
+                _jsonl_line(nodeid="test_b.py::test_two", outcome="passed"),
+                json.dumps(
+                    {
+                        "$report_type": "CoverageReport",
+                        "function_coverage": {
+                            "available": 2,
+                            "called_names": ["C_Initialize"],
+                            "called_counts": {"C_Initialize": 1},
+                            "bootstrap_counts": {},
+                            "uncalled_names": ["C_Finalize"],
+                        },
+                        "mechanism_coverage": {
+                            "available": 1,
+                            "available_names": ["CKM_AES_ECB"],
+                            "invoked_names": ["CKM_AES_ECB"],
+                            "invoked_counts": {"CKM_AES_ECB": 1},
+                            "not_invoked_names": [],
+                            "invoked_detail": [],
+                            "invoked_detail_counts": {},
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    units = ["test_a.py", "test_b.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    save_run_state(
+        tmp_path / "state.json",
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[
+                FileRunResult("test_a.py", "passed", 0, 0.1),
+                FileRunResult("test_b.py", "passed", 0, 0.2),
+            ],
+        ),
+    )
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del cmd, env, timeout
+        raise AssertionError("resume with no pending units should not run subprocesses")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path, jsonl_path=report_jsonl),
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert report_path.exists()
+    assert coverage_path.exists()
+    payload = json.loads(report_path.read_text())
+    assert payload["summary"]["passed"] == 2
+    assert payload["units"][0]["counts"]["passed"] == 1
+    assert payload["units"][1]["counts"]["passed"] == 1
+    assert json.loads(coverage_path.read_text())["function_coverage"]["called"] == 1
+
+
+def test_run_isolated_pytest_units_resume_merges_existing_report_jsonl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report_path = tmp_path / "results.json"
+    report_jsonl = tmp_path / "report.jsonl"
+    coverage_path = tmp_path / "coverage.json"
+    report_jsonl.write_text(
+        "\n".join(
+            [
+                _jsonl_line(nodeid="test_a.py::test_one", outcome="passed"),
+                json.dumps(
+                    {
+                        "$report_type": "CoverageReport",
+                        "function_coverage": {
+                            "available": 2,
+                            "called_names": ["C_Initialize"],
+                            "called_counts": {"C_Initialize": 1},
+                            "bootstrap_counts": {},
+                            "uncalled_names": ["C_Finalize"],
+                        },
+                        "mechanism_coverage": {
+                            "available": 1,
+                            "available_names": ["CKM_AES_ECB"],
+                            "invoked_names": ["CKM_AES_ECB"],
+                            "invoked_counts": {"CKM_AES_ECB": 1},
+                            "not_invoked_names": [],
+                            "invoked_detail": [],
+                            "invoked_detail_counts": {},
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    units = ["test_a.py", "test_b.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    save_run_state(
+        tmp_path / "state.json",
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[FileRunResult("test_a.py", "passed", 0, 0.1)],
+        ),
+    )
+    seen_cmds: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        seen_cmds.append(list(cmd))
+        for index, arg in enumerate(cmd):
+            if arg == "--report-log" and index + 1 < len(cmd):
+                Path(cmd[index + 1]).write_text(
+                    "\n".join(
+                        [
+                            _jsonl_line(nodeid="test_b.py::test_two", outcome="passed"),
+                            json.dumps(
+                                {
+                                    "$report_type": "CoverageReport",
+                                    "function_coverage": {
+                                        "available": 2,
+                                        "called_names": ["C_Initialize", "C_GetInfo"],
+                                        "called_counts": {"C_Initialize": 1, "C_GetInfo": 1},
+                                        "bootstrap_counts": {},
+                                        "uncalled_names": ["C_Finalize"],
+                                    },
+                                    "mechanism_coverage": {
+                                        "available": 2,
+                                        "available_names": ["CKM_AES_ECB", "CKM_AES_CBC"],
+                                        "invoked_names": ["CKM_AES_ECB", "CKM_AES_CBC"],
+                                        "invoked_counts": {
+                                            "CKM_AES_ECB": 1,
+                                            "CKM_AES_CBC": 1,
+                                        },
+                                        "not_invoked_names": [],
+                                        "invoked_detail": [],
+                                        "invoked_detail_counts": {},
+                                    },
+                                }
+                            ),
+                        ]
+                    )
+                    + "\n"
+                )
+                break
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path, jsonl_path=report_jsonl),
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen_cmds and "--report-log" in seen_cmds[0]
+    report_text = report_jsonl.read_text()
+    assert "test_a.py::test_one" in report_text
+    assert "test_b.py::test_two" in report_text
+    payload = json.loads(report_path.read_text())
+    assert payload["summary"]["passed"] == 2
+    assert payload["units"][0]["counts"]["passed"] == 1
+    assert payload["units"][1]["counts"]["passed"] == 1
+    coverage = json.loads(coverage_path.read_text())
+    assert coverage["function_coverage"]["called"] == 2
+    assert "C_GetInfo" in coverage["function_coverage"]["called_names"]
+
+
 def test_write_isolated_json_report_unified_format(tmp_path: Path) -> None:
     state = FileRunState(
         units=["test_a.py", "test_b.py"],

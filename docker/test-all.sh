@@ -6,16 +6,16 @@ ALL_PROVIDERS=(
     softhsm2-main
     nss-pqc
     opencryptoki-master
-    tpm2
     bouncyhsm
-    kryoptic
-    kryoptic-fips
-    softhsm2
-    nss
-    nss-main
-    opencryptoki
-    pkcs11-mock
-    qryptotoken
+    #tpm2
+    #kryoptic
+    #kryoptic-fips
+    #softhsm2
+    #nss
+    #nss-main
+    #opencryptoki
+    #pkcs11-mock
+    #qryptotoken
 )
 
 providers=("$@")

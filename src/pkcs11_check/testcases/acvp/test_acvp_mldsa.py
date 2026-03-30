@@ -32,7 +32,6 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
     CKK_ML_DSA,
-    CKM_ML_DSA,
     CKM_ML_DSA_KEY_PAIR_GEN,
     CKP_ML_DSA_44,
     CKP_ML_DSA_65,
@@ -40,6 +39,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.acvp._mldsa_helpers import (
     _PREHASH_MAP,
+    get_mldsa_mechanism,
     load_mldsa_keygen_vectors,
     load_mldsa_siggen_vectors,
     load_mldsa_sigver_vectors,
@@ -119,10 +119,11 @@ class TestMlDsaKeyGen:
             assert pub_key != 0, f"{vec_id}: Public key handle is zero"
             assert priv_key != 0, f"{vec_id}: Private key handle is zero"
 
-            # Test roundtrip sign/verify
+            # Test roundtrip sign/verify using specific parameter-set mechanism
             test_msg = b"ML-DSA keygen test message"
-            sig = sign_single(rs.raw, rs.sh, priv_key, CKM_ML_DSA, test_msg)
-            verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ML_DSA, test_msg, sig)
+            mech = get_mldsa_mechanism(param_set_name)
+            sig = sign_single(rs.raw, rs.sh, priv_key, mech, test_msg)
+            verified = verify_single(rs.raw, rs.sh, pub_key, mech, test_msg, sig)
             assert verified, f"{vec_id}: Roundtrip sign/verify failed"
         except AssertionError as exc:
             _handle_unsupported(exc, param_set_name)
@@ -157,15 +158,8 @@ class TestMlDsaSigGen:
                 attrs={CKA_SIGN: True},
             )
 
-            # Get the mechanism for signing
-            pre_hash = vec["pre_hash"]
-            if pre_hash == "pure":
-                mech = CKM_ML_DSA
-            else:
-                # For hash-ML-DSA, use the generic CKM_HASH_ML_DSA
-                from pkcs11_check.raw.types_std import CKM_HASH_ML_DSA
-
-                mech = CKM_HASH_ML_DSA
+            # Get the mechanism for signing using specific parameter-set
+            mech = get_mldsa_mechanism(vec["param_set"], vec["pre_hash"])
 
             # Sign the message
             try:
@@ -198,62 +192,80 @@ class TestMlDsaSigGen:
                 destroy_quietly(rs.raw, rs.sh, priv_key)
 
 
-@pytest.mark.parametrize("vec_id,vec", _SIGVER_VECTORS, ids=[v[0] for v in _SIGVER_VECTORS])
-def test_acvp_mldsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """ML-DSA signature verification from NIST ACVP SigVer vectors."""
-    rs = p11_raw_session
-    mech_name = _get_mech_name(vec["pre_hash"])
-    if not rs.has_mechanism(mech_name):
-        pytest.skip(f"{mech_name} mechanism not supported by module")
+class TestMlDsaSigVer:
+    """ML-DSA signature verification tests using ACVP vectors."""
 
-    pub_key = 0
-    try:
-        # Import the public key from the vector
-        pub_key = import_pqc_public_key(
-            rs.raw,
-            rs.sh,
-            key_type=int(CKK_ML_DSA),
-            value=vec["pk"],
-            parameter_set=vec["parameter_set"],
-            attrs={CKA_VERIFY: True},
-        )
+    @pytest.mark.parametrize("vec_id,vec", _SIGVER_VECTORS, ids=[v[0] for v in _SIGVER_VECTORS])
+    def test_acvp_mldsa_sigver(
+        self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
+    ) -> None:
+        """ML-DSA signature verification from NIST ACVP SigVer vectors."""
+        rs = p11_raw_session
+        mech_name = _get_mech_name(vec["pre_hash"])
+        param_set = vec["param_set"]
 
-        # Get the mechanism for verification
-        pre_hash = vec["pre_hash"]
-        if pre_hash == "pure":
-            mech = CKM_ML_DSA
+        # Check for specific parameter-set mechanism
+        if vec["pre_hash"] == "pure":
+            specific_mech_map = {
+                "ML-DSA-44": "ML_DSA_44",
+                "ML-DSA-65": "ML_DSA_65",
+                "ML-DSA-87": "ML_DSA_87",
+            }
         else:
-            from pkcs11_check.raw.types_std import CKM_HASH_ML_DSA
+            specific_mech_map = {
+                "ML-DSA-44": "HASH_ML_DSA_44",
+                "ML-DSA-65": "HASH_ML_DSA_65",
+                "ML-DSA-87": "HASH_ML_DSA_87",
+            }
 
-            mech = CKM_HASH_ML_DSA
+        specific_mech = specific_mech_map.get(param_set)
+        if specific_mech and not rs.has_mechanism(specific_mech):
+            pytest.skip(f"{specific_mech} mechanism not supported by module")
+        elif not rs.has_mechanism(mech_name):
+            pytest.skip(f"{mech_name} mechanism not supported by module")
 
-        # Verify the signature
+        pub_key = 0
         try:
-            verified = verify_single(rs.raw, rs.sh, pub_key, mech, vec["msg"], vec["sig"])
-        except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_SIGNATURE_INVALID",
-                    "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DATA_INVALID",
-                    "CKR_FUNCTION_FAILED",
-                    "CKR_DEVICE_ERROR",
-                )
-            ):
-                verified = False
-            elif "CKR_MECHANISM_PARAM_INVALID" in exc_msg:
-                pytest.skip(f"{vec_id}: module requires mechanism params for Hash-ML-DSA")
-            else:
-                raise
+            # Import the public key from the vector
+            pub_key = import_pqc_public_key(
+                rs.raw,
+                rs.sh,
+                key_type=int(CKK_ML_DSA),
+                value=vec["pk"],
+                parameter_set=vec["parameter_set"],
+                attrs={CKA_VERIFY: True},
+            )
 
-        if not vec["expected_pass"] and verified:
-            pytest.fail(f"{vec_id}: module ACCEPTED an INVALID ML-DSA signature")
-        if vec["expected_pass"] and not verified:
-            pytest.xfail(f"{vec_id}: module rejected a VALID ML-DSA signature")
-    except AssertionError as exc:
-        _handle_unsupported(exc, vec["param_set"])
-    finally:
-        if pub_key:
-            destroy_quietly(rs.raw, rs.sh, pub_key)
+            # Get the mechanism for verification using specific parameter-set
+            mech = get_mldsa_mechanism(param_set, vec["pre_hash"])
+
+            # Verify the signature
+            try:
+                verified = verify_single(rs.raw, rs.sh, pub_key, mech, vec["msg"], vec["sig"])
+            except AssertionError as exc:
+                exc_msg = str(exc)
+                if any(
+                    name in exc_msg
+                    for name in (
+                        "CKR_SIGNATURE_INVALID",
+                        "CKR_SIGNATURE_LEN_RANGE",
+                        "CKR_DATA_INVALID",
+                        "CKR_FUNCTION_FAILED",
+                        "CKR_DEVICE_ERROR",
+                    )
+                ):
+                    verified = False
+                elif "CKR_MECHANISM_PARAM_INVALID" in exc_msg:
+                    pytest.skip(f"{vec_id}: module requires mechanism params for Hash-ML-DSA")
+                else:
+                    raise
+
+            if not vec["expected_pass"] and verified:
+                pytest.fail(f"{vec_id}: module ACCEPTED an INVALID ML-DSA signature")
+            if vec["expected_pass"] and not verified:
+                pytest.xfail(f"{vec_id}: module rejected a VALID ML-DSA signature")
+        except AssertionError as exc:
+            _handle_unsupported(exc, vec["param_set"])
+        finally:
+            if pub_key:
+                destroy_quietly(rs.raw, rs.sh, pub_key)

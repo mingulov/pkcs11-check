@@ -12,6 +12,7 @@ build/
 .claude/*.local.md
 results/
 artifacts/
+artifacts*/
 .pkcs11-check-isolation-state.json
 .pkcs11-check-isolation-policy.json
 local-builds/bouncyhsm/

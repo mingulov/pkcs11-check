@@ -1018,19 +1018,19 @@ docker compose -f docker/docker-compose.test.yml run --rm test-kryoptic
 
 ---
 
-## Review Schedule
+## Review and Fix Process (Iterative)
 
-| Task | Review Required | Focus Areas |
-|------|----------------|-------------|
-| 1 (AES) | Yes | CCM, XTS, KW/KWP coverage |
-| 2 (RSA) | Yes | PSS handling, error codes |
-| 3 (ECDSA) | Yes | KeyGen, DetECDSA |
-| 4 (EdDSA) | Yes | KeyGen, NSS compatibility |
-| 5 (ML-DSA) | Yes | All parameter sets |
-| 6 (ML-KEM) | Yes | Encapsulation/Decapsulation |
-| 7 (SLH-DSA) | Yes | All 13 variants |
-| 8-11 | Optional | Extended features |
-| 12-13 | Yes | Final validation |
+**After each task completion:**
+
+1. **Spec Compliance Review** - Verify all requirements met
+2. **If issues found:** Implementer fixes issues → Re-review (repeat until approved)
+3. **Code Quality Review** - Check maintainability, structure, patterns
+4. **If issues found:** Implementer fixes issues → Re-review (repeat until approved)
+5. **Only proceed to next task when both reviews pass with zero issues**
+
+**Golden Rule:** Reviews must find ZERO issues before proceeding. Iterative fix cycles are expected and required.
+
+---
 
 ---
 

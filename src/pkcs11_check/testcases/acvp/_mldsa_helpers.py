@@ -9,7 +9,18 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pkcs11_check.raw.types_std import CKP_ML_DSA_44, CKP_ML_DSA_65, CKP_ML_DSA_87
+from pkcs11_check.raw.types_std import (
+    CKM,
+    CKM_HASH_ML_DSA_44,
+    CKM_HASH_ML_DSA_65,
+    CKM_HASH_ML_DSA_87,
+    CKM_ML_DSA_44,
+    CKM_ML_DSA_65,
+    CKM_ML_DSA_87,
+    CKP_ML_DSA_44,
+    CKP_ML_DSA_65,
+    CKP_ML_DSA_87,
+)
 from pkcs11_check.testcases.data import ACVP_DIR
 from pkcs11_check.testcases.data.acvp_loader import load_acvp_vectors
 
@@ -18,6 +29,20 @@ _ML_DSA_PARAM_MAP: dict[str, int] = {
     "ML-DSA-44": int(CKP_ML_DSA_44),
     "ML-DSA-65": int(CKP_ML_DSA_65),
     "ML-DSA-87": int(CKP_ML_DSA_87),
+}
+
+# Parameter set mechanism mapping
+_ML_DSA_MECHANISMS: dict[str, CKM] = {
+    "ML-DSA-44": CKM_ML_DSA_44,
+    "ML-DSA-65": CKM_ML_DSA_65,
+    "ML-DSA-87": CKM_ML_DSA_87,
+}
+
+# Hash-ML-DSA mechanism mapping
+_HASH_ML_DSA_MECHANISMS: dict[str, CKM] = {
+    "ML-DSA-44": CKM_HASH_ML_DSA_44,
+    "ML-DSA-65": CKM_HASH_ML_DSA_65,
+    "ML-DSA-87": CKM_HASH_ML_DSA_87,
 }
 
 # Pre-hash to mechanism suffix mapping
@@ -34,6 +59,21 @@ _PREHASH_MAP: dict[str, str | None] = {
     "SHAKE128": "SHAKE128",
     "SHAKE256": "SHAKE256",
 }
+
+
+def get_mldsa_mechanism(param_set: str, pre_hash: str = "pure") -> CKM:
+    """Get the ML-DSA mechanism for a parameter set and pre-hash mode.
+
+    Args:
+        param_set: Parameter set name ("ML-DSA-44", "ML-DSA-65", "ML-DSA-87")
+        pre_hash: Pre-hash mode ("pure" or hash algorithm name)
+
+    Returns:
+        The CKM_ML_DSA_* or CKM_HASH_ML_DSA_* mechanism constant
+    """
+    if pre_hash == "pure":
+        return _ML_DSA_MECHANISMS[param_set]
+    return _HASH_ML_DSA_MECHANISMS[param_set]
 
 
 def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
