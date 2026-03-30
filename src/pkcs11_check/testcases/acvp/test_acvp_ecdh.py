@@ -15,6 +15,7 @@ from typing import Any, cast
 import pytest
 
 from pkcs11_check.fixtures import RawSession
+from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack_mechanisms import mech_ecdh
 from pkcs11_check.raw.recipes import (
@@ -60,29 +61,6 @@ def _der_octet_string(data: bytes) -> bytes:
         return bytes([0x04, 0x81, n]) + data
     else:
         return bytes([0x04, 0x82, n >> 8, n & 0xFF]) + data
-
-
-def _strip_der_octet_string(data: bytes) -> bytes:
-    """Strip DER OCTET STRING wrapper and return inner data.
-
-    Handles short form (length < 128) and long form (1-2 byte length).
-    Returns original data if not a valid DER OCTET STRING.
-    """
-    if len(data) < 2 or data[0] != 0x04:
-        return data  # Not a DER OCTET STRING
-
-    length_byte = data[1]
-    if length_byte < 0x80:
-        # Short form: tag (1) + length (1) + data
-        return data[2:]
-    elif length_byte == 0x81 and len(data) >= 3:
-        # Long form, 1 byte length: tag (1) + 0x81 (1) + length (1) + data
-        return data[3:]
-    elif length_byte == 0x82 and len(data) >= 4:
-        # Long form, 2 byte length: tag (1) + 0x82 (1) + length (2) + data
-        return data[4:]
-    else:
-        return data  # Unsupported or invalid format
 
 
 def _pad_coordinate(hex_str: str, coord_len: int) -> bytes:
@@ -381,7 +359,7 @@ class TestEcdhKeyAgreement:
                 pytest.skip("Cannot extract public key point for ECDH")
 
             # CKA_EC_POINT is DER-encoded; ECDH1_DERIVE requires raw point per OASIS spec
-            bob_point_raw = _strip_der_octet_string(bob_ec_point)
+            bob_point_raw = decode_ec_point(bob_ec_point)
 
             # Derive shared secrets
             mech_param_alice = mech_ecdh(
