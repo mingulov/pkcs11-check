@@ -12,6 +12,7 @@ import pytest
 import typer
 from rich.console import Console
 
+from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
     discover_auto_isolation_units,
@@ -24,6 +25,7 @@ from pkcs11_check.core.file_runner import (
     write_quality_json_report,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
+from pkcs11_check.core.test_selection import load_disabled_baseline, write_deselect_file
 
 console = Console(stderr=True)
 
@@ -108,6 +110,11 @@ def test_command(
     output: str = typer.Option("rich", "--output", "-o", help="Output: rich, json, junit"),
     output_file: str | None = typer.Option(None, "--output-file", help="Output file path"),
     verbose: bool = typer.Option(False, "--verbose", "-V", help="Verbose output"),
+    ignore_disabled_tests: bool = typer.Option(
+        False,
+        "--ignore-disabled-tests",
+        help="Do not load the configured disabled baseline for this run",
+    ),
     isolation: str = typer.Option(
         "auto",
         "--isolation",
@@ -194,6 +201,21 @@ def test_command(
 
     target_args = targets or [_TESTCASES_DIR]
     try:
+        try:
+            runtime_config = P11TestConfig(
+                module=module,
+                interface=interface,
+                slot=slot,
+                destructive=destructive,
+                pin=pin,
+            )
+            baseline = None
+            if not ignore_disabled_tests:
+                baseline = load_disabled_baseline(runtime_config.disabled_tests_file)
+        except FileNotFoundError as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
+
         if isolation in {"auto", "file", "test"}:
             if sessions != 1:
                 console.print(
@@ -245,15 +267,22 @@ def test_command(
         # For JSON output, set PKCS11_CHECK_REPORT_LOG so plugin.py injects
         # --report-log into the pytest session for per-test JSONL capture.
         jsonl_raw: str | None = None
+        deselect_path: Path | None = None
         if output == "json":
             jsonl_fd, jsonl_raw = tempfile.mkstemp(prefix="pkcs11-check-jsonl-", suffix=".jsonl")
             os.close(jsonl_fd)
             os.environ["PKCS11_CHECK_REPORT_LOG"] = jsonl_raw
+        if baseline is not None and baseline.disabled_nodeids:
+            deselect_path = write_deselect_file(baseline.disabled_nodeids)
+            os.environ["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
         try:
             exit_code = pytest.main(args)
         finally:
             if jsonl_raw is not None:
                 os.environ.pop("PKCS11_CHECK_REPORT_LOG", None)
+            os.environ.pop("PKCS11_CHECK_DESELECT_FILE", None)
+            if deselect_path is not None:
+                deselect_path.unlink(missing_ok=True)
         if output == "json" and jsonl_raw is not None:
             jsonl_p = Path(jsonl_raw)
             unified_path = Path(output_file or "pkcs11-check-results.json")

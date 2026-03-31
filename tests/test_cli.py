@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from pkcs11_check.cli import test_cmd
 from pkcs11_check.cli.app import app
 from pkcs11_check.core.preflight import CapabilityManifest
+from pkcs11_check.core.test_selection import DisabledBaseline
 
 runner = CliRunner()
 
@@ -777,6 +778,132 @@ class TestTestCommand:
         report = json.loads(quality_path.read_text())
         assert report["schema_version"] == "1"
         assert "selection telemetry not provided" in report["data_quality_warnings"]
+
+    def test_test_none_honors_disabled_baseline_by_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        called: dict[str, object] = {}
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            deselect_path = Path(os.environ["PKCS11_CHECK_DESELECT_FILE"])
+            called["path"] = deselect_path
+            called["text"] = deselect_path.read_text()
+            return 0
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(
+            test_cmd,
+            "load_disabled_baseline",
+            lambda path: DisabledBaseline(
+                source_path=Path("config/disabled-tests.txt"),
+                disabled_nodeids=frozenset({"test_demo.py::test_disabled"}),
+                fingerprint="baseline-fp",
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "none"])
+
+        assert result.exit_code == 0
+        assert called["text"] == "test_demo.py::test_disabled\n"
+        assert "PKCS11_CHECK_DESELECT_FILE" not in os.environ
+
+    def test_test_none_ignore_disabled_tests_skips_baseline_loading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            assert "PKCS11_CHECK_DESELECT_FILE" not in os.environ
+            return 0
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(
+            test_cmd,
+            "load_disabled_baseline",
+            lambda path: pytest.fail("disabled baseline should be ignored"),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--isolation", "none", "--ignore-disabled-tests"],
+        )
+
+        assert result.exit_code == 0
+
+    def test_test_none_missing_disabled_baseline_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+
+        monkeypatch.setattr(
+            test_cmd,
+            "load_disabled_baseline",
+            lambda path: (_ for _ in ()).throw(
+                FileNotFoundError("disabled baseline file not found: broken")
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "none"])
+
+        assert result.exit_code == 2
+        assert "disabled baseline file not found" in result.output
 
     def test_test_preflight_failure_is_reported(self, tmp_path: Path, monkeypatch: object) -> None:
         module = tmp_path / "dummy.so"
