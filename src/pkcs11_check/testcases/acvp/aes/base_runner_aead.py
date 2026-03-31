@@ -100,9 +100,9 @@ def run_gcm_encrypt_test(
             )
         except AssertionError as exc:
             exc_msg = str(exc)
-            pytest.xfail(
-                f"Module limitation: GCM iv={len(iv)}B tag={tag_bytes}B not supported ({exc_msg})"
-            )
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"GCM iv={len(iv)}B tag={tag_bytes}B not supported: {exc_msg}")
+            raise
 
         if len(result) < tag_bytes:
             pytest.fail(
@@ -175,11 +175,9 @@ def run_gcm_decrypt_test(
                     "CKR_ARGUMENTS_BAD",
                 )
             ):
-                pytest.xfail(
-                    f"Module limitation: GCM iv={len(iv)}B tag={tag_bytes}B "
-                    f"not supported ({exc_msg})"
+                pytest.skip(
+                    f"GCM iv={len(iv)}B tag={tag_bytes}B not supported: {exc_msg}"
                 )
-                return
             if any(
                 name in exc_msg
                 for name in (
@@ -251,7 +249,9 @@ def run_ccm_encrypt_test(
             )
         except AssertionError as exc:
             exc_msg = str(exc)
-            pytest.xfail(f"Module limitation: CCM not supported ({exc_msg})")
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"CCM not supported: {exc_msg}")
+            raise
 
         tag_len = vec["tag_len"]
         if len(result) < tag_len:
@@ -328,10 +328,18 @@ def run_ccm_decrypt_test(
             )
         except AssertionError as exc:
             exc_msg = str(exc)
-            if "CKR" in exc_msg and not test_passed:
-                return
-            pytest.xfail(f"Module limitation: CCM decrypt not supported ({exc_msg})")
-            return
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"CCM decrypt not supported: {exc_msg}")
+            if not test_passed and any(
+                c in exc_msg
+                for c in (
+                    "CKR_ENCRYPTED_DATA_INVALID",
+                    "CKR_ENCRYPTED_DATA_LEN_RANGE",
+                    "CKR_AEAD_DECRYPT_FAILED",
+                )
+            ):
+                return  # Expected: invalid tag detected
+            raise
 
         if test_passed:
             assert pt == vec["pt_expected"], (

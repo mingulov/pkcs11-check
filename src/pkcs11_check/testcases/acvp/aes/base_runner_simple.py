@@ -96,7 +96,10 @@ def run_simple_encrypt_test(
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: {mech_name} encrypt failed ({exc})")
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"{mech_name} not supported: {exc_msg}")
+            raise
 
         assert ct == vec["ct_expected"], (
             f"{vec_id}: ciphertext mismatch: got {ct.hex()}, expected {vec['ct_expected'].hex()}"
@@ -145,8 +148,10 @@ def run_simple_decrypt_test(
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: {mech_name} decrypt failed ({exc})")
-            return
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"{mech_name} not supported: {exc_msg}")
+            raise
 
         assert pt == vec["pt_expected"], (
             f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {vec['pt_expected'].hex()}"

@@ -92,7 +92,10 @@ def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: AES-KW wrap failed ({exc})")
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"AES-KW wrap not supported: {exc_msg}")
+            raise
 
         assert wrapped == vec["ct_expected"], (
             f"{vec_id}: wrap mismatch:\n"
@@ -136,7 +139,10 @@ def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, An
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: AES-KW unwrap failed ({exc})")
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"AES-KW unwrap not supported: {exc_msg}")
+            raise
     finally:
         if unwrapped_key:
             destroy_quietly(rs.raw, rs.sh, unwrapped_key)
@@ -212,7 +218,10 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: AES-KWP wrap failed ({exc})")
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"AES-KWP wrap not supported: {exc_msg}")
+            raise
 
         assert wrapped == vec["ct_expected"], (
             f"{vec_id}: KWP wrap mismatch:\n"
@@ -258,7 +267,10 @@ def test_acvp_aes_kwp_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, A
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: AES-KWP unwrap failed ({exc})")
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"AES-KWP unwrap not supported: {exc_msg}")
+            raise
     finally:
         if unwrapped_key:
             destroy_quietly(rs.raw, rs.sh, unwrapped_key)

@@ -231,7 +231,7 @@ def test_acvp_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
 def _load_xpn_vectors() -> tuple[
     list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]
 ]:
-    """Load AES-XPN ACVP vectors (salt + IV = extended nonce)."""
+    """Load AES-XPN ACVP vectors (salt XOR IV = extended nonce)."""
     raw = load_acvp_vectors("ACVP-AES-XPN-1.0")
     encrypt_vecs: list[tuple[str, dict[str, Any]]] = []
     decrypt_vecs: list[tuple[str, dict[str, Any]]] = []
@@ -240,7 +240,7 @@ def _load_xpn_vectors() -> tuple[
         direction, tc_id = group.get("direction", ""), inp.get("tcId", 0)
         salt = bytes.fromhex(inp.get("salt", "")) if inp.get("salt") else b""
         iv = bytes.fromhex(inp.get("iv", "")) if inp.get("iv") else b""
-        ext_nonce = salt + iv
+        ext_nonce = bytes(a ^ b for a, b in zip(salt, iv))
         key_hex = inp.get("key", "")
         if not key_hex:
             continue

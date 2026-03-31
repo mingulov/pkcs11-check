@@ -127,7 +127,7 @@ def _load_wycheproof_ecdh_vectors(
             test_data = {
                 "curve": curve,
                 "tc_id": tc_id,
-                "private_key": bytes.fromhex(private_hex),
+                "private_key": bytes.fromhex(private_hex).lstrip(b"\x00").rjust(coord_len, b"\x00"),
                 "ec_point_der": ec_point_der,
                 "expected_shared": bytes.fromhex(shared_hex),
                 "comment": test.get("comment", ""),
