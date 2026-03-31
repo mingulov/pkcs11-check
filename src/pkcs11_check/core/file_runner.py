@@ -28,6 +28,8 @@ IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
 CrashStatus = Literal["crashed", "timeout"]
 _RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated", "crash_limited"}
+_DETAIL_COUNT_KEYS = ("passed", "failed", "skipped", "xfailed", "xpassed", "error")
+_SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
 _FINGERPRINT_ENV_PREFIXES = (
@@ -390,14 +392,7 @@ def _group_results_by_file(
     out: list[tuple[str, list[FileRunResult], dict[str, Any]]] = []
     for file_target in order:
         file_results = groups[file_target]
-        merged_counts: dict[str, int] = {
-            "passed": 0,
-            "failed": 0,
-            "skipped": 0,
-            "xfailed": 0,
-            "xpassed": 0,
-            "error": 0,
-        }
+        merged_counts: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
         merged_tests: list[dict[str, Any]] = []
         for r in file_results:
             detail = details.get(r.target, {})
@@ -406,6 +401,114 @@ def _group_results_by_file(
             merged_tests.extend(detail.get("tests", []))
         out.append((file_target, file_results, {"counts": merged_counts, "tests": merged_tests}))
     return out
+
+
+def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
+    counts = {key: 0 for key in _DETAIL_COUNT_KEYS}
+    tests: list[dict[str, Any]] = []
+    skip_reasons: dict[str, int] = {}
+
+    if isinstance(detail, Mapping):
+        raw_counts = detail.get("counts")
+        if isinstance(raw_counts, Mapping):
+            for key in counts:
+                value = raw_counts.get(key, 0)
+                if isinstance(value, int):
+                    counts[key] = value
+        raw_tests = detail.get("tests")
+        if isinstance(raw_tests, list):
+            tests = [dict(item) for item in raw_tests if isinstance(item, Mapping)]
+        raw_skip_reasons = detail.get("skip_reasons")
+        if isinstance(raw_skip_reasons, Mapping):
+            skip_reasons = {
+                str(reason): int(count)
+                for reason, count in raw_skip_reasons.items()
+                if isinstance(count, int)
+            }
+
+    copied: dict[str, Any] = {"counts": counts, "tests": tests}
+    if skip_reasons:
+        copied["skip_reasons"] = skip_reasons
+    return copied
+
+
+def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | None:
+    if result.status not in {"crashed", "timeout"} or "::" not in result.target:
+        return None
+
+    entry: dict[str, Any] = {
+        "nodeid": result.target,
+        "outcome": result.status,
+        "duration": result.duration_s,
+    }
+    flat = result.stderr.strip() or result.stdout.strip()
+    if flat:
+        entry["longrepr"] = flat
+    if result.stdout.strip():
+        entry["stdout"] = result.stdout
+    if result.stderr.strip():
+        entry["stderr"] = result.stderr
+    return entry
+
+
+def _merge_special_entries_into_detail(
+    detail: Mapping[str, Any] | None,
+    entries: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    merged = _copy_detail(detail)
+    existing = {
+        (str(record.get("nodeid", "")), str(record.get("outcome", "")))
+        for record in merged["tests"]
+        if isinstance(record, Mapping)
+    }
+
+    for entry in entries:
+        nodeid = str(entry.get("nodeid", "")).strip()
+        outcome = str(entry.get("outcome", "")).strip()
+        if not nodeid or not outcome:
+            continue
+        key = (nodeid, outcome)
+        if key in existing:
+            continue
+        merged["tests"].append(dict(entry))
+        existing.add(key)
+        if outcome in {"crashed", "timeout"}:
+            merged["counts"]["error"] += 1
+
+    return merged
+
+
+def _overall_unit_status(file_results: list[FileRunResult]) -> str:
+    seen = {result.status for result in file_results}
+    for status in ("failed", "crashed", "timeout", "crash_limited", "passed", "empty", "escalated"):
+        if status in seen:
+            return status
+    return file_results[0].status
+
+
+def _merge_supplemental_special_details(
+    base_details: Mapping[str, dict[str, Any]],
+    supplemental_details: Mapping[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    merged = {unit: _copy_detail(detail) for unit, detail in base_details.items()}
+
+    for unit, detail in supplemental_details.items():
+        if not isinstance(detail, Mapping):
+            continue
+        raw_tests = detail.get("tests")
+        if not isinstance(raw_tests, list):
+            continue
+        special_entries = [
+            record
+            for record in raw_tests
+            if isinstance(record, Mapping)
+            and str(record.get("outcome", "")).strip() in _SPECIAL_DETAIL_OUTCOMES
+        ]
+        if not special_entries:
+            continue
+        merged[unit] = _merge_special_entries_into_detail(merged.get(unit), special_entries)
+
+    return merged
 
 
 def write_isolated_json_report(
@@ -447,15 +550,27 @@ def _build_isolated_json_payload(
     units_out: list[dict[str, Any]] = []
 
     for file_target, file_results, merged_detail in grouped:
-        has_failure = any(r.status in {"failed", "crashed", "timeout"} for r in file_results)
+        overall_status = _overall_unit_status(file_results)
+        special_entries = [
+            entry
+            for result in file_results
+            if (entry := _special_test_entry_from_result(result)) is not None
+        ]
+        detail = _merge_special_entries_into_detail(merged_detail, special_entries)
+        if overall_status in {"crashed", "timeout"} and not any(detail["counts"].values()):
+            detail["counts"]["error"] = 1
         duration = sum(r.duration_s for r in file_results)
         stdout_parts = [r.stdout for r in file_results if r.stdout]
         stderr_parts = [r.stderr for r in file_results if r.stderr]
 
         unit: dict[str, Any] = {
             "target": file_target,
-            "status": "failed" if has_failure else file_results[0].status,
-            "returncode": max(abs(r.returncode) for r in file_results) if has_failure else 0,
+            "status": overall_status,
+            "returncode": (
+                max(abs(r.returncode) for r in file_results)
+                if overall_status in {"failed", "crashed", "timeout"}
+                else 0
+            ),
             "duration_s": round(duration, 3),
         }
         if stdout_parts:
@@ -463,15 +578,15 @@ def _build_isolated_json_payload(
         if stderr_parts:
             unit["stderr"] = "\n".join(stderr_parts)
 
-        counts = merged_detail.get("counts")
+        counts = detail.get("counts")
         if counts and any(v > 0 for v in counts.values()):
             unit["counts"] = counts
             for key in summary:
                 summary[key] += counts.get(key, 0)
-        tests = merged_detail.get("tests")
+        tests = detail.get("tests")
         if tests:
             unit["tests"] = tests
-        sr = merged_detail.get("skip_reasons")
+        sr = detail.get("skip_reasons")
         if sr:
             unit["skip_reasons"] = sr
 
@@ -2487,6 +2602,10 @@ def run_isolated_pytest_units(
                 if report_config.jsonl_path.exists():
                     merged_details = _build_per_unit_details_from_record_map(
                         merged_report_records_by_unit
+                    )
+                    merged_details = _merge_supplemental_special_details(
+                        merged_details,
+                        per_unit_details,
                     )
                     coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
                     quality_records = extract_quality_report_records_from_jsonl(

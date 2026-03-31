@@ -327,3 +327,43 @@ def test_collect_disabled_candidates_reports_manual_review_when_culprit_missing(
     assert candidates == []
     assert len(manual) == 1
     assert "manual review" in manual[0]
+
+
+def test_collect_disabled_candidates_reads_explicit_crash_and_timeout_tests_from_results_json(
+    tmp_path: Path,
+) -> None:
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "results.json").write_text(
+        json.dumps(
+            {
+                "units": [
+                    {
+                        "target": "test_a.py",
+                        "status": "failed",
+                        "tests": [
+                            {
+                                "nodeid": "test_a.py::test_crashed",
+                                "outcome": "crashed",
+                            },
+                            {
+                                "nodeid": "test_a.py::test_timed_out",
+                                "outcome": "timeout",
+                            },
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+
+    candidates, manual = collect_disabled_candidates(
+        [artifact_dir],
+        outcomes={"crashed", "timeout"},
+    )
+
+    assert candidates == [
+        "test_a.py::test_crashed",
+        "test_a.py::test_timed_out",
+    ]
+    assert manual == []

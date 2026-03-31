@@ -210,6 +210,34 @@ def _load_results_units(path: Path) -> list[dict[str, object]]:
     return [unit for unit in units if isinstance(unit, dict)]
 
 
+def _collect_results_test_nodeids(
+    units: list[dict[str, object]],
+    *,
+    outcomes: set[str],
+) -> tuple[set[str], set[str]]:
+    candidates: set[str] = set()
+    explicit_special_targets: set[str] = set()
+
+    for unit in units:
+        target = str(unit.get("target", "")).strip()
+        tests = unit.get("tests", [])
+        if not isinstance(tests, list):
+            continue
+        for record in tests:
+            if not isinstance(record, dict):
+                continue
+            nodeid = str(record.get("nodeid", "")).strip()
+            outcome = str(record.get("outcome", "")).strip()
+            if not nodeid or not outcome:
+                continue
+            if outcome in outcomes:
+                candidates.add(nodeid)
+            if target and outcome in {"crashed", "timeout"}:
+                explicit_special_targets.add(target)
+
+    return candidates, explicit_special_targets
+
+
 def collect_disabled_candidates(
     artifact_dirs: list[Path],
     *,
@@ -222,15 +250,23 @@ def collect_disabled_candidates(
     for artifact_dir in artifact_dirs:
         records = _load_report_log_records(artifact_dir / "report.jsonl")
         report_nodeids = _collect_report_nodeids(records)
+        results_units = _load_results_units(artifact_dir / "results.json")
+        result_test_nodeids, explicit_special_targets = _collect_results_test_nodeids(
+            results_units,
+            outcomes=outcomes,
+        )
         for nodeid, outcome in report_nodeids.items():
             if outcome in outcomes:
                 candidates.add(nodeid)
+        candidates.update(result_test_nodeids)
 
         if outcomes & {"crashed", "timeout"}:
-            for unit in _load_results_units(artifact_dir / "results.json"):
+            for unit in results_units:
                 status = str(unit.get("status", "")).strip()
                 target = str(unit.get("target", "")).strip()
                 if status not in outcomes or not target:
+                    continue
+                if target in explicit_special_targets:
                     continue
                 culprit = _identify_culprit_for_file(records, target)
                 if culprit is not None:
