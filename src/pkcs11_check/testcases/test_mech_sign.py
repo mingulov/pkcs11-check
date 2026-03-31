@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
     CKK,
+    CKK_EC_EDWARDS,
     CKM,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
@@ -40,6 +41,12 @@ from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
     generate_key_for_sign,
     make_mech_param_or_skip,
+)
+
+# DER-encoded OIDs for Edwards curves
+_EDWARDS_OID_PREFIXES = (
+    b"\x06\x03\x2b\x65\x70",  # Ed25519 (1.3.101.112)
+    b"\x06\x03\x2b\x65\x71",  # Ed448 (1.3.101.113)
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.sign]
@@ -213,13 +220,18 @@ def _run_asymmetric_sign_kat(
                 destroy_quietly(rs.raw, rs.sh, pub_key)
 
     elif "ec_private_scalar_hex" in vec:
-        # EC: import private key; public point not in vector so verify via round-trip
+        # EC/Edwards: import private key; public point not in vector so verify via round-trip
+        ec_params = bytes.fromhex(vec["ec_params_hex"])
+        ec_key_type = (
+            int(CKK_EC_EDWARDS) if ec_params.startswith(_EDWARDS_OID_PREFIXES) else None
+        )
         priv_key = import_ec_private_key(
             rs.raw,
             rs.sh,
-            ec_params=bytes.fromhex(vec["ec_params_hex"]),
+            ec_params=ec_params,
             value=bytes.fromhex(vec["ec_private_scalar_hex"]),
             attrs={CKA_SIGN: True, CKA_TOKEN: False},
+            **({"key_type": ec_key_type} if ec_key_type is not None else {}),
         )
         try:
             # Sign to confirm the key + mechanism work; we cannot verify the stored
