@@ -162,7 +162,7 @@ class TestRsaSigVer:
             if not expected_pass and verified:
                 pytest.fail(f"{vec_id}: ACCEPTED INVALID signature - security concern")
             if expected_pass and not verified:
-                pytest.xfail(f"{vec_id}: rejected VALID signature - module issue")
+                pytest.fail(f"{vec_id}: rejected VALID signature")
         except AssertionError as exc:
             exc_msg = str(exc)
             if any(c in exc_msg for c in ("CKR_KEY_SIZE_RANGE", "CKR_TEMPLATE_INCONSISTENT")):
@@ -211,7 +211,7 @@ class TestRsaSigVer:
             if not expected_pass and verified:
                 pytest.fail(f"{vec_id}: ACCEPTED INVALID PSS signature - security concern")
             if expected_pass and not verified:
-                pytest.xfail(f"{vec_id}: rejected VALID PSS signature - module issue")
+                pytest.fail(f"{vec_id}: rejected VALID PSS signature")
         except AssertionError as exc:
             exc_msg = str(exc)
             if any(c in exc_msg for c in ("CKR_KEY_SIZE_RANGE", "CKR_TEMPLATE_INCONSISTENT")):
