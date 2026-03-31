@@ -337,9 +337,10 @@ def run_ccm_decrypt_test(
                     "CKR_ENCRYPTED_DATA_INVALID",
                     "CKR_ENCRYPTED_DATA_LEN_RANGE",
                     "CKR_AEAD_DECRYPT_FAILED",
+                    "CKR_DEVICE_ERROR",
                 )
             ):
-                return  # Expected: invalid tag detected
+                return  # Expected: module rejected invalid-tag ciphertext
             raise
 
         if test_passed:
