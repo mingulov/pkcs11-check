@@ -115,6 +115,7 @@ def _two_call_output(
     call_fn: str,
     *args: Any,
     output_size_hint: int = 0,
+    retry_on_buffer_too_small: bool = False,
 ) -> bytes:
     """Execute a PKCS#11 function using the standard two-call size pattern.
 
@@ -136,6 +137,12 @@ def _two_call_output(
     When provided, the NULL-buffer query is skipped entirely and a single call is made
     with a pre-allocated buffer of ``output_size_hint`` bytes.  The output is truncated
     to the length reported by the module after the call.
+
+    ``retry_on_buffer_too_small`` when True, if the second call returns
+    CKR_BUFFER_TOO_SMALL and the module provides a larger required size,
+    re-allocates and retries once.  Needed for modules (e.g. NSS softoken)
+    that under-report the required size on the NULL-buffer query (returning
+    plaintext length without AEAD tag overhead).
 
     Per PKCS#11 spec section 5.2, the standard two-call pattern is used when
     ``output_size_hint`` is 0: first call with NULL buffer to obtain the required size,
@@ -159,9 +166,7 @@ def _two_call_output(
     out_buf = (ctypes.c_ubyte * size)()
     out_len = CK_ULONG(size)
     rv = fn(*args, out_buf, byref(out_len))
-    if rv == CKR_BUFFER_TOO_SMALL and out_len.value > size:
-        # Module reported a short size on the NULL query (e.g. NSS softoken
-        # returns plaintext length without AEAD tag).  Retry with the updated size.
+    if retry_on_buffer_too_small and rv == CKR_BUFFER_TOO_SMALL and out_len.value > size:
         size = out_len.value
         out_buf = (ctypes.c_ubyte * size)()
         out_len = CK_ULONG(size)
@@ -639,6 +644,7 @@ def encrypt_single(
     *,
     mech_param: PackedMechanism | None = None,
     output_overhead: int = 0,
+    retry_on_buffer_too_small: bool = False,
 ) -> bytes:
     """Encrypt data in a single operation. Returns ciphertext.
 
@@ -646,13 +652,14 @@ def encrypt_single(
     plaintext length (e.g. 16 for AES-GCM with a 128-bit tag).  This is only
     needed for modules (e.g. NSS softoken) that do not set the output length
     when called with a NULL buffer pointer during the size-query pass.
+
+    ``retry_on_buffer_too_small`` when True, if the module returns
+    CKR_BUFFER_TOO_SMALL with an updated size, re-allocates and retries once.
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_EncryptInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(plaintext)
-    # output_size_hint > 0 activates single-call mode (skip NULL-buffer size query).
-    # Only set it when output_overhead is specified (e.g. AEAD mechanisms that append a tag).
     hint = (len(plaintext) + output_overhead) if output_overhead > 0 else 0
     return _two_call_output(
         raw,
@@ -661,6 +668,7 @@ def encrypt_single(
         in_buf,
         len(plaintext),
         output_size_hint=hint,
+        retry_on_buffer_too_small=retry_on_buffer_too_small,
     )
 
 
@@ -689,13 +697,21 @@ def decrypt_single(
     ciphertext: bytes,
     *,
     mech_param: PackedMechanism | None = None,
+    retry_on_buffer_too_small: bool = False,
 ) -> bytes:
-    """Decrypt data in a single operation. Returns plaintext."""
+    """Decrypt data in a single operation. Returns plaintext.
+
+    ``retry_on_buffer_too_small`` when True, if the module returns
+    CKR_BUFFER_TOO_SMALL with an updated size, re-allocates and retries once.
+    """
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_DecryptInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(ciphertext)
-    return _two_call_output(raw, "C_Decrypt", session, in_buf, len(ciphertext))
+    return _two_call_output(
+        raw, "C_Decrypt", session, in_buf, len(ciphertext),
+        retry_on_buffer_too_small=retry_on_buffer_too_small,
+    )
 
 
 def verify_single(
