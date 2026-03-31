@@ -52,7 +52,9 @@ class TestP11TestConfigEnv:
         assert "secret123" not in repr(config)
         assert "secret123" not in str(config)
 
-    def test_disabled_tests_file_from_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_disabled_tests_file_from_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("P11TEST_MODULE", str(tmp_path / "m.so"))
         monkeypatch.setenv("P11TEST_DISABLED_TESTS_FILE", str(tmp_path / "env-disabled.txt"))
 

@@ -6,9 +6,9 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from pkcs11_check.core.collection import CollectedPytestItem
 
@@ -47,7 +47,7 @@ def parse_disabled_nodeids(text: str) -> list[str]:
 
 
 def _baseline_fingerprint(path: Path, text: str) -> str:
-    payload = f"{path.resolve()}\n{text}".encode("utf-8")
+    payload = f"{path.resolve()}\n{text}".encode()
     return hashlib.sha256(payload).hexdigest()
 
 

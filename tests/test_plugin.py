@@ -66,6 +66,7 @@ class _FakeItem:
     def __init__(self, path: Path, markers: dict[str, object]) -> None:
         self.path = path
         self.fspath = path
+        self.nodeid = f"{path}::test_case"
         self._markers = markers
         self.added: list[object] = []
 
@@ -116,6 +117,14 @@ class _FakeReportLogPlugin:
 
     def _write_json_data(self, payload: dict[str, object]) -> None:
         self.records.append(payload)
+
+
+class _FakeHook:
+    def __init__(self) -> None:
+        self.deselected: list[object] = []
+
+    def pytest_deselected(self, *, items: list[object]) -> None:
+        self.deselected.extend(items)
 
 
 def _fake_entry(name: str, *, flags: int = 0, config: object | None = object()) -> MechEntry:
@@ -413,6 +422,58 @@ def test_collection_modifyitems_applies_only_static_skips() -> None:
     reasons = [getattr(marker, "kwargs", {}).get("reason") for marker in item.added]
     assert "Destructive test (use --p11-destructive to enable)" in reasons
     assert not any(reason and "Requires v" in reason for reason in reasons)
+
+
+def test_collection_modifyitems_ignores_comments_in_deselect_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deselect_file = tmp_path / "disabled.txt"
+    deselect_file.write_text(
+        "\n".join(
+            [
+                "# disabled tests",
+                "",
+                f"{tmp_path / 'testcases' / 'test_a.py'}::test_case",
+                "# keep this comment",
+            ]
+        )
+    )
+    item_a = _FakeItem(tmp_path / "testcases" / "test_a.py", {})
+    item_b = _FakeItem(tmp_path / "testcases" / "test_b.py", {})
+    hook = _FakeHook()
+    config = SimpleNamespace(
+        hook=hook,
+        getoption=lambda name, default=None: {
+            "p11_module": "/tmp/module.so",
+            "p11_destructive": False,
+            "p11_thread_safe": False,
+        }.get(name, default),
+    )
+    monkeypatch.setenv("PKCS11_CHECK_DESELECT_FILE", str(deselect_file))
+
+    plugin_mod.pytest_collection_modifyitems(config, [item_a, item_b])
+
+    assert hook.deselected == [item_a]
+
+
+def test_collection_modifyitems_ignores_missing_deselect_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = _FakeItem(tmp_path / "testcases" / "test_a.py", {})
+    hook = _FakeHook()
+    config = SimpleNamespace(
+        hook=hook,
+        getoption=lambda name, default=None: {
+            "p11_module": "/tmp/module.so",
+            "p11_destructive": False,
+            "p11_thread_safe": False,
+        }.get(name, default),
+    )
+    monkeypatch.setenv("PKCS11_CHECK_DESELECT_FILE", str(tmp_path / "missing.txt"))
+
+    plugin_mod.pytest_collection_modifyitems(config, [item])
+
+    assert hook.deselected == []
 
 
 def test_runtime_skip_reason_uses_manifest() -> None:

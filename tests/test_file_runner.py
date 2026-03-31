@@ -1824,8 +1824,12 @@ def test_run_isolated_pytest_units_merges_baseline_deselects_into_retry_loop(
                     [
                         _jsonl_line(nodeid="test_a.py::test_done", when="setup", outcome="passed"),
                         _jsonl_line(nodeid="test_a.py::test_done", when="call", outcome="passed"),
-                        _jsonl_line(nodeid="test_a.py::test_done", when="teardown", outcome="passed"),
-                        _jsonl_line(nodeid="test_a.py::test_culprit", when="setup", outcome="passed"),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_done", when="teardown", outcome="passed"
+                        ),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_culprit", when="setup", outcome="passed"
+                        ),
                     ]
                 )
                 + "\n"

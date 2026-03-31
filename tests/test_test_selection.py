@@ -240,7 +240,9 @@ def test_collect_disabled_candidates_preserves_parametrized_nodeids_sorted(tmp_p
     assert manual == []
 
 
-def test_collect_disabled_candidates_recovers_crash_culprit_from_results_json(tmp_path: Path) -> None:
+def test_collect_disabled_candidates_recovers_crash_culprit_from_results_json(
+    tmp_path: Path,
+) -> None:
     artifact_dir = tmp_path / "artifact"
     artifact_dir.mkdir()
     (artifact_dir / "report.jsonl").write_text(

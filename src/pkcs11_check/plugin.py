@@ -15,6 +15,7 @@ from pkcs11_check.core.preflight import (
     load_manifest,
     run_preflight_subprocess,
 )
+from pkcs11_check.core.test_selection import parse_disabled_nodeids
 
 # Re-export fixtures so pytest discovers them
 from pkcs11_check.fixtures import (  # noqa: F401
@@ -395,11 +396,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     deselect_file = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
     if deselect_file:
         try:
-            deselect_nodeids = set(
-                line.strip()
-                for line in Path(deselect_file).read_text().splitlines()
-                if line.strip()
-            )
+            deselect_nodeids = set(parse_disabled_nodeids(Path(deselect_file).read_text()))
         except (FileNotFoundError, OSError):
             deselect_nodeids = set()
         if deselect_nodeids:
