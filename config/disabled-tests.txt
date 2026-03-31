@@ -1,0 +1,2 @@
+# Global production disabled baseline.
+# One exact pytest nodeid per line.

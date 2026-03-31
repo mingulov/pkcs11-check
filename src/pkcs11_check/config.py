@@ -35,6 +35,7 @@ class P11TestConfig(BaseSettings):
     skip_unsupported: bool = True
     log_level: str = "INFO"
     output: str = "rich"
+    disabled_tests_file: Path | None = None
 
     @classmethod
     def settings_customise_sources(

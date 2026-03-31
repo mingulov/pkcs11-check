@@ -26,6 +26,7 @@ class TestP11TestConfigDefaults:
         assert config.skip_unsupported is True
         assert config.log_level == "INFO"
         assert config.output == "rich"
+        assert config.disabled_tests_file == Path("config/disabled-tests.txt")
 
 
 class TestP11TestConfigEnv:
@@ -50,3 +51,21 @@ class TestP11TestConfigEnv:
         config = P11TestConfig()  # type: ignore[call-arg]
         assert "secret123" not in repr(config)
         assert "secret123" not in str(config)
+
+    def test_disabled_tests_file_from_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("P11TEST_MODULE", str(tmp_path / "m.so"))
+        monkeypatch.setenv("P11TEST_DISABLED_TESTS_FILE", str(tmp_path / "env-disabled.txt"))
+
+        config = P11TestConfig()  # type: ignore[call-arg]
+
+        assert config.disabled_tests_file == tmp_path / "env-disabled.txt"
+
+
+def test_disabled_tests_file_is_none_without_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    config = P11TestConfig(module=tmp_path / "fake.so")
+
+    assert config.disabled_tests_file is None
