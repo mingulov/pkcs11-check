@@ -77,7 +77,7 @@ def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
         mech = mech_simple(CKM_AES_KEY_WRAP)
         ct = encrypt_single(
             rs.raw, rs.sh, key, CKM_AES_KEY_WRAP, vec["pt"],
-            mech_param=mech, retry_on_buffer_too_small=True,
+            mech_param=mech, output_overhead=8,
         )
 
         assert ct == vec["ct_expected"], (
@@ -108,7 +108,7 @@ def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, An
         mech = mech_simple(CKM_AES_KEY_WRAP)
         pt = decrypt_single(
             rs.raw, rs.sh, key, CKM_AES_KEY_WRAP, vec["ct"],
-            mech_param=mech, retry_on_buffer_too_small=True,
+            mech_param=mech,
         )
 
         assert pt == vec["pt_expected"], (
@@ -166,7 +166,7 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
         mech = mech_simple(CKM_AES_KEY_WRAP_KWP)
         ct = encrypt_single(
             rs.raw, rs.sh, key, CKM_AES_KEY_WRAP_KWP, vec["pt"],
-            mech_param=mech, retry_on_buffer_too_small=True,
+            mech_param=mech, output_overhead=8,
         )
 
         assert ct == vec["ct_expected"], (
@@ -199,7 +199,7 @@ def test_acvp_aes_kwp_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, A
         mech = mech_simple(CKM_AES_KEY_WRAP_KWP)
         pt = decrypt_single(
             rs.raw, rs.sh, key, CKM_AES_KEY_WRAP_KWP, vec["ct"],
-            mech_param=mech, retry_on_buffer_too_small=True,
+            mech_param=mech,
         )
 
         assert pt == vec["pt_expected"], (

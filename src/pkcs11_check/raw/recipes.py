@@ -167,6 +167,8 @@ def _two_call_output(
     out_len = CK_ULONG(size)
     rv = fn(*args, out_buf, byref(out_len))
     if retry_on_buffer_too_small and rv == CKR_BUFFER_TOO_SMALL and out_len.value > size:
+        # Module under-reported the required size but set out_len to the
+        # correct value on failure.  Re-allocate and retry.
         size = out_len.value
         out_buf = (ctypes.c_ubyte * size)()
         out_len = CK_ULONG(size)

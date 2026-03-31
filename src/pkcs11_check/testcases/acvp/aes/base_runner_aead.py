@@ -97,7 +97,7 @@ def run_gcm_encrypt_test(
                 CKM_AES_GCM,
                 vec["pt"],
                 mech_param=gcm_param,
-                retry_on_buffer_too_small=True,
+                output_overhead=tag_bytes,
             )
         except AssertionError as exc:
             exc_msg = str(exc)
@@ -166,7 +166,6 @@ def run_gcm_decrypt_test(
                 CKM_AES_GCM,
                 ct_with_tag,
                 mech_param=gcm_param,
-                retry_on_buffer_too_small=True,
             )
         except AssertionError as exc:
             exc_msg = str(exc)
