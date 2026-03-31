@@ -22,6 +22,7 @@ from rich.console import Console
 
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.quality_audit import build_quality_audit
+from pkcs11_check.core.test_selection import write_deselect_file
 
 IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
@@ -1721,6 +1722,7 @@ def _escalate_current_file(
     pytest_args: list[str],
     env: Mapping[str, str],
     console: Console,
+    disabled_nodeids: set[str] | None = None,
     baseline_fingerprint: str | None = None,
 ) -> list[str]:
     try:
@@ -1737,11 +1739,17 @@ def _escalate_current_file(
         )
         return []
 
+    filtered_nodeids = (
+        [nodeid for nodeid in nodeids if nodeid not in disabled_nodeids]
+        if disabled_nodeids
+        else nodeids
+    )
+
     additions = _insert_escalated_units(
         state,
         units,
         index,
-        nodeids,
+        filtered_nodeids,
         pytest_args,
         env,
         baseline_fingerprint=baseline_fingerprint,
@@ -1828,7 +1836,7 @@ def run_isolated_pytest_units(
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
     env = os.environ.copy()
-    del deselect_by_file
+    deselect_by_file = {unit: set(nodeids) for unit, nodeids in (deselect_by_file or {}).items()}
     fingerprint = build_state_fingerprint(
         units,
         pytest_args,
@@ -1954,13 +1962,21 @@ def run_isolated_pytest_units(
             console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
             start = time.monotonic()
             unit_granularity = _effective_granularity(unit, granularity)
+            unit_disabled_nodeids = (
+                set(deselect_by_file.get(unit, set())) if unit_granularity == "file" else set()
+            )
 
             # File-level runs always benefit from JSONL detail. Test-level runs
             # only need it when we are building merged JSON artifacts.
             unit_jsonl_path: Path | None = None
+            initial_deselect_path: Path | None = None
+            run_env = dict(env)
             collect_report_log = unit_granularity == "file" or (
                 report_config is not None and report_config.jsonl_path is not None
             )
+            if unit_disabled_nodeids:
+                initial_deselect_path = write_deselect_file(unit_disabled_nodeids)
+                run_env["PKCS11_CHECK_DESELECT_FILE"] = str(initial_deselect_path)
             if collect_report_log:
                 unit_jsonl_fd, unit_jsonl_raw = tempfile.mkstemp(
                     prefix="pkcs11-check-jsonl-", suffix=".jsonl"
@@ -1983,7 +1999,7 @@ def run_isolated_pytest_units(
                 try:
                     returncode, captured_stdout, captured_stderr = _run_subprocess_tee(
                         cmd,
-                        env=env,
+                        env=run_env,
                         timeout=_unit_timeout_seconds(timeout, unit_granularity),
                     )
                     status = _status_from_returncode(returncode)
@@ -2026,6 +2042,7 @@ def run_isolated_pytest_units(
                             pytest_args=pytest_args,
                             env=env,
                             console=console,
+                            disabled_nodeids=unit_disabled_nodeids,
                             baseline_fingerprint=baseline_fingerprint,
                         )
                         if escalated_units:
@@ -2137,7 +2154,7 @@ def run_isolated_pytest_units(
                         # each time deselecting completed tests + confirmed
                         # crash culprits, until the file passes or exit
                         # conditions are met.
-                        deselect_set: set[str] = set()
+                        deselect_set: set[str] = set(unit_disabled_nodeids)
                         crash_count = 0
                         accumulated_detail: dict[str, Any] | None = None
                         total_retry_dur = 0.0
@@ -2252,13 +2269,7 @@ def run_isolated_pytest_units(
                                 # - retry with deselect via file --
                                 # Write deselected nodeids to a temp file
                                 # instead of --deselect args (avoids ARG_MAX).
-                                deselect_fd, deselect_raw = tempfile.mkstemp(
-                                    prefix="pkcs11-check-deselect-",
-                                    suffix=".txt",
-                                )
-                                os.close(deselect_fd)
-                                deselect_path = Path(deselect_raw)
-                                deselect_path.write_text("\n".join(sorted(deselect_set)) + "\n")
+                                deselect_path = write_deselect_file(deselect_set)
                                 retry_temp_files.append(deselect_path)
 
                                 retry_jsonl_fd, retry_jsonl_raw = tempfile.mkstemp(
@@ -2389,6 +2400,8 @@ def run_isolated_pytest_units(
                             pytest_args=pytest_args,
                             env=env,
                             console=console,
+                            disabled_nodeids=unit_disabled_nodeids,
+                            baseline_fingerprint=baseline_fingerprint,
                         )
                         if escalated_units:
                             _record_result(
@@ -2437,6 +2450,8 @@ def run_isolated_pytest_units(
                     return exit_code
                 index += 1
             finally:
+                if initial_deselect_path is not None:
+                    initial_deselect_path.unlink(missing_ok=True)
                 if unit_jsonl_path is not None:
                     unit_jsonl_path.unlink(missing_ok=True)
     finally:

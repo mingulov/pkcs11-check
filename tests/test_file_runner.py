@@ -1752,6 +1752,173 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
     ]
 
 
+def test_run_isolated_pytest_units_applies_baseline_deselects_on_initial_file_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_file = tmp_path / "state.json"
+    console = Console(file=StringIO(), force_terminal=False)
+    seen: dict[str, str] = {}
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del cmd, timeout
+        assert env is not None
+        deselect_path = Path(env["PKCS11_CHECK_DESELECT_FILE"])
+        seen["text"] = deselect_path.read_text()
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        deselect_by_file={"test_a.py": {"test_a.py::test_disabled"}},
+        baseline_fingerprint="baseline-initial",
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=console,
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    assert seen["text"] == "test_a.py::test_disabled\n"
+
+
+def test_run_isolated_pytest_units_merges_baseline_deselects_into_retry_loop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_file = tmp_path / "state.json"
+    console = Console(file=StringIO(), force_terminal=False)
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del timeout
+        target = cmd[3]
+        deselect_text = None
+        if env is not None and "PKCS11_CHECK_DESELECT_FILE" in env:
+            deselect_text = Path(env["PKCS11_CHECK_DESELECT_FILE"]).read_text()
+        calls.append((target, deselect_text))
+        report_log_path: Path | None = None
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                report_log_path = Path(cmd[i + 1])
+                break
+
+        if target == "test_a.py" and len(calls) == 1:
+            assert report_log_path is not None
+            report_log_path.write_text(
+                "\n".join(
+                    [
+                        _jsonl_line(nodeid="test_a.py::test_done", when="setup", outcome="passed"),
+                        _jsonl_line(nodeid="test_a.py::test_done", when="call", outcome="passed"),
+                        _jsonl_line(nodeid="test_a.py::test_done", when="teardown", outcome="passed"),
+                        _jsonl_line(nodeid="test_a.py::test_culprit", when="setup", outcome="passed"),
+                    ]
+                )
+                + "\n"
+            )
+            return (-11, "", "")
+
+        if target == "test_a.py::test_culprit":
+            return (-11, "", "")
+
+        if target == "test_a.py":
+            return (0, "", "")
+
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        deselect_by_file={"test_a.py": {"test_a.py::baseline_disabled"}},
+        baseline_fingerprint="baseline-retry",
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=console,
+        granularity="mixed",
+    )
+
+    assert exit_code == 0
+    assert calls[0] == ("test_a.py", "test_a.py::baseline_disabled\n")
+    assert calls[2][0] == "test_a.py"
+    assert calls[2][1] == (
+        "test_a.py::baseline_disabled\n"
+        "test_a.py::test_culprit\n"
+        "test_a.py::test_done\n"
+    )
+
+
+def test_run_isolated_pytest_units_filters_disabled_tests_when_escalating_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n")
+    state_file = tmp_path / "state.json"
+    console = Console(file=StringIO(), force_terminal=False)
+    calls: list[str] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        unit = cmd[3]
+        calls.append(unit)
+        return (-11 if unit == str(target) else 0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.core.file_runner.discover_pytest_units",
+        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+            [  # type: ignore[arg-type]
+                f"{target}::test_one",
+                f"{target}::test_two",
+            ]
+            if granularity == "test"
+            else list(targets)
+        ),
+    )
+
+    exit_code = run_isolated_pytest_units(
+        [str(target), "test_after.py"],
+        ["--p11-module", "/tmp/module.so"],
+        deselect_by_file={str(target): {f"{target}::test_two"}},
+        baseline_fingerprint="baseline-escalate",
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=console,
+        granularity="mixed",
+    )
+
+    assert exit_code == 1
+    assert calls == [str(target), f"{target}::test_one", "test_after.py"]
+
+
 def test_run_isolated_pytest_units_resume_rejects_mismatched_state(
     tmp_path: Path,
 ) -> None:
