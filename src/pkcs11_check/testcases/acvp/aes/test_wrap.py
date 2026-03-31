@@ -16,6 +16,7 @@ from pkcs11_check.raw.recipes import destroy_quietly, import_secret_key, unwrap_
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKK_GENERIC_SECRET,
@@ -76,6 +77,7 @@ def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
             attrs={
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
                 CKA_ENCRYPT: True,
                 CKA_DECRYPT: True,
             },
@@ -202,6 +204,7 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
             attrs={
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
                 CKA_ENCRYPT: True,
                 CKA_DECRYPT: True,
             },
