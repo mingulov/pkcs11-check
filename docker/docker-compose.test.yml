@@ -122,11 +122,14 @@ services:
       PKCS11_CHECK_PIN: "1234"
 
   # Kryoptic main branch (latest dev, default features)
+  # Custom OpenSSL: OPENSSL_TAG=openssl-4.0.0-beta1 bash docker/test.sh kryoptic-main --rebuild
   test-kryoptic-main:
     <<: *common
     build:
       context: ..
       dockerfile: docker/kryoptic/Dockerfile.main
+      args:
+        OPENSSL_TAG: "${OPENSSL_TAG:-openssl-3.6.1}"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic-main
       PKCS11_CHECK_PIN: "1234"

@@ -1,10 +1,24 @@
 # Kryoptic main — latest development (no FIPS, default features)
+# Build arg: OPENSSL_TAG — git tag/branch to build from source (e.g. openssl-3.5.0)
+# If empty, uses system libssl-dev (Debian default).
 
 FROM rust:latest AS builder
 
+ARG OPENSSL_TAG="openssl-3.6.1"
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git pkg-config libssl-dev clang make \
+    git pkg-config libssl-dev clang make perl \
     && rm -rf /var/lib/apt/lists/*
+
+# Build OpenSSL from source if OPENSSL_TAG is set
+RUN if [ -n "$OPENSSL_TAG" ]; then \
+        git clone --depth 1 --branch "$OPENSSL_TAG" https://github.com/openssl/openssl.git /build/openssl \
+        && cd /build/openssl \
+        && ./Configure --prefix=/opt/openssl --libdir=lib shared no-docs \
+        && make -j"$(nproc)" \
+        && make install_sw \
+        && echo "Built OpenSSL $OPENSSL_TAG"; \
+    fi
 
 # Copy and apply patches from pkcs11-check patches directory
 # Bust cache if patches change: 2026-03-30-05
@@ -18,9 +32,18 @@ RUN for p in /tmp/patches/*.patch; do \
             git apply --ignore-space-change --ignore-whitespace "$p" || echo "Warning: Failed to apply $p"; \
         fi; \
     done
-RUN cargo build --release --features pqc 2>&1 | tail -3
+# If custom OpenSSL, point pkg-config and linker at it
+RUN if [ -n "$OPENSSL_TAG" ]; then \
+        export PKG_CONFIG_PATH=/opt/openssl/lib/pkgconfig \
+        && export OPENSSL_DIR=/opt/openssl \
+        && cargo build --release --features pqc 2>&1 | tail -3; \
+    else \
+        cargo build --release --features pqc 2>&1 | tail -3; \
+    fi
 
 FROM python:3.14-slim
+
+ARG OPENSSL_TAG="openssl-3.6.1"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 git gcc python3-dev libssl-dev opensc \
@@ -30,6 +53,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY docker/fault-proxy.c /tmp/fault-proxy.c
 COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
 RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
+# Copy custom OpenSSL libs if built, and configure linker
+COPY --from=builder /opt/openssl/lib/ /opt/openssl/lib/
+RUN if [ -d /opt/openssl/lib ] && [ -n "$(ls /opt/openssl/lib/*.so* 2>/dev/null)" ]; then \
+        echo "/opt/openssl/lib" > /etc/ld.so.conf.d/openssl-custom.conf && ldconfig; \
+    fi
 
 COPY --from=builder /build/kryoptic/target/release/libkryoptic_pkcs11.so /usr/lib/
 
