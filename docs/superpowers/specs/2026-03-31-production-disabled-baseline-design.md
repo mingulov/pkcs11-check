@@ -120,16 +120,49 @@ Add a dedicated runtime module:
 
 Responsibilities:
 
-- load `config/disabled-tests.txt`
+- load the configured disabled-tests file path, with `config/disabled-tests.txt`
+  as the repo-default value
 - normalize comments/blank lines/duplicates
 - expose `disabled_nodeids: set[str]`
 - expose a stable fingerprint based on file path and file metadata or content
+- materialize cleaned temp deselect files for pytest/plugin consumption
 - provide small helpers used by CLI, plugin, and isolated runner code
 
 Phase 1 does not need pattern compilation, marker matching, or target-overlay
 merging logic.
 
-### 3. Default-On Runtime Behavior
+### 3. Shared Selection Planning
+
+All runtime modes should use one shared selection-planning step after the
+baseline file is loaded.
+
+Recommended planning object:
+
+```python
+@dataclass
+class DisabledSelectionPlan:
+    units: list[str]
+    deselect_by_file: dict[str, set[str]]
+    baseline_fingerprint: str
+```
+
+Rules:
+
+- `units` is the final scheduled unit list after baseline filtering
+- `deselect_by_file` contains exact nodeids to deselect for any file-level unit
+- test-level units that are disabled are removed from `units` entirely
+- file-level units with zero enabled tests are removed from `units`
+
+This planning step must be reusable in two situations:
+
+1. fresh runs
+2. resume runs where `prior_state.units` already exists
+
+The critical design point is that resume must reconstruct selection behavior
+from the current baseline plus the saved unit list. The runner should not rely
+on persisting the per-file deselect mapping inside state.
+
+### 4. Default-On Runtime Behavior
 
 `pkcs11-check test` should honor the configured disabled baseline by default.
 
@@ -153,18 +186,26 @@ Recommended config model:
 
 Use the existing plugin deselection mechanism:
 
-- write the exact nodeids to a temp file or point directly to the repo-default
-  file if safe to do so
+- always write a cleaned temp deselect file from the runtime loader output
 - set `PKCS11_CHECK_DESELECT_FILE`
 - let `plugin.py:pytest_collection_modifyitems()` perform exact deselection
 
-This path already matches exact nodeids only, which is exactly what phase 1
-needs.
+Do **not** point pytest directly at the repo baseline file, because the runtime
+format allows comments and blank lines while the current plugin deselect reader
+only understands raw nodeid lines.
 
 ### `--isolation test`
 
 Disabled nodeids must be removed before units are scheduled. Disabled tests
 must never become subprocess units.
+
+Recommended approach:
+
+- discover test units as today
+- drop any nodeid present in `disabled_nodeids`
+- schedule only the remaining nodeids
+
+No per-file deselect file is needed for pure surviving test units.
 
 ### `--isolation file`
 
@@ -173,6 +214,21 @@ Use collection metadata to determine disabled nodeids by file.
 - fully-disabled files are never spawned
 - mixed files receive a per-file deselect file
 - subprocesses still execute only the non-disabled tests from that file
+
+Recommended approach:
+
+- discover file units
+- collect item metadata for the requested targets with current pytest filters
+- compute `disabled_by_file`
+- remove file units whose collected items are all disabled
+- when spawning a file unit for the first time, write its baseline deselect set
+  immediately rather than waiting for crash recovery
+
+Edge case:
+
+- if the user passed an explicit nodeid target while in `--isolation file`,
+  treat that exact nodeid target like a test unit for baseline filtering
+  purposes
 
 ### `--isolation auto`
 
@@ -183,18 +239,37 @@ Important requirement:
 - if a file escalates from file-level to test-level units, the newly created
   test units must still be filtered against the baseline
 
+Recommended approach:
+
+- fresh auto discovery produces both `units` and `deselect_by_file`
+- if `_escalate_current_file()` generates test-level units, filter them through
+  `disabled_nodeids` before inserting them into the run queue
+- if a resumed auto run starts from `prior_state.units`, rebuild the same
+  selection plan from that unit list before the runner begins execution
+
 ### Crash-Recovery / Iterative Deselect
 
 If crash-recovery deselection is active, it must merge with the committed
 baseline rather than replacing it. The release baseline remains in force during
 all retries.
 
+Recommended approach:
+
+- the first subprocess spawn for a mixed file already receives the baseline
+  deselect file
+- the iterative deselect loop starts from that baseline set, then unions crash
+  culprits and already-completed tests onto it for each retry
+
 ## Resume and State
 
 The disabled baseline must be part of isolated-run fingerprinting.
 
-If `config/disabled-tests.txt` changes, old resume state is stale and must be
-rejected.
+If the configured disabled baseline changes, old resume state is stale and must
+be rejected.
+
+If the baseline does **not** change, resume should reconstruct the selection
+plan from the saved `units` and the current baseline loader output. This avoids
+persisting large per-file deselect maps in state.
 
 The internal cache directory:
 
@@ -253,6 +328,8 @@ Responsibilities:
   or any other classes the user wants to mine
 - emit exact nodeids only
 - write stable sorted output
+- reuse shared outcome/report parsing helpers instead of reimplementing
+  `report.jsonl` interpretation independently
 
 Crash and timeout handling:
 
@@ -275,7 +352,7 @@ how the helper chose candidates.
 
 ### Runtime
 
-- If default-on mode is active and the repo-default disabled file is missing,
+- If default-on mode is active and the configured disabled file is missing,
   fail fast with a clear error and mention the opt-out flag.
 - Ignore blank lines and comments.
 - Deduplicate repeated nodeids silently.
