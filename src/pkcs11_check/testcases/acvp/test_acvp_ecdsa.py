@@ -247,7 +247,7 @@ def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
         if not vec["expected_pass"] and verified:
             pytest.fail(f"{vec_id}: Module accepted invalid signature")
         if vec["expected_pass"] and not verified:
-            pytest.xfail(f"{vec_id}: Module rejected valid signature")
+            pytest.fail(f"{vec_id}: Module rejected valid signature")
     finally:
         if pub_key:
             destroy_quietly(rs.raw, rs.sh, pub_key)

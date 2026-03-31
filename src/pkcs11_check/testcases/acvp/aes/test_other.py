@@ -113,7 +113,10 @@ def test_acvp_aes_xts_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: XTS encrypt failed ({exc})")
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"XTS encrypt not supported: {exc_msg}")
+            raise
 
         assert ct == vec["ct_expected"], (
             f"{vec_id}: ciphertext mismatch: got {ct.hex()}, expected {vec['ct_expected'].hex()}"
@@ -158,7 +161,10 @@ def test_acvp_aes_xts_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: XTS decrypt failed ({exc})")
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"XTS decrypt not supported: {exc_msg}")
+            raise
             return
 
         assert pt == vec["pt_expected"], (
@@ -230,7 +236,10 @@ def _run_cbc_cs_encrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, A
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: CBC-CS encrypt failed ({exc})")
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"CBC-CS encrypt not supported: {exc_msg}")
+            raise
 
         assert ct == vec["ct_expected"], (
             f"{vec_id}: ciphertext mismatch: got {ct.hex()}, expected {vec['ct_expected'].hex()}"
@@ -260,7 +269,10 @@ def _run_cbc_cs_decrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, A
                 mech_param=mech,
             )
         except AssertionError as exc:
-            pytest.xfail(f"Module limitation: CBC-CS decrypt failed ({exc})")
+            exc_msg = str(exc)
+            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+                pytest.skip(f"CBC-CS decrypt not supported: {exc_msg}")
+            raise
             return
 
         assert pt == vec["pt_expected"], (

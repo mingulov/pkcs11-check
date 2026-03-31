@@ -131,7 +131,7 @@ class TestEdDsaKeyVer:
                 )
             except AssertionError as e:
                 if vec["expected_pass"]:
-                    pytest.xfail(f"{vec_id}: Module rejected valid key: {e}")
+                    pytest.fail(f"{vec_id}: Module rejected valid key: {e}")
                 return
 
             try:
@@ -162,7 +162,7 @@ class TestEdDsaKeyVer:
             if not vec["expected_pass"] and key_usable:
                 pytest.fail(f"{vec_id}: Module ACCEPTED an INVALID EdDSA key")
             if vec["expected_pass"] and not key_usable:
-                pytest.xfail(f"{vec_id}: Module rejected a VALID EdDSA key")
+                pytest.fail(f"{vec_id}: Module rejected a VALID EdDSA key")
         finally:
             if pub_key:
                 destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -209,7 +209,7 @@ def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
         if not vec["expected_pass"] and verified:
             pytest.fail(f"{vec_id}: module ACCEPTED an INVALID EdDSA signature")
         if vec["expected_pass"] and not verified:
-            pytest.xfail(f"{vec_id}: module rejected a VALID EdDSA signature")
+            pytest.fail(f"{vec_id}: module rejected a VALID EdDSA signature")
     finally:
         if pub_key:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -238,11 +238,11 @@ def test_acvp_eddsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
         try:
             sig = sign_single(rs.raw, rs.sh, priv_key, CKM_EDDSA, vec["msg"])
-        except AssertionError as e:
-            pytest.xfail(f"{vec_id}: Ed25519 sign raised unexpected error: {e}")
+        except AssertionError:
+            raise
 
         if sig != vec["expected_sig"]:
-            pytest.xfail(f"{vec_id}: Ed25519 signature mismatch")
+            pytest.fail(f"{vec_id}: EdDSA signature mismatch")
     finally:
         if priv_key:
             destroy_quietly(rs.raw, rs.sh, priv_key)

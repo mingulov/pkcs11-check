@@ -280,8 +280,7 @@ def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
             ):
                 verified = False
             else:
-                # Unexpected error from the module - record as xfail
-                pytest.xfail(f"SLH-DSA verify raised unexpected error for {vec_id}: {exc_msg}")
+                raise  # Unexpected error — not a signature verification result
 
         expected = vec["expected_pass"]
         if not expected and verified:
