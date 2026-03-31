@@ -155,8 +155,17 @@ def _two_call_output(
     out_len = CK_ULONG(0)
     rv = fn(*args, None, byref(out_len))
     expect_rv(rv, CKR_OK)
-    out_buf = (ctypes.c_ubyte * out_len.value)()
+    size = out_len.value
+    out_buf = (ctypes.c_ubyte * size)()
+    out_len = CK_ULONG(size)
     rv = fn(*args, out_buf, byref(out_len))
+    if rv == CKR_BUFFER_TOO_SMALL and out_len.value > size:
+        # Module reported a short size on the NULL query (e.g. NSS softoken
+        # returns plaintext length without AEAD tag).  Retry with the updated size.
+        size = out_len.value
+        out_buf = (ctypes.c_ubyte * size)()
+        out_len = CK_ULONG(size)
+        rv = fn(*args, out_buf, byref(out_len))
     expect_rv(rv, CKR_OK)
     return bytes(out_buf[: out_len.value])
 
