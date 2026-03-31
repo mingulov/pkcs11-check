@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from pkcs11_check.core.test_selection import (
     DisabledBaseline,
     DisabledSelectionPlan,
     build_disabled_selection_plan,
+    collect_disabled_candidates,
     load_disabled_baseline,
     parse_disabled_nodeids,
 )
@@ -140,3 +142,186 @@ def test_build_disabled_selection_plan_rebuilds_from_saved_units(tmp_path: Path)
     assert first == second
     assert first.units == saved_units
     assert first.deselect_by_file == {file_unit: {f"{file_unit}::test_b"}}
+
+
+def test_collect_disabled_candidates_from_report_jsonl_supports_multiple_outcomes(
+    tmp_path: Path,
+) -> None:
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    report_path = artifact_dir / "report.jsonl"
+    report_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_demo.py::test_failed",
+                        "when": "call",
+                        "outcome": "failed",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_demo.py::test_skipped",
+                        "when": "call",
+                        "outcome": "skipped",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_demo.py::test_xfailed",
+                        "when": "call",
+                        "outcome": "skipped",
+                        "wasxfail": "known bug",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_demo.py::test_passed",
+                        "when": "call",
+                        "outcome": "passed",
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+
+    candidates, manual = collect_disabled_candidates(
+        [artifact_dir],
+        outcomes={"failed", "skipped", "xfailed"},
+    )
+
+    assert candidates == [
+        "test_demo.py::test_failed",
+        "test_demo.py::test_skipped",
+        "test_demo.py::test_xfailed",
+    ]
+    assert manual == []
+
+
+def test_collect_disabled_candidates_preserves_parametrized_nodeids_sorted(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "report.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_vectors.py::test_case[param-b]",
+                        "when": "call",
+                        "outcome": "failed",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_vectors.py::test_case[param-a]",
+                        "when": "call",
+                        "outcome": "failed",
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+
+    candidates, manual = collect_disabled_candidates([artifact_dir], outcomes={"failed"})
+
+    assert candidates == [
+        "test_vectors.py::test_case[param-a]",
+        "test_vectors.py::test_case[param-b]",
+    ]
+    assert manual == []
+
+
+def test_collect_disabled_candidates_recovers_crash_culprit_from_results_json(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "report.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_a.py::test_done",
+                        "when": "setup",
+                        "outcome": "passed",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_a.py::test_done",
+                        "when": "call",
+                        "outcome": "passed",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_a.py::test_done",
+                        "when": "teardown",
+                        "outcome": "passed",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_a.py::test_culprit",
+                        "when": "setup",
+                        "outcome": "passed",
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    (artifact_dir / "results.json").write_text(
+        json.dumps(
+            {
+                "units": [
+                    {
+                        "target": "test_a.py",
+                        "status": "crashed",
+                    }
+                ]
+            }
+        )
+    )
+
+    candidates, manual = collect_disabled_candidates([artifact_dir], outcomes={"crashed"})
+
+    assert candidates == ["test_a.py::test_culprit"]
+    assert manual == []
+
+
+def test_collect_disabled_candidates_reports_manual_review_when_culprit_missing(
+    tmp_path: Path,
+) -> None:
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "report.jsonl").write_text("")
+    (artifact_dir / "results.json").write_text(
+        json.dumps(
+            {
+                "units": [
+                    {
+                        "target": "test_a.py",
+                        "status": "timeout",
+                    }
+                ]
+            }
+        )
+    )
+
+    candidates, manual = collect_disabled_candidates([artifact_dir], outcomes={"timeout"})
+
+    assert candidates == []
+    assert len(manual) == 1
+    assert "manual review" in manual[0]
