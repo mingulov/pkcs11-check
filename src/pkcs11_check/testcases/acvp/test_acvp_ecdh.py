@@ -179,7 +179,7 @@ def _load_all_ecdh_vectors(max_per_curve: int = 10) -> list[tuple[str, dict[str,
     return all_vectors
 
 
-_ECDH_VECTORS = _load_all_ecdh_vectors(max_per_curve=10)
+_ECDH_VECTORS = _load_all_ecdh_vectors(max_per_curve=50)
 
 
 @pytest.mark.parametrize("vec_id, vec", _ECDH_VECTORS, ids=[v[0] for v in _ECDH_VECTORS])
