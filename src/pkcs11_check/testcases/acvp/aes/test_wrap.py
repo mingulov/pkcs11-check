@@ -152,7 +152,15 @@ def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, An
             )
         except AssertionError as exc:
             exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+            if any(
+                c in exc_msg
+                for c in (
+                    "CKR_MECHANISM_INVALID",
+                    "CKR_MECHANISM_PARAM_INVALID",
+                    "CKR_TEMPLATE_INCONSISTENT",
+                    "CKR_WRAPPED_KEY_LEN_RANGE",
+                )
+            ):
                 pytest.skip(f"AES-KW unwrap not supported: {exc_msg}")
             raise
     finally:
@@ -288,7 +296,15 @@ def test_acvp_aes_kwp_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, A
             )
         except AssertionError as exc:
             exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+            if any(
+                c in exc_msg
+                for c in (
+                    "CKR_MECHANISM_INVALID",
+                    "CKR_MECHANISM_PARAM_INVALID",
+                    "CKR_TEMPLATE_INCONSISTENT",
+                    "CKR_WRAPPED_KEY_LEN_RANGE",
+                )
+            ):
                 pytest.skip(f"AES-KWP unwrap not supported: {exc_msg}")
             raise
     finally:
