@@ -16,7 +16,7 @@ Runtime behavior stays simple:
 - one fixed repo-default disabled file
 - exact pytest nodeids only at runtime
 - disabled tests are deselected, not skipped
-- default runs honor the baseline
+- default configured runs honor the baseline
 - an explicit opt-out exists for full-truth runs
 - no target overlays in phase 1
 - no invert/debug mode in phase 1
@@ -46,7 +46,7 @@ The helper proposes candidates. The committed file remains authoritative.
 ## Goals
 
 - Provide one committed repo-default disabled baseline.
-- Honor that baseline by default in `pkcs11-check test`.
+- Honor that baseline by default when the repo config points to it.
 - Allow an explicit opt-out for full-truth runs.
 - Work in all isolation modes: `none`, `file`, `test`, `auto`.
 - Keep disabled tests out of execution and out of the skipped bucket.
@@ -85,6 +85,10 @@ selection language.
 Add one committed default file:
 
 - `config/disabled-tests.txt`
+
+The repo-default config points to this file by default. Disabling the baseline
+globally is done by removing or commenting out the configured filename. A CLI
+opt-out disables it for one run.
 
 Format:
 
@@ -127,18 +131,21 @@ merging logic.
 
 ### 3. Default-On Runtime Behavior
 
-`pkcs11-check test` should honor the repo-default disabled baseline by default.
+`pkcs11-check test` should honor the configured disabled baseline by default.
 
 An explicit opt-out flag should disable this behavior for full-truth runs, for
 example:
 
 - `--ignore-disabled-tests`
 
-The default-on behavior matches the user's stated release/beta workflow. The
-opt-out preserves access to the full suite.
+The default-on behavior matches the user's stated workflow. The opt-out
+preserves access to the full suite.
 
-Config may expose the default path, but the default file should be discoverable
-without requiring extra per-user setup.
+Recommended config model:
+
+- repo config points to `config/disabled-tests.txt` by default
+- removing or commenting out the configured filename disables the baseline
+- `--ignore-disabled-tests` disables the baseline for one invocation
 
 ## Isolation-Mode Semantics
 
@@ -200,6 +207,10 @@ become the primary contract for baseline generation or runtime behavior.
 
 Phase 1 baseline generation happens offline.
 
+The baseline itself is global and provider-agnostic. The generation helper may
+scan any artifact set the user chooses. It is not tied to a hard-coded provider
+taxonomy.
+
 Primary input:
 
 - `artifacts/<provider>/report.jsonl`
@@ -220,6 +231,8 @@ Use only as fallback/helper:
 - `results.json` is useful for summaries and for some non-passing test details
 - it is not sufficient on its own to reconstruct the full skipped-test nodeid
   set
+- it is also the place to correlate unit-level statuses such as `crashed` and
+  `timeout`, which are not raw per-test outcomes in `report.jsonl`
 
 Not primary:
 
@@ -235,11 +248,20 @@ Add one offline helper:
 Responsibilities:
 
 - scan `artifacts/*/report.jsonl`
-- optionally allow provider selection
+- optionally allow explicit artifact-path selection
 - optionally allow outcome selection such as `failed,error,crashed,timeout`,
   or any other classes the user wants to mine
 - emit exact nodeids only
 - write stable sorted output
+
+Crash and timeout handling:
+
+- `crashed` and `timeout` are treated as failure-like candidate classes
+- they are not direct `report.jsonl` per-test outcomes, so the helper must
+  correlate `results.json` unit status with the available `report.jsonl`
+  evidence to recover exact culprit nodeids where possible
+- if an exact nodeid cannot be recovered, the helper should surface that case
+  for manual review instead of inventing a synthetic entry
 
 Design principle:
 
