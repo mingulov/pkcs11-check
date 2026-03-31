@@ -669,6 +669,24 @@ def test_build_state_fingerprint_changes_when_env_changes(tmp_path: Path) -> Non
     assert first != second
 
 
+def test_build_state_fingerprint_changes_when_disabled_baseline_changes(tmp_path: Path) -> None:
+    unit = tmp_path / "test_demo.py"
+    unit.write_text("def test_demo():\n    assert True\n")
+
+    first = build_state_fingerprint(
+        [str(unit)],
+        ["--p11-module", "/tmp/module.so"],
+        baseline_fingerprint="baseline-a",
+    )
+    second = build_state_fingerprint(
+        [str(unit)],
+        ["--p11-module", "/tmp/module.so"],
+        baseline_fingerprint="baseline-b",
+    )
+
+    assert first != second
+
+
 def test_build_policy_fingerprint_ignores_runner_control_env(tmp_path: Path) -> None:
     module = tmp_path / "module.so"
     module.write_text("v1")
@@ -757,6 +775,43 @@ def test_run_isolated_pytest_units_resume_skips_passed(monkeypatch: object, tmp_
     assert exit_code == 0
     assert saved is not None
     assert [result.target for result in saved.results] == ["test_a.py", "test_b.py"]
+
+
+def test_run_isolated_pytest_units_resume_rejects_changed_baseline_fingerprint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", lambda *args, **kwargs: (0, "", ""))
+    state_file = tmp_path / "state.json"
+    units = ["test_a.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    save_run_state(
+        state_file,
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(
+                units,
+                pytest_args,
+                baseline_fingerprint="baseline-old",
+            ),
+            results=[],
+        ),
+    )
+    console = Console(file=StringIO(), force_terminal=False)
+
+    with pytest.raises(ValueError, match="belongs to a different isolated run"):
+        run_isolated_pytest_units(
+            units,
+            pytest_args,
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=None,
+            resume=True,
+            stop_on_failure=False,
+            console=console,
+            granularity="file",
+            baseline_fingerprint="baseline-new",
+        )
 
 
 def test_run_isolated_pytest_units_resume_replaces_failed_result(

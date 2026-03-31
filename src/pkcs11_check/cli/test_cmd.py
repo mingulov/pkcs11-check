@@ -13,6 +13,7 @@ import typer
 from rich.console import Console
 
 from pkcs11_check.config import P11TestConfig
+from pkcs11_check.core.collection import collect_pytest_item_metadata
 from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
     discover_auto_isolation_units,
@@ -25,7 +26,12 @@ from pkcs11_check.core.file_runner import (
     write_quality_json_report,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
-from pkcs11_check.core.test_selection import load_disabled_baseline, write_deselect_file
+from pkcs11_check.core.test_selection import (
+    DisabledSelectionPlan,
+    build_disabled_selection_plan,
+    load_disabled_baseline,
+    write_deselect_file,
+)
 
 console = Console(stderr=True)
 
@@ -212,6 +218,10 @@ def test_command(
             baseline = None
             if not ignore_disabled_tests:
                 baseline = load_disabled_baseline(runtime_config.disabled_tests_file)
+            disabled_nodeids = set(baseline.disabled_nodeids) if baseline is not None else set()
+            baseline_fingerprint = (
+                baseline.fingerprint if baseline is not None else "disabled-baseline:none"
+            )
         except FileNotFoundError as exc:
             console.print(f"[red]Error:[/red] {exc}")
             raise typer.Exit(code=2) from exc
@@ -224,6 +234,7 @@ def test_command(
                 )
 
             try:
+                collected_items = None
                 if isolation == "auto":
                     prior_state = load_run_state(state_file) if resume else None
                     if prior_state is not None:
@@ -245,9 +256,28 @@ def test_command(
                         pytest_args=pytest_args,
                     )
                     runner_granularity = isolated_mode
+                if disabled_nodeids:
+                    if isolation == "auto":
+                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                    elif runner_granularity == "file":
+                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                    selection_plan = build_disabled_selection_plan(
+                        units=units,
+                        disabled_nodeids=disabled_nodeids,
+                        baseline_fingerprint=baseline_fingerprint,
+                        collected_items=collected_items,
+                    )
+                else:
+                    selection_plan = DisabledSelectionPlan(
+                        units=units,
+                        deselect_by_file={},
+                        baseline_fingerprint=baseline_fingerprint,
+                    )
                 exit_code = run_isolated_pytest_units(
-                    units,
+                    selection_plan.units,
                     pytest_args,
+                    deselect_by_file=selection_plan.deselect_by_file,
+                    baseline_fingerprint=selection_plan.baseline_fingerprint,
                     timeout=timeout,
                     state_file=state_file,
                     policy_file=policy_file,

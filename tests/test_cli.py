@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from pkcs11_check.cli import test_cmd
 from pkcs11_check.cli.app import app
+from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.preflight import CapabilityManifest
 from pkcs11_check.core.test_selection import DisabledBaseline
 
@@ -53,6 +54,8 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
         ) -> int:
             del console
             called["units"] = units
@@ -65,6 +68,8 @@ class TestTestCommand:
             called["stop_on_failure"] = stop_on_failure
             called["granularity"] = granularity
             called["max_crashes_per_file"] = max_crashes_per_file
+            called["deselect_by_file"] = deselect_by_file
+            called["baseline_fingerprint"] = baseline_fingerprint
             return 7
 
         monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
@@ -143,6 +148,8 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
         ) -> int:
             del (
                 units,
@@ -156,6 +163,8 @@ class TestTestCommand:
                 console,
                 granularity,
                 max_crashes_per_file,
+                deselect_by_file,
+                baseline_fingerprint,
             )
             assert os.environ["P11TEST_PIN"] == "1234"
             return 0
@@ -211,6 +220,8 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
         ) -> int:
             del (
                 pytest_args,
@@ -222,6 +233,8 @@ class TestTestCommand:
                 stop_on_failure,
                 console,
                 max_crashes_per_file,
+                deselect_by_file,
+                baseline_fingerprint,
             )
             called["units"] = units
             called["granularity"] = granularity
@@ -281,6 +294,8 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
         ) -> int:
             del (
                 pytest_args,
@@ -292,6 +307,8 @@ class TestTestCommand:
                 stop_on_failure,
                 console,
                 max_crashes_per_file,
+                deselect_by_file,
+                baseline_fingerprint,
             )
             called["units"] = units
             called["granularity"] = granularity
@@ -355,6 +372,8 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
         ) -> int:
             del (
                 units,
@@ -367,6 +386,8 @@ class TestTestCommand:
                 stop_on_failure,
                 console,
                 max_crashes_per_file,
+                deselect_by_file,
+                baseline_fingerprint,
             )
             called["granularity"] = granularity
             return 0
@@ -422,6 +443,8 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
         ) -> int:
             del (
                 pytest_args,
@@ -432,6 +455,8 @@ class TestTestCommand:
                 stop_on_failure,
                 console,
                 max_crashes_per_file,
+                deselect_by_file,
+                baseline_fingerprint,
             )
             called["units"] = units
             called["resume"] = resume
@@ -520,6 +545,8 @@ class TestTestCommand:
             console: object,
             granularity: str,
             max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
         ) -> int:
             del (
                 units,
@@ -532,6 +559,8 @@ class TestTestCommand:
                 console,
                 granularity,
                 max_crashes_per_file,
+                deselect_by_file,
+                baseline_fingerprint,
             )
             called["report_config"] = report_config
             return 0
@@ -904,6 +933,197 @@ class TestTestCommand:
 
         assert result.exit_code == 2
         assert "disabled baseline file not found" in result.output
+
+    def test_test_isolation_filters_disabled_test_units_before_runner(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        file_path = tmp_path / "test_demo.py"
+        file_path.write_text("")
+        called: dict[str, object] = {}
+
+        def fake_run(
+            units: list[str],
+            pytest_args: list[str],
+            *,
+            timeout: int,
+            state_file: Path,
+            policy_file: Path | None,
+            report_config: object | None,
+            resume: bool,
+            stop_on_failure: bool,
+            console: object,
+            granularity: str,
+            max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
+        ) -> int:
+            del (
+                pytest_args,
+                timeout,
+                state_file,
+                policy_file,
+                report_config,
+                resume,
+                stop_on_failure,
+                console,
+                max_crashes_per_file,
+            )
+            called["units"] = units
+            called["granularity"] = granularity
+            called["deselect_by_file"] = deselect_by_file
+            called["baseline_fingerprint"] = baseline_fingerprint
+            return 0
+
+        unit_a = f"{file_path}::test_a"
+        unit_b = f"{file_path}::test_b"
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [unit_a, unit_b],  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "load_disabled_baseline",
+            lambda path: DisabledBaseline(
+                source_path=Path("config/disabled-tests.txt"),
+                disabled_nodeids=frozenset({unit_b}),
+                fingerprint="baseline-fp-test",
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "test"])
+
+        assert result.exit_code == 0
+        assert called["units"] == [unit_a]
+        assert called["granularity"] == "test"
+        assert called["deselect_by_file"] == {}
+        assert called["baseline_fingerprint"] == "baseline-fp-test"
+
+    def test_file_isolation_drops_fully_disabled_files_and_passes_mixed_deselects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        file_a = tmp_path / "test_a.py"
+        file_b = tmp_path / "test_b.py"
+        file_a.write_text("")
+        file_b.write_text("")
+        called: dict[str, object] = {}
+
+        def fake_run(
+            units: list[str],
+            pytest_args: list[str],
+            *,
+            timeout: int,
+            state_file: Path,
+            policy_file: Path | None,
+            report_config: object | None,
+            resume: bool,
+            stop_on_failure: bool,
+            console: object,
+            granularity: str,
+            max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
+        ) -> int:
+            del (
+                pytest_args,
+                timeout,
+                state_file,
+                policy_file,
+                report_config,
+                resume,
+                stop_on_failure,
+                console,
+                max_crashes_per_file,
+                baseline_fingerprint,
+            )
+            called["units"] = units
+            called["granularity"] = granularity
+            called["deselect_by_file"] = deselect_by_file
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [str(file_a), str(file_b)],  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_item_metadata",
+            lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
+                CollectedPytestItem(
+                    nodeid=f"{file_a}::test_keep",
+                    file_path=str(file_a),
+                    markers=[],
+                ),
+                CollectedPytestItem(
+                    nodeid=f"{file_a}::test_drop",
+                    file_path=str(file_a),
+                    markers=[],
+                ),
+                CollectedPytestItem(
+                    nodeid=f"{file_b}::test_only",
+                    file_path=str(file_b),
+                    markers=[],
+                ),
+            ],
+            raising=False,
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "load_disabled_baseline",
+            lambda path: DisabledBaseline(
+                source_path=Path("config/disabled-tests.txt"),
+                disabled_nodeids=frozenset({f"{file_a}::test_drop", f"{file_b}::test_only"}),
+                fingerprint="baseline-fp-file",
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "file"])
+
+        assert result.exit_code == 0
+        assert called["units"] == [str(file_a)]
+        assert called["granularity"] == "file"
+        assert called["deselect_by_file"] == {str(file_a): {f"{file_a}::test_drop"}}
 
     def test_test_preflight_failure_is_reported(self, tmp_path: Path, monkeypatch: object) -> None:
         module = tmp_path / "dummy.so"

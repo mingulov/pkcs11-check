@@ -1356,7 +1356,11 @@ def _fingerprint_env(
 
 
 def build_state_fingerprint(
-    units: list[str], pytest_args: list[str], env: Mapping[str, str] | None = None
+    units: list[str],
+    pytest_args: list[str],
+    env: Mapping[str, str] | None = None,
+    *,
+    baseline_fingerprint: str | None = None,
 ) -> str:
     """Build a stable fingerprint for resume validation."""
     redacted_args: list[str] = []
@@ -1381,6 +1385,7 @@ def build_state_fingerprint(
 
     payload = json.dumps(
         {
+            "baseline_fingerprint": baseline_fingerprint,
             "env": _fingerprint_env(env or os.environ),
             "manifest_digest": manifest_digest,
             "module": module_snapshot,
@@ -1598,9 +1603,16 @@ def _refresh_state_plan(
     units: list[str],
     pytest_args: list[str],
     env: Mapping[str, str],
+    *,
+    baseline_fingerprint: str | None = None,
 ) -> None:
     state.units = list(units)
-    state.fingerprint = build_state_fingerprint(units, pytest_args, env)
+    state.fingerprint = build_state_fingerprint(
+        units,
+        pytest_args,
+        env,
+        baseline_fingerprint=baseline_fingerprint,
+    )
 
 
 def _count_test_level_crashes_for_file(state: FileRunState, file_key: str) -> int:
@@ -1624,6 +1636,7 @@ def _limit_remaining_units_for_file(
     env: Mapping[str, str],
     console: Console,
     max_crashes_per_file: int,
+    baseline_fingerprint: str | None = None,
 ) -> list[str]:
     if max_crashes_per_file <= 0 or "::" not in unit:
         return []
@@ -1656,7 +1669,13 @@ def _limit_remaining_units_for_file(
 
     limited_set = set(limited_units)
     pending_units[:] = [candidate for candidate in pending_units if candidate not in limited_set]
-    _refresh_state_plan(state, units, pytest_args, env)
+    _refresh_state_plan(
+        state,
+        units,
+        pytest_args,
+        env,
+        baseline_fingerprint=baseline_fingerprint,
+    )
     console.print(
         "[yellow]Adaptive isolation:[/yellow] "
         f"reached the per-file crash limit for {Path(unit.split('::', 1)[0]).name} "
@@ -1673,6 +1692,8 @@ def _insert_escalated_units(
     new_units: list[str],
     pytest_args: list[str],
     env: Mapping[str, str],
+    *,
+    baseline_fingerprint: str | None = None,
 ) -> list[str]:
     existing = set(units)
     additions = [unit for unit in new_units if unit not in existing]
@@ -1681,7 +1702,13 @@ def _insert_escalated_units(
 
     insert_at = index + 1
     units[insert_at:insert_at] = additions
-    _refresh_state_plan(state, units, pytest_args, env)
+    _refresh_state_plan(
+        state,
+        units,
+        pytest_args,
+        env,
+        baseline_fingerprint=baseline_fingerprint,
+    )
     return additions
 
 
@@ -1694,6 +1721,7 @@ def _escalate_current_file(
     pytest_args: list[str],
     env: Mapping[str, str],
     console: Console,
+    baseline_fingerprint: str | None = None,
 ) -> list[str]:
     try:
         nodeids = discover_pytest_units(
@@ -1709,7 +1737,15 @@ def _escalate_current_file(
         )
         return []
 
-    additions = _insert_escalated_units(state, units, index, nodeids, pytest_args, env)
+    additions = _insert_escalated_units(
+        state,
+        units,
+        index,
+        nodeids,
+        pytest_args,
+        env,
+        baseline_fingerprint=baseline_fingerprint,
+    )
     if additions:
         console.print(
             f"[yellow]Adaptive isolation:[/yellow] escalating {unit} to per-test isolation "
@@ -1778,6 +1814,8 @@ def run_isolated_pytest_units(
     units: list[str],
     pytest_args: list[str],
     *,
+    deselect_by_file: Mapping[str, set[str]] | None = None,
+    baseline_fingerprint: str | None = None,
     timeout: int,
     state_file: Path,
     policy_file: Path | None,
@@ -1790,7 +1828,13 @@ def run_isolated_pytest_units(
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress."""
     env = os.environ.copy()
-    fingerprint = build_state_fingerprint(units, pytest_args, env)
+    del deselect_by_file
+    fingerprint = build_state_fingerprint(
+        units,
+        pytest_args,
+        env,
+        baseline_fingerprint=baseline_fingerprint,
+    )
     previous_state = load_run_state(state_file) if resume else None
     if previous_state is not None and previous_state.fingerprint != fingerprint:
         msg = (
@@ -1982,6 +2026,7 @@ def run_isolated_pytest_units(
                             pytest_args=pytest_args,
                             env=env,
                             console=console,
+                            baseline_fingerprint=baseline_fingerprint,
                         )
                         if escalated_units:
                             _record_result(
@@ -2011,6 +2056,7 @@ def run_isolated_pytest_units(
                             env=env,
                             console=console,
                             max_crashes_per_file=max_crashes_per_file,
+                            baseline_fingerprint=baseline_fingerprint,
                         )
                         if limited_units:
                             save_run_state(state_file, state)
