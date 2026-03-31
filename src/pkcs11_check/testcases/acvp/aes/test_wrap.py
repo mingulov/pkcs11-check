@@ -31,6 +31,15 @@ from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
+_MAX_HEX_BYTES = 128  # max bytes to show in mismatch messages
+
+
+def _hex(data: bytes) -> str:
+    """Hex-encode with truncation for readable assert messages."""
+    if len(data) <= _MAX_HEX_BYTES:
+        return data.hex()
+    return data[:_MAX_HEX_BYTES].hex() + "..."
+
 
 # =============================================================================
 # AES-KW (RFC 3394)
@@ -70,8 +79,8 @@ def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 
         assert ct == vec["ct_expected"], (
             f"{vec_id}: wrap mismatch:\n"
-            f"  got:      {ct.hex()}\n"
-            f"  expected: {vec['ct_expected'].hex()}"
+            f"  got:      {_hex(ct)}\n"
+            f"  expected: {_hex(vec['ct_expected'])}"
         )
     except AssertionError as exc:
         exc_msg = str(exc)
@@ -98,8 +107,8 @@ def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, An
 
         assert pt == vec["pt_expected"], (
             f"{vec_id}: unwrap mismatch:\n"
-            f"  got:      {pt.hex()}\n"
-            f"  expected: {vec['pt_expected'].hex()}"
+            f"  got:      {_hex(pt)}\n"
+            f"  expected: {_hex(vec['pt_expected'])}"
         )
     except AssertionError as exc:
         exc_msg = str(exc)
@@ -153,8 +162,8 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
         assert ct == vec["ct_expected"], (
             f"{vec_id}: KWP wrap mismatch:\n"
-            f"  got:      {ct.hex()}\n"
-            f"  expected: {vec['ct_expected'].hex()}"
+            f"  got:      {_hex(ct)}\n"
+            f"  expected: {_hex(vec['ct_expected'])}"
         )
     except AssertionError as exc:
         exc_msg = str(exc)
@@ -183,8 +192,8 @@ def test_acvp_aes_kwp_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, A
 
         assert pt == vec["pt_expected"], (
             f"{vec_id}: KWP unwrap mismatch:\n"
-            f"  got:      {pt.hex()}\n"
-            f"  expected: {vec['pt_expected'].hex()}"
+            f"  got:      {_hex(pt)}\n"
+            f"  expected: {_hex(vec['pt_expected'])}"
         )
     except AssertionError as exc:
         exc_msg = str(exc)
