@@ -3,6 +3,12 @@
 Tests AES key wrap modes using official NIST ACVP vectors:
 - AES-KW - Key Wrap (RFC 3394)
 - AES-KWP - Key Wrap with Padding (RFC 5649)
+
+Per OASIS PKCS#11 v3.2 spec (aes_key_wrap.md), CKM_AES_KEY_WRAP and
+CKM_AES_KEY_WRAP_KWP support both C_Encrypt/C_Decrypt (raw data) and
+C_WrapKey/C_UnwrapKey (key objects).  ACVP vectors test raw byte-level
+wrapping, so we use C_Encrypt/C_Decrypt which operate on raw data
+without key-object metadata.
 """
 
 from __future__ import annotations
@@ -12,17 +18,12 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, import_secret_key, unwrap_key, wrap_key
+from pkcs11_check.raw.recipes import (
+    decrypt_single,
+    destroy_quietly,
+    encrypt_single,
+)
 from pkcs11_check.raw.types_std import (
-    CKA_DECRYPT,
-    CKA_ENCRYPT,
-    CKA_EXTRACTABLE,
-    CKA_KEY_TYPE,
-    CKA_SENSITIVE,
-    CKA_TOKEN,
-    CKA_VALUE_LEN,
-    CKK_AES,
-    CKK_GENERIC_SECRET,
     CKM_AES_KEY_WRAP,
     CKM_AES_KEY_WRAP_KWP,
 )
@@ -56,118 +57,58 @@ _KW_ENCRYPT_VECTORS, _KW_DECRYPT_VECTORS = _load_kw_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _KW_ENCRYPT_VECTORS, ids=[v[0] for v in _KW_ENCRYPT_VECTORS])
 def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """AES-KW key wrap from NIST ACVP vectors.
-
-    Key Wrap uses C_WrapKey / C_UnwrapKey, not encrypt/decrypt.
-    The plaintext is treated as a key to be wrapped.
-
-    SoftHSM2: Known issue - KW may produce incorrect output in some versions.
-    Kryoptic: Supports AES-KW well.
-    """
+    """AES-KW wrap via C_Encrypt from NIST ACVP vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("AES_KEY_WRAP"):
         pytest.skip("AES_KEY_WRAP not supported by module")
 
-    wrapping_key = 0
-    key_to_wrap = 0
-    pt = vec["pt"]
-    # Use CKK_AES for valid AES key sizes, CKK_GENERIC_SECRET for others
-    key_type = CKK_AES if len(pt) in (16, 24, 32) else CKK_GENERIC_SECRET
+    key = 0
     try:
-        wrapping_key = _import_aes_key(rs, vec["key"], wrap=True, unwrap=True)
-        key_to_wrap = import_secret_key(
-            rs.raw,
-            rs.sh,
-            key_type,
-            pt,
-            attrs={
-                CKA_TOKEN: False,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_ENCRYPT: True,
-                CKA_DECRYPT: True,
-            },
-        )
+        key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
+        mech = mech_simple(CKM_AES_KEY_WRAP)
+        ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_KEY_WRAP, vec["pt"], mech_param=mech)
 
-        try:
-            mech = mech_simple(CKM_AES_KEY_WRAP)
-            wrapped = wrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                key_to_wrap,
-                CKM_AES_KEY_WRAP,
-                mech_param=mech,
-            )
-        except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"AES-KW wrap not supported: {exc_msg}")
-            raise
-
-        assert wrapped == vec["ct_expected"], (
+        assert ct == vec["ct_expected"], (
             f"{vec_id}: wrap mismatch:\n"
-            f"  got:      {wrapped.hex()}\n"
+            f"  got:      {ct.hex()}\n"
             f"  expected: {vec['ct_expected'].hex()}"
         )
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+            pytest.skip(f"AES-KW encrypt not supported: {exc_msg}")
+        raise
     finally:
-        if key_to_wrap:
-            destroy_quietly(rs.raw, rs.sh, key_to_wrap)
-        if wrapping_key:
-            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 @pytest.mark.parametrize("vec_id,vec", _KW_DECRYPT_VECTORS, ids=[v[0] for v in _KW_DECRYPT_VECTORS])
 def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """AES-KW key unwrap from NIST ACVP vectors."""
+    """AES-KW unwrap via C_Decrypt from NIST ACVP vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("AES_KEY_WRAP"):
         pytest.skip("AES_KEY_WRAP not supported by module")
 
-    wrapping_key = 0
-    unwrapped_key = 0
-    # KW: wrapped = plaintext + 8-byte integrity check
-    pt_len = len(vec["ct"]) - 8
-    key_type = CKK_AES if pt_len in (16, 24, 32) else CKK_GENERIC_SECRET
+    key = 0
     try:
-        wrapping_key = _import_aes_key(rs, vec["key"], wrap=True, unwrap=True)
+        key = _import_aes_key(rs, vec["key"], encrypt=False, decrypt=True)
+        mech = mech_simple(CKM_AES_KEY_WRAP)
+        pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_KEY_WRAP, vec["ct"], mech_param=mech)
 
-        try:
-            mech = mech_simple(CKM_AES_KEY_WRAP)
-            template_attrs: dict[Any, Any] = {
-                CKA_KEY_TYPE: key_type,
-                CKA_TOKEN: False,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_VALUE_LEN: pt_len,
-            }
-            unwrapped_key = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                vec["ct"],
-                CKM_AES_KEY_WRAP,
-                template_attrs,
-                mech_param=mech,
-            )
-        except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(
-                c in exc_msg
-                for c in (
-                    "CKR_MECHANISM_INVALID",
-                    "CKR_MECHANISM_PARAM_INVALID",
-                    "CKR_TEMPLATE_INCONSISTENT",
-                    "CKR_WRAPPED_KEY_LEN_RANGE",
-                )
-            ):
-                pytest.skip(f"AES-KW unwrap not supported: {exc_msg}")
-            raise
+        assert pt == vec["pt_expected"], (
+            f"{vec_id}: unwrap mismatch:\n"
+            f"  got:      {pt.hex()}\n"
+            f"  expected: {vec['pt_expected'].hex()}"
+        )
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+            pytest.skip(f"AES-KW decrypt not supported: {exc_msg}")
+        raise
     finally:
-        if unwrapped_key:
-            destroy_quietly(rs.raw, rs.sh, unwrapped_key)
-        if wrapping_key:
-            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 # =============================================================================
@@ -199,116 +140,57 @@ _KWP_ENCRYPT_VECTORS, _KWP_DECRYPT_VECTORS = _load_kwp_vectors()
     "vec_id,vec", _KWP_ENCRYPT_VECTORS, ids=[v[0] for v in _KWP_ENCRYPT_VECTORS]
 )
 def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """AES-KWP key wrap from NIST ACVP vectors.
-
-    KWP is like KW but with padding support for non-8-byte-multiple inputs.
-
-    SoftHSM2: Known issue - KWP may produce incorrect output.
-    Kryoptic: Supports AES-KWP.
-    """
+    """AES-KWP wrap via C_Encrypt from NIST ACVP vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
         pytest.skip("AES_KEY_WRAP_KWP not supported by module")
 
-    wrapping_key = 0
-    key_to_wrap = 0
-    pt = vec["pt"]
-    key_type = CKK_AES if len(pt) in (16, 24, 32) else CKK_GENERIC_SECRET
+    key = 0
     try:
-        wrapping_key = _import_aes_key(rs, vec["key"], wrap=True, unwrap=True)
-        key_to_wrap = import_secret_key(
-            rs.raw,
-            rs.sh,
-            key_type,
-            pt,
-            attrs={
-                CKA_TOKEN: False,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_ENCRYPT: True,
-                CKA_DECRYPT: True,
-            },
-        )
+        key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
+        mech = mech_simple(CKM_AES_KEY_WRAP_KWP)
+        ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_KEY_WRAP_KWP, vec["pt"], mech_param=mech)
 
-        try:
-            mech = mech_simple(CKM_AES_KEY_WRAP_KWP)
-            wrapped = wrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                key_to_wrap,
-                CKM_AES_KEY_WRAP_KWP,
-                mech_param=mech,
-            )
-        except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"AES-KWP wrap not supported: {exc_msg}")
-            raise
-
-        assert wrapped == vec["ct_expected"], (
+        assert ct == vec["ct_expected"], (
             f"{vec_id}: KWP wrap mismatch:\n"
-            f"  got:      {wrapped.hex()}\n"
+            f"  got:      {ct.hex()}\n"
             f"  expected: {vec['ct_expected'].hex()}"
         )
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+            pytest.skip(f"AES-KWP encrypt not supported: {exc_msg}")
+        raise
     finally:
-        if key_to_wrap:
-            destroy_quietly(rs.raw, rs.sh, key_to_wrap)
-        if wrapping_key:
-            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 @pytest.mark.parametrize(
     "vec_id,vec", _KWP_DECRYPT_VECTORS, ids=[v[0] for v in _KWP_DECRYPT_VECTORS]
 )
 def test_acvp_aes_kwp_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """AES-KWP key unwrap from NIST ACVP vectors."""
+    """AES-KWP unwrap via C_Decrypt from NIST ACVP vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
         pytest.skip("AES_KEY_WRAP_KWP not supported by module")
 
-    wrapping_key = 0
-    unwrapped_key = 0
-    # KWP plaintext size not deterministic from ciphertext (has padding)
-    # Use expected plaintext length from vector if available
-    pt_len = len(vec.get("pt_expected", b"")) or len(vec["ct"]) - 8
-    key_type = CKK_AES if pt_len in (16, 24, 32) else CKK_GENERIC_SECRET
+    key = 0
     try:
-        wrapping_key = _import_aes_key(rs, vec["key"], wrap=True, unwrap=True)
+        key = _import_aes_key(rs, vec["key"], encrypt=False, decrypt=True)
+        mech = mech_simple(CKM_AES_KEY_WRAP_KWP)
+        pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_KEY_WRAP_KWP, vec["ct"], mech_param=mech)
 
-        try:
-            mech = mech_simple(CKM_AES_KEY_WRAP_KWP)
-            template_attrs: dict[Any, Any] = {
-                CKA_KEY_TYPE: key_type,
-                CKA_TOKEN: False,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_VALUE_LEN: pt_len,
-            }
-            unwrapped_key = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrapping_key,
-                vec["ct"],
-                CKM_AES_KEY_WRAP_KWP,
-                template_attrs,
-                mech_param=mech,
-            )
-        except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(
-                c in exc_msg
-                for c in (
-                    "CKR_MECHANISM_INVALID",
-                    "CKR_MECHANISM_PARAM_INVALID",
-                    "CKR_TEMPLATE_INCONSISTENT",
-                    "CKR_WRAPPED_KEY_LEN_RANGE",
-                )
-            ):
-                pytest.skip(f"AES-KWP unwrap not supported: {exc_msg}")
-            raise
+        assert pt == vec["pt_expected"], (
+            f"{vec_id}: KWP unwrap mismatch:\n"
+            f"  got:      {pt.hex()}\n"
+            f"  expected: {vec['pt_expected'].hex()}"
+        )
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+            pytest.skip(f"AES-KWP decrypt not supported: {exc_msg}")
+        raise
     finally:
-        if unwrapped_key:
-            destroy_quietly(rs.raw, rs.sh, unwrapped_key)
-        if wrapping_key:
-            destroy_quietly(rs.raw, rs.sh, wrapping_key)
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
