@@ -17,8 +17,11 @@ from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKA_TOKEN,
+    CKA_VALUE_LEN,
+    CKK_AES,
     CKK_GENERIC_SECRET,
     CKM_AES_KEY_WRAP,
     CKM_AES_KEY_WRAP_KWP,
@@ -67,13 +70,16 @@ def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 
     wrapping_key = 0
     key_to_wrap = 0
+    pt = vec["pt"]
+    # Use CKK_AES for valid AES key sizes, CKK_GENERIC_SECRET for others
+    key_type = CKK_AES if len(pt) in (16, 24, 32) else CKK_GENERIC_SECRET
     try:
         wrapping_key = _import_aes_key(rs, vec["key"], wrap=True, unwrap=True)
         key_to_wrap = import_secret_key(
             rs.raw,
             rs.sh,
-            CKK_GENERIC_SECRET,
-            vec["pt"],
+            key_type,
+            pt,
             attrs={
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
@@ -120,16 +126,20 @@ def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, An
 
     wrapping_key = 0
     unwrapped_key = 0
+    # KW: wrapped = plaintext + 8-byte integrity check
+    pt_len = len(vec["ct"]) - 8
+    key_type = CKK_AES if pt_len in (16, 24, 32) else CKK_GENERIC_SECRET
     try:
         wrapping_key = _import_aes_key(rs, vec["key"], wrap=True, unwrap=True)
 
         try:
             mech = mech_simple(CKM_AES_KEY_WRAP)
             template_attrs: dict[Any, Any] = {
+                CKA_KEY_TYPE: key_type,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
-                CKA_ENCRYPT: True,
-                CKA_DECRYPT: True,
+                CKA_EXTRACTABLE: True,
+                CKA_VALUE_LEN: pt_len,
             }
             unwrapped_key = unwrap_key(
                 rs.raw,
@@ -194,13 +204,15 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
     wrapping_key = 0
     key_to_wrap = 0
+    pt = vec["pt"]
+    key_type = CKK_AES if len(pt) in (16, 24, 32) else CKK_GENERIC_SECRET
     try:
         wrapping_key = _import_aes_key(rs, vec["key"], wrap=True, unwrap=True)
         key_to_wrap = import_secret_key(
             rs.raw,
             rs.sh,
-            CKK_GENERIC_SECRET,
-            vec["pt"],
+            key_type,
+            pt,
             attrs={
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
@@ -249,16 +261,21 @@ def test_acvp_aes_kwp_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, A
 
     wrapping_key = 0
     unwrapped_key = 0
+    # KWP plaintext size not deterministic from ciphertext (has padding)
+    # Use expected plaintext length from vector if available
+    pt_len = len(vec.get("pt_expected", b"")) or len(vec["ct"]) - 8
+    key_type = CKK_AES if pt_len in (16, 24, 32) else CKK_GENERIC_SECRET
     try:
         wrapping_key = _import_aes_key(rs, vec["key"], wrap=True, unwrap=True)
 
         try:
             mech = mech_simple(CKM_AES_KEY_WRAP_KWP)
             template_attrs: dict[Any, Any] = {
+                CKA_KEY_TYPE: key_type,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
-                CKA_ENCRYPT: True,
-                CKA_DECRYPT: True,
+                CKA_EXTRACTABLE: True,
+                CKA_VALUE_LEN: pt_len,
             }
             unwrapped_key = unwrap_key(
                 rs.raw,
