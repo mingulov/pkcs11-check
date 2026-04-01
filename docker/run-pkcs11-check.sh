@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Default data dir for Docker containers (host data/ mounted at /app/data)
+export PKCS11_CHECK_DATA_DIR="${PKCS11_CHECK_DATA_DIR:-/app/data}"
+
 module="${PKCS11_CHECK_MODULE:-${P11TEST_MODULE:-}}"
 pin="${PKCS11_CHECK_PIN:-${P11TEST_PIN:-}}"
 slot="${PKCS11_CHECK_SLOT:-}"
