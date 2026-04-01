@@ -7,7 +7,7 @@ authors = [
     { name = "Denis Mingulov", email = "denis@mingulov.com" }
 ]
 requires-python = ">=3.13"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
