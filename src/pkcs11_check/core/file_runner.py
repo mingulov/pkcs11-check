@@ -28,7 +28,16 @@ IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
 CrashStatus = Literal["crashed", "timeout"]
 _RESUME_COMPLETE_STATUSES = {"passed", "empty", "escalated", "crash_limited"}
-_DETAIL_COUNT_KEYS = ("passed", "failed", "skipped", "xfailed", "xpassed", "error")
+_DETAIL_COUNT_KEYS = (
+    "passed",
+    "failed",
+    "skipped",
+    "xfailed",
+    "xpassed",
+    "error",
+    "crashed",
+    "timeout",
+)
 _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
@@ -473,7 +482,7 @@ def _merge_special_entries_into_detail(
         merged["tests"].append(dict(entry))
         existing.add(key)
         if outcome in {"crashed", "timeout"}:
-            merged["counts"]["error"] += 1
+            merged["counts"][outcome] += 1
 
     return merged
 
@@ -544,6 +553,8 @@ def _build_isolated_json_payload(
         "xfailed": 0,
         "xpassed": 0,
         "error": 0,
+        "crashed": 0,
+        "timeout": 0,
     }
 
     grouped = _group_results_by_file(state.results, details)
@@ -558,7 +569,7 @@ def _build_isolated_json_payload(
         ]
         detail = _merge_special_entries_into_detail(merged_detail, special_entries)
         if overall_status in {"crashed", "timeout"} and not any(detail["counts"].values()):
-            detail["counts"]["error"] = 1
+            detail["counts"][overall_status] = 1
         duration = sum(r.duration_s for r in file_results)
         stdout_parts = [r.stdout for r in file_results if r.stdout]
         stderr_parts = [r.stderr for r in file_results if r.stderr]
@@ -966,6 +977,8 @@ def _build_detail_from_report_records(records: list[Mapping[str, Any]]) -> dict[
         "xfailed": 0,
         "xpassed": 0,
         "error": 0,
+        "crashed": 0,
+        "timeout": 0,
     }
     non_passing: list[dict[str, Any]] = []
     skip_reasons: dict[str, int] = {}
@@ -1219,42 +1232,20 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
         nodeid = rec.get("nodeid", "")
         file_part = nodeid.split("::")[0]
         if file_part not in file_counts:
-            file_counts[file_part] = {
-                "passed": 0,
-                "failed": 0,
-                "skipped": 0,
-                "xfailed": 0,
-                "xpassed": 0,
-                "error": 0,
-            }
+            file_counts[file_part] = {key: 0 for key in _DETAIL_COUNT_KEYS}
         outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
         file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
 
-    summary: dict[str, int] = {
-        "passed": 0,
-        "failed": 0,
-        "skipped": 0,
-        "xfailed": 0,
-        "xpassed": 0,
-        "error": 0,
-    }
+    summary: dict[str, int] = {key: 0 for key in _DETAIL_COUNT_KEYS}
     units: list[dict[str, Any]] = []
 
     for target in sorted(set(list(by_file.keys()) + list(file_counts.keys()))):
-        counts = file_counts.get(
-            target,
-            {
-                "passed": 0,
-                "failed": 0,
-                "skipped": 0,
-                "xfailed": 0,
-                "xpassed": 0,
-                "error": 0,
-            },
-        )
+        counts = file_counts.get(target, {key: 0 for key in _DETAIL_COUNT_KEYS})
         for key in summary:
             summary[key] += counts.get(key, 0)
-        has_failure = counts.get("failed", 0) > 0 or counts.get("error", 0) > 0
+        has_failure = any(
+            counts.get(key, 0) > 0 for key in ("failed", "error", "crashed", "timeout")
+        )
         unit: dict[str, Any] = {
             "target": target,
             "status": "failed" if has_failure else "passed",
@@ -2333,13 +2324,15 @@ def run_isolated_pytest_units(
                                     culprit_outcome = (
                                         "crashed"
                                         if confirm_status == "crashed"
+                                        else "timeout"
+                                        if confirm_status == "timeout"
                                         else "passed-in-isolation"
                                     )
                                     culprit_entry: dict[str, Any] = {
                                         "nodeid": culprit,
                                         "outcome": culprit_outcome,
                                     }
-                                    if confirm_status == "crashed":
+                                    if confirm_status in {"crashed", "timeout"}:
                                         culprit_entry["longrepr"] = (
                                             confirm_err.strip() or confirm_out.strip()
                                         )
@@ -2349,20 +2342,14 @@ def run_isolated_pytest_units(
                                         culprit_entry["stderr"] = confirm_err
                                     if accumulated_detail is None:
                                         accumulated_detail = {
-                                            "counts": {
-                                                "passed": 0,
-                                                "failed": 0,
-                                                "skipped": 0,
-                                                "xfailed": 0,
-                                                "xpassed": 0,
-                                                "error": 0,
-                                            },
+                                            "counts": {key: 0 for key in _DETAIL_COUNT_KEYS},
                                             "tests": [],
                                         }
                                     accumulated_detail["tests"].append(culprit_entry)
-                                    if confirm_status == "crashed":
-                                        accumulated_detail["counts"]["error"] = (
-                                            accumulated_detail["counts"].get("error", 0) + 1
+                                    if culprit_outcome in {"crashed", "timeout"}:
+                                        accumulated_detail["counts"][culprit_outcome] = (
+                                            accumulated_detail["counts"].get(culprit_outcome, 0)
+                                            + 1
                                         )
                                     deselect_set.add(culprit)
                                     crash_count += 1

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, MutableMapping
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, cast
 
-SchemaVersion: TypeAlias = str
-SkipReasonCategory: TypeAlias = Literal[
+type SchemaVersion = str
+type SkipReasonCategory = Literal[
     "missing_capability",
     "framework_constraint",
     "test_data_missing",
@@ -17,7 +17,16 @@ SkipReasonCategory: TypeAlias = Literal[
 
 SCHEMA_VERSION: SchemaVersion = "1"
 _PASSING_OUTCOMES = {"passed", "xpassed"}
-_KNOWN_OUTCOMES = {"passed", "failed", "skipped", "xfailed", "xpassed", "error"}
+_KNOWN_OUTCOMES = {
+    "passed",
+    "failed",
+    "skipped",
+    "xfailed",
+    "xpassed",
+    "error",
+    "crashed",
+    "timeout",
+}
 _SELECTED_REASON_CATEGORY = {
     "missing_flags": "missing_capability",
     "missing_capability": "missing_capability",

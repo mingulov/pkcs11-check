@@ -10,8 +10,10 @@ import pytest
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.test_selection import (
     DisabledBaseline,
+    DisabledCandidateReviewRecord,
     DisabledSelectionPlan,
     build_disabled_selection_plan,
+    collect_disabled_candidate_review_records,
     collect_disabled_candidates,
     load_disabled_baseline,
     parse_disabled_nodeids,
@@ -367,3 +369,90 @@ def test_collect_disabled_candidates_reads_explicit_crash_and_timeout_tests_from
         "test_a.py::test_timed_out",
     ]
     assert manual == []
+
+
+def test_collect_disabled_candidate_review_records_include_sources_and_inference(
+    tmp_path: Path,
+) -> None:
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "report.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_a.py::test_failed",
+                        "when": "call",
+                        "outcome": "failed",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_a.py::test_crash",
+                        "when": "setup",
+                        "outcome": "passed",
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    (artifact_dir / "results.json").write_text(
+        json.dumps(
+            {
+                "units": [
+                    {
+                        "target": "test_a.py",
+                        "status": "crashed",
+                        "tests": [
+                            {
+                                "nodeid": "test_a.py::test_timeout",
+                                "outcome": "timeout",
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+
+    records, manual = collect_disabled_candidate_review_records(
+        [artifact_dir],
+        outcomes={"failed", "crashed", "timeout"},
+    )
+
+    assert manual == []
+    assert records == [
+        DisabledCandidateReviewRecord(
+            artifact_dir=str(artifact_dir),
+            nodeid="test_a.py::test_crash",
+            outcome="crashed",
+            file_target="test_a.py",
+            unit_target="test_a.py",
+            unit_status="crashed",
+            discovery_mode="inferred",
+            sources=("results.status+report.jsonl",),
+        ),
+        DisabledCandidateReviewRecord(
+            artifact_dir=str(artifact_dir),
+            nodeid="test_a.py::test_failed",
+            outcome="failed",
+            file_target="test_a.py",
+            unit_target="test_a.py",
+            unit_status=None,
+            discovery_mode="explicit",
+            sources=("report.jsonl",),
+        ),
+        DisabledCandidateReviewRecord(
+            artifact_dir=str(artifact_dir),
+            nodeid="test_a.py::test_timeout",
+            outcome="timeout",
+            file_target="test_a.py",
+            unit_target="test_a.py",
+            unit_status="crashed",
+            discovery_mode="explicit",
+            sources=("results.tests",),
+        ),
+    ]

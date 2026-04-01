@@ -9,6 +9,7 @@ import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from pkcs11_check.core.collection import CollectedPytestItem
 
@@ -29,6 +30,20 @@ class DisabledSelectionPlan:
     units: list[str]
     deselect_by_file: dict[str, set[str]]
     baseline_fingerprint: str
+
+
+@dataclass(frozen=True, order=True)
+class DisabledCandidateReviewRecord:
+    """Machine-readable evidence for one disabled-test candidate."""
+
+    artifact_dir: str
+    nodeid: str
+    outcome: str
+    file_target: str
+    unit_target: str
+    unit_status: str | None
+    discovery_mode: Literal["explicit", "inferred"]
+    sources: tuple[str, ...]
 
 
 def parse_disabled_nodeids(text: str) -> list[str]:
@@ -214,9 +229,9 @@ def _collect_results_test_nodeids(
     units: list[dict[str, object]],
     *,
     outcomes: set[str],
-) -> tuple[set[str], set[str]]:
+) -> tuple[set[str], set[tuple[str, str]]]:
     candidates: set[str] = set()
-    explicit_special_targets: set[str] = set()
+    explicit_special_units: set[tuple[str, str]] = set()
 
     for unit in units:
         target = str(unit.get("target", "")).strip()
@@ -233,9 +248,148 @@ def _collect_results_test_nodeids(
             if outcome in outcomes:
                 candidates.add(nodeid)
             if target and outcome in {"crashed", "timeout"}:
-                explicit_special_targets.add(target)
+                explicit_special_units.add((target, outcome))
 
-    return candidates, explicit_special_targets
+    return candidates, explicit_special_units
+
+
+def _add_review_record(
+    review_map: dict[tuple[str, str, str], dict[str, object]],
+    *,
+    artifact_dir: Path,
+    nodeid: str,
+    outcome: str,
+    file_target: str,
+    unit_target: str,
+    unit_status: str | None,
+    source: str,
+    discovery_mode: Literal["explicit", "inferred"],
+) -> None:
+    key = (str(artifact_dir), nodeid, outcome)
+    record = review_map.get(key)
+    if record is None:
+        review_map[key] = {
+            "artifact_dir": str(artifact_dir),
+            "nodeid": nodeid,
+            "outcome": outcome,
+            "file_target": file_target,
+            "unit_target": unit_target,
+            "unit_status": unit_status,
+            "discovery_mode": discovery_mode,
+            "sources": {source},
+        }
+        return
+
+    sources = record.get("sources")
+    if isinstance(sources, set):
+        sources.add(source)
+    if discovery_mode == "explicit":
+        record["discovery_mode"] = "explicit"
+    if unit_status is not None:
+        record["unit_status"] = unit_status
+
+
+def collect_disabled_candidate_review_records(
+    artifact_dirs: list[Path],
+    *,
+    outcomes: set[str],
+) -> tuple[list[DisabledCandidateReviewRecord], list[str]]:
+    """Collect machine-readable disabled-candidate evidence plus review notes."""
+    review_map: dict[tuple[str, str, str], dict[str, object]] = {}
+    manual_review: set[str] = set()
+
+    for artifact_dir in artifact_dirs:
+        records = _load_report_log_records(artifact_dir / "report.jsonl")
+        report_nodeids = _collect_report_nodeids(records)
+        results_units = _load_results_units(artifact_dir / "results.json")
+        _, explicit_special_units = _collect_results_test_nodeids(
+            results_units,
+            outcomes=outcomes,
+        )
+
+        for nodeid, outcome in report_nodeids.items():
+            if outcome not in outcomes:
+                continue
+            file_target = nodeid.split("::", 1)[0]
+            _add_review_record(
+                review_map,
+                artifact_dir=artifact_dir,
+                nodeid=nodeid,
+                outcome=outcome,
+                file_target=file_target,
+                unit_target=file_target,
+                unit_status=None,
+                source="report.jsonl",
+                discovery_mode="explicit",
+            )
+
+        for unit in results_units:
+            target = str(unit.get("target", "")).strip()
+            status = str(unit.get("status", "")).strip() or None
+            tests = unit.get("tests", [])
+            if not isinstance(tests, list):
+                continue
+            for record in tests:
+                if not isinstance(record, dict):
+                    continue
+                nodeid = str(record.get("nodeid", "")).strip()
+                outcome = str(record.get("outcome", "")).strip()
+                if not nodeid or outcome not in outcomes:
+                    continue
+                _add_review_record(
+                    review_map,
+                    artifact_dir=artifact_dir,
+                    nodeid=nodeid,
+                    outcome=outcome,
+                    file_target=nodeid.split("::", 1)[0],
+                    unit_target=target or nodeid.split("::", 1)[0],
+                    unit_status=status,
+                    source="results.tests",
+                    discovery_mode="explicit",
+                )
+
+        if outcomes & {"crashed", "timeout"}:
+            for unit in results_units:
+                status = str(unit.get("status", "")).strip()
+                target = str(unit.get("target", "")).strip()
+                if status not in outcomes or not target:
+                    continue
+                if (target, status) in explicit_special_units:
+                    continue
+                culprit = _identify_culprit_for_file(records, target)
+                if culprit is not None:
+                    _add_review_record(
+                        review_map,
+                        artifact_dir=artifact_dir,
+                        nodeid=culprit,
+                        outcome=status,
+                        file_target=culprit.split("::", 1)[0],
+                        unit_target=target,
+                        unit_status=status,
+                        source="results.status+report.jsonl",
+                        discovery_mode="inferred",
+                    )
+                else:
+                    manual_review.add(
+                        f"{artifact_dir}: {status} unit {target} requires manual review"
+                    )
+
+    records = [
+        DisabledCandidateReviewRecord(
+            artifact_dir=str(record["artifact_dir"]),
+            nodeid=str(record["nodeid"]),
+            outcome=str(record["outcome"]),
+            file_target=str(record["file_target"]),
+            unit_target=str(record["unit_target"]),
+            unit_status=(
+                str(record["unit_status"]) if record.get("unit_status") is not None else None
+            ),
+            discovery_mode=str(record["discovery_mode"]),  # type: ignore[arg-type]
+            sources=tuple(sorted(str(source) for source in record.get("sources", set()))),
+        )
+        for _, record in sorted(review_map.items())
+    ]
+    return records, sorted(manual_review)
 
 
 def collect_disabled_candidates(
@@ -244,39 +398,12 @@ def collect_disabled_candidates(
     outcomes: set[str],
 ) -> tuple[list[str], list[str]]:
     """Collect exact nodeid candidates and manual-review notes from artifacts."""
-    candidates: set[str] = set()
-    manual_review: set[str] = set()
-
-    for artifact_dir in artifact_dirs:
-        records = _load_report_log_records(artifact_dir / "report.jsonl")
-        report_nodeids = _collect_report_nodeids(records)
-        results_units = _load_results_units(artifact_dir / "results.json")
-        result_test_nodeids, explicit_special_targets = _collect_results_test_nodeids(
-            results_units,
-            outcomes=outcomes,
-        )
-        for nodeid, outcome in report_nodeids.items():
-            if outcome in outcomes:
-                candidates.add(nodeid)
-        candidates.update(result_test_nodeids)
-
-        if outcomes & {"crashed", "timeout"}:
-            for unit in results_units:
-                status = str(unit.get("status", "")).strip()
-                target = str(unit.get("target", "")).strip()
-                if status not in outcomes or not target:
-                    continue
-                if target in explicit_special_targets:
-                    continue
-                culprit = _identify_culprit_for_file(records, target)
-                if culprit is not None:
-                    candidates.add(culprit)
-                else:
-                    manual_review.add(
-                        f"{artifact_dir}: {status} unit {target} requires manual review"
-                    )
-
-    return sorted(candidates), sorted(manual_review)
+    records, manual_review = collect_disabled_candidate_review_records(
+        artifact_dirs,
+        outcomes=outcomes,
+    )
+    candidates = sorted({record.nodeid for record in records})
+    return candidates, manual_review
 
 
 def write_deselect_file(nodeids: Iterable[str]) -> Path:

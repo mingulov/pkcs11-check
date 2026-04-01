@@ -519,3 +519,60 @@ def test_build_quality_audit_never_passed_nodeids_are_conservative() -> None:
     assert report["never_passed_nodeids"] == [
         "src/pkcs11_check/testcases/test_demo.py::test_failed",
     ]
+
+
+def test_build_quality_audit_understands_crashed_and_timeout_outcomes() -> None:
+    results = {
+        "tool": "pkcs11-check",
+        "kind": "test-run",
+        "summary": {
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "xpassed": 0,
+            "error": 0,
+            "crashed": 1,
+            "timeout": 1,
+            "total": 2,
+        },
+        "units": [
+            {
+                "target": "src/pkcs11_check/testcases/test_demo.py",
+                "status": "failed",
+                "counts": {
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "xfailed": 0,
+                    "xpassed": 0,
+                    "error": 0,
+                    "crashed": 1,
+                    "timeout": 1,
+                },
+                "tests": [
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_crash",
+                        "outcome": "crashed",
+                        "longrepr": "segmentation fault",
+                    },
+                    {
+                        "nodeid": "src/pkcs11_check/testcases/test_demo.py::test_timeout",
+                        "outcome": "timeout",
+                        "longrepr": "timed out after 120s",
+                    },
+                ],
+            }
+        ],
+    }
+
+    report = build_quality_audit(results=results)
+
+    assert report["summary"]["crashed"] == 1
+    assert report["summary"]["timeout"] == 1
+    assert report["summary"]["error"] == 0
+    assert report["summary"]["total"] == 2
+    assert report["never_passed_nodeids"] == [
+        "src/pkcs11_check/testcases/test_demo.py::test_crash",
+        "src/pkcs11_check/testcases/test_demo.py::test_timeout",
+    ]

@@ -103,8 +103,8 @@ def main() -> int:
     curr_total = curr_summary.get("total", len(curr_map))
     base_pass = base_summary.get("passed", 0)
     curr_pass = curr_summary.get("passed", 0)
-    base_fail = sum(base_summary.get(k, 0) for k in ("failed", "error"))
-    curr_fail = sum(curr_summary.get(k, 0) for k in ("failed", "error"))
+    base_fail = sum(base_summary.get(k, 0) for k in ("failed", "error", "crashed", "timeout"))
+    curr_fail = sum(curr_summary.get(k, 0) for k in ("failed", "error", "crashed", "timeout"))
     base_skip = base_summary.get("skipped", 0)
     curr_skip = curr_summary.get("skipped", 0)
 

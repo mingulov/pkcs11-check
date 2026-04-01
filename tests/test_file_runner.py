@@ -2009,12 +2009,14 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
     assert unit["target"] == "test_a.py"
     assert unit["status"] == "failed"
     assert unit["counts"]["failed"] == 1
-    assert unit["counts"]["error"] == 1
+    assert unit["counts"]["crashed"] == 1
+    assert unit["counts"]["error"] == 0
     by_nodeid = {entry["nodeid"]: entry for entry in unit["tests"]}
     assert by_nodeid["test_a.py::test_culprit"]["outcome"] == "crashed"
     assert by_nodeid["test_a.py::test_other"]["outcome"] == "failed"
     assert report["summary"]["failed"] == 1
-    assert report["summary"]["error"] == 1
+    assert report["summary"]["crashed"] == 1
+    assert report["summary"]["error"] == 0
 
 
 def test_run_isolated_pytest_units_resume_rejects_mismatched_state(
@@ -2730,12 +2732,14 @@ def test_write_isolated_json_report_preserves_crashed_test_unit(tmp_path: Path) 
     write_isolated_json_report(report_path, state, per_unit_details={})
 
     report = json.loads(report_path.read_text())
-    assert report["summary"]["error"] == 1
+    assert report["summary"]["crashed"] == 1
+    assert report["summary"]["error"] == 0
     assert report["summary"]["total"] == 1
     unit = report["units"][0]
     assert unit["target"] == "test_a.py"
     assert unit["status"] == "crashed"
-    assert unit["counts"]["error"] == 1
+    assert unit["counts"]["crashed"] == 1
+    assert unit["counts"]["error"] == 0
     assert unit["tests"][0]["nodeid"] == "test_a.py::test_case"
     assert unit["tests"][0]["outcome"] == "crashed"
     assert unit["tests"][0]["stderr"] == "segmentation fault"
