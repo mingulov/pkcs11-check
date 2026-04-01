@@ -116,8 +116,6 @@ Recipes call `expect_rv()` and raise on non-OK. For exact CK_RV control, use raw
   Generated function signatures, function indices, and name tables.
 - `api.py`
   `RawPKCS11`, the exact `C_*` dispatch layer.
-- `bridge.py`
-  Bridge helpers from a loaded `python-pkcs11` library or pkcs11-check loader module.
 - `pack.py`
   Exact valid-value packers with owned storage.
 - `faults.py`
@@ -150,15 +148,6 @@ raw = RawPKCS11.from_lib("/path/to/module.so")
 info = CK_INFO()
 rv = raw.C_GetInfo(byref(info))
 assert rv == CKR_OK
-```
-
-Bridge from a `python-pkcs11` library already loaded by pkcs11-check:
-
-```python
-from pkcs11_check.raw import raw_from_module
-
-raw = raw_from_module(p11_module)
-rv = raw.C_GetSessionInfo(session_handle, session_info_ptr)
 ```
 
 Available entry points are explicit:

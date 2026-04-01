@@ -11,9 +11,6 @@ artifacts*/
 # All dotfiles/dirs (caches, editor state, git)
 .*
 
-# Git internals (submodules not covered by .*)
-python-pkcs11/.git/
-
 # Python caches
 **/__pycache__/
 *.pyc
@@ -34,5 +31,3 @@ docker/docker-compose*.yml
 # Root analysis/investigation/dev files
 CLAUDE.md
 AGENTS.md
-prd.md
-INVESTIGATION*.md

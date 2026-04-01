@@ -16,7 +16,7 @@ pkcs11-check runs comprehensive tests against PKCS#11 modules (hardware HSMs, so
 
 ```bash
 # Install
-git clone --recurse-submodules https://github.com/mingulov/pkcs11-check
+git clone https://github.com/mingulov/pkcs11-check
 cd pkcs11-check
 uv sync
 
@@ -34,12 +34,12 @@ bash local-builds/test.sh nss-softokn
 
 ## Test suite
 
-75,000+ tests across 150+ test files:
+75,000+ tests across 220+ test files:
 
 | Category | Tests | Description |
 |----------|-------|-------------|
 | Core crypto | ~15,000 | AES, RSA, ECDSA, EdDSA, HMAC, digest |
-| Wycheproof | ~8,000 | Edge-case vectors from Google |
+| Wycheproof | ~8,000 | Edge-case vectors from C2SP |
 | PQC (v3.2) | ~500 | ML-KEM, ML-DSA, SLH-DSA |
 | CKR compliance | 148 | Return code verification per OASIS spec |
 | CVE regression | 29 | Known vulnerability tests |
@@ -56,6 +56,8 @@ bash local-builds/test.sh nss-softokn
 | OpenCryptoki | 3.26 | Docker only |
 | pkcs11-mock | 2.0.0 | Stub testing |
 | tpm2-pkcs11 | 1.9.0 | Hardware TPM |
+| BouncyHSM | 2.0.1 | Docker only |
+| qryptotoken | 0.4.1 | Docker only |
 
 ## Architecture
 
@@ -64,7 +66,7 @@ src/pkcs11_check/
   raw/          — pure ctypes PKCS#11 binding (v2.40-v3.2, PQC)
   cli/          — typer CLI (test, info, version commands)
   core/         — module loader, isolation runner, preflight
-  testcases/    — 150+ test files (the product)
+  testcases/    — 220+ test files (the product)
     ckr/        — CKR return code compliance tests
   plugin.py     — pytest plugin (markers, fixtures, collection)
   fixtures.py   — p11_session, p11_module, p11_config

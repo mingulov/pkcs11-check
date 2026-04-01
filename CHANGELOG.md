@@ -9,7 +9,7 @@ Initial beta release.
 - **PKCS#11 interface negotiation** — automatic v2.40/v3.0/v3.1/v3.2 detection with `--interface` forcing
 - **Crash survival** — per-file subprocess isolation recovers from SIGSEGV in loaded modules
 - **Pure ctypes binding** (`pkcs11_check.raw`) — all 68 v2.40 functions + v3.0 message-based + v3.2 KEM, no C compilation
-- **75,000+ tests** across 150+ test files covering crypto, compliance, security, and PQC
+- **75,000+ tests** across 220+ test files covering crypto, compliance, security, and PQC
 - **CKR spec compliance** — 802 conditions checked against OASIS PKCS#11 standard
 - **Cross-verification** — Wycheproof (C2SP) and ACVP (NIST) test vectors
 - **PQC support** — ML-KEM, ML-DSA, SLH-DSA tests for v3.2 modules

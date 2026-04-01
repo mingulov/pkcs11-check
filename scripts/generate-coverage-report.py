@@ -5,7 +5,7 @@ Scans test files for mechanism usage and cross-references with
 the PKCS#11 mechanism list to produce a coverage summary.
 
 Usage:
-    uv run python scripts/generate-coverage-report.py > docs/test-coverage-generated.md
+    uv run python scripts/generate-coverage-report.py
 """
 
 from __future__ import annotations

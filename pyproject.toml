@@ -122,7 +122,5 @@ timeout = 300
 
 [dependency-groups]
 dev = [
-    "hypothesis>=6.151.9",
     "pytest-benchmark>=5.2.3",
-    "pytest-reportlog>=1.0.0",
 ]
