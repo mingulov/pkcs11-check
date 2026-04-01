@@ -1,0 +1,65 @@
+# Commands Reference
+
+## Standard commands (always use `uv run` prefix)
+
+```bash
+uv run pkcs11-check version              # check CLI works
+uv run python -m pytest tests/           # run meta-tests
+uv run ruff check src/ tests/            # lint
+uv run ruff format src/ tests/           # format
+uv run mypy src/                         # type check
+```
+
+> **Never** run bare `ruff`, `mypy`, or `pytest` — they are inside the uv venv.
+
+## Local builds
+
+```bash
+bash local-builds/build.sh kryoptic           # build token
+bash local-builds/test.sh kryoptic            # run full suite (~5 min)
+bash local-builds/test.sh kryoptic -k test_encrypt -v  # specific tests
+bash local-builds/test.sh softhsm2            # system SoftHSM2
+bash local-builds/reset.sh kryoptic           # reset token data
+```
+
+### Test profiles
+
+```bash
+bash local-builds/test.sh softhsm2 -m smoke                              # 27 tests, ~5s
+bash local-builds/test.sh softhsm2 -m "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
+bash local-builds/test.sh softhsm2 -m "wycheproof or acvp or cctv"       # ~72K vectors only
+bash local-builds/test.sh softhsm2                                        # full: ~75K tests, ~5min
+```
+
+### Available providers
+
+OpenSSL 3.6.1, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.26, pkcs11-mock 2.0.0, qryptotoken 0.4.1, tpm2-pkcs11 1.9.0, BouncyHSM 2.0.1, swtpm 0.10.1
+
+### Worktree Kryoptic testing
+
+Kryoptic requires OpenSSL 3.5.0+. In worktrees, use the pre-built module:
+
+```bash
+LD_LIBRARY_PATH=/home/user/src/m/pkcs11-check/local-builds/openssl/install/lib64 \
+P11TEST_MODULE=/home/user/src/m/pkcs11-check/local-builds/kryoptic/lib/libkryoptic_pkcs11.so \
+P11TEST_PIN=1234 uv run python -m pytest src/pkcs11_check/testcases/<test_file>.py -v
+```
+
+## Test vector data
+
+```bash
+bash scripts/fetch-data.sh --status          # show what's present/missing
+bash scripts/fetch-data.sh all               # fetch all sources (~800 MB)
+bash scripts/fetch-data.sh wycheproof        # fetch individual source
+```
+
+## Docker testing
+
+```bash
+bash docker/test.sh softhsm2
+bash docker/test.sh opencryptoki
+bash docker/test.sh nss --timeout 30 -- src/pkcs11_check/testcases/test_interface.py
+docker compose -f docker/docker-compose.test.yml run --build --rm test-softhsm2
+```
+
+See [docker-artifacts.md](docker-artifacts.md) for the runner contract and artifact layout.
