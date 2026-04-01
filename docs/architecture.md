@@ -7,9 +7,9 @@
 
 ## Test vector data (`data/`)
 
-- `data/sources.toml` — tracked manifest: pinned commits, SHA-256 checksums, include filters
+- `src/pkcs11_check/testcases/data/sources.toml` — tracked manifest: pinned commits, SHA-256 checksums, include filters (ships in wheel)
 - `data/.gitignore` — tracked, ignores extracted directories
-- `data/wycheproof/`, `data/cctv/`, `data/acvp/`, `data/x509-limbo/` — gitignored, fetched by `scripts/fetch-data.sh`
+- `data/wycheproof/`, `data/cctv/`, `data/acvp/`, `data/x509-limbo/` — gitignored, fetched by `pkcs11-check fetch-data`
 - Own test data (mechanism_vectors, KAT JSONs) stays in `src/pkcs11_check/testcases/data/` (tracked)
 - Override data location with `PKCS11_CHECK_DATA_DIR` env var
 

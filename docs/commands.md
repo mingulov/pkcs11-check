@@ -48,9 +48,10 @@ P11TEST_PIN=1234 uv run python -m pytest src/pkcs11_check/testcases/<test_file>.
 ## Test vector data
 
 ```bash
-bash scripts/fetch-data.sh --status          # show what's present/missing
-bash scripts/fetch-data.sh all               # fetch all sources (~800 MB)
-bash scripts/fetch-data.sh wycheproof        # fetch individual source
+uv run pkcs11-check fetch-data --status      # show what's present/missing
+uv run pkcs11-check fetch-data all           # fetch all sources (~800 MB)
+uv run pkcs11-check fetch-data wycheproof    # fetch individual source
+uv run pkcs11-check fetch-disabled           # fetch disabled-tests baseline
 ```
 
 ## Docker testing

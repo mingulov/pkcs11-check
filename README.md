@@ -32,6 +32,14 @@ bash local-builds/test.sh kryoptic
 bash local-builds/test.sh nss-softokn
 ```
 
+### From PyPI (installed)
+
+```bash
+pip install pkcs11-check
+pkcs11-check fetch-data all                            # download test vectors (~800 MB)
+pkcs11-check test --module /path/to/module.so --pin 1234
+```
+
 ## Test suite
 
 75,000+ tests across 220+ test files:
