@@ -79,7 +79,7 @@ docker/         — 12 Docker test targets
 - **`pkcs11_check.raw`** — pure Python ctypes binding with v2.40/v3.0/v3.1/v3.2 interface negotiation, 50+ PQC mechanisms, all 68 standard functions
 - **`--isolation file`** mode runs each test file in its own subprocess — crashes don't kill the suite
 - **`--ckr-strict`** mode enforces exact OASIS spec CKR codes (not just "any error")
-- **Wycheproof + ACVP vectors** — cross-verification against Google and NIST test vectors
+- **Wycheproof + ACVP vectors** — cross-verification against C2SP and NIST test vectors
 
 ## Documentation
 
