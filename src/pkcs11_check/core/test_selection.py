@@ -83,6 +83,16 @@ def load_disabled_baseline(path: Path | None) -> DisabledBaseline | None:
     )
 
 
+def auto_discover_disabled_baseline() -> Path | None:
+    """Check if a disabled-tests.txt exists in the resolved data directory."""
+    from pkcs11_check.testcases.data import resolve_data_dir
+
+    candidate = resolve_data_dir() / "disabled-tests.txt"
+    if candidate.is_file():
+        return candidate
+    return None
+
+
 def _unit_file_key(unit: str) -> str:
     return str(Path(unit.split("::", 1)[0]).resolve())
 

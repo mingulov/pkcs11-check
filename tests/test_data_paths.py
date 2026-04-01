@@ -49,3 +49,30 @@ class TestSourcesManifest:
             assert "repo" in entry, f"{name} missing 'repo'"
             assert "commit" in entry, f"{name} missing 'commit'"
             assert "archive_sha256" in entry, f"{name} missing 'archive_sha256'"
+
+
+class TestDisabledAutoDiscovery:
+    def test_auto_discovers_from_data_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        baseline_file = tmp_path / "disabled-tests.txt"
+        baseline_file.write_text(
+            "# test baseline\n"
+            "src/pkcs11_check/testcases/test_foo.py::TestFoo::test_bar\n"
+        )
+        monkeypatch.setenv("PKCS11_CHECK_DATA_DIR", str(tmp_path))
+
+        from pkcs11_check.core.test_selection import auto_discover_disabled_baseline
+
+        result = auto_discover_disabled_baseline()
+        assert result is not None
+        assert result == baseline_file
+
+    def test_no_discovery_when_missing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("PKCS11_CHECK_DATA_DIR", str(tmp_path))
+
+        from pkcs11_check.core.test_selection import auto_discover_disabled_baseline
+
+        assert auto_discover_disabled_baseline() is None

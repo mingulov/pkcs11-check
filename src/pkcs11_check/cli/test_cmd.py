@@ -217,7 +217,19 @@ def test_command(
             )
             baseline = None
             if not ignore_disabled_tests:
-                baseline = load_disabled_baseline(runtime_config.disabled_tests_file)
+                disabled_path = runtime_config.disabled_tests_file
+                if disabled_path is None:
+                    from pkcs11_check.core.test_selection import (
+                        auto_discover_disabled_baseline,
+                    )
+
+                    disabled_path = auto_discover_disabled_baseline()
+                    if disabled_path is not None:
+                        console.print(
+                            f"[dim]Using auto-discovered disabled"
+                            f" baseline: {disabled_path}[/dim]"
+                        )
+                baseline = load_disabled_baseline(disabled_path)
             disabled_nodeids = set(baseline.disabled_nodeids) if baseline is not None else set()
             baseline_fingerprint = (
                 baseline.fingerprint if baseline is not None else "disabled-baseline:none"
