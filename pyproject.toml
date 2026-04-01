@@ -63,6 +63,7 @@ exclude = [
     "data/",
     "artifacts/",
     "artifacts2/",
+    "config/",
     "docker/",
     "patches/",
     ".worktrees/",
