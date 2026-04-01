@@ -1,0 +1,65 @@
+# NSS softoken — main branch (built from source with full PQC)
+# ML-KEM (Kyber), ML-DSA (Dilithium), PKCS#11 v3.2
+#
+# NSS build system: gyp + ninja, outputs to ../dist/Release/lib/
+
+FROM quay.io/fedora/fedora:44 AS builder
+
+RUN dnf -y install git gcc gcc-c++ make cmake ninja-build \
+    zlib-devel python3.14 python3.14-pip mercurial \
+    && pip3 install gyp-next \
+    && dnf clean all
+
+# Clone NSS + NSPR (NSS build expects NSPR alongside)
+WORKDIR /build
+RUN hg clone https://hg.mozilla.org/projects/nspr && \
+    hg clone https://hg.mozilla.org/projects/nss
+
+# Build NSS in Release mode with full PQC (Kyber/ML-KEM enabled by default)
+WORKDIR /build/nss
+RUN ./build.sh -o --disable-tests 2>&1 | tail -50
+
+# Verify the built libraries exist
+RUN ls -lh /build/dist/Release/lib/libsoftokn3.so \
+           /build/dist/Release/lib/libfreeblpriv3.so \
+           /build/dist/Release/lib/libnss3.so \
+           /build/dist/Release/lib/libnssutil3.so
+
+# ---------- runtime ----------
+FROM quay.io/fedora/fedora:44
+
+RUN dnf -y install python3.14 python3.14-devel gcc git nss-tools sqlite \
+    && dnf clean all
+
+# Test tooling: fault-proxy, pkcs11-provider, p11-kit
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
+RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
+# Copy NSS + NSPR libraries from the build
+COPY --from=builder /build/dist/Release/lib/*.so /usr/lib64/
+COPY --from=builder /build/dist/Release/lib/*.chk /usr/lib64/
+RUN ldconfig
+
+# Create NSS DB
+ENV NSS_DB_DIR=/var/lib/nss
+RUN mkdir -p $NSS_DB_DIR && \
+    certutil -d sql:$NSS_DB_DIR -N --empty-password
+
+ENV PKCS11_CHECK_SLOT=1
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+WORKDIR /app
+
+# Install deps first (cached unless pyproject.toml/uv.lock change)
+COPY pyproject.toml uv.lock README.md ./
+COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
+COPY third_party/ third_party/
+RUN uv sync --frozen
+
+# Copy test code (changes frequently, does not invalidate deps cache)
+COPY . .
+
+ENV PKCS11_CHECK_MODULE=/usr/lib64/libsoftokn3.so
+
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "bash", "/app/docker/run-pkcs11-check.sh"]

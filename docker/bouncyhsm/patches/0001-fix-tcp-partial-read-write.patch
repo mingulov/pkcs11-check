@@ -1,0 +1,63 @@
+From c5cb0fa5e5eddceec99845b61e267e5fdd790883 Mon Sep 17 00:00:00 2001
+From: Denis Mingulov <denis@laavat.com>
+Date: Mon, 23 Mar 2026 15:14:59 +0200
+Subject: [PATCH] fix: handle partial TCP reads and writes for large payloads
+
+Server (TcpHostedService.cs):
+  ReceiveAsync may return fewer bytes than requested because TCP
+  delivers data in chunks. For large payloads (1MB+) this caused
+  incomplete reads, leading to MessagePack deserialization failures.
+  Replace bare ReceiveAsync with ReceiveExactAsync loop.
+  Also fix TimeSpanToTimeout: .Milliseconds -> .TotalMilliseconds.
+
+Client (tcpTransport.c):
+  send() may return a short count on large payloads if the kernel
+  send buffer is full or a signal interrupts. Add a send loop in
+  sock_writerequest for both Windows and Linux variants.
+  The recv() side already uses MSG_WAITALL.
+
+Found by pkcs11-check (https://github.com/nickthetimid/pkcs11-check)
+---
+ .../BouncyHsm.Pkcs11Lib/rpc/tcpTransport.c    | Bin 14221 -> 14926 bytes
+ .../HostedServices/TcpHostedService.cs        | Bin 4495 -> 5272 bytes
+ 2 files changed, 0 insertions(+), 0 deletions(-)
+
+diff --git a/src/Src/BouncyHsm.Pkcs11Lib/rpc/tcpTransport.c b/src/Src/BouncyHsm.Pkcs11Lib/rpc/tcpTransport.c
+index 492e512f5935ecf12e9c1dcacc33c536d8b872c4..39b9cc5994aa6f1fa0bf00733a74dd5847a7255b 100644
+GIT binary patch
+delta 794
+zcmeCpKUcCLRI*-QU!gcPFGWLBAvdv7p(wSav?xy@QK2{^zo<kZIlnZoL?J&<At$jY
+zJyoF~u`(w=F{RjAAtyh-KmjP1nWK=HlLIoLgqKSJ2&y3zh?$(9R}3^FBe6(Jp`fHl
+z!B#;7Nl3FOwXig`IH)8(C9x#Y8lkN?vnn;d1n837#LT?RymX*Gh*F5kc#u4j^74$#
+zoKyu3gmSyd^95zRGJ);}xeBNo?7ifY3SGNm9gstG6f}UcK>MK<=qMOyA{hvBdS;q}
+z23WU^g2CiEHl@iuViuEU8}Lv5A*njqP+Z#$q^K6*W)K(TMQyNcC1|F>ZBoz$h5^KX
+ynjqsRUr>~uTwpG~IYw%==rD~5&thnV;*1S=@DLvn{xpb$$uUxkH=i*)$O-^Tt@1zs
+
+delta 115
+zcmX?C(wn~_R8k-_O+lkLH7`XYxuinZu2^UC0ZA!FoyoR(;><b<29xv5eJA%z2u}Vg
+jr8@bnu*c?O(u+ii(<3yQ!`L3AXYw)WS(|%J4zdCO)1xO1
+
+diff --git a/src/Src/BouncyHsm/Infrastructure/HostedServices/TcpHostedService.cs b/src/Src/BouncyHsm/Infrastructure/HostedServices/TcpHostedService.cs
+index 6f55a203d60ea3af6fba103ca41511f154655f0a..0b8b94aa5f1408d2e2364145e81b618dd6ab69a1 100644
+GIT binary patch
+delta 983
+zcma)5O^ee&7-m5bVhek5FJ4|&kp@F59^JOEmU?nUy2bn3$(wfQWG2o`wi}j`i+2z4
+zAowE`_U=#cr}!J3e6(3T?HndB!#wZvl`l`f`9IIRa88W)70s@Z*>jUiHeiC2v{NM|
+zG0T+<U`-gk$>NxFdDDM>``vqd^z1(G%HNMp%Fq4d^2fuTk6Yvx?(wWt{a3en@6Ur`
+zz@_yqPe^4p{D>l>aG@-U3oZmV#FUH-yoQ%&9=Nsh>d$aEgptXT1a&?+oXnjBph~33
+zVU(iAL{khB6B?f`Yi*~)N%)TB%C2FVTQX3@S|woD1V*t9+3<jN4u;E>puL>hIAACQ
+zB$$IHn`sF#ZArISc8$`Vf6B;MiVi?aVwf3%#q<Mk0|>@y!UR&StSXoifHJBnY)DIL
+z;3E<)F%1z~JRoriNhT~$9V@oZ<i-R*CMCuls~lpbL7-j{q?ikZk?GWohX2@=YJP>*
+zi7qT!&H$@czyi%?FZWJaE^B96g95mqMCp7~`8R>a)&Qm`842OQlw7C{NnqBmiQm+F
+z6`o5PY?W;t)VR*nuP)r$uDKI6=&naCbQ_oNmA`r?MFmj@*FrRfYolv>*EGB#7G4U@
+zsDt$bXw<wFxH92;B`K(wHtlMtIHEBO?o4q^8!1qJJ$_PXwFODr7HD?OD6Lcv>Lxen
+jGp&^lyWeY0hW;PYR(U_OQ~qMyN$hy-Y8!Xn?#TNKZWKY}
+
+delta 170
+zcmbQC*{{68nrpHapP+b9YI163S*l}kWnQvIMrvY;Q)yaSYSCm*KJCc`yu6$HxkMR3
+z3Z+mK7Nr)JrWTiY0M&!lnopj`%?45?flZlHeo7_Wz)+rdEE*-5xvBZ3C3<0rIi;z3
+dzL_~WnZ>Ee`FSbD3RVgR)?5leP|H=z1pq`WIPd@f
+
+-- 
+2.43.0
+

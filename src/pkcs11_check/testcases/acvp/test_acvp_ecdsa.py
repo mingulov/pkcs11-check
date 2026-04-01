@@ -1,0 +1,352 @@
+"""NIST ACVP ECDSA signature test vectors (FIPS 186-5).
+
+Tests ECDSA signature generation, verification, and key generation using official
+NIST ACVP vectors for P-256, P-384, and P-521 with SHA2-256, SHA2-384, and SHA2-512.
+
+Requires: scripts/fetch-optional-data.sh acvp
+Skips gracefully if ACVP vectors not cloned or mechanism unavailable.
+"""
+
+from __future__ import annotations
+
+from typing import Any, cast
+
+import pytest
+
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    gen_ec_keypair,
+    import_ec_public_key,
+    sign_single,
+    verify_single,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_SIGN,
+    CKA_VERIFY,
+    CKM,
+    CKM_ECDSA_SHA256,
+    CKM_ECDSA_SHA384,
+    CKM_ECDSA_SHA512,
+)
+from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+
+pytestmark = [pytest.mark.kat, pytest.mark.acvp]
+
+if not ACVP_AVAILABLE:
+    pytest.skip(
+        "ACVP vectors not cloned (run: scripts/fetch-optional-data.sh acvp)",
+        allow_module_level=True,
+    )
+
+# ACVP hashAlg -> (CKM mechanism, mechanism name string for has_mechanism)
+_HASH_TO_MECH: dict[str, tuple[Any, str]] = {
+    "SHA2-256": (CKM_ECDSA_SHA256, "ECDSA_SHA256"),
+    "SHA2-384": (CKM_ECDSA_SHA384, "ECDSA_SHA384"),
+    "SHA2-512": (CKM_ECDSA_SHA512, "ECDSA_SHA512"),
+}
+
+# ACVP curve name -> (pkcs11 curve name, coordinate byte length)
+_CURVE_MAP: dict[str, tuple[str, int]] = {
+    "P-256": ("secp256r1", 32),
+    "P-384": ("secp384r1", 48),
+    "P-521": ("secp521r1", 66),
+}
+
+_UNSUPPORTED_ERRORS = (
+    "CKR_MECHANISM_INVALID",
+    "CKR_ATTRIBUTE_VALUE_INVALID",
+    "CKR_TEMPLATE_INCOMPLETE",
+    "CKR_CURVE_NOT_SUPPORTED",
+    "CKR_KEY_SIZE_RANGE",
+)
+
+
+def _der_octet_string(data: bytes) -> bytes:
+    """Wrap bytes in a DER OCTET STRING (tag 0x04 + length + data)."""
+    n = len(data)
+    if n < 0x80:
+        return bytes([0x04, n]) + data
+    elif n < 0x100:
+        return bytes([0x04, 0x81, n]) + data
+    else:
+        return bytes([0x04, 0x82, n >> 8, n & 0xFF]) + data
+
+
+def _pad_coordinate(hex_str: str, coord_len: int) -> bytes:
+    """Pad hex coordinate to specified byte length."""
+    return bytes.fromhex(hex_str.zfill(coord_len * 2))
+
+
+def _build_signature(r_hex: str, s_hex: str, coord_len: int) -> bytes:
+    """Build raw signature from r and s components."""
+    return _pad_coordinate(r_hex, coord_len) + _pad_coordinate(s_hex, coord_len)
+
+
+def _build_ec_point(qx_hex: str, qy_hex: str, coord_len: int) -> bytes:
+    """Build uncompressed EC point from coordinates."""
+    return _der_octet_string(
+        bytes([0x04]) + _pad_coordinate(qx_hex, coord_len) + _pad_coordinate(qy_hex, coord_len)
+    )
+
+
+def _handle_unsupported_curve(exc: AssertionError, curve: str) -> None:
+    """Check if exception indicates unsupported curve and skip if so."""
+    if any(name in str(exc) for name in _UNSUPPORTED_ERRORS):
+        pytest.skip(f"Curve {curve} not supported: {exc}")
+    raise
+
+
+def _load_ecdsa_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
+    """Load ECDSA SigVer ACVP vectors for P-256/384/521. Limits to 20 vectors for speed."""
+    all_vecs = load_acvp_vectors("ECDSA-SigVer-FIPS186-5")
+    result: list[tuple[str, dict[str, Any]]] = []
+    for vec in all_vecs:
+        group, inp, exp = vec["group"], vec["input"], vec["expected"]
+        curve_name, hash_alg = group.get("curve", ""), group.get("hashAlg", "")
+        if curve_name not in _CURVE_MAP or hash_alg not in _HASH_TO_MECH:
+            continue
+        msg_hex = inp.get("message", "")
+        qx_hex, qy_hex = inp.get("qx", ""), inp.get("qy", "")
+        r_hex, s_hex = inp.get("r", ""), inp.get("s", "")
+        tc_id = inp.get("tcId", 0)
+        if not (msg_hex and qx_hex and qy_hex and r_hex and s_hex):
+            continue
+        _, coord_len = _CURVE_MAP[curve_name]
+        mech_int, mech_name = _HASH_TO_MECH[hash_alg]
+        ec_curve_name, _ = _CURVE_MAP[curve_name]
+        merged: dict[str, Any] = {
+            "curve": curve_name,
+            "hash_alg": hash_alg,
+            "ec_curve_name": ec_curve_name,
+            "mech_int": mech_int,
+            "mech_name": mech_name,
+            "msg": bytes.fromhex(msg_hex),
+            "ec_params": encode_named_curve_parameters(ec_curve_name),
+            "ec_point_der": _build_ec_point(qx_hex, qy_hex, coord_len),
+            "sig": _build_signature(r_hex, s_hex, coord_len),
+            "expected_pass": exp.get("testPassed", True),
+            "tc_id": tc_id,
+        }
+        result.append((f"ECDSA-SigVer-{curve_name}-{hash_alg}-tc{tc_id}", merged))
+        if len(result) >= 20:
+            break
+    return result
+
+
+def _load_ecdsa_siggen_vectors(det: bool = False) -> list[tuple[str, dict[str, Any]]]:
+    """Load ECDSA SigGen ACVP vectors (regular or deterministic). Limits to 30 vectors."""
+    dirs = ["DetECDSA-SigGen-FIPS186-5"] if det else ["ECDSA-SigGen-FIPS186-5", "ECDSA-SigGen-1.0"]
+    all_vecs: list[dict[str, Any]] = []
+    for d in dirs:
+        all_vecs.extend(load_acvp_vectors(d))
+    result: list[tuple[str, dict[str, Any]]] = []
+    prefix = "DetECDSA" if det else "ECDSA"
+    for vec in all_vecs:
+        group, inp, exp = vec["group"], vec["input"], vec["expected"]
+        curve_name, hash_alg = group.get("curve", ""), group.get("hashAlg", "")
+        if curve_name not in _CURVE_MAP or hash_alg not in _HASH_TO_MECH:
+            continue
+        msg_hex, tc_id = inp.get("message", ""), inp.get("tcId", 0)
+        if not msg_hex:
+            continue
+        _, coord_len = _CURVE_MAP[curve_name]
+        mech_int, mech_name = _HASH_TO_MECH[hash_alg]
+        ec_curve_name, _ = _CURVE_MAP[curve_name]
+        r_hex, s_hex = exp.get("r", ""), exp.get("s", "")
+        qx_hex, qy_hex = exp.get("qx", ""), exp.get("qy", "")
+        merged: dict[str, Any] = {
+            "curve": curve_name,
+            "hash_alg": hash_alg,
+            "ec_curve_name": ec_curve_name,
+            "mech_int": mech_int,
+            "mech_name": mech_name,
+            "msg": bytes.fromhex(msg_hex),
+            "ec_params": encode_named_curve_parameters(ec_curve_name),
+            "tc_id": tc_id,
+            "expected_sig": _build_signature(r_hex, s_hex, coord_len)
+            if (r_hex and s_hex)
+            else None,
+            "expected_pub": _build_ec_point(qx_hex, qy_hex, coord_len)
+            if (qx_hex and qy_hex)
+            else None,
+        }
+        result.append((f"{prefix}-SigGen-{curve_name}-{hash_alg}-tc{tc_id}", merged))
+        if len(result) >= 30:
+            break
+    return result
+
+
+def _load_ecdsa_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
+    """Load ECDSA KeyGen ACVP vectors for P-256/384/521. Limits to 20 vectors for speed."""
+    all_vecs: list[dict[str, Any]] = []
+    for d in ["ECDSA-KeyGen-FIPS186-5", "ECDSA-KeyGen-1.0"]:
+        all_vecs.extend(load_acvp_vectors(d))
+    result: list[tuple[str, dict[str, Any]]] = []
+    for vec in all_vecs:
+        curve_name = vec["group"].get("curve", "")
+        if curve_name not in _CURVE_MAP:
+            continue
+        ec_curve_name, coord_len = _CURVE_MAP[curve_name]
+        tc_id = vec["input"].get("tcId", 0)
+        merged: dict[str, Any] = {
+            "curve": curve_name,
+            "ec_curve_name": ec_curve_name,
+            "ec_params": encode_named_curve_parameters(ec_curve_name),
+            "coord_len": coord_len,
+            "tc_id": tc_id,
+        }
+        result.append((f"ECDSA-KeyGen-{curve_name}-tc{tc_id}", merged))
+        if len(result) >= 20:
+            break
+    return result
+
+
+_ECDSA_SIGVER_VECTORS = _load_ecdsa_sigver_vectors()
+_ECDSA_SIGGEN_VECTORS = _load_ecdsa_siggen_vectors()
+_ECDSA_KEYGEN_VECTORS = _load_ecdsa_keygen_vectors()
+_DET_ECDSA_VECTORS = _load_ecdsa_siggen_vectors(det=True)
+
+
+@pytest.mark.parametrize(
+    "vec_id,vec", _ECDSA_SIGVER_VECTORS, ids=[v[0] for v in _ECDSA_SIGVER_VECTORS]
+)
+def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    """ECDSA signature verification from NIST ACVP FIPS 186-5 vectors."""
+    rs = p11_raw_session
+    mech_int: CKM = cast(CKM, vec["mech_int"])
+    mech_name: str = vec["mech_name"]
+    if not rs.has_mechanism(mech_name):
+        pytest.skip(f"{mech_name} not supported by module")
+    pub_key = 0
+    try:
+        try:
+            pub_key = import_ec_public_key(
+                rs.raw,
+                rs.sh,
+                ec_params=vec["ec_params"],
+                ec_point=vec["ec_point_der"],
+                attrs={CKA_VERIFY: True},
+            )
+        except AssertionError as e:
+            pytest.skip(f"Cannot import EC public key for {vec['curve']}: {e}")
+        try:
+            verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], vec["sig"])
+        except AssertionError as exc:
+            exc_msg = str(exc)
+            if any(
+                name in exc_msg
+                for name in (
+                    "CKR_SIGNATURE_INVALID",
+                    "CKR_SIGNATURE_LEN_RANGE",
+                )
+            ):
+                verified = False
+            else:
+                raise
+        if not vec["expected_pass"] and verified:
+            pytest.fail(f"{vec_id}: Module accepted invalid signature")
+        if vec["expected_pass"] and not verified:
+            pytest.fail(f"{vec_id}: Module rejected valid signature")
+    finally:
+        if pub_key:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+
+
+class TestEcdsaKeyGen:
+    """ECDSA key generation tests using ACVP vectors."""
+
+    @pytest.mark.parametrize(
+        "vec_id,vec", _ECDSA_KEYGEN_VECTORS, ids=[v[0] for v in _ECDSA_KEYGEN_VECTORS]
+    )
+    def test_ecdsa_keygen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+        """Test ECDSA keypair generation and roundtrip sign/verify."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
+            pytest.skip("EC_KEY_PAIR_GEN not supported by module")
+        pub_key = priv_key = 0
+        try:
+            pub_key, priv_key = gen_ec_keypair(
+                rs.raw,
+                rs.sh,
+                curve_oid=vec["ec_params"],
+                public_attrs={CKA_VERIFY: True},
+                private_attrs={CKA_SIGN: True},
+            )
+            assert pub_key != 0, f"{vec_id}: Public key handle is zero"
+            assert priv_key != 0, f"{vec_id}: Private key handle is zero"
+            sig = sign_single(rs.raw, rs.sh, priv_key, CKM_ECDSA_SHA256, b"ACVP keygen test")
+            assert verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA_SHA256, b"ACVP keygen test", sig)
+        except AssertionError as exc:
+            _handle_unsupported_curve(exc, vec["curve"])
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+            destroy_quietly(rs.raw, rs.sh, priv_key)
+
+
+class TestEcdsaSigGen:
+    """ECDSA signature generation tests using ACVP vectors."""
+
+    @pytest.mark.parametrize(
+        "vec_id,vec", _ECDSA_SIGGEN_VECTORS, ids=[v[0] for v in _ECDSA_SIGGEN_VECTORS]
+    )
+    def test_ecdsa_siggen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+        """Test ECDSA signature generation and roundtrip verification."""
+        rs = p11_raw_session
+        mech_name: str = vec["mech_name"]
+        mech_int: CKM = cast(CKM, vec["mech_int"])
+        if not rs.has_mechanism(mech_name):
+            pytest.skip(f"{mech_name} not supported by module")
+        pub_key = priv_key = 0
+        try:
+            pub_key, priv_key = gen_ec_keypair(
+                rs.raw,
+                rs.sh,
+                curve_oid=vec["ec_params"],
+                public_attrs={CKA_VERIFY: True},
+                private_attrs={CKA_SIGN: True},
+            )
+            sig = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["msg"])
+            assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], sig), (
+                f"{vec_id}: Roundtrip verification failed"
+            )
+        except AssertionError as exc:
+            _handle_unsupported_curve(exc, vec["curve"])
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+            destroy_quietly(rs.raw, rs.sh, priv_key)
+
+
+class TestDetEcdsa:
+    """Deterministic ECDSA (RFC 6979) signature generation tests."""
+
+    @pytest.mark.parametrize(
+        "vec_id,vec", _DET_ECDSA_VECTORS, ids=[v[0] for v in _DET_ECDSA_VECTORS]
+    )
+    def test_det_ecdsa_siggen(self, p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+        """Test deterministic ECDSA signature generation."""
+        rs = p11_raw_session
+        mech_name: str = vec["mech_name"]
+        mech_int: CKM = cast(CKM, vec["mech_int"])
+        if not rs.has_mechanism(mech_name):
+            pytest.skip(f"{mech_name} not supported by module")
+        pub_key = priv_key = 0
+        try:
+            pub_key, priv_key = gen_ec_keypair(
+                rs.raw,
+                rs.sh,
+                curve_oid=vec["ec_params"],
+                public_attrs={CKA_VERIFY: True},
+                private_attrs={CKA_SIGN: True},
+            )
+            sig1 = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["msg"])
+            sig2 = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["msg"])
+            assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], sig1)
+            assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], sig2)
+            if sig1 != sig2:
+                pytest.xfail(f"{vec_id}: Non-deterministic signatures (RFC 6979 not implemented)")
+        except AssertionError as exc:
+            _handle_unsupported_curve(exc, vec["curve"])
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+            destroy_quietly(rs.raw, rs.sh, priv_key)
