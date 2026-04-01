@@ -34,7 +34,7 @@ bash local-builds/test.sh nss-softokn
 
 ## Test suite
 
-22,000+ tests across 105+ test files:
+75,000+ tests across 150+ test files:
 
 | Category | Tests | Description |
 |----------|-------|-------------|
@@ -61,33 +61,34 @@ bash local-builds/test.sh nss-softokn
 
 ```
 src/pkcs11_check/
+  raw/          — pure ctypes PKCS#11 binding (v2.40-v3.2, PQC)
   cli/          — typer CLI (test, info, version commands)
   core/         — module loader, isolation runner, preflight
-  testcases/    — 105+ test files (the product)
+  testcases/    — 150+ test files (the product)
     ckr/        — CKR return code compliance tests
   plugin.py     — pytest plugin (markers, fixtures, collection)
   fixtures.py   — p11_session, p11_module, p11_config
   config.py     — four-layer config (CLI > env > TOML > defaults)
 
-python-pkcs11/  — fork with v3.0-3.2 support, PQC, specific CKR exceptions
 local-builds/   — build scripts for 10 soft token providers
 docker/         — 12 Docker test targets
 ```
 
 ## Key features
 
-- **python-pkcs11 fork** with v3.0/3.1/3.2 interface negotiation, 50+ PQC mechanisms, specific CKR exception classes for ALL standard error codes
+- **`pkcs11_check.raw`** — pure Python ctypes binding with v2.40/v3.0/v3.1/v3.2 interface negotiation, 50+ PQC mechanisms, all 68 standard functions
 - **`--isolation file`** mode runs each test file in its own subprocess — crashes don't kill the suite
 - **`--ckr-strict`** mode enforces exact OASIS spec CKR codes (not just "any error")
-- **`pkcs11.raw`** module for ctypes-based raw C_* function calls bypassing wrapper safety
+- **Wycheproof + ACVP vectors** — cross-verification against Google and NIST test vectors
 
 ## Documentation
 
-- `docs/master-plan.md` — task plan
+- `docs/architecture.md` — codebase structure and test writing guide
+- `docs/commands.md` — build, test, and Docker commands
 - `docs/module-issues.md` — per-module bugs and quirks
 - `docs/cve-regression.md` — CVE coverage tracker
-- `docs/gap-analysis.md` — deep analysis of remaining work
-- `CLAUDE.md` — AI assistant instructions
+- `docs/file-isolation.md` — isolation runner design
+- `docs/docker-artifacts.md` — Docker test runner contract
 
 ## License
 
