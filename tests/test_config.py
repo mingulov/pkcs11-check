@@ -26,7 +26,7 @@ class TestP11TestConfigDefaults:
         assert config.skip_unsupported is True
         assert config.log_level == "INFO"
         assert config.output == "rich"
-        assert config.disabled_tests_file == Path("config/disabled-tests.txt")
+        assert config.disabled_tests_file is None
 
 
 class TestP11TestConfigEnv:
