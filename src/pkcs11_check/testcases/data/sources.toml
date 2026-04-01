@@ -1,5 +1,5 @@
-# Third-party test vector sources — single source of truth for fetch-data.sh.
-# Run:    bash scripts/fetch-data.sh [name|all|--status]
+# Third-party test vector sources — single source of truth.
+# Run:    pkcs11-check fetch-data [name|all|--status]
 # Update: change commit + archive_sha256, then re-fetch.
 
 [wycheproof]

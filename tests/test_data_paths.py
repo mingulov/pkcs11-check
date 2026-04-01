@@ -28,3 +28,24 @@ class TestResolveDataDir:
 
         result = resolve_data_dir()
         assert str(result).endswith(".local/share/pkcs11-check/data")
+
+
+class TestSourcesManifest:
+    def test_sources_toml_exists_in_package(self) -> None:
+        from pkcs11_check.testcases.data import SOURCES_TOML
+
+        assert SOURCES_TOML.exists(), f"sources.toml not found at {SOURCES_TOML}"
+
+    def test_sources_toml_has_expected_keys(self) -> None:
+        import tomllib
+
+        from pkcs11_check.testcases.data import SOURCES_TOML
+
+        with open(SOURCES_TOML, "rb") as f:
+            sources = tomllib.load(f)
+        assert "wycheproof" in sources
+        assert "acvp" in sources
+        for name, entry in sources.items():
+            assert "repo" in entry, f"{name} missing 'repo'"
+            assert "commit" in entry, f"{name} missing 'commit'"
+            assert "archive_sha256" in entry, f"{name} missing 'archive_sha256'"
