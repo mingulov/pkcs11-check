@@ -1,0 +1,31 @@
+# Third-party test vector sources — single source of truth.
+# Run:    pkcs11-check fetch-data [name|all|--status]
+# Update: change commit + archive_sha256, then re-fetch.
+
+[wycheproof]
+repo = "C2SP/wycheproof"
+commit = "78898104021ebd2cd98820e4112da89b1531d999"
+archive_sha256 = "0394623240cda4f4a85b449d323458c1a2be40cc640a53437b93e10e3aaba52b"
+description = "Wycheproof edge-case cryptographic test vectors"
+include = ["testvectors_v1/", "LICENSE"]
+
+[cctv]
+repo = "C2SP/CCTV"
+commit = "d091f096c98eaaf9a42a824eb923a457867e4eae"
+archive_sha256 = "6e8aeea9aa34aeb146f4fac1839199c853d8a09736ba633062b60bc20e0c3bc4"
+description = "C2SP Comprehensive Cryptographic Test Vectors"
+include = ["ed25519/", "ML-DSA/", "ML-KEM/", "RFC6979/", "jq255/", "keygen/", "README.md", "LICENSE"]
+
+[acvp]
+repo = "usnistgov/ACVP-Server"
+commit = "3611942ea10c070dd8bc6afec5682d56c307de8a"
+archive_sha256 = "dae63084ff928bc88326fe187511a1760c02f021e7a63825f705337241ce3bb7"
+description = "NIST ACVP Automated Cryptographic Validation"
+include = ["gen-val/json-files/", "README.md"]
+
+[x509-limbo]
+repo = "C2SP/x509-limbo"
+commit = "9d594748cd0184468ec80a2d6e69d231ecf9fc8f"
+archive_sha256 = "bc3ede4d6a604d4c16f34dcab94cf3752e5c35124694bd5f5222146a068adf9b"
+description = "C2SP x509-limbo pathological X.509 certificates"
+# No include = extract everything

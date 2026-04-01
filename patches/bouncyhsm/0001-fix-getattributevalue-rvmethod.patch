@@ -1,0 +1,31 @@
+diff --git a/src/Src/BouncyHsm.Pkcs11Lib/bouncy-pkcs11.c b/src/Src/BouncyHsm.Pkcs11Lib/bouncy-pkcs11.c
+index 753af9a..044e90b 100644
+--- a/src/Src/BouncyHsm.Pkcs11Lib/bouncy-pkcs11.c
++++ b/src/Src/BouncyHsm.Pkcs11Lib/bouncy-pkcs11.c
+@@ -1445,8 +1445,17 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetAttributeValue)(CK_SESSION_HANDLE hSession, CK_OB
+ 
+     CK_RV rvMethod = (CK_RV)envelope.Rv;
+ 
+-    if (rv == CKR_OK || rv == CKR_ATTRIBUTE_SENSITIVE || rv == CKR_ATTRIBUTE_TYPE_INVALID || rv == CKR_BUFFER_TOO_SMALL)
++    if (rvMethod == CKR_OK || rvMethod == CKR_ATTRIBUTE_SENSITIVE || rvMethod == CKR_ATTRIBUTE_TYPE_INVALID || rvMethod == CKR_BUFFER_TOO_SMALL)
+     {
++        if (envelope.Data == NULL)
++        {
++            log_message(LOG_LEVEL_ERROR,
++                "GetAttributeValue returned success-like RV 0x%08X without envelope data.",
++                (unsigned int)rvMethod);
++            rvMethod = CKR_DEVICE_ERROR;
++            goto cleanup;
++        }
++
+         for (i = 0; i < ulCount; i++)
+         {
+             GetAttributeOutValue* outAttrPtr = &envelope.Data->OutTemplate.array[i];
+@@ -1535,6 +1544,7 @@ CK_DEFINE_FUNCTION(CK_RV, C_GetAttributeValue)(CK_SESSION_HANDLE hSession, CK_OB
+         }
+     }
+ 
++cleanup:
+     if (request.InTemplate.array != NULL)
+     {
+         free((void*)request.InTemplate.array);

@@ -1,0 +1,518 @@
+From d7dd4f5b75bf86d8b1e471ad10ae0c852e93f375 Mon Sep 17 00:00:00 2001
+From: Denis Mingulov <denis@mingulov.com>
+Date: Mon, 23 Mar 2026 09:42:35 +0200
+Subject: [PATCH] fix: check key type in C_SignInit/C_VerifyInit to prevent
+ crash
+
+Passing a wrong asymmetric key type (e.g. EC key) to a mismatched
+mechanism (e.g. CKM_RSA_PKCS) caused a crash (segfault or abort)
+because the code tried to read RSA attributes from an EC key object,
+then passed invalid data to OpenSSL.
+
+Add key type validation after the mechanism switch in both functions,
+returning CKR_KEY_TYPE_INCONSISTENT on mismatch. Also convert the
+GOST catch-all else branch to an explicit else-if(isGOST) check.
+Move MLDSA check also - to be consistent with other checks.
+
+Regression tests use cross-matched asymmetric keys (EC key with RSA
+mechanisms, RSA key with ECDSA/EdDSA mechanisms) to verify the fix.
+Without the fix, C_SignInit accepts the wrong key type and the
+subsequent C_Sign crashes.
+---
+ src/lib/SoftHSM.cpp              |  90 +++++++++++----
+ src/lib/test/SignVerifyTests.cpp | 188 +++++++++++++++++++++++++++++++
+ src/lib/test/SignVerifyTests.h   |   4 +
+ 3 files changed, 258 insertions(+), 24 deletions(-)
+
+diff --git a/src/lib/SoftHSM.cpp b/src/lib/SoftHSM.cpp
+index 166db0a..53d72e3 100644
+--- a/src/lib/SoftHSM.cpp
++++ b/src/lib/SoftHSM.cpp
+@@ -4190,6 +4190,9 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ 	if (!isMechanismPermitted(key, pMechanism->mechanism))
+ 		return CKR_MECHANISM_INVALID;
+
++	// Get key info
++	CK_KEY_TYPE keyType = key->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED);
++
+ 	// Get the asymmetric algorithm matching the mechanism
+ 	AsymMech::Type mechanism = AsymMech::Unknown;
+ 	void* param = NULL;
+@@ -4202,13 +4205,15 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ #ifdef WITH_ECC
+ 	bool isECDSA = false;
+ #endif
++#ifdef WITH_GOST
++	bool isGOST = false;
++#endif
+ #ifdef WITH_EDDSA
+ 	bool isEDDSA = false;
+ #endif
+ #ifdef WITH_ML_DSA
+ 	bool isMLDSA = false;
+ 	MLDSAMechanismParam mldsaParam;
+-	CK_KEY_TYPE keyType;
+ #endif
+ 	switch(pMechanism->mechanism) {
+ 		case CKM_RSA_PKCS:
+@@ -4463,10 +4468,12 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ 		case CKM_GOSTR3410:
+ 			mechanism = AsymMech::GOST;
+ 			bAllowMultiPartOp = false;
++			isGOST = true;
+ 			break;
+ 		case CKM_GOSTR3410_WITH_GOSTR3411:
+ 			mechanism = AsymMech::GOST_GOST;
+ 			bAllowMultiPartOp = true;
++			isGOST = true;
+ 			break;
+ #endif
+ #ifdef WITH_EDDSA
+@@ -4478,12 +4485,6 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ #endif
+ #ifdef WITH_ML_DSA
+ 		case CKM_ML_DSA:
+-			// Get key info
+-			keyType = key->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED);
+-			if (keyType != CKK_ML_DSA)
+-			{
+-				return CKR_KEY_TYPE_INCONSISTENT;
+-			}
+ 			mechanism = AsymMech::MLDSA;
+ 			bAllowMultiPartOp = false;
+ 			isMLDSA = true;
+@@ -4531,6 +4532,9 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ 	PrivateKey* privateKey = NULL;
+ 	if (isRSA)
+ 	{
++		if (keyType != CKK_RSA)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::RSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -4550,6 +4554,9 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ 	}
+ 	else if (isDSA)
+ 	{
++		if (keyType != CKK_DSA)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::DSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -4570,6 +4577,9 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ #ifdef WITH_ECC
+ 	else if (isECDSA)
+ 	{
++		if (keyType != CKK_EC)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::ECDSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -4591,6 +4601,9 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ #ifdef WITH_EDDSA
+ 	else if (isEDDSA)
+ 	{
++		if (keyType != CKK_EC_EDWARDS)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::EDDSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -4612,6 +4625,9 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ #ifdef WITH_ML_DSA
+ 	else if (isMLDSA)
+ 	{
++		if (keyType != CKK_ML_DSA)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::MLDSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -4630,9 +4646,12 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ 		}
+ 	}
+ #endif
+-	else
+-	{
+ #ifdef WITH_GOST
++	else if (isGOST)
++	{
++		if (keyType != CKK_GOSTR3410)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::GOST);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -4649,10 +4668,12 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
+ 			CryptoFactory::i()->recycleAsymmetricAlgorithm(asymCrypto);
+ 			return CKR_GENERAL_ERROR;
+ 		}
+-#else
+-		return CKR_MECHANISM_INVALID;
++	}
+ #endif
+-        }
++	else
++	{
++		return CKR_MECHANISM_INVALID;
++	}
+
+ 	// Initialize signing
+ 	if (bAllowMultiPartOp && !asymCrypto->signInit(privateKey,mechanism,param,paramLen))
+@@ -5269,6 +5290,9 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ 	if (!isMechanismPermitted(key, pMechanism->mechanism))
+ 		return CKR_MECHANISM_INVALID;
+
++	// Get key info
++	CK_KEY_TYPE keyType = key->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED);
++
+ 	// Get the asymmetric algorithm matching the mechanism
+ 	AsymMech::Type mechanism = AsymMech::Unknown;
+ 	void* param = NULL;
+@@ -5281,13 +5305,15 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ #ifdef WITH_ECC
+ 	bool isECDSA = false;
+ #endif
++#ifdef WITH_GOST
++	bool isGOST = false;
++#endif
+ #ifdef WITH_EDDSA
+ 	bool isEDDSA = false;
+ #endif
+ #ifdef WITH_ML_DSA
+ 	bool isMLDSA = false;
+ 	MLDSAMechanismParam mldsaParam;
+-	CK_KEY_TYPE keyType;
+ #endif
+ 	switch(pMechanism->mechanism) {
+ 		case CKM_RSA_PKCS:
+@@ -5540,10 +5566,12 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ 		case CKM_GOSTR3410:
+ 			mechanism = AsymMech::GOST;
+ 			bAllowMultiPartOp = false;
++			isGOST = true;
+ 			break;
+ 		case CKM_GOSTR3410_WITH_GOSTR3411:
+ 			mechanism = AsymMech::GOST_GOST;
+ 			bAllowMultiPartOp = true;
++			isGOST = true;
+ 			break;
+ #endif
+ #ifdef WITH_EDDSA
+@@ -5555,12 +5583,6 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ #endif
+ #ifdef WITH_ML_DSA
+ 		case CKM_ML_DSA:
+-			// Get key info
+-			keyType = key->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED);
+-			if (keyType != CKK_ML_DSA)
+-			{
+-				return CKR_KEY_TYPE_INCONSISTENT;
+-			}
+ 			mechanism = AsymMech::MLDSA;
+ 			bAllowMultiPartOp = false;
+ 			isMLDSA = true;
+@@ -5608,6 +5630,9 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ 	PublicKey* publicKey = NULL;
+ 	if (isRSA)
+ 	{
++		if (keyType != CKK_RSA)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::RSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -5627,6 +5652,9 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ 	}
+ 	else if (isDSA)
+ 	{
++		if (keyType != CKK_DSA)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::DSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -5647,6 +5675,9 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ #ifdef WITH_ECC
+ 	else if (isECDSA)
+ 	{
++		if (keyType != CKK_EC)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::ECDSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -5668,6 +5699,9 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ #ifdef WITH_EDDSA
+ 	else if (isEDDSA)
+ 	{
++		if (keyType != CKK_EC_EDWARDS)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::EDDSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -5689,6 +5723,9 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ #ifdef WITH_ML_DSA
+ 	else if (isMLDSA)
+ 	{
++		if (keyType != CKK_ML_DSA)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::MLDSA);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -5707,9 +5744,12 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ 		}
+ 	}
+ #endif
+-	else
+-	{
+ #ifdef WITH_GOST
++	else if (isGOST)
++	{
++		if (keyType != CKK_GOSTR3410)
++			return CKR_KEY_TYPE_INCONSISTENT;
++
+ 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::GOST);
+ 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
+
+@@ -5726,10 +5766,12 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
+ 			CryptoFactory::i()->recycleAsymmetricAlgorithm(asymCrypto);
+ 			return CKR_GENERAL_ERROR;
+ 		}
+-#else
+-		return CKR_MECHANISM_INVALID;
++	}
+ #endif
+-        }
++	else
++	{
++		return CKR_MECHANISM_INVALID;
++	}
+
+ 	// Initialize verifying
+ 	if (bAllowMultiPartOp && !asymCrypto->verifyInit(publicKey,mechanism,param,paramLen))
+diff --git a/src/lib/test/SignVerifyTests.cpp b/src/lib/test/SignVerifyTests.cpp
+index f3afa88..a85b91d 100644
+--- a/src/lib/test/SignVerifyTests.cpp
++++ b/src/lib/test/SignVerifyTests.cpp
+@@ -1285,3 +1285,191 @@ void SignVerifyTests::testMacSignVerify()
+ 	macSignVerify(CKM_AES_CMAC, hSessionRO, hKey);
+ }
+
++// C_SignInit with mismatched key type must return CKR_KEY_TYPE_INCONSISTENT,
++// not accept the key and crash during C_Sign.
++void SignVerifyTests::testSignInitWrongKeyType()
++{
++	CK_RV rv;
++	CK_SESSION_HANDLE hSession;
++
++	// Just make sure that we finalize any previous tests
++	CRYPTOKI_F_PTR( C_Finalize(NULL_PTR) );
++
++	rv = CRYPTOKI_F_PTR( C_Initialize(NULL_PTR) );
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++	rv = CRYPTOKI_F_PTR( C_OpenSession(m_initializedTokenSlotID, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL_PTR, NULL_PTR, &hSession) );
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++	rv = CRYPTOKI_F_PTR( C_Login(hSession, CKU_USER, m_userPin1, m_userPin1Length) );
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++	// EC private key with RSA/DSA mechanisms
++	CK_OBJECT_HANDLE hEcPub = CK_INVALID_HANDLE, hEcPriv = CK_INVALID_HANDLE;
++#ifdef WITH_ECC
++	rv = generateEC("P-256", hSession, IN_SESSION, IS_PUBLIC, IN_SESSION, IS_PUBLIC, hEcPub, hEcPriv);
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++	// RSA mechanisms with EC key
++	CK_MECHANISM_TYPE rsaMechs[] = {
++		CKM_RSA_PKCS, CKM_RSA_X_509,
++		CKM_SHA1_RSA_PKCS, CKM_SHA256_RSA_PKCS,
++		CKM_SHA384_RSA_PKCS, CKM_SHA512_RSA_PKCS
++	};
++	for (size_t i = 0; i < sizeof(rsaMechs)/sizeof(rsaMechs[0]); i++)
++	{
++		CK_MECHANISM mechanism = { rsaMechs[i], NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_SignInit(hSession, &mechanism, hEcPriv) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++
++	// DSA mechanisms with EC key
++	CK_MECHANISM_TYPE dsaMechs[] = { CKM_DSA, CKM_DSA_SHA1, CKM_DSA_SHA256 };
++	for (size_t i = 0; i < sizeof(dsaMechs)/sizeof(dsaMechs[0]); i++)
++	{
++		CK_MECHANISM mechanism = { dsaMechs[i], NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_SignInit(hSession, &mechanism, hEcPriv) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++	// RSA private key with ECDSA/EdDSA mechanisms
++	CK_OBJECT_HANDLE hRsaPub = CK_INVALID_HANDLE, hRsaPriv = CK_INVALID_HANDLE;
++	rv = generateRSA(hSession, IN_SESSION, IS_PUBLIC, IN_SESSION, IS_PUBLIC, hRsaPub, hRsaPriv);
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++#ifdef WITH_ECC
++	// ECDSA mechanisms with RSA key
++	CK_MECHANISM_TYPE ecdsaMechs[] = { CKM_ECDSA, CKM_ECDSA_SHA1, CKM_ECDSA_SHA256 };
++	for (size_t i = 0; i < sizeof(ecdsaMechs)/sizeof(ecdsaMechs[0]); i++)
++	{
++		CK_MECHANISM mechanism = { ecdsaMechs[i], NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_SignInit(hSession, &mechanism, hRsaPriv) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++#ifdef WITH_EDDSA
++	// EdDSA mechanism with RSA key
++	{
++		CK_MECHANISM mechanism = { CKM_EDDSA, NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_SignInit(hSession, &mechanism, hRsaPriv) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++#ifdef WITH_GOST
++	// GOST mechanism with RSA key
++	{
++		CK_MECHANISM mechanism = { CKM_GOSTR3410, NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_SignInit(hSession, &mechanism, hRsaPriv) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++#ifdef WITH_ML_DSA
++	// ML-DSA mechanism with RSA key
++	{
++		CK_MECHANISM mechanism = { CKM_ML_DSA, NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_SignInit(hSession, &mechanism, hRsaPriv) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++	C_Logout(hSession);
++	C_CloseSession(hSession);
++}
++
++// Same as above but for C_VerifyInit.
++void SignVerifyTests::testVerifyInitWrongKeyType()
++{
++	CK_RV rv;
++	CK_SESSION_HANDLE hSession;
++
++	// Just make sure that we finalize any previous tests
++	CRYPTOKI_F_PTR( C_Finalize(NULL_PTR) );
++
++	rv = CRYPTOKI_F_PTR( C_Initialize(NULL_PTR) );
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++	rv = CRYPTOKI_F_PTR( C_OpenSession(m_initializedTokenSlotID, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL_PTR, NULL_PTR, &hSession) );
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++	rv = CRYPTOKI_F_PTR( C_Login(hSession, CKU_USER, m_userPin1, m_userPin1Length) );
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++	// EC public key with RSA/DSA mechanisms
++	CK_OBJECT_HANDLE hEcPub = CK_INVALID_HANDLE, hEcPriv = CK_INVALID_HANDLE;
++#ifdef WITH_ECC
++	rv = generateEC("P-256", hSession, IN_SESSION, IS_PUBLIC, IN_SESSION, IS_PUBLIC, hEcPub, hEcPriv);
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++	// RSA mechanisms with EC key
++	CK_MECHANISM_TYPE rsaMechs[] = {
++		CKM_RSA_PKCS, CKM_RSA_X_509,
++		CKM_SHA1_RSA_PKCS, CKM_SHA256_RSA_PKCS,
++		CKM_SHA384_RSA_PKCS, CKM_SHA512_RSA_PKCS
++	};
++	for (size_t i = 0; i < sizeof(rsaMechs)/sizeof(rsaMechs[0]); i++)
++	{
++		CK_MECHANISM mechanism = { rsaMechs[i], NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_VerifyInit(hSession, &mechanism, hEcPub) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++
++	// DSA mechanisms with EC key
++	CK_MECHANISM_TYPE dsaMechs[] = { CKM_DSA, CKM_DSA_SHA1, CKM_DSA_SHA256 };
++	for (size_t i = 0; i < sizeof(dsaMechs)/sizeof(dsaMechs[0]); i++)
++	{
++		CK_MECHANISM mechanism = { dsaMechs[i], NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_VerifyInit(hSession, &mechanism, hEcPub) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++	// RSA public key with ECDSA/EdDSA mechanisms
++	CK_OBJECT_HANDLE hRsaPub = CK_INVALID_HANDLE, hRsaPriv = CK_INVALID_HANDLE;
++	rv = generateRSA(hSession, IN_SESSION, IS_PUBLIC, IN_SESSION, IS_PUBLIC, hRsaPub, hRsaPriv);
++	CPPUNIT_ASSERT(rv == CKR_OK);
++
++#ifdef WITH_ECC
++	// ECDSA mechanisms with RSA key
++	CK_MECHANISM_TYPE ecdsaMechs[] = { CKM_ECDSA, CKM_ECDSA_SHA1, CKM_ECDSA_SHA256 };
++	for (size_t i = 0; i < sizeof(ecdsaMechs)/sizeof(ecdsaMechs[0]); i++)
++	{
++		CK_MECHANISM mechanism = { ecdsaMechs[i], NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_VerifyInit(hSession, &mechanism, hRsaPub) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++#ifdef WITH_EDDSA
++	// EdDSA mechanism with RSA key
++	{
++		CK_MECHANISM mechanism = { CKM_EDDSA, NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_VerifyInit(hSession, &mechanism, hRsaPub) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++#ifdef WITH_GOST
++	// GOST mechanism with RSA key
++	{
++		CK_MECHANISM mechanism = { CKM_GOSTR3410, NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_VerifyInit(hSession, &mechanism, hRsaPub) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++#ifdef WITH_ML_DSA
++	// ML-DSA mechanism with RSA key
++	{
++		CK_MECHANISM mechanism = { CKM_ML_DSA, NULL_PTR, 0 };
++		rv = CRYPTOKI_F_PTR( C_VerifyInit(hSession, &mechanism, hRsaPub) );
++		CPPUNIT_ASSERT(rv == CKR_KEY_TYPE_INCONSISTENT);
++	}
++#endif
++
++	C_Logout(hSession);
++	C_CloseSession(hSession);
++}
+diff --git a/src/lib/test/SignVerifyTests.h b/src/lib/test/SignVerifyTests.h
+index c2b4ada..a7c22e0 100644
+--- a/src/lib/test/SignVerifyTests.h
++++ b/src/lib/test/SignVerifyTests.h
+@@ -52,6 +52,8 @@ class SignVerifyTests : public TestsBase
+ #ifdef WITH_ML_DSA
+ 	CPPUNIT_TEST_PARAMETERIZED(testMLDSASignVerify, {CKP_ML_DSA_44, CKP_ML_DSA_65, CKP_ML_DSA_87});
+ #endif
++	CPPUNIT_TEST(testSignInitWrongKeyType);
++	CPPUNIT_TEST(testVerifyInitWrongKeyType);
+ 	CPPUNIT_TEST_SUITE_END();
+
+ public:
+@@ -66,6 +68,8 @@ public:
+ #ifdef WITH_ML_DSA
+ 	void testMLDSASignVerify(CK_ULONG parameterSet);
+ #endif
++	void testSignInitWrongKeyType();
++	void testVerifyInitWrongKeyType();
+
+ protected:
+ 	CK_RV generateRSA(CK_SESSION_HANDLE hSession, CK_BBOOL bTokenPuk, CK_BBOOL bPrivatePuk, CK_BBOOL bTokenPrk, CK_BBOOL bPrivatePrk, CK_OBJECT_HANDLE &hPuk, CK_OBJECT_HANDLE &hPrk);
+--
+2.43.0
