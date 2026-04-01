@@ -57,6 +57,16 @@ pkcs11-check = "pkcs11_check.plugin"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+exclude = [
+    "local-builds/",
+    "data/",
+    "artifacts/",
+    "artifacts2/",
+    ".worktrees/",
+    ".serena/",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/pkcs11_check"]
 
