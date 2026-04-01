@@ -23,8 +23,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
-    CKM_SHAKE128,
-    CKM_SHAKE256,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 
