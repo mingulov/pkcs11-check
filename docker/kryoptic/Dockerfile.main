@@ -4,7 +4,7 @@
 
 FROM rust:latest AS builder
 
-ARG OPENSSL_TAG="openssl-3.6.1"
+ARG OPENSSL_TAG="openssl-4.0.0-beta1"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git pkg-config libssl-dev clang make perl \

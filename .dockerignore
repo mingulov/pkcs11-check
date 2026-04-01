@@ -6,6 +6,7 @@ local-builds/
 
 # Artifacts from previous Docker runs
 artifacts/
+artifacts*/
 
 # All dotfiles/dirs (caches, editor state, git)
 .*
