@@ -720,6 +720,18 @@ def generate_raw_standard(*, header: Path, out_types: Path, out_metadata: Path) 
     )
     out_metadata.write_text(_render_metadata_module(symbols=symbols, functions=functions))
 
+    # Format generated files with ruff if available
+    import shutil
+    import subprocess as _sp
+
+    ruff_bin = shutil.which("ruff")
+    if ruff_bin:
+        for path in (out_types, out_metadata):
+            _sp.run(  # noqa: S603
+                [ruff_bin, "format", str(path)],
+                capture_output=True,
+            )
+
 
 def main() -> None:
     generate_raw_standard(header=HEADER, out_types=OUT_TYPES, out_metadata=OUT_METADATA)
