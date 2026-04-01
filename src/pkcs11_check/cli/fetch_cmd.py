@@ -25,7 +25,7 @@ from pkcs11_check.testcases.data import SOURCES_TOML, resolve_data_dir
 console = Console()
 
 _DISABLED_BASELINE_URL = (
-    "https://raw.githubusercontent.com/mingulov/pkcs11-check/main/config/disabled-tests.txt"
+    "https://raw.githubusercontent.com/mingulov/pkcs11-check/main/data/disabled-tests.txt"
 )
 
 
