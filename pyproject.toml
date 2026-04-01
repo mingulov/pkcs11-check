@@ -60,7 +60,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build]
 exclude = [
     "local-builds/",
-    "data/",
+    "/data/",
     "artifacts/",
     "artifacts2/",
     "config/",

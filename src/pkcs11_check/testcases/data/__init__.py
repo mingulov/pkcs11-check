@@ -3,6 +3,7 @@
 Own data (mechanism_vectors, KAT JSONs) lives here in src/.
 Third-party vendor data lives in a resolved data directory.
 """
+
 from __future__ import annotations
 
 import os
@@ -35,9 +36,7 @@ def _find_repo_data_dir() -> Path | None:
         return None
     data = root / "data"
     # Only use repo data dir if it has fetched content (not just .gitignore)
-    if data.is_dir() and any(
-        p.is_dir() and p.name != "__pycache__" for p in data.iterdir()
-    ):
+    if data.is_dir() and any(p.is_dir() and p.name != "__pycache__" for p in data.iterdir()):
         return data
     return None
 
