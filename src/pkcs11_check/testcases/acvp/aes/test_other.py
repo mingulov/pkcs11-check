@@ -320,7 +320,7 @@ def _skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
     """
     detected = _get_detected_variant(rs)
     if detected is None:
-        return  # Can't detect — let the test run normally
+        pytest.skip("CTS variant detection failed — skipping all CS tests")
     if detected != expected_cs:
         pytest.skip(
             f"Module implements CS{detected}, skipping CS{expected_cs} vectors"
