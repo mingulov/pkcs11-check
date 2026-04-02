@@ -2,7 +2,7 @@
 
 Twofish: 128/192/256-bit keys, 16-byte block.
 Only CBC and CBC_PAD are defined in the OASIS PKCS#11 spec - there is no
-CKM_TWOFISH_ECB mechanism. IV for CBC modes is 8 bytes.
+CKM_TWOFISH_ECB mechanism. IV for CBC modes is 16 bytes.
 
 Most modules do NOT support Twofish - all tests will skip cleanly on those
 platforms.
@@ -37,7 +37,7 @@ from pkcs11_check.raw.types_std import (
 
 pytestmark = pytest.mark.full
 
-# Twofish block is 8 bytes - CBC data must be 16-byte aligned
+# Twofish block is 16 bytes - CBC data must be 16-byte aligned
 _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 
 
