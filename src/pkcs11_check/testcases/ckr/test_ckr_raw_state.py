@@ -37,6 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_GEN,
     CKM_SHA256,
     CKM_SHA256_HMAC,
+    CKR_CRYPTOKI_ALREADY_INITIALIZED,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED,
@@ -53,7 +54,7 @@ def _template_ptr(attrs):
 
 raw = RawPKCS11.from_lib("{module}")
 rv = raw.C_Initialize(None)
-assert rv == CKR_OK or rv == 0x191
+assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
 
 sh = open_session(raw, get_slot_ids(raw)[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
 

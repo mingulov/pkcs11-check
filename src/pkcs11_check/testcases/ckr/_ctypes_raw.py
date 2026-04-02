@@ -39,7 +39,8 @@ def run_null_test(
         import ctypes
         from ctypes import c_ulong, c_void_p, c_ubyte, POINTER, byref, cast
         from pkcs11_check.raw.types_std import (
-            CKR_OK, CKF_SERIAL_SESSION, CKF_RW_SESSION,
+            CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK,
+            CKF_SERIAL_SESSION, CKF_RW_SESSION,
         )
 
         CK_RV = c_ulong
@@ -110,7 +111,7 @@ def run_null_test(
 
         # Initialize the module first
         rv = call_func("C_Initialize", c_void_p(None))
-        if rv != CKR_OK and rv != 0x00000191:  # OK or ALREADY_INITIALIZED
+        if rv != CKR_OK and rv != CKR_CRYPTOKI_ALREADY_INITIALIZED:
             print(f"CKR:0x{{rv:08x}}:Initialize_failed")
             exit(1)
 

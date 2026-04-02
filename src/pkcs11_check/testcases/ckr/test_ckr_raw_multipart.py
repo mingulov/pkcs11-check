@@ -30,7 +30,8 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
         import ctypes, os
         from pkcs11_check.raw.api import RawPKCS11
         from pkcs11_check.raw.types_std import (
-            CK_NOTIFY, CKR_OK, CKR_OPERATION_NOT_INITIALIZED,
+            CK_NOTIFY, CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK,
+            CKR_OPERATION_NOT_INITIALIZED,
             CKR_OPERATION_ACTIVE, CKR_KEY_FUNCTION_NOT_PERMITTED,
             CKR_BUFFER_TOO_SMALL, CKR_DATA_LEN_RANGE,
             CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION,
@@ -39,7 +40,7 @@ def _run_raw_test(module_path: str, pin: str | None, test_code: str) -> tuple[in
 
         raw = RawPKCS11.from_lib("{module_path}")
         rv = raw.C_Initialize(None)
-        assert rv == CKR_OK or rv == 0x191, f"Init failed: 0x{{rv:08x}}"
+        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"Init failed: 0x{{rv:08x}}"
 
         # Get first slot
         slot_count = ctypes.c_ulong(0)

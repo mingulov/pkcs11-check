@@ -838,8 +838,10 @@ from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.types_std import CKR_OK
 from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
 from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, mech_simple, template
-from pkcs11_check.raw.types_std import (  # noqa: E501
-    CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE)
+from pkcs11_check.raw.types_std import (
+    CKF_RW_SESSION, CKF_SERIAL_SESSION, CK_ATTRIBUTE_PTR, CK_OBJECT_HANDLE,
+    CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_NOT_WRAPPABLE,
+)
 
 
 def _template_ptr(attrs):
@@ -918,8 +920,7 @@ mech = mech_simple(0x000003E0)  # CKM_TLS12_MASTER_KEY_DERIVE
 out_key = CK_OBJECT_HANDLE(0)
 rv = raw.C_DeriveKey(sh, mech.byref(), key.value, None, 0, byref(out_key))
 print(f"CKR:0x{rv:08x}")
-# 0x69 = KEY_FUNCTION_NOT_PERMITTED, 0x70 = MECHANISM_PARAM_INVALID
-if rv == 0x69:
+if rv in (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_NOT_WRAPPABLE):
     print("OK:KEY_FUNCTION_NOT_PERMITTED")
 elif rv == 0:
     print("FAIL:allowed_derive_with_DERIVE_false")

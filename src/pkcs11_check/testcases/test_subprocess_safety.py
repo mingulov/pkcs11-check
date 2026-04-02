@@ -95,12 +95,12 @@ class TestForkSafety:
         if pid == 0:
             try:
                 try: raw.C_Finalize(None)
-                except: pass
+                except Exception: pass  # Best-effort cleanup before reinit
                 raw.C_Initialize(None)
                 get_slot_ids(raw)
                 raw.C_Finalize(None)
                 os._exit(0)
-            except:
+            except Exception:
                 os._exit(1)
         else:
             _, status = os.waitpid(pid, 0)
