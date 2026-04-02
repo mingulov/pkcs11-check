@@ -137,3 +137,32 @@
 - **Meta-tests:** 604 passed, 2 failed (pre-existing), 1 skipped — **zero regressions**
 - **Ruff (E,F):** No new errors from audit changes
 - **Branch:** All work on `dev`
+
+## Implementation Phase (2026-04-02)
+
+**Spec:** `docs/superpowers/specs/2026-04-02-audit-implementation-design.md`
+
+### Completed
+
+| Iter | Change | Files |
+|------|--------|-------|
+| 01 | Corrected audit reports (SHAKE/KMAC not in v3.2, GMAC/HSS already tested) | 5 audit reports |
+| 02 | Added SHA3/SHAKE KEY_DERIVE to mechanism registry (6 mechanisms) | _kdf.py |
+| 03 | Added mech_sign_context for CK_SIGN_ADDITIONAL_CONTEXT (pure ML-DSA/SLH-DSA) | pack_mechanisms.py |
+| 03b | Fixed SHAKE ACVP NameError (CKM_SHAKE128/256 not in v3.2) | test_acvp_hash.py |
+| 04 | Fixed ML-DSA ACVP context passing via mech_sign_context | test_acvp_mldsa.py |
+| 05 | Added ML-DSA hedge variant tests (preferred/required/deterministic) | test_pqc_sign.py |
+| 06 | Added CKM_AES_MAC functional tests (sign/verify, tamper, key independence) | test_aes_modes.py |
+
+### Remaining (for future sessions)
+
+- SHA3/SHAKE key derivation functional tests (registry entries added, tests pending)
+- Ed448 keygen/sign/verify tests
+- AES-CTR ulCounterBits negative tests (0, 129)
+- RSA OAEP SHA-384/512 hash/MGF combos
+
+### Closed (NOT in PKCS#11 v3.2)
+
+- C_DigestXof* (SHAKE digest) — not in pkcs11.h
+- CK_KMAC_PARAMS / CKM_KMAC128/256 — not in pkcs11.h
+- CKM_ML_DSA_EXTERNAL_MU — not in pkcs11.h
