@@ -51,6 +51,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_XCBC_MAC,
     CKM_AES_XCBC_MAC_96,
     CKO_SECRET_KEY,
+    CKR_OK,
 )
 
 pytestmark = pytest.mark.encrypt
@@ -170,6 +171,38 @@ class TestAESCTR:
                 mech_param=mech_ctr(CKM_AES_CTR),
             )
             assert pt == plaintext
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_aes_ctr_counter_bits_zero_rejected(self, p11_raw_session: Any) -> None:
+        """ulCounterBits=0 must be rejected per OASIS spec (valid range: 1-128)."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CTR"):
+            pytest.skip("CKM_AES_CTR not supported")
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            mech = mech_ctr(CKM_AES_CTR, bits=0)
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            assert rv != CKR_OK, (
+                f"C_EncryptInit accepted ulCounterBits=0 (rv=0x{rv:08x}), "
+                "spec requires rejection"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_aes_ctr_counter_bits_129_rejected(self, p11_raw_session: Any) -> None:
+        """ulCounterBits=129 must be rejected per OASIS spec (valid range: 1-128)."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CTR"):
+            pytest.skip("CKM_AES_CTR not supported")
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            mech = mech_ctr(CKM_AES_CTR, bits=129)
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            assert rv != CKR_OK, (
+                f"C_EncryptInit accepted ulCounterBits=129 (rv=0x{rv:08x}), "
+                "spec requires rejection"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
