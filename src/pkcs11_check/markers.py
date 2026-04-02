@@ -8,6 +8,7 @@ _VERSION_ORDER = {"2.40": 0, "3.0": 1, "3.1": 2, "3.2": 3}
 
 _MARKER_MIN_VERSION: dict[str, str] = {
     "requires_v30": "3.0",
+    "requires_v31": "3.1",
     "requires_v32": "3.2",
 }
 
@@ -28,6 +29,7 @@ MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("cctv", "CCTV (C2SP) edge-case test vector"),
     MarkerDef("crossverify", "Cross-verification test against an independent implementation"),
     MarkerDef("requires_v30", "Test requires PKCS#11 v3.0 or later"),
+    MarkerDef("requires_v31", "Test requires PKCS#11 v3.1 or later"),
     MarkerDef("requires_v32", "Test requires PKCS#11 v3.2 or later"),
     MarkerDef("destructive", "Test modifies token state (requires --p11-destructive)"),
     MarkerDef("differential", "Cross-backend differential test"),
