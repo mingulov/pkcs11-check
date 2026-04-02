@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import attr_ulong
+from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_keypair,
@@ -181,11 +182,11 @@ class TestMlDsaSigGen:
                 pre_hash = vec.get("hash_alg", "pure")
             mech = get_mldsa_mechanism(pre_hash)
 
-            # Sign the message
-            # TODO: pass vec["context"] via CK_SIGN_ADDITIONAL_CONTEXT when
-            # mechanism param builder is available (context is empty for most
-            # pure ML-DSA vectors, so this works correctly for now)
-            sig = sign_single(rs.raw, rs.sh, priv_key, mech, vec["msg"])
+            # Sign the message, passing context via CK_SIGN_ADDITIONAL_CONTEXT
+            # when non-empty (pure ML-DSA only — hash variants use mech_hash_sign_context)
+            context = bytes.fromhex(vec.get("context", ""))
+            mech_param = mech_sign_context(mech, context=context) if context else None
+            sig = sign_single(rs.raw, rs.sh, priv_key, mech, vec["msg"], mech_param=mech_param)
 
             # Note: ML-DSA is probabilistic, so we can't compare signatures
             # Instead, verify the signature we just generated (if pk available)
@@ -253,10 +254,14 @@ class TestMlDsaSigVer:
                 pre_hash = vec.get("hash_alg", "pure")
             mech = get_mldsa_mechanism(pre_hash)
 
-            # Verify the signature
-            # TODO: pass vec["context"] via CK_SIGN_ADDITIONAL_CONTEXT when available
+            # Verify the signature, passing context when non-empty
+            context = bytes.fromhex(vec.get("context", ""))
+            mech_param = mech_sign_context(mech, context=context) if context else None
             try:
-                verified = verify_single(rs.raw, rs.sh, pub_key, mech, vec["msg"], vec["sig"])
+                verified = verify_single(
+                    rs.raw, rs.sh, pub_key, mech, vec["msg"], vec["sig"],
+                    mech_param=mech_param,
+                )
             except AssertionError as exc:
                 exc_msg = str(exc)
                 if any(
