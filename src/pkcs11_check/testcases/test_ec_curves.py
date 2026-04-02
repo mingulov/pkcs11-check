@@ -34,6 +34,7 @@ pytestmark = pytest.mark.crossverify
 _EC_CURVES = [
     ("secp224r1", 28, ec.SECP224R1(), hashes.SHA224()),
     ("secp256r1", 32, ec.SECP256R1(), hashes.SHA256()),
+    ("secp256k1", 32, ec.SECP256K1(), hashes.SHA256()),
     ("secp384r1", 48, ec.SECP384R1(), hashes.SHA384()),
     ("secp521r1", 66, ec.SECP521R1(), hashes.SHA512()),
 ]
