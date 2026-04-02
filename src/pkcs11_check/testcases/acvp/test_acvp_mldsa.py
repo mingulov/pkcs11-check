@@ -184,7 +184,9 @@ class TestMlDsaSigGen:
 
             # Sign the message, passing context via CK_SIGN_ADDITIONAL_CONTEXT
             # when non-empty (pure ML-DSA only — hash variants use mech_hash_sign_context)
-            context = bytes.fromhex(vec.get("context", ""))
+            context = vec.get("context", b"")
+            if isinstance(context, str):
+                context = bytes.fromhex(context) if context else b""
             mech_param = mech_sign_context(mech, context=context) if context else None
             sig = sign_single(rs.raw, rs.sh, priv_key, mech, vec["msg"], mech_param=mech_param)
 
@@ -255,7 +257,9 @@ class TestMlDsaSigVer:
             mech = get_mldsa_mechanism(pre_hash)
 
             # Verify the signature, passing context when non-empty
-            context = bytes.fromhex(vec.get("context", ""))
+            context = vec.get("context", b"")
+            if isinstance(context, str):
+                context = bytes.fromhex(context) if context else b""
             mech_param = mech_sign_context(mech, context=context) if context else None
             try:
                 verified = verify_single(
