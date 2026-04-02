@@ -153,13 +153,17 @@
 | 04 | Fixed ML-DSA ACVP context passing via mech_sign_context | test_acvp_mldsa.py |
 | 05 | Added ML-DSA hedge variant tests (preferred/required/deterministic) | test_pqc_sign.py |
 | 06 | Added CKM_AES_MAC functional tests (sign/verify, tamper, key independence) | test_aes_modes.py |
+| 07 | Added Ed448 keygen/sign/verify/signature-length tests | test_eddsa.py |
+| 08 | Added SHA3/SHAKE key derivation tests (6 mechanisms, determinism) | test_kdf.py |
+| 09 | AES-CTR ulCounterBits=0/129 negative tests, RSA OAEP SHA-384/512 | test_aes_modes.py, test_rsa_oaep.py |
 
-### Remaining (for future sessions)
+### Remaining (lower priority)
 
-- SHA3/SHAKE key derivation functional tests (registry entries added, tests pending)
-- Ed448 keygen/sign/verify tests
-- AES-CTR ulCounterBits negative tests (0, 129)
-- RSA OAEP SHA-384/512 hash/MGF combos
+- PQC cross-verification against external library
+- Authenticated wrap tag tampering detection
+- Message-based API decrypt/sign/verify
+- DES weak/semi-weak key detection
+- CKR error priority ordering tests
 
 ### Closed (NOT in PKCS#11 v3.2)
 
