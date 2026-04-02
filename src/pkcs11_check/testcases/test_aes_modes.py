@@ -45,6 +45,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CTR,
     CKM_AES_CTS,
     CKM_AES_KEY_WRAP_PKCS7,
+    CKM_AES_MAC,
     CKM_AES_MAC_GENERAL,
     CKM_AES_OFB,
     CKM_AES_XCBC_MAC,
@@ -496,6 +497,54 @@ _XCBC_VERIFY_XFAIL_MSG = (
     "NSS softoken rejects CKK_AES keys for XCBC-MAC verify even when CKA_VERIFY=True "
     "(NSS softoken bug — sign works but verify is broken)"
 )
+
+
+class TestAESMAC:
+    """CKM_AES_MAC — fixed 8-byte (half-block) CBC-MAC."""
+
+    def test_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
+        """Sign and verify with CKM_AES_MAC."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_MAC"):
+            pytest.skip("AES_MAC not supported")
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            data = b"AES-MAC test data for roundtrip verification"
+            sig = sign_single(rs.raw, rs.sh, key, CKM_AES_MAC, data)
+            assert len(sig) == 8, f"AES-MAC output must be 8 bytes, got {len(sig)}"
+            ok = verify_single(rs.raw, rs.sh, key, CKM_AES_MAC, data, sig)
+            assert ok is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_tamper_detection(self, p11_raw_session: Any) -> None:
+        """Modified data must fail verification."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_MAC"):
+            pytest.skip("AES_MAC not supported")
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            sig = sign_single(rs.raw, rs.sh, key, CKM_AES_MAC, b"original")
+            ok = verify_single(rs.raw, rs.sh, key, CKM_AES_MAC, b"tampered", sig)
+            assert ok is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_different_keys(self, p11_raw_session: Any) -> None:
+        """Different keys produce different MACs."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_MAC"):
+            pytest.skip("AES_MAC not supported")
+        k1 = gen_aes_key(rs.raw, rs.sh, 256)
+        k2 = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            data = b"same data different keys"
+            sig1 = sign_single(rs.raw, rs.sh, k1, CKM_AES_MAC, data)
+            sig2 = sign_single(rs.raw, rs.sh, k2, CKM_AES_MAC, data)
+            assert sig1 != sig2
+        finally:
+            destroy_quietly(rs.raw, rs.sh, k1)
+            destroy_quietly(rs.raw, rs.sh, k2)
 
 
 class TestAESXCBCMAC:
