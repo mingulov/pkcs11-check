@@ -51,12 +51,10 @@ _ALG_MAP: dict[str, tuple[Any, str, int]] = {
 }
 
 
-# SHAKE algorithms use extendable-output functions (XOF) with variable output length
-# Each entry: (algorithm_name, (mechanism, mechanism_name))
-_SHAKE_ALG_MAP: dict[str, tuple[Any, str]] = {
-    "SHAKE-128-1.0": (CKM_SHAKE128, "SHAKE128"),
-    "SHAKE-256-1.0": (CKM_SHAKE256, "SHAKE256"),
-}
+# SHAKE digest mechanisms (CKM_SHAKE_128, CKM_SHAKE_256) are NOT in the PKCS#11 v3.2
+# header — only SHAKE KEY_DERIVE variants exist.  C_DigestXof functions needed for XOF
+# are also absent from v3.2.  Map is empty until a future spec revision adds them.
+_SHAKE_ALG_MAP: dict[str, tuple[Any, str]] = {}
 
 
 def _load_hash_vectors() -> list[tuple[str, dict[str, Any]]]:
