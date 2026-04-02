@@ -156,14 +156,18 @@
 | 07 | Added Ed448 keygen/sign/verify/signature-length tests | test_eddsa.py |
 | 08 | Added SHA3/SHAKE key derivation tests (6 mechanisms, determinism) | test_kdf.py |
 | 09 | AES-CTR ulCounterBits=0/129 negative tests, RSA OAEP SHA-384/512 | test_aes_modes.py, test_rsa_oaep.py |
+| 11 | Authenticated wrap tag tampering detection test | test_authenticated_wrap.py |
+| 12 | DES weak key detection (10-key generation check) | test_des.py |
+| 13 | secp256k1 curve added to EC test parametrization | test_ec_curves.py |
+| 14 | HMAC_GENERAL variable output length test (1/4/8/12/16 bytes) | test_aes_modes.py |
+| 15 | Config precedence fix: CLI defaults no longer override TOML/env | fixtures.py, plugin.py |
 
 ### Remaining (lower priority)
 
-- PQC cross-verification against external library
-- Authenticated wrap tag tampering detection
-- Message-based API decrypt/sign/verify
-- DES weak/semi-weak key detection
+- PQC cross-verification — covered by ACVP + Wycheproof vectors (closed)
+- Message-based API decrypt/sign/verify — already implemented in test_mech_message.py (closed)
 - CKR error priority ordering tests
+- Callback functions (CK_NOTIFY) testing
 
 ### Closed (NOT in PKCS#11 v3.2)
 
