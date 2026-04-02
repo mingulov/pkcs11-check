@@ -12,6 +12,7 @@ from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     get_slot_ids,
     login_user,
+    logout_quietly,
     open_session,
 )
 from pkcs11_check.raw.types_std import (
@@ -67,10 +68,7 @@ def raw_session(
         yield sh
     finally:
         if pin_value is not None:
-            try:
-                raw_pkcs11.C_Logout(sh)
-            except Exception:
-                pass
+            logout_quietly(raw_pkcs11, sh)
         close_session_quietly(raw_pkcs11, sh)
 
 

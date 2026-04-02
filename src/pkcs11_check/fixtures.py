@@ -68,8 +68,14 @@ def _open_raw_session(
     pin = p11_config.pin.get_secret_value() if p11_config.pin else None
     logged_in = False
     if pin is not None:
-        login_user(raw, sh, CKU_USER, pin.encode("utf-8"))
-        logged_in = True
+        try:
+            login_user(raw, sh, CKU_USER, pin.encode("utf-8"))
+            logged_in = True
+        except Exception:
+            from pkcs11_check.raw.bootstrap import close_session_quietly
+
+            close_session_quietly(raw, sh)
+            raise
 
     return raw, sh, slot_id, logged_in
 
@@ -81,7 +87,7 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
     After the test, we attempt to logout so the next test can login fresh.
     This avoids UserAlreadyLoggedIn / UserTypeInvalid cascading failures.
     """
-    from pkcs11_check.raw.bootstrap import close_session_quietly
+    from pkcs11_check.raw.bootstrap import close_session_quietly, logout_quietly
 
     raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
     bootstrap_log = dict(raw.call_log)
@@ -91,7 +97,7 @@ def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[A
         yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
     finally:
         if logged_in:
-            raw.C_Logout(sh)  # type: ignore[attr-defined]
+            logout_quietly(raw, sh)
         close_session_quietly(raw, sh)
 
 
@@ -215,7 +221,7 @@ def p11_raw_session(
     because PKCS#11 login is per-token, and login_user() accepts
     CKR_USER_ALREADY_LOGGED_IN.
     """
-    from pkcs11_check.raw.bootstrap import close_session_quietly
+    from pkcs11_check.raw.bootstrap import close_session_quietly, logout_quietly
 
     raw, sh, slot_id, logged_in = _open_raw_session(p11_module, p11_config)
     bootstrap_log = dict(raw.call_log)
@@ -225,5 +231,5 @@ def p11_raw_session(
         yield RawSession(raw, sh, slot_id, bootstrap_call_counts=bootstrap_log)
     finally:
         if logged_in:
-            raw.C_Logout(sh)  # type: ignore[attr-defined]
+            logout_quietly(raw, sh)
         close_session_quietly(raw, sh)
