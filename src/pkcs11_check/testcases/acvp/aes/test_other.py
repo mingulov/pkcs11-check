@@ -338,15 +338,12 @@ def _get_detected_variant(rs: Any) -> str | None:
 
 
 def _skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
-    """Skip test if module's CTS variant doesn't match expected_cs.
-
-    If detection fails (all probes error), does NOT skip — lets the test
-    run and fail/pass naturally. Only skips when we positively detect a
-    different variant.
-    """
+    """Skip test if module's CTS variant doesn't match expected_cs."""
+    if not rs.has_mechanism("AES_CTS"):
+        pytest.skip("CKM_AES_CTS not supported by module")
     detected = _get_detected_variant(rs)
     if detected is None:
-        pytest.skip("CTS variant detection failed — skipping all CS tests")
+        pytest.skip("CTS variant detection failed (module errors on CTS encrypt)")
     if detected != expected_cs:
         pytest.skip(
             f"Module implements CS{detected}, skipping CS{expected_cs} vectors"
