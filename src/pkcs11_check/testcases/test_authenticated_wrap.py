@@ -114,6 +114,60 @@ class TestAuthenticatedWrap:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
 
+    def test_tampered_tag_rejected(self, p11_raw_session: Any, p11_interface_version: str) -> None:
+        """Unwrap with tampered authentication tag must fail."""
+        rs = p11_raw_session
+        if p11_interface_version not in ("3.2",):
+            pytest.skip("Authenticated wrapping requires v3.2 interface")
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+
+        wrap_h = gen_aes_key(
+            rs.raw, rs.sh, 256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_ENCRYPT: True, CKA_DECRYPT: True},
+        )
+        target = gen_aes_key(
+            rs.raw, rs.sh, 128, attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+        )
+        try:
+            iv = generate_random(rs.raw, rs.sh, 12)
+            gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
+            try:
+                wrapped, tag = wrap_key_authenticated(
+                    rs.raw, rs.sh, wrap_h, target, CKM_AES_GCM, mech_param=gcm,
+                )
+            except (NotImplementedError, AttributeError, TypeError, AssertionError):
+                pytest.skip("wrap_key_authenticated not available")
+                return
+
+            if not tag:
+                pytest.skip("Module did not return a separate authentication tag")
+                return
+
+            # Tamper with the tag (flip first byte)
+            tampered_tag = bytes([tag[0] ^ 0xFF]) + tag[1:]
+            gcm2 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
+            try:
+                unwrapped = unwrap_key_authenticated(
+                    rs.raw, rs.sh, wrap_h, wrapped, tampered_tag, CKM_AES_GCM,
+                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                    mech_param=gcm2,
+                )
+                # If unwrap succeeded, that's a security bug
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
+                pytest.fail(
+                    "Unwrap with tampered authentication tag should have been rejected — "
+                    "this is a security vulnerability"
+                )
+            except AssertionError as exc:
+                # Expected: module should reject the tampered tag
+                assert "CKR_OK" not in str(exc) or "tampered" in str(exc).lower(), (
+                    f"Unexpected error during tampered unwrap: {exc}"
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, wrap_h)
+            destroy_quietly(rs.raw, rs.sh, target)
+
     def test_authenticated_wrap_requires_v32(
         self, p11_raw_session: Any, p11_interface_version: str
     ) -> None:
