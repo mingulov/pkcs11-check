@@ -34,6 +34,7 @@ from .types_std import (
     CK_RSA_PKCS_OAEP_PARAMS,
     CK_RSA_PKCS_PSS_PARAMS,
     CK_SALSA20_CHACHA20_POLY1305_PARAMS,
+    CK_SIGN_ADDITIONAL_CONTEXT,
     CK_SSL3_KEY_MAT_OUT,
     CK_SSL3_KEY_MAT_PARAMS,
     CK_SSL3_MASTER_KEY_DERIVE_PARAMS,
@@ -803,6 +804,29 @@ def mech_hash_sign_context(
     return _mech_struct(mechanism_type, params, "mech_hash_sign_context", ka)
 
 
+def mech_sign_context(
+    mechanism_type: CKM,
+    *,
+    hedge: int | None = None,
+    context: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_SIGN_ADDITIONAL_CONTEXT for CKM_ML_DSA / CKM_SLH_DSA (pure).
+
+    For hash-and-sign variants (CKM_HASH_ML_DSA, CKM_HASH_SLH_DSA), use
+    ``mech_hash_sign_context`` instead — it has a ``hash`` field.
+    ``hedge`` defaults to CKH_HEDGE_PREFERRED.
+    """
+    ka: list[Any] = []
+    params = CK_SIGN_ADDITIONAL_CONTEXT()
+    params.hedgeVariant = int(CKH_HEDGE_PREFERRED) if hedge is None else hedge
+    if context is not None:
+        params.pContext, params.ulContextLen = _pack_bytes(context, ka)
+    else:
+        params.pContext = None
+        params.ulContextLen = 0
+    return _mech_struct(mechanism_type, params, "mech_sign_context", ka)
+
+
 __all__ = [
     "mech_cbc_pad",
     "mech_ccm",
@@ -821,6 +845,7 @@ __all__ = [
     "mech_pss",
     "mech_rc2",
     "mech_rc2_cbc",
+    "mech_sign_context",
     "mech_ssl3_key_mat",
     "mech_ssl3_master_key_derive",
     "mech_string_data",
