@@ -230,27 +230,26 @@ def _detect_cts_variant(rs: Any) -> str | None:
         "2": _CBC_CS2_ENCRYPT_VECTORS,
         "3": _CBC_CS3_ENCRYPT_VECTORS,
     }
-    # Collect expected outputs for the same key/iv/pt across variants
-    # Each variant uses different test vectors, so we probe with each variant's first vector
+    # Try up to 3 vectors per variant — some may trigger module errors
     for cs_ver, vecs in probe_vecs.items():
         if not vecs:
             continue
-        _, vec = vecs[0]
-        try:
-            key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
+        for _, vec in vecs[:3]:
             try:
-                ct = encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_CTS, vec["pt"],
-                    mech_param=mech_bytes(CKM_AES_CTS, vec["iv"]),
-                )
-                if ct == vec["ct_expected"]:
-                    return cs_ver
+                key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
+                try:
+                    ct = encrypt_single(
+                        rs.raw, rs.sh, key, CKM_AES_CTS, vec["pt"],
+                        mech_param=mech_bytes(CKM_AES_CTS, vec["iv"]),
+                    )
+                    if ct == vec["ct_expected"]:
+                        return cs_ver
+                except (AssertionError, OSError):
+                    continue  # Try next vector
+                finally:
+                    destroy_quietly(rs.raw, rs.sh, key)
             except (AssertionError, OSError):
-                pass  # Try next variant
-            finally:
-                destroy_quietly(rs.raw, rs.sh, key)
-        except (AssertionError, OSError):
-            continue
+                continue
     return None
 
 
@@ -267,10 +266,15 @@ def _get_detected_variant(rs: Any) -> str | None:
 
 
 def _skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
-    """Skip test if module's CTS variant doesn't match expected_cs."""
+    """Skip test if module's CTS variant doesn't match expected_cs.
+
+    If detection fails (all probes error), does NOT skip — lets the test
+    run and fail/pass naturally. Only skips when we positively detect a
+    different variant.
+    """
     detected = _get_detected_variant(rs)
     if detected is None:
-        pytest.skip("CKM_AES_CTS not supported or variant not detectable")
+        return  # Can't detect — let the test run normally
     if detected != expected_cs:
         pytest.skip(
             f"Module implements CS{detected}, skipping CS{expected_cs} vectors"
