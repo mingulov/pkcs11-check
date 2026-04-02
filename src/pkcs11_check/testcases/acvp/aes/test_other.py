@@ -218,39 +218,59 @@ _CBC_CS3_ENCRYPT_VECTORS, _CBC_CS3_DECRYPT_VECTORS = _load_cbc_cs_vectors("3")
 def _detect_cts_variant(rs: Any) -> str | None:
     """Detect which CBC-CS variant (CS1/CS2/CS3) the module implements.
 
-    Encrypts one known vector from each variant and returns the matching one.
-    Returns None if CKM_AES_CTS is not supported or no variant matches.
+    Uses a self-contained probe: generates an AES-256 key, encrypts a known
+    17-byte plaintext (1 block + 1 byte — triggers CTS block reordering),
+    and compares against pre-computed expected outputs for each variant.
+
+    CS1/CS2 swap the last two blocks only when input is not block-aligned.
+    CS3 keeps the natural order (full block, then partial).
+    CS1 and CS2 produce the same output for non-block-aligned input.
+
+    Returns "1" (CS1/CS2), "3" (CS3), or None if detection fails.
     """
     if not rs.has_mechanism("AES_CTS"):
         return None
 
-    # Use first CS1 encrypt vector as probe — it has known outputs for all 3 variants
-    probe_vecs = {
-        "1": _CBC_CS1_ENCRYPT_VECTORS,
-        "2": _CBC_CS2_ENCRYPT_VECTORS,
-        "3": _CBC_CS3_ENCRYPT_VECTORS,
-    }
-    # Try up to 3 vectors per variant — some may trigger module errors
-    for cs_ver, vecs in probe_vecs.items():
-        if not vecs:
-            continue
-        for _, vec in vecs[:3]:
-            try:
-                key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
-                try:
-                    ct = encrypt_single(
-                        rs.raw, rs.sh, key, CKM_AES_CTS, vec["pt"],
-                        mech_param=mech_bytes(CKM_AES_CTS, vec["iv"]),
-                    )
-                    if ct == vec["ct_expected"]:
-                        return cs_ver
-                except (AssertionError, OSError):
-                    continue  # Try next vector
-                finally:
-                    destroy_quietly(rs.raw, rs.sh, key)
-            except (AssertionError, OSError):
-                continue
-    return None
+    from pkcs11_check.raw.recipes import gen_aes_key as _gen_key
+
+    # Pre-computed reference: AES-256 key=00..1f, IV=00..0f, PT=17x 0x41
+    # CS1/CS2: 3e cfc6db137e91a49b51b31bce1a7b0f0f (partial first)
+    # CS3:     cfc6db137e91a49b51b31bce1a7b0f0f 3e (partial last)
+    _PROBE_IV = bytes(range(16))
+    _PROBE_PT = b"A" * 17
+    _CS1_CT = bytes.fromhex("3ecfc6db137e91a49b51b31bce1a7b0f0f")
+    _CS3_CT = bytes.fromhex("cfc6db137e91a49b51b31bce1a7b0f0f3e")
+
+    key = 0
+    try:
+        key = _gen_key(rs.raw, rs.sh, 256)
+    except (AssertionError, OSError):
+        return None
+
+    try:
+        # Import the fixed probe key instead — we need deterministic output
+        from pkcs11_check.raw.recipes import import_secret_key
+        from pkcs11_check.raw.types_std import CKA_SENSITIVE, CKK_AES
+
+        destroy_quietly(rs.raw, rs.sh, key)
+        key = import_secret_key(
+            rs.raw, rs.sh, CKK_AES, bytes(range(32)),
+            attrs={CKA_ENCRYPT: True, CKA_TOKEN: False, CKA_SENSITIVE: False},
+        )
+        ct = encrypt_single(
+            rs.raw, rs.sh, key, CKM_AES_CTS, _PROBE_PT,
+            mech_param=mech_bytes(CKM_AES_CTS, _PROBE_IV),
+        )
+        if ct == _CS1_CT:
+            return "1"  # CS1 (or CS2 — same for non-aligned)
+        if ct == _CS3_CT:
+            return "3"
+        return None  # Unknown variant
+    except (AssertionError, OSError):
+        return None
+    finally:
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 # Module-level cache for detected variant (set on first access)
