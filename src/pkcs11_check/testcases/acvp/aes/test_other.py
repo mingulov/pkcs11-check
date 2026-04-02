@@ -165,7 +165,6 @@ def test_acvp_aes_xts_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
             if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
                 pytest.skip(f"XTS decrypt not supported: {exc_msg}")
             raise
-            return
 
         assert pt == vec["pt_expected"], (
             f"{vec_id}: plaintext mismatch: got {pt.hex()}, expected {vec['pt_expected'].hex()}"
