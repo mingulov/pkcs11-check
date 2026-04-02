@@ -88,14 +88,14 @@ def pytest_addoption(parser: Any) -> None:
     group.addoption(
         "--p11-interface",
         dest="p11_interface",
-        default="auto",
-        help="Force interface version: auto, 2.40, 3.0, 3.1, 3.2",
+        default=None,
+        help="Force interface version: auto, 2.40, 3.0, 3.1, 3.2 (default: auto)",
     )
     group.addoption(
         "--p11-slot",
         dest="p11_slot",
         type=int,
-        default=0,
+        default=None,
         help="Slot index (default: 0)",
     )
     group.addoption(
