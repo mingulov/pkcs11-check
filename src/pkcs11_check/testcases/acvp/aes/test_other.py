@@ -24,6 +24,7 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKK_AES_XTS,
+    CKM_AES_CBC,
     CKM_AES_CTS,
     CKM_AES_XTS,
 )
@@ -218,69 +219,78 @@ _CBC_CS3_ENCRYPT_VECTORS, _CBC_CS3_DECRYPT_VECTORS = _load_cbc_cs_vectors("3")
 def _detect_cts_variant(rs: Any) -> str | None:
     """Detect which CBC-CS variant (CS1/CS2/CS3) the module implements.
 
-    Uses two self-contained probes with a fixed imported AES-256 key:
+    Uses structural comparison — no pre-computed values needed.
 
-    Probe 1 — 17 bytes (non-aligned): distinguishes CS3 from CS1/CS2.
-      CS1/CS2 swap the last two blocks for non-aligned input (partial first).
-      CS3 keeps natural order (full block first, partial last).
+    Probe 1 — 33 bytes (2 full blocks + 1 byte): the module returns 33 bytes.
+      CS1/CS2: last byte of output is part of the penultimate CBC block.
+      CS3: last byte of output is the truncated final encrypt.
+      Detect by checking if output[:16] == CBC(block1) — if yes, it's CS3.
 
-    Probe 2 — 32 bytes (block-aligned): distinguishes CS1 from CS2.
-      CS1 does NOT swap for block-aligned input (same as CBC).
-      CS2 ALWAYS swaps, even when block-aligned.
+    Probe 2 — 32 bytes (block-aligned): only needed if probe 1 says CS1/CS2.
+      CS1: output == standard CBC output (no swap).
+      CS2: last two 16-byte halves are swapped vs CBC.
+
+    Uses gen_aes_key (module generates the key) + structural analysis of
+    output byte positions, so no imported key or pre-computed values needed.
 
     Returns "1", "2", "3", or None if detection fails.
     """
     if not rs.has_mechanism("AES_CTS"):
         return None
 
-    from pkcs11_check.raw.recipes import import_secret_key
-    from pkcs11_check.raw.types_std import CKA_SENSITIVE, CKK_AES
-
-    _PROBE_KEY = bytes(range(32))  # AES-256: 00 01 02 ... 1f
-    _PROBE_IV = bytes(range(16))   # IV: 00 01 02 ... 0f
-
-    # Probe 1: 17 bytes (non-aligned) — CS3 vs CS1/CS2
-    _PT1 = b"A" * 17
-    _CS12_CT1 = bytes.fromhex("3ecfc6db137e91a49b51b31bce1a7b0f0f")  # partial first
-    _CS3_CT1 = bytes.fromhex("cfc6db137e91a49b51b31bce1a7b0f0f3e")  # partial last
-
-    # Probe 2: 32 bytes (aligned) — CS1 vs CS2
-    _PT2 = b"B" * 32
-    _CS1_CT2 = bytes.fromhex(  # no swap (same as CBC)
-        "d25c12741580119b4392e32cab018393f62effbf9452e3c70896eb04d2e58d1e"
-    )
-    _CS2_CT2 = bytes.fromhex(  # swapped
-        "f62effbf9452e3c70896eb04d2e58d1ed25c12741580119b4392e32cab018393"
-    )
+    from pkcs11_check.raw.recipes import gen_aes_key as _gen_key
 
     key = 0
     try:
-        key = import_secret_key(
-            rs.raw, rs.sh, CKK_AES, _PROBE_KEY,
-            attrs={CKA_ENCRYPT: True, CKA_TOKEN: False, CKA_SENSITIVE: False},
+        key = _gen_key(
+            rs.raw, rs.sh, 256,
+            attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
+    except (AssertionError, OSError):
+        return None
 
-        # Probe 1: non-aligned (17 bytes)
+    try:
+        iv = bytes(16)  # zero IV
+
+        # Probe 1: 33 bytes = 2 full blocks + 1 byte
+        pt1 = bytes(range(33))
         ct1 = encrypt_single(
-            rs.raw, rs.sh, key, CKM_AES_CTS, _PT1,
-            mech_param=mech_bytes(CKM_AES_CTS, _PROBE_IV),
+            rs.raw, rs.sh, key, CKM_AES_CTS, pt1,
+            mech_param=mech_bytes(CKM_AES_CTS, iv),
         )
-        if ct1 == _CS3_CT1:
-            return "3"
+        assert len(ct1) == 33
 
-        if ct1 != _CS12_CT1:
-            return None  # Unknown variant
+        # Also encrypt just the first 16 bytes with standard AES-CBC
+        # to get the raw C1 block for comparison
+        cbc_c1 = encrypt_single(
+            rs.raw, rs.sh, key, CKM_AES_CBC, pt1[:16],
+            mech_param=mech_bytes(CKM_AES_CBC, iv),
+        )
 
-        # Probe 2: block-aligned (32 bytes) — distinguish CS1 from CS2
+        # In CS3 (no swap), output starts with C1 (the penultimate full block)
+        # In CS1/CS2 (swap), output starts with a truncated byte from the last encrypt
+        # Check: does the CTS output start with the same C1 as CBC?
+        if ct1[:16] == cbc_c1[:16]:
+            return "3"  # CS3: natural order, C1 is first
+
+        # CS1 or CS2 — need probe 2 to distinguish
+        # Probe 2: 32 bytes (block-aligned)
+        pt2 = bytes(range(32))
         ct2 = encrypt_single(
-            rs.raw, rs.sh, key, CKM_AES_CTS, _PT2,
-            mech_param=mech_bytes(CKM_AES_CTS, _PROBE_IV),
+            rs.raw, rs.sh, key, CKM_AES_CTS, pt2,
+            mech_param=mech_bytes(CKM_AES_CTS, iv),
         )
-        if ct2 == _CS2_CT2:
-            return "2"
-        if ct2 == _CS1_CT2:
-            return "1"
-        return "1"  # Default to CS1 if aligned probe inconclusive
+        # Also get standard CBC for same 32 bytes
+        cbc_ct2 = encrypt_single(
+            rs.raw, rs.sh, key, CKM_AES_CBC, pt2,
+            mech_param=mech_bytes(CKM_AES_CBC, iv),
+        )
+
+        if ct2 == cbc_ct2:
+            return "1"  # CS1: no swap for aligned = same as CBC
+        if ct2[:16] == cbc_ct2[16:] and ct2[16:] == cbc_ct2[:16]:
+            return "2"  # CS2: always swaps, even when aligned
+        return "1"  # Default to CS1 if inconclusive
 
     except (AssertionError, OSError):
         return None
