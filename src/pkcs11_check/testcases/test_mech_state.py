@@ -119,7 +119,7 @@ class TestEncryptState:
                 out_len = CK_ULONG(64)
                 rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))  # type: ignore[attr-defined]
             except Exception:
-                pass
+                pass  # Best-effort cleanup: EncryptFinal may fail if op already terminated
             destroy_quietly(rs.raw, rs.sh, key)
 
 
@@ -324,4 +324,4 @@ class TestDigestState:
             out_len = CK_ULONG(64)
             rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))  # type: ignore[attr-defined]
         except Exception:
-            pass
+            pass  # Best-effort cleanup: DigestFinal may fail if op already terminated

@@ -107,13 +107,15 @@ def subprocess_session_preamble(
         f"    close_session_quietly, get_slot_ids, login_user, open_session,\n"
         f")\n"
         f"from pkcs11_check.raw.types_std import (\n"
-        f"    CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OK, CKU_USER,\n"
+        f"    CKF_RW_SESSION, CKF_SERIAL_SESSION,\n"
+        f"    CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK, CKU_USER,\n"
         f")\n"
         f"{extra_block}"
         f"\n"
         f'raw = RawPKCS11.from_lib("{module_path}")\n'
         f"rv = raw.C_Initialize(None)\n"
-        f'assert rv in (CKR_OK, 0x00000191), f"C_Initialize: 0x{{rv:08x}}"\n'
+        f'assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), '
+        f'f"C_Initialize: 0x{{rv:08x}}"\n'
         f"\n"
         f"{slot_discovery}\n"
         f"sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)\n"

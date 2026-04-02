@@ -12,7 +12,7 @@ import pytest
 
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
 from pkcs11_check.raw.rv import expect_rv
-from pkcs11_check.raw.types_std import CKR_OK
+from pkcs11_check.raw.types_std import CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK
 
 pytestmark = pytest.mark.smoke
 
@@ -41,7 +41,7 @@ class TestInterfaceVersion:
 
         raw = RawPKCS11.from_lib(str(module_path))
         rv = raw.C_Initialize(None)
-        assert rv in (CKR_OK, 0x00000191), f"C_Initialize: 0x{rv:08x}"
+        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{rv:08x}"
         try:
             fnames = raw.available_function_names()
             # v2.40 functions are always present; v3.0+ have C_GetInterfaceList
