@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import attr_ulong
+from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_keypair,
@@ -25,6 +26,9 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
     CKA_VERIFY,
+    CKH_DETERMINISTIC_REQUIRED,
+    CKH_HEDGE_PREFERRED,
+    CKH_HEDGE_REQUIRED,
     CKK_ML_DSA,
     CKK_SLH_DSA,
     CKM_ML_DSA,
@@ -223,6 +227,68 @@ class TestMLDSASignVerify:
             # Note: some implementations may use deterministic signing, so xfail not assert
             if sig1 == sig2:
                 pytest.xfail("ML-DSA produced identical signatures (deterministic mode?)")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+
+class TestMLDSAHedgeVariants:
+    """ML-DSA signing with explicit hedge variants via CK_SIGN_ADDITIONAL_CONTEXT."""
+
+    def test_hedge_preferred(self, p11_raw_session: Any) -> None:
+        """CKH_HEDGE_PREFERRED — default randomized signing."""
+        rs = p11_raw_session
+        _skip_if_no(rs, "ML_DSA")
+        pub, priv = _generate_ml_dsa_keypair(rs)
+        try:
+            mech_param = mech_sign_context(CKM_ML_DSA, hedge=int(CKH_HEDGE_PREFERRED))
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param)
+            assert len(sig) > 0
+            result = verify_single(
+                rs.raw, rs.sh, pub, CKM_ML_DSA, _PLAINTEXT, sig, mech_param=mech_param,
+            )
+            assert result is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_hedge_required(self, p11_raw_session: Any) -> None:
+        """CKH_HEDGE_REQUIRED — must use randomization."""
+        rs = p11_raw_session
+        _skip_if_no(rs, "ML_DSA")
+        pub, priv = _generate_ml_dsa_keypair(rs)
+        try:
+            mech_param = mech_sign_context(CKM_ML_DSA, hedge=int(CKH_HEDGE_REQUIRED))
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param)
+            assert len(sig) > 0
+            result = verify_single(
+                rs.raw, rs.sh, pub, CKM_ML_DSA, _PLAINTEXT, sig, mech_param=mech_param,
+            )
+            assert result is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_deterministic_required(self, p11_raw_session: Any) -> None:
+        """CKH_DETERMINISTIC_REQUIRED — signing must be deterministic."""
+        rs = p11_raw_session
+        _skip_if_no(rs, "ML_DSA")
+        pub, priv = _generate_ml_dsa_keypair(rs)
+        try:
+            mech_param = mech_sign_context(
+                CKM_ML_DSA, hedge=int(CKH_DETERMINISTIC_REQUIRED),
+            )
+            sig1 = sign_single(
+                rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param,
+            )
+            sig2 = sign_single(
+                rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param,
+            )
+            assert sig1 == sig2, "Deterministic mode should produce identical signatures"
+            result = verify_single(
+                rs.raw, rs.sh, pub, CKM_ML_DSA, _PLAINTEXT, sig1, mech_param=mech_param,
+            )
+            assert result is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
