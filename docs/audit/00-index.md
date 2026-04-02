@@ -102,16 +102,25 @@
 
 ## Top-Priority Future Work
 
-**Blocking gaps (need new bindings/infrastructure):**
-1. C_DigestXof* functions for SHAKE-128/256 testing
-2. CK_KMAC_PARAMS structure for KMAC-128/256 testing
-3. CK_SIGN_ADDITIONAL_CONTEXT mechanism param builder for ML-DSA/SLH-DSA context
+**Closed — NOT in PKCS#11 v3.2 header (spec-only / future draft):**
+1. ~~C_DigestXof* functions for SHAKE-128/256~~ — NOT in v3.2 pkcs11.h header
+2. ~~CK_KMAC_PARAMS for KMAC-128/256~~ — NOT in v3.2 pkcs11.h header (zero KMAC references)
+3. ~~CKM_ML_DSA_EXTERNAL_MU~~ — NOT in v3.2 pkcs11.h header
 
-**High-value test additions:**
-4. CKM_AES_MAC and CKM_AES_GMAC functional tests
-5. Ed448 keygen/sign/verify
-6. SHA3/SHAKE key derivation mechanisms (6 mechanisms, 0 coverage)
-7. RSA OAEP with SHA-384/512 hash/MGF combos
+**Audit corrections (items already implemented, audit was wrong):**
+- AES_GMAC: already has Wycheproof, ACVP, and message API tests
+- HSS/XMSS: already have comprehensive tests in test_stateful_sigs.py + full registry entries
+- CKM_NULL: already in mechanism_registry/_kdf.py
+- mech_hash_sign_context: already exists in pack_mechanisms.py for CK_HASH_SIGN_ADDITIONAL_CONTEXT
+
+**Implementable (in v3.2 header):**
+1. CK_SIGN_ADDITIONAL_CONTEXT pure variant pack function for ML-DSA/SLH-DSA ACVP context
+2. CKM_AES_MAC functional tests (fixed 8-byte output — registry exists, zero tests)
+3. Ed448 keygen/sign/verify (CKM_EDDSA with Ed448 OID)
+4. SHA3/SHAKE key derivation mechanisms (6 mechanisms, 0 registry entries, 0 tests)
+5. RSA OAEP with SHA-384/512 hash/MGF combos
+6. ML-DSA/SLH-DSA hedge variant tests (CKH_HEDGE_PREFERRED/REQUIRED/DETERMINISTIC_REQUIRED)
+7. AES-CTR ulCounterBits boundary validation (0, 129 → CKR_MECHANISM_PARAM_INVALID)
 8. PQC cross-verification against external library
 9. Authenticated wrap tag tampering detection
 10. CKR error priority ordering tests

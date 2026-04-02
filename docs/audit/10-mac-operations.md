@@ -12,11 +12,13 @@
 
 ### Coverage Gaps
 
-- [GAP] `CKM_KMAC128`/`CKM_KMAC256` — availability check only, sign roundtrip explicitly skipped: "CK_KMAC_PARAMS mechanism parameter not yet available in pkcs11_check.raw bindings."
-- [GAP] HMAC_GENERAL truncation — 18 _GENERAL variants registered but no test specifically exercises variable output lengths or boundary cases (output_len=1, output_len=hash_len).
-- [GAP] `CKM_AES_GMAC` — registered but no functional sign/verify test.
-- [GAP] `CKM_AES_MAC` — registered but no test coverage.
-- [GAP] SHA-1 HMAC — absent from ACVP test mapping despite being in registry.
+**CORRECTION (2026-04-02):** CKM_KMAC128/KMAC256 and CK_KMAC_PARAMS are NOT in the PKCS#11 v3.2 header. Zero KMAC references exist in pkcs11.h. This was spec-only/future draft content. These gaps are CLOSED as "not in v3.2". Also: CKM_AES_GMAC already has Wycheproof (test_wycheproof_aes.py:348), ACVP (test_gcm.py:203), and message API (test_mech_message.py:210) test coverage — original audit incorrectly stated "zero coverage".
+
+- [CLOSED] ~~`CKM_KMAC128`/`CKM_KMAC256`~~ — NOT in v3.2 header.
+- [CLOSED] ~~`CKM_AES_GMAC` no tests~~ — already has 3 test files (Wycheproof, ACVP, message API).
+- [GAP] `CKM_AES_MAC` — registered but no functional sign/verify test (fixed 8-byte output variant).
+- [GAP] HMAC_GENERAL truncation — no test exercises variable output lengths.
+- [GAP] SHA-1 HMAC — absent from ACVP test mapping.
 - [GAP] BLAKE2b HMAC — four variants defined, zero ACVP vectors loaded.
 
 ## Changes Made

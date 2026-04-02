@@ -12,8 +12,9 @@ Domain parameters tested for DSA/DH. Mechanism info and mechanism object attribu
 
 ### Coverage Gaps
 
-- [GAP] HSS (CKM_HSS_KEY_PAIR_GEN, CKM_HSS) — spec fully defines Hierarchical Signature Scheme but no module in the test matrix supports it. No test exists.
-- [GAP] XMSS/XMSS-MT (CKM_XMSS_KEY_PAIR_GEN, CKM_XMSS, CKM_XMSS_MT_KEY_PAIR_GEN, CKM_XMSS_MT) — spec defines these hash-based stateful signature schemes. No module supports them yet.
+**CORRECTION (2026-04-02):** HSS/XMSS/XMSSMT already have comprehensive tests in test_stateful_sigs.py and full registry entries in mechanism_registry/_pqc.py:397-437. Original audit incorrectly stated "no tests".
+
+- [CLOSED] ~~HSS/XMSS/XMSSMT no tests~~ — comprehensive tests exist in test_stateful_sigs.py + registry in _pqc.py:397-437.
 - [GAP] Mechanism objects (CKO_MECHANISM) — v3.2 introduces mechanism objects for runtime mechanism querying. test_mechanism_objects.py exists but may only probe availability.
 - [NOTED] All remaining TODOs in test_remaining_gaps.py should be reviewed and either implemented or documented with justification.
 

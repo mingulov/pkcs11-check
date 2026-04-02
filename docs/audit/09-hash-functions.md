@@ -21,11 +21,13 @@
 
 ### Coverage Gaps
 
-- [GAP] `CKM_SHAKE_128`, `CKM_SHAKE_256` — permanently skipped. Require `C_DigestXof*` functions which are not in the v3.2 header. ACVP SHAKE vectors exist but `pytest.skip` at load time.
-- [GAP] `CKM_SHA512_T` — no test exercises the truncation parameter. Requires `CK_MAC_GENERAL_PARAMS` with desired output length.
-- [GAP] `C_DigestXof*` functions — not implemented in raw bindings, blocking all XOF mechanism testing.
-- [GAP] RIPEMD-128/160 — only covered by parametrized test_mech_digest if module advertises; no dedicated tests.
-- [GAP] Multipart digest streaming — `test_mech_multipart.py` covers this, but SHAKE variants are excluded.
+**CORRECTION (2026-04-02):** CKM_SHAKE_128/256 as digest mechanisms and C_DigestXof* functions are NOT in the PKCS#11 v3.2 header. Only CKM_SHAKE_128/256_KEY_DERIVE exist. The OASIS spec markdown describes future/draft functionality not yet standardized. These gaps are CLOSED as "not in v3.2".
+
+- [CLOSED] ~~`CKM_SHAKE_128`, `CKM_SHAKE_256` digest~~ — NOT in v3.2 header. Only KEY_DERIVE variants exist.
+- [CLOSED] ~~`C_DigestXof*` functions~~ — NOT in v3.2 header.
+- [GAP] `CKM_SHA512_T` — no test exercises the truncation parameter.
+- [GAP] RIPEMD-128/160 — only covered by parametrized test_mech_digest if module advertises.
+- [GAP] Multipart digest streaming — SHAKE variants excluded (correctly, since SHAKE digest not in v3.2).
 
 ## Changes Made
 

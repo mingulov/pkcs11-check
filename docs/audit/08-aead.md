@@ -11,6 +11,8 @@
 - [NOTED] AES-GCM implementation is thorough: cross-verification, roundtrip, AAD, tamper detection, nonce uniqueness all tested.
 - [NOTED] Standalone Poly1305 MAC correctly tested: sign/verify, tamper detection, key independence.
 
+**CORRECTION (2026-04-02):** CKM_AES_GMAC already has test coverage in: test_wycheproof_aes.py:348 (Wycheproof), acvp/aes/test_gcm.py:203 (ACVP), test_mech_message.py:210 (message API). Original audit incorrectly stated "zero coverage" for GMAC.
+
 ### Coverage Gaps
 
 - [GAP] `CKM_SALSA20_POLY1305` — zero test coverage. No roundtrip, no AAD, no tamper detection. Spec fully defines this mechanism.
