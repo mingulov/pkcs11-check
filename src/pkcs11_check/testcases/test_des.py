@@ -31,6 +31,7 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     generate_random,
+    read_attributes,
     sign_single,
     verify_single,
 )
@@ -39,8 +40,11 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_DECRYPT,
     CKA_ENCRYPT,
+    CKA_EXTRACTABLE,
+    CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
+    CKA_VALUE,
     CKA_VERIFY,
     CKM_DES2_KEY_GEN,
     CKM_DES3_CBC,
@@ -1021,3 +1025,43 @@ class TestDESKeyDerivation:
         if not rs.has_mechanism("DES3_CBC_ENCRYPT_DATA"):
             pytest.skip("CKM_DES3_CBC_ENCRYPT_DATA not supported")
         assert True
+
+
+# DES weak keys (before parity adjustment) — 4 weak + 12 semi-weak
+_DES_WEAK_KEYS = frozenset([
+    bytes.fromhex("0101010101010101"),
+    bytes.fromhex("FEFEFEFEFEFEFEFE"),
+    bytes.fromhex("E0E0E0E0F1F1F1F1"),
+    bytes.fromhex("1F1F1F1F0E0E0E0E"),
+])
+
+
+class TestDESWeakKeys:
+    """DES weak key detection — generated keys should not be weak."""
+
+    def test_des_keygen_avoids_weak_keys(self, p11_raw_session: Any) -> None:
+        """Generated DES keys must not be weak or semi-weak keys."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("DES_KEY_GEN"):
+            pytest.skip("CKM_DES_KEY_GEN not supported")
+
+        # Generate multiple keys and check none are weak
+        for _ in range(10):
+            key = _gen_des_key(
+                rs.raw, rs.sh, CKM_DES_KEY_GEN,
+                {
+                    CKA_ENCRYPT: True,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                },
+            )
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+                val = attrs[CKA_VALUE]
+                assert isinstance(val, bytes) and len(val) == 8
+                assert val not in _DES_WEAK_KEYS, (
+                    f"Generated DES key is a known weak key: {val.hex()}"
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, key)
