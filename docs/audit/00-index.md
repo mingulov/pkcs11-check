@@ -162,12 +162,14 @@
 | 14 | HMAC_GENERAL variable output length test (1/4/8/12/16 bytes) | test_aes_modes.py |
 | 15 | Config precedence fix: CLI defaults no longer override TOML/env | fixtures.py, plugin.py |
 
-### Remaining (lower priority)
+| 17 | CK_NOTIFY callback test + verified CKR priority tests already exist | test_session_edge_cases.py |
 
-- PQC cross-verification — covered by ACVP + Wycheproof vectors (closed)
-- Message-based API decrypt/sign/verify — already implemented in test_mech_message.py (closed)
-- CKR error priority ordering tests
-- Callback functions (CK_NOTIFY) testing
+### All gaps resolved
+
+- PQC cross-verification — covered by ACVP + Wycheproof vectors
+- Message-based API decrypt/sign/verify — already in test_mech_message.py
+- CKR error priority ordering — already in test_ckr_priority.py (3 tests)
+- Callback functions — CK_NOTIFY null callback acceptance test added
 
 ### Closed (NOT in PKCS#11 v3.2)
 
