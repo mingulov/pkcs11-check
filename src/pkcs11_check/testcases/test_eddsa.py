@@ -221,3 +221,92 @@ class TestEdDSACrossVerify:
 
         pub_crypto = Ed25519PublicKey.from_public_bytes(raw_key)
         pub_crypto.verify(sig, data)  # raises on failure
+
+
+# ---------------------------------------------------------------------------
+# Ed448 tests
+# ---------------------------------------------------------------------------
+
+ED448_OID = encode_named_curve_parameters("ed448")
+
+
+def _gen_ed448(rs: Any) -> tuple[int, int]:
+    """Generate Ed448 keypair via raw C_GenerateKeyPair."""
+    return gen_keypair(
+        rs.raw,
+        rs.sh,
+        CKM_EC_EDWARDS_KEY_PAIR_GEN,
+        pub_base=[attr_bytes(CKA_EC_PARAMS, ED448_OID)],
+        priv_base=[],
+        public_attrs={
+            CKA_VERIFY: True,
+            CKA_TOKEN: False,
+        },
+        private_attrs={
+            CKA_SIGN: True,
+            CKA_TOKEN: False,
+        },
+        pub_skip={CKA_EC_PARAMS},
+    )
+
+
+@pytest.fixture()
+def ed448_keypair(p11_raw_session: Any) -> tuple[int, int]:
+    """Generate Ed448 keypair, skip if unsupported."""
+    rs = p11_raw_session
+    if not rs.has_mechanism("EDDSA"):
+        pytest.skip("EDDSA mechanism not supported")
+    try:
+        return _gen_ed448(rs)
+    except (AssertionError, OSError):
+        pytest.skip("Ed448 keygen not available")
+        raise  # unreachable, satisfies mypy
+
+
+class TestEd448:
+    """Ed448 key generation, signing, and verification."""
+
+    def test_ed448_keygen(self, p11_raw_session: Any, ed448_keypair: tuple[int, int]) -> None:
+        """Generate Ed448 key pair."""
+        pub, priv = ed448_keypair
+        assert pub != 0
+        assert priv != 0
+
+    def test_ed448_key_type(self, p11_raw_session: Any, ed448_keypair: tuple[int, int]) -> None:
+        """Ed448 key type is CKK_EC_EDWARDS."""
+        rs = p11_raw_session
+        pub, _ = ed448_keypair
+        attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
+        assert attrs[CKA_KEY_TYPE] == int(CKK_EC_EDWARDS)
+
+    def test_sign_verify_roundtrip(
+        self, p11_raw_session: Any, ed448_keypair: tuple[int, int]
+    ) -> None:
+        """Sign and verify with Ed448."""
+        rs = p11_raw_session
+        pub, priv = ed448_keypair
+        data = b"Ed448 sign-verify test data"
+        signature = _sign_eddsa(rs, priv, data)
+        assert len(signature) == 114, f"Ed448 signature must be 114 bytes, got {len(signature)}"
+        result = _verify_eddsa(rs, pub, data, signature)
+        assert result is True
+
+    def test_wrong_data_fails(
+        self, p11_raw_session: Any, ed448_keypair: tuple[int, int]
+    ) -> None:
+        """Verification with wrong data must fail."""
+        rs = p11_raw_session
+        pub, priv = ed448_keypair
+        sig = _sign_eddsa(rs, priv, b"original data")
+        result = _verify_eddsa(rs, pub, b"tampered data", sig)
+        assert result is False
+
+    def test_signature_length(
+        self, p11_raw_session: Any, ed448_keypair: tuple[int, int]
+    ) -> None:
+        """Ed448 signatures are always exactly 114 bytes."""
+        rs = p11_raw_session
+        _, priv = ed448_keypair
+        for data in [b"", b"x", b"a" * 1000]:
+            sig = _sign_eddsa(rs, priv, data)
+            assert len(sig) == 114
