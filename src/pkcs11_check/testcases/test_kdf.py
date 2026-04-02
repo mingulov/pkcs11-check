@@ -17,6 +17,7 @@ import pytest
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh, mech_hkdf
+from pkcs11_check.raw.pack_mechanisms import mech_string_data
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
@@ -35,15 +36,22 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
     CKA_VALUE,
+    CKA_VALUE_LEN,
     CKD_NULL,
     CKK_GENERIC_SECRET,
     CKK_SHA256_HMAC,
     CKK_SHA512_HMAC,
     CKM_ECDH1_DERIVE,
     CKM_HKDF_DERIVE,
+    CKM_SHA3_224_KEY_DERIVE,
+    CKM_SHA3_256_KEY_DERIVE,
+    CKM_SHA3_384_KEY_DERIVE,
+    CKM_SHA3_512_KEY_DERIVE,
     CKM_SHA256,
     CKM_SHA256_HMAC,
     CKM_SHA512_HMAC,
+    CKM_SHAKE_128_KEY_DERIVE,
+    CKM_SHAKE_256_KEY_DERIVE,
     CKO_SECRET_KEY,
 )
 
@@ -294,3 +302,109 @@ class TestECDHDerive:
                 destroy_quietly(rs.raw, rs.sh, shared_ab)
             if shared_ac:
                 destroy_quietly(rs.raw, rs.sh, shared_ac)
+
+
+# ---------------------------------------------------------------------------
+# SHA-3 / SHAKE hash-based key derivation
+# ---------------------------------------------------------------------------
+
+_SHA3_SHAKE_DERIVE_MECHS = [
+    ("SHA3_224_KEY_DERIVE", CKM_SHA3_224_KEY_DERIVE),
+    ("SHA3_256_KEY_DERIVE", CKM_SHA3_256_KEY_DERIVE),
+    ("SHA3_384_KEY_DERIVE", CKM_SHA3_384_KEY_DERIVE),
+    ("SHA3_512_KEY_DERIVE", CKM_SHA3_512_KEY_DERIVE),
+    ("SHAKE_128_KEY_DERIVE", CKM_SHAKE_128_KEY_DERIVE),
+    ("SHAKE_256_KEY_DERIVE", CKM_SHAKE_256_KEY_DERIVE),
+]
+
+
+class TestSHA3ShakeKeyDerive:
+    """SHA3/SHAKE hash-based key derivation (CKM_SHA3_*_KEY_DERIVE, CKM_SHAKE_*_KEY_DERIVE)."""
+
+    @pytest.mark.parametrize(
+        "mech_name,ckm",
+        _SHA3_SHAKE_DERIVE_MECHS,
+        ids=[m[0] for m in _SHA3_SHAKE_DERIVE_MECHS],
+    )
+    def test_derive_produces_key(self, p11_raw_session: Any, mech_name: str, ckm: int) -> None:
+        """Derive a key using hash-based derivation and verify it's usable."""
+        rs = p11_raw_session
+        if not rs.has_mechanism(mech_name):
+            pytest.skip(f"{mech_name} not supported")
+
+        base_key = _import_generic_secret(rs, b"SHA3/SHAKE derive base key material!")
+        derived = 0
+        try:
+            mech_param = mech_string_data(ckm, b"derivation data input")
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                base_key,
+                ckm,
+                attrs={
+                    CKA_CLASS: int(CKO_SECRET_KEY),
+                    CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),
+                    CKA_VALUE_LEN: 32,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                },
+                mech_param=mech_param,
+            )
+            assert derived != 0
+            # Verify derived key has value
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(val, bytes) and len(val) == 32
+        finally:
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            destroy_quietly(rs.raw, rs.sh, base_key)
+
+    @pytest.mark.parametrize(
+        "mech_name,ckm",
+        _SHA3_SHAKE_DERIVE_MECHS,
+        ids=[m[0] for m in _SHA3_SHAKE_DERIVE_MECHS],
+    )
+    def test_derive_deterministic(self, p11_raw_session: Any, mech_name: str, ckm: int) -> None:
+        """Same base key + same data → same derived key value."""
+        rs = p11_raw_session
+        if not rs.has_mechanism(mech_name):
+            pytest.skip(f"{mech_name} not supported")
+
+        base_key = _import_generic_secret(rs, b"determinism test key material!!")
+        d1 = d2 = 0
+        try:
+            data = b"same derivation data"
+            d1 = derive_key(
+                rs.raw, rs.sh, base_key, ckm,
+                attrs={
+                    CKA_CLASS: int(CKO_SECRET_KEY),
+                    CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),
+                    CKA_VALUE_LEN: 16,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                },
+                mech_param=mech_string_data(ckm, data),
+            )
+            d2 = derive_key(
+                rs.raw, rs.sh, base_key, ckm,
+                attrs={
+                    CKA_CLASS: int(CKO_SECRET_KEY),
+                    CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),
+                    CKA_VALUE_LEN: 16,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                },
+                mech_param=mech_string_data(ckm, data),
+            )
+            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
+            assert v1 == v2, "Same input must produce same derived key"
+        finally:
+            if d1:
+                destroy_quietly(rs.raw, rs.sh, d1)
+            if d2:
+                destroy_quietly(rs.raw, rs.sh, d2)
+            destroy_quietly(rs.raw, rs.sh, base_key)
