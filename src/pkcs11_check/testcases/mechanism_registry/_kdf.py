@@ -33,6 +33,12 @@ from pkcs11_check.raw.types_std import (
     CKM_NULL,
     CKM_PKCS5_PBKD2,
     CKM_PUB_KEY_FROM_PRIV_KEY,
+    CKM_SHA3_224_KEY_DERIVE,
+    CKM_SHA3_256_KEY_DERIVE,
+    CKM_SHA3_384_KEY_DERIVE,
+    CKM_SHA3_512_KEY_DERIVE,
+    CKM_SHAKE_128_KEY_DERIVE,
+    CKM_SHAKE_256_KEY_DERIVE,
     CKM_SP800_108_COUNTER_KDF,
     CKM_SP800_108_DOUBLE_PIPELINE_KDF,
     CKM_SP800_108_FEEDBACK_KDF,
@@ -570,6 +576,28 @@ def populate(registry: dict[int, MechConfig]) -> None:
         expected_flags=CKF_DERIVE,
         notes="Extract a subset of bytes from key value to create new key",
     )
+
+    # ---------------------------------------------------------------------------
+    # SHA-3 / SHAKE hash-based key derivation
+    # ---------------------------------------------------------------------------
+
+    for _ckm, _note in [
+        (CKM_SHA3_224_KEY_DERIVE, "SHA3-224 hash-based key derivation"),
+        (CKM_SHA3_256_KEY_DERIVE, "SHA3-256 hash-based key derivation"),
+        (CKM_SHA3_384_KEY_DERIVE, "SHA3-384 hash-based key derivation"),
+        (CKM_SHA3_512_KEY_DERIVE, "SHA3-512 hash-based key derivation"),
+        (CKM_SHAKE_128_KEY_DERIVE, "SHAKE-128 hash-based key derivation"),
+        (CKM_SHAKE_256_KEY_DERIVE, "SHAKE-256 hash-based key derivation"),
+    ]:
+        registry[_ckm] = MechConfig(
+            key_type=CKK_GENERIC_SECRET,
+            keygen_mech=CKM_GENERIC_SECRET_KEY_GEN,
+            key_sizes=(),
+            param_required=True,
+            keygen_recipe=_sym,
+            expected_flags=CKF_DERIVE,
+            notes=_note,
+        )
 
     registry[CKM_PUB_KEY_FROM_PRIV_KEY] = MechConfig(
         key_type=CKK_EC,
