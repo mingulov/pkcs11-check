@@ -212,3 +212,36 @@ class TestSoftHSM2IssueRegressions:
 
 # Need CKA_VALUE_LEN for the generate key test
 from pkcs11_check.raw.types_std import CKA_VALUE_LEN  # noqa: E402
+
+
+class TestCKNotifyCallback:
+    """Test that C_OpenSession accepts CK_NOTIFY callback parameter.
+
+    Per OASIS spec, C_OpenSession takes a notification callback (CK_NOTIFY)
+    and an application pointer.  Most modules ignore the callback, but they
+    must accept it without error.
+    """
+
+    def test_open_session_with_null_callback(self, p11_raw_session: Any) -> None:
+        """C_OpenSession with NULL CK_NOTIFY (standard usage) succeeds."""
+        from pkcs11_check.raw.types_std import (
+            CK_NOTIFY,
+            CK_SESSION_HANDLE,
+            CKF_RW_SESSION,
+            CKF_SERIAL_SESSION,
+            CKR_OK,
+        )
+
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+        sh = CK_SESSION_HANDLE(0)
+        # Pass explicit CK_NOTIFY() (null callback) and NULL application pointer
+        rv = rs.raw.C_OpenSession(rs.slot_id, flags, None, CK_NOTIFY(), byref(sh))
+        if rv == CKR_OK:
+            close_session_quietly(rs.raw, sh.value)
+        else:
+            # Some modules limit concurrent sessions — acceptable
+            ckr = ckr_name(rv)
+            assert "SESSION_COUNT" in ckr or "PARALLEL" in ckr, (
+                f"C_OpenSession with null CK_NOTIFY failed unexpectedly: {ckr}"
+            )
