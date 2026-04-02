@@ -54,7 +54,7 @@ class TestECKeygen:
     @pytest.mark.parametrize(
         "curve_name,_,__,___",
         _EC_CURVES,
-        ids=["P-224", "P-256", "P-384", "P-521"],
+        ids=["P-224", "P-256", "secp256k1", "P-384", "P-521"],
     )
     def test_ec_keygen(
         self, p11_raw_session: Any, curve_name: str, _: int, __: Any, ___: Any
@@ -72,7 +72,7 @@ class TestECKeygen:
     @pytest.mark.parametrize(
         "curve_name,_,__,___",
         _EC_CURVES,
-        ids=["P-224", "P-256", "P-384", "P-521"],
+        ids=["P-224", "P-256", "secp256k1", "P-384", "P-521"],
     )
     def test_ec_key_type(
         self, p11_raw_session: Any, curve_name: str, _: int, __: Any, ___: Any
@@ -94,7 +94,7 @@ class TestECDSACrossVerify:
     @pytest.mark.parametrize(
         "curve_name,coord_size,crypto_curve,hash_algo",
         _EC_CURVES,
-        ids=["P-224", "P-256", "P-384", "P-521"],
+        ids=["P-224", "P-256", "secp256k1", "P-384", "P-521"],
     )
     def test_ecdsa_sign_p11_verify_crypto(
         self,
