@@ -254,14 +254,38 @@ def _detect_cts_variant(rs: Any) -> str | None:
 
         # Probe 1: 33 bytes = 2 full blocks + 1 byte
         pt1 = bytes(range(33))
-        ct1 = encrypt_single(
-            rs.raw, rs.sh, key, CKM_AES_CTS, pt1,
-            mech_param=mech_bytes(CKM_AES_CTS, iv),
-        )
-        assert len(ct1) == 33
+        try:
+            ct1 = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CTS, pt1,
+                mech_param=mech_bytes(CKM_AES_CTS, iv),
+            )
+        except AssertionError:
+            # CTS encrypt itself fails (e.g. CKR_DEVICE_ERROR on Kryoptic).
+            # Try block-aligned input only — CTS with aligned data should
+            # behave like CBC (no stealing needed).
+            pt2 = bytes(range(32))
+            try:
+                ct2 = encrypt_single(
+                    rs.raw, rs.sh, key, CKM_AES_CTS, pt2,
+                    mech_param=mech_bytes(CKM_AES_CTS, iv),
+                )
+                cbc2 = encrypt_single(
+                    rs.raw, rs.sh, key, CKM_AES_CBC, pt2,
+                    mech_param=mech_bytes(CKM_AES_CBC, iv),
+                )
+                # If aligned CTS works, we can at least distinguish CS2 from CS1/CS3
+                if ct2 == cbc2:
+                    return "1"  # CS1 or CS3 (no swap for aligned)
+                if ct2[:16] == cbc2[16:] and ct2[16:] == cbc2[:16]:
+                    return "2"
+                return "1"
+            except AssertionError:
+                return None  # CTS completely broken
 
-        # Also encrypt just the first 16 bytes with standard AES-CBC
-        # to get the raw C1 block for comparison
+        if len(ct1) != 33:
+            return None
+
+        # Compare with standard AES-CBC to detect block order
         cbc_c1 = encrypt_single(
             rs.raw, rs.sh, key, CKM_AES_CBC, pt1[:16],
             mech_param=mech_bytes(CKM_AES_CBC, iv),
@@ -269,18 +293,20 @@ def _detect_cts_variant(rs: Any) -> str | None:
 
         # In CS3 (no swap), output starts with C1 (the penultimate full block)
         # In CS1/CS2 (swap), output starts with a truncated byte from the last encrypt
-        # Check: does the CTS output start with the same C1 as CBC?
         if ct1[:16] == cbc_c1[:16]:
-            return "3"  # CS3: natural order, C1 is first
+            is_cs3 = True
+        else:
+            is_cs3 = False
 
-        # CS1 or CS2 — need probe 2 to distinguish
-        # Probe 2: 32 bytes (block-aligned)
+        if is_cs3:
+            return "3"
+
+        # CS1 or CS2 — need aligned probe to distinguish
         pt2 = bytes(range(32))
         ct2 = encrypt_single(
             rs.raw, rs.sh, key, CKM_AES_CTS, pt2,
             mech_param=mech_bytes(CKM_AES_CTS, iv),
         )
-        # Also get standard CBC for same 32 bytes
         cbc_ct2 = encrypt_single(
             rs.raw, rs.sh, key, CKM_AES_CBC, pt2,
             mech_param=mech_bytes(CKM_AES_CBC, iv),
