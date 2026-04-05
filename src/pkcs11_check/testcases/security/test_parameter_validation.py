@@ -233,9 +233,8 @@ class TestGcmAadNullWithLength:
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("AES_GCM not supported")
         preamble = subprocess_session_preamble(
-            str(p11_config.module_path),
-            slot_id=p11_config.slot_id,
-            pin=str(p11_config.pin) if p11_config.pin else None,
+            str(p11_config.module),
+            pin=p11_config.pin.get_secret_value() if p11_config.pin else None,
         )
         script = preamble + '''
 import ctypes
