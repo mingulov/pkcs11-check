@@ -31,7 +31,6 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VERIFY,
     CKF_ENCRYPT,
-    CKM,
     CKM_MD5_RSA_PKCS,
     CKM_RSA_PKCS,
     CKM_SHA1_RSA_PKCS,
@@ -199,7 +198,7 @@ class TestDeprecatedMechanismOperation:
         self,
         p11_raw_session: Any,
         mech_name: str,
-        mech_id: CKM,
+        mech_id: Any,
         key_type: str,
     ) -> None:
         """Attempt a sign operation with a deprecated mechanism."""
