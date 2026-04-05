@@ -55,23 +55,6 @@ try:
     mod_len = len(mod_bytes)
 """
 
-_RSA_KEYGEN_SIGN = """\
-from pkcs11_check.raw.recipes import gen_rsa_keypair, read_attributes, destroy_quietly
-from pkcs11_check.raw.types_std import (
-    CKA_MODULUS, CKA_TOKEN, CKA_SIGN, CKA_VERIFY,
-)
-
-pub, priv = gen_rsa_keypair(
-    raw, sh, 2048,
-    private_attrs={int(CKA_SIGN): True, int(CKA_TOKEN): False},
-    public_attrs={int(CKA_VERIFY): True, int(CKA_TOKEN): False},
-)
-try:
-    attrs = read_attributes(raw, sh, pub, [int(CKA_MODULUS)])
-    mod_bytes = attrs[int(CKA_MODULUS)]
-    mod_len = len(mod_bytes)
-"""
-
 _RSA_CLEANUP = """\
 finally:
     destroy_quietly(raw, sh, pub)
