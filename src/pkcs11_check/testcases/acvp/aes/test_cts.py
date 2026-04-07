@@ -232,10 +232,6 @@ def _handle_cts_error(exc: AssertionError, vec_id: str, direction: str) -> None:
             ComplianceLevel.CRITICAL,
             reference="PKCS#11 v3.1 CKM_AES_CTS",
         )
-        pytest.xfail(
-            f"MODULE BUG: CKM_AES_CTS {direction} returned CKR_DEVICE_ERROR "
-            f"for {vec_id}"
-        )
     raise
 
 

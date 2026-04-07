@@ -31,13 +31,15 @@ from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
 
 # CKR errors that indicate the module correctly rejected invalid ciphertext
 # during unwrap integrity checking.  OpenSSL-backed modules often return
-# CKR_GENERAL_ERROR instead of the more specific CKR codes.
+# CKR_GENERAL_ERROR instead of the more specific CKR codes.  Kryoptic
+# returns CKR_DEVICE_ERROR for integrity check failures.
 _UNWRAP_REJECT_ERRORS = (
     "CKR_ENCRYPTED_DATA_INVALID",
     "CKR_ENCRYPTED_DATA_LEN_RANGE",
     "CKR_GENERAL_ERROR",
     "CKR_FUNCTION_FAILED",
     "CKR_WRAPPED_KEY_INVALID",
+    "CKR_DEVICE_ERROR",
 )
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
@@ -57,8 +59,17 @@ def _hex(data: bytes) -> str:
 # =============================================================================
 
 
+def _is_cipher_variant(v: dict[str, Any]) -> bool:
+    """True if the vector uses the standard (forward) cipher, not inverse."""
+    return v.get("kw_cipher") != "inverse"
+
+
 def _load_kw_vectors() -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]]:
-    """Load AES-KW ACVP vectors."""
+    """Load AES-KW ACVP vectors.
+
+    Inverse cipher variants (kwCipher=inverse, per SP 800-38F) are excluded:
+    PKCS#11 CKM_AES_KEY_WRAP always uses the standard (forward) cipher.
+    """
     encrypt_fields = {
         "key": "key",
         "pt": "pt",
@@ -69,7 +80,14 @@ def _load_kw_vectors() -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str
         "ct": "ct",
         "pt_expected": "pt",
     }
-    return _load_vectors("ACVP-AES-KW-1.0", encrypt_fields, decrypt_fields)
+    enc, dec = _load_vectors(
+        "ACVP-AES-KW-1.0", encrypt_fields, decrypt_fields,
+        extra_group_fields={"kw_cipher": "kwCipher"},
+    )
+    return (
+        [(vid, v) for vid, v in enc if _is_cipher_variant(v)],
+        [(vid, v) for vid, v in dec if _is_cipher_variant(v)],
+    )
 
 
 _KW_ENCRYPT_VECTORS, _KW_DECRYPT_VECTORS = _load_kw_vectors()
@@ -164,7 +182,7 @@ def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, An
 def _load_kwp_vectors() -> tuple[
     list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]
 ]:
-    """Load AES-KWP ACVP vectors."""
+    """Load AES-KWP ACVP vectors (forward cipher only, see _load_kw_vectors)."""
     encrypt_fields = {
         "key": "key",
         "pt": "pt",
@@ -175,7 +193,14 @@ def _load_kwp_vectors() -> tuple[
         "ct": "ct",
         "pt_expected": "pt",
     }
-    return _load_vectors("ACVP-AES-KWP-1.0", encrypt_fields, decrypt_fields)
+    enc, dec = _load_vectors(
+        "ACVP-AES-KWP-1.0", encrypt_fields, decrypt_fields,
+        extra_group_fields={"kw_cipher": "kwCipher"},
+    )
+    return (
+        [(vid, v) for vid, v in enc if _is_cipher_variant(v)],
+        [(vid, v) for vid, v in dec if _is_cipher_variant(v)],
+    )
 
 
 _KWP_ENCRYPT_VECTORS, _KWP_DECRYPT_VECTORS = _load_kwp_vectors()
@@ -194,6 +219,7 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     try:
         key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
         mech = mech_simple(CKM_AES_KEY_WRAP_KWP)
+        # KWP pads to 8-byte boundary then adds 8-byte header; max overhead = 15.
         ct = encrypt_single(
             rs.raw,
             rs.sh,
@@ -201,7 +227,7 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
             CKM_AES_KEY_WRAP_KWP,
             vec["pt"],
             mech_param=mech,
-            output_overhead=8,
+            output_overhead=16,
         )
 
         assert ct == vec["ct_expected"], (
