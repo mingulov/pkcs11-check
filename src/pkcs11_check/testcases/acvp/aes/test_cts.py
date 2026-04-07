@@ -42,7 +42,13 @@ pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 def _load_cbc_cs_vectors(
     cs_version: str,
 ) -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]]:
-    """Load AES-CBC-CS1/CS2/CS3 ACVP vectors."""
+    """Load AES-CBC-CS1/CS2/CS3 ACVP vectors.
+
+    Vectors with non-byte-aligned payloadLen are excluded: PKCS#11
+    CKM_AES_CTS operates on whole bytes, but ACVP CBC-CS vectors may
+    specify bit-level payloads.  The CTS "stealing" portion changes
+    size when rounded to bytes, producing different ciphertext.
+    """
     encrypt_fields = {
         "key": "key",
         "iv": "iv",
@@ -63,8 +69,16 @@ def _load_cbc_cs_vectors(
         extra_group_fields={"payload_len_bits": "payloadLen"},
     )
 
-    encrypt_vecs = [(f"CBC-CS{cs_version}-{vid}", v) for vid, v in encrypt_vecs]
-    decrypt_vecs = [(f"CBC-CS{cs_version}-{vid}", v) for vid, v in decrypt_vecs]
+    def _byte_aligned(v: dict[str, Any]) -> bool:
+        pl = v.get("payload_len_bits")
+        return pl is None or pl % 8 == 0
+
+    encrypt_vecs = [
+        (f"CBC-CS{cs_version}-{vid}", v) for vid, v in encrypt_vecs if _byte_aligned(v)
+    ]
+    decrypt_vecs = [
+        (f"CBC-CS{cs_version}-{vid}", v) for vid, v in decrypt_vecs if _byte_aligned(v)
+    ]
 
     return encrypt_vecs, decrypt_vecs
 
