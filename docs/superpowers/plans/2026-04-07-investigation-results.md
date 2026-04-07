@@ -17,7 +17,12 @@
 | F6 | `test_wycheproof_rsa_oaep.py` | `_mgf_sha` key name typo in error message | Cosmetic | Fixed |
 | F7 | `acvp/aes/test_cts.py` | CTS variant detection misclassifies NSS as CS3 | 399F (NSS) | Fixed |
 
-**Estimated total false failures eliminated:** ~1,622 across all providers
+| F8 | `test_mech_derive.py` | `CKZ_SALT_SPECIFIED` used instead of HKDF salt_type | 1F (kryoptic) | Fixed |
+| F9 | `test_mech_lifecycle.py` | Same HKDF salt_type bug | 1F (kryoptic) | Fixed |
+| F10 | `test_interop_openssl.py` | Missing `shutil.which("openssl")` guard | 3F (nss+ock+softhsm2) | Fixed |
+| F11 | `wycheproof/test_wycheproof.py` | GCM 257B IV rejection should be compliance note | 9F (3 providers) | Fixed |
+
+**Estimated total false failures eliminated:** ~1,636 across all providers
 
 ---
 
