@@ -398,16 +398,24 @@ def gen_keypair_for_mech(
             CKK_ML_DSA,
             CKK_ML_KEM,
             CKK_SLH_DSA,
+            CKM_ML_DSA_KEY_PAIR_GEN,
+            CKM_ML_KEM_KEY_PAIR_GEN,
+            CKM_SLH_DSA_KEY_PAIR_GEN,
             CKP_ML_DSA_65,
             CKP_ML_KEM_768,
             CKP_SLH_DSA_SHA2_128S,
         )
 
         if kt == int(CKK_ML_KEM):
+            keygen_mech = (
+                int(config.keygen_mech)
+                if config.keygen_mech is not None
+                else int(CKM_ML_KEM_KEY_PAIR_GEN)
+            )
             return gen_keypair(
                 rs.raw,
                 rs.sh,
-                entry.mech_id,
+                keygen_mech,
                 pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768)],
                 priv_base=[],
                 public_attrs={CKA_TOKEN: False},
@@ -415,10 +423,15 @@ def gen_keypair_for_mech(
                 pub_skip={CKA_PARAMETER_SET},
             )
         if kt == int(CKK_ML_DSA):
+            keygen_mech = (
+                int(config.keygen_mech)
+                if config.keygen_mech is not None
+                else int(CKM_ML_DSA_KEY_PAIR_GEN)
+            )
             return gen_keypair(
                 rs.raw,
                 rs.sh,
-                entry.mech_id,
+                keygen_mech,
                 pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65)],
                 priv_base=[],
                 public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
@@ -426,10 +439,15 @@ def gen_keypair_for_mech(
                 pub_skip={CKA_PARAMETER_SET},
             )
         if kt == int(CKK_SLH_DSA):
+            keygen_mech = (
+                int(config.keygen_mech)
+                if config.keygen_mech is not None
+                else int(CKM_SLH_DSA_KEY_PAIR_GEN)
+            )
             return gen_keypair(
                 rs.raw,
                 rs.sh,
-                entry.mech_id,
+                keygen_mech,
                 pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_SLH_DSA_SHA2_128S)],
                 priv_base=[],
                 public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
@@ -494,6 +512,12 @@ def generate_key_from_recipe(
         kt = int(config.key_type)
 
         keygen_mech = config.keygen_mech
+        # PKCS5_PBKD2 requires CK_PKCS5_PBKD2_PARAMS (password, salt, iterations)
+        # which the generic keygen fixture cannot provide.
+        if keygen_mech is not None and "PKCS5_PBKD2" in str(CKM(int(keygen_mech))):
+            pytest.skip(
+                f"{entry.mech_name}: PKCS5_PBKD2 requires specialized parameters"
+            )
         if keygen_mech is None:
             if kt == int(CKK_AES):
                 keygen_mech = int(CKM_AES_KEY_GEN)
