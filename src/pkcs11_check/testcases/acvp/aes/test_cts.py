@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -219,6 +220,25 @@ def _skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _handle_cts_error(exc: AssertionError, vec_id: str, direction: str) -> None:
+    """Handle CTS encrypt/decrypt errors with appropriate reporting."""
+    exc_msg = str(exc)
+    if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
+        pytest.skip(f"CBC-CS {direction} not supported: {exc_msg}")
+    if "CKR_DEVICE_ERROR" in exc_msg:
+        note(
+            f"CKM_AES_CTS {direction} returned CKR_DEVICE_ERROR for {vec_id}. "
+            "Module advertises CTS but fails on valid input.",
+            ComplianceLevel.CRITICAL,
+            reference="PKCS#11 v3.1 CKM_AES_CTS",
+        )
+        pytest.xfail(
+            f"MODULE BUG: CKM_AES_CTS {direction} returned CKR_DEVICE_ERROR "
+            f"for {vec_id}"
+        )
+    raise
+
+
 def _run_cbc_cs_encrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """Run AES-CBC-CS encrypt test."""
     rs = p11_raw_session
@@ -234,10 +254,7 @@ def _run_cbc_cs_encrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, A
                 rs.raw, rs.sh, key, CKM_AES_CTS, vec["pt"], mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"CBC-CS encrypt not supported: {exc_msg}")
-            raise
+            _handle_cts_error(exc, vec_id, "encrypt")
 
         assert ct == vec["ct_expected"], (
             f"{vec_id}: ciphertext mismatch.\n"
@@ -264,10 +281,7 @@ def _run_cbc_cs_decrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, A
                 rs.raw, rs.sh, key, CKM_AES_CTS, vec["ct"], mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"CBC-CS decrypt not supported: {exc_msg}")
-            raise
+            _handle_cts_error(exc, vec_id, "decrypt")
 
         assert pt == vec["pt_expected"], (
             f"{vec_id}: plaintext mismatch.\n"
