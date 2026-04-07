@@ -39,6 +39,7 @@ from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_LABEL,
     CKA_MODULUS_BITS,
+    CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_VALUE,
     CKM_AES_CBC,
@@ -174,11 +175,10 @@ class TestCKRAttributeCompliance:
         """Reading VALUE on SENSITIVE key -> CKR_ATTRIBUTE_SENSITIVE (spec).
 
         PKCS#11 v3.1 Sec.4.9.2: C_GetAttributeValue(CKA_VALUE) on a CKA_SENSITIVE=True
-        key MUST return CKR_ATTRIBUTE_SENSITIVE. NSS returns CKR_OK, meaning sensitive
-        key material is readable in clear — a security violation.
+        key MUST return CKR_ATTRIBUTE_SENSITIVE.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
         try:
             tmpl = (CK_ATTRIBUTE * 1)()
             tmpl[0].type = CKA_VALUE
@@ -189,14 +189,14 @@ class TestCKRAttributeCompliance:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
-                    "NSS returns CKR_OK for C_GetAttributeValue(CKA_VALUE) on sensitive key "
+                    "C_GetAttributeValue(CKA_VALUE) returned CKR_OK on CKA_SENSITIVE=True key "
                     "(expected CKR_ATTRIBUTE_SENSITIVE). Sensitive key material is readable.",
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.4.9.2",
                 )
                 pytest.xfail(
-                    "SECURITY: NSS returns CKR_OK for sensitive CKA_VALUE read "
-                    "(expected CKR_ATTRIBUTE_SENSITIVE)"
+                    "SECURITY: module returns CKR_OK for CKA_VALUE read on "
+                    "CKA_SENSITIVE=True key (expected CKR_ATTRIBUTE_SENSITIVE)"
                 )
             _check_ckr(
                 "C_GetAttributeValue(SENSITIVE, VALUE)",

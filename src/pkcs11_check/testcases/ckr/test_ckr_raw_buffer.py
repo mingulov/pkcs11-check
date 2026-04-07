@@ -70,8 +70,10 @@ class TestBufferTooSmall:
 
         PKCS#11 v3.1 Sec.5.10.2: C_Digest with undersized output buffer MUST return
         CKR_BUFFER_TOO_SMALL and update *pulDigestLen with the required size.
-        NSS returns CKR_OK and writes 32 bytes into a 1-byte buffer — potential
-        buffer overflow.
+
+        Uses a 64-byte buffer filled with guard bytes (0xAA) and passes out_len=1.
+        After the call, checks how many guard bytes were overwritten to confirm
+        whether the module actually wrote past the declared buffer boundary.
         """
         rc, out, err = _run_raw(
             str(p11_config.module),
@@ -81,31 +83,48 @@ mech = mech_simple(CKM_SHA256)
 rv = raw.C_DigestInit(sh, mech.byref())
 assert rv == CKR_OK, f"DigestInit: 0x{rv:08x}"
 
+GUARD = 0xAA
+BUF_SIZE = 64
+DECLARED = 1  # Tell C_Digest the buffer is only 1 byte
+
 data = (ctypes.c_ubyte * 16)(*([0x42]*16))
-out = (ctypes.c_ubyte * 1)()  # Too small for SHA-256 (32 bytes)
-out_len = ctypes.c_ulong(1)
-rv = raw.C_Digest(sh, data, 16, out, ctypes.byref(out_len))
+buf = (ctypes.c_ubyte * BUF_SIZE)(*([GUARD]*BUF_SIZE))
+out_len = ctypes.c_ulong(DECLARED)
+rv = raw.C_Digest(sh, data, 16, buf, ctypes.byref(out_len))
 print(f"CKR:0x{rv:08x}")
 print(f"LEN:{out_len.value}")
-# Report result without asserting — outer test checks security compliance
+
+# Count how many bytes were overwritten past the declared boundary
+overwritten = 0
+for i in range(DECLARED, BUF_SIZE):
+    if buf[i] != GUARD:
+        overwritten += 1
+print(f"OVERWRITTEN:{overwritten}")
 print("OK")
 """,
         )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
-        # CKR_OK from C_Digest with a 1-byte buffer = NSS wrote past the end
+        # Parse overflow evidence from subprocess output
+        overwritten = 0
+        for line in out.splitlines():
+            if line.startswith("OVERWRITTEN:"):
+                overwritten = int(line.split(":")[1])
         if "CKR:0x00000000" in out:
             from pkcs11_check.compliance import ComplianceLevel, note
 
+            msg = (
+                f"C_Digest returned CKR_OK with out_len=1 for SHA-256 (needs 32). "
+                f"Guard byte check: {overwritten} bytes overwritten past declared boundary."
+            )
             note(
-                "NSS returns CKR_OK for C_Digest with undersized output buffer (expected "
-                "CKR_BUFFER_TOO_SMALL). Module may have written 32 bytes into a 1-byte buffer.",
+                msg + " PKCS#11 spec requires CKR_BUFFER_TOO_SMALL.",
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.5.10.2",
             )
             pytest.xfail(
-                "SECURITY: NSS returns CKR_OK for C_Digest with 1-byte buffer "
-                "(expected CKR_BUFFER_TOO_SMALL) — potential buffer overflow"
+                f"SECURITY: module returns CKR_OK for C_Digest with 1-byte buffer "
+                f"(expected CKR_BUFFER_TOO_SMALL) — {overwritten} guard bytes overwritten"
             )
 
     def test_encrypt_buffer_too_small(self, p11_config: Any) -> None:

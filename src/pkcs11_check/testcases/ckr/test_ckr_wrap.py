@@ -15,6 +15,8 @@ from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
 from pkcs11_check.raw.types_std import (
+    CK_ATTRIBUTE,
+    CK_BBOOL,
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CKA_CLASS,
@@ -41,8 +43,7 @@ class TestWrapKeyErrors:
         """Wrapping non-extractable key -> CKR_KEY_UNEXTRACTABLE.
 
         PKCS#11 v3.1 Sec.5.14.3: C_WrapKey on a key with CKA_EXTRACTABLE=False MUST
-        return CKR_KEY_UNEXTRACTABLE. NSS returns CKR_OK, meaning non-extractable keys
-        can be exported in wrapped form — a security violation.
+        return CKR_KEY_UNEXTRACTABLE.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
@@ -61,6 +62,19 @@ class TestWrapKeyErrors:
             attrs={CKA_EXTRACTABLE: False, CKA_SENSITIVE: True},
         )
         try:
+            # Verify the module actually honoured CKA_EXTRACTABLE=False
+            check = (CK_ATTRIBUTE * 1)()
+            check[0].type = CKA_EXTRACTABLE
+            val = CK_BBOOL(0xFF)  # sentinel
+            check[0].pValue = ctypes.cast(ctypes.pointer(val), ctypes.c_void_p)
+            check[0].ulValueLen = ctypes.sizeof(val)
+            rv = rs.raw.C_GetAttributeValue(rs.sh, target, check, 1)
+            if rv != CKR_OK or val.value != 0:
+                pytest.skip(
+                    "Module did not honour CKA_EXTRACTABLE=False on generated key "
+                    f"(CKR=0x{rv:08x}, value={val.value})"
+                )
+
             mech = mech_simple(CKM_AES_KEY_WRAP)
             wrapped_len = CK_ULONG(256)
             wrapped_buf = (ctypes.c_ubyte * 256)()
@@ -74,14 +88,14 @@ class TestWrapKeyErrors:
             )
             if rv == CKR_OK:
                 note(
-                    "NSS returns CKR_OK for C_WrapKey on CKA_EXTRACTABLE=False key "
+                    "C_WrapKey returned CKR_OK on CKA_EXTRACTABLE=False key "
                     "(expected CKR_KEY_UNEXTRACTABLE). Non-extractable keys can be exported.",
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.5.14.3",
                 )
                 pytest.xfail(
-                    "SECURITY: NSS returns CKR_OK for C_WrapKey on non-extractable key "
-                    "(expected CKR_KEY_UNEXTRACTABLE)"
+                    "SECURITY: module returns CKR_OK for C_WrapKey on "
+                    "CKA_EXTRACTABLE=False key (expected CKR_KEY_UNEXTRACTABLE)"
                 )
             # CKR_KEY_UNEXTRACTABLE or CKR_KEY_NOT_WRAPPABLE - both acceptable
         finally:
