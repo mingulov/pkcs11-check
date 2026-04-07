@@ -164,7 +164,21 @@ def _detect_cts_variant(rs: Any) -> str | None:
         )
 
         if ct1[:16] == cbc_c1[:16]:
-            return "3"  # CS3: natural order, C1 is first
+            # First block matches CBC(block1) — candidate for CS3.
+            # CS3 format for 33 bytes: C1(16) | C3(16) | C2'(1)
+            # Verify by computing full CBC chain and checking middle bytes
+            # match the last full CBC block (C3).  If they don't, the module
+            # uses a non-standard variant (e.g. NSS) that also preserves C1
+            # but orders the stealing blocks differently.
+            pt1_padded = pt1 + b"\x00" * (48 - len(pt1))  # pad to 3 blocks
+            cbc_full = encrypt_single(
+                rs.raw, rs.sh, key, CKM_AES_CBC, pt1_padded,
+                mech_param=mech_bytes(CKM_AES_CBC, iv),
+            )
+            # In CS3, middle 16 bytes should be C3 (last full CBC block)
+            if ct1[16:32] == cbc_full[32:48]:
+                return "3"
+            return None  # Non-standard variant (first block matches but stealing order differs)
 
         # CS1 or CS2 — need aligned probe to distinguish
         pt2 = bytes(range(32))
