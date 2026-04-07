@@ -570,7 +570,7 @@ class TestAESMAC:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_MAC"):
             pytest.skip("AES_MAC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SIGN: True, CKA_VERIFY: True})
         try:
             data = b"AES-MAC test data for roundtrip verification"
             sig = sign_single(rs.raw, rs.sh, key, CKM_AES_MAC, data)
@@ -585,7 +585,7 @@ class TestAESMAC:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_MAC"):
             pytest.skip("AES_MAC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SIGN: True, CKA_VERIFY: True})
         try:
             sig = sign_single(rs.raw, rs.sh, key, CKM_AES_MAC, b"original")
             ok = verify_single(rs.raw, rs.sh, key, CKM_AES_MAC, b"tampered", sig)
@@ -598,8 +598,8 @@ class TestAESMAC:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_MAC"):
             pytest.skip("AES_MAC not supported")
-        k1 = gen_aes_key(rs.raw, rs.sh, 256)
-        k2 = gen_aes_key(rs.raw, rs.sh, 256)
+        k1 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SIGN: True, CKA_VERIFY: True})
+        k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SIGN: True, CKA_VERIFY: True})
         try:
             data = b"same data different keys"
             sig1 = sign_single(rs.raw, rs.sh, k1, CKM_AES_MAC, data)
