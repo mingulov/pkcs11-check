@@ -1632,9 +1632,17 @@ def _read_jsonl_results(jsonl_path: Path) -> dict[str, Any] | None:
     return _build_detail_from_report_records(records)
 
 
-def _unit_timeout_seconds(test_timeout: int, granularity: IsolationGranularity) -> int:
+def _unit_timeout_seconds(
+    test_timeout: int,
+    granularity: IsolationGranularity,
+    *,
+    num_tests: int = 0,
+) -> int:
     if granularity == "test":
         return max(test_timeout + 60, 120)
+    if num_tests > 0:
+        # 5s per test + 60s startup overhead, floor 300s, cap 14400s (4h)
+        return min(max(num_tests * 5 + 60, 300), 14400)
     return max(test_timeout * 30, 900)
 
 

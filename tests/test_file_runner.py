@@ -3218,3 +3218,19 @@ def test_collection_args_strips_report_log(tmp_path: Path) -> None:
 
     # Always ends with --collect-only -qq
     assert result[-2:] == ["--collect-only", "-qq"]
+
+
+def test_unit_timeout_seconds_with_num_tests() -> None:
+    from pkcs11_check.core.file_runner import _unit_timeout_seconds
+
+    # Per-test granularity ignores num_tests
+    assert _unit_timeout_seconds(120, "test", num_tests=100) == 180
+
+    # Per-file with num_tests uses scaled formula
+    assert _unit_timeout_seconds(120, "file", num_tests=100) == 560  # 100*5+60
+    assert _unit_timeout_seconds(120, "file", num_tests=10) == 300   # floor
+    assert _unit_timeout_seconds(120, "file", num_tests=30000) == 14400  # cap
+
+    # Per-file without num_tests uses legacy formula
+    assert _unit_timeout_seconds(120, "file") == 3600  # 120*30
+    assert _unit_timeout_seconds(120, "file", num_tests=0) == 3600  # same as no num_tests
