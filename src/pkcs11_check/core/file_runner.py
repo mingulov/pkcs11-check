@@ -39,6 +39,7 @@ _DETAIL_COUNT_KEYS = (
     "timeout",
 )
 _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
+_MAX_TIMEOUT_RETRIES = 3
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
 _FINGERPRINT_ENV_PREFIXES = (
@@ -1837,6 +1838,7 @@ def _escalate_current_file(
     env: Mapping[str, str],
     console: Console,
     disabled_nodeids: set[str] | None = None,
+    exclude_nodeids: set[str] | None = None,
     baseline_fingerprint: str | None = None,
 ) -> list[str]:
     try:
@@ -1858,6 +1860,8 @@ def _escalate_current_file(
         if disabled_nodeids
         else nodeids
     )
+    if exclude_nodeids:
+        filtered_nodeids = [n for n in filtered_nodeids if n not in exclude_nodeids]
 
     additions = _insert_escalated_units(
         state,
@@ -2020,9 +2024,7 @@ def run_isolated_pytest_units(
                 )
                 for unit, records in parsed_report_records.items():
                     merged_report_records_by_unit.setdefault(unit, records)
-            merged_details = _build_per_unit_details_from_record_map(
-                merged_report_records_by_unit
-            )
+            merged_details = _build_per_unit_details_from_record_map(merged_report_records_by_unit)
             if report_config.jsonl_path is not None:
                 if merged_report_records_by_unit:
                     _write_report_jsonl_from_record_map(
@@ -2134,20 +2136,249 @@ def run_isolated_pytest_units(
                     )
                     _record_result(state, result)
                     save_run_state(state_file, state)
-                    _promote_crashing_unit(
-                        policy_file,
-                        pytest_args,
-                        env,
-                        unit,
-                        unit_granularity,
-                        "timeout",
-                        console,
-                    )
+
+                    # -- Timeouts do NOT promote to policy (unlike crashes) --
+
+                    # -- Progressive timeout retry for file-level mixed mode --
                     if (
                         granularity == "mixed"
                         and unit_granularity == "file"
                         and not stop_on_failure
                     ):
+                        to_deselect: set[str] = set(unit_disabled_nodeids)
+                        to_accum_detail: dict[str, Any] | None = None
+                        total_retry_dur = 0.0
+                        to_iter_jsonl: Path | None = unit_jsonl_path
+                        to_retry_temps: list[Path] = []
+                        escalate = False
+                        retry_count = 0
+
+                        try:
+                            while retry_count < _MAX_TIMEOUT_RETRIES:
+                                # -- parse JSONL for completed + culprit --
+                                if to_iter_jsonl is not None:
+                                    culprit, completed = _identify_crash_culprit(
+                                        to_iter_jsonl,
+                                    )
+                                    iter_detail = _read_jsonl_results(to_iter_jsonl)
+                                else:
+                                    culprit, completed = None, []
+                                    iter_detail = None
+
+                                to_deselect.update(completed)
+
+                                # Merge partial results
+                                if iter_detail is not None:
+                                    if to_accum_detail is None:
+                                        to_accum_detail = iter_detail
+                                    else:
+                                        for k in to_accum_detail["counts"]:
+                                            to_accum_detail["counts"][k] += iter_detail[
+                                                "counts"
+                                            ].get(k, 0)
+                                        to_accum_detail["tests"].extend(
+                                            iter_detail["tests"],
+                                        )
+                                        for reason, cnt in iter_detail.get(
+                                            "skip_reasons", {}
+                                        ).items():
+                                            to_accum_detail.setdefault("skip_reasons", {})[
+                                                reason
+                                            ] = (
+                                                to_accum_detail.get("skip_reasons", {}).get(
+                                                    reason, 0
+                                                )
+                                                + cnt
+                                            )
+
+                                if culprit:
+                                    # Confirm timeout culprit individually
+                                    console.print(
+                                        f"[yellow]Confirming timeout culprit:[/yellow] {culprit}"
+                                    )
+                                    try:
+                                        confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
+                                            [
+                                                sys.executable,
+                                                "-m",
+                                                "pytest",
+                                                culprit,
+                                                *pytest_args,
+                                            ],
+                                            env=env,
+                                            timeout=_unit_timeout_seconds(timeout, "test"),
+                                        )
+                                    except subprocess.TimeoutExpired:
+                                        confirm_rc = 124
+                                        confirm_out = confirm_err = ""
+                                    confirm_status = _status_from_returncode(confirm_rc)
+                                    culprit_outcome = (
+                                        "timeout"
+                                        if confirm_status == "timeout"
+                                        else "passed-in-isolation"
+                                    )
+                                    to_culprit_entry: dict[str, Any] = {
+                                        "nodeid": culprit,
+                                        "outcome": culprit_outcome,
+                                    }
+                                    if confirm_status == "timeout":
+                                        to_culprit_entry["longrepr"] = (
+                                            confirm_err.strip() or confirm_out.strip()
+                                        )
+                                    if confirm_out.strip():
+                                        to_culprit_entry["stdout"] = confirm_out
+                                    if confirm_err.strip():
+                                        to_culprit_entry["stderr"] = confirm_err
+                                    if to_accum_detail is None:
+                                        to_accum_detail = {
+                                            "counts": {key: 0 for key in _DETAIL_COUNT_KEYS},
+                                            "tests": [],
+                                        }
+                                    to_accum_detail["tests"].append(to_culprit_entry)
+                                    if culprit_outcome == "timeout":
+                                        to_accum_detail["counts"]["timeout"] = (
+                                            to_accum_detail["counts"].get("timeout", 0) + 1
+                                        )
+                                    to_deselect.add(culprit)
+
+                                # -- check exit conditions --
+                                if not culprit and not completed:
+                                    escalate = True
+                                    break
+                                if not to_deselect:
+                                    escalate = True
+                                    break
+
+                                # -- retry file with deselect --
+                                deselect_path = write_deselect_file(to_deselect)
+                                to_retry_temps.append(deselect_path)
+
+                                retry_jsonl_fd, retry_jsonl_raw = tempfile.mkstemp(
+                                    prefix="pkcs11-check-timeout-retry-",
+                                    suffix=".jsonl",
+                                )
+                                os.close(retry_jsonl_fd)
+                                retry_jsonl_path = Path(retry_jsonl_raw)
+                                to_retry_temps.append(retry_jsonl_path)
+
+                                retry_env = dict(env)
+                                retry_env["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
+                                retry_cmd = [
+                                    sys.executable,
+                                    "-m",
+                                    "pytest",
+                                    unit,
+                                    *pytest_args,
+                                    "--report-log",
+                                    str(retry_jsonl_path),
+                                ]
+                                console.print(
+                                    f"[yellow]Adaptive isolation:[/yellow] "
+                                    f"retrying {unit} with "
+                                    f"{len(to_deselect)} tests deselected "
+                                    f"(timeout retry {retry_count + 1}/"
+                                    f"{_MAX_TIMEOUT_RETRIES})"
+                                )
+                                retry_start = time.monotonic()
+                                try:
+                                    retry_rc, retry_out, retry_err = _run_subprocess_tee(
+                                        retry_cmd,
+                                        env=retry_env,
+                                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                                    )
+                                    retry_status = _status_from_returncode(retry_rc)
+                                except subprocess.TimeoutExpired:
+                                    retry_status = "timeout"
+                                    retry_rc = 124
+                                    retry_out = retry_err = ""
+                                retry_dur = time.monotonic() - retry_start
+                                total_retry_dur += retry_dur
+
+                                if retry_status != "timeout":
+                                    # Retry completed (pass or fail) - merge
+                                    final_detail = _read_jsonl_results(retry_jsonl_path)
+                                    if final_detail is not None:
+                                        if to_accum_detail is None:
+                                            to_accum_detail = final_detail
+                                        else:
+                                            for k in to_accum_detail["counts"]:
+                                                to_accum_detail["counts"][k] += final_detail[
+                                                    "counts"
+                                                ].get(k, 0)
+                                            to_accum_detail["tests"].extend(final_detail["tests"])
+
+                                    keep = retry_status != "passed" or (
+                                        to_accum_detail is not None
+                                        and any(
+                                            to_accum_detail["counts"].get(k, 0) > 0
+                                            for k in (
+                                                "failed",
+                                                "xfailed",
+                                                "xpassed",
+                                                "error",
+                                            )
+                                        )
+                                    )
+                                    result = FileRunResult(
+                                        target=unit,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        duration_s=(duration_s + total_retry_dur),
+                                        stdout=(retry_out if keep else ""),
+                                        stderr=(retry_err if keep else ""),
+                                    )
+                                    _record_result(state, result)
+                                    save_run_state(state_file, state)
+                                    if to_accum_detail is not None:
+                                        per_unit_details[unit] = to_accum_detail
+                                    console.print(
+                                        f"[green]RETRY OK[/green] {unit} "
+                                        f"({total_retry_dur:.1f}s, "
+                                        f"{len(to_deselect)} deselected)"
+                                    )
+                                    if retry_status == "failed":
+                                        exit_code = 1
+                                    index += 1
+                                    break  # exit retry loop
+
+                                # Retry also timed out - loop
+                                retry_count += 1
+                                console.print(
+                                    f"[red]RETRY TIMEOUT[/red] {unit} "
+                                    f"(attempt {retry_count}/{_MAX_TIMEOUT_RETRIES})"
+                                )
+                                to_iter_jsonl = retry_jsonl_path
+                                # Continue the while loop
+
+                            else:
+                                # while loop exhausted retries without break
+                                escalate = True
+
+                        finally:
+                            all_iter_jsonls = (
+                                [unit_jsonl_path] if unit_jsonl_path else []
+                            ) + to_retry_temps
+                            if report_config is not None and report_config.jsonl_path is not None:
+                                to_aggr_records: list[dict[str, Any]] = []
+                                for tmp in all_iter_jsonls:
+                                    if not tmp.exists():
+                                        continue
+                                    to_aggr_records.extend(_load_report_log_records(tmp))
+                                report_records_by_unit[unit] = to_aggr_records
+                                state.report_records_by_unit[unit] = to_aggr_records
+                                _write_unit_report_record_cache(state_file, unit, to_aggr_records)
+                                save_run_state(state_file, state)
+                            for tmp in all_iter_jsonls:
+                                tmp.unlink(missing_ok=True)
+
+                        if not escalate:
+                            # Retry loop succeeded
+                            continue
+
+                        # Fall back: escalate remaining tests
+                        if to_accum_detail is not None:
+                            per_unit_details[unit] = to_accum_detail
+
                         escalated_units = _escalate_current_file(
                             unit=unit,
                             units=units,
@@ -2157,6 +2388,7 @@ def run_isolated_pytest_units(
                             env=env,
                             console=console,
                             disabled_nodeids=unit_disabled_nodeids,
+                            exclude_nodeids=to_deselect,
                             baseline_fingerprint=baseline_fingerprint,
                         )
                         if escalated_units:
@@ -2356,8 +2588,7 @@ def run_isolated_pytest_units(
                                     accumulated_detail["tests"].append(culprit_entry)
                                     if culprit_outcome in {"crashed", "timeout"}:
                                         accumulated_detail["counts"][culprit_outcome] = (
-                                            accumulated_detail["counts"].get(culprit_outcome, 0)
-                                            + 1
+                                            accumulated_detail["counts"].get(culprit_outcome, 0) + 1
                                         )
                                     deselect_set.add(culprit)
                                     crash_count += 1
@@ -2576,9 +2807,9 @@ def run_isolated_pytest_units(
                 for unit, records in state.report_records_by_unit.items():
                     merged_report_records_by_unit.setdefault(unit, records)
                 if resume and report_config.jsonl_path.exists():
-                    candidate_targets = (
-                        set(state.units) | {result.target for result in state.results}
-                    )
+                    candidate_targets = set(state.units) | {
+                        result.target for result in state.results
+                    }
                     parsed_report_records = _extract_unit_report_records_from_jsonl(
                         report_config.jsonl_path,
                         candidate_targets=candidate_targets,

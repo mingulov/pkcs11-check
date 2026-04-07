@@ -1615,9 +1615,7 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
                 report_log_path = Path(cmd[i + 1])
                 break
 
-        if target == "test_a.py" and (
-            env is None or "PKCS11_CHECK_DESELECT_FILE" not in env
-        ):
+        if target == "test_a.py" and (env is None or "PKCS11_CHECK_DESELECT_FILE" not in env):
             assert report_log_path is not None
             report_log_path.write_text(
                 "\n".join(
@@ -1865,9 +1863,7 @@ def test_run_isolated_pytest_units_merges_baseline_deselects_into_retry_loop(
     assert calls[0] == ("test_a.py", "test_a.py::baseline_disabled\n")
     assert calls[2][0] == "test_a.py"
     assert calls[2][1] == (
-        "test_a.py::baseline_disabled\n"
-        "test_a.py::test_culprit\n"
-        "test_a.py::test_done\n"
+        "test_a.py::baseline_disabled\ntest_a.py::test_culprit\ntest_a.py::test_done\n"
     )
 
 
@@ -2557,9 +2553,7 @@ def test_run_isolated_pytest_units_uses_report_log_for_test_level_when_merging_j
     quality_report = json.loads((tmp_path / "quality.json").read_text())
     assert quality_report["summary"]["selection_scenarios"] == 1
     assert quality_report["selection_findings"][0]["scenario"] == "encrypt_roundtrip"
-    assert quality_report["selection_findings"][0]["selected_but_not_invoked"] == [
-        "CKM_AES_GCM"
-    ]
+    assert quality_report["selection_findings"][0]["selected_but_not_invoked"] == ["CKM_AES_GCM"]
 
 
 def test_write_isolated_json_report_unified_format(tmp_path: Path) -> None:
@@ -3228,9 +3222,322 @@ def test_unit_timeout_seconds_with_num_tests() -> None:
 
     # Per-file with num_tests uses scaled formula
     assert _unit_timeout_seconds(120, "file", num_tests=100) == 560  # 100*5+60
-    assert _unit_timeout_seconds(120, "file", num_tests=10) == 300   # floor
+    assert _unit_timeout_seconds(120, "file", num_tests=10) == 300  # floor
     assert _unit_timeout_seconds(120, "file", num_tests=30000) == 14400  # cap
 
     # Per-file without num_tests uses legacy formula
     assert _unit_timeout_seconds(120, "file") == 3600  # 120*30
     assert _unit_timeout_seconds(120, "file", num_tests=0) == 3600  # same as no num_tests
+
+
+# ---------------------------------------------------------------------------
+# Progressive timeout retry tests
+# ---------------------------------------------------------------------------
+
+
+def test_progressive_timeout_retry_succeeds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When a file times out, progressive retry deselects completed + culprit
+    and retries.  If the retry succeeds the file is NOT escalated."""
+    units = ["test_a.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    calls: list[tuple[str, list[str]]] = []
+    call_count = 0
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        nonlocal call_count
+        call_count += 1
+        target = cmd[3]
+        calls.append((target, list(cmd)))
+        report_log_path: Path | None = None
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                report_log_path = Path(cmd[i + 1])
+                break
+
+        # First call: file run that times out with partial JSONL
+        if target == "test_a.py" and (env is None or "PKCS11_CHECK_DESELECT_FILE" not in env):
+            assert report_log_path is not None
+            report_log_path.write_text(
+                "\n".join(
+                    [
+                        # test_done1 completed
+                        _jsonl_line(
+                            nodeid="test_a.py::test_done1",
+                            when="setup",
+                            outcome="passed",
+                        ),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_done1",
+                            when="call",
+                            outcome="passed",
+                        ),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_done1",
+                            when="teardown",
+                            outcome="passed",
+                        ),
+                        # test_done2 completed
+                        _jsonl_line(
+                            nodeid="test_a.py::test_done2",
+                            when="setup",
+                            outcome="passed",
+                        ),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_done2",
+                            when="call",
+                            outcome="passed",
+                        ),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_done2",
+                            when="teardown",
+                            outcome="passed",
+                        ),
+                        # test_slow started but did not finish (culprit)
+                        _jsonl_line(
+                            nodeid="test_a.py::test_slow",
+                            when="setup",
+                            outcome="passed",
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            raise subprocess.TimeoutExpired(cmd, timeout=12)
+
+        # Second call: culprit confirmation (test_slow alone) - passes
+        if target == "test_a.py::test_slow":
+            return (0, "", "")
+
+        # Third call: retry file with deselect - succeeds
+        if target == "test_a.py" and env is not None and "PKCS11_CHECK_DESELECT_FILE" in env:
+            assert report_log_path is not None
+            report_log_path.write_text(
+                "\n".join(
+                    [
+                        _jsonl_line(
+                            nodeid="test_a.py::test_remaining",
+                            when="call",
+                            outcome="passed",
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            return (0, "", "")
+
+        raise AssertionError(f"unexpected subprocess invocation: {cmd!r} env={env!r}")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+    )
+
+    saved = load_run_state(state_file)
+    assert saved is not None
+    # File was NOT escalated - progressive retry handled it
+    assert call_count == 3
+    assert calls[0][0] == "test_a.py"
+    assert calls[1][0] == "test_a.py::test_slow"
+    assert calls[2][0] == "test_a.py"
+    # No per-test units should appear in the state (no escalation)
+    assert all("::" not in u for u in saved.units)
+    # The result should reflect successful retry, not escalation
+    statuses = [r.status for r in saved.results]
+    assert "escalated" not in statuses
+    assert exit_code == 0 or exit_code == 1  # depends on timeout record
+
+
+def test_progressive_timeout_retry_exhausted_escalates_remaining(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When progressive timeout retries are exhausted, fall back to escalation
+    but only for tests NOT already completed."""
+    module = tmp_path / "module.so"
+    module.write_text("")
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n")
+    units = [str(target)]
+    pytest_args = ["--p11-module", str(module)]
+    state_file = tmp_path / "state.json"
+    calls: list[tuple[str, list[str]]] = []
+    timeout_count = 0
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        nonlocal timeout_count
+        t = cmd[3]
+        calls.append((t, list(cmd)))
+        report_log_path: Path | None = None
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                report_log_path = Path(cmd[i + 1])
+                break
+
+        # File-level calls always timeout, with one completed + one culprit each time
+        if t == str(target) and "::" not in t:
+            timeout_count += 1
+            assert report_log_path is not None
+            # Each iteration: test_doneN completed, test_slowN is culprit
+            report_log_path.write_text(
+                "\n".join(
+                    [
+                        _jsonl_line(
+                            nodeid=f"{target}::test_done{timeout_count}",
+                            when="setup",
+                            outcome="passed",
+                        ),
+                        _jsonl_line(
+                            nodeid=f"{target}::test_done{timeout_count}",
+                            when="call",
+                            outcome="passed",
+                        ),
+                        _jsonl_line(
+                            nodeid=f"{target}::test_done{timeout_count}",
+                            when="teardown",
+                            outcome="passed",
+                        ),
+                        _jsonl_line(
+                            nodeid=f"{target}::test_slow{timeout_count}",
+                            when="setup",
+                            outcome="passed",
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            raise subprocess.TimeoutExpired(cmd, timeout=12)
+
+        # Culprit confirmations pass
+        if "::" in t and "test_slow" in t:
+            return (0, "", "")
+
+        # Escalated per-test units pass
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        "pkcs11_check.core.file_runner.discover_pytest_units",
+        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+            [  # type: ignore[arg-type]
+                f"{target}::test_done1",
+                f"{target}::test_done2",
+                f"{target}::test_done3",
+                f"{target}::test_slow1",
+                f"{target}::test_slow2",
+                f"{target}::test_slow3",
+                f"{target}::test_remaining",
+            ]
+            if granularity == "test"
+            else list(targets)
+        ),
+    )
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+    )
+
+    saved = load_run_state(state_file)
+    assert saved is not None
+    assert exit_code == 1
+    # File should be escalated
+    file_results = [r for r in saved.results if r.target == str(target)]
+    assert any(r.status == "escalated" for r in file_results)
+    # Escalated units should NOT include completed tests (test_done1..3)
+    # or confirmed culprits (test_slow1..3)
+    escalated_targets = [u for u in saved.units if "::" in u]
+    completed_and_culprits = {
+        f"{target}::test_done1",
+        f"{target}::test_done2",
+        f"{target}::test_done3",
+        f"{target}::test_slow1",
+        f"{target}::test_slow2",
+        f"{target}::test_slow3",
+    }
+    for nodeid in escalated_targets:
+        assert nodeid not in completed_and_culprits, (
+            f"Escalated unit {nodeid} should have been excluded"
+        )
+
+
+def test_timeout_does_not_promote_to_policy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Timeouts should NOT promote the file in the isolation policy.
+    Only crashes should trigger policy promotion."""
+    units = ["test_a.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    policy_file = tmp_path / "policy.json"
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        report_log_path: Path | None = None
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                report_log_path = Path(cmd[i + 1])
+                break
+        if report_log_path is not None:
+            report_log_path.write_text("")
+        raise subprocess.TimeoutExpired(cmd, timeout=12)
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=policy_file,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 1
+    # Policy file should either not exist or have no promoted files.
+    # _promote_crashing_unit normalises the key to an absolute path, so
+    # check that NO policy has any promoted files at all.
+    policies = load_isolation_policy(policy_file)
+    for _fp, policy in policies.items():
+        assert len(policy.promoted_files) == 0, (
+            f"Timeout should not promote anything to policy, "
+            f"but found promoted_files={policy.promoted_files}"
+        )
