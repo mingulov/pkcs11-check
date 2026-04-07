@@ -37,13 +37,13 @@ def _load_xts_vectors(
     encrypt_fields = {
         "key": "key",
         "pt": ("pt", lambda x: bytes.fromhex(x) if x else b""),
-        "tweak": "tweakValue",
+        "tweak": ("tweakValue", lambda x: bytes.fromhex(x) if x else b""),
         "ct_expected": ("ct", lambda x: bytes.fromhex(x) if x else b""),
     }
     decrypt_fields = {
         "key": "key",
         "ct": ("ct", lambda x: bytes.fromhex(x) if x else b""),
-        "tweak": "tweakValue",
+        "tweak": ("tweakValue", lambda x: bytes.fromhex(x) if x else b""),
         "pt_expected": ("pt", lambda x: bytes.fromhex(x) if x else b""),
     }
 
