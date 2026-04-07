@@ -316,10 +316,20 @@ def gen_symmetric_key(
     else:
         packed.extend(pack_attrs(attrs))
 
+    import pytest
+
     from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
 
     tmpl = template(*packed)
-    mech = mech_simple(CKM(entry.mech_id))
+    if config.param_required:
+        mech_param_result = make_mech_param(entry)
+        if mech_param_result == "SKIP":
+            pytest.skip(f"{entry.name} requires runtime parameters for keygen")
+        mech = mech_param_result if mech_param_result is not None else mech_simple(
+            CKM(entry.mech_id)
+        )
+    else:
+        mech = mech_simple(CKM(entry.mech_id))
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
     assert rv == CKR_OK, f"C_GenerateKey failed: {rv} for {entry.mech_name}"

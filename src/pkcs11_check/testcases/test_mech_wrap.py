@@ -152,6 +152,13 @@ except ImportError:
     pass
 
 try:
+    from pkcs11_check.raw.types_std import CKM_AES_CTS, CKM_AES_XTS
+
+    _IV16_WRAP_MECHS |= {int(CKM_AES_XTS), int(CKM_AES_CTS)}
+except ImportError:
+    pass
+
+try:
     from pkcs11_check.raw.types_std import (
         CKM_SEED_CBC,
         CKM_SEED_CBC_PAD,

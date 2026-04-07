@@ -203,7 +203,7 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
     except AssertionError as exc:
         if result == "valid":
             sha = vec.get("_sha", "unknown")
-            mgf_sha = vec.get("_mgf_sha", "unknown")
+            mgf_sha = vec.get("_mgfSha", "unknown")
             pytest.fail(
                 f"Valid RSA-OAEP ciphertext {vec_id} failed to decrypt "
                 f"(sha={sha}, mgf={mgf_sha}): {exc}"

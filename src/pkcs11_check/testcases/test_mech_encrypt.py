@@ -70,6 +70,7 @@ class TestMechEncryptRoundtrip:
                 plaintext,
                 mech_param=mech_param,
                 output_overhead=overhead,
+                retry_on_buffer_too_small=config.auth_tag_included,
             )
             pt = decrypt_single(
                 rs.raw,
