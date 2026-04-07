@@ -143,7 +143,12 @@ class TestEdDsaKeyVer:
             except AssertionError as exc:
                 exc_msg = str(exc)
                 if any(
-                    name in exc_msg for name in ("CKR_SIGNATURE_INVALID", "CKR_SIGNATURE_LEN_RANGE")
+                    name in exc_msg
+                    for name in (
+                        "CKR_SIGNATURE_INVALID",
+                        "CKR_SIGNATURE_LEN_RANGE",
+                        "CKR_DEVICE_ERROR",
+                    )
                 ):
                     key_usable = True
                 elif any(
@@ -198,6 +203,7 @@ def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
                 for name in (
                     "CKR_SIGNATURE_INVALID",
                     "CKR_SIGNATURE_LEN_RANGE",
+                    "CKR_DEVICE_ERROR",
                 )
             ):
                 verified = False

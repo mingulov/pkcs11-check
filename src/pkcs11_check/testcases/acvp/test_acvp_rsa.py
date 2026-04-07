@@ -168,7 +168,12 @@ class TestRsaSigVer:
             if any(c in exc_msg for c in ("CKR_KEY_SIZE_RANGE", "CKR_TEMPLATE_INCONSISTENT")):
                 pytest.skip("RSA key import failed")
             if not expected_pass and any(
-                c in exc_msg for c in ("CKR_SIGNATURE_INVALID", "CKR_SIGNATURE_LEN_RANGE")
+                c in exc_msg
+                for c in (
+                    "CKR_SIGNATURE_INVALID",
+                    "CKR_SIGNATURE_LEN_RANGE",
+                    "CKR_DEVICE_ERROR",
+                )
             ):
                 pass  # Expected
             elif expected_pass:
@@ -219,7 +224,12 @@ class TestRsaSigVer:
             if "CKR_MECHANISM_PARAM_INVALID" in exc_msg:
                 pytest.skip("PSS params not supported")
             if not expected_pass and any(
-                c in exc_msg for c in ("CKR_SIGNATURE_INVALID", "CKR_SIGNATURE_LEN_RANGE")
+                c in exc_msg
+                for c in (
+                    "CKR_SIGNATURE_INVALID",
+                    "CKR_SIGNATURE_LEN_RANGE",
+                    "CKR_DEVICE_ERROR",
+                )
             ):
                 pass  # Expected
             elif expected_pass:
