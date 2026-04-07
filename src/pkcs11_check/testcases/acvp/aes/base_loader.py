@@ -121,6 +121,10 @@ def _load_vectors(
             if tag_len_bits is not None:
                 merged["tag_len_bits"] = tag_len_bits
 
+            # Preserve payloadLen for sub-byte modes (e.g. CFB1)
+            if "payloadLen" in inp:
+                merged["payload_len_bits"] = inp["payloadLen"]
+
             vec_id = f"{vector_name.split('-')[1]}-enc-tc{tc_id}"
             encrypt_vecs.append((vec_id, merged))
 
@@ -196,6 +200,10 @@ def _load_vectors(
 
             if tag_len_bits is not None:
                 merged["tag_len_bits"] = tag_len_bits
+
+            # Preserve payloadLen for sub-byte modes (e.g. CFB1)
+            if "payloadLen" in inp:
+                merged["payload_len_bits"] = inp["payloadLen"]
 
             vec_id = f"{vector_name.split('-')[1]}-dec-tc{tc_id}"
             decrypt_vecs.append((vec_id, merged))
