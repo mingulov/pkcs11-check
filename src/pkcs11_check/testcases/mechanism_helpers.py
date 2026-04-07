@@ -54,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_GEN,
     CKM_EC_KEY_PAIR_GEN,
     CKM_GENERIC_SECRET_KEY_GEN,
+    CKM_PKCS5_PBKD2,
     CKR_OK,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
@@ -512,12 +513,6 @@ def generate_key_from_recipe(
         kt = int(config.key_type)
 
         keygen_mech = config.keygen_mech
-        # PKCS5_PBKD2 requires CK_PKCS5_PBKD2_PARAMS (password, salt, iterations)
-        # which the generic keygen fixture cannot provide.
-        if keygen_mech is not None and "PKCS5_PBKD2" in str(CKM(int(keygen_mech))):
-            pytest.skip(
-                f"{entry.mech_name}: PKCS5_PBKD2 requires specialized parameters"
-            )
         if keygen_mech is None:
             if kt == int(CKK_AES):
                 keygen_mech = int(CKM_AES_KEY_GEN)
@@ -556,7 +551,19 @@ def generate_key_from_recipe(
             packed.extend(pack_attrs(attrs))
 
         tmpl = template(*packed)
-        mech = mech_simple(CKM(keygen_mech))
+        if keygen_mech == CKM_PKCS5_PBKD2:
+            from pkcs11_check.raw.pack_mechanisms import mech_pbkdf2
+            from pkcs11_check.raw.types_std import CKP_PKCS5_PBKD2_HMAC_SHA256
+
+            mech = mech_pbkdf2(
+                CKM_PKCS5_PBKD2,
+                salt=b"pkcs11-check-test-salt",
+                iterations=10000,
+                prf=CKP_PKCS5_PBKD2_HMAC_SHA256,
+                password=b"test-password",
+            )
+        else:
+            mech = mech_simple(CKM(keygen_mech))
         handle = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
         assert rv == CKR_OK, f"C_GenerateKey failed: {rv} for {entry.mech_name}"
