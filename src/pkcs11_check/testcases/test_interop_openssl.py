@@ -11,6 +11,7 @@ Runs in subprocess to avoid crash contamination.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -91,6 +92,8 @@ class TestOpenSSLPkcs11Provider:
 
     def test_openssl_dgst_via_pkcs11(self, p11_config: Any) -> None:
         """SHA-256 digest via OpenSSL with pkcs11-provider (basic smoke test)."""
+        if not shutil.which("openssl"):
+            pytest.skip("openssl binary not on PATH")
         if not _have_pkcs11_provider():
             pytest.skip("pkcs11-provider not installed")
 

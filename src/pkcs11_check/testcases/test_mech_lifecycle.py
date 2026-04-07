@@ -69,7 +69,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKO_SECRET_KEY,
     CKR_OK,
-    CKZ_SALT_SPECIFIED,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.lifecycle]
@@ -297,7 +296,6 @@ class TestHKDFDerivedKeyUse:
                 hash_mech=int(CKM_SHA256),
                 extract=True,
                 expand=True,
-                salt_type=int(CKZ_SALT_SPECIFIED),
                 salt=os.urandom(16),
                 info=b"pkcs11-check lifecycle test",
             )

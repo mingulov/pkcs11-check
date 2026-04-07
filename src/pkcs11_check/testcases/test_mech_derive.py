@@ -68,7 +68,6 @@ from pkcs11_check.raw.types_std import (
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_OK,
-    CKZ_SALT_SPECIFIED,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import gen_generic_secret
@@ -361,7 +360,6 @@ def _derive_hkdf(rs: RawSession, entry: MechEntry) -> None:
             hash_mech=int(CKM_SHA256),
             extract=True,
             expand=True,
-            salt_type=int(CKZ_SALT_SPECIFIED),
             salt=salt,
             info=b"pkcs11-check derive test",
         )
