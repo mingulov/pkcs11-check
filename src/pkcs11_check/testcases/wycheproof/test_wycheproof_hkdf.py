@@ -38,6 +38,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v30]
+REQUIRED_MECHANISMS = ["HKDF_DERIVE"]
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 

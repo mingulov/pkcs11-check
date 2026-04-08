@@ -129,6 +129,7 @@ def load_mlkem_encap_vectors(limit: int | None = None) -> list[tuple[str, dict[s
         for test in tg.get("tests", []):
             tc_id = test.get("tcId", 0)
             ek_hex = test.get("ek", "")  # encapsulation key (public)
+            dk_hex = test.get("dk", "")  # decapsulation key (for round-trip)
             c_hex = test.get("c", "")  # ciphertext
             k_hex = test.get("k", "")  # shared secret
             m_hex = test.get("m", "")  # randomness
@@ -153,6 +154,11 @@ def load_mlkem_encap_vectors(limit: int | None = None) -> list[tuple[str, dict[s
                 "k": k_bytes,
                 "m": m_bytes,
             }
+            if dk_hex:
+                try:
+                    vec_data["dk"] = bytes.fromhex(dk_hex)
+                except ValueError:
+                    pass
             vec_id = f"ML-KEM-encap-{param_set}-tc{tc_id}"
             result.append((vec_id, vec_data))
 

@@ -602,6 +602,8 @@ def _build_isolated_json_payload(
         sr = detail.get("skip_reasons")
         if sr:
             unit["skip_reasons"] = sr
+        if detail.get("file_skip"):
+            unit["file_skip"] = True
 
         units_out.append(unit)
 

@@ -214,15 +214,39 @@ def build_quality_audit(
         "mechanisms_invoked": len(_mechanism_invoked_names(coverage_map)),
     }
 
+    file_skipped = _collect_file_skipped_units(results_map)
+
     return {
         "schema_version": SCHEMA_VERSION,
         "summary": summary,
+        "file_skipped_units": file_skipped,
         "never_passed_nodeids": _sorted_never_passed_nodeids(explicit_outcomes),
         "framework_skip_candidates": _serialize_skip_buckets(explicit_skip_buckets),
         "selection_findings": selection_findings,
         "mechanism_findings": mechanism_findings,
         "data_quality_warnings": _dedupe_preserve_order(warnings),
     }
+
+
+def _collect_file_skipped_units(results: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Collect units that were file-skipped via REQUIRED_MECHANISMS."""
+    units = results.get("units")
+    if not isinstance(units, list):
+        return []
+    skipped: list[dict[str, str]] = []
+    for unit in units:
+        if not isinstance(unit, Mapping):
+            continue
+        if not unit.get("file_skip"):
+            continue
+        entry: dict[str, str] = {"target": str(unit.get("target", ""))}
+        sr = unit.get("skip_reasons")
+        if isinstance(sr, Mapping):
+            reasons = list(sr.keys())
+            if reasons:
+                entry["reason"] = str(reasons[0])
+        skipped.append(entry)
+    return skipped
 
 
 def _mapping_or_empty(value: Mapping[str, Any] | None) -> Mapping[str, Any]:

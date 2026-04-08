@@ -47,6 +47,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 pytestmark = [pytest.mark.pqc]
+REQUIRED_MECHANISMS = ["SLH_DSA_KEY_PAIR_GEN"]
 
 _MESSAGE = b"HashSLH-DSA pre-hash signature test message 2026"
 

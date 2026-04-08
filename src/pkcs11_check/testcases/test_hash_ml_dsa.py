@@ -51,6 +51,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = [pytest.mark.pqc]
+REQUIRED_MECHANISMS = ["ML_DSA_KEY_PAIR_GEN"]
 
 _MESSAGE = b"HashML-DSA pre-hash signature test message 2026"
 
