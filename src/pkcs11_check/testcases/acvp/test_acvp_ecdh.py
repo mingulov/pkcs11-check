@@ -77,7 +77,7 @@ def _build_ec_point(qx_hex: str, qy_hex: str, coord_len: int) -> bytes:
 
 
 def _load_wycheproof_ecdh_vectors(
-    curve: str, max_tests: int = 10
+    curve: str,
 ) -> list[tuple[str, dict[str, Any]]]:
     """Load ECDH vectors from Wycheproof for a specific curve.
 
@@ -135,12 +135,6 @@ def _load_wycheproof_ecdh_vectors(
 
             results.append((f"Wycheproof-ECDH-{curve}-tc{tc_id}", test_data))
 
-            if len(results) >= max_tests:
-                break
-
-        if len(results) >= max_tests:
-            break
-
     return results
 
 
@@ -168,18 +162,18 @@ def _extract_ec_point(public_key_bytes: bytes, coord_len: int) -> bytes | None:
     return None
 
 
-def _load_all_ecdh_vectors(max_per_curve: int = 10) -> list[tuple[str, dict[str, Any]]]:
+def _load_all_ecdh_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load ECDH vectors for all supported curves."""
     all_vectors: list[tuple[str, dict[str, Any]]] = []
 
     for curve in ["P-256", "P-384", "P-521"]:
-        vectors = _load_wycheproof_ecdh_vectors(curve, max_per_curve)
+        vectors = _load_wycheproof_ecdh_vectors(curve)
         all_vectors.extend(vectors)
 
     return all_vectors
 
 
-_ECDH_VECTORS = _load_all_ecdh_vectors(max_per_curve=50)
+_ECDH_VECTORS = _load_all_ecdh_vectors()
 
 
 @pytest.mark.parametrize("vec_id, vec", _ECDH_VECTORS, ids=[v[0] for v in _ECDH_VECTORS])
