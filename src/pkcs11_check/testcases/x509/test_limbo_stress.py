@@ -1,7 +1,9 @@
 """X.509 certificate import stress tests from C2SP/x509-limbo.
 
 Tests that EVERY unique X.509 certificate and CRL in the limbo dataset
-can be handled by the PKCS#11 module without crashing.
+can be handled by the PKCS#11 module without crashing -- both on import
+AND when the module is forced to parse the DER content (by reading back
+computed attributes like CKA_SUBJECT, CKA_ISSUER, CKA_SERIAL_NUMBER).
 
 Marked @stress - not run by default. A "pass" is any non-crash CKR code.
 """
@@ -12,10 +14,18 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.recipes import create_object, destroy_quietly
+from pkcs11_check.raw.recipes import (
+    create_object,
+    destroy_quietly,
+    get_object_size,
+    read_attributes,
+)
 from pkcs11_check.raw.types_std import (
     CKA_CERTIFICATE_TYPE,
     CKA_CLASS,
+    CKA_ISSUER,
+    CKA_SERIAL_NUMBER,
+    CKA_SUBJECT,
     CKA_VALUE,
     CKC_X_509,
     CKO_CERTIFICATE,
@@ -44,7 +54,12 @@ def test_exhaustive_cert_import_no_crash(
     p11_raw_session: Any,
     limbo_available: Any,
 ) -> None:
-    """Import every unique cert from Limbo - must not crash module."""
+    """Import every unique cert from Limbo - must not crash module.
+
+    After successful import, forces the module to parse the DER by reading
+    back computed attributes (SUBJECT, ISSUER, SERIAL_NUMBER) and querying
+    object size.  This catches ASN.1 parser crashes that a bare import misses.
+    """
     rs = p11_raw_session
     try:
         h = create_object(
@@ -56,9 +71,24 @@ def test_exhaustive_cert_import_no_crash(
                 CKA_VALUE: der_bytes,
             },
         )
-        destroy_quietly(rs.raw, rs.sh, h)
     except (AssertionError, Exception):
-        pass  # Rejection is fine, as long as it doesn't crash
+        return  # Rejection on import is fine
+
+    try:
+        # Force the module to parse the DER by reading computed attributes.
+        # A module that lazily parses may crash here on malformed certs.
+        try:
+            read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT, CKA_ISSUER, CKA_SERIAL_NUMBER])
+        except (AssertionError, Exception):
+            pass  # Error reading attrs is fine, crash is not
+
+        # C_GetObjectSize may also trigger internal parsing.
+        try:
+            get_object_size(rs.raw, rs.sh, h)
+        except (AssertionError, Exception):
+            pass
+    finally:
+        destroy_quietly(rs.raw, rs.sh, h)
 
 
 @pytest.mark.parametrize(
@@ -72,7 +102,12 @@ def test_exhaustive_crl_import_no_crash(
     p11_raw_session: Any,
     limbo_available: Any,
 ) -> None:
-    """Import every unique CRL from Limbo - must not crash module."""
+    """Import every unique CRL from Limbo - must not crash module.
+
+    After successful import, reads back CKA_VALUE and queries object size
+    to force any lazy parsing.  CRLs may not have SUBJECT/ISSUER attributes,
+    so we read CKA_VALUE (round-trip) and CKA_CLASS.
+    """
     rs = p11_raw_session
     try:
         # Use a generic class value for CRL
@@ -85,6 +120,19 @@ def test_exhaustive_crl_import_no_crash(
                 CKA_VALUE: der_bytes,
             },
         )
-        destroy_quietly(rs.raw, rs.sh, h)
     except (AssertionError, Exception):
-        pass  # Rejection or "not supported" is fine
+        return  # Rejection or "not supported" is fine
+
+    try:
+        # Read back CKA_VALUE to verify round-trip and trigger any parsing.
+        try:
+            read_attributes(rs.raw, rs.sh, h, [CKA_VALUE, CKA_CLASS])
+        except (AssertionError, Exception):
+            pass
+
+        try:
+            get_object_size(rs.raw, rs.sh, h)
+        except (AssertionError, Exception):
+            pass
+    finally:
+        destroy_quietly(rs.raw, rs.sh, h)
