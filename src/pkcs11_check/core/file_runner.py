@@ -21,8 +21,9 @@ from xml.etree import ElementTree as ET
 from rich.console import Console
 
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
-from pkcs11_check.core.test_selection import write_deselect_file
+from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
 IsolationGranularity = Literal["file", "test"]
 RunnerGranularity = Literal["file", "test", "mixed"]
@@ -1329,6 +1330,32 @@ def _manifest_digest(pytest_args: list[str]) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _load_available_mechanisms(pytest_args: list[str]) -> frozenset[str] | None:
+    """Load mechanism names from the manifest referenced by --p11-manifest.
+
+    Returns a frozenset containing both 'CKM_AES_CBC' and 'AES_CBC' forms,
+    or None if no manifest is available.
+    """
+    manifest_path = _extract_option_value(pytest_args, "--p11-manifest")
+    if manifest_path is None:
+        return None
+    path = Path(manifest_path)
+    if not path.exists():
+        return None
+    try:
+        manifest = load_manifest(path)
+    except Exception:  # noqa: BLE001
+        return None
+    if manifest.status != "ok":
+        return None
+    names: set[str] = set()
+    for mech in manifest.mechanisms:
+        names.add(mech)
+        if mech.startswith("CKM_"):
+            names.add(mech[4:])
+    return frozenset(names)
+
+
 def _backend_args_snapshot(pytest_args: list[str]) -> list[str]:
     args: list[str] = []
     skip_next = False
@@ -2001,6 +2028,7 @@ def run_isolated_pytest_units(
     per_unit_details: dict[str, dict[str, Any]] = {}
     report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
     executed_units: set[str] = set()
+    available_mechanisms = _load_available_mechanisms(pytest_args)
 
     if not pending_units:
         console.print("[green]Nothing to do[/green] - all isolated units already completed.")
@@ -2076,6 +2104,36 @@ def run_isolated_pytest_units(
                 _delete_unit_report_record_cache(state_file, unit)
                 state.report_records_by_unit.pop(unit, None)
             console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
+
+            # -- File-level mechanism skip --
+            if available_mechanisms is not None:
+                required = extract_required_mechanisms(unit)
+                if required is not None:
+                    missing = [m for m in required if m not in available_mechanisms]
+                    if missing:
+                        reason = f"{', '.join(missing)} not supported by module"
+                        console.print(f"  [dim]file-skip: {reason}[/dim]")
+                        result = FileRunResult(
+                            target=unit,
+                            status="passed",
+                            returncode=0,
+                            duration_s=0.0,
+                        )
+                        _record_result(state, result)
+                        per_unit_details[unit] = {
+                            "counts": {
+                                "passed": 0, "failed": 0, "skipped": 0,
+                                "xfailed": 0, "xpassed": 0, "error": 0,
+                                "crashed": 0, "timeout": 0,
+                            },
+                            "tests": [],
+                            "skip_reasons": {reason: 1},
+                            "file_skip": True,
+                        }
+                        save_run_state(state_file, state)
+                        index += 1
+                        continue
+
             start = time.monotonic()
             unit_granularity = _effective_granularity(unit, granularity)
             unit_disabled_nodeids = (

@@ -3595,3 +3595,26 @@ def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:
     assert mechs is not None
     missing = [m for m in required if m not in mechs]
     assert missing == []
+
+
+def test_load_available_mechanisms_from_manifest(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({
+        "status": "ok",
+        "module_path": "/lib/mod.so",
+        "requested_interface": "PKCS11",
+        "interface_version": "2.40",
+        "slot_index": 0,
+        "slot_count": 1,
+        "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB", "CKM_RSA_PKCS"],
+    }))
+    result = _load_available_mechanisms(["--p11-manifest", str(manifest)])
+    assert result is not None
+    assert "AES_CBC" in result
+    assert "CKM_AES_CBC" in result
+    assert "RSA_PKCS" in result
+
+
+def test_load_available_mechanisms_no_manifest() -> None:
+    result = _load_available_mechanisms(["--p11-module", "/lib/mod.so"])
+    assert result is None
