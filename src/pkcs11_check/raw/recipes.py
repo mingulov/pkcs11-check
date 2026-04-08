@@ -1294,11 +1294,14 @@ def set_pin(raw: RawPKCS11, session: int, old_pin: bytes, new_pin: bytes) -> Non
     expect_rv(rv, CKR_OK)
 
 
-def seed_random(raw: RawPKCS11, session: int, seed: bytes) -> None:
-    """Seed the RNG with C_SeedRandom."""
+def seed_random(
+    raw: RawPKCS11, session: int, seed: bytes, *, extra_ok: tuple[int, ...] = ()
+) -> int:
+    """Seed the RNG with C_SeedRandom.  Returns the raw CK_RV."""
     buf = _to_ubyte_buf(seed)
     rv = raw.C_SeedRandom(session, buf, len(seed))
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, *extra_ok)
+    return rv
 
 
 def get_mechanism_list(raw: RawPKCS11, slot_id: int) -> list[int]:

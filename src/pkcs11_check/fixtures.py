@@ -204,11 +204,11 @@ class RawSession:
         length = bits // 8
         return _generate_random(self.raw, self.sh, length)
 
-    def seed_random(self, seed: bytes) -> None:
-        """Seed the RNG via C_SeedRandom."""
+    def seed_random(self, seed: bytes, *, extra_ok: tuple[int, ...] = ()) -> int:
+        """Seed the RNG via C_SeedRandom.  Returns the raw CK_RV."""
         from pkcs11_check.raw.recipes import seed_random as _seed_random
 
-        _seed_random(self.raw, self.sh, seed)
+        return _seed_random(self.raw, self.sh, seed, extra_ok=extra_ok)
 
 
 @pytest.fixture

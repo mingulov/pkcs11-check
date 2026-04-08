@@ -17,7 +17,7 @@ class TestSessionValidationFlags:
     def test_get_session_validation_flags_returns_flags(self, p11_raw_session: Any) -> None:
         """C_GetSessionValidationFlags should return a CK_FLAGS bitmask."""
         rs = p11_raw_session
-        if not hasattr(rs.raw, "C_GetSessionValidationFlags"):
+        if "C_GetSessionValidationFlags" not in rs.raw.available_function_names():
             pytest.skip("C_GetSessionValidationFlags not available")
         flags = c_ulong(0)
         rv = rs.raw.C_GetSessionValidationFlags(rs.sh, 0, byref(flags))

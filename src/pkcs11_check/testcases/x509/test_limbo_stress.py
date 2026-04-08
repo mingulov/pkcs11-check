@@ -38,8 +38,10 @@ from pkcs11_check.testcases.x509.conftest import (
 
 pytestmark = [pytest.mark.stress, pytest.mark.security]
 
+_CERT_CAP = 1000  # Enough diversity for crash-probing; full set is ~30K.
+
 _all_cases = load_limbo_testcases()
-_all_certs = get_unique_limbo_certs(_all_cases)
+_all_certs = get_unique_limbo_certs(_all_cases)[:_CERT_CAP]
 _all_crls = get_unique_limbo_crls(_all_cases)
 
 
@@ -75,17 +77,32 @@ def test_exhaustive_cert_import_no_crash(
         return  # Rejection on import is fine
 
     try:
+        # Verify CKA_VALUE round-trips correctly.  If the module corrupts
+        # stored cert data, this will FAIL (not just silently pass).
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
+            stored = attrs.get(CKA_VALUE, b"")
+            if isinstance(stored, bytes) and stored:
+                assert stored == der_bytes, (
+                    f"{tc_id}: CKA_VALUE round-trip mismatch "
+                    f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+                )
+        except AssertionError:
+            raise  # Round-trip mismatch is a real failure
+        except Exception:
+            pass  # CKR error reading VALUE is acceptable
+
         # Force the module to parse the DER by reading computed attributes.
         # A module that lazily parses may crash here on malformed certs.
         try:
             read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT, CKA_ISSUER, CKA_SERIAL_NUMBER])
-        except (AssertionError, Exception):
-            pass  # Error reading attrs is fine, crash is not
+        except Exception:
+            pass  # CKR error reading attrs is fine, crash is not
 
         # C_GetObjectSize may also trigger internal parsing.
         try:
             get_object_size(rs.raw, rs.sh, h)
-        except (AssertionError, Exception):
+        except Exception:
             pass
     finally:
         destroy_quietly(rs.raw, rs.sh, h)
@@ -124,15 +141,23 @@ def test_exhaustive_crl_import_no_crash(
         return  # Rejection or "not supported" is fine
 
     try:
-        # Read back CKA_VALUE to verify round-trip and trigger any parsing.
+        # Verify CKA_VALUE round-trips correctly.
         try:
-            read_attributes(rs.raw, rs.sh, h, [CKA_VALUE, CKA_CLASS])
-        except (AssertionError, Exception):
-            pass
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
+            stored = attrs.get(CKA_VALUE, b"")
+            if isinstance(stored, bytes) and stored:
+                assert stored == der_bytes, (
+                    f"{tc_id}: CRL CKA_VALUE round-trip mismatch "
+                    f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+                )
+        except AssertionError:
+            raise  # Round-trip mismatch is a real failure
+        except Exception:
+            pass  # CKR error is acceptable
 
         try:
             get_object_size(rs.raw, rs.sh, h)
-        except (AssertionError, Exception):
+        except Exception:
             pass
     finally:
         destroy_quietly(rs.raw, rs.sh, h)

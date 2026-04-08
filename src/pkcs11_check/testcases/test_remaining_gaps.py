@@ -428,7 +428,7 @@ class TestAsyncLifecycle:
     def test_async_complete_no_active_operation(self, p11_raw_session: Any) -> None:
         """C_AsyncComplete with no active async op should return a defined CKR."""
         rs = p11_raw_session
-        if not hasattr(rs.raw, "C_AsyncComplete"):
+        if "C_AsyncComplete" not in rs.raw.available_function_names():
             pytest.skip("C_AsyncComplete not available")
         rv = rs.raw.C_AsyncComplete(rs.sh, None, None)
         # No CKR assertion -- presence check only (function returned without crash)
@@ -438,7 +438,7 @@ class TestAsyncLifecycle:
     def test_async_join_no_active_operation(self, p11_raw_session: Any) -> None:
         """C_AsyncJoin with no active async op should return a defined CKR."""
         rs = p11_raw_session
-        if not hasattr(rs.raw, "C_AsyncJoin"):
+        if "C_AsyncJoin" not in rs.raw.available_function_names():
             pytest.skip("C_AsyncJoin not available")
         rv = rs.raw.C_AsyncJoin(rs.sh, None, 0, None, 0)
         # No CKR assertion -- presence check only (function returned without crash)
@@ -448,7 +448,7 @@ class TestAsyncLifecycle:
     def test_async_get_id_no_active_operation(self, p11_raw_session: Any) -> None:
         """C_AsyncGetID with no active async op should return a defined CKR."""
         rs = p11_raw_session
-        if not hasattr(rs.raw, "C_AsyncGetID"):
+        if "C_AsyncGetID" not in rs.raw.available_function_names():
             pytest.skip("C_AsyncGetID not available")
         async_id = c_ulong(0)
         rv = rs.raw.C_AsyncGetID(rs.sh, None, byref(async_id))

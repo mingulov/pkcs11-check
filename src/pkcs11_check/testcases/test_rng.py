@@ -141,11 +141,16 @@ class TestRNGStatistical:
         Seeding doesn't guarantee changed output (implementation-defined),
         but it should not crash or error.
         """
-        try:
-            p11_session.seed_random(b"entropy seed data for testing 12345")
-        except AttributeError:
-            pytest.skip("python-pkcs11 doesn't expose seed_random")
-        except Exception as exc:
-            if "FunctionNotSupported" in type(exc).__name__:
-                pytest.skip("Module doesn't support C_SeedRandom")
-            raise
+        from pkcs11_check.raw.types_std import (
+            CKR_FUNCTION_NOT_SUPPORTED,
+            CKR_OK,
+            CKR_RANDOM_SEED_NOT_SUPPORTED,
+        )
+
+        skip_rvs = (CKR_RANDOM_SEED_NOT_SUPPORTED, CKR_FUNCTION_NOT_SUPPORTED)
+        rv = p11_session.seed_random(
+            b"entropy seed data for testing 12345", extra_ok=skip_rvs
+        )
+        if rv in skip_rvs:
+            pytest.skip(f"C_SeedRandom not supported ({rv:#x})")
+        assert rv == CKR_OK
