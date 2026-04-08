@@ -21,6 +21,7 @@ from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
     _collection_args,
     _identify_crash_culprit,
+    _load_available_mechanisms,
     _read_jsonl_results,
     build_policy_fingerprint,
     build_state_fingerprint,
@@ -3541,3 +3542,56 @@ def test_timeout_does_not_promote_to_policy(
             f"Timeout should not promote anything to policy, "
             f"but found promoted_files={policy.promoted_files}"
         )
+
+
+def test_file_skip_for_missing_mechanism(tmp_path: Path) -> None:
+    """File with REQUIRED_MECHANISMS absent from manifest gets file-skipped."""
+    from pkcs11_check.core.test_selection import extract_required_mechanisms
+
+    test_file = tmp_path / "test_example.py"
+    test_file.write_text(
+        'import pytest\n'
+        'REQUIRED_MECHANISMS = ["AES_CCM"]\n'
+        'def test_dummy(): pass\n'
+    )
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({
+        "status": "ok",
+        "module_path": "/lib/mod.so",
+        "requested_interface": "PKCS11",
+        "interface_version": "2.40",
+        "slot_index": 0,
+        "slot_count": 1,
+        "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB"],
+    }))
+
+    mechs = _load_available_mechanisms(["--p11-manifest", str(manifest)])
+    required = extract_required_mechanisms(str(test_file))
+    assert required == ["AES_CCM"]
+    assert mechs is not None
+    missing = [m for m in required if m not in mechs]
+    assert missing == ["AES_CCM"]
+
+
+def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:
+    """File with REQUIRED_MECHANISMS present in manifest is NOT skipped."""
+    from pkcs11_check.core.test_selection import extract_required_mechanisms
+
+    test_file = tmp_path / "test_example.py"
+    test_file.write_text('REQUIRED_MECHANISMS = ["AES_CBC"]\n')
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({
+        "status": "ok",
+        "module_path": "/lib/mod.so",
+        "requested_interface": "PKCS11",
+        "interface_version": "2.40",
+        "slot_index": 0,
+        "slot_count": 1,
+        "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB"],
+    }))
+    mechs = _load_available_mechanisms(["--p11-manifest", str(manifest)])
+    required = extract_required_mechanisms(str(test_file))
+    assert required == ["AES_CBC"]
+    assert mechs is not None
+    missing = [m for m in required if m not in mechs]
+    assert missing == []
