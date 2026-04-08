@@ -106,19 +106,28 @@ _HASH_TO_MGF: dict[str, int] = {
     "SHA3-512": CKG_MGF1_SHA3_512,
 }
 
-# Maximum vectors per algorithm for speed (None = no limit)
-_MAX_VECTORS_PER_SET: int | None = None
+# Maximum vectors per loader for speed and TPM object-cache pressure.
+# TPM2 simulators (swtpm) have a fixed transient-object cache (~96 slots);
+# running hundreds of RSA keygen/import operations sequentially exhausts it
+# even when each test destroys its keys.  Capped at 30 total per loader
+# with at most 4 per hash algorithm for broad hash+size coverage.
+_MAX_VECTORS_PER_SET: int = 30
+_MAX_PER_HASH: int = 4
 
 
 def load_siggen_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load RSA-SigGen PKCS#1 v1.5 vectors from FIPS186-4 and FIPS186-5."""
     result: list[tuple[str, dict[str, Any]]] = []
+    hash_counts: dict[str, int] = {}
 
     for algorithm in ["RSA-SigGen-FIPS186-4", "RSA-SigGen-FIPS186-5"]:
+        if len(result) >= _MAX_VECTORS_PER_SET:
+            break
+
         raw = load_acvp_vectors(algorithm)
 
         for vec in raw:
-            if _MAX_VECTORS_PER_SET is not None and len(result) >= _MAX_VECTORS_PER_SET:
+            if len(result) >= _MAX_VECTORS_PER_SET:
                 break
 
             group = vec["group"]
@@ -131,6 +140,9 @@ def load_siggen_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             hash_alg = group.get("hashAlg", "")
             if hash_alg not in _HASH_TO_PKCS15_MECH:
+                continue
+
+            if hash_counts.get(hash_alg, 0) >= _MAX_PER_HASH:
                 continue
 
             mech_int, mech_name = _HASH_TO_PKCS15_MECH[hash_alg]
@@ -159,6 +171,7 @@ def load_siggen_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             vec_id = f"{algorithm.split('-')[1]}-pkcs15-{hash_alg}-tc{tc_id}"
             result.append((vec_id, merged))
+            hash_counts[hash_alg] = hash_counts.get(hash_alg, 0) + 1
 
     return result
 
@@ -166,12 +179,16 @@ def load_siggen_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
 def load_siggen_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load RSA-SigGen PSS vectors from FIPS186-4 and FIPS186-5."""
     result: list[tuple[str, dict[str, Any]]] = []
+    hash_counts: dict[str, int] = {}
 
     for algorithm in ["RSA-SigGen-FIPS186-4", "RSA-SigGen-FIPS186-5"]:
+        if len(result) >= _MAX_VECTORS_PER_SET:
+            break
+
         raw = load_acvp_vectors(algorithm)
 
         for vec in raw:
-            if _MAX_VECTORS_PER_SET is not None and len(result) >= _MAX_VECTORS_PER_SET:
+            if len(result) >= _MAX_VECTORS_PER_SET:
                 break
 
             group = vec["group"]
@@ -184,6 +201,9 @@ def load_siggen_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             hash_alg = group.get("hashAlg", "")
             if hash_alg not in _HASH_TO_PSS_MECH:
+                continue
+
+            if hash_counts.get(hash_alg, 0) >= _MAX_PER_HASH:
                 continue
 
             mech_int, mech_name = _HASH_TO_PSS_MECH[hash_alg]
@@ -222,6 +242,7 @@ def load_siggen_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             vec_id = f"{algorithm.split('-')[1]}-pss-{hash_alg}-tc{tc_id}"
             result.append((vec_id, merged))
+            hash_counts[hash_alg] = hash_counts.get(hash_alg, 0) + 1
 
     return result
 
@@ -229,13 +250,16 @@ def load_siggen_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
 def load_sigver_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load RSA-SigVer PKCS#1 v1.5 vectors from FIPS186-2, FIPS186-4, FIPS186-5."""
     result: list[tuple[str, dict[str, Any]]] = []
+    hash_counts: dict[str, int] = {}
 
     for algorithm in ["RSA-SigVer-FIPS186-2", "RSA-SigVer-FIPS186-4", "RSA-SigVer-FIPS186-5"]:
+        if len(result) >= _MAX_VECTORS_PER_SET:
+            break
+
         raw = load_acvp_vectors(algorithm)
 
-        count = 0
         for vec in raw:
-            if _MAX_VECTORS_PER_SET is not None and count >= _MAX_VECTORS_PER_SET:
+            if len(result) >= _MAX_VECTORS_PER_SET:
                 break
 
             group = vec["group"]
@@ -248,6 +272,9 @@ def load_sigver_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             hash_alg = group.get("hashAlg", "")
             if hash_alg not in _HASH_TO_PKCS15_MECH:
+                continue
+
+            if hash_counts.get(hash_alg, 0) >= _MAX_PER_HASH:
                 continue
 
             mech_int, mech_name = _HASH_TO_PKCS15_MECH[hash_alg]
@@ -278,7 +305,7 @@ def load_sigver_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             vec_id = f"{algorithm.split('-')[1]}-pkcs15-ver-{hash_alg}-tc{tc_id}"
             result.append((vec_id, merged))
-            count += 1
+            hash_counts[hash_alg] = hash_counts.get(hash_alg, 0) + 1
 
     return result
 
@@ -286,13 +313,16 @@ def load_sigver_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
 def load_sigver_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load RSA-SigVer PSS vectors from FIPS186-2, FIPS186-4, FIPS186-5."""
     result: list[tuple[str, dict[str, Any]]] = []
+    hash_counts: dict[str, int] = {}
 
     for algorithm in ["RSA-SigVer-FIPS186-2", "RSA-SigVer-FIPS186-4", "RSA-SigVer-FIPS186-5"]:
+        if len(result) >= _MAX_VECTORS_PER_SET:
+            break
+
         raw = load_acvp_vectors(algorithm)
 
-        count = 0
         for vec in raw:
-            if _MAX_VECTORS_PER_SET is not None and count >= _MAX_VECTORS_PER_SET:
+            if len(result) >= _MAX_VECTORS_PER_SET:
                 break
 
             group = vec["group"]
@@ -305,6 +335,9 @@ def load_sigver_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             hash_alg = group.get("hashAlg", "")
             if hash_alg not in _HASH_TO_PSS_MECH:
+                continue
+
+            if hash_counts.get(hash_alg, 0) >= _MAX_PER_HASH:
                 continue
 
             mech_int, mech_name = _HASH_TO_PSS_MECH[hash_alg]
@@ -345,7 +378,7 @@ def load_sigver_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             vec_id = f"{algorithm.split('-')[1]}-pss-ver-{hash_alg}-tc{tc_id}"
             result.append((vec_id, merged))
-            count += 1
+            hash_counts[hash_alg] = hash_counts.get(hash_alg, 0) + 1
 
     return result
 
