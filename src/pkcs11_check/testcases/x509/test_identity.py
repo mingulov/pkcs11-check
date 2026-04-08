@@ -48,10 +48,8 @@ def test_limbo_identity_closeness(
     if not cases_with_keys:
         pytest.skip("No testcases with private keys found in Limbo dataset")
 
-    cases = cases_with_keys[:10]
-
     errors: list[str] = []
-    for tc in cases:
+    for tc in cases_with_keys:
         cert_der = pem_to_der(tc["peer_certificate"])
         key_der = pem_to_der(tc["peer_certificate_key"])
         cid = tc["id"].encode("utf-8")[:32]

@@ -35,7 +35,7 @@ _all_crls = get_unique_limbo_crls(_all_cases)
 
 @pytest.mark.parametrize(
     "tc_id,der_bytes",
-    _all_certs[:500],
+    _all_certs,
     ids=lambda x: f"cert-{x}" if isinstance(x, str) else "cert",
 )
 def test_exhaustive_cert_import_no_crash(

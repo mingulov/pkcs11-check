@@ -48,17 +48,13 @@ _PARAM_CONFIGS: list[tuple[str, int, Path]] = [
     ("ML-DSA-87", CKP_ML_DSA_87, _BENCHMARK_DIR / "ML-DSA-87.json"),
 ]
 
-# Limit to first N messages per parameter set for speed
-_MAX_MESSAGES = 20
-
-
 def _load_messages(path: Path) -> list[bytes]:
     """Load benchmark message strings, encoded to UTF-8 bytes."""
     if not path.exists():
         return []
     with open(path) as f:
         data: list[str] = json.load(f)
-    return [msg.encode("utf-8") for msg in data[:_MAX_MESSAGES]]
+    return [msg.encode("utf-8") for msg in data]
 
 
 def _build_vectors() -> list[tuple[str, dict[str, Any]]]:
