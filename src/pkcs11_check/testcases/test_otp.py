@@ -252,7 +252,7 @@ class TestCTKIP:
                 CKK_GENERIC_SECRET,
                 CKM_KIP_DERIVE,
             )
-            # Key gen failed — KIP_DERIVE not operational
+            # Key gen failed -- KIP_DERIVE not operational
             pytest.skip("CKM_KIP_DERIVE not operational with generic secret key type")
         except AssertionError as exc:
             pytest.skip(f"CKM_KIP_DERIVE rejected: {exc}")

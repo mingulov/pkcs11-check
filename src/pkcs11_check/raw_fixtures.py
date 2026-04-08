@@ -1,4 +1,4 @@
-"""Raw PKCS#11 pytest fixtures — uses pkcs11_check.raw, not the python-pkcs11 fork."""
+"""Raw PKCS#11 pytest fixtures -- uses pkcs11_check.raw, not the python-pkcs11 fork."""
 
 from __future__ import annotations
 

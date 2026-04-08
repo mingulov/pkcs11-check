@@ -621,7 +621,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_required=True,
         keygen_recipe=_ec_montgomery,
         expected_flags=CKF_DERIVE,
-        notes="X3DH key agreement — initiator side (Signal protocol): CK_X3DH_INITIATE_PARAMS",
+        notes="X3DH key agreement -- initiator side (Signal protocol): CK_X3DH_INITIATE_PARAMS",
     )
 
     registry[CKM_X3DH_RESPOND] = MechConfig(
@@ -632,7 +632,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_required=True,
         keygen_recipe=_ec_montgomery,
         expected_flags=CKF_DERIVE,
-        notes="X3DH key agreement — responder side (Signal protocol): CK_X3DH_RESPOND_PARAMS",
+        notes="X3DH key agreement -- responder side (Signal protocol): CK_X3DH_RESPOND_PARAMS",
     )
 
     registry[CKM_X2RATCHET_INITIALIZE] = MechConfig(
@@ -643,7 +643,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_required=True,
         keygen_recipe=_ec_montgomery,
         expected_flags=CKF_DERIVE,
-        notes="Double Ratchet initialization — sender side (Signal protocol)",
+        notes="Double Ratchet initialization -- sender side (Signal protocol)",
     )
 
     registry[CKM_X2RATCHET_RESPOND] = MechConfig(
@@ -654,7 +654,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         param_required=True,
         keygen_recipe=_ec_montgomery,
         expected_flags=CKF_DERIVE,
-        notes="Double Ratchet initialization — receiver side (Signal protocol)",
+        notes="Double Ratchet initialization -- receiver side (Signal protocol)",
     )
 
     # ---------------------------------------------------------------------------

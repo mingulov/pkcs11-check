@@ -181,13 +181,13 @@ from .types_std import (
 # Attribute value types per OASIS PKCS#11 v3.2 spec.
 #
 # Types:
-#   'bool'        — CK_BBOOL (1 byte)
-#   'ulong'       — CK_ULONG or CK_ULONG-based enum (CK_OBJECT_CLASS, CK_KEY_TYPE, etc.)
-#   'bytes'       — Byte array, big integer, opaque data
-#   'str'         — RFC2279 UTF-8 string
-#   'date'        — CK_DATE (8-byte YYYYMMDD)
-#   'ulong_array' — Array of CK_ULONG (CK_MECHANISM_TYPE_PTR etc.)
-#   'template'    — CK_ATTRIBUTE array (nested template)
+#   'bool'        -- CK_BBOOL (1 byte)
+#   'ulong'       -- CK_ULONG or CK_ULONG-based enum (CK_OBJECT_CLASS, CK_KEY_TYPE, etc.)
+#   'bytes'       -- Byte array, big integer, opaque data
+#   'str'         -- RFC2279 UTF-8 string
+#   'date'        -- CK_DATE (8-byte YYYYMMDD)
+#   'ulong_array' -- Array of CK_ULONG (CK_MECHANISM_TYPE_PTR etc.)
+#   'template'    -- CK_ATTRIBUTE array (nested template)
 #
 # Attributes not in this table default to 'bytes' in read_attributes/attr_auto.
 #

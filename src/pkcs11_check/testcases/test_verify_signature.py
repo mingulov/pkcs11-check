@@ -1,6 +1,6 @@
 """Positive-path tests for C_VerifySignatureInit/Update/Final.
 
-The VerifySignature API (v3.0+) differs from C_VerifyInit — the signature is
+The VerifySignature API (v3.0+) differs from C_VerifyInit -- the signature is
 provided at initialization time, not at final time.  Tests skip when the module
 does not expose C_VerifySignatureInit.
 """
@@ -128,7 +128,7 @@ class TestVerifySignatureRoundtrip:
 
         NSS deviation: NSS C_VerifySignatureInit returns CKR_OK even when the
         signature was created with a different key pair (pub2 vs priv1).
-        This is a SECURITY BUG in NSS's C_VerifySignatureInit — it does not
+        This is a SECURITY BUG in NSS's C_VerifySignatureInit -- it does not
         validate key-signature correspondence at init time.
         Tracked in docs/module-issues.md under NSS (SECURITY).
         """
@@ -149,14 +149,14 @@ class TestVerifySignatureRoundtrip:
             if rv == CKR_OK:
                 note(
                     "C_VerifySignatureInit returned CKR_OK for a signature created with a "
-                    "different key — module does not validate key-signature correspondence "
+                    "different key -- module does not validate key-signature correspondence "
                     "at init time (SECURITY)",
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 spec C_VerifySignatureInit",
                 )
                 pytest.xfail(
                     "SECURITY: NSS C_VerifySignatureInit returned CKR_OK when verifying "
-                    "with a mismatched public key — silent acceptance of forged signatures "
+                    "with a mismatched public key -- silent acceptance of forged signatures "
                     "(expected CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID)"
                 )
             assert rv in (

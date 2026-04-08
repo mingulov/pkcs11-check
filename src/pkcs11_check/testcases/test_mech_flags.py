@@ -1,6 +1,6 @@
 """Mechanism flag validation tests.
 
-Parametrized by mech_any_entry — checks every mechanism advertised by the
+Parametrized by mech_any_entry -- checks every mechanism advertised by the
 module against the OASIS PKCS#11 spec expectations stored in the registry.
 
 Tests:
@@ -95,8 +95,8 @@ class TestMechFlags:
         """
         entry = mech_any_entry
         if entry.min_key_size == 0 and entry.max_key_size == 0:
-            return  # 0/0 means "no key size constraint" — valid
+            return  # 0/0 means "no key size constraint" -- valid
         assert entry.min_key_size <= entry.max_key_size, (
             f"{entry.mech_name}: min_key_size ({entry.min_key_size}) > "
-            f"max_key_size ({entry.max_key_size}) — invalid C_GetMechanismInfo output"
+            f"max_key_size ({entry.max_key_size}) -- invalid C_GetMechanismInfo output"
         )

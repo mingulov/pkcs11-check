@@ -95,7 +95,7 @@ def nonnull_zero_length_bytes(value: bytes | bytearray | memoryview) -> SizedFau
 def nonnull_zero_length_scalar(value: int) -> SizedFaultArg:
     """Model a live non-NULL scalar pointer passed with length zero.
 
-    (unused — retained for future tests)
+    (unused -- retained for future tests)
     """
     return _fault_from_storage(
         CK_ULONG(value),
@@ -108,7 +108,7 @@ def nonnull_zero_length_scalar(value: int) -> SizedFaultArg:
 def nonnull_zero_length_struct(struct_type: type[ctypes.Structure]) -> SizedFaultArg:
     """Model a live non-NULL struct pointer passed with length zero.
 
-    (unused — retained for future tests)
+    (unused -- retained for future tests)
     """
     return _fault_from_storage(
         struct_type(),
@@ -155,7 +155,7 @@ def incorrect_explicit_length_struct(
 ) -> SizedFaultArg:
     """Model a live struct pointer passed with an incorrect explicit length.
 
-    (unused — retained for future tests)
+    (unused -- retained for future tests)
     """
     return _fault_from_storage(
         struct_type(),

@@ -51,7 +51,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     """Add EC/EdDSA/ECDH mechanism entries to the registry."""
 
     # ---------------------------------------------------------------------------
-    # EC — Weierstrass (CKK_EC)
+    # EC -- Weierstrass (CKK_EC)
     # ---------------------------------------------------------------------------
 
     registry[CKM_EC_KEY_PAIR_GEN] = MechConfig(
@@ -64,7 +64,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         notes="EC (Weierstrass) key pair generation; alias CKM_ECDSA_KEY_PAIR_GEN",
     )
 
-    # Alias: same value as CKM_EC_KEY_PAIR_GEN — only one entry in registry
+    # Alias: same value as CKM_EC_KEY_PAIR_GEN -- only one entry in registry
     # (CKM_ECDSA_KEY_PAIR_GEN == CKM_EC_KEY_PAIR_GEN == 0x1040)
 
     registry[CKM_EC_KEY_PAIR_GEN_W_EXTRA_BITS] = MechConfig(
@@ -253,7 +253,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     # ---------------------------------------------------------------------------
-    # EC — Edwards (CKK_EC_EDWARDS)
+    # EC -- Edwards (CKK_EC_EDWARDS)
     # ---------------------------------------------------------------------------
 
     registry[CKM_EC_EDWARDS_KEY_PAIR_GEN] = MechConfig(
@@ -292,7 +292,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     # ---------------------------------------------------------------------------
-    # EC — Montgomery (CKK_EC_MONTGOMERY)
+    # EC -- Montgomery (CKK_EC_MONTGOMERY)
     # ---------------------------------------------------------------------------
 
     registry[CKM_EC_MONTGOMERY_KEY_PAIR_GEN] = MechConfig(

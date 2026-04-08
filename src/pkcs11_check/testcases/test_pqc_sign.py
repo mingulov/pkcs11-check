@@ -236,7 +236,7 @@ class TestMLDSAHedgeVariants:
     """ML-DSA signing with explicit hedge variants via CK_SIGN_ADDITIONAL_CONTEXT."""
 
     def test_hedge_preferred(self, p11_raw_session: Any) -> None:
-        """CKH_HEDGE_PREFERRED — default randomized signing."""
+        """CKH_HEDGE_PREFERRED -- default randomized signing."""
         rs = p11_raw_session
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
@@ -253,7 +253,7 @@ class TestMLDSAHedgeVariants:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_hedge_required(self, p11_raw_session: Any) -> None:
-        """CKH_HEDGE_REQUIRED — must use randomization."""
+        """CKH_HEDGE_REQUIRED -- must use randomization."""
         rs = p11_raw_session
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
@@ -270,7 +270,7 @@ class TestMLDSAHedgeVariants:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_deterministic_required(self, p11_raw_session: Any) -> None:
-        """CKH_DETERMINISTIC_REQUIRED — signing must be deterministic."""
+        """CKH_DETERMINISTIC_REQUIRED -- signing must be deterministic."""
         rs = p11_raw_session
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)

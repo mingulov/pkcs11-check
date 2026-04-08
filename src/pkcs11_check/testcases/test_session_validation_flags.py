@@ -1,4 +1,4 @@
-"""C_GetSessionValidationFlags tests — v3.0+ session validation bitmask."""
+"""C_GetSessionValidationFlags tests -- v3.0+ session validation bitmask."""
 
 from __future__ import annotations
 

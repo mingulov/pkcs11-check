@@ -280,7 +280,7 @@ def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
             ):
                 verified = False
             else:
-                raise  # Unexpected error — not a signature verification result
+                raise  # Unexpected error -- not a signature verification result
 
         expected = vec["expected_pass"]
         if not expected and verified:

@@ -121,7 +121,7 @@ class TestCloseAllSessions:
 
         # Close all sessions at once
         rv = rs.raw.C_CloseAllSessions(rs.slot_id)
-        # Crash-only check — CKR_OK expected; some modules may return error
+        # Crash-only check -- CKR_OK expected; some modules may return error
         assert rv is not None
 
         # Verify we can open a new session after closing all
@@ -240,7 +240,7 @@ class TestCKNotifyCallback:
         if rv == CKR_OK:
             close_session_quietly(rs.raw, sh.value)
         else:
-            # Some modules limit concurrent sessions — acceptable
+            # Some modules limit concurrent sessions -- acceptable
             ckr = ckr_name(rv)
             assert "SESSION_COUNT" in ckr or "PARALLEL" in ckr, (
                 f"C_OpenSession with null CK_NOTIFY failed unexpectedly: {ckr}"

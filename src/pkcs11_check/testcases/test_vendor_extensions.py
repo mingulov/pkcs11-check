@@ -94,7 +94,7 @@ class TestVendorMechanismEnumeration:
             name = MECHANISM_NAMES.get(mech, f"0x{mech:08x}")
             if name.startswith("CKM_"):
                 name = name[4:]
-            _flags = info["flags"]  # noqa: F841 — output visible in test log
+            _flags = info["flags"]  # noqa: F841 -- output visible in test log
             _name = name  # noqa: F841
 
 

@@ -1,6 +1,6 @@
 """Probe tests for vendor/unknown mechanisms.
 
-Parametrized by mech_any_entry — covers mechanisms advertised by the module
+Parametrized by mech_any_entry -- covers mechanisms advertised by the module
 that have NO entry in the mechanism registry.  These are vendor-defined or
 newly added standard mechanisms not yet catalogued.
 
@@ -10,7 +10,7 @@ Tests confirm that:
   - The flags advertised by the module are self-consistent (at least one
     operation class bit is set, or CKF_EXTENSION is present)
 
-Registered mechanisms (with a registry config) are skipped here — they are
+Registered mechanisms (with a registry config) are skipped here -- they are
 fully exercised by test_mech_encrypt.py, test_mech_sign.py, etc.
 """
 from __future__ import annotations
@@ -87,8 +87,8 @@ class TestMechProbeNoRegistry:
         """
         entry = mech_any_entry
         if entry.config is not None:
-            pytest.skip(f"{entry.mech_name}: registered mechanism — tested elsewhere")
-        # No assertion needed — reaching here confirms it is unregistered.
+            pytest.skip(f"{entry.mech_name}: registered mechanism -- tested elsewhere")
+        # No assertion needed -- reaching here confirms it is unregistered.
 
     def test_has_operation_flag(
         self, p11_raw_session: RawSession, mech_any_entry: MechEntry
@@ -100,18 +100,18 @@ class TestMechProbeNoRegistry:
         """
         entry = mech_any_entry
         if entry.config is not None:
-            pytest.skip(f"{entry.mech_name}: registered mechanism — tested elsewhere")
+            pytest.skip(f"{entry.mech_name}: registered mechanism -- tested elsewhere")
         if entry.flags == 0:
             # Flags == 0 is a spec violation but not a crash.  Fail with a
             # clear message rather than silently passing.
             pytest.fail(
                 f"{entry.mech_name} (0x{entry.mech_id:08x}): "
-                f"flags == 0 — no operation class bits set (CKF_EXTENSION expected at minimum)"
+                f"flags == 0 -- no operation class bits set (CKF_EXTENSION expected at minimum)"
             )
         # At least one known operation bit or CKF_EXTENSION must be set
         assert entry.flags & _OP_FLAGS, (
             f"{entry.mech_name} (0x{entry.mech_id:08x}): "
-            f"flags=0x{entry.flags:08x} — no known operation class bits recognised"
+            f"flags=0x{entry.flags:08x} -- no known operation class bits recognised"
         )
 
     def test_init_does_not_crash(
@@ -125,7 +125,7 @@ class TestMechProbeNoRegistry:
         """
         entry = mech_any_entry
         if entry.config is not None:
-            pytest.skip(f"{entry.mech_name}: registered mechanism — tested elsewhere")
+            pytest.skip(f"{entry.mech_name}: registered mechanism -- tested elsewhere")
 
         flags = entry.flags
         mech = mech_simple(CKM(entry.mech_id))
@@ -144,10 +144,10 @@ class TestMechProbeNoRegistry:
         elif flags & ckf_encrypt:
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), 0)  # type: ignore[attr-defined]
         else:
-            # Other operation type — just confirm it didn't crash reaching here
+            # Other operation type -- just confirm it didn't crash reaching here
             return
 
-        # rv must be a recognisable CKR integer — not a process crash
+        # rv must be a recognisable CKR integer -- not a process crash
         assert isinstance(rv, int), (
             f"{entry.mech_name}: Init returned non-integer {rv!r}"
         )

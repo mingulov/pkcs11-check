@@ -1,6 +1,6 @@
 """Mechanism-driven sign/verify tests.
 
-Parametrized by mech_sign_entry — tests every sign mechanism advertised by the
+Parametrized by mech_sign_entry -- tests every sign mechanism advertised by the
 module that also has a registry config.
 
 Key types covered:
@@ -9,7 +9,7 @@ Key types covered:
 - RSA-PKCS, RSA-PSS, RSA-X9.31, SHA*-RSA-PKCS, SHA*-RSA-PKCS-PSS: RSA keypair
 - ECDSA, ECDSA-SHA*, EdDSA: EC keypair
 - ML-DSA, SLH-DSA: PQC keypair
-- DSA/GOSTR/KEA: require domain parameters — skipped
+- DSA/GOSTR/KEA: require domain parameters -- skipped
 
 The tampered-data test verifies that C_Verify returns False (CKR_SIGNATURE_INVALID
 or CKR_SIGNATURE_LEN_RANGE) when the data does not match the signature.
@@ -56,7 +56,7 @@ class TestMechSignRoundtrip:
     """Sign then verify roundtrip for every advertised sign mechanism."""
 
     def test_roundtrip(self, p11_raw_session: RawSession, mech_sign_entry: MechEntry) -> None:
-        """Sign data then verify — must return True."""
+        """Sign data then verify -- must return True."""
         rs = p11_raw_session
         entry = mech_sign_entry
         config = entry.config
@@ -95,7 +95,7 @@ class TestMechSignRoundtrip:
     def test_tampered_data_fails_verify(
         self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
-        """Sign data A, verify with data B — must return False."""
+        """Sign data A, verify with data B -- must return False."""
         rs = p11_raw_session
         entry = mech_sign_entry
         config = entry.config
@@ -250,14 +250,14 @@ def _run_asymmetric_sign_kat(
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_key)
 
-    # else: unrecognised asymmetric vector schema — skip silently
+    # else: unrecognised asymmetric vector schema -- skip silently
 
 
 class TestMechSignKAT:
     """Known-answer sign/MAC tests from pre-generated vectors."""
 
     def test_kat_vector(self, p11_raw_session: RawSession, mech_sign_entry: MechEntry) -> None:
-        """Compute MAC with known key and input — verify output matches vector."""
+        """Compute MAC with known key and input -- verify output matches vector."""
         rs = p11_raw_session
         entry = mech_sign_entry
         config = entry.config

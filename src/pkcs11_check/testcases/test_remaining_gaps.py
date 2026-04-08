@@ -278,9 +278,9 @@ class TestWaitForSlotEvent:
         if rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.skip("C_WaitForSlotEvent not supported")
         if rv == CKR_OK:
-            pass  # Got an event — valid
+            pass  # Got an event -- valid
         elif rv == CKR_NO_EVENT:
-            pass  # Expected — no slot events pending
+            pass  # Expected -- no slot events pending
         else:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -431,7 +431,7 @@ class TestAsyncLifecycle:
         if not hasattr(rs.raw, "C_AsyncComplete"):
             pytest.skip("C_AsyncComplete not available")
         rv = rs.raw.C_AsyncComplete(rs.sh, None, None)
-        # No CKR assertion — presence check only (function returned without crash)
+        # No CKR assertion -- presence check only (function returned without crash)
         assert rv is not None
 
     @pytest.mark.requires_v30
@@ -441,7 +441,7 @@ class TestAsyncLifecycle:
         if not hasattr(rs.raw, "C_AsyncJoin"):
             pytest.skip("C_AsyncJoin not available")
         rv = rs.raw.C_AsyncJoin(rs.sh, None, 0, None, 0)
-        # No CKR assertion — presence check only (function returned without crash)
+        # No CKR assertion -- presence check only (function returned without crash)
         assert rv is not None
 
     @pytest.mark.requires_v30
@@ -452,7 +452,7 @@ class TestAsyncLifecycle:
             pytest.skip("C_AsyncGetID not available")
         async_id = c_ulong(0)
         rv = rs.raw.C_AsyncGetID(rs.sh, None, byref(async_id))
-        # No CKR assertion — presence check only (function returned without crash)
+        # No CKR assertion -- presence check only (function returned without crash)
         assert rv is not None
 
 

@@ -6,8 +6,8 @@ the variant at runtime by probing the module, then runs only the matching
 variant's ACVP vectors (skipping the other two).
 
 Detection method (cached, runs once per session):
-  Probe 1 — 33-byte non-aligned encrypt: distinguishes CS3 from CS1/CS2.
-  Probe 2 — 32-byte aligned encrypt: distinguishes CS1 from CS2.
+  Probe 1 -- 33-byte non-aligned encrypt: distinguishes CS3 from CS1/CS2.
+  Probe 2 -- 32-byte aligned encrypt: distinguishes CS1 from CS2.
 """
 
 from __future__ import annotations
@@ -98,13 +98,13 @@ _CBC_CS3_ENCRYPT_VECTORS, _CBC_CS3_DECRYPT_VECTORS = _load_cbc_cs_vectors("3")
 def _detect_cts_variant(rs: Any) -> str | None:
     """Detect which CBC-CS variant (CS1/CS2/CS3) the module implements.
 
-    Uses structural comparison — no pre-computed values needed.
+    Uses structural comparison -- no pre-computed values needed.
 
-    Probe 1 — 33 bytes (2 full blocks + 1 byte): the module returns 33 bytes.
-      CS3: output starts with CBC(block1) — natural order.
-      CS1/CS2: output starts differently — swapped.
+    Probe 1 -- 33 bytes (2 full blocks + 1 byte): the module returns 33 bytes.
+      CS3: output starts with CBC(block1) -- natural order.
+      CS1/CS2: output starts differently -- swapped.
 
-    Probe 2 — 32 bytes (block-aligned): only needed if probe 1 says CS1/CS2.
+    Probe 2 -- 32 bytes (block-aligned): only needed if probe 1 says CS1/CS2.
       CS1: output == standard CBC output (no swap).
       CS2: last two 16-byte halves are swapped vs CBC.
 
@@ -165,7 +165,7 @@ def _detect_cts_variant(rs: Any) -> str | None:
         )
 
         if ct1[:16] == cbc_c1[:16]:
-            # First block matches CBC(block1) — candidate for CS3.
+            # First block matches CBC(block1) -- candidate for CS3.
             # CS3 format for 33 bytes: C1(16) | C3(16) | C2'(1)
             # Verify by computing full CBC chain and checking middle bytes
             # match the last full CBC block (C3).  If they don't, the module
@@ -181,7 +181,7 @@ def _detect_cts_variant(rs: Any) -> str | None:
                 return "3"
             return None  # Non-standard variant (first block matches but stealing order differs)
 
-        # CS1 or CS2 — need aligned probe to distinguish
+        # CS1 or CS2 -- need aligned probe to distinguish
         pt2 = bytes(range(32))
         ct2 = encrypt_single(
             rs.raw, rs.sh, key, CKM_AES_CTS, pt2,

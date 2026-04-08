@@ -135,7 +135,7 @@ class TestTokenFlags:
         """
         rs = p11_raw_session
         if p11_config.pin is None:
-            pytest.skip("No PIN configured — CKF_USER_PIN_INITIALIZED check requires a PIN")
+            pytest.skip("No PIN configured -- CKF_USER_PIN_INITIALIZED check requires a PIN")
         info = CK_TOKEN_INFO()
         rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
         expect_rv(rv, CKR_OK)
@@ -144,14 +144,14 @@ class TestTokenFlags:
 
             note(
                 f"CKF_USER_PIN_INITIALIZED not set on token with configured PIN; "
-                f"flags=0x{info.flags:08x} — "
+                f"flags=0x{info.flags:08x} -- "
                 f"module may report this slot as not requiring a user PIN",
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 spec CKF_USER_PIN_INITIALIZED",
             )
             pytest.xfail(
                 f"NSS does not set CKF_USER_PIN_INITIALIZED on this slot "
-                f"(flags=0x{info.flags:08x}) — "
+                f"(flags=0x{info.flags:08x}) -- "
                 f"NSS Certificate DB slot does not report user PIN as initialized"
             )
         assert info.flags & CKF_USER_PIN_INITIALIZED, (

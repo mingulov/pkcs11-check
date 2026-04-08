@@ -1,6 +1,6 @@
 """Mechanism-driven encrypt/decrypt tests.
 
-Parametrized by mech_encrypt_entry — tests every encrypt mechanism advertised
+Parametrized by mech_encrypt_entry -- tests every encrypt mechanism advertised
 by the module that also has a registry config.
 
 Key types covered:
@@ -100,7 +100,7 @@ class TestMechEncryptKAT:
     """Known-answer encryption tests from pre-generated vectors."""
 
     def test_kat_vector(self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry) -> None:
-        """Encrypt known plaintext with known key — verify ciphertext matches vector."""
+        """Encrypt known plaintext with known key -- verify ciphertext matches vector."""
         rs = p11_raw_session
         entry = mech_encrypt_entry
         config = entry.config

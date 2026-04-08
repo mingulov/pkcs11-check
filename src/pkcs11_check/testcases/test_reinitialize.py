@@ -107,7 +107,7 @@ class TestReinitialize:
         rv = raw.C_Initialize(None)
         expect_rv(rv, CKR_OK)
         try:
-            # Old session handle should be invalid now — any C_ call should fail
+            # Old session handle should be invalid now -- any C_ call should fail
             from ctypes import byref
 
             from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
@@ -117,7 +117,7 @@ class TestReinitialize:
             mech = mech_simple(CKM_AES_KEY_GEN)
             new_key = CK_OBJECT_HANDLE(0)
             rv2 = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(new_key))
-            # Some modules may reuse the handle — CKR_OK is acceptable
+            # Some modules may reuse the handle -- CKR_OK is acceptable
             # CKR_SESSION_HANDLE_INVALID (0xb3) or any non-OK is expected
             if rv2 == CKR_OK:
                 destroy_quietly(raw, sh, new_key.value)

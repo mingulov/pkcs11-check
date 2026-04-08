@@ -114,7 +114,7 @@ class TestGetAttributeErrors:
 
                 note(
                     "C_GetAttributeValue(CKA_VALUE) returned CKR_OK on CKA_SENSITIVE=True key "
-                    "— module exposes secret key material without restriction. "
+                    "-- module exposes secret key material without restriction. "
                     "PKCS#11 spec requires CKR_ATTRIBUTE_SENSITIVE (Sec.5.7.5).",
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.5.7.5",

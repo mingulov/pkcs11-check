@@ -1,6 +1,6 @@
 """Mechanism-driven key generation tests.
 
-Parametrized by mech_keygen_entry — tests every keygen mechanism
+Parametrized by mech_keygen_entry -- tests every keygen mechanism
 advertised by the module that also has a registry config.
 
 Key types covered:
@@ -10,7 +10,7 @@ Key types covered:
 - RSA keypairs: CKA_MODULUS_BITS in public template
 - EC (Weierstrass / Edwards / Montgomery) keypairs: CKA_EC_PARAMS (P-256 default)
 - PQC keypairs (ML-KEM, ML-DSA, SLH-DSA): CKA_PARAMETER_SET
-- DSA / DH / X9.42 DH / KEA / GOSTR: need domain parameters — skipped
+- DSA / DH / X9.42 DH / KEA / GOSTR: need domain parameters -- skipped
 """
 
 from __future__ import annotations

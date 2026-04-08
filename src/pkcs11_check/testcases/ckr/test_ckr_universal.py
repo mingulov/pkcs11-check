@@ -121,7 +121,7 @@ class TestUniversalRealTriggers:
             sc = ctypes.c_ulong(0)
             rv = raw.C_GetSlotList(1, None, ctypes.byref(sc))
             print(f"CKR:0x{{rv:08x}}")
-            # Report result without asserting — outer test checks compliance
+            # Report result without asserting -- outer test checks compliance
             print("OK")
         """)
         result = subprocess.run(
@@ -133,7 +133,7 @@ class TestUniversalRealTriggers:
         )
         assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
         assert "OK" in result.stdout
-        # CKR_OK after C_Finalize means NSS auto-re-initializes — vendor deviation from spec
+        # CKR_OK after C_Finalize means NSS auto-re-initializes -- vendor deviation from spec
         if "CKR:0x00000000" in result.stdout:
             from pkcs11_check.compliance import ComplianceLevel, note
 

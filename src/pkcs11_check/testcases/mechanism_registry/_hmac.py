@@ -108,7 +108,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     """Add HMAC and key derivation mechanism entries to the registry."""
 
     # ---------------------------------------------------------------------------
-    # HMAC mechanisms — standard
+    # HMAC mechanisms -- standard
     # ---------------------------------------------------------------------------
 
     registry[CKM_SHA_1_HMAC] = MechConfig(
@@ -243,7 +243,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     # ---------------------------------------------------------------------------
-    # HMAC_GENERAL variants — variable-length output
+    # HMAC_GENERAL variants -- variable-length output
     # ---------------------------------------------------------------------------
 
     registry[CKM_SHA_1_HMAC_GENERAL] = MechConfig(

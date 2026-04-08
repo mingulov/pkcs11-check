@@ -231,7 +231,7 @@ def test_acvp_ecdh_shared_secret(
 
         # Prepare ECDH1_DERIVE mechanism parameters
         # The public data is the peer's public key point
-        # Strip DER OCTET STRING wrapper — ECDH1_DERIVE needs raw point
+        # Strip DER OCTET STRING wrapper -- ECDH1_DERIVE needs raw point
         point_data = decode_ec_point(vec["ec_point_der"])
 
         mech_param = mech_ecdh(

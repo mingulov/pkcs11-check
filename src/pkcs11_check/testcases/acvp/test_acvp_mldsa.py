@@ -183,7 +183,7 @@ class TestMlDsaSigGen:
             mech = get_mldsa_mechanism(pre_hash)
 
             # Sign the message, passing context via CK_SIGN_ADDITIONAL_CONTEXT
-            # when non-empty (pure ML-DSA only — hash variants use mech_hash_sign_context)
+            # when non-empty (pure ML-DSA only -- hash variants use mech_hash_sign_context)
             context = vec.get("context", b"")
             if isinstance(context, str):
                 context = bytes.fromhex(context) if context else b""

@@ -1,6 +1,6 @@
 """PKCS#11 module loading and interface negotiation.
 
-Uses RawPKCS11.from_lib() directly — no python-pkcs11 fork dependency.
+Uses RawPKCS11.from_lib() directly -- no python-pkcs11 fork dependency.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ SUPPORTED_INTERFACES = ("auto", "2.40", "3.0", "3.1", "3.2")
 
 
 # ---------------------------------------------------------------------------
-# Thin wrappers — provide the same duck-typed interface as python-pkcs11 Slot
+# Thin wrappers -- provide the same duck-typed interface as python-pkcs11 Slot
 # and Token objects, implemented over RawPKCS11 calls.
 # ---------------------------------------------------------------------------
 
@@ -98,9 +98,9 @@ class RawToken:
         return bytes(self._get_info().model).decode("utf-8").strip()
 
     def open(self, rw: bool = False) -> Any:
-        """Not implemented in the raw loader — use fixtures.py raw bootstrap."""
+        """Not implemented in the raw loader -- use fixtures.py raw bootstrap."""
         raise NotImplementedError(
-            "RawToken.open() not supported — use p11_raw_session fixture or "
+            "RawToken.open() not supported -- use p11_raw_session fixture or "
             "raw bootstrap helpers directly (Task 2 will replace this path)."
         )
 
@@ -162,7 +162,7 @@ class P11Module:
 
     path: Path
     _raw: RawPKCS11
-    # lib is intentionally None — python-pkcs11 fork no longer used.
+    # lib is intentionally None -- python-pkcs11 fork no longer used.
     # Tests that access p11_module.lib will get None and should be updated
     # to use p11_module.raw or the raw bootstrap helpers instead.
     lib: Any = None
@@ -281,7 +281,7 @@ def load_module(
 
     # Initialize the cryptoki library. C_Initialize may return
     # CKR_CRYPTOKI_ALREADY_INITIALIZED (0x00000191) if another part of the
-    # process already initialized it — that is acceptable.
+    # process already initialized it -- that is acceptable.
     rv = raw.C_Initialize(None)
     _ckr_already_initialized = 0x00000191
     if rv not in (CKR_OK, _ckr_already_initialized):

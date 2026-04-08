@@ -73,7 +73,7 @@ class TestKeyFunctionNotPermitted:
 
         PKCS#11 v3.1 Sec.4.4.1: If CKA_ENCRYPT is False, C_EncryptInit MUST return
         CKR_KEY_FUNCTION_NOT_PERMITTED. NSS returns CKR_OK, meaning the key permission
-        flag is silently ignored — keys without CKA_ENCRYPT=True can still be used to
+        flag is silently ignored -- keys without CKA_ENCRYPT=True can still be used to
         encrypt. This is a security finding.
         """
         rc, out, err = _run(
@@ -96,13 +96,13 @@ assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 mech = mech_simple(CKM_AES_ECB)  # AES_ECB
 rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
 print(f"CKR:0x{rv:08x}")
-# Report result without asserting — outer test checks security compliance
+# Report result without asserting -- outer test checks security compliance
 print("OK")
 """,
         )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
-        # CKR_OK means NSS allowed using the key despite CKA_ENCRYPT=False — security violation
+        # CKR_OK means NSS allowed using the key despite CKA_ENCRYPT=False -- security violation
         if "CKR:0x00000000" in out:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -157,7 +157,7 @@ print("OK")
 
         PKCS#11 v3.1 Sec.4.4.1: If CKA_DECRYPT is False, C_DecryptInit MUST return
         CKR_KEY_FUNCTION_NOT_PERMITTED. NSS returns CKR_OK, meaning the key permission
-        flag is silently ignored — keys without CKA_DECRYPT=True can still be used to
+        flag is silently ignored -- keys without CKA_DECRYPT=True can still be used to
         decrypt. This is a security finding.
         """
         rc, out, err = _run(
@@ -178,13 +178,13 @@ assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
 mech = mech_simple(CKM_AES_ECB)  # AES_ECB
 rv = raw.C_DecryptInit(sh, mech.byref(), key.value)
 print(f"CKR:0x{rv:08x}")
-# Report result without asserting — outer test checks security compliance
+# Report result without asserting -- outer test checks security compliance
 print("OK")
 """,
         )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
-        # CKR_OK means NSS allowed using the key despite CKA_DECRYPT=False — security violation
+        # CKR_OK means NSS allowed using the key despite CKA_DECRYPT=False -- security violation
         if "CKR:0x00000000" in out:
             from pkcs11_check.compliance import ComplianceLevel, note
 

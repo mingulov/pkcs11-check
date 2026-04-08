@@ -79,7 +79,7 @@ class TestSessionInfo:
             close_session_quietly(rs.raw, test_sh)
 
     def test_session_has_token(self, p11_raw_session: Any, p11_config: Any) -> None:
-        """Session is associated with a token — generate a session key."""
+        """Session is associated with a token -- generate a session key."""
         rs = p11_raw_session
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)

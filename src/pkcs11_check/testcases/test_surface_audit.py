@@ -69,7 +69,7 @@ class TestHiddenMechanisms:
         assert len(standard_mechs) >= 5, f"Only {len(standard_mechs)} standard mechanisms"
         assert len(standard_mechs) < 1000, f"Too many standard mechanisms: {len(standard_mechs)}"
         if vendor_mechs:
-            _vendor_count = len(vendor_mechs)  # noqa: F841 — visible in test log
+            _vendor_count = len(vendor_mechs)  # noqa: F841 -- visible in test log
 
     def test_deprecated_mechanisms_flagged(
         self,

@@ -353,7 +353,7 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
                 entries = catalog.filter_registered(flag)
 
     if not entries:
-        # No catalog or no matching entries — use a sentinel that triggers skip
+        # No catalog or no matching entries -- use a sentinel that triggers skip
         entries = [pytest.param(None, marks=pytest.mark.skip("No mechanism catalog"))]
         ids = ["no_catalog"]
     else:

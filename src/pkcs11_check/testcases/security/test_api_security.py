@@ -103,7 +103,7 @@ class TestWrapDecryptOracle:
                             "CKA_WRAP and CKA_DECRYPT should not both be True",
                         )
                         pytest.xfail(
-                            "SECURITY: NSS wrap-decrypt oracle possible — key has both "
+                            "SECURITY: NSS wrap-decrypt oracle possible -- key has both "
                             "CKA_WRAP and CKA_DECRYPT, attacker can decrypt wrapped key blobs"
                         )
                 except AssertionError:
@@ -131,7 +131,7 @@ class TestSensitiveExtraction:
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
             assert CKA_VALUE not in attrs, (
-                "SECURITY: CKA_VALUE readable on SENSITIVE key — key material exposed"
+                "SECURITY: CKA_VALUE readable on SENSITIVE key -- key material exposed"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
@@ -143,7 +143,7 @@ class TestSensitiveExtraction:
         try:
             attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_PRIVATE_EXPONENT])
             assert CKA_PRIVATE_EXPONENT not in attrs, (
-                "SECURITY: CKA_PRIVATE_EXPONENT readable — private key material exposed"
+                "SECURITY: CKA_PRIVATE_EXPONENT readable -- private key material exposed"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_h)
@@ -224,7 +224,7 @@ class TestAttributeLaunderingViaCopy:
                         )
                         pytest.xfail(
                             "SECURITY: NSS Copy escalated CKA_EXTRACTABLE (False->True) "
-                            "via C_CopyObject — key material readable (Tookan vulnerability)"
+                            "via C_CopyObject -- key material readable (Tookan vulnerability)"
                         )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, copy_h)
@@ -289,7 +289,7 @@ class TestKeyUsageRestrictions:
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
             assert CKA_VALUE not in attrs, (
-                "SECURITY: CKA_VALUE readable on non-extractable key — key material exposed"
+                "SECURITY: CKA_VALUE readable on non-extractable key -- key material exposed"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)

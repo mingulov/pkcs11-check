@@ -676,7 +676,7 @@ class TestSessionCancel:
             )
             pytest.xfail(
                 f"Module returns non-conformant CKR for C_SessionCancel(flags=0): "
-                f"{cancel_part} — spec requires CKR_OK when no flags are set "
+                f"{cancel_part} -- spec requires CKR_OK when no flags are set "
                 f"(OASIS PKCS#11 v3.0 C_SessionCancel section)"
             )
 

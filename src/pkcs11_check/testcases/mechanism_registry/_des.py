@@ -42,7 +42,7 @@ _DES_ENC = CKF_ENCRYPT | CKF_DECRYPT
 _DES_SIG = CKF_SIGN | CKF_VERIFY
 
 # OASIS spec lists WRP&UWRP for DES/3DES block ciphers, but this is an optional
-# capability — modules may implement encrypt/decrypt without wrap.  Only the
+# capability -- modules may implement encrypt/decrypt without wrap.  Only the
 # minimum required flags (CKF_ENCRYPT | CKF_DECRYPT) are recorded as expected.
 _DES3_SIZES = (128, 192)  # DES2 (2-key 3DES) and DES3 (3-key 3DES)
 

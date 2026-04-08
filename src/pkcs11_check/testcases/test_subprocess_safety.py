@@ -121,7 +121,7 @@ class TestLibraryReload:
 
         A negative exit code (signal/segfault) is a module bug and kept as failure.
         A positive exit code (rc > 0) means the module raised a Python exception
-        during reinit — common causes: token label not found after reinit (NSS,
+        during reinit -- common causes: token label not found after reinit (NSS,
         qryptotoken), daemon not provisioned (tpm2-pkcs11). These are module
         environment limitations, not crashes, so xfail.
         """
@@ -153,7 +153,7 @@ class TestLibraryReload:
         """
         rc, output = _run_script(script, timeout=30)
         if rc < 0:
-            # Negative exit code = killed by signal (crash/segfault) — real module bug
+            # Negative exit code = killed by signal (crash/segfault) -- real module bug
             pytest.fail(f"Reload cycle crashed with signal (rc={rc}): {output}")
         if rc != 0:
             # Non-zero but no signal: module raised an exception during reinit

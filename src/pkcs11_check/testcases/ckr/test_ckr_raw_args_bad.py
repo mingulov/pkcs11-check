@@ -37,10 +37,10 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
 )
 # NULL mechanism pointer: acceptable CKR codes per OASIS PKCS#11 v3.1 Sec.5.2
-# CKR_ARGUMENTS_BAD — NULL pointer is bad argument
-# CKR_MECHANISM_INVALID — NULL interpreted as invalid mechanism (NSS)
-# CKR_MECHANISM_PARAM_INVALID — NULL mechanism params interpreted as invalid
-# CKR_OK (0) — v3.0+ spec allows NULL mech to cancel an in-progress operation
+# CKR_ARGUMENTS_BAD -- NULL pointer is bad argument
+# CKR_MECHANISM_INVALID -- NULL interpreted as invalid mechanism (NSS)
+# CKR_MECHANISM_PARAM_INVALID -- NULL mechanism params interpreted as invalid
+# CKR_OK (0) -- v3.0+ spec allows NULL mech to cancel an in-progress operation
 _NULL_MECH_OK = (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0)
 from pkcs11_check.raw.faults import null_pointer
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template

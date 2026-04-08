@@ -89,12 +89,12 @@ def close_session_quietly(raw: RawPKCS11, session: int) -> None:
 
 
 def logout(raw: RawPKCS11, session: int) -> None:
-    """C_Logout — log out from a token session."""
+    """C_Logout -- log out from a token session."""
     expect_rv(raw.C_Logout(session), CKR_OK, CKR_USER_NOT_LOGGED_IN)
 
 
 def logout_quietly(raw: RawPKCS11, session: int) -> None:
-    """C_Logout — log out, ignoring errors (for use in finally blocks)."""
+    """C_Logout -- log out, ignoring errors (for use in finally blocks)."""
     try:
         raw.C_Logout(session)
     except (AttributeError, OSError, ctypes.ArgumentError):
@@ -108,7 +108,7 @@ def login_user_with_name(
     pin: bytes | bytearray | memoryview,
     username: bytes = b"",
 ) -> None:
-    """C_LoginUser (v3.0+) — login with an explicit username."""
+    """C_LoginUser (v3.0+) -- login with an explicit username."""
     if isinstance(pin, str):
         raise TypeError("pin must be bytes-like")
     try:

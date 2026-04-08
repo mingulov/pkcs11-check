@@ -1,15 +1,15 @@
 """Multi-part streaming operation tests.
 
 Parametrized by mech_multipart_encrypt_entry / mech_multipart_sign_entry /
-mech_digest_entry — verifies that multi-part operations produce the same
+mech_digest_entry -- verifies that multi-part operations produce the same
 result as the equivalent single-part operation.
 
 Test patterns:
-- Encrypt: C_EncryptUpdate chunks → C_EncryptFinal, result matches C_Encrypt
-- Decrypt: C_DecryptUpdate chunks → C_DecryptFinal, result matches C_Decrypt
-- Sign: C_SignUpdate chunks → C_SignFinal, result matches C_Sign (deterministic mechs)
-- Verify: C_VerifyUpdate chunks → C_VerifyFinal, validates multipart sig
-- Digest: C_DigestUpdate chunks → C_DigestFinal, result matches C_Digest
+- Encrypt: C_EncryptUpdate chunks -> C_EncryptFinal, result matches C_Encrypt
+- Decrypt: C_DecryptUpdate chunks -> C_DecryptFinal, result matches C_Decrypt
+- Sign: C_SignUpdate chunks -> C_SignFinal, result matches C_Sign (deterministic mechs)
+- Verify: C_VerifyUpdate chunks -> C_VerifyFinal, validates multipart sig
+- Digest: C_DigestUpdate chunks -> C_DigestFinal, result matches C_Digest
 
 Selector-backed multipart fixtures cover multi-part capability. Runtime guards
 remain only for helper coverage gaps and operation-specific limitations such as
@@ -56,7 +56,7 @@ except ImportError:
 
 
 class TestMultipartEncrypt:
-    """C_EncryptUpdate chunks → C_EncryptFinal matches C_Encrypt."""
+    """C_EncryptUpdate chunks -> C_EncryptFinal matches C_Encrypt."""
 
     def test_streaming_equals_single(
         self, p11_raw_session: RawSession, mech_multipart_encrypt_entry: MechEntry
@@ -132,7 +132,7 @@ class TestMultipartEncrypt:
 
 
 class TestMultipartDigest:
-    """C_DigestUpdate chunks → C_DigestFinal matches C_Digest."""
+    """C_DigestUpdate chunks -> C_DigestFinal matches C_Digest."""
 
     def test_streaming_equals_single(
         self, p11_raw_session: RawSession, mech_digest_entry: MechEntry
@@ -153,7 +153,7 @@ class TestMultipartDigest:
         # Parameterised digests (SHA-512/t) without a buildable recipe
         if config.param_required and config.param_recipe.style == "none":
             pytest.skip(
-                f"{entry.mech_name}: param_required but recipe style 'none' — cannot build params"
+                f"{entry.mech_name}: param_required but recipe style 'none' -- cannot build params"
             )
 
         data = b"multipart digest test input data" * 3  # 96 bytes
@@ -190,7 +190,7 @@ class TestMultipartDigest:
 
         if config.param_required and config.param_recipe.style == "none":
             pytest.skip(
-                f"{entry.mech_name}: param_required but recipe style 'none' — cannot build params"
+                f"{entry.mech_name}: param_required but recipe style 'none' -- cannot build params"
             )
 
         data = b"single chunk multipart test"
@@ -203,7 +203,7 @@ class TestMultipartDigest:
 
 
 class TestMultipartSign:
-    """C_SignUpdate chunks → C_SignFinal — multipart signature verifies."""
+    """C_SignUpdate chunks -> C_SignFinal -- multipart signature verifies."""
 
     def test_multipart_sign_verify(
         self, p11_raw_session: RawSession, mech_multipart_sign_entry: MechEntry

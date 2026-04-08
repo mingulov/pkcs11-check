@@ -3,7 +3,7 @@
 Covers invalid operations, boundary conditions, empty inputs,
 session edge cases, and key lifecycle.
 
-Migrated to pkcs11_check.raw — error tests use raw C_* calls with
+Migrated to pkcs11_check.raw -- error tests use raw C_* calls with
 specific CKR code checks; happy-path tests use recipes.
 """
 

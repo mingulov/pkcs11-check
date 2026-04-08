@@ -51,7 +51,7 @@ def _preamble(p11_config: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# TestDataLengthOverflow — 4 lengths x 2 ops = 8 cases
+# TestDataLengthOverflow -- 4 lengths x 2 ops = 8 cases
 # ---------------------------------------------------------------------------
 
 _DATA_LENGTHS = [
@@ -124,7 +124,7 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
-# TestMechanismParamLengthOverflow — 2 cases
+# TestMechanismParamLengthOverflow -- 2 cases
 # ---------------------------------------------------------------------------
 
 _MECH_PARAM_CASES = [
@@ -183,7 +183,7 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
-# TestGcmTagBitsOverflow — 4 cases
+# TestGcmTagBitsOverflow -- 4 cases
 # ---------------------------------------------------------------------------
 
 _GCM_TAG_BITS = [
@@ -247,7 +247,7 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
-# TestPssSaltLengthOverflow — 3 cases
+# TestPssSaltLengthOverflow -- 3 cases
 # ---------------------------------------------------------------------------
 
 _PSS_SALT_LENGTHS = [
@@ -311,7 +311,7 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
-# TestTemplateCountOverflow — 3 counts x 5 ops = 15 cases
+# TestTemplateCountOverflow -- 3 counts x 5 ops = 15 cases
 # ---------------------------------------------------------------------------
 
 _TEMPLATE_COUNTS = [
@@ -414,7 +414,7 @@ attr.type = int(CKA_CLASS)
 cls_val = CK_ULONG(int(CKO_DATA))
 attr.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
 attr.ulValueLen = ctypes.sizeof(cls_val)
-# Use object handle 0 — the huge count should be rejected first
+# Use object handle 0 -- the huge count should be rejected first
 rv = raw.C_SetAttributeValue(sh, 0, ctypes.byref(attr), {count})
 print(f"rv={{rv}}")
 cleanup()
@@ -464,7 +464,7 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
-# TestKeyValueLenOverflow — 2 cases
+# TestKeyValueLenOverflow -- 2 cases
 # ---------------------------------------------------------------------------
 
 _KEYGEN_MECHS = [
@@ -536,7 +536,7 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
-# TestAttributeValueLenOverflow — 3 cases
+# TestAttributeValueLenOverflow -- 3 cases
 # ---------------------------------------------------------------------------
 
 _ATTR_VALUE_OPS = [
@@ -572,7 +572,7 @@ attr = CK_ATTRIBUTE()
 attr.type = int(CKA_CLASS)
 attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
 attr.ulValueLen = {_ULONG_MAX}
-# Object handle 0 — module may reject handle before reading attr
+# Object handle 0 -- module may reject handle before reading attr
 rv = raw.C_GetAttributeValue(sh, 0, ctypes.pointer(attr), 1)
 print(f"rv={{rv}}")
 cleanup()
@@ -618,7 +618,7 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
-# TestGenerateKeyPairCountOverflow — 2 cases
+# TestGenerateKeyPairCountOverflow -- 2 cases
 # ---------------------------------------------------------------------------
 
 _KEYPAIR_COUNT_CASES = [

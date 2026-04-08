@@ -1,6 +1,6 @@
 """Mechanism-driven digest tests.
 
-Parametrized by mech_digest_entry — tests every digest mechanism advertised by
+Parametrized by mech_digest_entry -- tests every digest mechanism advertised by
 the module that also has a registry config.
 
 Tests:
@@ -9,7 +9,7 @@ Tests:
 - test_length: output length matches expected size for the algorithm
 - test_deterministic: same input produces identical digest in two calls
 
-XOF mechanisms (SHAKE-128/256) that require C_DigestXof* are skipped here —
+XOF mechanisms (SHAKE-128/256) that require C_DigestXof* are skipped here --
 they use a different API not covered by digest_single.
 Mechanisms with param_required=True and no factory (SHA-512/t) are skipped.
 """
@@ -47,11 +47,11 @@ from pkcs11_check.testcases.mechanism_registry import MechConfig
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.digest]
 
-# Known CKM IDs for SHAKE (XOF — different API, not tested here)
+# Known CKM IDs for SHAKE (XOF -- different API, not tested here)
 _SHAKE_128_ID = 0x00000418  # TODO: not in vendored v3.2 header; future spec
 _SHAKE_256_ID = 0x00000419  # TODO: not in vendored v3.2 header; future spec
 
-# Map CKM mech_id → expected output length in bytes (None = unknown/variable)
+# Map CKM mech_id -> expected output length in bytes (None = unknown/variable)
 _KNOWN_OUTPUT_LENGTHS: dict[int, int] = {
     int(CKM_SHA_1): 20,
     int(CKM_SHA224): 28,
@@ -72,7 +72,7 @@ _KNOWN_OUTPUT_LENGTHS: dict[int, int] = {
     int(CKM_BLAKE2B_512): 64,
 }
 
-# Map CKM mech_id → hashlib algorithm name (for known-answer verification via Python)
+# Map CKM mech_id -> hashlib algorithm name (for known-answer verification via Python)
 _HASHLIB_BY_MECH: dict[int, str] = {
     int(CKM_SHA_1): "sha1",
     int(CKM_SHA224): "sha224",
@@ -98,7 +98,7 @@ def _check_not_parameterised(entry: MechEntry, config: MechConfig) -> None:
     """Skip mechanisms that require parameters we can't build generically (e.g. SHA-512/t)."""
     if config.param_required and config.param_recipe.style == "none":
         pytest.skip(
-            f"{entry.mech_name}: param_required=True but recipe style 'none' — "
+            f"{entry.mech_name}: param_required=True but recipe style 'none' -- "
             "cannot create test params generically"
         )
 
@@ -129,7 +129,7 @@ class TestMechDigest:
                     f"Got {digest.hex()!r}, expected {expected.hex()!r}"
                 )
             except ValueError:
-                # hashlib doesn't know this algorithm — just check non-empty
+                # hashlib doesn't know this algorithm -- just check non-empty
                 assert len(digest) > 0, f"{entry.mech_name}: empty digest output"
         else:
             assert len(digest) > 0, f"{entry.mech_name}: empty digest output is zero bytes"
@@ -154,7 +154,7 @@ class TestMechDigest:
                 f"{entry.mech_name}: output length {len(digest)} != expected {expected_len}"
             )
         else:
-            # Unknown algorithm — just verify output is non-empty
+            # Unknown algorithm -- just verify output is non-empty
             assert len(digest) > 0, f"{entry.mech_name}: digest output is zero bytes"
 
     def test_deterministic(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
@@ -180,7 +180,7 @@ class TestMechDigestKAT:
     """Known-answer digest tests from pre-generated vectors."""
 
     def test_kat_vector(self, p11_raw_session: RawSession, mech_digest_entry: MechEntry) -> None:
-        """Digest known inputs — verify output matches pre-computed vectors."""
+        """Digest known inputs -- verify output matches pre-computed vectors."""
         rs = p11_raw_session
         entry = mech_digest_entry
         config = entry.config

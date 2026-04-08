@@ -504,7 +504,7 @@ class TestSignRecoverRecipes:
         """C_VerifyRecover should recover the original data from a valid signature.
 
         NSS deviation: NSS C_VerifyRecover recovers wrong/unexpected data on
-        CKM_RSA_X_509 — the recovered bytes do not match the original padded input.
+        CKM_RSA_X_509 -- the recovered bytes do not match the original padded input.
         This is a bug in NSS's C_VerifyRecover implementation for raw RSA.
         Tracked in docs/module-issues.md under NSS.
         """
@@ -519,7 +519,7 @@ class TestSignRecoverRecipes:
                 pytest.xfail(
                     f"NSS C_VerifyRecover returned wrong data: "
                     f"recovered[0]={recovered[0] if recovered else 'empty'!r}, "
-                    f"expected[0]={data[0]!r} — "
+                    f"expected[0]={data[0]!r} -- "
                     f"NSS bug in CKM_RSA_X_509 C_VerifyRecover implementation"
                 )
         finally:
@@ -542,7 +542,7 @@ class TestSignRecoverRecipes:
             if valid is True or recovered != b"":
                 pytest.xfail(
                     f"NSS C_VerifyRecover accepted invalid all-zero signature: "
-                    f"valid={valid}, recovered={recovered!r} — "
+                    f"valid={valid}, recovered={recovered!r} -- "
                     f"NSS does not validate the signature block in C_VerifyRecover"
                 )
         finally:

@@ -1,6 +1,6 @@
 """Negative tests for mechanism error handling.
 
-NOT parametrized by mechanism entry — uses explicit test cases.
+NOT parametrized by mechanism entry -- uses explicit test cases.
 
 Tests verify that the module correctly rejects operations with:
 - Wrong key type (AES mechanism with RSA key, etc.)

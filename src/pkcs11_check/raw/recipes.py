@@ -890,7 +890,7 @@ def read_attributes(
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
         if _is_unavailable(size) or buffers[i] is None:
-            continue  # Attribute sensitive or type invalid — skip
+            continue  # Attribute sensitive or type invalid -- skip
         raw_bytes = bytes(buffers[i][:size])
         vtype = ATTR_VALUE_TYPES.get(at, "bytes")
         if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):
@@ -900,7 +900,7 @@ def read_attributes(
         elif vtype == "str":
             result[at] = raw_bytes.decode("utf-8")
         elif vtype == "date":
-            # Return as str 'YYYYMMDD' — callers can parse if needed
+            # Return as str 'YYYYMMDD' -- callers can parse if needed
             result[at] = raw_bytes.decode("ascii") if raw_bytes else ""
         elif vtype == "ulong_array":
             # Decode CK_ULONG array
@@ -914,7 +914,7 @@ def read_attributes(
                 for j in range(count_elems)
             ]
         elif vtype == "template":
-            # Template attributes are complex — return raw bytes
+            # Template attributes are complex -- return raw bytes
             # Proper decoding requires recursive CK_ATTRIBUTE parsing
             result[at] = raw_bytes
         else:
@@ -1103,7 +1103,7 @@ def _multipart_output(
     """Shared Init -> Update(chunks) -> Final for encrypt/decrypt.
 
     Only for operations where Update produces output (C_EncryptUpdate,
-    C_DecryptUpdate). Sign/Digest Update calls do not produce output —
+    C_DecryptUpdate). Sign/Digest Update calls do not produce output --
     use the manual Init+Update+_two_call_output(Final) pattern instead.
     """
     rv = getattr(raw, init_fn)(session, *init_args)
@@ -1113,7 +1113,7 @@ def _multipart_output(
         in_buf = _to_ubyte_buf(chunk)
         # Allocate a conservative output buffer upfront (chunk + 256 bytes for
         # block cipher expansion). Do NOT use the two-call size-probe pattern for
-        # Update functions — probing feeds the same chunk twice, corrupting cipher
+        # Update functions -- probing feeds the same chunk twice, corrupting cipher
         # state. The Final two-call pattern remains correct.
         max_out = len(chunk) + 256
         out_buf = (ctypes.c_ubyte * max_out)()
@@ -1250,7 +1250,7 @@ def digest_multipart(
 
 
 def save_operation_state(raw: RawPKCS11, session: int) -> bytes:
-    """C_GetOperationState — two-call output pattern."""
+    """C_GetOperationState -- two-call output pattern."""
     return _two_call_output(raw, "C_GetOperationState", session)
 
 
@@ -1261,7 +1261,7 @@ def restore_operation_state(
     encrypt_key: int = 0,
     auth_key: int = 0,
 ) -> None:
-    """C_SetOperationState — restore previously saved operation state."""
+    """C_SetOperationState -- restore previously saved operation state."""
     buf = _to_ubyte_buf(state)
     rv = raw.C_SetOperationState(session, buf, len(state), encrypt_key, auth_key)
     expect_rv(rv, CKR_OK)
@@ -1317,7 +1317,7 @@ def get_mechanism_list(raw: RawPKCS11, slot_id: int) -> list[int]:
 
 
 def get_session_info(raw: RawPKCS11, session: int) -> dict[str, int]:
-    """C_GetSessionInfo — returns session info as dict."""
+    """C_GetSessionInfo -- returns session info as dict."""
     info = CK_SESSION_INFO()
     expect_rv(raw.C_GetSessionInfo(session, byref(info)), CKR_OK)
     return {
@@ -1329,7 +1329,7 @@ def get_session_info(raw: RawPKCS11, session: int) -> dict[str, int]:
 
 
 def get_mechanism_info(raw: RawPKCS11, slot_id: int, mechanism: CKM) -> dict[str, int]:
-    """C_GetMechanismInfo — returns mechanism info as dict."""
+    """C_GetMechanismInfo -- returns mechanism info as dict."""
     info = CK_MECHANISM_INFO()
     expect_rv(raw.C_GetMechanismInfo(slot_id, mechanism, byref(info)), CKR_OK)
     return {
@@ -1340,7 +1340,7 @@ def get_mechanism_info(raw: RawPKCS11, slot_id: int, mechanism: CKM) -> dict[str
 
 
 def get_slot_info(raw: RawPKCS11, slot_id: int) -> dict[str, Any]:
-    """C_GetSlotInfo — returns slot info as dict."""
+    """C_GetSlotInfo -- returns slot info as dict."""
     info = CK_SLOT_INFO()
     expect_rv(raw.C_GetSlotInfo(slot_id, byref(info)), CKR_OK)
     return {
@@ -1466,14 +1466,14 @@ def encapsulate_key(
     *,
     mech_param: PackedMechanism | None = None,
 ) -> tuple[int, bytes]:
-    """C_EncapsulateKey — returns (secret_key_handle, ciphertext).
+    """C_EncapsulateKey -- returns (secret_key_handle, ciphertext).
 
     Uses the two-call pattern: first call with pCiphertext=NULL to get the required buffer
     size, second call with a properly allocated buffer.
 
     NSS-PQC returns CKR_BUFFER_TOO_SMALL (not CKR_OK) on the first NULL-buffer call, which
     is valid PKCS#11 behavior analogous to C_Encrypt.  Kryoptic may create the key on the
-    first call and return CKR_OK — we preserve that handle and reuse it on the second call.
+    first call and return CKR_OK -- we preserve that handle and reuse it on the second call.
     """
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
@@ -1489,7 +1489,7 @@ def encapsulate_key(
         mech.byref(),
         pub_key,
         *template_ptr_count(tmpl),
-        None,  # pCiphertext — NULL signals size query
+        None,  # pCiphertext -- NULL signals size query
         byref(ct_len),
         byref(key_handle),  # Kryoptic requires non-NULL even for size query
     )
@@ -1528,7 +1528,7 @@ def decapsulate_key(
     *,
     mech_param: PackedMechanism | None = None,
 ) -> int:
-    """C_DecapsulateKey — returns secret_key_handle."""
+    """C_DecapsulateKey -- returns secret_key_handle."""
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
     tmpl = template(*packed)
@@ -1559,7 +1559,7 @@ def wrap_key_authenticated(
     *,
     mech_param: PackedMechanism | None = None,
 ) -> tuple[bytes, bytes]:
-    """C_WrapKeyAuthenticated — returns (wrapped_key, tag).
+    """C_WrapKeyAuthenticated -- returns (wrapped_key, tag).
 
     C_WrapKeyAuthenticated signature: (session, mech_ptr, wrapping_key, target_key,
     wrapped_ptr, wrapped_len[CK_ULONG], tag_ptr, tag_len_ptr[CK_ULONG_PTR]).
@@ -1584,7 +1584,7 @@ def wrap_key_authenticated(
     if rv not in (CKR_OK, CKR_BUFFER_TOO_SMALL):
         expect_rv(rv, CKR_OK)
 
-    # For wrapped key size, C_WrapKey uses the same NULL pattern — try with large buffer
+    # For wrapped key size, C_WrapKey uses the same NULL pattern -- try with large buffer
     # then retry if needed. Use C_WrapKey size as a heuristic first call.
     wrapped_len = CK_ULONG(0)
     rv2 = raw.C_WrapKey(
@@ -1624,7 +1624,7 @@ def unwrap_key_authenticated(
     *,
     mech_param: PackedMechanism | None = None,
 ) -> int:
-    """C_UnwrapKeyAuthenticated — returns key handle."""
+    """C_UnwrapKeyAuthenticated -- returns key handle."""
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None

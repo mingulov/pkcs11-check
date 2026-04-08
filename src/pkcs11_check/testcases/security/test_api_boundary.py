@@ -1,4 +1,4 @@
-"""API boundary tests — crash-safe probes for invalid handles, NULL pointers, and edge-case inputs.
+"""API boundary tests -- crash-safe probes for invalid handles, NULL pointers, and edge-case inputs.
 
 All tests run in subprocess for crash safety. Each test builds a script string,
 executes it via run_with_coverage(), and checks that the module did not crash
@@ -29,7 +29,7 @@ from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
 
-# 64-bit CK_ULONG max — used as literal in subprocess script strings
+# 64-bit CK_ULONG max -- used as literal in subprocess script strings
 _CK_ULONG_MAX_64 = 0xFFFFFFFFFFFFFFFF
 
 
@@ -50,7 +50,7 @@ class TestSessionHandleBoundary:
     """Probe C_* session functions with boundary session handles (0, MAX).
 
     PKCS#11 v3.1 Sec. 5.6: functions taking CK_SESSION_HANDLE must return
-    CKR_SESSION_HANDLE_INVALID for unknown handles — never crash.
+    CKR_SESSION_HANDLE_INVALID for unknown handles -- never crash.
     """
 
     _SESSION_FUNCTIONS = ["C_GetSessionInfo", "C_CloseSession", "C_GetOperationState"]
@@ -111,7 +111,7 @@ class TestObjectHandleBoundary:
     """Probe C_* object functions with boundary object handles (0, MAX).
 
     PKCS#11 v3.1 Sec. 5.7: functions taking CK_OBJECT_HANDLE must return
-    CKR_OBJECT_HANDLE_INVALID for unknown handles — never crash.
+    CKR_OBJECT_HANDLE_INVALID for unknown handles -- never crash.
     """
 
     _OBJECT_FUNCTIONS = [
@@ -193,7 +193,7 @@ class TestNullMechanismInit:
     """Probe C_*Init functions with NULL mechanism pointer.
 
     PKCS#11 v3.1: CK_MECHANISM_PTR must not be NULL. The module should
-    return CKR_ARGUMENTS_BAD or CKR_MECHANISM_INVALID — never crash.
+    return CKR_ARGUMENTS_BAD or CKR_MECHANISM_INVALID -- never crash.
     """
 
     _INIT_FUNCTIONS = [
@@ -212,7 +212,7 @@ class TestNullMechanismInit:
     ) -> None:
         preamble = _preamble(p11_config)
         if func_name == "C_DigestInit":
-            # C_DigestInit(session, mechanism_ptr) — no key argument
+            # C_DigestInit(session, mechanism_ptr) -- no key argument
             body = """
 rv = raw.C_DigestInit(sh, None)
 print(f"rv={rv}")
@@ -220,7 +220,7 @@ cleanup()
 """
         else:
             # C_EncryptInit/DecryptInit/SignInit/VerifyInit(session, mech_ptr, key)
-            # Use key handle 0 — the NULL mechanism should be rejected first
+            # Use key handle 0 -- the NULL mechanism should be rejected first
             body = f"""
 rv = raw.{func_name}(sh, None, 0)
 print(f"rv={{rv}}")
@@ -266,7 +266,7 @@ from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_AES_CBC
 mech = CK_MECHANISM()
 mech.mechanism = int(CKM_AES_CBC)
 mech.pParameter = None              # NULL pointer
-mech.ulParameterLen = 16             # Non-zero length — mismatch!
+mech.ulParameterLen = 16             # Non-zero length -- mismatch!
 rv = raw.{func_name}(sh, ctypes.byref(mech), 0)
 print(f"rv={{rv}}")
 cleanup()
@@ -368,7 +368,7 @@ class TestZeroLengthData:
 
     Passing a zero-length buffer can cause edge-case failures in modules
     that don't validate data length before processing. The module should
-    return an appropriate error code — never crash.
+    return an appropriate error code -- never crash.
     """
 
     @pytest.mark.parametrize("operation,mech_check,mech_name", _ZERO_LENGTH_CASES)
@@ -514,7 +514,7 @@ class TestLoginNullPin:
     def test_login_null_pin_nonzero_length(self, p11_config: Any) -> None:
         preamble = subprocess_session_preamble(
             str(p11_config.module),
-            pin=None,  # Don't auto-login — we're testing C_Login directly
+            pin=None,  # Don't auto-login -- we're testing C_Login directly
         )
         body = """
 from pkcs11_check.raw.types_std import CKU_USER

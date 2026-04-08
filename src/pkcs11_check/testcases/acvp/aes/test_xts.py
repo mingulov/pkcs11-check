@@ -1,6 +1,6 @@
 """NIST ACVP AES-XTS tests.
 
-XEX-based Tweaked Codebook with Ciphertext Stealing — sector-based
+XEX-based Tweaked Codebook with Ciphertext Stealing -- sector-based
 disk encryption mode.  Uses double-length keys (data key + tweak key).
 """
 

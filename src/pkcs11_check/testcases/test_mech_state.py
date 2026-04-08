@@ -1,15 +1,15 @@
 """Operation state machine violation tests.
 
 Tests verify that the module correctly enforces PKCS#11 operation state:
-- C_Encrypt (and variants) without prior C_EncryptInit → CKR_OPERATION_NOT_INITIALIZED
-- C_EncryptInit while another operation is active → CKR_OPERATION_ACTIVE
+- C_Encrypt (and variants) without prior C_EncryptInit -> CKR_OPERATION_NOT_INITIALIZED
+- C_EncryptInit while another operation is active -> CKR_OPERATION_ACTIVE
 - C_Sign, C_Verify, C_Digest: same patterns
-- C_DecryptFinal without C_DecryptInit → CKR_OPERATION_NOT_INITIALIZED
+- C_DecryptFinal without C_DecryptInit -> CKR_OPERATION_NOT_INITIALIZED
 
-Source: PKCS#11 v3.1 Section 5 — each function description lists
+Source: PKCS#11 v3.1 Section 5 -- each function description lists
 CKR_OPERATION_NOT_INITIALIZED and CKR_OPERATION_ACTIVE as valid return values.
 
-These tests are NOT parametrized — they use hard-coded AES and SHA-256 mechanisms
+These tests are NOT parametrized -- they use hard-coded AES and SHA-256 mechanisms
 which are widely supported.  Mechanism-specific state tests belong in the
 mechanism-specific test files.
 """
@@ -39,7 +39,7 @@ pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
 _NOT_INIT_RVCS: frozenset[int] = frozenset(
     [
         int(CKR_OPERATION_NOT_INITIALIZED),
-        0x00000005,  # CKR_FUNCTION_FAILED — non-spec-compliant but widely seen
+        0x00000005,  # CKR_FUNCTION_FAILED -- non-spec-compliant but widely seen
         0x00000020,  # CKR_GENERAL_ERROR
     ]
 )
@@ -91,7 +91,7 @@ class TestEncryptState:
         )
 
     def test_double_encrypt_init(self, p11_raw_session: RawSession) -> None:
-        """C_EncryptInit twice → second call must return CKR_OPERATION_ACTIVE."""
+        """C_EncryptInit twice -> second call must return CKR_OPERATION_ACTIVE."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
@@ -301,7 +301,7 @@ class TestDigestState:
         )
 
     def test_double_digest_init(self, p11_raw_session: RawSession) -> None:
-        """C_DigestInit twice → second call must return CKR_OPERATION_ACTIVE."""
+        """C_DigestInit twice -> second call must return CKR_OPERATION_ACTIVE."""
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256"):
             pytest.skip("CKM_SHA256 not supported")

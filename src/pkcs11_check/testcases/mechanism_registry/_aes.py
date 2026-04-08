@@ -50,7 +50,7 @@ _AES_WRP = CKF_WRAP | CKF_UNWRAP
 _AES_SIG = CKF_SIGN | CKF_VERIFY
 
 # OASIS PKCS#11 spec lists WRP&UWRP for AES block/stream ciphers, but this is
-# an optional capability — modules may implement encrypt/decrypt without wrap.
+# an optional capability -- modules may implement encrypt/decrypt without wrap.
 # Only dedicated key-wrap mechanisms (CKM_AES_KEY_WRAP*) are required to
 # advertise CKF_WRAP | CKF_UNWRAP.  For all other AES cipher modes the minimum
 # required flag set is CKF_ENCRYPT | CKF_DECRYPT.
@@ -75,13 +75,13 @@ def populate(registry: dict[int, MechConfig]) -> None:
     registry[CKM_AES_XTS_KEY_GEN] = MechConfig(
         key_type=CKK_AES_XTS,
         keygen_mech=CKM_AES_XTS_KEY_GEN,
-        key_sizes=(256, 512),  # XTS uses double-length keys: 2×128 or 2×256
+        key_sizes=(256, 512),  # XTS uses double-length keys: 2x128 or 2x256
         keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
         notes="AES-XTS double-length key generation (CKK_AES_XTS)",
     )
 
-    # -- Block cipher modes — encrypt/decrypt + wrap/unwrap ----------------------
+    # -- Block cipher modes -- encrypt/decrypt + wrap/unwrap ----------------------
 
     registry[CKM_AES_ECB] = MechConfig(
         key_type=CKK_AES,
@@ -285,7 +285,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     registry[CKM_AES_XTS] = MechConfig(
         key_type=CKK_AES_XTS,
         keygen_mech=CKM_AES_XTS_KEY_GEN,
-        key_sizes=(256, 512),  # double-length keys: 2×128 or 2×256
+        key_sizes=(256, 512),  # double-length keys: 2x128 or 2x256
         block_size=16,
         input_constraint="any",
         param_required=True,
@@ -387,7 +387,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_recipe=_sym,
         multi_part_supported=False,
         expected_flags=_AES_WRP,
-        notes="AES Key Wrap with Padding (DEPRECATED in PKCS#11 v3.x — use KWP instead)",
+        notes="AES Key Wrap with Padding (DEPRECATED in PKCS#11 v3.x -- use KWP instead)",
     )
 
     registry[CKM_AES_KEY_WRAP_KWP] = MechConfig(

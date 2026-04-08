@@ -110,15 +110,15 @@ class TestGcmTagSize:
                     rs.raw, rs.sh, key, CKM_AES_GCM, pt,
                     mech_param=mech, output_overhead=overhead,
                 )
-                # Module accepted a weak tag — report finding
+                # Module accepted a weak tag -- report finding
                 note(
-                    f"AES-GCM accepts {tag_bits}-bit tag — below NIST minimum of 96 bits",
+                    f"AES-GCM accepts {tag_bits}-bit tag -- below NIST minimum of 96 bits",
                     ComplianceLevel.VENDOR,
                     reference="NIST SP 800-38D Section 5.2.1.2: tag lengths < 96 bits "
                     "are not recommended",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected weak tag — correct behavior
+                pass  # Module rejected weak tag -- correct behavior
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -156,13 +156,13 @@ class TestGcmIvWeakness:
                     mech_param=mech, output_overhead=16,
                 )
                 note(
-                    f"AES-GCM accepts {len(iv)}-byte IV — NIST recommends 96-bit (12-byte)",
+                    f"AES-GCM accepts {len(iv)}-byte IV -- NIST recommends 96-bit (12-byte)",
                     ComplianceLevel.VENDOR,
                     reference="NIST SP 800-38D Section 8.2.1: "
                     "IVs should be 96 bits for interoperability and security",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected weak IV — correct behavior
+                pass  # Module rejected weak IV -- correct behavior
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -200,22 +200,22 @@ class TestGcmIvReuse:
                     rs.raw, rs.sh, key, CKM_AES_GCM, pt2,
                     mech_param=mech2, output_overhead=16,
                 )
-                # Both succeeded — IV reuse not prevented
+                # Both succeeded -- IV reuse not prevented
                 _ = ct1, ct2  # suppress unused warnings
                 note(
                     "AES-GCM allows IV reuse with same key "
-                    "— NIST SP 800-38D violation",
+                    "-- NIST SP 800-38D violation",
                     ComplianceLevel.CRITICAL,
                     reference="NIST SP 800-38D: IVs must be unique per key",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected reuse — good
+                pass  # Module rejected reuse -- good
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
 
 # ---------------------------------------------------------------------------
-# GCM NULL AAD pointer with non-zero length (subprocess — crash risk)
+# GCM NULL AAD pointer with non-zero length (subprocess -- crash risk)
 # ---------------------------------------------------------------------------
 
 
@@ -248,7 +248,7 @@ try:
     params.ulIvLen = 12
     params.ulIvBits = 96
     params.pAAD = None  # NULL pointer
-    params.ulAADLen = 16  # Non-zero length — mismatch!
+    params.ulAADLen = 16  # Non-zero length -- mismatch!
     params.ulTagBits = 128
     mech = CK_MECHANISM()
     mech.mechanism = int(CKM_AES_GCM)
@@ -311,14 +311,14 @@ class TestPssSaltLength:
                     data, mech_param=pss,
                 )
                 note(
-                    f"RSA-PSS accepts sLen={salt_len} — deterministic signatures "
+                    f"RSA-PSS accepts sLen={salt_len} -- deterministic signatures "
                     f"(produced {len(sig)}-byte signature)",
                     ComplianceLevel.VENDOR,
                     reference="RFC 8017 Section 9.1: sLen=0 makes PSS deterministic, "
                     "reducing security margin",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected zero salt — acceptable
+                pass  # Module rejected zero salt -- acceptable
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -362,7 +362,7 @@ class TestPssSaltLength:
                     "emLen - hLen - 2",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected excessive salt — correct
+                pass  # Module rejected excessive salt -- correct
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -398,7 +398,7 @@ class TestXtsKeyValidation:
                 },
             )
         except (AssertionError, OSError):
-            return  # Module rejected identical halves at import — good
+            return  # Module rejected identical halves at import -- good
         # Key was imported; try to use it
         try:
             mech = mech_simple(CKM_AES_XTS)
@@ -406,12 +406,12 @@ class TestXtsKeyValidation:
             try:
                 encrypt_single(rs.raw, rs.sh, key, CKM_AES_XTS, pt, mech_param=mech)
                 note(
-                    "AES-XTS accepts key with identical halves — NIST SP 800-38E violation",
+                    "AES-XTS accepts key with identical halves -- NIST SP 800-38E violation",
                     ComplianceLevel.VENDOR,
                     reference="NIST SP 800-38E: the two AES keys in XTS must differ",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected at encrypt time — acceptable
+                pass  # Module rejected at encrypt time -- acceptable
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -450,7 +450,7 @@ class TestRsaExponent:
                 public_attrs={CKA_PUBLIC_EXPONENT: exp_bytes},
             )
         except (AssertionError, OSError):
-            return  # Module rejected weak exponent — correct behavior
+            return  # Module rejected weak exponent -- correct behavior
         try:
             note(
                 f"Module accepts RSA keygen with public exponent e={exponent}",
@@ -524,11 +524,11 @@ class TestEcPointValidation:
                     ),
                 )
             except (AssertionError, OSError):
-                return  # Module rejected invalid point — correct behavior
+                return  # Module rejected invalid point -- correct behavior
 
             try:
                 note(
-                    f"ECDH derive accepts {point_type} point — "
+                    f"ECDH derive accepts {point_type} point -- "
                     f"invalid curve attack risk",
                     ComplianceLevel.CRITICAL,
                     reference="NIST SP 800-56A Section 5.6.2.3.3: "
@@ -560,7 +560,7 @@ class TestEcPointValidation:
             # Point at infinity encoded as a single 0x00 byte
             return b"\x00"
         elif point_type == "truncated":
-            # Cut the point short — missing half of Y coordinate
+            # Cut the point short -- missing half of Y coordinate
             return valid_point[: len(valid_point) // 2]
         else:
             raise ValueError(f"Unknown point type: {point_type}")
@@ -575,7 +575,7 @@ class TestRsaOaepSha1Mgf:
     """Probe whether RSA-OAEP with SHA-1 MGF is accepted."""
 
     def test_rsa_oaep_sha1_mgf(self, p11_raw_session: Any) -> None:
-        """RSA-OAEP with SHA-1 as MGF hash — weakness report.
+        """RSA-OAEP with SHA-1 as MGF hash -- weakness report.
 
         SHA-1 is deprecated for collision resistance (SHAttered, 2017).
         While OAEP does not directly rely on collision resistance,
@@ -611,7 +611,7 @@ class TestRsaOaepSha1Mgf:
                     "prefer SHA-256 or stronger for new applications",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected SHA-1 MGF — acceptable
+                pass  # Module rejected SHA-1 MGF -- acceptable
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -621,7 +621,7 @@ class TestRsaPssMd5Hash:
     """Probe whether RSA-PSS with MD5 hash is accepted."""
 
     def test_rsa_pss_md5_hash(self, p11_raw_session: Any) -> None:
-        """RSA-PSS with MD5 as hash — weakness report.
+        """RSA-PSS with MD5 as hash -- weakness report.
 
         MD5 has been broken for collision resistance since 2004.
         Using MD5 in PSS signatures enables forgery attacks.
@@ -637,7 +637,7 @@ class TestRsaPssMd5Hash:
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
         )
         try:
-            # MD5 hash with SHA-256 MGF — intentionally mismatched
+            # MD5 hash with SHA-256 MGF -- intentionally mismatched
             # to specifically test whether MD5 hash is accepted
             pss = mech_pss(
                 CKM_RSA_PKCS_PSS,
@@ -659,7 +659,7 @@ class TestRsaPssMd5Hash:
                     "NIST SP 800-131A Rev.2 disallows MD5 for digital signatures",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected MD5 — correct behavior
+                pass  # Module rejected MD5 -- correct behavior
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -669,7 +669,7 @@ class TestCbcIvAllZeros:
     """Probe whether AES-CBC accepts an all-zero IV."""
 
     def test_cbc_iv_all_zeros(self, p11_raw_session: Any) -> None:
-        """AES-CBC with all-zero IV — weakness report.
+        """AES-CBC with all-zero IV -- weakness report.
 
         An all-zero IV makes the first block encryption equivalent to ECB
         for the first block. While not always a vulnerability, it indicates
@@ -689,13 +689,13 @@ class TestCbcIvAllZeros:
                 )
                 _ = ct
                 note(
-                    "AES-CBC accepts all-zero IV — weak IV generation indicator",
+                    "AES-CBC accepts all-zero IV -- weak IV generation indicator",
                     ComplianceLevel.VENDOR,
                     reference="CWE-329: not using a random IV for CBC makes "
                     "the first block equivalent to ECB",
                 )
             except (AssertionError, OSError):
-                pass  # Module rejected all-zero IV — unusual but acceptable
+                pass  # Module rejected all-zero IV -- unusual but acceptable
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -724,7 +724,7 @@ class TestEcbPatternLeakage:
             if ct_block1 == ct_block2:
                 note(
                     "AES-ECB produces identical ciphertext for identical plaintext blocks "
-                    "— expected pattern leakage confirmed",
+                    "-- expected pattern leakage confirmed",
                     ComplianceLevel.VENDOR,
                     reference="NIST SP 800-38A: ECB mode does not provide "
                     "semantic security; avoid for multi-block data",

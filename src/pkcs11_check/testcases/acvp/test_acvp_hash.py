@@ -52,7 +52,7 @@ _ALG_MAP: dict[str, tuple[Any, str, int]] = {
 
 
 # SHAKE digest mechanisms (CKM_SHAKE_128, CKM_SHAKE_256) are NOT in the PKCS#11 v3.2
-# header — only SHAKE KEY_DERIVE variants exist.  C_DigestXof functions needed for XOF
+# header -- only SHAKE KEY_DERIVE variants exist.  C_DigestXof functions needed for XOF
 # are also absent from v3.2.  Map is empty until a future spec revision adds them.
 _SHAKE_ALG_MAP: dict[str, tuple[Any, str]] = {}
 

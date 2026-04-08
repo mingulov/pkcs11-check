@@ -1,7 +1,7 @@
 """Miscellaneous mechanism family registry entries.
 
 Covers MD2, MD5 (digest/HMAC/KDF/RSA), GOST R 34.10/34.11, PBE/PBA,
-KEA, Fortezza, OTP (SecurID/HOTP/ACTI), CMS, and KIP — approximately 40 mechanisms.
+KEA, Fortezza, OTP (SecurID/HOTP/ACTI), CMS, and KIP -- approximately 40 mechanisms.
 """
 
 from __future__ import annotations
@@ -274,7 +274,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
 
     # ---------------------------------------------------------------------------
     # PBE / PBA mechanisms (password-based encryption/authentication)
-    # CKM_PKCS5_PBKD2 is registered in _kdf.py — not duplicated here.
+    # CKM_PKCS5_PBKD2 is registered in _kdf.py -- not duplicated here.
     # ---------------------------------------------------------------------------
 
     registry[CKM_PBE_MD2_DES_CBC] = MechConfig(
@@ -401,7 +401,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     # ---------------------------------------------------------------------------
-    # KEA (Key Exchange Algorithm — Fortezza)
+    # KEA (Key Exchange Algorithm -- Fortezza)
     # ---------------------------------------------------------------------------
 
     registry[CKM_KEA_KEY_PAIR_GEN] = MechConfig(

@@ -12,10 +12,10 @@ from .types_std import *  # noqa: F401,F403,F405
 
 _PTR_SIZE = ctypes.sizeof(c_void_p)
 
-# Reverse lookups: int → named constant
+# Reverse lookups: int -> named constant
 _CKR_BY_VALUE: dict[int, CKR] = {}  # type: ignore[type-arg]
 _CKM_BY_VALUE: dict[int, CKM] = {}  # type: ignore[type-arg]
-_CK_PREFIX_LOOKUPS: dict[str, dict[int, Any]] = {}  # prefix → {value → constant}
+_CK_PREFIX_LOOKUPS: dict[str, dict[int, Any]] = {}  # prefix -> {value -> constant}
 
 
 def _build_constant_lookups() -> None:

@@ -325,7 +325,7 @@ def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
     - 'bytes': raw byte array (accepts bytes, bytearray)
     - 'date': CK_DATE 8-byte YYYYMMDD (accepts datetime.date or str 'YYYYMMDD')
     - 'ulong_array': CK_ULONG[] (accepts list[int] or tuple[int, ...])
-    - 'template': CK_ATTRIBUTE[] — not supported for auto-packing, use pack.template() directly
+    - 'template': CK_ATTRIBUTE[] -- not supported for auto-packing, use pack.template() directly
 
     For deliberate mispacking (fault tests), use attr_bool/attr_ulong/attr_bytes directly.
     """
@@ -382,7 +382,7 @@ def attr_auto(attr_type: int, value: Any) -> PackedAttribute:
             f"Use pack.template() and pack.attr_template() directly."
         )
     elif vtype is None:
-        # Unknown attribute not in ATTR_VALUE_TYPES — fall back to Python type inference
+        # Unknown attribute not in ATTR_VALUE_TYPES -- fall back to Python type inference
         # but only for vendor/unknown attrs
         if isinstance(value, bool):
             return attr_bool(attr_type, value)

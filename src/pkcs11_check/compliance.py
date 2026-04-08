@@ -33,7 +33,7 @@ class ComplianceLevel(enum.Enum):
     DEPRECATED = "deprecated"  # Uses deprecated algorithms/modes
     VENDOR = "vendor"  # Vendor-specific extension
     FIPS_NON_APPROVED = "fips_non_approved"  # Not approved in FIPS 140-3 mode
-    CRITICAL = "critical"  # Spec-defined MUST/MUST NOT violation — security impact
+    CRITICAL = "critical"  # Spec-defined MUST/MUST NOT violation -- security impact
 
 
 @dataclass

@@ -436,7 +436,7 @@ class TestPBASHA1:
         """CKM_PBA_SHA1_WITH_SHA1_HMAC generates a key with CKA_KEY_TYPE=CKK_SHA_1_HMAC.
 
         NSS deviation: NSS generates a key with CKA_KEY_TYPE=CKK_GENERIC_SECRET (0x10)
-        instead of CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC — NSS does
+        instead of CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC -- NSS does
         not differentiate HMAC key types and uses the generic secret key type.
         Tracked in docs/module-issues.md under NSS.
         """
@@ -464,7 +464,7 @@ class TestPBASHA1:
 
                 note(
                     f"CKM_PBA_SHA1_WITH_SHA1_HMAC generated CKK_GENERIC_SECRET "
-                    f"(0x{actual_key_type:02x}) instead of CKK_SHA_1_HMAC (0x28) — "
+                    f"(0x{actual_key_type:02x}) instead of CKK_SHA_1_HMAC (0x28) -- "
                     f"module does not distinguish HMAC key types",
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec CKM_PBA_SHA1_WITH_SHA1_HMAC, CKK_SHA_1_HMAC",

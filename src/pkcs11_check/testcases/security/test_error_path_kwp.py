@@ -220,7 +220,7 @@ def _build_script(
 
 
 class TestCorruptedUnwrap:
-    """Corrupted wrapped-key blob unwrap/decrypt — 8 corruptions x 2 mechs x 2 APIs.
+    """Corrupted wrapped-key blob unwrap/decrypt -- 8 corruptions x 2 mechs x 2 APIs.
 
     Each test wraps a valid AES-128 key with a 256-bit AES wrapping key using
     AES-KWP or AES-KW, corrupts the wrapped blob, then attempts unwrap or
@@ -267,7 +267,7 @@ class TestCorruptedUnwrap:
 
 
 class TestBitFlipUnwrap:
-    """Single-bit-flip corrupted wrapped-key blob unwrap — 5 offsets x 2 mechs.
+    """Single-bit-flip corrupted wrapped-key blob unwrap -- 5 offsets x 2 mechs.
 
     Flips bit 0 at specific byte offsets in the wrapped blob, then attempts
     C_UnwrapKey. Targets subtle corruption that may bypass coarse validation

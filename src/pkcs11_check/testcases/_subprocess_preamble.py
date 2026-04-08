@@ -38,7 +38,7 @@ def run_with_coverage(
         for k, v in data.get("mechanism_counts", {}).items():
             _subprocess_mechanism_counts[k] += v
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        pass  # Subprocess may have crashed (segfault) — coverage file not written
+        pass  # Subprocess may have crashed (segfault) -- coverage file not written
     finally:
         try:
             os.unlink(cov_path)

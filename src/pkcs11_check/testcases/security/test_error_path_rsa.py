@@ -2,7 +2,7 @@
 
 All tests run in subprocess for crash safety. Each test generates an RSA 2048-bit
 keypair, crafts a malformed ciphertext or signature, and calls C_Decrypt / C_Verify.
-The module must return an error code cleanly — never crash.
+The module must return an error code cleanly -- never crash.
 
 Covers:
 - PKCS#1 v1.5: random bytes, truncated, extended, all-zeros, all-0xFF
@@ -118,7 +118,7 @@ else:
 
 
 class TestRsaPkcsDecryptErrorPaths:
-    """RSA PKCS#1 v1.5 decrypt with malformed ciphertext — 5 corruption variants.
+    """RSA PKCS#1 v1.5 decrypt with malformed ciphertext -- 5 corruption variants.
 
     Each test generates a fresh RSA 2048-bit keypair, crafts malformed input
     sized relative to the actual modulus, and calls C_DecryptInit + C_Decrypt.
@@ -133,7 +133,7 @@ class TestRsaPkcsDecryptErrorPaths:
         p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
-        """Random bytes (no PKCS#1 v1.5 0x00 0x02 header) → C_Decrypt must error, not crash."""
+        """Random bytes (no PKCS#1 v1.5 0x00 0x02 header) -> C_Decrypt must error, not crash."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
@@ -151,7 +151,7 @@ class TestRsaPkcsDecryptErrorPaths:
         p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
-        """Ciphertext shorter than modulus (half length) → C_Decrypt must error, not crash."""
+        """Ciphertext shorter than modulus (half length) -> C_Decrypt must error, not crash."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
@@ -169,7 +169,7 @@ class TestRsaPkcsDecryptErrorPaths:
         p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
-        """Ciphertext longer than modulus (modulus + 16 bytes) → C_Decrypt must error, not crash."""
+        """Ciphertext longer than modulus (modulus+16 bytes) -> C_Decrypt must error, not crash."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
@@ -187,7 +187,7 @@ class TestRsaPkcsDecryptErrorPaths:
         p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
-        """Modulus-length all-zero ciphertext (no 0x00 0x02 header) → must error, not crash."""
+        """Modulus-length all-zero ciphertext (no 0x00 0x02 header) -> must error, not crash."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
@@ -205,7 +205,7 @@ class TestRsaPkcsDecryptErrorPaths:
         p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
-        """Modulus-length 0xFF ciphertext → must error, not crash."""
+        """Modulus-length 0xFF ciphertext -> must error, not crash."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
@@ -225,7 +225,7 @@ class TestRsaPkcsDecryptErrorPaths:
 
 
 class TestRsaOaepDecryptErrorPaths:
-    """RSA OAEP decrypt with malformed ciphertext — 2 corruption variants.
+    """RSA OAEP decrypt with malformed ciphertext -- 2 corruption variants.
 
     Each test generates a fresh RSA 2048-bit keypair and crafts malformed
     OAEP input. The module must return a CKR error, not crash.
@@ -239,7 +239,7 @@ class TestRsaOaepDecryptErrorPaths:
         p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
-        """Random bytes → OAEP C_Decrypt must error, not crash."""
+        """Random bytes -> OAEP C_Decrypt must error, not crash."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
@@ -257,7 +257,7 @@ class TestRsaOaepDecryptErrorPaths:
         p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
-        """Truncated OAEP ciphertext (half modulus length) → must error, not crash."""
+        """Truncated OAEP ciphertext (half modulus length) -> must error, not crash."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
@@ -277,14 +277,14 @@ class TestRsaOaepDecryptErrorPaths:
 
 
 class TestRsaVerifyCorruptedSignature:
-    """RSA verify with a bit-flipped signature — must return verification failure, not crash.
+    """RSA verify with a bit-flipped signature -- must return verification failure, not crash.
 
     Signs valid data, flips the first bit of the signature, then calls
     C_VerifyInit + C_Verify. The module must return CKR_SIGNATURE_INVALID
     or CKR_SIGNATURE_LEN_RANGE cleanly.
 
     PKCS#11 v3.1 Sec. 6.3: C_Verify must validate the signature and return
-    CKR_SIGNATURE_INVALID for a non-matching signature — never crash.
+    CKR_SIGNATURE_INVALID for a non-matching signature -- never crash.
     """
 
     def test_rsa_verify_corrupted_signature(
@@ -292,7 +292,7 @@ class TestRsaVerifyCorruptedSignature:
         p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
-        """Sign valid data, flip a bit in signature, verify → must return error, not crash."""
+        """Sign valid data, flip a bit in signature, verify -> must return error, not crash."""
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
             pytest.skip("CKM_SHA256_RSA_PKCS not supported")

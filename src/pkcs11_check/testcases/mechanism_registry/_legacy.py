@@ -1,7 +1,7 @@
 """Legacy cipher mechanism family registry entries.
 
 Covers RC2, RC4, RC5, IDEA, CAST, CAST3, CAST128/CAST5, CDMF, Skipjack,
-Baton, Juniper, Blowfish, and Twofish — approximately 80 mechanisms.
+Baton, Juniper, Blowfish, and Twofish -- approximately 80 mechanisms.
 """
 
 from __future__ import annotations
@@ -152,7 +152,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RC2_SIZES,
         keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
-        notes="RC2 key generation (variable key size 40–128 bits)",
+        notes="RC2 key generation (variable key size 40-128 bits)",
     )
 
     registry[CKM_RC2_ECB] = MechConfig(
@@ -229,7 +229,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RC4_SIZES,
         keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
-        notes="RC4 key generation (variable key size 40–256 bits)",
+        notes="RC4 key generation (variable key size 40-256 bits)",
     )
 
     registry[CKM_RC4] = MechConfig(
@@ -401,7 +401,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CAST_SIZES,
         keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
-        notes="CAST key generation (40–128 bit variable key size)",
+        notes="CAST key generation (40-128 bit variable key size)",
     )
 
     registry[CKM_CAST_ECB] = MechConfig(
@@ -474,7 +474,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CAST3_SIZES,
         keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
-        notes="CAST3 key generation (40–128 bit variable key size)",
+        notes="CAST3 key generation (40-128 bit variable key size)",
     )
 
     registry[CKM_CAST3_ECB] = MechConfig(
@@ -538,7 +538,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     # ---------------------------------------------------------------------------
-    # CAST128 / CAST5 mechanisms (aliases — register under CAST128 names only)
+    # CAST128 / CAST5 mechanisms (aliases -- register under CAST128 names only)
     # ---------------------------------------------------------------------------
 
     registry[CKM_CAST128_KEY_GEN] = MechConfig(
@@ -547,7 +547,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_CAST128_SIZES,
         keygen_recipe=_sym,
         expected_flags=CKF_GENERATE,
-        notes="CAST128/CAST5 key generation (40–128 bit); CKM_CAST5_KEY_GEN is an alias",
+        notes="CAST128/CAST5 key generation (40-128 bit); CKM_CAST5_KEY_GEN is an alias",
     )
 
     registry[CKM_CAST128_ECB] = MechConfig(

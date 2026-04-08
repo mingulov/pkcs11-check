@@ -366,7 +366,7 @@ class TestSHA3ShakeKeyDerive:
         ids=[m[0] for m in _SHA3_SHAKE_DERIVE_MECHS],
     )
     def test_derive_deterministic(self, p11_raw_session: Any, mech_name: str, ckm: int) -> None:
-        """Same base key + same data → same derived key value."""
+        """Same base key + same data -> same derived key value."""
         rs = p11_raw_session
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported")

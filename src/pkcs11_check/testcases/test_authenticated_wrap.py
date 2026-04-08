@@ -156,7 +156,7 @@ class TestAuthenticatedWrap:
                 # If unwrap succeeded, that's a security bug
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
                 pytest.fail(
-                    "Unwrap with tampered authentication tag should have been rejected — "
+                    "Unwrap with tampered authentication tag should have been rejected -- "
                     "this is a security vulnerability"
                 )
             except AssertionError as exc:

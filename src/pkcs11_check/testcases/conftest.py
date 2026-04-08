@@ -69,7 +69,7 @@ def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:
     if rv != CKR_OK:
         return  # Can't determine, let the test try
     if info.flags & CKF_WRITE_PROTECTED:
-        pytest.skip("Token is write-protected — cannot create token objects")
+        pytest.skip("Token is write-protected -- cannot create token objects")
 
 
 def xfail_if_known_ckr(
@@ -94,4 +94,4 @@ def xfail_if_known_ckr(
     for ckr in known_ckrs:
         if ckr_name(ckr) in exc_str:
             pytest.xfail(f"{msg}: {ckr_name(ckr)}")
-    raise  # Not a known CKR — propagate as real failure
+    raise  # Not a known CKR -- propagate as real failure

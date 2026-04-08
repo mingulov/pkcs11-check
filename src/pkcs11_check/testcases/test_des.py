@@ -1027,7 +1027,7 @@ class TestDESKeyDerivation:
         assert True
 
 
-# DES weak keys (before parity adjustment) — 4 weak + 12 semi-weak
+# DES weak keys (before parity adjustment) -- 4 weak + 12 semi-weak
 _DES_WEAK_KEYS = frozenset([
     bytes.fromhex("0101010101010101"),
     bytes.fromhex("FEFEFEFEFEFEFEFE"),
@@ -1037,7 +1037,7 @@ _DES_WEAK_KEYS = frozenset([
 
 
 class TestDESWeakKeys:
-    """DES weak key detection — generated keys should not be weak."""
+    """DES weak key detection -- generated keys should not be weak."""
 
     def test_des_keygen_avoids_weak_keys(self, p11_raw_session: Any) -> None:
         """Generated DES keys must not be weak or semi-weak keys."""

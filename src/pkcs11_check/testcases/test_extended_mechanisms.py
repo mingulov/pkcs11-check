@@ -1,11 +1,11 @@
 """Tests for mechanisms that lack dedicated roundtrip coverage.
 
 Phase 4.1: High-priority mechanism roundtrip tests for:
-- CKM_SHAKE_128 / CKM_SHAKE_256 — XOF digest (requires C_DigestXof* functions)
-- CKM_SHA512_224 / CKM_SHA512_256 — Truncated SHA-512 variants
-- CKM_AES_KEY_WRAP_KWP — AES Key Wrap with Padding
-- CKM_KMAC_128 / CKM_KMAC_256 — Keccak MAC (v3.2)
-- CKM_ML_DSA_EXTERNAL_MU — External message update PQC sign
+- CKM_SHAKE_128 / CKM_SHAKE_256 -- XOF digest (requires C_DigestXof* functions)
+- CKM_SHA512_224 / CKM_SHA512_256 -- Truncated SHA-512 variants
+- CKM_AES_KEY_WRAP_KWP -- AES Key Wrap with Padding
+- CKM_KMAC_128 / CKM_KMAC_256 -- Keccak MAC (v3.2)
+- CKM_ML_DSA_EXTERNAL_MU -- External message update PQC sign
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ class TestSHA512Truncated:
 
 
 class TestAESKeyWrapKWP:
-    """CKM_AES_KEY_WRAP_KWP — AES Key Wrap with Padding (NIST SP 800-38F)."""
+    """CKM_AES_KEY_WRAP_KWP -- AES Key Wrap with Padding (NIST SP 800-38F)."""
 
     def test_wrap_unwrap_roundtrip(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -282,7 +282,7 @@ class TestAESKeyWrapKWP:
 
 
 class TestKMAC:
-    """CKM_KMAC_128 / CKM_KMAC_256 — Keccak MAC (v3.2, NIST SP 800-185).
+    """CKM_KMAC_128 / CKM_KMAC_256 -- Keccak MAC (v3.2, NIST SP 800-185).
 
     KMAC mechanisms require CK_KMAC_PARAMS with a key handle, output length,
     and optional customization string. These are XOF-capable: output can be
@@ -325,7 +325,7 @@ class TestKMAC:
 
 
 class TestMLDSAExternalMU:
-    """CKM_ML_DSA_EXTERNAL_MU — External message update PQC sign (v3.2).
+    """CKM_ML_DSA_EXTERNAL_MU -- External message update PQC sign (v3.2).
 
     ExternalMu-ML-DSA accepts a precomputed 64-byte message representative mu
     instead of hashing the message on-token. The mu value is normally computed
@@ -352,5 +352,5 @@ class TestMLDSAExternalMU:
             pytest.skip("CKM_ML_DSA keygen not supported for EXTERNAL_MU test")
         pytest.skip(
             "CKM_ML_DSA_EXTERNAL_MU constant (0x00000020) not yet in "
-            "pkcs11_check.raw.types_std — awaiting published PKCS#11 header"
+            "pkcs11_check.raw.types_std -- awaiting published PKCS#11 header"
         )

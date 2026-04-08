@@ -98,7 +98,7 @@ class TestLargeRandomGeneration:
         """Generate 100KB of random data via C_GenerateRandom.
 
         NSS deviation: NSS returns CKR_ARGUMENTS_BAD for C_GenerateRandom
-        requests larger than approximately 32KB — NSS has an internal size
+        requests larger than approximately 32KB -- NSS has an internal size
         limit on single random generation calls.
         Tracked in docs/module-issues.md under NSS.
         """
@@ -112,7 +112,7 @@ class TestLargeRandomGeneration:
             xfail_if_known_ckr(
                 exc,
                 {CKR_ARGUMENTS_BAD},
-                "NSS rejects C_GenerateRandom(100KB) with CKR_ARGUMENTS_BAD — "
+                "NSS rejects C_GenerateRandom(100KB) with CKR_ARGUMENTS_BAD -- "
                 "NSS has an internal size limit on single random generation calls",
             )
             raise

@@ -243,7 +243,7 @@ def _mct_dec_next_input(
     initial_iv: bytes,
     output_history: list[bytes],
 ) -> bytes:
-    """Compute the next ciphertext for MCT decrypt (PT↔CT swap)."""
+    """Compute the next ciphertext for MCT decrypt (PT<->CT swap)."""
     if mech_constant == CKM_AES_CFB8:
         if j <= 16:
             return initial_iv[j - 1 : j]
@@ -327,7 +327,7 @@ def run_multiblock_decrypt_test(
 ) -> None:
     """Run ACVP MCT decryption test (1000 iterations per block).
 
-    Mirrors the encrypt MCT with PT↔CT swapped (per ACVP spec).
+    Mirrors the encrypt MCT with PT<->CT swapped (per ACVP spec).
     For CFB modes the IV/shift-register tracks the ciphertext input,
     not the plaintext output.
     """

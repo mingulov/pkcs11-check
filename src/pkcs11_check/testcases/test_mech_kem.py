@@ -116,7 +116,7 @@ class TestMechKEM:
                 rs.raw, rs.sh, pub1, CKM_ML_KEM, attrs=_AES_DERIVED_ATTRS
             )
             try:
-                # Decapsulate with wrong private key — produces a different derived key
+                # Decapsulate with wrong private key -- produces a different derived key
                 dec_key_wrong = decapsulate_key(
                     rs.raw, rs.sh, priv2, CKM_ML_KEM, ct, attrs=_AES_DERIVED_ATTRS
                 )

@@ -271,7 +271,7 @@ class TestRSAOAEPCrossVerify:
                 b"wrong key test",
                 mech_param=oaep,
             )
-            # Decrypt with wrong key — should fail at Init or Decrypt stage
+            # Decrypt with wrong key -- should fail at Init or Decrypt stage
             rv = rs.raw.C_DecryptInit(rs.sh, oaep.byref(), priv2)
             if rv != CKR_OK:
                 return  # Failed as expected

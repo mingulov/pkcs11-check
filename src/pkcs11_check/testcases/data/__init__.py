@@ -1,4 +1,4 @@
-"""Centralized test data paths — single source of truth.
+"""Centralized test data paths -- single source of truth.
 
 Own data (mechanism_vectors, KAT JSONs) lives here in src/.
 Third-party vendor data lives in a resolved data directory.

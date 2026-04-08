@@ -57,7 +57,7 @@ class TestSensitiveKeyValue:
                 )
                 pytest.xfail(
                     "SECURITY: NSS allows reading sensitive AES key material "
-                    "(CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE) — NSS softoken bug"
+                    "(CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE) -- NSS softoken bug"
                 )
             except AssertionError as e:
                 msg = str(e)
@@ -110,7 +110,7 @@ class TestSensitiveKeyValue:
                 )
                 pytest.xfail(
                     "SECURITY: NSS allows reading sensitive RSA private key material "
-                    "(CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE) — NSS softoken bug"
+                    "(CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE) -- NSS softoken bug"
                 )
             except AssertionError as e:
                 msg = str(e)

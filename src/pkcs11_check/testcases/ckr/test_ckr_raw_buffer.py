@@ -124,7 +124,7 @@ print("OK")
             )
             pytest.xfail(
                 f"SECURITY: module returns CKR_OK for C_Digest with 1-byte buffer "
-                f"(expected CKR_BUFFER_TOO_SMALL) — {overwritten} guard bytes overwritten"
+                f"(expected CKR_BUFFER_TOO_SMALL) -- {overwritten} guard bytes overwritten"
             )
 
     def test_encrypt_buffer_too_small(self, p11_config: Any) -> None:

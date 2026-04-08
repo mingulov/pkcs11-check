@@ -813,7 +813,7 @@ def mech_sign_context(
     """Pack CK_SIGN_ADDITIONAL_CONTEXT for CKM_ML_DSA / CKM_SLH_DSA (pure).
 
     For hash-and-sign variants (CKM_HASH_ML_DSA, CKM_HASH_SLH_DSA), use
-    ``mech_hash_sign_context`` instead — it has a ``hash`` field.
+    ``mech_hash_sign_context`` instead -- it has a ``hash`` field.
     ``hedge`` defaults to CKH_HEDGE_PREFERRED.
     """
     ka: list[Any] = []

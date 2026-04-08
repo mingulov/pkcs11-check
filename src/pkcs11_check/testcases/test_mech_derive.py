@@ -1,15 +1,15 @@
 """Mechanism-driven key derivation tests.
 
-Parametrized by mech_derive_entry — tests every derive mechanism advertised
+Parametrized by mech_derive_entry -- tests every derive mechanism advertised
 by the module that also has a registry config.
 
 Derivation categories handled:
-- SHA key derivation (no params): base generic secret key → derived key
-- HKDF (CK_HKDF_PARAMS): HKDF base key → AES-128 derived key
-- ECDH1 (CK_ECDH1_DERIVE_PARAMS): EC keypair → shared secret
-- AES-ECB encrypt-data derivation: AES base key → derived key
-- DES-ECB / DES3-ECB encrypt-data derivation: DES/DES3 base key → derived key
-- CONCATENATE / XOR / EXTRACT: generic secret base key → derived key
+- SHA key derivation (no params): base generic secret key -> derived key
+- HKDF (CK_HKDF_PARAMS): HKDF base key -> AES-128 derived key
+- ECDH1 (CK_ECDH1_DERIVE_PARAMS): EC keypair -> shared secret
+- AES-ECB encrypt-data derivation: AES base key -> derived key
+- DES-ECB / DES3-ECB encrypt-data derivation: DES/DES3 base key -> derived key
+- CONCATENATE / XOR / EXTRACT: generic secret base key -> derived key
 
 Mechanisms skipped here (too complex for generic parametrized tests):
 - HKDF_DATA (raw bytes output, not a key object handle)
@@ -266,7 +266,7 @@ try:
 except ImportError:
     pass
 
-# PUB_KEY_FROM_PRIV_KEY — derive public key from private, not a typical derive test
+# PUB_KEY_FROM_PRIV_KEY -- derive public key from private, not a typical derive test
 _PUB_KEY_FROM_PRIV_KEY_ID: int = 0
 try:
     from pkcs11_check.raw.types_std import CKM_PUB_KEY_FROM_PRIV_KEY
@@ -275,7 +275,7 @@ try:
 except ImportError:
     pass
 
-# CKF_NULL_DERIVE — no derivation semantics
+# CKF_NULL_DERIVE -- no derivation semantics
 _CKM_NULL_ID: int = 0
 try:
     from pkcs11_check.raw.types_std import CKM_NULL
@@ -298,7 +298,7 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
     except ImportError:
         import pytest
 
-        pytest.skip("CKM_HKDF_KEY_GEN not in types_std — cannot generate HKDF base key")
+        pytest.skip("CKM_HKDF_KEY_GEN not in types_std -- cannot generate HKDF base key")
     attrs: dict[int, Any] = {
         CKA_KEY_TYPE: CKK_HKDF,
         CKA_DERIVE: True,
@@ -319,7 +319,7 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
 
 
 # Template for derived AES-128 key.
-# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey — some modules (Kryoptic)
+# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- some modules (Kryoptic)
 # return CKR_TEMPLATE_INCONSISTENT when it is absent.
 _DERIVED_AES_ATTRS: dict[int, Any] = {
     CKA_CLASS: CKO_SECRET_KEY,
@@ -333,7 +333,7 @@ _DERIVED_AES_ATTRS: dict[int, Any] = {
 }
 
 # Template for derived generic secret key.
-# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey — some modules (Kryoptic)
+# CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- some modules (Kryoptic)
 # return CKR_TEMPLATE_INCONSISTENT when it is absent.
 _DERIVED_GENERIC_ATTRS: dict[int, Any] = {
     CKA_CLASS: CKO_SECRET_KEY,
@@ -350,7 +350,7 @@ def _derive_hkdf(rs: RawSession, entry: MechEntry) -> None:
     """HKDF_DERIVE: generate HKDF base key, derive AES-128 key via CK_HKDF_PARAMS."""
     mech_id = entry.mech_id
     if not rs.has_mechanism("HKDF_KEY_GEN"):
-        pytest.skip("HKDF_KEY_GEN not available — cannot generate HKDF base key")
+        pytest.skip("HKDF_KEY_GEN not available -- cannot generate HKDF base key")
     base_key = _gen_hkdf_base_key(rs)
     derived_key: int = 0
     try:
@@ -383,7 +383,7 @@ def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
 
     The private key must have CKA_DERIVE=True.  The derived key uses
     CKA_CLASS=CKO_SECRET_KEY (required by the PKCS#11 spec for C_DeriveKey)
-    and no CKA_VALUE_LEN — ECDH with CKD_NULL derives the full curve-output
+    and no CKA_VALUE_LEN -- ECDH with CKD_NULL derives the full curve-output
     length (32 bytes for P-256) without truncation.
     """
     mech_id = entry.mech_id
@@ -407,7 +407,7 @@ def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
             kdf=int(CKD_NULL),
             public_data=peer_point,
         )
-        # CKA_CLASS required; no CKA_VALUE_LEN — ECDH output length is curve-fixed
+        # CKA_CLASS required; no CKA_VALUE_LEN -- ECDH output length is curve-fixed
         ecdh_derived_attrs: dict[int, Any] = {
             CKA_CLASS: CKO_SECRET_KEY,
             CKA_KEY_TYPE: CKK_GENERIC_SECRET,
@@ -603,7 +603,7 @@ def _derive_concat_key(rs: RawSession, entry: MechEntry) -> None:
 
 
 def _derive_sha(rs: RawSession, entry: MechEntry) -> None:
-    """SHA key derivation (no params): generic secret base key → derived key."""
+    """SHA key derivation (no params): generic secret base key -> derived key."""
     mech_id = entry.mech_id
     base_key = gen_generic_secret(rs, bits=256, extra_attrs={CKA_DERIVE: True})
     derived_key: int = 0
@@ -709,7 +709,7 @@ class TestMechDerive:
         if mech_id in _SKIPPED_PROTOCOL_MECHS:
             pytest.skip(
                 f"{entry.mech_name}: protocol KDF (TLS/SSL/IKE/SP800/Signal) "
-                "— complex params, skipped here"
+                "-- complex params, skipped here"
             )
 
         # Skip HKDF_DATA (produces raw data output, not a key handle)
@@ -723,12 +723,12 @@ class TestMechDerive:
 
         # Skip CKM_NULL (no derivation semantics)
         if _CKM_NULL_ID and mech_id == _CKM_NULL_ID:
-            pytest.skip(f"{entry.mech_name}: null mechanism — no derivation semantics")
+            pytest.skip(f"{entry.mech_name}: null mechanism -- no derivation semantics")
 
         # Skip AES-CBC-ENCRYPT-DATA (needs custom struct with IV)
         if _AES_CBC_ENCRYPT_DATA_ID and mech_id == _AES_CBC_ENCRYPT_DATA_ID:
             pytest.skip(
-                f"{entry.mech_name}: needs CK_AES_CBC_ENCRYPT_DATA_PARAMS struct — "
+                f"{entry.mech_name}: needs CK_AES_CBC_ENCRYPT_DATA_PARAMS struct -- "
                 "covered in test_aes_kdf.py"
             )
 

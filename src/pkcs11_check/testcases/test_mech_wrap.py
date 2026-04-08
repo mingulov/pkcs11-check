@@ -1,6 +1,6 @@
 """Mechanism-driven wrap/unwrap tests.
 
-Parametrized by mech_wrap_entry — tests every wrap mechanism advertised
+Parametrized by mech_wrap_entry -- tests every wrap mechanism advertised
 by the module that also has a registry config.
 
 Key types covered:
@@ -11,7 +11,7 @@ Key types covered:
 - RSA mechanisms (RSA_PKCS, RSA_PKCS_OAEP): wrapping key is RSA
 
 Mechanisms not covered here (skipped with clear message):
-- ECDH-AES hybrid wraps (ECDH_AES_KEY_WRAP, ECDH_COF_AES_KEY_WRAP) — need
+- ECDH-AES hybrid wraps (ECDH_AES_KEY_WRAP, ECDH_COF_AES_KEY_WRAP) -- need
   ECDH parameter construction
 - AES-CTR: requires CK_AES_CTR_PARAMS (complex, skip here)
 """
@@ -62,12 +62,12 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
 
-# Integer value for CKK_AES — used for dispatch in the wrapping-key builder.
+# Integer value for CKK_AES -- used for dispatch in the wrapping-key builder.
 _AES_KEY_TYPE: int = int(CKK_AES)
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.wrap]
 
-# Hybrid wrap mechanisms that need ECDH parameter construction — skipped here
+# Hybrid wrap mechanisms that need ECDH parameter construction -- skipped here
 _HYBRID_WRAP_MECH_IDS: set[int] = set()
 try:
     from pkcs11_check.raw.types_std import (
@@ -93,7 +93,7 @@ try:
 except ImportError:
     pass
 
-# RSA_AES hybrid — needs CK_RSA_AES_KEY_WRAP_PARAMS which is beyond this test's scope
+# RSA_AES hybrid -- needs CK_RSA_AES_KEY_WRAP_PARAMS which is beyond this test's scope
 _RSA_AES_KEY_WRAP_MECH_ID: int = 0
 try:
     from pkcs11_check.raw.types_std import CKM_RSA_AES_KEY_WRAP
@@ -102,7 +102,7 @@ try:
 except ImportError:
     pass
 
-# DES/3DES key types — these mechanisms need a DES key, not an AES key, as the wrapping key
+# DES/3DES key types -- these mechanisms need a DES key, not an AES key, as the wrapping key
 _DES_KEY_TYPES: set[int] = {int(CKK_DES), int(CKK_DES2), int(CKK_DES3)}
 
 # Block cipher mechanisms (AES, Camellia, ARIA, SEED) that have CKF_WRAP and
@@ -200,7 +200,7 @@ try:
 except ImportError:
     pass
 
-# AES CTR — needs CK_AES_CTR_PARAMS struct, skip here
+# AES CTR -- needs CK_AES_CTR_PARAMS struct, skip here
 _AES_CTR_MECH_ID: int = 0
 try:
     from pkcs11_check.raw.types_std import CKM_AES_CTR
@@ -218,7 +218,7 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
     """
     mech_id = entry.mech_id
 
-    # RSA_AES hybrid requires CK_RSA_AES_KEY_WRAP_PARAMS — not covered here
+    # RSA_AES hybrid requires CK_RSA_AES_KEY_WRAP_PARAMS -- not covered here
     if _RSA_AES_KEY_WRAP_MECH_ID and mech_id == _RSA_AES_KEY_WRAP_MECH_ID:
         pytest.skip(f"{entry.mech_name}: RSA_AES hybrid wrap needs CK_RSA_AES_KEY_WRAP_PARAMS")
 
@@ -231,7 +231,7 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
         return mech_bytes(CKM(mech_id), iv)
 
     if _AES_CTR_MECH_ID and mech_id == _AES_CTR_MECH_ID:
-        pytest.skip(f"{entry.mech_name}: CTR wrap needs CK_AES_CTR_PARAMS — skipped here")
+        pytest.skip(f"{entry.mech_name}: CTR wrap needs CK_AES_CTR_PARAMS -- skipped here")
 
     # RSA OAEP
     try:
@@ -244,7 +244,7 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
     except ImportError:
         pass
 
-    # GCM / CCM / AEAD variants — complex, skip
+    # GCM / CCM / AEAD variants -- complex, skip
     config = entry.config
     if config is not None and config.param_recipe.style in ("gcm", "ccm"):
         pytest.skip(f"{entry.mech_name}: AEAD wrap not covered here")
@@ -475,7 +475,7 @@ class TestMechWrapRoundtrip:
 
         assert config is not None
 
-        # Skip hybrid wraps (ECDH-AES) — need ECDH parameter construction
+        # Skip hybrid wraps (ECDH-AES) -- need ECDH parameter construction
         if mech_id in _HYBRID_WRAP_MECH_IDS:
             pytest.skip(f"{entry.mech_name}: hybrid ECDH-AES wrap not covered here")
 
@@ -502,7 +502,7 @@ class TestMechWrapRoundtrip:
             unwrap_handle = wrap_handle
             wrap_priv = None
         elif is_aes or config.key_type is None:
-            # AES wrapping key (or unknown key type — fall back to AES)
+            # AES wrapping key (or unknown key type -- fall back to AES)
             wrap_handle = _build_aes_wrap_key(rs, entry, config)
             unwrap_handle = wrap_handle
             wrap_priv = None
@@ -543,7 +543,7 @@ class TestMechWrapRoundtrip:
             )
             assert len(wrapped_blob) > 0, f"{entry.mech_name}: wrap produced empty blob"
 
-            # Destroy the original target key — unwrapped copy must still work
+            # Destroy the original target key -- unwrapped copy must still work
             destroy_quietly(rs.raw, rs.sh, target_key)
             target_key = 0
 
@@ -561,7 +561,7 @@ class TestMechWrapRoundtrip:
             )
             assert unwrapped_key != 0, f"{entry.mech_name}: unwrap returned handle 0"
 
-            # Decrypt with the unwrapped key — must recover original plaintext
+            # Decrypt with the unwrapped key -- must recover original plaintext
             recovered = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -590,7 +590,7 @@ class TestMechWrapRoundtrip:
                 )
                 diagnostic = _raw_rsa_unwrap_hint(original_value, decrypted_block, unwrapped_value)
             assert recovered == plaintext, (
-                f"{entry.mech_name}: decrypt mismatch after unwrap — "
+                f"{entry.mech_name}: decrypt mismatch after unwrap -- "
                 f"expected {plaintext.hex()!r}, got {recovered.hex()!r}{diagnostic}"
             )
 

@@ -362,7 +362,7 @@ def gen_keypair_for_mech(
     if needs_domain_params(config):
         pytest.skip(
             f"{entry.mech_name}: requires external domain parameters "
-            "(DSA/DH/GOSTR/KEA — not covered by this test)"
+            "(DSA/DH/GOSTR/KEA -- not covered by this test)"
         )
 
     kt = int(config.key_type)
@@ -533,7 +533,7 @@ def generate_key_from_recipe(
 
         # CKM_GENERIC_SECRET_KEY_GEN only produces CKK_GENERIC_SECRET keys.
         # Module-specific HMAC key types (e.g. CKK_SHA256_HMAC) are correct for
-        # import/KAT operations but incompatible with this keygen mechanism —
+        # import/KAT operations but incompatible with this keygen mechanism --
         # passing them in the template causes CKR_TEMPLATE_INCONSISTENT.
         actual_key_type: Any = config.key_type
         if int(keygen_mech) == int(CKM_GENERIC_SECRET_KEY_GEN):
@@ -683,13 +683,13 @@ def build_params_from_vector(mech_id: int, recipe: ParamRecipe, vec: dict[str, A
     the function falls back to ``build_test_params`` (random generation).
 
     Styles handled:
-        ``"none"``   — returns None regardless of vector contents.
-        ``"iv"``     — uses ``params["iv_hex"]`` decoded to bytes.
-        ``"gcm"``    — uses ``iv_hex``, ``aad_hex`` (optional), ``tag_bits``.
-        ``"ctr"``    — uses ``params["iv_hex"]`` as the 16-byte counter block.
-        ``"ccm"``    — uses ``iv_hex`` (nonce), ``aad_hex``, ``tag_bits``, ``data_len``.
-        ``"pss"``    — uses ``params["hash_mech_hex"]`` as CKM constant name.
-        ``"oaep"``   — uses ``params["hash_mech_hex"]`` as CKM constant name.
+        ``"none"``   -- returns None regardless of vector contents.
+        ``"iv"``     -- uses ``params["iv_hex"]`` decoded to bytes.
+        ``"gcm"``    -- uses ``iv_hex``, ``aad_hex`` (optional), ``tag_bits``.
+        ``"ctr"``    -- uses ``params["iv_hex"]`` as the 16-byte counter block.
+        ``"ccm"``    -- uses ``iv_hex`` (nonce), ``aad_hex``, ``tag_bits``, ``data_len``.
+        ``"pss"``    -- uses ``params["hash_mech_hex"]`` as CKM constant name.
+        ``"oaep"``   -- uses ``params["hash_mech_hex"]`` as CKM constant name.
 
     For all other styles the function delegates to ``build_test_params``.
 

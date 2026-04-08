@@ -118,7 +118,7 @@ class TestMessageEncrypt:
             assert rv == CKR_OK, f"C_EncryptMessage (size query) failed: 0x{rv:08x}"
 
             ct_buf = (ctypes.c_ubyte * ct_len.value)()
-            # Reset pTag pointer — may have been updated during size query
+            # Reset pTag pointer -- may have been updated during size query
             msg_params.pTag = ctypes.cast(tag_buf, ctypes.c_void_p)
             rv = rs.raw.C_EncryptMessage(
                 rs.sh,
@@ -143,7 +143,7 @@ class TestMessageEncrypt:
 
             # --- Decrypt side ---
             if not (info["flags"] & int(CKF_MESSAGE_DECRYPT)):
-                # Encrypt validated; decrypt flag not advertised — acceptable.
+                # Encrypt validated; decrypt flag not advertised -- acceptable.
                 return
 
             for fname in ("C_MessageDecryptInit", "C_DecryptMessage", "C_MessageDecryptFinal"):

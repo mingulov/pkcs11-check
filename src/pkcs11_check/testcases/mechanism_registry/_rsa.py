@@ -51,7 +51,7 @@ from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, 
 _RSA_SIZES = (2048, 3072, 4096)
 _SIG_VER = CKF_SIGN | CKF_VERIFY
 # OASIS spec lists SIGR&VERR for CKM_RSA_PKCS and CKM_RSA_X_509, but
-# sign-with-message-recovery is an optional capability — modules may omit
+# sign-with-message-recovery is an optional capability -- modules may omit
 # CKF_SIGN_RECOVER / CKF_VERIFY_RECOVER without violating the spec.
 # _SIG_VER_REC is kept for documentation but not used in expected_flags.
 _SIG_VER_REC = CKF_SIGN | CKF_VERIFY | CKF_SIGN_RECOVER | CKF_VERIFY_RECOVER
@@ -61,7 +61,7 @@ _WRP_UWRP = CKF_WRAP | CKF_UNWRAP
 _rsa = KeygenRecipe("rsa")
 _oaep = ParamRecipe("oaep", {"hash_mech": "CKM_SHA256", "mgf": "CKG_MGF1_SHA256"})
 
-# PSS parameter recipes (one per hash — salt_len matches hash output size)
+# PSS parameter recipes (one per hash -- salt_len matches hash output size)
 _pss_sha1 = ParamRecipe("pss", {"hash_mech": "CKM_SHA_1", "mgf": "CKG_MGF1_SHA1", "salt_len": 20})
 _pss_sha224 = ParamRecipe(
     "pss", {"hash_mech": "CKM_SHA224", "mgf": "CKG_MGF1_SHA224", "salt_len": 28}

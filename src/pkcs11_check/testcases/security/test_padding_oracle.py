@@ -132,7 +132,7 @@ class TestRSAPaddingOracle:
                     "SHOULD return CKR_ENCRYPTED_DATA_INVALID uniformly",
                 )
                 pytest.xfail(
-                    f"SECURITY: NSS RSA-OAEP padding oracle — non-uniform error codes: "
+                    f"SECURITY: NSS RSA-OAEP padding oracle -- non-uniform error codes: "
                     f"{error_types} (Manger 2001 attack vector)"
                 )
         finally:

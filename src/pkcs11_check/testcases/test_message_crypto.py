@@ -160,7 +160,7 @@ class TestMessageEncryptDecrypt:
     """Test message-based encrypt/decrypt lifecycle."""
 
     def test_message_encrypt_single(self, p11_raw_session: Any) -> None:
-        """C_MessageEncryptInit + C_EncryptMessage — single-shot encrypt."""
+        """C_MessageEncryptInit + C_EncryptMessage -- single-shot encrypt."""
         rs = p11_raw_session
         _skip_unless_message_functions(rs, MESSAGE_ENCRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
@@ -179,7 +179,7 @@ class TestMessageEncryptDecrypt:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_message_decrypt_single(self, p11_raw_session: Any) -> None:
-        """C_MessageDecryptInit + C_DecryptMessage — single-shot decrypt."""
+        """C_MessageDecryptInit + C_DecryptMessage -- single-shot decrypt."""
         rs = p11_raw_session
         _skip_unless_message_functions(rs, MESSAGE_DECRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
@@ -310,7 +310,7 @@ class TestMessageSignVerify:
     """Test message-based sign/verify lifecycle."""
 
     def test_message_sign_single(self, p11_raw_session: Any) -> None:
-        """C_MessageSignInit + C_SignMessage — single-shot sign."""
+        """C_MessageSignInit + C_SignMessage -- single-shot sign."""
         rs = p11_raw_session
         _skip_unless_message_functions(rs, MESSAGE_SIGN_FUNCS)
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
@@ -326,7 +326,7 @@ class TestMessageSignVerify:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_message_verify_single(self, p11_raw_session: Any) -> None:
-        """C_MessageVerifyInit + C_VerifyMessage — single-shot verify."""
+        """C_MessageVerifyInit + C_VerifyMessage -- single-shot verify."""
         rs = p11_raw_session
         _skip_unless_message_functions(rs, MESSAGE_SIGN_FUNCS + MESSAGE_VERIFY_FUNCS)
         if not rs.has_mechanism("SHA256_RSA_PKCS"):

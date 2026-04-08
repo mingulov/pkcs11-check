@@ -1,21 +1,21 @@
-"""Composite lifecycle tests — multi-step operation patterns.
+"""Composite lifecycle tests -- multi-step operation patterns.
 
 Each test exercises a realistic end-to-end sequence that crosses multiple
 mechanism categories.  These tests are NOT parametrized by mechanism entry;
 they use hard-coded mechanism selections to keep complexity manageable.
 
 Patterns covered:
-  1. AES key generate → encrypt → wrap → destroy → unwrap → decrypt
-  2. ECDH derive → use derived key for AES-CBC encrypt
-  3. HKDF expand → AES-256 key → AES-ECB encrypt roundtrip
-  4. RSA-OAEP wrap AES key → unwrap → encrypt/decrypt verify
-  5. HMAC-SHA256 sign → copy key → verify with copy
+  1. AES key generate -> encrypt -> wrap -> destroy -> unwrap -> decrypt
+  2. ECDH derive -> use derived key for AES-CBC encrypt
+  3. HKDF expand -> AES-256 key -> AES-ECB encrypt roundtrip
+  4. RSA-OAEP wrap AES key -> unwrap -> encrypt/decrypt verify
+  5. HMAC-SHA256 sign -> copy key -> verify with copy
   6. Digest then encrypt: hash plaintext, encrypt result
-  7. Export then re-import: gen AES → extract value → import → encrypt roundtrip
-  8. RSA keygen → sign → verify (SHA256-RSA-PKCS roundtrip)
-  9. EC keygen → ECDSA sign → verify
- 10. Generate multiple AES keys → batch encrypt → destroy all
- 11. AES-GCM encrypt → AES-GCM decrypt (AEAD full cycle)
+  7. Export then re-import: gen AES -> extract value -> import -> encrypt roundtrip
+  8. RSA keygen -> sign -> verify (SHA256-RSA-PKCS roundtrip)
+  9. EC keygen -> ECDSA sign -> verify
+ 10. Generate multiple AES keys -> batch encrypt -> destroy all
+ 11. AES-GCM encrypt -> AES-GCM decrypt (AEAD full cycle)
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.lifecycle]
 
 
 class TestAESWrapUnwrapUse:
-    """Generate AES → encrypt → wrap → destroy → unwrap → decrypt."""
+    """Generate AES -> encrypt -> wrap -> destroy -> unwrap -> decrypt."""
 
     def test_aes_wrap_roundtrip(self, p11_raw_session: RawSession) -> None:
         """Full AES key lifecycle: generate, use, wrap, destroy, unwrap, use again."""
@@ -125,12 +125,12 @@ class TestAESWrapUnwrapUse:
             )
             assert len(wrapped) > 0, "wrap produced empty blob"
 
-            # Destroy original — only the wrapped copy remains
+            # Destroy original -- only the wrapped copy remains
             destroy_quietly(rs.raw, rs.sh, target)
             target = 0
 
             # Unwrap and decrypt to verify key material was preserved.
-            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey — Kryoptic
+            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey -- Kryoptic
             # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
             unwrapped_key = unwrap_key(
                 rs.raw,
@@ -162,7 +162,7 @@ class TestAESWrapUnwrapUse:
 
 
 class TestECDHDerivedKeyUse:
-    """ECDH1 derive → use derived key for AES-CBC encryption."""
+    """ECDH1 derive -> use derived key for AES-CBC encryption."""
 
     def test_ecdh_derive_and_use(self, p11_raw_session: RawSession) -> None:
         """ECDH derive a shared secret, use it as AES-128 key to encrypt/decrypt."""
@@ -201,7 +201,7 @@ class TestECDHDerivedKeyUse:
                 CKM(int(CKM_ECDH1_DERIVE)), kdf=int(CKD_NULL), public_data=peer_point
             )
 
-            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey — Kryoptic
+            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- Kryoptic
             # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
             derived = derive_key(
                 rs.raw,
@@ -246,7 +246,7 @@ class TestECDHDerivedKeyUse:
 
 
 class TestHKDFDerivedKeyUse:
-    """HKDF expand → AES-256 key → AES-ECB encrypt roundtrip."""
+    """HKDF expand -> AES-256 key -> AES-ECB encrypt roundtrip."""
 
     def test_hkdf_to_aes_encrypt(self, p11_raw_session: RawSession) -> None:
         """HKDF-derive an AES key and use it for encryption."""
@@ -271,7 +271,7 @@ class TestHKDFDerivedKeyUse:
 
             # Generate HKDF base key using CKM_HKDF_KEY_GEN + CKK_HKDF.
             # Using CKM_GENERIC_SECRET_KEY_GEN with CKK_HKDF fails on Kryoptic
-            # with CKR_TEMPLATE_INCONSISTENT — the HKDF keygen mechanism is
+            # with CKR_TEMPLATE_INCONSISTENT -- the HKDF keygen mechanism is
             # required for this key type.
             hkdf_attrs: dict[int, Any] = {
                 CKA_KEY_TYPE: CKK_HKDF,
@@ -300,7 +300,7 @@ class TestHKDFDerivedKeyUse:
                 info=b"pkcs11-check lifecycle test",
             )
 
-            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey — Kryoptic
+            # CKA_CLASS is required by PKCS#11 spec for C_DeriveKey -- Kryoptic
             # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
             derived = derive_key(
                 rs.raw,
@@ -336,7 +336,7 @@ class TestHKDFDerivedKeyUse:
 
 
 class TestRSAOAEPWrapLifecycle:
-    """RSA-OAEP wrap AES key → unwrap → encrypt/decrypt verify."""
+    """RSA-OAEP wrap AES key -> unwrap -> encrypt/decrypt verify."""
 
     def test_rsa_oaep_wrap_aes_roundtrip(self, p11_raw_session: RawSession) -> None:
         """Wrap an AES key under RSA-OAEP, unwrap, and verify enc/dec works."""
@@ -389,7 +389,7 @@ class TestRSAOAEPWrapLifecycle:
             destroy_quietly(rs.raw, rs.sh, target)
             target = 0
 
-            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey — Kryoptic
+            # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey -- Kryoptic
             # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
             unwrapped_key = unwrap_key(
                 rs.raw, rs.sh, rsa_priv, wrapped, CKM(int(CKM_RSA_PKCS_OAEP)),
@@ -494,7 +494,7 @@ class TestExportReimportAES:
             )
             assert key2 != 0
 
-            # Decrypt with re-imported key — must recover original plaintext
+            # Decrypt with re-imported key -- must recover original plaintext
             pt = decrypt_single(rs.raw, rs.sh, key2, CKM_AES_ECB, ct)
             assert pt == plaintext, (
                 f"export/reimport key mismatch: expected {plaintext.hex()!r}, got {pt.hex()!r}"
@@ -506,7 +506,7 @@ class TestExportReimportAES:
 
 
 class TestRSASignVerifyLifecycle:
-    """RSA keygen → SHA256-RSA-PKCS sign → verify."""
+    """RSA keygen -> SHA256-RSA-PKCS sign -> verify."""
 
     def test_rsa_sign_verify_roundtrip(self, p11_raw_session: RawSession) -> None:
         """Full RSA sign/verify lifecycle with SHA256-RSA-PKCS."""
@@ -535,7 +535,7 @@ class TestRSASignVerifyLifecycle:
 
 
 class TestECSignVerifyLifecycle:
-    """EC keygen → ECDSA sign → verify."""
+    """EC keygen -> ECDSA sign -> verify."""
 
     def test_ecdsa_sign_verify_roundtrip(self, p11_raw_session: RawSession) -> None:
         """Full ECDSA sign/verify lifecycle on P-256."""
@@ -566,10 +566,10 @@ class TestECSignVerifyLifecycle:
 
 
 class TestAESGCMFullCycle:
-    """AES-GCM AEAD encrypt → decrypt (full cycle with auth tag)."""
+    """AES-GCM AEAD encrypt -> decrypt (full cycle with auth tag)."""
 
     def test_aes_gcm_encrypt_decrypt(self, p11_raw_session: RawSession) -> None:
-        """AES-GCM encrypt, then decrypt with same IV — auth tag verified."""
+        """AES-GCM encrypt, then decrypt with same IV -- auth tag verified."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")

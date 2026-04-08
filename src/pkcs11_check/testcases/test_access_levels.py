@@ -775,13 +775,13 @@ class TestTrustedAttribute:
 
                 note(
                     "C_WrapKey returned CKR_OK when wrapping a CKA_WRAP_WITH_TRUSTED key "
-                    "with an untrusted (non-CKA_TRUSTED) wrapping key — "
+                    "with an untrusted (non-CKA_TRUSTED) wrapping key -- "
                     "module does not enforce CKA_WRAP_WITH_TRUSTED",
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec CKA_WRAP_WITH_TRUSTED, CKA_TRUSTED",
                 )
                 pytest.xfail(
-                    "NSS does not enforce CKA_WRAP_WITH_TRUSTED — "
+                    "NSS does not enforce CKA_WRAP_WITH_TRUSTED -- "
                     "C_WrapKey returned CKR_OK with an untrusted wrapping key "
                     "(expected CKR_ACTION_PROHIBITED, CKR_KEY_NOT_WRAPPABLE, "
                     "or CKR_FUNCTION_FAILED)"

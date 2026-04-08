@@ -144,7 +144,7 @@ class TestAESGCMWycheproof:
                 tag_len = len(tag_expected)
                 if iv_len > 16:
                     # NIST SP 800-38D: support for non-96-bit IVs is optional.
-                    # All tested providers reject oversized IVs — acceptable.
+                    # All tested providers reject oversized IVs -- acceptable.
                     from pkcs11_check.compliance import ComplianceLevel, note
 
                     note(

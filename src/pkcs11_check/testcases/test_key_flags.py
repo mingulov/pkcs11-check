@@ -169,7 +169,7 @@ class TestNeverExtractable:
                 )
             if never_ext is not False:
                 pytest.xfail(
-                    "Module sets CKA_NEVER_EXTRACTABLE=True on extractable keys — "
+                    "Module sets CKA_NEVER_EXTRACTABLE=True on extractable keys -- "
                     "violates PKCS#11 spec Table 18 invariant"
                 )
         finally:

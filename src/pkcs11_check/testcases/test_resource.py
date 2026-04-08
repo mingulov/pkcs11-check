@@ -109,7 +109,7 @@ class TestUseAfterDestroy:
         destroy_quietly(rs.raw, rs.sh, key)
         # Second destroy - should not crash (destroy_quietly swallows errors)
         rv = rs.raw.C_DestroyObject(rs.sh, key)
-        # Crash-only check — any CKR is acceptable
+        # Crash-only check -- any CKR is acceptable
         assert rv is not None
 
     def test_read_attribute_after_destroy(self, p11_raw_session: Any) -> None:

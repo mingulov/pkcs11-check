@@ -558,12 +558,12 @@ class TestAESMACGeneral:
 _XCBC_VERIFY_XFAIL_MSG = (
     "Module returns CKR_KEY_TYPE_INCONSISTENT for CKM_AES_XCBC_MAC C_VerifyInit; "
     "NSS softoken rejects CKK_AES keys for XCBC-MAC verify even when CKA_VERIFY=True "
-    "(NSS softoken bug — sign works but verify is broken)"
+    "(NSS softoken bug -- sign works but verify is broken)"
 )
 
 
 class TestAESMAC:
-    """CKM_AES_MAC — fixed 8-byte (half-block) CBC-MAC."""
+    """CKM_AES_MAC -- fixed 8-byte (half-block) CBC-MAC."""
 
     def test_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
         """Sign and verify with CKM_AES_MAC."""

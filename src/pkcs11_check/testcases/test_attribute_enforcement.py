@@ -197,7 +197,7 @@ class TestDestroyable:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                "Module ignores CKA_DESTROYABLE=False — C_DestroyObject succeeded",
+                "Module ignores CKA_DESTROYABLE=False -- C_DestroyObject succeeded",
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.4.1.2: CKA_DESTROYABLE=False must prevent destroy",
             )
