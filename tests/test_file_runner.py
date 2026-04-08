@@ -3567,6 +3567,7 @@ def test_file_skip_for_missing_mechanism(tmp_path: Path) -> None:
 
     mechs = _load_available_mechanisms(["--p11-manifest", str(manifest)])
     required = extract_required_mechanisms(str(test_file))
+    assert required is not None
     assert required == ["AES_CCM"]
     assert mechs is not None
     missing = [m for m in required if m not in mechs]
@@ -3591,6 +3592,7 @@ def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:
     }))
     mechs = _load_available_mechanisms(["--p11-manifest", str(manifest)])
     required = extract_required_mechanisms(str(test_file))
+    assert required is not None
     assert required == ["AES_CBC"]
     assert mechs is not None
     missing = [m for m in required if m not in mechs]
