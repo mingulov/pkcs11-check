@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -44,6 +45,32 @@ class DisabledCandidateReviewRecord:
     unit_status: str | None
     discovery_mode: Literal["explicit", "inferred"]
     sources: tuple[str, ...]
+
+
+_REQUIRED_MECHANISMS_RE = re.compile(
+    r'^REQUIRED_MECHANISMS\s*=\s*\[([^\]]*)\]',
+    re.MULTILINE,
+)
+
+
+def extract_required_mechanisms(filepath: str) -> list[str] | None:
+    """Parse REQUIRED_MECHANISMS list from a Python test file (no import).
+
+    Returns the mechanism name list, or None if the file has no declaration
+    or the list is empty.
+    """
+    try:
+        text = Path(filepath).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = _REQUIRED_MECHANISMS_RE.search(text)
+    if not match:
+        return None
+    inner = match.group(1).strip()
+    if not inner:
+        return None
+    names = [s.strip().strip("\"'") for s in inner.split(",") if s.strip().strip("\"'")]
+    return names or None
 
 
 def parse_disabled_nodeids(text: str) -> list[str]:

@@ -15,6 +15,7 @@ from pkcs11_check.core.test_selection import (
     build_disabled_selection_plan,
     collect_disabled_candidate_review_records,
     collect_disabled_candidates,
+    extract_required_mechanisms,
     load_disabled_baseline,
     parse_disabled_nodeids,
 )
@@ -456,3 +457,27 @@ def test_collect_disabled_candidate_review_records_include_sources_and_inference
             sources=("results.tests",),
         ),
     ]
+
+
+def test_extract_required_mechanisms_single(tmp_path: Path) -> None:
+    f = tmp_path / "test_example.py"
+    f.write_text('REQUIRED_MECHANISMS = ["AES_CCM"]\n')
+    assert extract_required_mechanisms(str(f)) == ["AES_CCM"]
+
+
+def test_extract_required_mechanisms_multiple(tmp_path: Path) -> None:
+    f = tmp_path / "test_example.py"
+    f.write_text('REQUIRED_MECHANISMS = ["AES_KEY_WRAP", "AES_KEY_WRAP_KWP"]\n')
+    assert extract_required_mechanisms(str(f)) == ["AES_KEY_WRAP", "AES_KEY_WRAP_KWP"]
+
+
+def test_extract_required_mechanisms_absent(tmp_path: Path) -> None:
+    f = tmp_path / "test_example.py"
+    f.write_text('pytestmark = [pytest.mark.kat]\n')
+    assert extract_required_mechanisms(str(f)) is None
+
+
+def test_extract_required_mechanisms_empty_list(tmp_path: Path) -> None:
+    f = tmp_path / "test_example.py"
+    f.write_text('REQUIRED_MECHANISMS = []\n')
+    assert extract_required_mechanisms(str(f)) is None
