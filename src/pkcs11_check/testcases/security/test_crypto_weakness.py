@@ -318,6 +318,7 @@ class TestWeakKeySizeAcceptance:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
 
+@pytest.mark.destructive
 class TestPinTimingSideChannel:
     """Analyse whether PIN validation timing leaks information."""
 
