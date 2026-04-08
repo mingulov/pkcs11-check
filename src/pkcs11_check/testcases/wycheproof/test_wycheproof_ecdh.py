@@ -40,6 +40,7 @@ from pkcs11_check.testcases.wycheproof._key_decoders import (
 )
 
 pytestmark = pytest.mark.wycheproof
+REQUIRED_MECHANISMS = ["ECDH1_DERIVE"]
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 

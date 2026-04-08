@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 pytestmark = pytest.mark.wycheproof
+REQUIRED_MECHANISMS = ["CHACHA20_POLY1305"]
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 

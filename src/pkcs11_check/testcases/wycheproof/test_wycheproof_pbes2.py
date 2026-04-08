@@ -47,6 +47,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
+REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]
 
 _PRF_MAP: dict[str, int] = {
     "hmacsha1": CKP_PKCS5_PBKD2_HMAC_SHA1,

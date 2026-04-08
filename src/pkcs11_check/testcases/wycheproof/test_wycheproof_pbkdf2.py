@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 pytestmark = pytest.mark.wycheproof
+REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 

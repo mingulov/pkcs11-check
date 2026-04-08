@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 pytestmark = pytest.mark.wycheproof
+REQUIRED_MECHANISMS = ["EDDSA"]
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 

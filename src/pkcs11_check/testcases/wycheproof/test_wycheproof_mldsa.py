@@ -32,6 +32,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
+REQUIRED_MECHANISMS = ["ML_DSA"]
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
