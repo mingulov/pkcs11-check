@@ -185,7 +185,14 @@ class TestLimboCertImport:
                     )
                 except AssertionError as e:
                     msg = str(e)
-                    if "CKR_ATTRIBUTE_TYPE_INVALID" in msg or "CKR_ATTRIBUTE_READ_ONLY" in msg:
+                    if any(
+                        ckr in msg
+                        for ckr in (
+                            "CKR_ATTRIBUTE_TYPE_INVALID",
+                            "CKR_ATTRIBUTE_READ_ONLY",
+                            "CKR_USER_NOT_LOGGED_IN",
+                        )
+                    ):
                         h, _ = import_cert_raw(
                             rs.raw,
                             rs.sh,
