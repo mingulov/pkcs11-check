@@ -19,6 +19,7 @@ from pkcs11_check.testcases.acvp.aes.base import (
 )
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
+REQUIRED_MECHANISMS = ["AES_CCM"]
 
 
 # =============================================================================

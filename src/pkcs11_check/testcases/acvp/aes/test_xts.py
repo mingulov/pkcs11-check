@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.acvp.aes.base import _load_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
+REQUIRED_MECHANISMS = ["AES_XTS"]
 
 
 def _load_xts_vectors(

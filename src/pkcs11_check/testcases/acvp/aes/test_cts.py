@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
+REQUIRED_MECHANISMS = ["AES_CTS"]
 
 
 # ---------------------------------------------------------------------------
