@@ -32,7 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
 )
 
-pytestmark = [pytest.mark.wycheproof, pytest.mark.requires_v30]
+pytestmark = pytest.mark.wycheproof
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 
