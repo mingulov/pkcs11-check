@@ -53,7 +53,7 @@ def _b64url_decode(data: str) -> bytes:
 
 def _pem_to_der(value: str) -> bytes:
     _type_name, _headers, der = pem.unarmor(value.encode())
-    return der
+    return bytes(der)
 
 
 def normalize_ec_curve(curve_name: str) -> tuple[str, int]:
@@ -107,7 +107,7 @@ def decode_ec_private_scalar(value: Any, encoding_name: str, curve_name: str) ->
         coord_size = ec_coord_size(curve_name)
         if len(raw) == coord_size + 1 and raw[0] == 0:
             raw = raw[1:]
-        return raw
+        return bytes(raw)
     if encoding_name == "webcrypto":
         coord_size = ec_coord_size(curve_name)
         return _b64url_decode(value["d"]).rjust(coord_size, b"\x00")

@@ -27,10 +27,10 @@ def _byte_preview(storage: Any) -> str | None:
     if raw is None and hasattr(storage, "_type_") and isinstance(storage, object):
         item_type = getattr(type(storage), "_type_", None)
         if item_type in (bytes, ctypes.c_char, ctypes.c_byte, ctypes.c_ubyte):
-            raw = bytes(storage)
+            raw = bytes(storage)  # type: ignore[call-overload]
     if raw is None:
         return None
-    return raw[:16].hex()
+    return str(raw[:16].hex())
 
 
 def _preview_from_pointer(pointer: PointerArg) -> str | None:

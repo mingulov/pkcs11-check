@@ -656,7 +656,7 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-29 |
-| last_action | Phase 5 CHECK-002: widened `recipes.get_mechanism_info(mechanism)` from `CKM` to `CKM \| int`; widened `_bf_key` (test_blowfish) and `_gost_key` (test_gost) `attrs` from `dict[int, Any]` to `Mapping[Any, Any]`. mypy 42→32 (-10 this tick). **Cumulative: 516→32 (-484, -93.8%).** |
+| last_action | Phase 5 CHECK-002: types_std.py annotations finally landed in 3 single-edit-commit pairs (`__new__`, `__getnewargs__`, CKF dunders) — discovered that the file is auto-reverted between sequential edits, so the previous bulk-edit commits were silently rolling back to unannotated state. Plus `get_mechanism_info` widening, `_bf_key`/`_gost_key` widening, recipes/`_key_decoders` no-any-return wraps. mypy 42→28 (-14 this tick). **Cumulative: 516→28 (-488, -94.6%).** |
 
 ### Findings Table (Phase 1 → Phase 2)
 
