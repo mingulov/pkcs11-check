@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 9 |
+| current_iteration | 10 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-002 progress: pack.py __all__ now lists 27 mech_* re-exports from pack_mechanisms; mypy errors 516→466 (-50, 10% drop). Meta-tests still green (643 passed). 466 errors remain — broken into categories below. |
+| last_action | Phase 5 CHECK-002 progress: added `__getattr__(self, name) -> Any` to RawPKCS11 (Any-return fallback for the 100+ C_* methods attached dynamically via `setattr` at module load). mypy 466→414 (-52, including 2 newly-redundant `# type: ignore` markers). Cumulative: 516→414 (-102, -20%). |
 
 ### Findings Table (Phase 1 → Phase 2)
 

@@ -310,6 +310,16 @@ class RawPKCS11:
             raise AttributeError(f"{name} not available in this module")
         return _to_ckr(int(func(*args)))
 
+    # C_* methods (C_Initialize, C_GenerateKey, C_OpenSession, ...) are attached
+    # to the class at module load via the `setattr(RawPKCS11, name, ...)` loop
+    # below. Static type-checkers do not see those, so this fallback keeps
+    # `obj.C_X(...)` type-checking without per-call-site `# type: ignore`.
+    # Runtime is unchanged: this fires only when normal attribute lookup
+    # fails, so the AttributeError for actually-missing names matches the
+    # default Python behavior.
+    def __getattr__(self, name: str) -> Any:
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+
 
 def _make_method(name: str) -> Any:
     def method(self: RawPKCS11, *args: Any) -> CKR:
