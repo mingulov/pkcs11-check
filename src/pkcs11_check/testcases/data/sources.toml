@@ -18,8 +18,8 @@ include = ["ed25519/", "ML-DSA/", "ML-KEM/", "RFC6979/", "jq255/", "keygen/", "R
 
 [acvp]
 repo = "usnistgov/ACVP-Server"
-commit = "3611942ea10c070dd8bc6afec5682d56c307de8a"
-archive_sha256 = "dae63084ff928bc88326fe187511a1760c02f021e7a63825f705337241ce3bb7"
+commit = "15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0"
+archive_sha256 = "12c1c7956b0c06a82d7f873f97f85900520ad0cddf9d769f976802443dce1ceb"
 description = "NIST ACVP Automated Cryptographic Validation"
 include = ["gen-val/json-files/", "README.md"]
 
