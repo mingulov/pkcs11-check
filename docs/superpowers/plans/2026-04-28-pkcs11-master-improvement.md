@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 18 |
+| current_iteration | 19 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-002: file_runner.py — replaced `list[Mapping[str, Any]]` params with `Sequence[Mapping[str, Any]]` (Sequence is covariant in T, list isn't). 5 helpers updated; nested `Mapping[str, list[Mapping[str, Any]]]` also widened. mypy 100→89 (-11 this tick). Cumulative: 516→89 (-427, -82.8%). |
+| last_action | Phase 5 CHECK-002: widened `_camellia_key`, `_aria_key`, `_gen_des_key` local helpers from `attrs: dict[int, Any]` → `Mapping[Any, Any]` in test_camellia/test_aria/test_des. mypy 89→65 (-24 this tick). Cumulative: 516→65 (-451, -87.4%). Bulk wins exhausted — remaining 65 errors are distributed across 11+ files with small counts each. |
 
 ### Findings Table (Phase 1 → Phase 2)
 

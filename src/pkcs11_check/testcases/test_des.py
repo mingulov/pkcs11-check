@@ -20,6 +20,7 @@ SoftHSM2 does NOT support: DES_MAC, DES_MAC_GENERAL, DES_OFB64, DES_CFB8,
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from ctypes import byref
 from typing import Any
 
@@ -96,7 +97,7 @@ def _encrypt_or_xfail(
         raise
 
 
-def _gen_des_key(raw: Any, sh: int, mechanism: Any, attrs: dict[int, Any]) -> int:
+def _gen_des_key(raw: Any, sh: int, mechanism: Any, attrs: Mapping[Any, Any]) -> int:
     """Generate a DES/DES2/DES3 key using C_GenerateKey (fixed-size, no CKA_VALUE_LEN)."""
     from pkcs11_check.raw.pack import template as mk_template
     from pkcs11_check.raw.recipes import pack_attrs

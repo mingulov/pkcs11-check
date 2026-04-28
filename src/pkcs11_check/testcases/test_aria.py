@@ -12,6 +12,7 @@ ARIA support.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from ctypes import byref
 from typing import Any
 
@@ -49,7 +50,7 @@ pytestmark = pytest.mark.full
 _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 
 
-def _aria_key(raw: Any, sh: int, bits: int, attrs: dict[int, Any]) -> int:
+def _aria_key(raw: Any, sh: int, bits: int, attrs: Mapping[Any, Any]) -> int:
     """Generate an ARIA session key via C_GenerateKey."""
     from pkcs11_check.raw.pack import attr_ulong
     from pkcs11_check.raw.pack import template as mk_template
