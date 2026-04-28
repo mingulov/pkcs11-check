@@ -59,7 +59,7 @@ _DERIVE_ATTRS: dict[int, Any] = {
 def _ec_point_from_handle(rs: Any, handle: int) -> bytes:
     """Read and decode EC_POINT from a public key handle."""
     attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
-    return decode_ec_point(attrs[CKA_EC_POINT])  # type: ignore[arg-type]
+    return decode_ec_point(attrs[CKA_EC_POINT])
 
 
 class TestECDHKnownAnswer:
@@ -127,7 +127,7 @@ class TestECDHKnownAnswer:
             # Both should produce the same raw shared secret
             assert p11_secret == crypto_secret, (
                 f"ECDH shared secret mismatch: "
-                f"PKCS#11={p11_secret.hex()[:16]}... "  # type: ignore[union-attr]
+                f"PKCS#11={p11_secret.hex()[:16]}... "
                 f"crypto={crypto_secret.hex()[:16]}..."
             )
         finally:

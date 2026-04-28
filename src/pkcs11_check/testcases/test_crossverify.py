@@ -167,8 +167,8 @@ class TestRSACrossVerify:
             pub_h,
             [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
         )
-        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
-        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
+        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
+        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
         return rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
     def test_rsa_pkcs_sign(self, p11_raw_session: Any) -> None:
@@ -419,8 +419,8 @@ class TestRSAKeySizeCrossVerify:
             pub_h,
             [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
         )
-        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
-        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
+        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
+        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
         return rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
     def test_rsa_3072_sha384(self, p11_raw_session: Any) -> None:

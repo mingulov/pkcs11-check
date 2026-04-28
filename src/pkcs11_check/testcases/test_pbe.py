@@ -458,7 +458,7 @@ class TestPBASHA1:
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            actual_key_type = int(attrs[CKA_KEY_TYPE])  # type: ignore[arg-type]
+            actual_key_type = int(attrs[CKA_KEY_TYPE])
             if actual_key_type == _CKK_GENERIC_SECRET_INT:
                 from pkcs11_check.compliance import ComplianceLevel, note
 

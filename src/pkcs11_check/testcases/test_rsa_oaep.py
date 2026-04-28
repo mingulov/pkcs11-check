@@ -194,8 +194,8 @@ class TestRSAOAEPCrossVerify:
             pub_handle,
             [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
         )
-        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
-        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
+        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
+        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
         return rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
     def test_encrypt_crypto_decrypt_p11(self, p11_raw_session: Any) -> None:

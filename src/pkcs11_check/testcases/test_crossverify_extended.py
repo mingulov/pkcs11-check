@@ -206,8 +206,8 @@ class TestRSAPSSCrossVerify:
             exponent = attrs[CKA_PUBLIC_EXPONENT]
 
             # Reconstruct public key in cryptography
-            n = int.from_bytes(modulus, "big")  # type: ignore[arg-type]
-            e = int.from_bytes(exponent, "big")  # type: ignore[arg-type]
+            n = int.from_bytes(modulus, "big")
+            e = int.from_bytes(exponent, "big")
             crypto_pub = rsa.RSAPublicNumbers(e, n).public_key()
 
             # Verify with cryptography (PSS with SHA-256)
@@ -279,14 +279,14 @@ class TestRSAOAEPCrossVerify:
                 ],
             )
 
-            n = int.from_bytes(priv_attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
-            e = int.from_bytes(priv_attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
-            d = int.from_bytes(priv_attrs[CKA_PRIVATE_EXPONENT], "big")  # type: ignore[arg-type]
-            p_int = int.from_bytes(priv_attrs[CKA_PRIME_1], "big")  # type: ignore[arg-type]
-            q_int = int.from_bytes(priv_attrs[CKA_PRIME_2], "big")  # type: ignore[arg-type]
-            dp_int = int.from_bytes(priv_attrs[CKA_EXPONENT_1], "big")  # type: ignore[arg-type]
-            dq_int = int.from_bytes(priv_attrs[CKA_EXPONENT_2], "big")  # type: ignore[arg-type]
-            qi_int = int.from_bytes(priv_attrs[CKA_COEFFICIENT], "big")  # type: ignore[arg-type]
+            n = int.from_bytes(priv_attrs[CKA_MODULUS], "big")
+            e = int.from_bytes(priv_attrs[CKA_PUBLIC_EXPONENT], "big")
+            d = int.from_bytes(priv_attrs[CKA_PRIVATE_EXPONENT], "big")
+            p_int = int.from_bytes(priv_attrs[CKA_PRIME_1], "big")
+            q_int = int.from_bytes(priv_attrs[CKA_PRIME_2], "big")
+            dp_int = int.from_bytes(priv_attrs[CKA_EXPONENT_1], "big")
+            dq_int = int.from_bytes(priv_attrs[CKA_EXPONENT_2], "big")
+            qi_int = int.from_bytes(priv_attrs[CKA_COEFFICIENT], "big")
 
             crypto_priv = rsa.RSAPrivateNumbers(
                 p_int,

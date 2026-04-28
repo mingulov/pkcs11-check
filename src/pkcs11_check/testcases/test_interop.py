@@ -72,8 +72,8 @@ class TestRSAInterop:
 
             # Export and verify in cryptography
             attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
-            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
+            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
+            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
             pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
             pub_crypto.verify(sig, data, padding.PKCS1v15(), hashes.SHA256())
         finally:
@@ -87,8 +87,8 @@ class TestRSAInterop:
 
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
-            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
+            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
+            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
             pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
             pem = pub_crypto.public_bytes(
@@ -126,8 +126,8 @@ class TestRSAInterop:
             )
 
             attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
-            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
+            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
+            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
             pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
             pub_crypto.verify(
@@ -162,8 +162,8 @@ class TestRSAInterop:
             sig = sign_single(rs.raw, rs.sh, priv_h, hash_mech, data)
 
             attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")  # type: ignore[arg-type]
-            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")  # type: ignore[arg-type]
+            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
+            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
             pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
             pub_crypto.verify(sig, data, padding.PKCS1v15(), hash_class)
         finally:

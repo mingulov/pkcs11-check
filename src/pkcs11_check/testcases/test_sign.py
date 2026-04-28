@@ -299,9 +299,9 @@ class TestDSASignature:
 
             # Step 3: Generate keypair with extracted domain parameters
             pub_tmpl = template(
-                attr_bytes(CKA_PRIME, params[CKA_PRIME]),  # type: ignore[arg-type]
-                attr_bytes(CKA_SUBPRIME, params[CKA_SUBPRIME]),  # type: ignore[arg-type]
-                attr_bytes(CKA_BASE, params[CKA_BASE]),  # type: ignore[arg-type]
+                attr_bytes(CKA_PRIME, params[CKA_PRIME]),
+                attr_bytes(CKA_SUBPRIME, params[CKA_SUBPRIME]),
+                attr_bytes(CKA_BASE, params[CKA_BASE]),
             )
             priv_tmpl = template()
             kp_mech = mech_simple(CKM_DSA_KEY_PAIR_GEN)

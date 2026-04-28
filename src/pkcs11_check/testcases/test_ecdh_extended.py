@@ -109,7 +109,7 @@ def _ec_point(rs: Any, handle: int) -> bytes:
     raw = attrs[CKA_EC_POINT]
     if isinstance(raw, bytes) and len(raw) > 0 and raw[0] == 0x04:
         return decode_ec_point(raw)
-    return raw  # type: ignore[return-value]
+    return raw
 
 
 def _gen_ec(rs: Any) -> tuple[int, int]:
@@ -492,7 +492,7 @@ class TestECMontgomeryKeyPairGen:
             assert attrs[CKA_KEY_TYPE] == CKK_EC_MONTGOMERY
             ec_point = attrs[CKA_EC_POINT]
             assert ec_point is not None
-            assert len(ec_point) > 0  # type: ignore[arg-type]
+            assert len(ec_point) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -514,7 +514,7 @@ class TestECMontgomeryKeyPairGen:
             assert attrs[CKA_KEY_TYPE] == CKK_EC_MONTGOMERY
             ec_point = attrs[CKA_EC_POINT]
             assert ec_point is not None
-            assert len(ec_point) > 0  # type: ignore[arg-type]
+            assert len(ec_point) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, pub)

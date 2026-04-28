@@ -119,7 +119,7 @@ class TestECDSACrossVerify:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
 
             ec_point_der = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
-            point_bytes = decode_ec_point(ec_point_der)  # type: ignore[arg-type]
+            point_bytes = decode_ec_point(ec_point_der)
             pub_crypto = ec.EllipticCurvePublicKey.from_encoded_point(crypto_curve, point_bytes)
 
             half = len(sig) // 2

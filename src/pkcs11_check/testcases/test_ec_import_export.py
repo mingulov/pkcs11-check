@@ -97,7 +97,7 @@ class TestECPointExport:
         pub, priv = _make_ec_keypair(rs, "secp256r1")
         try:
             ec_point_der = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
-            raw_point = decode_ec_point(ec_point_der)  # type: ignore[arg-type]
+            raw_point = decode_ec_point(ec_point_der)
             assert raw_point[0] == 0x04, "EC point should be uncompressed (0x04 prefix)"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -112,7 +112,7 @@ class TestECPointExport:
         pub, priv = _make_ec_keypair(rs, "secp256r1")
         try:
             ec_point_der = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
-            raw_point = decode_ec_point(ec_point_der)  # type: ignore[arg-type]
+            raw_point = decode_ec_point(ec_point_der)
             assert len(raw_point) == 65, f"P-256 point should be 65 bytes, got {len(raw_point)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
