@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 6 |
+| current_iteration | 7 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-004 fixed: regex `r"'(C_\w+)':"` was single-quote-only, but `metadata_std.py` is ruff-formatted with double quotes; made regex quote-agnostic. 5/5 parity tests now pass. |
+| last_action | Phase 5 CHECK-001 fixed: 7 CLI tests broke after disabled-tests baseline grew from ~0 to 19,684 entries — that triggered an unmocked `collect_pytest_item_metadata` subprocess. Added `--ignore-disabled-tests` to each affected test (file/auto isolation tests that don't actually exercise baseline behavior). 25/25 test_cli.py tests pass. |
 
 ### Findings Table (Phase 1 → Phase 2)
 
@@ -669,7 +669,7 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 | id | source | area | priority | description | status |
 |---|---|---|---|---|---|
 | UV-001 | side-finding (Phase 0.1) | tooling/docs | LOW | `uv run <cmd>` exits 120 silently in this shell; `/snap/bin/uv --version` also empty. Need to either (a) fix uv install / venv link, or (b) update CLAUDE.md to allow `.venv/bin/<cmd>` as fallback, or (c) wrap commands so failures aren't swallowed. Reproducer: `uv run python -c "print('hi')"` returns exit 120 with no output; `.venv/bin/python -c "print('hi')"` works. | OPEN |
-| CHECK-001 | Phase 0.7 meta-tests | tests/test_cli.py | MED | 8 CLI test failures: `test_test_file_isolation_invokes_runner`, `test_test_restores_pin_env`, `test_test_auto_isolation_invokes_mixed_runner`, `test_test_defaults_to_auto_isolation`, `test_test_auto_resume_reuses_saved_units`, `test_test_isolation_builds_report_config[auto-json-...]`, `test_test_isolation_builds_report_config[file-junit-...]`, `test_test_file_isolation_resume_mismatch_is_reported`. Pre-existing (verified pre-Phase-0). Test the CLI `test` subcommand contract — likely runner/isolation refactor drift. Investigate test fixtures vs current `core/file_runner.py` API. | OPEN |
+| CHECK-001 | Phase 0.7 meta-tests | tests/test_cli.py | MED | 8 CLI test failures: `test_test_file_isolation_invokes_runner`, `test_test_restores_pin_env`, `test_test_auto_isolation_invokes_mixed_runner`, `test_test_defaults_to_auto_isolation`, `test_test_auto_resume_reuses_saved_units`, `test_test_isolation_builds_report_config[auto-json-...]`, `test_test_isolation_builds_report_config[file-junit-...]`, `test_test_file_isolation_resume_mismatch_is_reported`. Pre-existing (verified pre-Phase-0). Test the CLI `test` subcommand contract — likely runner/isolation refactor drift. Investigate test fixtures vs current `core/file_runner.py` API. | **CLOSED iter 7** — root cause: tests mocked `discover_pytest_units` / `run_isolated_pytest_units` / `run_preflight_subprocess` but NOT `collect_pytest_item_metadata`. With a baseline of ~0 entries, `disabled_nodeids` was empty so the unmocked path was skipped; with 19,684 entries the path fired and crashed (15 collection errors during a subprocess `pytest --collect-only` invoked with `--p11-manifest`). Fix: added `--ignore-disabled-tests` flag to each of the 7 invocations (test_test_test_isolation_invokes_runner with isolation=test never hit the path so didn't need the flag). 25/25 tests pass. |
 | CHECK-002 | Phase 0.7 mypy | src/ (broad) | MED | 516 mypy --strict errors across 99 files. Sample: `core/file_runner.py:2776 Name "unit_records" already defined`, `cli/test_cmd.py:216 Argument "pin" expected SecretStr|None`, multiple Mapping vs dict invariance issues. Need batch cleanup; cannot land Phase 5 fixes that touch these files cleanly until baseline is mypy-clean. | OPEN |
 | CHECK-003 | Phase 0.7 ruff | src/ | LOW | 4 ruff errors, all auto-fixable: "Remove default type arguments" (`Generator[X, None, None]` → `Generator[X]`). Single `ruff check --fix` should resolve. | OPEN |
 | CHECK-004 | Phase 0.7 meta-tests | tests/test_raw_header_parity.py | HIGH | `test_function_count_not_regressed` and `test_all_reference_functions_present` both fail: `len(cur)=0 < len(ref)=104` — the live metadata source returns an empty set. Means `pkcs11_check.raw.metadata` (or whatever `cur` reads) is broken / missing the function inventory. This blocks any v3.x function-coverage gap analysis in Phase 4. Pre-existing (verified pre-Phase-0 via stash test). | **CLOSED iter 6** — root cause: `_extract_function_sigs` regex `r"'(C_\w+)':"` only matched single-quoted keys; ruff reformatted `metadata_std.py` to double quotes. Fix: regex `r"['\"](C_\w+)['\"]:"`. metadata_std.py actually has 208 functions vs 104 in reference, so no regression — current is a strict superset. |

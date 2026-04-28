@@ -115,6 +115,7 @@ class TestTestCommand:
                 "5",
                 "--state-file",
                 str(state_file),
+                "--ignore-disabled-tests",
             ],
         )
 
@@ -196,7 +197,16 @@ class TestTestCommand:
 
         result = runner.invoke(
             app,
-            ["test", "--module", str(module), "--pin", "1234", "--isolation", "file"],
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "1234",
+                "--isolation",
+                "file",
+                "--ignore-disabled-tests",
+            ],
         )
 
         assert result.exit_code == 0
@@ -342,7 +352,15 @@ class TestTestCommand:
 
         result = runner.invoke(
             app,
-            ["test", "--module", str(module), "--isolation", "auto", "src/pkcs11_check/testcases"],
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "auto",
+                "src/pkcs11_check/testcases",
+                "--ignore-disabled-tests",
+            ],
         )
 
         assert result.exit_code == 0
@@ -417,7 +435,9 @@ class TestTestCommand:
             )[1],
         )
 
-        result = runner.invoke(app, ["test", "--module", str(module)])
+        result = runner.invoke(
+            app, ["test", "--module", str(module), "--ignore-disabled-tests"]
+        )
 
         assert result.exit_code == 0
         assert called["granularity"] == "mixed"
@@ -504,6 +524,7 @@ class TestTestCommand:
                 "--resume",
                 "--state-file",
                 str(state_file),
+                "--ignore-disabled-tests",
             ],
         )
 
@@ -599,7 +620,16 @@ class TestTestCommand:
 
         result = runner.invoke(
             app,
-            ["test", "--module", str(module), "--isolation", mode, "--output", output_name],
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                mode,
+                "--output",
+                output_name,
+                "--ignore-disabled-tests",
+            ],
         )
 
         assert result.exit_code == 0
@@ -643,6 +673,7 @@ class TestTestCommand:
                 "--resume",
                 "--state-file",
                 str(state_file),
+                "--ignore-disabled-tests",
             ],
         )
 
