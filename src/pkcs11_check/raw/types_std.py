@@ -31,7 +31,7 @@ class CK_CONSTANT(int):
             return self._name
         return self._hex()
 
-    def __getnewargs__(self) -> tuple:
+    def __getnewargs__(self) -> tuple[int, str | None]:
         return (int(self), self._name)
 
 
