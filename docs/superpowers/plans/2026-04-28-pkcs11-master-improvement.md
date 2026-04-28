@@ -88,14 +88,16 @@ Every tick of /loop, do **exactly** the following:
 
 ### Phase 0 Tasks
 
-- [ ] **0.1 — Inspect current pinned commits**
+- [x] **0.1 — Inspect current pinned commits**
 
 ```bash
 uv run pkcs11-check fetch-data --status
 ```
 Expected: status table shows each source as PRESENT or MISSING with current pinned commit.
 
-- [ ] **0.2 — Check upstream HEAD for each source vs. pinned commit**
+**Result (iter 1, 2026-04-28):** all 4 sources PRESENT. Note: `uv run` is silently broken in this shell (exit 120, no output); used `.venv/bin/pkcs11-check` directly. Logged as fix-queue row UV-001.
+
+- [x] **0.2 — Check upstream HEAD for each source vs. pinned commit**
 
 For each `[<name>]` block in `src/pkcs11_check/testcases/data/sources.toml`, fetch the upstream HEAD commit SHA and compare:
 
@@ -108,11 +110,22 @@ done
 ```
 Expected: prints HEAD SHA per repo. Compare against `commit = "..."` in `sources.toml`.
 
-- [ ] **0.3 — Decide per-source whether to bump**
+**Result (iter 1, 2026-04-28):** all 4 behind upstream:
+
+| source | pinned | pinned date | HEAD | HEAD date |
+|---|---|---|---|---|
+| wycheproof | 78898104 | 2026-03-11 | 4d535535 | 2026-04-28 |
+| cctv | d091f096 | 2026-03-09 | 67c1397a | 2026-04-27 |
+| acvp | 3611942e | 2026-03-11 | 15c0f3de | 2026-04-16 |
+| x509-limbo | 9d594748 | 2026-03-03 | 086b0da8 | 2026-04-27 |
+
+- [x] **0.3 — Decide per-source whether to bump**
 
 For each source where HEAD ≠ pinned:
 - If the diff is purely additive new vectors, prefer to bump.
 - If upstream rewrote history or changed schema, write a note in the State Tracker `data_decisions` block and SKIP the bump (open a manual investigation task in Phase 4).
+
+**Result (iter 1, 2026-04-28):** decided BUMP all 4 — these are all additive test corpora (Google Wycheproof, C2SP CCTV, NIST ACVP, C2SP x509-limbo) with no history rewrites in their workflow. 5–8 weeks of catch-up. Per-source rows in `data_decisions` table below. Each per-source bump (0.4–0.5) is its own task in subsequent /loop ticks so any schema breakage is caught and reverted in isolation.
 
 - [ ] **0.4 — For each source to bump, compute new archive SHA-256**
 
@@ -636,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 0 |
-| phase0_last_run | (none yet) |
+| current_iteration | 1 |
+| phase0_last_run | in-progress (started 2026-04-28) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
-| last_action_at | (none) |
-| last_action | (none) |
+| last_action_at | 2026-04-28 |
+| last_action | Phase 0.1–0.3 done; decided to bump all 4 sources; logged uv-broken side-finding |
 
 ### Findings Table (Phase 1 → Phase 2)
 
@@ -655,13 +668,16 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | id | source | area | priority | description | status |
 |---|---|---|---|---|---|
-| (empty — populated by Phase 2.N.e and Phase 4.11) | | | | | |
+| UV-001 | side-finding (Phase 0.1) | tooling/docs | LOW | `uv run <cmd>` exits 120 silently in this shell; `/snap/bin/uv --version` also empty. Need to either (a) fix uv install / venv link, or (b) update CLAUDE.md to allow `.venv/bin/<cmd>` as fallback, or (c) wrap commands so failures aren't swallowed. Reproducer: `uv run python -c "print('hi')"` returns exit 120 with no output; `.venv/bin/python -c "print('hi')"` works. | OPEN |
 
 ### Data Decisions (Phase 0)
 
 | date | source | decision | reason |
 |---|---|---|---|
-| (empty) | | | |
+| 2026-04-28 | wycheproof | BUMP 78898104→4d535535 | ~7 weeks of additive vectors; Google CI-tested corpus, no history rewrites |
+| 2026-04-28 | cctv | BUMP d091f096→67c1397a | ~7 weeks of additive C2SP vectors; additive-only by repo policy |
+| 2026-04-28 | acvp | BUMP 3611942e→15c0f3de | ~5 weeks of additive NIST validation vectors; additive-only |
+| 2026-04-28 | x509-limbo | BUMP 9d594748→086b0da8 | ~8 weeks of additive C2SP x509 corpus; additive-only |
 
 ### Iteration Log (Phase 6.4)
 
