@@ -453,7 +453,7 @@ def _pack_bytes(
 
 
 def _mech_struct(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     params: ctypes.Structure,
     origin: str,
     keepalive: list[Any] | None = None,

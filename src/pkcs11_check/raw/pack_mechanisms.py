@@ -59,7 +59,7 @@ from .types_std import (
 
 
 def mech_gcm(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     iv: bytes,
     *,
     aad: bytes | None = None,
@@ -88,7 +88,7 @@ def mech_gcm(
 
 
 def mech_gcm_message(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     iv: bytes,
     *,
     iv_fixed_bits: int = 0,
@@ -114,7 +114,7 @@ def mech_gcm_message(
 
 
 def mech_ccm(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     nonce: bytes,
     *,
     data_len: int = 0,
@@ -142,7 +142,7 @@ def mech_ccm(
 
 
 def mech_pss(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     *,
     hash_mech: int,
     mgf: int,
@@ -162,7 +162,7 @@ def mech_pss(
 
 
 def mech_oaep(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     *,
     hash_mech: int,
     mgf: int,
@@ -185,7 +185,7 @@ def mech_oaep(
 
 
 def mech_ecdh(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     *,
     kdf: int,
     public_data: bytes,
@@ -207,7 +207,7 @@ def mech_ecdh(
 
 
 def mech_hkdf(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     *,
     hash_mech: int,
     extract: bool = True,
@@ -244,12 +244,12 @@ def mech_hkdf(
     )
 
 
-def mech_cbc_pad(mechanism_type: CKM, iv: bytes) -> PackedMechanism:
+def mech_cbc_pad(mechanism_type: CKM | int, iv: bytes) -> PackedMechanism:
     """Pack 16-byte IV for AES-CBC / AES-CBC-PAD (raw bytes parameter)."""
     return mech_bytes(mechanism_type, iv)
 
 
-def mech_ctr(mechanism_type: CKM, bits: int = 128) -> PackedMechanism:
+def mech_ctr(mechanism_type: CKM | int, bits: int = 128) -> PackedMechanism:
     """Pack CK_AES_CTR_PARAMS with ulCounterBits=bits and zeroed counter block."""
     params = CK_AES_CTR_PARAMS()
     params.ulCounterBits = bits
@@ -259,7 +259,7 @@ def mech_ctr(mechanism_type: CKM, bits: int = 128) -> PackedMechanism:
 
 
 def mech_chacha20(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     nonce: bytes,
     counter: int = 0,
 ) -> PackedMechanism:
@@ -275,7 +275,7 @@ def mech_chacha20(
 
 
 def mech_chacha20_poly1305(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     nonce: bytes,
     aad: bytes | None = None,
 ) -> PackedMechanism:
@@ -288,7 +288,7 @@ def mech_chacha20_poly1305(
 
 
 def mech_rc2(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     effective_bits: int = 128,
 ) -> PackedMechanism:
     """Pack CK_RC2_PARAMS (a single CK_ULONG: ulEffectiveBits)."""
@@ -300,7 +300,7 @@ def mech_rc2(
 
 
 def mech_rc2_cbc(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     effective_bits: int = 128,
     iv: bytes | None = None,
 ) -> PackedMechanism:
@@ -315,7 +315,7 @@ def mech_rc2_cbc(
 
 
 def mech_eddsa(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     *,
     context_data: bytes | None = None,
 ) -> PackedMechanism:
@@ -330,7 +330,7 @@ def mech_eddsa(
 
 
 def mech_pbkdf2(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     *,
     salt: bytes,
     iterations: int,
@@ -357,7 +357,7 @@ def mech_pbkdf2(
 
 
 def mech_pbe(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     *,
     password: bytes,
     salt: bytes,
@@ -377,7 +377,7 @@ def mech_pbe(
     return _mech_struct(mechanism_type, params, "mech_pbe", ka)
 
 
-def mech_string_data(mechanism_type: CKM, data: bytes) -> PackedMechanism:
+def mech_string_data(mechanism_type: CKM | int, data: bytes) -> PackedMechanism:
     """Pack CK_KEY_DERIVATION_STRING_DATA for concatenation-style derivation."""
     ka: list[Any] = []
     params = CK_KEY_DERIVATION_STRING_DATA()
@@ -406,7 +406,7 @@ def _fill_random_data(
 
 
 def mech_ssl3_master_key_derive(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     client_random: bytes,
     server_random: bytes,
     *,
@@ -434,7 +434,7 @@ def mech_ssl3_master_key_derive(
 
 
 def mech_ssl3_key_mat(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     client_random: bytes,
     server_random: bytes,
     *,
@@ -478,7 +478,7 @@ def mech_ssl3_key_mat(
 
 
 def mech_tls12_master_key_derive(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     client_random: bytes,
     server_random: bytes,
     hash_mech: int,
@@ -510,7 +510,7 @@ def mech_tls12_master_key_derive(
 
 
 def mech_tls12_key_mat(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     client_random: bytes,
     server_random: bytes,
     hash_mech: int,
@@ -558,7 +558,7 @@ def mech_tls12_key_mat(
 
 
 def mech_tls12_extended_master_key_derive(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     hash_mech: int,
     session_hash: bytes,
     *,
@@ -588,7 +588,7 @@ def mech_tls12_extended_master_key_derive(
 
 
 def mech_tls_prf(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     seed: bytes,
     label: bytes,
     output_len: int,
@@ -615,7 +615,7 @@ def mech_tls_prf(
 
 
 def mech_tls_kdf(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     prf_mechanism: int,
     label: bytes,
     client_random: bytes,
@@ -643,7 +643,7 @@ def mech_tls_kdf(
 
 
 def mech_tls_mac(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     prf_hash_mechanism: int,
     mac_length: int,
     server_or_client: int,
@@ -666,7 +666,7 @@ def mech_tls_mac(
 
 
 def mech_wtls_master_key_derive(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     digest_mechanism: int,
     client_random: bytes,
     server_random: bytes,
@@ -697,7 +697,7 @@ def mech_wtls_master_key_derive(
 
 
 def mech_wtls_key_mat(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     digest_mechanism: int,
     client_random: bytes,
     server_random: bytes,
@@ -746,7 +746,7 @@ def mech_wtls_key_mat(
 
 
 def mech_wtls_prf(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     digest_mechanism: int,
     seed: bytes,
     label: bytes,
@@ -780,7 +780,7 @@ def mech_wtls_prf(
 
 
 def mech_hash_sign_context(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     hash_mech: int,
     *,
     hedge: int | None = None,
@@ -805,7 +805,7 @@ def mech_hash_sign_context(
 
 
 def mech_sign_context(
-    mechanism_type: CKM,
+    mechanism_type: CKM | int,
     *,
     hedge: int | None = None,
     context: bytes | None = None,

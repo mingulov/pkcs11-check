@@ -96,7 +96,7 @@ def _to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
 
 
 def _resolve_mech(
-    mechanism: CKM,
+    mechanism: CKM | int,
     mech_param: PackedMechanism | None,
 ) -> PackedMechanism:
     """Return mech_param if given, otherwise wrap mechanism as mech_simple.
@@ -232,7 +232,7 @@ def gen_aes_key(
     raw: RawPKCS11,
     sh: int,
     bits: int = 256,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
     mechanism: int = CKM_AES_KEY_GEN,
 ) -> int:
     """Generate an AES key with explicit attributes."""
@@ -381,7 +381,7 @@ def import_rsa_private_key(
     dmp1: bytes,
     dmq1: bytes,
     iqmp: bytes,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import RSA private key from CRT components."""
     base: dict[int, Any] = {
@@ -410,7 +410,7 @@ def import_rsa_public_key(
     *,
     n: bytes,
     e: bytes,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import RSA public key from modulus + exponent."""
     base: dict[int, Any] = {
@@ -432,7 +432,7 @@ def import_ec_private_key(
     ec_params: bytes,
     value: bytes,
     key_type: int = int(CKK_EC),
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import EC/Edwards/Montgomery private key from scalar.
 
@@ -461,7 +461,7 @@ def import_ec_public_key(
     ec_params: bytes,
     ec_point: bytes,
     key_type: int = int(CKK_EC),
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import EC/Edwards/Montgomery public key from point.
 
@@ -488,7 +488,7 @@ def import_pqc_private_key(
     key_type: int,
     value: bytes,
     parameter_set: int,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import PQC private key (ML-DSA, ML-KEM, SLH-DSA).
 
@@ -517,7 +517,7 @@ def import_pqc_public_key(
     key_type: int,
     value: bytes,
     parameter_set: int,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import PQC public key (ML-DSA, SLH-DSA)."""
     base: dict[int, Any] = {
@@ -540,7 +540,7 @@ def import_dsa_public_key(
     subprime: bytes,
     base_g: bytes,
     value: bytes,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import DSA public key from domain parameters + public value.
 
@@ -567,7 +567,7 @@ def import_gost_private_key(
     gostr3410_params: bytes,
     value: bytes,
     gostr3411_params: bytes | None = None,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import GOST R 34.10-2012 private key.
 
@@ -598,7 +598,7 @@ def import_gost_public_key(
     gostr3410_params: bytes,
     value: bytes,
     gostr3411_params: bytes | None = None,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import GOST R 34.10-2012 public key."""
     base: dict[int, Any] = {
@@ -646,7 +646,7 @@ def encrypt_single(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     plaintext: bytes,
     *,
     mech_param: PackedMechanism | None = None,
@@ -683,7 +683,7 @@ def sign_single(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     data: bytes,
     *,
     mech_param: PackedMechanism | None = None,
@@ -700,7 +700,7 @@ def decrypt_single(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     ciphertext: bytes,
     *,
     mech_param: PackedMechanism | None = None,
@@ -725,7 +725,7 @@ def verify_single(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     data: bytes,
     signature: bytes,
     *,
@@ -756,7 +756,7 @@ def sign_recover_single(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     data: bytes,
     *,
     mech_param: PackedMechanism | None = None,
@@ -775,7 +775,7 @@ def verify_recover_single(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     signature: bytes,
 ) -> tuple[bool, bytes]:
     """Verify and recover data (C_VerifyRecoverInit + C_VerifyRecover).
@@ -809,7 +809,7 @@ def verify_recover_single(
 def digest_single(
     raw: RawPKCS11,
     session: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     data: bytes,
     *,
     mech_param: PackedMechanism | None = None,
@@ -825,7 +825,7 @@ def digest_single(
 def digest_single_with_key(
     raw: RawPKCS11,
     session: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     key: int,
 ) -> bytes:
     """Digest a secret key value (C_DigestInit + C_DigestKey + C_DigestFinal).
@@ -974,7 +974,7 @@ def wrap_key(
     session: int,
     wrapping_key: int,
     target_key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     *,
     mech_param: PackedMechanism | None = None,
     output_size_hint: int = 0,
@@ -1003,8 +1003,8 @@ def unwrap_key(
     session: int,
     unwrapping_key: int,
     wrapped_key: bytes,
-    mechanism: CKM,
-    attrs: dict[int, Any] | None = None,
+    mechanism: CKM | int,
+    attrs: Mapping[Any, Any] | None = None,
     *,
     mech_param: PackedMechanism | None = None,
 ) -> int:
@@ -1031,8 +1031,8 @@ def derive_key(
     raw: RawPKCS11,
     session: int,
     base_key: int,
-    mechanism: CKM,
-    attrs: dict[int, Any] | None = None,
+    mechanism: CKM | int,
+    attrs: Mapping[Any, Any] | None = None,
     *,
     mech_param: PackedMechanism | None = None,
 ) -> int:
@@ -1064,7 +1064,7 @@ def copy_object(
     raw: RawPKCS11,
     session: int,
     handle: int,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Copy an object using C_CopyObject. Returns new handle."""
     packed = pack_attrs(attrs)
@@ -1141,7 +1141,7 @@ def encrypt_multipart(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     chunks: list[bytes] | tuple[bytes, ...],
     *,
     mech_param: PackedMechanism | None = None,
@@ -1163,7 +1163,7 @@ def decrypt_multipart(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     chunks: list[bytes] | tuple[bytes, ...],
     *,
     mech_param: PackedMechanism | None = None,
@@ -1185,7 +1185,7 @@ def sign_multipart(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     chunks: list[bytes] | tuple[bytes, ...],
     *,
     mech_param: PackedMechanism | None = None,
@@ -1205,7 +1205,7 @@ def verify_multipart(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     chunks: list[bytes] | tuple[bytes, ...],
     signature: bytes,
     *,
@@ -1235,7 +1235,7 @@ def verify_multipart(
 def digest_multipart(
     raw: RawPKCS11,
     session: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     chunks: list[bytes] | tuple[bytes, ...],
     *,
     mech_param: PackedMechanism | None = None,
@@ -1367,7 +1367,7 @@ def _message_crypto(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     data: bytes,
     init_fn: str,
     msg_fn: str,
@@ -1418,7 +1418,7 @@ def message_encrypt(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     data: bytes,
     *,
     aad: bytes | None = None,
@@ -1442,7 +1442,7 @@ def message_decrypt(
     raw: RawPKCS11,
     session: int,
     key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     ciphertext: bytes,
     *,
     aad: bytes | None = None,
@@ -1469,8 +1469,8 @@ def encapsulate_key(
     raw: RawPKCS11,
     session: int,
     pub_key: int,
-    mechanism: CKM,
-    attrs: dict[int, Any] | None = None,
+    mechanism: CKM | int,
+    attrs: Mapping[Any, Any] | None = None,
     *,
     mech_param: PackedMechanism | None = None,
 ) -> tuple[int, bytes]:
@@ -1530,9 +1530,9 @@ def decapsulate_key(
     raw: RawPKCS11,
     session: int,
     priv_key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     ciphertext: bytes,
-    attrs: dict[int, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
     *,
     mech_param: PackedMechanism | None = None,
 ) -> int:
@@ -1563,7 +1563,7 @@ def wrap_key_authenticated(
     session: int,
     wrapping_key: int,
     target_key: int,
-    mechanism: CKM,
+    mechanism: CKM | int,
     *,
     mech_param: PackedMechanism | None = None,
 ) -> tuple[bytes, bytes]:
@@ -1627,8 +1627,8 @@ def unwrap_key_authenticated(
     unwrapping_key: int,
     wrapped_key: bytes,
     tag: bytes,
-    mechanism: CKM,
-    attrs: dict[int, Any] | None = None,
+    mechanism: CKM | int,
+    attrs: Mapping[Any, Any] | None = None,
     *,
     mech_param: PackedMechanism | None = None,
 ) -> int:
