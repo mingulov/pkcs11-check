@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 12 |
+| current_iteration | 13 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-002 bulk-widened recipes.py (24 `mechanism: CKM` and 16 `attrs: dict[int, Any] \| None` instances) and pack_mechanisms.py (27 `mechanism_type: CKM` plus mech_cbc_pad/mech_ctr/mech_string_data) to `CKM \| int` / `Mapping[Any, Any]`. Plus pack._mech_struct. mypy 384→355 (-29 this tick). Cumulative: 516→355 (-161, -31%). |
+| last_action | Phase 5 CHECK-002: removed 43 unused `# type: ignore` markers across 7 files (raw/api.py, test_ecdh_extended.py, test_mech_derive.py, test_mech_lifecycle.py, test_mech_negative.py x14, test_mech_probe.py, test_mech_state.py x19). They were now redundant after the prior helper-widening commits. mypy 355→312 (-43 this tick). Cumulative: 516→312 (-204, -39.5%). |
 
 ### Findings Table (Phase 1 → Phase 2)
 

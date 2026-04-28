@@ -108,7 +108,7 @@ def _ec_point(rs: Any, handle: int) -> bytes:
     attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
     raw = attrs[CKA_EC_POINT]
     if isinstance(raw, bytes) and len(raw) > 0 and raw[0] == 0x04:
-        return decode_ec_point(raw)  # type: ignore[arg-type]
+        return decode_ec_point(raw)
     return raw  # type: ignore[return-value]
 
 

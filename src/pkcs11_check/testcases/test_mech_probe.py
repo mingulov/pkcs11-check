@@ -138,11 +138,11 @@ class TestMechProbeNoRegistry:
 
         rv: int
         if flags & ckf_digest:
-            rv = rs.raw.C_DigestInit(rs.sh, mech.byref())  # type: ignore[attr-defined]
+            rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
         elif flags & ckf_sign:
-            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), 0)  # type: ignore[attr-defined]
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), 0)
         elif flags & ckf_encrypt:
-            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), 0)  # type: ignore[attr-defined]
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), 0)
         else:
             # Other operation type -- just confirm it didn't crash reaching here
             return

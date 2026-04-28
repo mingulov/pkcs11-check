@@ -285,7 +285,7 @@ class TestHKDFDerivedKeyUse:
             tmpl = template(*packed)
             gen_mech = mech_simple(CKM(CKM_HKDF_KEY_GEN))
             handle = CK_OBJECT_HANDLE(0)
-            rv = rs.raw.C_GenerateKey(  # type: ignore[attr-defined]
+            rv = rs.raw.C_GenerateKey(
                 rs.sh, gen_mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
             )
             assert rv == CKR_OK, f"HKDF base key gen failed: {rv}"

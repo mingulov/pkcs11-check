@@ -68,7 +68,7 @@ class TestEncryptState:
         out_buf = (ctypes.c_ubyte * 32)()
         out_len = CK_ULONG(32)
 
-        rv = rs.raw.C_Encrypt(  # type: ignore[attr-defined]
+        rv = rs.raw.C_Encrypt(
             rs.sh, in_buf, len(plaintext), out_buf, byref(out_len)
         )
         assert rv in _NOT_INIT_RVCS, (
@@ -84,7 +84,7 @@ class TestEncryptState:
 
         out_buf = (ctypes.c_ubyte * 32)()
         out_len = CK_ULONG(32)
-        rv = rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))  # type: ignore[attr-defined]
+        rv = rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))
         assert rv in _NOT_INIT_RVCS, (
             f"C_EncryptFinal without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED"
@@ -101,13 +101,13 @@ class TestEncryptState:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv1 = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)  # type: ignore[attr-defined]
+            rv1 = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv1 != CKR_OK:
                 pytest.skip(f"First C_EncryptInit failed: 0x{rv1:08x}")
 
             # Second init while operation is active
             mech2 = mech_simple(CKM_AES_ECB)
-            rv2 = rs.raw.C_EncryptInit(rs.sh, mech2.byref(), key)  # type: ignore[attr-defined]
+            rv2 = rs.raw.C_EncryptInit(rs.sh, mech2.byref(), key)
             assert rv2 in _ALREADY_ACTIVE_RVCS, (
                 f"Double C_EncryptInit returned 0x{rv2:08x}, "
                 f"expected CKR_OPERATION_ACTIVE (0x{int(CKR_OPERATION_ACTIVE):08x})"
@@ -117,7 +117,7 @@ class TestEncryptState:
             try:
                 out_buf = (ctypes.c_ubyte * 64)()
                 out_len = CK_ULONG(64)
-                rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))  # type: ignore[attr-defined]
+                rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))
             except Exception:
                 pass  # Best-effort cleanup: EncryptFinal may fail if op already terminated
             destroy_quietly(rs.raw, rs.sh, key)
@@ -137,7 +137,7 @@ class TestDecryptState:
         out_buf = (ctypes.c_ubyte * 32)()
         out_len = CK_ULONG(32)
 
-        rv = rs.raw.C_Decrypt(  # type: ignore[attr-defined]
+        rv = rs.raw.C_Decrypt(
             rs.sh, in_buf, len(ct), out_buf, byref(out_len)
         )
         assert rv in _NOT_INIT_RVCS, (
@@ -153,7 +153,7 @@ class TestDecryptState:
 
         out_buf = (ctypes.c_ubyte * 32)()
         out_len = CK_ULONG(32)
-        rv = rs.raw.C_DecryptFinal(rs.sh, out_buf, byref(out_len))  # type: ignore[attr-defined]
+        rv = rs.raw.C_DecryptFinal(rs.sh, out_buf, byref(out_len))
         assert rv in _NOT_INIT_RVCS, (
             f"C_DecryptFinal without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED"
@@ -172,7 +172,7 @@ class TestSignState:
         sig_buf = (ctypes.c_ubyte * 256)()
         sig_len = CK_ULONG(256)
 
-        rv = rs.raw.C_Sign(rs.sh, in_buf, len(data), sig_buf, byref(sig_len))  # type: ignore[attr-defined]
+        rv = rs.raw.C_Sign(rs.sh, in_buf, len(data), sig_buf, byref(sig_len))
         assert rv in _NOT_INIT_RVCS, (
             f"C_Sign without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED"
@@ -184,7 +184,7 @@ class TestSignState:
 
         data = b"\xdd" * 8
         in_buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
-        rv = rs.raw.C_SignUpdate(rs.sh, in_buf, len(data))  # type: ignore[attr-defined]
+        rv = rs.raw.C_SignUpdate(rs.sh, in_buf, len(data))
         assert rv in _NOT_INIT_RVCS, (
             f"C_SignUpdate without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED"
@@ -196,7 +196,7 @@ class TestSignState:
 
         sig_buf = (ctypes.c_ubyte * 256)()
         sig_len = CK_ULONG(256)
-        rv = rs.raw.C_SignFinal(rs.sh, sig_buf, byref(sig_len))  # type: ignore[attr-defined]
+        rv = rs.raw.C_SignFinal(rs.sh, sig_buf, byref(sig_len))
         assert rv in _NOT_INIT_RVCS, (
             f"C_SignFinal without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED"
@@ -215,7 +215,7 @@ class TestVerifyState:
         in_buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
         sig_buf = (ctypes.c_ubyte * len(sig)).from_buffer_copy(sig)
 
-        rv = rs.raw.C_Verify(rs.sh, in_buf, len(data), sig_buf, len(sig))  # type: ignore[attr-defined]
+        rv = rs.raw.C_Verify(rs.sh, in_buf, len(data), sig_buf, len(sig))
         assert rv in _NOT_INIT_RVCS | {
             0x000000C4,  # CKR_SIGNATURE_INVALID
             0x000000C5,  # CKR_SIGNATURE_LEN_RANGE
@@ -230,7 +230,7 @@ class TestVerifyState:
 
         data = b"\x01" * 8
         in_buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
-        rv = rs.raw.C_VerifyUpdate(rs.sh, in_buf, len(data))  # type: ignore[attr-defined]
+        rv = rs.raw.C_VerifyUpdate(rs.sh, in_buf, len(data))
         assert rv in _NOT_INIT_RVCS, (
             f"C_VerifyUpdate without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED"
@@ -242,7 +242,7 @@ class TestVerifyState:
 
         sig = b"\x02" * 64
         sig_buf = (ctypes.c_ubyte * len(sig)).from_buffer_copy(sig)
-        rv = rs.raw.C_VerifyFinal(rs.sh, sig_buf, len(sig))  # type: ignore[attr-defined]
+        rv = rs.raw.C_VerifyFinal(rs.sh, sig_buf, len(sig))
         assert rv in _NOT_INIT_RVCS | {
             0x000000C4,  # CKR_SIGNATURE_INVALID
             0x000000C5,  # CKR_SIGNATURE_LEN_RANGE
@@ -266,7 +266,7 @@ class TestDigestState:
         out_buf = (ctypes.c_ubyte * 64)()
         out_len = CK_ULONG(64)
 
-        rv = rs.raw.C_Digest(rs.sh, in_buf, len(data), out_buf, byref(out_len))  # type: ignore[attr-defined]
+        rv = rs.raw.C_Digest(rs.sh, in_buf, len(data), out_buf, byref(out_len))
         assert rv in _NOT_INIT_RVCS, (
             f"C_Digest without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED"
@@ -280,7 +280,7 @@ class TestDigestState:
 
         data = b"\x04" * 8
         in_buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
-        rv = rs.raw.C_DigestUpdate(rs.sh, in_buf, len(data))  # type: ignore[attr-defined]
+        rv = rs.raw.C_DigestUpdate(rs.sh, in_buf, len(data))
         assert rv in _NOT_INIT_RVCS, (
             f"C_DigestUpdate without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED"
@@ -294,7 +294,7 @@ class TestDigestState:
 
         out_buf = (ctypes.c_ubyte * 64)()
         out_len = CK_ULONG(64)
-        rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))  # type: ignore[attr-defined]
+        rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
         assert rv in _NOT_INIT_RVCS, (
             f"C_DigestFinal without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED"
@@ -307,12 +307,12 @@ class TestDigestState:
             pytest.skip("CKM_SHA256 not supported")
 
         mech = mech_simple(CKM_SHA256)
-        rv1 = rs.raw.C_DigestInit(rs.sh, mech.byref())  # type: ignore[attr-defined]
+        rv1 = rs.raw.C_DigestInit(rs.sh, mech.byref())
         if rv1 != CKR_OK:
             pytest.skip(f"First C_DigestInit failed: 0x{rv1:08x}")
 
         mech2 = mech_simple(CKM_SHA256)
-        rv2 = rs.raw.C_DigestInit(rs.sh, mech2.byref())  # type: ignore[attr-defined]
+        rv2 = rs.raw.C_DigestInit(rs.sh, mech2.byref())
         assert rv2 in _ALREADY_ACTIVE_RVCS, (
             f"Double C_DigestInit returned 0x{rv2:08x}, "
             f"expected CKR_OPERATION_ACTIVE (0x{int(CKR_OPERATION_ACTIVE):08x})"
@@ -322,6 +322,6 @@ class TestDigestState:
         try:
             out_buf = (ctypes.c_ubyte * 64)()
             out_len = CK_ULONG(64)
-            rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))  # type: ignore[attr-defined]
+            rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
         except Exception:
             pass  # Best-effort cleanup: DigestFinal may fail if op already terminated

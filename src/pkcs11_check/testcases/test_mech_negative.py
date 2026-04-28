@@ -71,7 +71,7 @@ class TestWrongKeyType:
         try:
             mech = mech_simple(CKM_AES_ECB)
             # Use the RSA private key handle with an AES mechanism
-            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), priv)  # type: ignore[attr-defined]
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), priv)
             assert rv != CKR_OK, (
                 "C_EncryptInit(CKM_AES_ECB, RSA_priv) should fail but returned CKR_OK"
             )
@@ -90,7 +90,7 @@ class TestWrongKeyType:
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             mech = mech_simple(CKM_RSA_PKCS)
-            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)  # type: ignore[attr-defined]
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             assert rv != CKR_OK, (
                 "C_EncryptInit(CKM_RSA_PKCS, AES_key) should fail but returned CKR_OK"
             )
@@ -108,7 +108,7 @@ class TestWrongKeyType:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_ECDSA)
-            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)  # type: ignore[attr-defined]
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
             assert rv != CKR_OK, (
                 "C_SignInit(CKM_ECDSA, RSA_priv) should fail but returned CKR_OK"
             )
@@ -127,7 +127,7 @@ class TestWrongKeyType:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             mech = mech_simple(CKM_SHA256_HMAC)
-            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)  # type: ignore[attr-defined]
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
             assert rv != CKR_OK, (
                 "C_SignInit(CKM_SHA256_HMAC, RSA_priv) should fail but returned CKR_OK"
             )
@@ -146,7 +146,7 @@ class TestWrongKeyType:
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, _P256_OID)
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), priv)  # type: ignore[attr-defined]
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), priv)
             assert rv != CKR_OK, (
                 "C_EncryptInit(CKM_AES_ECB, EC_priv) should fail but returned CKR_OK"
             )
@@ -172,7 +172,7 @@ class TestMissingPermission:
         )
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)  # type: ignore[attr-defined]
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             assert rv != CKR_OK, (
                 "C_EncryptInit with CKA_ENCRYPT=False should fail but returned CKR_OK"
             )
@@ -193,7 +193,7 @@ class TestMissingPermission:
         )
         try:
             mech = mech_simple(CKM_AES_ECB)
-            rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)  # type: ignore[attr-defined]
+            rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
             assert rv != CKR_OK, (
                 "C_DecryptInit with CKA_DECRYPT=False should fail but returned CKR_OK"
             )
@@ -220,14 +220,14 @@ class TestMissingPermission:
         tmpl = template(*packed)
         mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
         handle = CK_OBJECT_HANDLE(0)
-        rv = rs.raw.C_GenerateKey(  # type: ignore[attr-defined]
+        rv = rs.raw.C_GenerateKey(
             rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
         )
         assert rv == CKR_OK, f"Key gen failed: {rv}"
         key = handle.value
         try:
             sign_mech = mech_simple(CKM_SHA256_HMAC)
-            rv2 = rs.raw.C_SignInit(rs.sh, sign_mech.byref(), key)  # type: ignore[attr-defined]
+            rv2 = rs.raw.C_SignInit(rs.sh, sign_mech.byref(), key)
             assert rv2 != CKR_OK, (
                 "C_SignInit with CKA_SIGN=False should fail but returned CKR_OK"
             )
@@ -253,14 +253,14 @@ class TestMissingPermission:
         tmpl = template(*packed)
         mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
         handle = CK_OBJECT_HANDLE(0)
-        rv = rs.raw.C_GenerateKey(  # type: ignore[attr-defined]
+        rv = rs.raw.C_GenerateKey(
             rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
         )
         assert rv == CKR_OK, f"Key gen failed: {rv}"
         key = handle.value
         try:
             verify_mech = mech_simple(CKM_SHA256_HMAC)
-            rv2 = rs.raw.C_VerifyInit(rs.sh, verify_mech.byref(), key)  # type: ignore[attr-defined]
+            rv2 = rs.raw.C_VerifyInit(rs.sh, verify_mech.byref(), key)
             assert rv2 != CKR_OK, (
                 "C_VerifyInit with CKA_VERIFY=False should fail but returned CKR_OK"
             )
@@ -295,7 +295,7 @@ class TestMissingPermission:
         try:
             wrap_mech = mech_simple(CKM_AES_KEY_WRAP)
             out_len = CK_ULONG(0)
-            rv = rs.raw.C_WrapKey(  # type: ignore[attr-defined]
+            rv = rs.raw.C_WrapKey(
                 rs.sh, wrap_mech.byref(), wrapping_key, target_key, None, byref(out_len)
             )
             assert rv != CKR_OK, (
@@ -329,7 +329,7 @@ class TestMissingPermission:
         tmpl = template(*packed)
         mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
         handle = CK_OBJECT_HANDLE(0)
-        rv = rs.raw.C_GenerateKey(  # type: ignore[attr-defined]
+        rv = rs.raw.C_GenerateKey(
             rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
         )
         assert rv == CKR_OK, f"Key gen failed: {rv}"
@@ -348,7 +348,7 @@ class TestMissingPermission:
             d_packed.extend(pack_attrs(derived_attrs, skip={CKA_VALUE_LEN}))
             d_tmpl = template(*d_packed)
 
-            rv2 = rs.raw.C_DeriveKey(  # type: ignore[attr-defined]
+            rv2 = rs.raw.C_DeriveKey(
                 rs.sh,
                 derive_mech.byref(),
                 base_key,
