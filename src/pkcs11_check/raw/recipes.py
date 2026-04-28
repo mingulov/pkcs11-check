@@ -881,7 +881,7 @@ def read_attributes(
     expect_rv(rv, CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
 
     # Allocate buffers (skip unavailable attributes)
-    buffers = []
+    buffers: list[Any] = []
     for i in range(count):
         size = tmpl[i].ulValueLen
         if _is_unavailable(size):
@@ -1283,7 +1283,8 @@ def restore_operation_state(
 def init_token(raw: RawPKCS11, slot_id: int, so_pin: bytes, label: str) -> None:
     """Initialize a token with C_InitToken. Label is padded to 32 bytes with spaces."""
     label_bytes = label.encode().ljust(32)[:32]
-    label_buf = (ctypes.c_char * 32)(*label_bytes)
+    # ctypes c_char array constructor accepts bytes per-element; mypy is overly strict.
+    label_buf = (ctypes.c_char * 32)(*label_bytes)  # type: ignore[arg-type]
     pin_buf = _to_ubyte_buf(so_pin)
     rv = raw.C_InitToken(slot_id, pin_buf, len(so_pin), label_buf)
     expect_rv(rv, CKR_OK)
@@ -1310,8 +1311,8 @@ def seed_random(
     """Seed the RNG with C_SeedRandom.  Returns the raw CK_RV."""
     buf = _to_ubyte_buf(seed)
     rv = raw.C_SeedRandom(session, buf, len(seed))
-    expect_rv(rv, CKR_OK, *extra_ok)
-    return rv
+    expect_rv(rv, CKR_OK, *extra_ok)  # type: ignore[arg-type]
+    return int(rv)
 
 
 def get_mechanism_list(raw: RawPKCS11, slot_id: int) -> list[int]:

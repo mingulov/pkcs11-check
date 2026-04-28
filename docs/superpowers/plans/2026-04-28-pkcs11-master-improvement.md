@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 21 |
+| current_iteration | 22 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
-| last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-002: api.py — added `# type: ignore[assignment]` for the `_CKR_BY_VALUE[val] = obj` / `_CKM_BY_VALUE[val] = obj` lines (mypy can't narrow `obj: int` to CKR/CKM via attr-name prefix); renamed `function_list_ptr` to `fn_list_ptr` in fallback path so the int|None earlier binding doesn't conflict with ctypes pointer rebinding. test_v30_session.py — wrapped raw.C_Login/C_LoginUser/C_Logout returns with `int(...)` to fix no-any-return; added explicit bytes annotation to `_pin_bytes` body. mypy 53→50 (-3 this tick). **Cumulative: 516→50 (-466, -90.3%) — past 90%.** |
+| last_action_at | 2026-04-29 |
+| last_action | Phase 5 CHECK-002: types_std.py — re-applied (the iter-20 commit had silently dropped them) explicit return annotations on CK_CONSTANT.__new__/__getnewargs__ and CKF arithmetic dunders. Plus recipes.py — annotated `buffers: list[Any]`, added `# type: ignore` for ctypes c_char array constructor + variadic CKR expansion in seed_random, wrapped seed_random return with int(). mypy 50→42 (-8). **Cumulative: 516→42 (-474, -91.9%).** |
 
 ### Findings Table (Phase 1 → Phase 2)
 
