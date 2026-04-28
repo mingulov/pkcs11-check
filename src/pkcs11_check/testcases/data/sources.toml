@@ -11,8 +11,8 @@ include = ["testvectors_v1/", "LICENSE"]
 
 [cctv]
 repo = "C2SP/CCTV"
-commit = "d091f096c98eaaf9a42a824eb923a457867e4eae"
-archive_sha256 = "6e8aeea9aa34aeb146f4fac1839199c853d8a09736ba633062b60bc20e0c3bc4"
+commit = "67c1397af2a57f935cc96ee112b446c051cdb68a"
+archive_sha256 = "9380931cfd5bf238bd44ee993f1aee6453b5e52413ddfd20a3e41d66e4d119cd"
 description = "C2SP Comprehensive Cryptographic Test Vectors"
 include = ["ed25519/", "ML-DSA/", "ML-KEM/", "RFC6979/", "jq255/", "keygen/", "README.md", "LICENSE"]
 

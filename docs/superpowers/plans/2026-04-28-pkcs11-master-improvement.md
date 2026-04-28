@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 2 |
+| current_iteration | 3 |
 | phase0_last_run | in-progress (started 2026-04-28) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 0.4/0.5 wycheproof bumped (78898104→4d535535); +2,629 new vectors (63,310→65,939); collection clean |
+| last_action | Phase 0.4/0.5 cctv bumped (d091f096→67c1397a); 53 files installed; 1,365 cctv tests collect cleanly |
 
 ### Findings Table (Phase 1 → Phase 2)
 
@@ -675,7 +675,7 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 | date | source | decision | reason |
 |---|---|---|---|
 | 2026-04-28 | wycheproof | BUMP 78898104→4d535535 DONE (zip 26 MB, sha 9d326c66...; 341 files installed; 65,939 tests collected, +2,629 vs prior 63,310) | ~7 weeks of additive vectors; Google CI-tested corpus, no history rewrites |
-| 2026-04-28 | cctv | BUMP d091f096→67c1397a | ~7 weeks of additive C2SP vectors; additive-only by repo policy |
+| 2026-04-28 | cctv | BUMP d091f096→67c1397a DONE (zip 1.3 MB, sha 9380931c...; 53 files installed; 1,365 cctv tests collected cleanly) | ~7 weeks of additive C2SP vectors; additive-only by repo policy |
 | 2026-04-28 | acvp | BUMP 3611942e→15c0f3de | ~5 weeks of additive NIST validation vectors; additive-only |
 | 2026-04-28 | x509-limbo | BUMP 9d594748→086b0da8 | ~8 weeks of additive C2SP x509 corpus; additive-only |
 
