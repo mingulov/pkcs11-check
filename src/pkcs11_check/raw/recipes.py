@@ -846,14 +846,19 @@ def read_attributes(
     raw: RawPKCS11,
     session: int,
     handle: int,
-    attr_types: list[int] | tuple[int, ...],
-) -> dict[int, bytes | int | bool | str | list[int]]:
+    attr_types: list[int] | tuple[int, ...] | set[int] | frozenset[int],
+) -> dict[int, Any]:
     """Read attribute values from an object.
 
     Returns a dict mapping attribute type to its value. Uses the generated
     ATTR_VALUE_TYPES table for spec-correct decoding: bool attrs as bool,
     ulong attrs as int, str attrs as str, date attrs as 'YYYYMMDD' str,
     ulong_array attrs as list[int], template and unknown attrs as bytes.
+
+    Returns `dict[int, Any]` (not the precise union) because callers
+    typically know the expected attribute type and call type-specific
+    methods (`.hex()`, `len()`, etc.); a precise union would force
+    `isinstance` narrowing at every callsite without adding safety.
     """
     count = len(attr_types)
     tmpl = (CK_ATTRIBUTE * count)()
