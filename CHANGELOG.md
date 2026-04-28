@@ -30,6 +30,23 @@ Initial beta release.
 - pkcs11-mock 2.0.0
 - qryptotoken 0.4.1
 
+### Test Results (2026-04-09)
+
+Tested 6 modules, ~510K total test executions across 237 test files:
+
+| Module | Passed | Failed | Skipped | Xfailed | Total |
+|--------|-------:|-------:|--------:|--------:|------:|
+| OpenCryptoki (master) | 75,265 | 2,405 | 8,512 | 54 | 86,242 |
+| BouncyHSM (v2.0.1) | 66,307 | 22,282 | 8,694 | 59 | 97,345 |
+| Kryoptic (main) | 65,674 | 2,831 | 32,218 | 68 | 100,791 |
+| SoftHSM2 (main) | 60,820 | 2,697 | 16,943 | 41 | 80,501 |
+| NSS (main) | 46,185 | 2,018 | 34,454 | 105 | 82,763 |
+| tpm2-pkcs11 (1.9.1) | 8,202 | 5,028 | 47,977 | 2 | 62,242 |
+
+Key findings: 2 CRITICAL (NSS sensitive key exposure, Tookan CKA_EXTRACTABLE escalation),
+9 HIGH-severity issues across 4 modules, real SIGSEGV crashes in all 6 modules.
+See [docs/release-v0.1.0.md](docs/release-v0.1.0.md) for full breakdown.
+
 ### Requirements
 
 - Python 3.13+
