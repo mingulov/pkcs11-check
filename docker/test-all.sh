@@ -19,8 +19,8 @@ DEFAULT_PROVIDERS=(
     softhsm2-main
     nss-main
     opencryptoki-master
-    bouncyhsm
     tpm2
+    bouncyhsm
 )
 
 ALL_PROVIDERS=(
