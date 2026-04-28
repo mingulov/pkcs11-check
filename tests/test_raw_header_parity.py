@@ -31,7 +31,8 @@ def _extract_classes(text: str) -> set[str]:
 
 
 def _extract_function_sigs(text: str) -> set[str]:
-    return _extract_names(text, r"'(C_\w+)':")
+    # Quote-agnostic: ruff-formatted output uses double quotes, reference uses single.
+    return _extract_names(text, r"['\"](C_\w+)['\"]:")
 
 
 class TestTypesParity:
