@@ -4,8 +4,8 @@
 
 [wycheproof]
 repo = "C2SP/wycheproof"
-commit = "78898104021ebd2cd98820e4112da89b1531d999"
-archive_sha256 = "0394623240cda4f4a85b449d323458c1a2be40cc640a53437b93e10e3aaba52b"
+commit = "4d535535851fff6e3f4a50ab1062faca5a13a302"
+archive_sha256 = "9d326c66f03ef6863499f31054b7431891f1cae9cd5a08bb152eb5bc76a96fbb"
 description = "Wycheproof edge-case cryptographic test vectors"
 include = ["testvectors_v1/", "LICENSE"]
 
