@@ -74,7 +74,7 @@ def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:
 
 def xfail_if_known_ckr(
     exc: Exception,
-    known_ckrs: set[int] | tuple[int, ...],
+    known_ckrs: set[Any] | tuple[Any, ...] | frozenset[Any],
     msg: str,
 ) -> None:
     """xfail if the exception message contains a known CKR name, otherwise re-raise.

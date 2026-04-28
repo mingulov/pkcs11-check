@@ -261,9 +261,9 @@ def gen_keypair(
     mechanism: int,
     pub_base: list[Any],
     priv_base: list[Any],
-    public_attrs: dict[CKA, Any] | None,
-    private_attrs: dict[CKA, Any] | None,
-    pub_skip: set[int] | None = None,
+    public_attrs: Mapping[Any, Any] | None,
+    private_attrs: Mapping[Any, Any] | None,
+    pub_skip: set[Any] | frozenset[Any] | None = None,
 ) -> tuple[int, int]:
     """Shared keypair generation logic."""
     pub_packed = pub_base + pack_attrs(public_attrs, skip=pub_skip)
@@ -292,8 +292,8 @@ def gen_rsa_keypair(
     raw: RawPKCS11,
     session: int,
     bits: int = 2048,
-    public_attrs: dict[CKA, Any] | None = None,
-    private_attrs: dict[CKA, Any] | None = None,
+    public_attrs: Mapping[Any, Any] | None = None,
+    private_attrs: Mapping[Any, Any] | None = None,
 ) -> tuple[int, int]:
     """Generate an RSA key pair. Returns (pub_handle, priv_handle)."""
     _pub_defaults: dict[CKA, Any] = {
@@ -322,8 +322,8 @@ def gen_ec_keypair(
     raw: RawPKCS11,
     session: int,
     curve_oid: bytes,
-    public_attrs: dict[CKA, Any] | None = None,
-    private_attrs: dict[CKA, Any] | None = None,
+    public_attrs: Mapping[Any, Any] | None = None,
+    private_attrs: Mapping[Any, Any] | None = None,
 ) -> tuple[int, int]:
     """Generate an EC key pair. Returns (pub_handle, priv_handle)."""
     _pub_defaults: dict[CKA, Any] = {CKA_VERIFY: True}

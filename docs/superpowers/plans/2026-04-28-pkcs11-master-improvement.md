@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 13 |
+| current_iteration | 14 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-002: removed 43 unused `# type: ignore` markers across 7 files (raw/api.py, test_ecdh_extended.py, test_mech_derive.py, test_mech_lifecycle.py, test_mech_negative.py x14, test_mech_probe.py, test_mech_state.py x19). They were now redundant after the prior helper-widening commits. mypy 355→312 (-43 this tick). Cumulative: 516→312 (-204, -39.5%). |
+| last_action | Phase 5 CHECK-002: widened `gen_keypair` / `gen_rsa_keypair` / `gen_ec_keypair` `public_attrs`+`private_attrs` to `Mapping[Any, Any] \| None`; widened `gen_keypair.pub_skip` to `set[Any] \| frozenset[Any]`; widened `xfail_if_known_ckr.known_ckrs` to `set[Any] \| tuple[Any, ...] \| frozenset[Any]`. mypy 312→255 (-57 this tick). **Cumulative: 516→255 (-261, -50.6%) — past halfway.** |
 
 ### Findings Table (Phase 1 → Phase 2)
 
