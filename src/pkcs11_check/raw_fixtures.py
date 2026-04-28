@@ -26,7 +26,7 @@ from pkcs11_check.raw.types_std import (
 
 
 @pytest.fixture(scope="session")
-def raw_pkcs11(request: pytest.FixtureRequest) -> Generator[RawPKCS11, None, None]:
+def raw_pkcs11(request: pytest.FixtureRequest) -> Generator[RawPKCS11]:
     """Load a PKCS#11 module via the raw layer and initialize it."""
     module_path = request.config.getoption("p11_module")
     if module_path is None:
@@ -52,7 +52,7 @@ def raw_session(
     raw_pkcs11: RawPKCS11,
     raw_slot_id: int,
     request: pytest.FixtureRequest,
-) -> Generator[int, None, None]:
+) -> Generator[int]:
     """Open a raw PKCS#11 RW session with login. Yields session handle.
 
     Performs login/logout per test to avoid UserAlreadyLoggedIn cascading.

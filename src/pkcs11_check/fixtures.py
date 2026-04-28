@@ -85,7 +85,7 @@ def _open_raw_session(
 
 
 @pytest.fixture
-def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[Any, None, None]:
+def p11_session(p11_module: P11Module, p11_config: P11TestConfig) -> Generator[Any]:
     """Open PKCS#11 session with login. Yields RawSession, closes after test.
 
     After the test, we attempt to logout so the next test can login fresh.
@@ -215,7 +215,7 @@ class RawSession:
 def p11_raw_session(
     p11_module: P11Module,
     p11_config: P11TestConfig,
-) -> Generator[RawSession, None, None]:
+) -> Generator[RawSession]:
     """Open a raw PKCS#11 session.
 
     Yields RawSession with raw, session_handle, slot_id, and cached
