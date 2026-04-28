@@ -65,13 +65,14 @@ def _pin_bytes(p11_config: Any) -> bytes | None:
     """Return the PIN as bytes, or None if not configured."""
     if p11_config.pin is None:
         return None
-    return p11_config.pin.get_secret_value().encode("utf-8")
+    encoded: bytes = p11_config.pin.get_secret_value().encode("utf-8")
+    return encoded
 
 
 def _raw_login(raw: Any, sh: int, user_type: int, pin: bytes) -> int:
     """Call C_Login and return the raw CKR."""
     pin_buf = (CK_UTF8CHAR * len(pin))(*pin)
-    return raw.C_Login(sh, user_type, pin_buf, len(pin))
+    return int(raw.C_Login(sh, user_type, pin_buf, len(pin)))
 
 
 def _raw_login_user(
@@ -85,12 +86,12 @@ def _raw_login_user(
     pin_buf = (CK_UTF8CHAR * len(pin))(*pin)
     user_buf = (CK_UTF8CHAR * len(username))(*username) if username else None
     user_len = len(username) if username else 0
-    return raw.C_LoginUser(sh, user_type, pin_buf, len(pin), user_buf, user_len)
+    return int(raw.C_LoginUser(sh, user_type, pin_buf, len(pin), user_buf, user_len))
 
 
 def _raw_logout(raw: Any, sh: int) -> int:
     """Call C_Logout and return the raw CKR."""
-    return raw.C_Logout(sh)
+    return int(raw.C_Logout(sh))
 
 
 # ---------------------------------------------------------------------------

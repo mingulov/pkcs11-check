@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 20 |
+| current_iteration | 21 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-002: types_std.py — added return annotations to 7 dunders (`__new__`, `__getnewargs__`, CKF.__or__/__ror__/__and__/__rand__/__invert__); file_runner.py — fixed bare `return` → `return None` in `postprocess_jsonl_to_unified`; removed redundant type annotations causing 3 no-redef errors; _key_decoders.py — added `# type: ignore[import-untyped]` for asn1crypto. mypy 65→53 (-12 this tick). **Cumulative: 516→53 (-463, -89.7%).** |
+| last_action | Phase 5 CHECK-002: api.py — added `# type: ignore[assignment]` for the `_CKR_BY_VALUE[val] = obj` / `_CKM_BY_VALUE[val] = obj` lines (mypy can't narrow `obj: int` to CKR/CKM via attr-name prefix); renamed `function_list_ptr` to `fn_list_ptr` in fallback path so the int|None earlier binding doesn't conflict with ctypes pointer rebinding. test_v30_session.py — wrapped raw.C_Login/C_LoginUser/C_Logout returns with `int(...)` to fix no-any-return; added explicit bytes annotation to `_pin_bytes` body. mypy 53→50 (-3 this tick). **Cumulative: 516→50 (-466, -90.3%) — past 90%.** |
 
 ### Findings Table (Phase 1 → Phase 2)
 

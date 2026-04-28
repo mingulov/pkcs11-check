@@ -29,9 +29,9 @@ def _build_constant_lookups() -> None:
             continue
         val = int(obj)
         if attr_name.startswith("CKR_"):
-            _CKR_BY_VALUE[val] = obj
+            _CKR_BY_VALUE[val] = obj  # type: ignore[assignment]
         elif attr_name.startswith("CKM_"):
-            _CKM_BY_VALUE[val] = obj
+            _CKM_BY_VALUE[val] = obj  # type: ignore[assignment]
         if hasattr(obj, "_name") and obj._name:
             prefix = attr_name.split("_", 1)[0] + "_"
             lookup = _CK_PREFIX_LOOKUPS.setdefault(prefix, {})
@@ -257,13 +257,16 @@ class RawPKCS11:
         get_function_list = self._lib.C_GetFunctionList
         get_function_list.restype = CK_RV
         get_function_list.argtypes = [CK_FUNCTION_LIST_PTR_PTR]
-        function_list_ptr = CK_FUNCTION_LIST_PTR()
-        rv = get_function_list(byref(function_list_ptr))
+        # The earlier `function_list_ptr` (int | None from interface lookup) is
+        # rebound here to a CK_FUNCTION_LIST_PTR ctypes object — different type
+        # but same logical role. Use a fresh local to keep mypy happy.
+        fn_list_ptr = CK_FUNCTION_LIST_PTR()
+        rv = get_function_list(byref(fn_list_ptr))
         if rv != CKR_OK:
             raise RuntimeError(f"C_GetFunctionList failed: 0x{rv:08x}")
-        if not bool(function_list_ptr):
+        if not bool(fn_list_ptr):
             raise RuntimeError("C_GetFunctionList returned NULL pointer")
-        base_ptr = cast(function_list_ptr, c_void_p).value
+        base_ptr = cast(fn_list_ptr, c_void_p).value
         if base_ptr is None:
             raise RuntimeError("C_GetFunctionList returned NULL pointer")
         self._load_from_ptr(base_ptr)
