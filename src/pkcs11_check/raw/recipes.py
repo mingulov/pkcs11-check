@@ -1342,7 +1342,7 @@ def get_session_info(raw: RawPKCS11, session: int) -> dict[str, int]:
     }
 
 
-def get_mechanism_info(raw: RawPKCS11, slot_id: int, mechanism: CKM) -> dict[str, int]:
+def get_mechanism_info(raw: RawPKCS11, slot_id: int, mechanism: CKM | int) -> dict[str, int]:
     """C_GetMechanismInfo -- returns mechanism info as dict."""
     info = CK_MECHANISM_INFO()
     expect_rv(raw.C_GetMechanismInfo(slot_id, mechanism, byref(info)), CKR_OK)

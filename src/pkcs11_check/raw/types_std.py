@@ -10,7 +10,7 @@ STANDARD_GENERATED = True
 class CK_CONSTANT(int):
     _name: str | None
 
-    def __new__(cls, value: int, name: str | None = None) -> "CK_CONSTANT":
+    def __new__(cls, value: int, name: str | None = None):
         obj = super().__new__(cls, value)
         obj._name = name
         return obj
@@ -31,7 +31,7 @@ class CK_CONSTANT(int):
             return self._name
         return self._hex()
 
-    def __getnewargs__(self) -> tuple[int, str | None]:
+    def __getnewargs__(self) -> tuple:
         return (int(self), self._name)
 
 
@@ -48,19 +48,19 @@ class CKD(CK_CONSTANT):
 
 
 class CKF(CK_CONSTANT):
-    def __or__(self, other: int) -> "CKF":
+    def __or__(self, other):
         return CKF(int.__or__(self, other))
 
-    def __ror__(self, other: int) -> "CKF":
+    def __ror__(self, other):
         return CKF(int.__or__(self, other))
 
-    def __and__(self, other: int) -> "CKF":
+    def __and__(self, other):
         return CKF(int.__and__(self, other))
 
-    def __rand__(self, other: int) -> "CKF":
+    def __rand__(self, other):
         return CKF(int.__and__(self, other))
 
-    def __invert__(self) -> "CKF":
+    def __invert__(self):
         return CKF(int.__invert__(self))
 
 

@@ -8,6 +8,7 @@ Almost no modules support GOST - tests skip cleanly when unsupported.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from ctypes import byref
 from typing import Any
 
@@ -57,7 +58,7 @@ _TWO_BLOCKS = b"12345678abcdefgh"
 _HASH_SIZE_DATA = bytes(range(32))
 
 
-def _gost_key(raw: Any, sh: int, attrs: dict[int, Any]) -> int:
+def _gost_key(raw: Any, sh: int, attrs: Mapping[Any, Any]) -> int:
     """Generate a 256-bit GOST 28147-89 key via C_GenerateKey."""
     from pkcs11_check.raw.pack import attr_ulong
     from pkcs11_check.raw.pack import template as mk_template

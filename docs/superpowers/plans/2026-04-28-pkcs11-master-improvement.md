@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 22 |
+| current_iteration | 23 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-29 |
-| last_action | Phase 5 CHECK-002: types_std.py — re-applied (the iter-20 commit had silently dropped them) explicit return annotations on CK_CONSTANT.__new__/__getnewargs__ and CKF arithmetic dunders. Plus recipes.py — annotated `buffers: list[Any]`, added `# type: ignore` for ctypes c_char array constructor + variadic CKR expansion in seed_random, wrapped seed_random return with int(). mypy 50→42 (-8). **Cumulative: 516→42 (-474, -91.9%).** |
+| last_action | Phase 5 CHECK-002: widened `recipes.get_mechanism_info(mechanism)` from `CKM` to `CKM \| int`; widened `_bf_key` (test_blowfish) and `_gost_key` (test_gost) `attrs` from `dict[int, Any]` to `Mapping[Any, Any]`. mypy 42→32 (-10 this tick). **Cumulative: 516→32 (-484, -93.8%).** |
 
 ### Findings Table (Phase 1 → Phase 2)
 
