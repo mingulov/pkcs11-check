@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -464,7 +464,7 @@ def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | N
 
 def _merge_special_entries_into_detail(
     detail: Mapping[str, Any] | None,
-    entries: list[Mapping[str, Any]],
+    entries: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     merged = _copy_detail(detail)
     existing = {
@@ -779,7 +779,7 @@ def _report_record_cache_path(state_file: Path, unit: str) -> Path:
 def _write_unit_report_record_cache(
     state_file: Path,
     unit: str,
-    records: list[Mapping[str, Any]],
+    records: Sequence[Mapping[str, Any]],
 ) -> None:
     cache_path = _report_record_cache_path(state_file, unit)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -854,7 +854,7 @@ def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
 
 
 def _infer_unit_target_from_records(
-    records: list[Mapping[str, Any]],
+    records: Sequence[Mapping[str, Any]],
     candidate_targets: set[str],
 ) -> str | None:
     nodeids = [
@@ -944,7 +944,7 @@ def _extract_unit_report_records_from_jsonl(
 
 
 def _write_report_jsonl_from_record_map(
-    report_records_by_unit: Mapping[str, list[Mapping[str, Any]]],
+    report_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
     *,
     units: list[str],
     output_path: Path,
@@ -969,7 +969,9 @@ def _write_report_jsonl_from_record_map(
         tmp_path.unlink(missing_ok=True)
 
 
-def _build_detail_from_report_records(records: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+def _build_detail_from_report_records(
+    records: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
     """Build per-unit detail payload from parsed report-log records."""
     if not records:
         return None
@@ -1109,7 +1111,7 @@ def _build_detail_from_report_records(records: list[Mapping[str, Any]]) -> dict[
 
 
 def _build_per_unit_details_from_record_map(
-    report_records_by_unit: Mapping[str, list[Mapping[str, Any]]],
+    report_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
 ) -> dict[str, dict[str, Any]]:
     details: dict[str, dict[str, Any]] = {}
     for unit, records in report_records_by_unit.items():

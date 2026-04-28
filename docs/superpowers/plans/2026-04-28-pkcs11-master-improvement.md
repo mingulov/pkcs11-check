@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 17 |
+| current_iteration | 18 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-002: stripped 37 newly-redundant `# type: ignore` markers across 11 testcase files (test_crossverify, test_crossverify_extended x10, test_ec_*, test_ecdh_*, test_ike, test_interop x8, test_pbe, test_rsa_oaep, test_sign). mypy 137→100 (-37 this tick). **Cumulative: 516→100 (-416, -80.6%) — past 80%.** |
+| last_action | Phase 5 CHECK-002: file_runner.py — replaced `list[Mapping[str, Any]]` params with `Sequence[Mapping[str, Any]]` (Sequence is covariant in T, list isn't). 5 helpers updated; nested `Mapping[str, list[Mapping[str, Any]]]` also widened. mypy 100→89 (-11 this tick). Cumulative: 516→89 (-427, -82.8%). |
 
 ### Findings Table (Phase 1 → Phase 2)
 
