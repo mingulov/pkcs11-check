@@ -11,6 +11,7 @@ platforms. Some Korean-standard-focused HSMs may include SEED support.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from ctypes import byref
 from typing import Any
 
@@ -48,7 +49,7 @@ pytestmark = pytest.mark.full
 _TWO_BLOCKS = b"sixteen bytes!!\x01" * 2  # exactly 32 bytes
 
 
-def _seed_key(raw: Any, sh: int, attrs: dict[int, Any]) -> int:
+def _seed_key(raw: Any, sh: int, attrs: Mapping[Any, Any]) -> int:
     """Generate a SEED-128 session key via C_GenerateKey (fixed size)."""
     from pkcs11_check.raw.pack import template as mk_template
     from pkcs11_check.raw.recipes import pack_attrs

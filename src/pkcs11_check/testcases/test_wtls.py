@@ -72,7 +72,7 @@ _CLIENT_RANDOM = bytes(range(16))
 _SERVER_RANDOM = bytes(range(16, 32))
 
 
-def _is_known_error(exc: AssertionError, error_rvs: set[int]) -> bool:
+def _is_known_error(exc: AssertionError, error_rvs: set[Any] | frozenset[Any]) -> bool:
     """Check if an AssertionError from expect_rv matches a known CKR."""
     msg = str(exc)
     return any(ckr_name(rv) in msg for rv in error_rvs)

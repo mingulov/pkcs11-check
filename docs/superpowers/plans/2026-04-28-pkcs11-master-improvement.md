@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 14 |
+| current_iteration | 15 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-002: widened `gen_keypair` / `gen_rsa_keypair` / `gen_ec_keypair` `public_attrs`+`private_attrs` to `Mapping[Any, Any] \| None`; widened `gen_keypair.pub_skip` to `set[Any] \| frozenset[Any]`; widened `xfail_if_known_ckr.known_ckrs` to `set[Any] \| tuple[Any, ...] \| frozenset[Any]`. mypy 312→255 (-57 this tick). **Cumulative: 516→255 (-261, -50.6%) — past halfway.** |
+| last_action | Phase 5 CHECK-002: widened local helpers `_is_known_error` (test_tls12, test_ssl3, test_wtls — set[int]→set[Any]\|frozenset[Any]), `_seed_key` (test_seed — dict[int, Any]→Mapping[Any, Any]), `_tf_key` (test_twofish — same). mypy 255→210 (-45 this tick). Cumulative: 516→210 (-306, -59.3%). |
 
 ### Findings Table (Phase 1 → Phase 2)
 
