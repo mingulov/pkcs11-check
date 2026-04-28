@@ -1222,7 +1222,7 @@ def postprocess_jsonl_to_unified(jsonl_path: Path, output_path: Path) -> dict[st
     try:
         text = jsonl_path.read_text()
     except (FileNotFoundError, OSError):
-        return
+        return None
 
     file_counts: dict[str, dict[str, int]] = {}
     for line in text.splitlines():
@@ -2775,7 +2775,7 @@ def run_isolated_pytest_units(
                                 [crash_jsonl_path] if crash_jsonl_path else []
                             ) + retry_temp_files
                             if report_config is not None and report_config.jsonl_path is not None:
-                                unit_records: list[dict[str, Any]] = []
+                                unit_records = []
                                 for tmp in all_iter_jsonls:
                                     if not tmp.exists():
                                         continue
@@ -2858,8 +2858,8 @@ def run_isolated_pytest_units(
                 if unit_jsonl_path is not None:
                     unit_jsonl_path.unlink(missing_ok=True)
     finally:
-        coverage_data: dict[str, Any] | None = None
-        quality_records: list[dict[str, Any]] = []
+        coverage_data = None
+        quality_records = []
         merged_details = dict(per_unit_details)
         if report_config is not None:
             if report_config.jsonl_path is not None:

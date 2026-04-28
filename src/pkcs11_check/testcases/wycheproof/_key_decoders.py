@@ -6,8 +6,12 @@ import base64
 from math import ceil
 from typing import Any
 
-from asn1crypto import pem
-from asn1crypto.keys import ECPrivateKey, PrivateKeyInfo, PublicKeyInfo
+from asn1crypto import pem  # type: ignore[import-untyped]
+from asn1crypto.keys import (  # type: ignore[import-untyped]
+    ECPrivateKey,
+    PrivateKeyInfo,
+    PublicKeyInfo,
+)
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
