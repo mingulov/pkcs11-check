@@ -25,7 +25,7 @@ include = ["gen-val/json-files/", "README.md"]
 
 [x509-limbo]
 repo = "C2SP/x509-limbo"
-commit = "9d594748cd0184468ec80a2d6e69d231ecf9fc8f"
-archive_sha256 = "bc3ede4d6a604d4c16f34dcab94cf3752e5c35124694bd5f5222146a068adf9b"
+commit = "086b0da8b83d78ed0f491d6df6672b2673406500"
+archive_sha256 = "a7d1a02029fdb8c9a6bb5ac960c0077171e937f000031efc666e0246be959385"
 description = "C2SP x509-limbo pathological X.509 certificates"
 # No include = extract everything
