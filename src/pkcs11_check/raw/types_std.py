@@ -10,7 +10,7 @@ STANDARD_GENERATED = True
 class CK_CONSTANT(int):
     _name: str | None
 
-    def __new__(cls, value: int, name: str | None = None):
+    def __new__(cls, value: int, name: str | None = None) -> "CK_CONSTANT":
         obj = super().__new__(cls, value)
         obj._name = name
         return obj
