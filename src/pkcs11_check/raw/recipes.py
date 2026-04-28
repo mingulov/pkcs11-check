@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from collections.abc import Mapping
 from ctypes import byref
 from typing import Any
 
@@ -203,14 +204,18 @@ def quick_session(
 
 
 def pack_attrs(
-    attrs: dict[int, Any] | None,
+    attrs: Mapping[Any, Any] | None,
     *,
-    skip: set[int] | None = None,
+    skip: set[Any] | frozenset[Any] | None = None,
 ) -> list[Any]:
     """Convert a {attr_type: value} dict to a list of PackedAttributes.
 
     Uses attr_auto for spec-correct type packing based on ATTR_VALUE_TYPES.
-    Skips attr types in skip set.
+    Skips attr types in skip set. Both `attrs` keys and `skip` members are
+    treated as integers internally (CKA values are `int` subclasses); the
+    parameter types are intentionally `Mapping[Any, Any]` / `set[Any]`
+    because `dict`/`set` type parameters are invariant — narrower types
+    would reject `dict[CKA, ...]` / `set[CKA]` at every callsite.
     """
     if not attrs:
         return []

@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 10 |
+| current_iteration | 11 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-28 |
-| last_action | Phase 5 CHECK-002 progress: added `__getattr__(self, name) -> Any` to RawPKCS11 (Any-return fallback for the 100+ C_* methods attached dynamically via `setattr` at module load). mypy 466→414 (-52, including 2 newly-redundant `# type: ignore` markers). Cumulative: 516→414 (-102, -20%). |
+| last_action | Phase 5 CHECK-002 progress: widened `pack.attr_{bool,ulong,bytes,string,date,array,template}` to accept `CKA \| int`; widened `mech_simple` and `mech_bytes` to `CKM \| int`; widened `recipes.pack_attrs` to `Mapping[Any, Any]` / `set[Any] \| frozenset[Any]`. Reason: dict / set / Mapping are invariant in K, so dict[CKA, ...] could not be passed where dict[int, ...] was expected — using broader types fixes that without losing runtime correctness (CKA / CKM ARE int subclasses). mypy 414→384 (-30). Cumulative: 516→384 (-132, -26%). |
 
 ### Findings Table (Phase 1 → Phase 2)
 
