@@ -641,6 +641,16 @@ All skips are legitimate capability-based skips; none hide broken behavior.
 ### Root cause of 28K errors
 `pkcsslotd` daemon dies during the full test run, causing `FunctionFailed` for all subsequent tests. When run individually with the daemon alive, tests pass. This is a daemon stability issue under sustained load — needs investigation in task 2.4.
 
+> **Update 2026-04-29:** No longer reproduces. The 2026-04-29 phase 1 run
+> against opencryptoki-master (commit unpinned, `--depth 1` HEAD) recorded
+> 0 crashed tests across 84,026 total — vs 6 crashed in the 2026-04-09
+> baseline. Either upstream OpenCryptoki master fixed the daemon stability
+> issue between Apr 8 and Apr 29, or the larger 19,684-entry
+> `data/disabled-tests.txt` baseline now pre-skips the load pattern
+> that triggered it. Worth cross-checking against the
+> `test-opencryptoki` (Fedora 44 RPM, version 3.26.0) image, which is
+> still pinned to 3.26.
+
 ### Known quirks
 - Requires `pkcsslotd` daemon running
 - Software token (`swtok`) only
