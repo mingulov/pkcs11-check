@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 31 |
+| current_iteration | 33 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | in-progress (5/6 providers done; bouncyhsm currently testing at ~65%) |
+| phase1_last_run | 2026-04-29 (5/6 PROVIDERS DONE; bouncyhsm STOPPED at 7/223 units due to crash-recovery overhead) |
 | phase1_due | false |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-29 |
-| last_action | tpm2 done: 8,272 P / 5,029 F / 44,895 S / 2 XF / **1,027 E** / 0 C / 59,225 T (was 8,202/5,028/47,977/2/0/0/62,242 in v0.1.0). **NEW: 1,027 errors** — 912 in acvp/test_acvp_rsa.py, 63 in test_acvp_ecdsa.py, 43 in acvp/test_acvp_rsa_keygen.py. All "ERROR at setup" — fixture key-import rejected (TPM doesn't support certain key params). Phase 2 will classify: tests need to detect-and-skip on unsupported params, OR the disabled-tests baseline needs to pre-skip them. bouncyhsm currently testing (Up 7m, 65%, dense FFFFF pattern as expected). |
+| last_action | **Phase 1 closed with bouncyhsm partial.** bouncyhsm container ran ~1 hour, processed 7/223 units, accumulated 9× SIGSEGV in C_Encrypt+0x190 (matches v0.1.0 finding "Segfault on >1MB data in encryption" — refreshed test vectors include more 1MB+ cases). At ~10 min/unit pace, full run projected 30+ hours; stopped via `pkill -f test-all.sh` + `docker stop`. Partial state saved in artifacts/bouncyhsm/state.json (~70 MB). **Phase 1 finalized:** 5 providers fully complete (softhsm2-main, kryoptic-main, nss-main, opencryptoki-master, tpm2), bouncyhsm with 7-unit partial. Headline findings: opencryptoki pkcsslotd-die (HIGH from v0.1.0) RESOLVED; tpm2 1,027 fixture-setup errors NEW; bouncyhsm crash-frequency higher than v0.1.0 baseline. Phase 2 triage starts next. |
 
 ### Findings Table (Phase 1 → Phase 2)
 
