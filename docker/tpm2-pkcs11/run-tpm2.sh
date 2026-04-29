@@ -20,7 +20,16 @@ swtpm socket --tpm2 \
 sleep 1
 
 dbus-daemon --system --fork 2>/dev/null
-tpm2-abrmd --tcti=swtpm:host=127.0.0.1,port=2321 --allow-root >/dev/null 2>&1 &
+# tpm2-abrmd default --max-transient-objects=27 saturates quickly during
+# ACVP RSA / ECDSA runs (each test generates a keypair). Refreshed test
+# data in 2026-04-29 drove 1,027+ "Esys_Load: out of memory for object
+# contexts" errors during login. Raise the cap so per-connection key
+# generation has headroom; --max-sessions similarly prevents session
+# exhaustion across long pytest files.
+tpm2-abrmd --tcti=swtpm:host=127.0.0.1,port=2321 \
+    --max-transient-objects=512 \
+    --max-sessions=512 \
+    --allow-root >/dev/null 2>&1 &
 sleep 2
 
 export TPM2TOOLS_TCTI="tabrmd:bus_type=system"
