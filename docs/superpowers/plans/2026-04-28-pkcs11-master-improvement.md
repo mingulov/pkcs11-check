@@ -73,6 +73,82 @@ Every tick of /loop, do **exactly** the following:
 
 ---
 
+## Parallel Investigation Track
+
+Phase 1 (Docker build + full provider matrix) takes 60–120 min per provider, ~4–6 hours total. Idling the loop during that window is wasteful when **read-only** Phase 3 audit and Phase 4 gap-analysis sub-tasks can run concurrently via subagents.
+
+### When the track is active
+- A Phase 1 background task is in flight (a `task-id` is recorded in the State Tracker, status not yet `completed`).
+- The current /loop tick has no urgent foreground work (no Phase 5 fix queue item ready, no fresh Phase 2 finding to triage).
+- An unstarted Phase 3 / Phase 4 sub-task remains in this iteration.
+
+### What to dispatch (parallel-safe)
+
+**Phase 3 audit slices — read-only file inspection:**
+- 3.1 Raw bindings completeness (api.py vs FUNCTION_SIGNATURES)
+- 3.2 types_std vs OASIS pkcs11.h
+- 3.3 Mechanism registry vs spec
+- 3.5 Marker plumbing (`pytest --collect-only -m <marker>` is read-only)
+- 3.6 CKR strict mode (grep + read)
+- 3.10 Architecture doc reconciliation
+
+**Phase 4 gap analyses — pure analysis:**
+- 4.1 Mechanism coverage matrix
+- 4.2 CKR coverage matrix
+- 4.3 PKCS#11 function coverage
+- 4.4 Object class × attribute matrix
+- 4.5 Security test gap analysis
+- 4.6 Multi-part / streaming API gap
+- 4.7 PIN management API gap
+- 4.8 Session-state matrix gap
+- 4.9 Interface-version negotiation gap
+
+### What NOT to dispatch in parallel
+- 3.4 Fixture correctness, 3.7 Subprocess isolation, 3.8 Helper API consistency — these may need to run pytest, which can collide with Docker artifacts being written.
+- 3.11 Lint / type / meta-test sweep — fast in main session; no value in dispatch.
+- Phase 5 fix tasks — modify production code; risk colliding with concurrent main-session edits.
+- Phase 2 triage — needs the new Phase 1 results to exist.
+
+### How to dispatch
+
+Use the `Agent` tool. Pick the subagent type by task shape:
+- **`Explore`** — quick targeted lookups ("which files reference CKM_X?"); single search.
+- **`feature-dev:code-explorer`** — deep traversal mapping (e.g. mechanism-coverage matrix across `mechanism_registry/` + every `test_*.py`).
+- **`general-purpose`** — multi-step research with cross-references (e.g. spec section X → CKR coverage gaps).
+
+Multiple subagents can run concurrently — emit them in a single message with multiple `Agent` tool calls. **Brief each one self-contained** (it has no main-session memory). State the goal, the inputs (file paths, spec references), and the output format (markdown table, bullet list, etc.).
+
+Example brief skeleton:
+
+> Task: Build a coverage matrix of every CKM_* in OASIS PKCS#11 v3.2 spec vs. `src/pkcs11_check/testcases/mechanism_registry/`.
+>
+> Inputs:
+> - Spec: `/home/user/src/m/pkcs11-proxy/doc/oasis-tcs-pkcs11/working/doc/spec/*.md`
+> - Code: `src/pkcs11_check/testcases/mechanism_registry/`, `src/pkcs11_check/raw/types_std.py` (CKM constants)
+>
+> Output: a markdown table with rows = CKM_*, columns = (in_types_std, in_registry, has_test_file). Save to `/tmp/phase4-mechanism-coverage.md`. Reply with the file path and a 5-line summary.
+
+### How to ingest
+
+The subagent returns a text summary plus (if instructed) a written report file. The main loop tick:
+1. Reads the summary; opens the report file if present.
+2. Appends actionable items to the **Parallel Findings Buffer** below — one row per concrete gap or audit finding.
+3. Once Phase 1 completes (artifact write timestamps fresh), the next foreground tick drains the buffer: each row gets classified into the main Findings Table (Phase 2 candidate) or the Fix Queue (Phase 5 task).
+
+### Worktree-isolated implementation (advanced, optional)
+
+For self-contained Phase 5 fixes that don't depend on Phase 1 results (e.g. adding `pytest.xfail(reason=...)` to a test that triggers a documented module bug), dispatch `general-purpose` with `isolation: "worktree"`. The subagent gets an isolated git worktree, implements + tests + commits, and returns a commit hash. Main loop verifies and cherry-picks onto `dev`.
+
+Keep this conservative — at most **one** worktree subagent active at a time to avoid merge conflicts.
+
+### Iteration Protocol — parallel addendum
+
+After step 3 (priority pick) and before step 4 (execute):
+> 3a. If a Phase 1 background task is in flight AND the picked task is foreground-only (Phase 5 / Phase 2), additionally dispatch one or more Phase 3 / 4 read-only subagents per the rules above. Treat the dispatch as a parallel side-effect — the foreground task continues and ScheduleWakeup remains keyed to the foreground deadline.
+> 3b. On wakeup, before picking the next task, check inboxes from any dispatched subagents (`TaskList` / `TaskOutput`) and merge their reports into the Parallel Findings Buffer.
+
+---
+
 ## Phase 0 — Refresh Dependent Components
 
 **Goal:** Fetch the latest upstream test vectors and disabled-tests baseline; verify integrity; surface any vector-set changes that would change test counts.
@@ -705,6 +781,14 @@ Aggregate-level findings (file-grouped where root cause is shared). Per-test tri
 | 2026-04-28 | cctv | BUMP d091f096→67c1397a DONE (zip 1.3 MB, sha 9380931c...; 53 files installed; 1,365 cctv tests collected cleanly) | ~7 weeks of additive C2SP vectors; additive-only by repo policy |
 | 2026-04-28 | acvp | BUMP 3611942e→15c0f3de DONE (zip 490 MB, sha 12c1c795...; 838 files installed; 30,908 acvp tests collected cleanly) | ~5 weeks of additive NIST validation vectors; additive-only |
 | 2026-04-28 | x509-limbo | BUMP 9d594748→086b0da8 DONE (zip 16 MB, sha a7d1a020...; 132 files installed; 1,686 x509/limbo tests collect cleanly) | ~8 weeks of additive C2SP x509 corpus; additive-only |
+
+### Parallel Findings Buffer (Phase 3/4 subagent reports during Phase 1)
+
+> Drained into the main Findings Table or Fix Queue once Phase 1 completes. While Phase 1 is in flight, this is the inbox for read-only subagent results.
+
+| dispatch_iter | sub_task | subagent_type | report_path | summary | drained_to |
+|---|---|---|---|---|---|
+| (empty — populated when subagents run) | | | | | |
 
 ### Iteration Log (Phase 6.4)
 
