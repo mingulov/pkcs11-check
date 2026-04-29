@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 25 |
+| current_iteration | 26 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | in-progress (started 2026-04-29) |
-| phase1_due | false (in flight) |
+| phase1_last_run | in-progress (1/6 providers done; 5 in flight) |
+| phase1_due | false |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-29 |
-| last_action | **Phase 1 launched.** Started softhsm2-main build+test in background (task `bgetiuba7`, log `/tmp/p1-softhsm2-main.log`). Build phase pulling uv image, will then build OpenSSL + SoftHSMv2 + run pytest suite. Expected total runtime: 40–90 min for this provider alone. Subsequent providers (kryoptic-main, nss-main, opencryptoki-master, bouncyhsm, tpm2) launch sequentially after each completes. |
+| last_action | softhsm2-main DONE: 61,246 P / 2,574 F / 13,758 S / 41 XF / 77,619 T (vs v0.1.0 baseline 60,820/2,697/16,943/41/80,501 → +426 P, -123 F, -3,185 S; failures dominated by known RSA-OAEP SHA-256/384 CKR_ARGUMENTS_BAD module bug). Launched remaining 5 providers via `bash docker/test-all.sh kryoptic-main nss-main opencryptoki-master tpm2 bouncyhsm` (task `bkxihijhy`, log `/tmp/p1-rest.log`). Currently building kryoptic-main. Expected total: 2.5–7.5 hours. |
 
 ### Findings Table (Phase 1 → Phase 2)
 
