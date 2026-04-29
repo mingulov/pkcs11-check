@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 26 |
+| current_iteration | 27 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | in-progress (1/6 providers done; 5 in flight) |
+| phase1_last_run | in-progress (3/6 providers done; opencryptoki-master currently building) |
 | phase1_due | false |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-29 |
-| last_action | softhsm2-main DONE: 61,246 P / 2,574 F / 13,758 S / 41 XF / 77,619 T (vs v0.1.0 baseline 60,820/2,697/16,943/41/80,501 → +426 P, -123 F, -3,185 S; failures dominated by known RSA-OAEP SHA-256/384 CKR_ARGUMENTS_BAD module bug). Launched remaining 5 providers via `bash docker/test-all.sh kryoptic-main nss-main opencryptoki-master tpm2 bouncyhsm` (task `bkxihijhy`, log `/tmp/p1-rest.log`). Currently building kryoptic-main. Expected total: 2.5–7.5 hours. |
+| last_action | Phase 1 progressing faster than estimated (~10-30 min/provider). Done: softhsm2-main, kryoptic-main, nss-main. In flight: opencryptoki-master. Pending: tpm2, bouncyhsm. **Pattern across done providers: failures DOWN vs v0.1.0 baseline (-123 / -248 / -136), totals DOWN (-2,882 / -5,779 / -3,128) likely from larger 19,684-entry disabled-tests filter pre-suppressing more known-bad tests.** No new crashes (nss-main retains its 1 crash from baseline). |
 
 ### Findings Table (Phase 1 → Phase 2)
 
