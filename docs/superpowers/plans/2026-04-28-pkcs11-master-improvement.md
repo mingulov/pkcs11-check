@@ -725,14 +725,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 39 |
+| current_iteration | 40 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | in-progress 2026-04-30 — kryoptic-main DONE; softhsm2-main running; nss-main / opencryptoki-master / tpm2 pending. Background task: `bwueo1zox`. |
+| phase1_last_run | in-progress 2026-04-30 — kryoptic-main + softhsm2-main DONE; nss-main running; opencryptoki-master / tpm2 pending. Background task: `bwueo1zox`. |
 | phase1_due | false (in flight) |
-| phase3_audit_complete_for_iteration | 3.2 done (0 defects); 3.1 dispatched (ae0b2a77c754e03f1) |
-| phase4_gap_complete_for_iteration | 4.3 done (82/104, 10 priority untested); 4.5 done (36 gaps, 10 HIGH); 4.1 dispatched (a13e92f19d6cd7b36); 4.2 dispatched (a2e0c137152cb7536) |
+| phase3_audit_complete_for_iteration | 3.1 done (0 gaps); 3.2 done (0 defects) |
+| phase4_gap_complete_for_iteration | 4.2 done (19 zero-cov CKR / 5 HIGH); 4.3 done (82/104, 10 priority untested); 4.5 done (36 gaps, 10 HIGH); 4.1 still running (a13e92f19d6cd7b36) |
 | last_action_at | 2026-04-30 |
-| last_action | kryoptic-main unfiltered: 67,249 P / 2,831 F / 32,343 S / 68 XF / **102,491 T** / 0 crashed (vs filtered 95,012 T → **+7,479 T** unmasked). 7,479 tests no longer pre-skipped: +3,235 valid passes recovered, **+248 real failures previously hidden by baseline**, +3,996 legitimate skips for unsupported mechanisms. Dispatched 3 new parallel subagents: 3.1 raw bindings, 4.1 mechanism coverage matrix, 4.2 CKR coverage matrix. |
+| last_action | softhsm2-main unfiltered: 61,314 P / 2,697 F / 18,149 S / 41 XF / 82,201 T / 0 crashed (vs filtered 77,619 T → +4,582 T unmasked: +68 P, **+123 real failures previously hidden**, +4,391 legit skips). Phase 4.2 subagent ingested: 19 zero-coverage CKR codes; top-leverage finding is that 3 HIGH gaps in C_WrapKey failure paths can be closed by extending test_ckr_wrap.py with 3 cases. |
 
 ### Findings Table (Phase 1 → Phase 2)
 
