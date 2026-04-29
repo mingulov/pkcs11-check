@@ -151,7 +151,10 @@ def _run_asymmetric_sign_kat(
     """
     from pkcs11_check.testcases.mechanism_helpers import build_params_from_vector
 
-    mech_param = build_params_from_vector(entry.mech_id, getattr(config, "param_recipe", None), vec)
+    param_recipe = getattr(config, "param_recipe", None)
+    if param_recipe is None:
+        pytest.skip(f"No param_recipe configured for {entry.mech_name}")
+    mech_param = build_params_from_vector(entry.mech_id, param_recipe, vec)
     if mech_param == "SKIP":
         return
 

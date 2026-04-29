@@ -10,6 +10,7 @@ from typing import Literal, cast
 
 import pytest
 import typer
+from pydantic import SecretStr
 from rich.console import Console
 
 from pkcs11_check.config import P11TestConfig
@@ -213,7 +214,7 @@ def test_command(
                 interface=interface,
                 slot=slot,
                 destructive=destructive,
-                pin=pin,
+                pin=SecretStr(pin) if pin is not None else None,
             )
             baseline = None
             if not ignore_disabled_tests:

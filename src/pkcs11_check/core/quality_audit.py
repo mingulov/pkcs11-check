@@ -742,7 +742,7 @@ def _classify_reason_code_counts(reason_counts: Mapping[str, int]) -> dict[str, 
 
 
 def _classify_reason_code(code: str) -> SkipReasonCategory:
-    return _SELECTED_REASON_CATEGORY.get(code, "unknown")
+    return _SELECTED_REASON_CATEGORY.get(code, "unknown")  # type: ignore[return-value]
 
 
 def _string_list(value: Any) -> list[str]:

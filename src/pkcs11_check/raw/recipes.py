@@ -347,9 +347,9 @@ def gen_ec_keypair(
 def import_secret_key(
     raw: RawPKCS11,
     session: int,
-    key_type: CKK,
+    key_type: CKK | int,
     value: bytes,
-    attrs: dict[CKA, Any] | None = None,
+    attrs: Mapping[Any, Any] | None = None,
 ) -> int:
     """Import a secret key by value using C_CreateObject."""
     base = {CKA_CLASS, CKA_KEY_TYPE, CKA_VALUE}
@@ -1283,8 +1283,9 @@ def restore_operation_state(
 def init_token(raw: RawPKCS11, slot_id: int, so_pin: bytes, label: str) -> None:
     """Initialize a token with C_InitToken. Label is padded to 32 bytes with spaces."""
     label_bytes = label.encode().ljust(32)[:32]
-    # ctypes c_char array constructor accepts bytes per-element; mypy is overly strict.
-    label_buf = (ctypes.c_char * 32)(*label_bytes)  # type: ignore[arg-type]
+    # ctypes c_char array constructor accepts bytes per-element at runtime; the
+    # static type stub flags the splat as Iterable[c_char] mismatch.
+    label_buf = (ctypes.c_char * 32)(*[bytes([b]) for b in label_bytes])
     pin_buf = _to_ubyte_buf(so_pin)
     rv = raw.C_InitToken(slot_id, pin_buf, len(so_pin), label_buf)
     expect_rv(rv, CKR_OK)

@@ -326,6 +326,14 @@ def _add_review_record(
         record["unit_status"] = unit_status
 
 
+def _record_sources(record: dict[str, object]) -> tuple[str, ...]:
+    """Coerce a review_map record's ``sources`` field into a sorted tuple."""
+    raw = record.get("sources")
+    if raw is None or not isinstance(raw, (set, list, tuple)):
+        return ()
+    return tuple(sorted(str(source) for source in raw))
+
+
 def collect_disabled_candidate_review_records(
     artifact_dirs: list[Path],
     *,
@@ -411,7 +419,7 @@ def collect_disabled_candidate_review_records(
                         f"{artifact_dir}: {status} unit {target} requires manual review"
                     )
 
-    records = [
+    review_records: list[DisabledCandidateReviewRecord] = [
         DisabledCandidateReviewRecord(
             artifact_dir=str(record["artifact_dir"]),
             nodeid=str(record["nodeid"]),
@@ -422,11 +430,11 @@ def collect_disabled_candidate_review_records(
                 str(record["unit_status"]) if record.get("unit_status") is not None else None
             ),
             discovery_mode=str(record["discovery_mode"]),  # type: ignore[arg-type]
-            sources=tuple(sorted(str(source) for source in record.get("sources", set()))),
+            sources=_record_sources(record),
         )
         for _, record in sorted(review_map.items())
     ]
-    return records, sorted(manual_review)
+    return review_records, sorted(manual_review)
 
 
 def collect_disabled_candidates(

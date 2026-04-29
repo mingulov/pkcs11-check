@@ -171,6 +171,7 @@ def _validate_helper_alias_consistency(
 
     resolved: dict[int, Any] = {}
     for key, value in helpers.items():
+        mechanism_id: int | None
         if isinstance(key, int):
             mechanism_id = key
         elif isinstance(key, str):

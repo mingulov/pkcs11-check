@@ -91,7 +91,7 @@ class PointerArg:
             storage_size = ctypes.sizeof(storage)
             element_count = len(storage)
             fallback = type(item_type).__name__ if item_type else None
-            element_type = getattr(item_type, "__name__", fallback)
+            element_type = getattr(item_type, "__name__", fallback) or ""
         else:
             pointer = ctypes.cast(ctypes.pointer(storage), CK_VOID_PTR)
             kind = "scalar"

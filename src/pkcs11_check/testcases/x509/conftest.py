@@ -290,7 +290,7 @@ def import_cert_raw(
 
     Returns (handle, needed_explicit_attrs).
     """
-    from asn1crypto.x509 import Certificate as Asn1Cert
+    from asn1crypto.x509 import Certificate as Asn1Cert  # type: ignore[import-untyped]
 
     minimal: dict[int, Any] = {
         CKA_CLASS: CKO_CERTIFICATE,

@@ -184,7 +184,7 @@ def _x942_derive_aes(
     extra_attrs: dict[int, Any] | None = None,
 ) -> int:
     """Derive an AES-128 key from X9.42 DH."""
-    attrs = {
+    attrs: dict[int, Any] = {
         CKA_CLASS: CKO_SECRET_KEY,
         CKA_KEY_TYPE: CKK_AES,
         CKA_SENSITIVE: False,

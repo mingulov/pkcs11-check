@@ -56,6 +56,7 @@ def test_limbo_identity_closeness(
 
         try:
             # 1. Import Certificate
+            assert cert_der is not None
             cert_h = import_cert_object(
                 rs.raw,
                 rs.sh,
