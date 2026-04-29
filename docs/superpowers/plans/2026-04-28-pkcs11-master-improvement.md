@@ -790,7 +790,7 @@ Aggregate-level findings (file-grouped where root cause is shared). Per-test tri
 |---|---|---|---|---|---|
 | 37 | 3.2 types_std vs OASIS pkcs11.h | feature-dev:code-explorer | `/tmp/phase3-2-types-std-audit.md` | running… | pending |
 | 37 | 4.3 PKCS#11 function coverage | feature-dev:code-explorer | `/tmp/phase4-3-function-coverage.md` | running… | pending |
-| 37 | 4.5 Security test gap analysis | feature-dev:code-explorer | `/tmp/phase4-5-security-gap-analysis.md` | running… | pending |
+| 37 | 4.5 Security test gap analysis | feature-dev:code-explorer | `/tmp/phase4-5-security-gap-analysis.md` | **DONE 2026-04-30 02:00** — 36 gaps (10 HIGH / 21 MED / 5 LOW). Top 5: GAP-A1 multi-part streaming API untested, GAP-W1 wrap-non-extractable assertion missing, **GAP-S1 ECDSA timing test cosmetic — false coverage claim for CVE-2023-6135 Minerva and CVE-2024-45678 EUCLEAK**, GAP-P1 Manger oracle uses random ciphertexts only, GAP-T3 SENSITIVE not tested through wrap/unwrap. | pending Phase 1 finish; queue for Phase 5 |
 
 ### Iteration Log (Phase 6.4)
 
