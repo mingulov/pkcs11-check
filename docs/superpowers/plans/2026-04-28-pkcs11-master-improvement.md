@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 27 |
+| current_iteration | 30 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | in-progress (3/6 providers done; opencryptoki-master currently building) |
+| phase1_last_run | in-progress (4/6 providers done; tpm2 currently testing) |
 | phase1_due | false |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-29 |
-| last_action | Phase 1 progressing faster than estimated (~10-30 min/provider). Done: softhsm2-main, kryoptic-main, nss-main. In flight: opencryptoki-master. Pending: tpm2, bouncyhsm. **Pattern across done providers: failures DOWN vs v0.1.0 baseline (-123 / -248 / -136), totals DOWN (-2,882 / -5,779 / -3,128) likely from larger 19,684-entry disabled-tests filter pre-suppressing more known-bad tests.** No new crashes (nss-main retains its 1 crash from baseline). |
+| last_action | Phase 1 progressing. Done: softhsm2-main, kryoptic-main, nss-main, **opencryptoki-master**. In flight: tpm2 (Up 2 min). Pending: bouncyhsm. opencryptoki-master result: 75,209 P / 2,387 F / 6,375 S / 55 XF / 84,026 T / **0 crashed** (was 6 in v0.1.0 — pkcsslotd-die-under-load issue **resolved**). User-driven /loop pause + restart between ticks 29 and 30. |
 
 ### Findings Table (Phase 1 → Phase 2)
 
