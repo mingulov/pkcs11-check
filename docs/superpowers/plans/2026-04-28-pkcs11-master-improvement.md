@@ -725,14 +725,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 37 |
+| current_iteration | 39 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | in-progress 2026-04-30 — 5 providers (kryoptic-main, softhsm2-main, nss-main, opencryptoki-master, tpm2); bouncyhsm deliberately omitted to avoid the 30+ hour SIGSEGV-recovery time. Background task: `bwueo1zox` (log `/tmp/p1-iter37.log`). |
+| phase1_last_run | in-progress 2026-04-30 — kryoptic-main DONE; softhsm2-main running; nss-main / opencryptoki-master / tpm2 pending. Background task: `bwueo1zox`. |
 | phase1_due | false (in flight) |
-| phase3_audit_complete_for_iteration | 3.2 dispatched (subagent a5c23aaaca1397863, report → `/tmp/phase3-2-types-std-audit.md`) |
-| phase4_gap_complete_for_iteration | 4.3 dispatched (a21ac222d95170b73 → `/tmp/phase4-3-function-coverage.md`); 4.5 dispatched (a6805be8b10820482 → `/tmp/phase4-5-security-gap-analysis.md`) |
+| phase3_audit_complete_for_iteration | 3.2 done (0 defects); 3.1 dispatched (ae0b2a77c754e03f1) |
+| phase4_gap_complete_for_iteration | 4.3 done (82/104, 10 priority untested); 4.5 done (36 gaps, 10 HIGH); 4.1 dispatched (a13e92f19d6cd7b36); 4.2 dispatched (a2e0c137152cb7536) |
 | last_action_at | 2026-04-30 |
-| last_action | First **parallel-track** iteration: launched the unfiltered Phase 1 (no baseline) for 5 stable providers in background, plus 3 read-only investigation subagents (Phase 3.2 types_std vs OASIS spec, Phase 4.3 PKCS#11 function coverage, Phase 4.5 security gap analysis). All 4 tasks running concurrently; subagent reports will land in the Parallel Findings Buffer for ingestion on the next foreground tick. |
+| last_action | kryoptic-main unfiltered: 67,249 P / 2,831 F / 32,343 S / 68 XF / **102,491 T** / 0 crashed (vs filtered 95,012 T → **+7,479 T** unmasked). 7,479 tests no longer pre-skipped: +3,235 valid passes recovered, **+248 real failures previously hidden by baseline**, +3,996 legitimate skips for unsupported mechanisms. Dispatched 3 new parallel subagents: 3.1 raw bindings, 4.1 mechanism coverage matrix, 4.2 CKR coverage matrix. |
 
 ### Findings Table (Phase 1 → Phase 2)
 
@@ -791,6 +791,9 @@ Aggregate-level findings (file-grouped where root cause is shared). Per-test tri
 | 37 | 3.2 types_std vs OASIS pkcs11.h | feature-dev:code-explorer | `/tmp/phase3-2-types-std-audit.md` | **DONE 2026-04-30 02:11** — **0 defects** on 476 spec-defined constants (CKR/CKM/CKA/CKO/CKK/CKF). 26 "extras" are legitimate v3.2-text-but-not-in-pkcs11t.h-CS01 additions: 5 CKT_*, 8 CKV_*, 3 CKH_* (hedged signing), 12 CKP_* (PQC param sets), 1 CKS_LAST_VALIDATION_OK. Optional follow-up: spot-check PQC CKP_* values against mechanisms.md §6.39-6.41 (LOW priority). | no-action — no Phase 5 fix required |
 | 37 | 4.3 PKCS#11 function coverage | feature-dev:code-explorer | `/tmp/phase4-3-function-coverage.md` | **DONE 2026-04-30 02:14** — **82/104 TESTED (79%)** vs release-v0.1.0.md's stale "64/104" claim — implies +18 functions covered since v0.1.0. **18 UNTESTED** (9 v2.40 / 5 v3.0 / 4 v3.2), **4 HELPER-ONLY** (init_token/init_pin/set_pin/get_slot_info — recipes ready, just need tests), **31 NEGATIVE-PATH-MISSING** (mostly v3.0 message API). **Top-10 prio:** C_SessionCancel (known Kryoptic SIGSEGV), C_LoginUser, C_CloseAllSessions, C_GetSessionValidationFlags, C_Init{Token,PIN}/C_SetPIN (recipes ready), C_GetInfo, C_DigestEncryptUpdate, C_WaitForSlotEvent. | each top-10 → Phase 5 GAP row (queue), pending Phase 1 finish |
 | 37 | 4.5 Security test gap analysis | feature-dev:code-explorer | `/tmp/phase4-5-security-gap-analysis.md` | **DONE 2026-04-30 02:00** — 36 gaps (10 HIGH / 21 MED / 5 LOW). Top 5: GAP-A1 multi-part streaming API untested, GAP-W1 wrap-non-extractable assertion missing, **GAP-S1 ECDSA timing test cosmetic — false coverage claim for CVE-2023-6135 Minerva and CVE-2024-45678 EUCLEAK**, GAP-P1 Manger oracle uses random ciphertexts only, GAP-T3 SENSITIVE not tested through wrap/unwrap. | pending Phase 1 finish; queue for Phase 5 |
+| 39 | 3.1 Raw bindings completeness | feature-dev:code-explorer | `/tmp/phase3-1-raw-bindings-audit.md` | running… | pending |
+| 39 | 4.1 Mechanism coverage matrix | feature-dev:code-explorer | `/tmp/phase4-1-mechanism-coverage.md` | running… | pending |
+| 39 | 4.2 CKR coverage matrix | feature-dev:code-explorer | `/tmp/phase4-2-ckr-coverage.md` | running… | pending |
 
 ### Iteration Log (Phase 6.4)
 
