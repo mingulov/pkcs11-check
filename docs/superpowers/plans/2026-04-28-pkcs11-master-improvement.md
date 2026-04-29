@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 24 |
+| current_iteration | 25 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | (none yet) |
-| phase1_due | true |
+| phase1_last_run | in-progress (started 2026-04-29) |
+| phase1_due | false (in flight) |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-29 |
-| last_action | **Phase 5 fix queue DRAINED.** CHECK-001/002/003/004 all CLOSED. UV-001 deferred as out-of-scope workstation issue (workaround: `.venv/bin/<cmd>`). mypy --strict src/ = 0 errors (was 516 at start of session). 643 meta-tests pass, ruff clean. **Phase 1 unblocked** — next tick should run `--no-cache` rebuild of all `*-main` Docker providers and execute the full test matrix. |
+| last_action | **Phase 1 launched.** Started softhsm2-main build+test in background (task `bgetiuba7`, log `/tmp/p1-softhsm2-main.log`). Build phase pulling uv image, will then build OpenSSL + SoftHSMv2 + run pytest suite. Expected total runtime: 40–90 min for this provider alone. Subsequent providers (kryoptic-main, nss-main, opencryptoki-master, bouncyhsm, tpm2) launch sequentially after each completes. |
 
 ### Findings Table (Phase 1 → Phase 2)
 
