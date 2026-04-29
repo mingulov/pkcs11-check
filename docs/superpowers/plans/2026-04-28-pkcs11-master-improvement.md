@@ -725,14 +725,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 36 |
+| current_iteration | 37 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | INVALIDATED — `data/disabled-tests.txt` cleared by user in `6c58a4a` to capture **raw** pass/fail without baseline filtering. Old 2026-04-29 results no longer reflect the runtime configuration. |
-| phase1_due | **true** (re-run with empty baseline pending) |
-| phase3_audit_complete_for_iteration | (none) |
-| phase4_gap_complete_for_iteration | (none) |
+| phase1_last_run | in-progress 2026-04-30 — 5 providers (kryoptic-main, softhsm2-main, nss-main, opencryptoki-master, tpm2); bouncyhsm deliberately omitted to avoid the 30+ hour SIGSEGV-recovery time. Background task: `bwueo1zox` (log `/tmp/p1-iter37.log`). |
+| phase1_due | false (in flight) |
+| phase3_audit_complete_for_iteration | 3.2 dispatched (subagent a5c23aaaca1397863, report → `/tmp/phase3-2-types-std-audit.md`) |
+| phase4_gap_complete_for_iteration | 4.3 dispatched (a21ac222d95170b73 → `/tmp/phase4-3-function-coverage.md`); 4.5 dispatched (a6805be8b10820482 → `/tmp/phase4-5-security-gap-analysis.md`) |
 | last_action_at | 2026-04-30 |
-| last_action | User cleared `data/disabled-tests.txt` (commit `6c58a4a`) to obtain the **real** test status without baseline-driven skip filtering. Phase 1 results from 2026-04-29 (5/6 providers done, bouncyhsm partial) are now stale — those runs used the 19,684-entry baseline (and later the regenerated 11,192-entry baseline). The next Phase 1 run will show every test outcome, including the ones the baselines were pre-skipping. **Findings Table entries from iter 33 are now historical only.** Until the new Phase 1 completes, Phase 2 triage cannot meaningfully proceed against the latest data. Open queue still: TPM-FIXTURE-001 (provisional fix in tree, validation now folds into the new Phase 1), BOUNCY-CRASH-FREQ-001 (re-evaluate after fresh run). |
+| last_action | First **parallel-track** iteration: launched the unfiltered Phase 1 (no baseline) for 5 stable providers in background, plus 3 read-only investigation subagents (Phase 3.2 types_std vs OASIS spec, Phase 4.3 PKCS#11 function coverage, Phase 4.5 security gap analysis). All 4 tasks running concurrently; subagent reports will land in the Parallel Findings Buffer for ingestion on the next foreground tick. |
 
 ### Findings Table (Phase 1 → Phase 2)
 
@@ -788,7 +788,9 @@ Aggregate-level findings (file-grouped where root cause is shared). Per-test tri
 
 | dispatch_iter | sub_task | subagent_type | report_path | summary | drained_to |
 |---|---|---|---|---|---|
-| (empty — populated when subagents run) | | | | | |
+| 37 | 3.2 types_std vs OASIS pkcs11.h | feature-dev:code-explorer | `/tmp/phase3-2-types-std-audit.md` | running… | pending |
+| 37 | 4.3 PKCS#11 function coverage | feature-dev:code-explorer | `/tmp/phase4-3-function-coverage.md` | running… | pending |
+| 37 | 4.5 Security test gap analysis | feature-dev:code-explorer | `/tmp/phase4-5-security-gap-analysis.md` | running… | pending |
 
 ### Iteration Log (Phase 6.4)
 
