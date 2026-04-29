@@ -26,6 +26,21 @@ Updated as Docker targets are analyzed.
   `CKF_WRAP` and `CKF_UNWRAP` for `CKM_DES_CBC_PAD` and `CKM_DES3_CBC_PAD`, but `C_WrapKey`
   returns `CKR_MECHANISM_INVALID` even when called with matching DES-family wrapping keys and
   DES-family target keys. Detected by: `test_mech_wrap.py`.
+- **HIGH — SIGSEGV on integer-overflow `template_count` (NEW 2026-04-29)**: Calling
+  `C_CreateObject`, `C_GenerateKey`, or `C_GenerateKeyPair` with `ulCount` set to extreme
+  values such as `0xffffffffffffffff` (UINT64_MAX), `0xaaaaaaaaaaaaaab`
+  (sizeof(CK_ATTRIBUTE)-overflow boundary), or `0x100000000` (4 GiB) crashes the module
+  with `SIGSEGV` instead of returning `CKR_ARGUMENTS_BAD`. 8/8 overflow inputs across
+  the three function entry points reproduce the crash. Caller-controlled-count→DoS via
+  process termination. Affects `softhsm2-main` (HEAD on 2026-04-29). Detected by:
+  `test_arithmetic_overflow.py::TestTemplateCountOverflow` and
+  `TestGenerateKeyPairCountOverflow`. Likely missing length validation in
+  `SoftHSM.cpp`'s template parser before allocating / iterating. Reportable upstream.
+- **GCM null-IV crash potential (NEW 2026-04-29)**: `test_ffi_length_boundary.py
+  ::TestMechanismNullInnerParams::test_gcm_null_iv` failed (does not assert clean
+  CKR_ARGUMENTS_BAD on `pIv = NULL` for GCM). Needs deeper investigation — currently
+  marked as a SoftHSM-specific finding; may overlap with arithmetic-overflow theme.
+  Detected by: `test_ffi_length_boundary.py`.
 
 ### Known quirks
 - `C_GetObjectSize` returns `CK_UNAVAILABLE_INFORMATION` (not implemented)
