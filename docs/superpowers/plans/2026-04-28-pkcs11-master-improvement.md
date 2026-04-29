@@ -651,37 +651,37 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 |---|---|
 | current_iteration | 36 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | 2026-04-29 (5/6 done; bouncyhsm partial 7/223) |
-| phase1_due | false |
+| phase1_last_run | INVALIDATED — `data/disabled-tests.txt` cleared by user in `6c58a4a` to capture **raw** pass/fail without baseline filtering. Old 2026-04-29 results no longer reflect the runtime configuration. |
+| phase1_due | **true** (re-run with empty baseline pending) |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
-| last_action_at | 2026-04-29 |
-| last_action | **NEW HIGH-severity finding closed: SoftHSM2 SIGSEGV on template_count integer overflow.** 8 module crashes in C_CreateObject/C_GenerateKey/C_GenerateKeyPair when ulCount = UINT64_MAX, 0xaaaaaaaaaaaaaab, or 0x100000000. Caller-controlled-count → DoS via process termination. Documented in `docs/module-issues.md` SoftHSM2 §Known bugs as new HIGH bug. SOFTHSM-SEC-001 closed as MOD-BUG. Remaining: TPM-FIXTURE-001 (provisional fix needs re-run validation), BOUNCY-CRASH-FREQ-001. |
+| last_action_at | 2026-04-30 |
+| last_action | User cleared `data/disabled-tests.txt` (commit `6c58a4a`) to obtain the **real** test status without baseline-driven skip filtering. Phase 1 results from 2026-04-29 (5/6 providers done, bouncyhsm partial) are now stale — those runs used the 19,684-entry baseline (and later the regenerated 11,192-entry baseline). The next Phase 1 run will show every test outcome, including the ones the baselines were pre-skipping. **Findings Table entries from iter 33 are now historical only.** Until the new Phase 1 completes, Phase 2 triage cannot meaningfully proceed against the latest data. Open queue still: TPM-FIXTURE-001 (provisional fix in tree, validation now folds into the new Phase 1), BOUNCY-CRASH-FREQ-001 (re-evaluate after fresh run). |
 
 ### Findings Table (Phase 1 → Phase 2)
+
+> **History note (iter 36, 2026-04-30):** the iter-33 rows below were captured against runs filtered by `data/disabled-tests.txt`. The user has since cleared that file (commit `6c58a4a`) to capture the **real** unfiltered status. The next Phase 1 run will repopulate this table from scratch — leaving the historical rows here as background until the fresh run lands.
 
 Aggregate-level findings (file-grouped where root cause is shared). Per-test triage would require ~200 files × 5-15 min and most match documented module bugs. Triaging the cluster-level findings here.
 
 | iter | provider | scope | outcome | excerpt | classification | linked_fix |
 |---|---|---|---|---|---|---|
-| 33 | softhsm2-main | test_rsa_oaep* / test_wycheproof_rsa_oaep* | failed | RSA-OAEP non-SHA1 hash returns CKR_ARGUMENTS_BAD | **MOD-BUG (documented)** — `docs/module-issues.md` SoftHSM2 §RSA-OAEP only supports SHA-1 | (existing) |
-| 33 | softhsm2-main | test_wycheproof_rsa_pss | failed | RSA-PSS distinct hash/MGF rejected | **MOD-BUG (documented)** — SoftHSM2 §RSA-PSS distinct hash/MGF | (existing) |
-| 33 | softhsm2-main | test_acvp_ecdh / test_acvp_eddsa / test_acvp_mldsa | failed | ACVP SigVer accepts invalid sigs | **MOD-BUG (documented)** — SoftHSM2 §EDDSA accepts invalid signatures | (existing) |
-| 33 | softhsm2-main | test_wycheproof_hmac / test_wycheproof.py | failed | HMAC truncated / AES-GCM edge cases | **MOD-BUG (documented)** — SoftHSM2 §HMAC truncated not supported | (existing) |
-| 33 | softhsm2-main | test_mech_wrap | failed | DES_CBC_PAD wrap CKR_MECHANISM_INVALID | **MOD-BUG (documented)** — SoftHSM2 §DES_CBC_PAD wrap advertised but not operational | (existing) |
-| 33 | softhsm2-main | security/test_arithmetic_overflow / test_ffi_length_boundary | failed | security boundary tests | **NEW — needs investigation** (may be NSS-specific test running on softhsm2; or new security findings) | TBD |
-| 33 | kryoptic-main | test_acvp_eddsa / test_acvp_slhdsa | failed | EDDSA/SLH-DSA SigVer accepts invalid | **MOD-BUG (documented)** — Kryoptic §EDDSA/SLH-DSA accepts invalid signatures | (existing) |
-| 33 | kryoptic-main | test_v30_session | failed | C_SessionCancel crash via function list | **MOD-BUG (documented)** — Kryoptic §C_SessionCancel crash | (existing) |
-| 33 | kryoptic-main | test_wycheproof_mldsa_sign | failed | seed-based key derivation | **MOD-BUG (documented)** — Kryoptic §ML-DSA sign seed mismatch | (existing) |
-| 33 | nss-main | test_wycheproof_dsa | failed | NSS rejects valid DSA sigs | **MOD-BUG (documented)** — NSS §DSA verify rejects valid signatures (296 vectors) | (existing) |
-| 33 | nss-main | test_acvp_eddsa | failed | EDDSA SigVer | **MOD-BUG (documented)** — NSS §EdDSA accepts invalid signatures | (existing) |
-| 33 | nss-main | test_acvp_mlkem / test_wycheproof_mlkem | failed | ML-KEM not supported in NSS 3.120 | **MOD-BUG (documented)** — NSS §ML-KEM not supported | (existing) |
-| 33 | nss-main | security/* | failed | sensitive key exposure / Tookan | **MOD-BUG (documented)** — NSS §CRITICAL CKA_VALUE on sensitive, CKA_EXTRACTABLE escalation | (existing) |
-| 33 | opencryptoki-master | (35 files) | failed | various — pkcsslotd-die now RESOLVED | **HEADLINE FINDING: pkcsslotd-die HIGH from v0.1.0 RESOLVED**. Other 35 file failures match documented issues. | needs `docs/module-issues.md` update to mark pkcsslotd-die resolved |
-| 33 | tpm2 | acvp/test_acvp_rsa | error (912) | "ERROR at setup of TestRsa*" — fixture key-import rejected | **CHECK-BUG (NEW)** — test fixture should detect TPM-unsupported RSA modulus sizes / parameters and `pytest.skip()` rather than error. OR disabled-tests baseline needs to pre-skip. | new Phase 5 task |
-| 33 | tpm2 | acvp/test_acvp_ecdsa | error (63) | "ERROR at setup of TestEcdsa*" | **CHECK-BUG (NEW)** — same root cause as above for ECDSA curves not supported by TPM | new Phase 5 task |
-| 33 | tpm2 | acvp/test_acvp_rsa_keygen | error (43) | "ERROR at setup of TestRsaKeyGen" | **CHECK-BUG (NEW)** — same root cause | new Phase 5 task |
-| 33 | bouncyhsm | acvp/aes/test_ccm/cfb*/cts/gcm/ofb (PARTIAL) | crashed | 9× SIGSEGV in C_Encrypt+0x190 in 7 units | **MOD-BUG (documented + new severity)** — BouncyHSM §segfault on >1MB encryption. Crash frequency materially higher than v0.1.0 baseline (9/7 vs 3/224) — refreshed test data triggers more cases. | (existing module bug; severity worth re-noting) |
+| 33 *(stale)* | softhsm2-main | test_rsa_oaep* / test_wycheproof_rsa_oaep* | failed | RSA-OAEP non-SHA1 hash returns CKR_ARGUMENTS_BAD | **MOD-BUG (documented)** — `docs/module-issues.md` SoftHSM2 §RSA-OAEP only supports SHA-1 | (existing) |
+| 33 *(stale)* | softhsm2-main | test_wycheproof_rsa_pss | failed | RSA-PSS distinct hash/MGF rejected | **MOD-BUG (documented)** — SoftHSM2 §RSA-PSS distinct hash/MGF | (existing) |
+| 33 *(stale)* | softhsm2-main | test_acvp_ecdh / test_acvp_eddsa / test_acvp_mldsa | failed | ACVP SigVer accepts invalid sigs | **MOD-BUG (documented)** — SoftHSM2 §EDDSA accepts invalid signatures | (existing) |
+| 33 *(stale)* | softhsm2-main | test_wycheproof_hmac / test_wycheproof.py | failed | HMAC truncated / AES-GCM edge cases | **MOD-BUG (documented)** — SoftHSM2 §HMAC truncated not supported | (existing) |
+| 33 *(stale)* | softhsm2-main | test_mech_wrap | failed | DES_CBC_PAD wrap CKR_MECHANISM_INVALID | **MOD-BUG (documented)** — SoftHSM2 §DES_CBC_PAD wrap advertised but not operational | (existing) |
+| 33 *(stale)* | softhsm2-main | security/test_arithmetic_overflow / test_ffi_length_boundary | failed | security boundary tests | NEW HIGH SoftHSM2 SIGSEGV on integer-overflow ulCount → see `docs/module-issues.md` (commit b2965e7) | closed |
+| 33 *(stale)* | kryoptic-main | test_acvp_eddsa / test_acvp_slhdsa | failed | EDDSA/SLH-DSA SigVer accepts invalid | **MOD-BUG (documented)** — Kryoptic §EDDSA/SLH-DSA accepts invalid signatures | (existing) |
+| 33 *(stale)* | kryoptic-main | test_v30_session | failed | C_SessionCancel crash via function list | **MOD-BUG (documented)** — Kryoptic §C_SessionCancel crash | (existing) |
+| 33 *(stale)* | kryoptic-main | test_wycheproof_mldsa_sign | failed | seed-based key derivation | **MOD-BUG (documented)** — Kryoptic §ML-DSA sign seed mismatch | (existing) |
+| 33 *(stale)* | nss-main | test_wycheproof_dsa | failed | NSS rejects valid DSA sigs | **MOD-BUG (documented)** — NSS §DSA verify rejects valid signatures (296 vectors) | (existing) |
+| 33 *(stale)* | nss-main | test_acvp_eddsa | failed | EDDSA SigVer | **MOD-BUG (documented)** — NSS §EdDSA accepts invalid signatures | (existing) |
+| 33 *(stale)* | nss-main | test_acvp_mlkem / test_wycheproof_mlkem | failed | ML-KEM not supported in NSS 3.120 | **MOD-BUG (documented)** — NSS §ML-KEM not supported | (existing) |
+| 33 *(stale)* | nss-main | security/* | failed | sensitive key exposure / Tookan | **MOD-BUG (documented)** — NSS §CRITICAL CKA_VALUE on sensitive, CKA_EXTRACTABLE escalation | (existing) |
+| 33 *(stale)* | opencryptoki-master | (35 files) | failed | various — pkcsslotd-die now RESOLVED | OC-DOC-001 closed (`b6d1364`) — pkcsslotd-die marked resolved; other failures match documented issues. | closed |
+| 33 *(stale)* | tpm2 | acvp/test_acvp_rsa / test_acvp_ecdsa / test_acvp_rsa_keygen | error (1,018) | "ERROR at setup of ..." → revised diagnosis: TPM swtpm/abrmd resource exhaustion | TPM-FIXTURE-001 provisional fix in tree (`ff8cc65`); validation needs new run | in progress |
+| 33 *(stale)* | bouncyhsm | acvp/aes/test_ccm/cfb*/cts/gcm/ofb (PARTIAL) | crashed | 9× SIGSEGV in C_Encrypt+0x190 in 7 units | **MOD-BUG (documented + new severity)** — BouncyHSM §segfault on >1MB encryption | BOUNCY-CRASH-FREQ-001 still open |
 
 ### Fix Queue (Phase 2 + Phase 4 → Phase 5)
 
@@ -710,7 +710,10 @@ Aggregate-level findings (file-grouped where root cause is shared). Per-test tri
 
 | iter | date | fixes_closed | findings_triaged | per_provider_pass_count | notes |
 |---|---|---|---|---|---|
-| (empty — populated at end of each loop cycle) | | | | | |
+| 1–24 | 2026-04-28 | CHECK-001/003/004 + CHECK-002 (516→0 mypy) | — | — | Phase 0 (4 sources bumped, baseline refreshed) + Phase 5 fix queue drained on the framework side |
+| 25–33 | 2026-04-29 | — | aggregate cluster triage | softhsm2 61,246 / kryoptic 64,014 / nss 44,295 / opencryptoki 75,209 / tpm2 8,272 / bouncyhsm partial | Phase 1 with 19,684-entry baseline; opencryptoki pkcsslotd-die HIGH RESOLVED |
+| 34–36 | 2026-04-29 | OC-DOC-001, SOFTHSM-SEC-001 (NEW HIGH SoftHSM2 SIGSEGV) | TPM-FIXTURE-001 root-cause revised; provisional fix in tree | — | Phase 2 triage; baseline regenerated (19,684→11,192) |
+| 36→ | 2026-04-30 | — | — | — | User cleared `data/disabled-tests.txt` (commit `6c58a4a`); next Phase 1 will run **without baseline filtering** to capture real status. Old findings table marked stale. |
 
 ---
 
