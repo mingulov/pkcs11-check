@@ -200,7 +200,8 @@ def _generate_xmssmt_keypair(rs: Any) -> tuple[int, int]:
 def _try_keygen(gen_fn: Any, rs: Any, name: str) -> tuple[int, int]:
     """Try key generation, xfail if module rejects."""
     try:
-        return gen_fn(rs)
+        result: tuple[int, int] = gen_fn(rs)
+        return result
     except AssertionError as exc:
         exc_msg = str(exc)
         if any(n in exc_msg for n in _KEYGEN_CKR_NAMES):

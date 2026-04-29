@@ -142,7 +142,9 @@ def _derive_aes128(rs: Any, base_key: int, mech: int, param: bytes) -> int:
 def _get_value(rs: Any, handle: int) -> bytes:
     """Read CKA_VALUE from a key handle."""
     attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
-    return attrs[CKA_VALUE]
+    value = attrs[CKA_VALUE]
+    assert isinstance(value, bytes)
+    return value
 
 
 class TestIKE2PRFPlusDerive:

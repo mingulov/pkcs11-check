@@ -41,7 +41,8 @@ def _load_cctv_ed25519() -> list[dict[str, Any]]:
     if not _VECTORS_FILE.exists():
         return []
     with open(_VECTORS_FILE) as f:
-        return json.load(f)
+        result: list[dict[str, Any]] = json.load(f)
+        return result
 
 
 def _vec_id(v: dict[str, Any]) -> str:

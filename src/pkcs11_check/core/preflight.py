@@ -8,6 +8,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from pkcs11_check.core.loader import load_module
 
@@ -24,7 +25,7 @@ class CapabilityManifest:
     slot_count: int | None
     mechanisms: list[str]
     error: str | None = None
-    mechanism_info: dict[str, dict] = field(default_factory=dict)
+    mechanism_info: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _mechanism_name(value: object) -> str:
@@ -48,7 +49,7 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
             raise IndexError(msg)
         raw_mechs = slots[slot].get_mechanisms()
         mechanisms = sorted(_mechanism_name(mech) for mech in raw_mechs)
-        mech_info: dict[str, dict] = {}
+        mech_info: dict[str, dict[str, Any]] = {}
         for mech in raw_mechs:
             try:
                 info = slots[slot].get_mechanism_info(mech)

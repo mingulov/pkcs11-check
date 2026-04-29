@@ -323,7 +323,8 @@ def load_limbo_testcases() -> list[dict[str, Any]]:
     with open(_LIMBO_FILE) as f:
         data = json.load(f)
 
-    return data.get("testcases", [])
+    cases: list[dict[str, Any]] = data.get("testcases", [])
+    return cases
 
 
 def get_unique_limbo_certs(

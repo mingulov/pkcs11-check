@@ -649,14 +649,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 23 |
+| current_iteration | 24 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | (none yet) |
 | phase1_due | true |
 | phase3_audit_complete_for_iteration | (none) |
 | phase4_gap_complete_for_iteration | (none) |
 | last_action_at | 2026-04-29 |
-| last_action | Phase 5 CHECK-002: types_std.py annotations finally landed in 3 single-edit-commit pairs (`__new__`, `__getnewargs__`, CKF dunders) — discovered that the file is auto-reverted between sequential edits, so the previous bulk-edit commits were silently rolling back to unannotated state. Plus `get_mechanism_info` widening, `_bf_key`/`_gost_key` widening, recipes/`_key_decoders` no-any-return wraps. mypy 42→28 (-14 this tick). **Cumulative: 516→28 (-488, -94.6%).** |
+| last_action | Phase 5 CHECK-002: 8 no-any-return wraps in test files (test_stateful_sigs `_try_keygen` typed-result, test_message_crypto `bool(...)`, test_ecdh_extended `assert isinstance(raw, bytes)`, test_cctv_ed25519 typed-result, x509/conftest typed-cases, ckr/conftest `bool(...)`, test_pin `int(...)`, test_ike `assert isinstance`); 2 ComplianceLevel.WARNING → NOT_RECOMMENDED in x509/test_attributes; preflight.py `dict[str, dict]` → `dict[str, dict[str, Any]]` x2 + `from typing import Any`. mypy 28→16 (-12 this tick). **Cumulative: 516→16 (-500, -96.9%).** |
 
 ### Findings Table (Phase 1 → Phase 2)
 

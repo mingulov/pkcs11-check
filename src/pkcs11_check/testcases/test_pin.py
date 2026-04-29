@@ -62,7 +62,7 @@ pytestmark = [pytest.mark.security, pytest.mark.destructive]
 def _try_login(raw: Any, sh: int, pin: bytes) -> int:
     """Attempt login and return raw CKR value."""
     pin_buf = (CK_UTF8CHAR * len(pin))(*pin)
-    return raw.C_Login(sh, CKU_USER, pin_buf, len(pin))
+    return int(raw.C_Login(sh, CKU_USER, pin_buf, len(pin)))
 
 
 class TestWrongPIN:

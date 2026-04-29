@@ -27,4 +27,4 @@ def ckr_strict(request: pytest.FixtureRequest) -> bool:
     When False (default): deviations are logged as compliance notes.
     Both modes fail on errors outside the acceptable set.
     """
-    return request.config.getoption("--ckr-strict")
+    return bool(request.config.getoption("--ckr-strict"))

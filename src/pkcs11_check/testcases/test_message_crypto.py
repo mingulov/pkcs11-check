@@ -118,7 +118,7 @@ def _message_verify(
     in_buf = _to_ubyte_buf(data)
     sig_buf = _to_ubyte_buf(signature)
     rv = rs.raw.C_VerifyMessage(rs.sh, None, 0, in_buf, len(data), sig_buf, len(signature))
-    return rv == CKR_OK
+    return bool(rv == CKR_OK)
 
 
 def _message_sign_multipart(

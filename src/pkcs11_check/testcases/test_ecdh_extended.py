@@ -109,6 +109,7 @@ def _ec_point(rs: Any, handle: int) -> bytes:
     raw = attrs[CKA_EC_POINT]
     if isinstance(raw, bytes) and len(raw) > 0 and raw[0] == 0x04:
         return decode_ec_point(raw)
+    assert isinstance(raw, bytes)
     return raw
 
 

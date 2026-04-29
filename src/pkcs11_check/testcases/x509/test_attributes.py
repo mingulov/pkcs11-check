@@ -118,7 +118,7 @@ class TestCertificateAttributes:
 
                         note(
                             f"Module returned empty attr 0x{attr_id:X} for {tc['id']}",
-                            ComplianceLevel.WARNING,
+                            ComplianceLevel.NOT_RECOMMENDED,
                         )
                 except (AssertionError, Exception):
                     pass
@@ -167,7 +167,7 @@ class TestCertificateAttributes:
 
                     note(
                         "Non-SO session successfully set CKA_TRUSTED=True",
-                        ComplianceLevel.WARNING,
+                        ComplianceLevel.NOT_RECOMMENDED,
                     )
             except (AssertionError, Exception):
                 pass
