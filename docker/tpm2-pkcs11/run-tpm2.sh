@@ -19,17 +19,25 @@ swtpm socket --tpm2 \
     --log level=0 >/dev/null 2>&1 &
 sleep 1
 
-dbus-daemon --system --fork 2>/dev/null
-# tpm2-abrmd default --max-transient-objects=27 saturates quickly during
-# ACVP RSA / ECDSA runs (each test generates a keypair). Refreshed test
-# data in 2026-04-29 drove 1,027+ "Esys_Load: out of memory for object
-# contexts" errors during login. Raise the cap so per-connection key
-# generation has headroom; --max-sessions similarly prevents session
-# exhaustion across long pytest files.
+dbus-daemon --system --fork
+# tpm2-abrmd defaults saturate quickly during ACVP RSA / ECDSA runs (each
+# test generates a keypair). Refreshed test data in 2026-04-29 drove
+# 1,027+ "Esys_Load: out of memory for object contexts" errors during
+# login. Raise the per-connection caps to the values tabrmd 3.0.0 allows.
+#
+# tpm2-abrmd 3.0.0 (Fedora 44) flag constraints:
+#   --max-transients : 1-100 (hard-coded TPM transient-object slot count)
+#   --max-sessions   : 1-4   (hard-coded TPM session-slot count)
+# An earlier fix attempt (commit ff8cc65) used --max-transient-objects=512
+# and --max-sessions=512, which (a) used the wrong flag name and (b) was
+# out of range, so tabrmd died at startup; dbus then could not activate
+# the service ("Cannot do system-bus activation with no user" — see
+# TPM-DBUS-001). Stderr is no longer silenced so future flag errors
+# surface immediately.
 tpm2-abrmd --tcti=swtpm:host=127.0.0.1,port=2321 \
-    --max-transient-objects=512 \
-    --max-sessions=512 \
-    --allow-root >/dev/null 2>&1 &
+    --max-transients=100 \
+    --max-sessions=4 \
+    --allow-root &
 sleep 2
 
 export TPM2TOOLS_TCTI="tabrmd:bus_type=system"
