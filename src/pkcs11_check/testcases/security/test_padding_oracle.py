@@ -5,12 +5,13 @@ different error codes or timing differences. A secure module should return
 the same error code regardless of padding correctness.
 
 Based on Bardou et al. "Efficient Padding Oracle Attacks on Cryptographic
-Hardware" (CRYPTO 2012).
+Hardware" (CRYPTO 2012) and Manger (CRYPTO 2001).
 """
 
 from __future__ import annotations
 
 import re
+import secrets
 import time
 from typing import Any
 
@@ -24,10 +25,13 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     gen_rsa_keypair,
     generate_random,
+    read_attributes,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
+    CKA_MODULUS,
+    CKA_PUBLIC_EXPONENT,
     CKA_TOKEN,
     CKG_MGF1_SHA1,
     CKM_AES_CBC_PAD,
@@ -124,16 +128,123 @@ class TestRSAPaddingOracle:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
-                    f"SECURITY: NSS RSA-OAEP returns non-uniform error codes for invalid "
+                    f"RSA-OAEP returns non-uniform error codes for invalid "
                     f"ciphertexts ({error_types}), enabling padding oracle attack "
                     f"(Manger 2001 / Bleichenbacher-style)",
                     ComplianceLevel.CRITICAL,
                     reference="Manger (2001); PKCS#11 v3.1 Sec.6.1.8: implementations "
                     "SHOULD return CKR_ENCRYPTED_DATA_INVALID uniformly",
                 )
-                pytest.xfail(
-                    f"SECURITY: NSS RSA-OAEP padding oracle -- non-uniform error codes: "
-                    f"{error_types} (Manger 2001 attack vector)"
+                pytest.fail(
+                    f"SECURITY: RSA-OAEP padding oracle — non-uniform error codes: "
+                    f"{error_types} (Manger 2001 attack vector). Distinct CKRs "
+                    f"on invalid ciphertexts let an attacker partition decryption "
+                    f"failures into categories — exactly the Manger leak channel."
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_oaep_manger_structured_oracle(self, p11_raw_session: Any) -> None:
+        """RSA-OAEP Manger 2001 structured-ciphertext oracle.
+
+        Manger's attack distinguishes ciphertexts whose decryption m falls
+        below B = 2^(8*(k-1)) (top byte zero) from those at or above B
+        (top byte non-zero). A secure RSA-OAEP implementation returns
+        identical errors for both categories — the bug is otherwise the
+        primary lever for the Manger chosen-ciphertext attack.
+
+        This goes beyond the existing test_oaep_error_uniformity (which
+        uses 10 random ciphertexts) by:
+        - reading the actual public modulus n and computing B from it,
+        - constructing 50 cat-1 ciphertexts (m < B, top byte zero) and
+          50 cat-2 ciphertexts (m >= B, top byte non-zero) via raw
+          modular exponentiation c = m^e mod n outside PKCS#11,
+        - comparing the resulting error-code sets per category.
+
+        Closes Phase 4.5 GAP-P1 (HIGH).
+        """
+        rs = p11_raw_session
+        pub, priv = gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
+        )
+
+        try:
+            try:
+                attrs = read_attributes(
+                    rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT]
+                )
+            except AssertionError as exc:
+                pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
+                return
+
+            n_bytes = attrs[CKA_MODULUS]
+            e_bytes = attrs[CKA_PUBLIC_EXPONENT]
+            if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
+                pytest.skip("Modulus / exponent not returned as bytes")
+                return
+            n = int.from_bytes(n_bytes, "big")
+            e = int.from_bytes(e_bytes, "big")
+            k = (n.bit_length() + 7) // 8
+            boundary = 1 << (8 * (k - 1))
+
+            oaep = mech_oaep(
+                CKM_RSA_PKCS_OAEP,
+                hash_mech=CKM_SHA_1,
+                mgf=CKG_MGF1_SHA1,
+            )
+
+            cat1_errors: set[str] = set()  # m < B (top byte == 0)
+            cat2_errors: set[str] = set()  # m >= B (top byte != 0)
+
+            samples_per_category = 50
+            for _ in range(samples_per_category):
+                # Cat-1: random m in [1, B). Top byte is 0.
+                m1 = secrets.randbelow(boundary - 1) + 1
+                c1 = pow(m1, e, n)
+                c1_bytes = c1.to_bytes(k, "big")
+                try:
+                    decrypt_single(
+                        rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, c1_bytes, mech_param=oaep
+                    )
+                except AssertionError as exc:
+                    cat1_errors.add(_extract_ckr(exc))
+
+                # Cat-2: random m in [B, n). Top byte is non-zero.
+                m2 = boundary + secrets.randbelow(n - boundary)
+                c2 = pow(m2, e, n)
+                c2_bytes = c2.to_bytes(k, "big")
+                try:
+                    decrypt_single(
+                        rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, c2_bytes, mech_param=oaep
+                    )
+                except AssertionError as exc:
+                    cat2_errors.add(_extract_ckr(exc))
+
+            # Manger leak: the two categories produce DIFFERENT error sets.
+            if cat1_errors != cat2_errors:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"RSA-OAEP returns category-distinguishable error codes — "
+                    f"cat-1 (m<B, top-byte=0): {cat1_errors}, "
+                    f"cat-2 (m>=B, top-byte!=0): {cat2_errors}. This is the "
+                    f"Manger 2001 leak channel.",
+                    ComplianceLevel.CRITICAL,
+                    reference="Manger 'A Chosen Ciphertext Attack on RSA "
+                    "Optimal Asymmetric Encryption Padding (OAEP) as "
+                    "Standardized in PKCS #1 v2.0' (CRYPTO 2001)",
+                )
+                pytest.fail(
+                    f"SECURITY: RSA-OAEP Manger 2001 padding oracle — "
+                    f"cat-1 errors {cat1_errors} != cat-2 errors {cat2_errors}. "
+                    f"An attacker who can submit chosen ciphertexts can "
+                    f"recover the plaintext via roughly k * log2(k) "
+                    f"oracle queries."
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
