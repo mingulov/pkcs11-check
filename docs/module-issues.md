@@ -709,6 +709,22 @@ and wrong CKR on wrap).
 **Root cause:** SoftHSM2 does not validate AES key sizes on import; its
 wrap path catches the failure too late and returns a generic error.
 
+### Tookan §3.3 — CKA_SENSITIVE downgrade on unwrap (NEW 2026-04-30)
+`test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive`
+— SoftHSM2 honours an attacker-supplied `CKA_SENSITIVE=False` in the
+unwrap template, even when the original wrapped key was `CKA_SENSITIVE=True`.
+The unwrapped copy has `CKA_SENSITIVE=False` and the key value can then be
+read via `C_GetAttributeValue(CKA_VALUE)`.
+
+**Severity:** **HIGH (security — known attack class)**. This is the
+canonical Tookan paper §3.3 attack pattern from 2010. Anyone with wrap +
+unwrap permission can clone any sensitive secret key into a non-sensitive
+copy and exfiltrate the key bytes. Reportable upstream as a security
+finding.
+**Root cause:** SoftHSM2's unwrap path applies the attacker's template
+without enforcing the "sensitive can never be unset" rule from
+PKCS#11 v3.1 Sec.4.7.
+
 ---
 
 ## Qryptotoken 0.4.1 (Rust PQC)
@@ -828,3 +844,17 @@ wrap-key's `CKA_KEY_TYPE` against the mechanism's required type before
 invoking the underlying AES primitive. The output is whatever the AES
 primitive produces when fed the generic-secret bytes as if they were an
 AES key.
+
+### Tookan §3.3 — CKA_SENSITIVE downgrade on unwrap (NEW 2026-04-30)
+`test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive`
+— Kryoptic, like SoftHSM2, honours an attacker-supplied `CKA_SENSITIVE=False`
+in the unwrap template, downgrading a `CKA_SENSITIVE=True` key to a
+non-sensitive copy whose value can be read via `C_GetAttributeValue(CKA_VALUE)`.
+
+**Severity:** **HIGH (security — known attack class)**. Canonical Tookan
+paper §3.3 attack pattern from 2010. Any caller with wrap + unwrap
+permission can clone a sensitive secret key into a non-sensitive copy
+and exfiltrate the key bytes. Reportable upstream as a security finding.
+**Root cause:** Kryoptic applies the attacker's CKA_SENSITIVE in the
+unwrap template without enforcing the "sensitive can never be unset"
+invariant from PKCS#11 v3.1 Sec.4.7.

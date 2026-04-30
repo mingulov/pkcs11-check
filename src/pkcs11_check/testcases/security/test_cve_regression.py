@@ -250,6 +250,106 @@ class TestTookanUnwrapAttrs:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
 
+    def test_unwrapped_key_cannot_unset_sensitive(
+        self,
+        p11_raw_session: Any,
+    ) -> None:
+        """Tookan sec.3.3: unwrap with attacker-supplied CKA_SENSITIVE=False
+        on a key that was originally SENSITIVE=True must not produce a
+        non-sensitive copy.
+
+        The attack: an attacker who can wrap a sensitive key and then unwrap
+        it provides a template requesting CKA_SENSITIVE=False, hoping the
+        module will silently accept the attribute downgrade and let them
+        read the key value. Either the unwrap must be rejected, or the
+        resulting key must keep CKA_SENSITIVE=True.
+
+        Closes Phase 4.5 GAP-T3 (HIGH).
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("AES_KEY_WRAP not supported")
+
+        wrap_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
+        )
+        # Source key is SENSITIVE=True (and EXTRACTABLE=True so wrap is
+        # permitted). The attacker controls the unwrap template, not the
+        # source key.
+        target = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: True},
+        )
+        try:
+            try:
+                wrapped = wrap_key_recipe(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    target,
+                    CKM_AES_KEY_WRAP,
+                )
+            except AssertionError as exc:
+                pytest.skip(f"Module rejected wrap of SENSITIVE=True key: {exc}")
+
+            try:
+                unwrapped = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    wrapped,
+                    CKM_AES_KEY_WRAP,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_SENSITIVE: False,  # attacker-controlled
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as exc:
+                # Module rejected the attacker template — correct behaviour.
+                msg = str(exc)
+                if any(
+                    code in msg
+                    for code in (
+                        "CKR_TEMPLATE_INCONSISTENT",
+                        "CKR_ATTRIBUTE_VALUE_INVALID",
+                        "CKR_ATTRIBUTE_READ_ONLY",
+                        "CKR_ACTION_PROHIBITED",
+                    )
+                ):
+                    return
+                raise
+
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_SENSITIVE])
+                if attrs.get(CKA_SENSITIVE) is False:
+                    from pkcs11_check.compliance import ComplianceLevel, note
+
+                    note(
+                        "Module honoured CKA_SENSITIVE=False on unwrap of a "
+                        "SENSITIVE=True key — Tookan sec.3.3 attack succeeded.",
+                        ComplianceLevel.CRITICAL,
+                        reference="Tookan paper §3.3 / PKCS#11 v3.1 Sec.4.7",
+                    )
+                    pytest.fail(
+                        "SECURITY: Tookan §3.3 — unwrap with CKA_SENSITIVE=False "
+                        "produced a non-sensitive copy of a SENSITIVE=True key. "
+                        "Sensitive-key boundary breached on unwrap."
+                    )
+                # SENSITIVE preserved: correct behaviour (template ignored
+                # for security-downgrade).
+            finally:
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, wrap_h)
+            destroy_quietly(rs.raw, rs.sh, target)
+
 
 class TestSessionObjectsAfterLogout:
     """Session objects surviving logout (task 7.25).
