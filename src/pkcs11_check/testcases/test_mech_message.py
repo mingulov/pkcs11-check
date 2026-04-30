@@ -207,6 +207,93 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    def test_message_encrypt_rejects_decrypt_only_key(
+        self, p11_raw_session: RawSession
+    ) -> None:
+        """C_MessageEncryptInit must reject a key with CKA_ENCRYPT=False.
+
+        Phase 4.5 GAP-A3 closure: the v3.0 message-based API has separate
+        code paths from the classical C_EncryptInit / C_DecryptInit flow.
+        Key-usage enforcement (CKA_ENCRYPT, CKA_DECRYPT) must apply in
+        both paths; a module that only checks usage at C_EncryptInit and
+        skips the check at C_MessageEncryptInit allows a decrypt-only
+        key to be used for encryption — bypass of the usage attribute.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+
+        from pkcs11_check.raw.pack_mechanisms import mech_gcm_message
+        from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, get_mechanism_info
+        from pkcs11_check.raw.types_std import (
+            CKA_DECRYPT,
+            CKA_ENCRYPT,
+            CKA_TOKEN,
+            CKF_MESSAGE_ENCRYPT,
+            CKM_AES_GCM,
+            CKR_KEY_FUNCTION_NOT_PERMITTED,
+            CKR_KEY_HANDLE_INVALID,
+            CKR_KEY_TYPE_INCONSISTENT,
+            CKR_OK,
+        )
+
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_GCM)
+        if not (info["flags"] & int(CKF_MESSAGE_ENCRYPT)):
+            pytest.skip("CKM_AES_GCM does not advertise CKF_MESSAGE_ENCRYPT")
+        if not hasattr(rs.raw, "C_MessageEncryptInit"):
+            pytest.skip("C_MessageEncryptInit not available on this module")
+
+        # Decrypt-only key: explicitly NOT encrypt-capable.
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_TOKEN: False, CKA_ENCRYPT: False, CKA_DECRYPT: True},
+        )
+        try:
+            iv = os.urandom(12)
+            mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
+            rv = rs.raw.C_MessageEncryptInit(rs.sh, mech.byref(), key)
+
+            if rv == CKR_OK:
+                # Module accepted a decrypt-only key for message-encrypt
+                # init — usage enforcement bypass on the v3.0 message API.
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "C_MessageEncryptInit accepted CKA_ENCRYPT=False key — "
+                    "key-usage enforcement bypass on the v3.0 message-"
+                    "based API. The classical C_EncryptInit path enforces "
+                    "CKA_ENCRYPT; the message API must do the same.",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.4.7 (CKA_ENCRYPT) / Sec.5.4 "
+                    "(message-based encryption)",
+                )
+                # Try to clean up — if MessageEncryptFinal exists, cancel.
+                if hasattr(rs.raw, "C_MessageEncryptFinal"):
+                    try:
+                        rs.raw.C_MessageEncryptFinal(rs.sh)
+                    except Exception:
+                        pass
+                pytest.fail(
+                    "SECURITY: C_MessageEncryptInit accepted a key with "
+                    "CKA_ENCRYPT=False — usage-attribute enforcement "
+                    "missing on the v3.0 message-based API path."
+                )
+
+            accepted_rejection = (
+                int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+                int(CKR_KEY_HANDLE_INVALID),
+                int(CKR_KEY_TYPE_INCONSISTENT),
+            )
+            assert rv in accepted_rejection, (
+                f"C_MessageEncryptInit on CKA_ENCRYPT=False key returned "
+                f"0x{rv:08x}; expected one of "
+                f"{[hex(c) for c in accepted_rejection]}"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
     def test_message_sign_aes_gmac(self, p11_raw_session: RawSession) -> None:
         """Message-based sign init/final roundtrip for CKM_AES_GMAC.
 
