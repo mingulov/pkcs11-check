@@ -901,6 +901,53 @@ RFC-5649-conformant reader).
 **Root cause:** OpenCryptoki AES-KWP either implements the wrong RFC or
 applies extra blocks beyond the RFC 5649 padding. Reportable upstream.
 
+### AES-CBC-PAD ciphertext malleability — no padding validation (NEW iter-58 2026-04-30 — CRITICAL)
+`test_padding_oracle.py::test_cbc_pad_all_last_block_positions` — across
+20 trials × 16 byte positions = 320 corruption probes, OpenCryptoki
+returns the tally `{CKR_OK_DIFFERENT: 319, CKR_OK_MATCH: 1}`. **NONE** of
+the 320 probes return `CKR_ENCRYPTED_DATA_INVALID`. The module silently
+accepts ALL bit-flipped CBC-PAD ciphertexts and returns CKR_OK with
+whatever plaintext bytes result from the corrupted ciphertext.
+
+This is **strictly worse than the Vaudenay 2002 channel** observed on
+SoftHSM2 / Kryoptic — those modules at least reject the ~94% of
+corruptions that produce invalid PKCS#7 padding. OpenCryptoki has no
+padding validation at all on the decrypt path, exposing a CIPHERTEXT
+MALLEABILITY surface: an attacker who can submit chosen-ciphertext
+queries can flip arbitrary bits in the ciphertext and the module
+silently produces the corresponding plaintext modification. No
+oracle queries needed — direct manipulation works.
+
+The single CKR_OK_MATCH out of 320 is a coincidence: a random
+corruption that happens to invert to its original (statistically
+expected at ~1/256 / 2^N probability for N flipped bits in random
+content).
+
+**Severity:** **CRITICAL (security — silent ciphertext malleability)**.
+This is significantly worse than a padding oracle. Reportable upstream
+as an urgent fix. The iter-51 audit-fix classifier (CKR_OK_MATCH /
+CKR_OK_DIFFERENT) introduced for the silent-failure-hunter was
+exactly what surfaced this finding — a less-strict test that just
+checked for "more than one outcome class" would have flagged it
+identically to SoftHSM2's Vaudenay finding, missing the
+"no rejections at all" pattern.
+**Root cause:** OpenCryptoki's AES-CBC-PAD decrypt path appears to
+skip PKCS#7 padding validation entirely on the decrypted block.
+
+### RSA-OAEP padding oracle — Manger 2001 (NEW iter-58 2026-04-30 — HIGH)
+`test_padding_oracle.py::TestRSAPaddingOracle::test_oaep_error_uniformity`
+— OpenCryptoki returns non-uniform CKRs for invalid OAEP ciphertexts:
+`{CKR_FUNCTION_FAILED, CKR_ENCRYPTED_DATA_INVALID}`. The Manger 2001
+attack distinguishes "valid prefix, bad content" from "invalid prefix"
+via this CKR difference. The same channel as the NSS finding above,
+but with a different CKR set (NSS uses `CKR_ARGUMENTS_BAD` instead of
+`CKR_FUNCTION_FAILED`).
+
+**Severity:** HIGH (security — known attack class). Reportable upstream.
+**Root cause:** OpenCryptoki's OAEP decrypt path emits different
+CKRs depending on which validation step failed, leaking the boundary
+the Manger attack exploits.
+
 ---
 
 ## Kryoptic v1.5.0 / main (v3.2)
