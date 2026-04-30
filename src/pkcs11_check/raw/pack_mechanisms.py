@@ -23,6 +23,7 @@ from .types_std import (
     CK_BYTE,
     CK_CHACHA20_PARAMS,
     CK_ECDH1_DERIVE_PARAMS,
+    CK_ECDH_AES_KEY_WRAP_PARAMS,
     CK_EDDSA_PARAMS,
     CK_GCM_MESSAGE_PARAMS,
     CK_HASH_SIGN_ADDITIONAL_CONTEXT,
@@ -203,6 +204,40 @@ def mech_ecdh(
         "mech_ecdh",
         ka,
         sub_mechanisms={"kdf": kdf},
+    )
+
+
+def mech_ecdh_aes_kw(
+    mechanism_type: CKM | int,
+    *,
+    aes_key_bits: int,
+    kdf: int,
+    shared_data: bytes | None = None,
+) -> PackedMechanism:
+    """Pack CK_ECDH_AES_KEY_WRAP_PARAMS for CKM_ECDH_AES_KEY_WRAP family.
+
+    Used for hybrid wrap mechanisms that derive an ephemeral AES key via
+    ECDH and then wrap the target with AES-KW. See PKCS#11 v3.1
+    Sec.6.3.13.4.
+
+    Args:
+        mechanism_type: CKM_ECDH_AES_KEY_WRAP, CKM_ECDH_COF_AES_KEY_WRAP,
+            or CKM_ECDH_X_AES_KEY_WRAP.
+        aes_key_bits: 128 / 192 / 256.
+        kdf: a CKD_* constant (e.g. CKD_SHA256_KDF).
+        shared_data: optional info string mixed into the KDF.
+    """
+    ka: list[Any] = []
+    params = CK_ECDH_AES_KEY_WRAP_PARAMS()
+    params.ulAESKeyBits = aes_key_bits
+    params.kdf = kdf
+    params.pSharedData, params.ulSharedDataLen = _pack_bytes(shared_data, ka)
+    return _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ecdh_aes_kw",
+        ka,
+        sub_mechanisms={"aes_key_bits": aes_key_bits, "kdf": kdf},
     )
 
 

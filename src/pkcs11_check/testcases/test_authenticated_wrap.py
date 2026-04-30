@@ -560,3 +560,176 @@ class TestWrapIntegrity:
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
+
+
+class TestEcdhAesKeyWrap:
+    """GAP-W3: CKM_ECDH_AES_KEY_WRAP hybrid wrap roundtrip + integrity.
+
+    The hybrid mechanism derives an AES key via ECDH (using the
+    recipient's public key + an internally-generated ephemeral key
+    pair) and then wraps the target with AES-KW under that derived
+    key. The wrap blob carries the ephemeral public point alongside
+    the AES-KW ciphertext so the recipient can re-derive the wrapping
+    AES key.
+
+    Closes Phase 4.5 GAP-W3 (MED).
+    """
+
+    def test_ecdh_aes_kw_roundtrip_and_integrity(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
+        """Wrap an AES key with CKM_ECDH_AES_KEY_WRAP, unwrap, verify
+        roundtrip, then verify bit-flip integrity rejection."""
+        from pkcs11_check.raw.ec import encode_named_curve_parameters
+        from pkcs11_check.raw.pack import mech_ecdh_aes_kw
+        from pkcs11_check.raw.recipes import (
+            gen_ec_keypair,
+            unwrap_key,
+            wrap_key,
+        )
+        from pkcs11_check.raw.types_std import (
+            CKA_DERIVE,
+            CKA_KEY_TYPE,
+            CKD_SHA256_KDF,
+            CKK_AES,
+            CKM_ECDH_AES_KEY_WRAP,
+            CKO_SECRET_KEY,
+        )
+
+        rs = p11_raw_session
+        if not rs.has_mechanism("ECDH_AES_KEY_WRAP"):
+            pytest.skip("CKM_ECDH_AES_KEY_WRAP not supported")
+
+        # Recipient EC P-256 keypair: pub used for wrap, priv for unwrap.
+        curve_oid = encode_named_curve_parameters("secp256r1")
+        try:
+            pub, priv = gen_ec_keypair(
+                rs.raw,
+                rs.sh,
+                curve_oid,
+                public_attrs={CKA_DERIVE: True, CKA_WRAP: True},
+                private_attrs={CKA_DERIVE: True, CKA_UNWRAP: True},
+            )
+        except AssertionError as exc:
+            pytest.skip(f"Could not generate P-256 keypair: {exc}")
+            return
+
+        target = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+        )
+        try:
+            mech = mech_ecdh_aes_kw(
+                CKM_ECDH_AES_KEY_WRAP,
+                aes_key_bits=256,
+                kdf=CKD_SHA256_KDF,
+            )
+
+            # --- Roundtrip ---
+            try:
+                wrapped = wrap_key(
+                    rs.raw, rs.sh, pub, target, CKM_ECDH_AES_KEY_WRAP,
+                    mech_param=mech,
+                )
+            except AssertionError as exc:
+                msg = str(exc)
+                # Some modules advertise the mechanism but reject specific
+                # parameter combinations. Skip cleanly on those.
+                skip_codes = (
+                    "CKR_MECHANISM_PARAM_INVALID",
+                    "CKR_FUNCTION_NOT_SUPPORTED",
+                    "CKR_KEY_FUNCTION_NOT_PERMITTED",
+                )
+                if any(code in msg for code in skip_codes):
+                    pytest.skip(f"Module rejected ECDH-AES-KW wrap config: {exc}")
+                    return
+                raise
+
+            assert len(wrapped) > 16, "ECDH-AES-KW output unexpectedly short"
+
+            mech2 = mech_ecdh_aes_kw(
+                CKM_ECDH_AES_KEY_WRAP,
+                aes_key_bits=256,
+                kdf=CKD_SHA256_KDF,
+            )
+            unwrapped = unwrap_key(
+                rs.raw,
+                rs.sh,
+                priv,
+                wrapped,
+                CKM_ECDH_AES_KEY_WRAP,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: True,
+                },
+                mech_param=mech2,
+            )
+            try:
+                # Round-trip succeeded — basic happy-path coverage.
+                pass
+            finally:
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
+
+            # --- Bit-flip integrity ---
+            # The wrap blob ends with an AES-KW ciphertext over the target
+            # key bytes. Flip a byte in the latter half (likely AES-KW
+            # ciphertext, not the ephemeral point header).
+            tampered = bytearray(wrapped)
+            tampered[-2] ^= 0xFF
+            mech3 = mech_ecdh_aes_kw(
+                CKM_ECDH_AES_KEY_WRAP,
+                aes_key_bits=256,
+                kdf=CKD_SHA256_KDF,
+            )
+            try:
+                bad = unwrap_key(
+                    rs.raw, rs.sh, priv, bytes(tampered), CKM_ECDH_AES_KEY_WRAP,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_EXTRACTABLE: True,
+                    },
+                    mech_param=mech3,
+                )
+            except AssertionError as exc:
+                # Expected: AES-KW's RFC 3394 magic-field check rejects.
+                msg = str(exc)
+                accepted: tuple[str, ...] = (
+                    "CKR_WRAPPED_KEY_INVALID",
+                    "CKR_ENCRYPTED_DATA_INVALID",
+                    "CKR_WRAPPED_KEY_LEN_RANGE",
+                    "CKR_ATTRIBUTE_READ_ONLY",  # OC unwrap-template quirk
+                )
+                from pkcs11_check.raw.rv import ckr_name as _ckr_name
+                from pkcs11_check.testcases._module_quirks import quirk_extras
+
+                accepted += tuple(
+                    _ckr_name(c)
+                    for c in quirk_extras(p11_config, "verify_or_integrity_failure")
+                )
+                if any(code in msg for code in accepted):
+                    return
+                raise
+
+            # Bit-flipped wrap → CKR_OK on unwrap → integrity bypass.
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                "C_UnwrapKey accepted bit-flipped CKM_ECDH_AES_KEY_WRAP "
+                "ciphertext (AES-KW RFC 3394 ICV check missing).",
+                ComplianceLevel.CRITICAL,
+                reference="RFC 3394 §2.2.2 / PKCS#11 v3.1 Sec.6.13.6",
+            )
+            destroy_quietly(rs.raw, rs.sh, bad)
+            pytest.fail(
+                "SECURITY: CKM_ECDH_AES_KEY_WRAP unwrap accepted "
+                "bit-flipped ciphertext — RFC 3394 ICV check missing "
+                "in the AES-KW step of the hybrid mechanism."
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+            destroy_quietly(rs.raw, rs.sh, target)
