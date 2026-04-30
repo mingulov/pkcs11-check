@@ -594,3 +594,102 @@ class TestTimingBasic:
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_aes_cbc_pad_decrypt_timing_sanity(self, p11_raw_session: Any) -> None:
+        """AES-CBC-PAD decrypt: valid vs invalid-padding timing should be similar.
+
+        Lucky13 (CVE-2013-0169) and similar attacks exploit the small
+        timing difference between "valid PKCS#7 padding, then MAC check"
+        and "invalid PKCS#7 padding, MAC check skipped" code paths. PKCS#11
+        modules without a MAC layer have the inverse: valid-padding paths
+        unpad-and-return; invalid-padding paths reject early. A large
+        timing gap (>3x) is a real channel.
+
+        This is a sanity check, not lab-grade analysis. CV / multi-trial
+        statistical methods would be more rigorous; the 3x threshold
+        catches gross differences. Closes Phase 4.5 GAP-P4 (MED).
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_PAD"):
+            pytest.skip("CKM_AES_CBC_PAD not supported")
+
+        key = gen_aes_key(rs.raw, rs.sh, 256)
+        try:
+            iv = generate_random(rs.raw, rs.sh, 16)
+            plaintext = b"lucky13 timing probe " * 5  # 105 bytes (7 blocks of 16)
+            valid_ct = encrypt_single(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                plaintext,
+                mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+            )
+            assert len(valid_ct) % 16 == 0
+
+            # Valid decrypts: CT with intact PKCS#7 padding.
+            valid_times: list[float] = []
+            for _ in range(50):
+                start = time.perf_counter()
+                try:
+                    decrypt_single(
+                        rs.raw,
+                        rs.sh,
+                        key,
+                        CKM_AES_CBC_PAD,
+                        valid_ct,
+                        mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+                    )
+                except AssertionError:
+                    pass
+                valid_times.append(time.perf_counter() - start)
+
+            # Invalid decrypts: corrupt the LAST block to invalidate
+            # padding. Use a fresh corrupted ct each iteration so we
+            # don't accidentally settle on a stable "accidentally valid"
+            # padding pattern.
+            invalid_times: list[float] = []
+            last_block_start = len(valid_ct) - 16
+            for i in range(50):
+                bad_ct = bytearray(valid_ct)
+                # Vary the corruption position so we sample the response
+                # surface, not just one byte.
+                bad_ct[last_block_start + (i % 16)] ^= 0xFF
+                start = time.perf_counter()
+                try:
+                    decrypt_single(
+                        rs.raw,
+                        rs.sh,
+                        key,
+                        CKM_AES_CBC_PAD,
+                        bytes(bad_ct),
+                        mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+                    )
+                except AssertionError:
+                    pass
+                invalid_times.append(time.perf_counter() - start)
+
+            valid_avg = sum(valid_times) / len(valid_times)
+            invalid_avg = sum(invalid_times) / len(invalid_times)
+
+            if valid_avg > 0 and invalid_avg > 0:
+                ratio = max(valid_avg, invalid_avg) / min(valid_avg, invalid_avg)
+                if ratio > 3.0:
+                    from pkcs11_check.compliance import ComplianceLevel, note
+
+                    note(
+                        f"AES-CBC-PAD valid/invalid decrypt timing ratio "
+                        f"{ratio:.1f}x — Lucky13-class timing oracle.",
+                        ComplianceLevel.CRITICAL,
+                        reference="Al Fardan & Paterson 'Lucky Thirteen' "
+                        "(IEEE S&P 2013, CVE-2013-0169)",
+                    )
+                    pytest.fail(
+                        f"TIMING: AES-CBC-PAD valid vs invalid timing "
+                        f"ratio {ratio:.1f}x "
+                        f"(valid={valid_avg * 1000:.2f}ms, "
+                        f"invalid={invalid_avg * 1000:.2f}ms) — "
+                        f"Lucky13-class oracle."
+                    )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
