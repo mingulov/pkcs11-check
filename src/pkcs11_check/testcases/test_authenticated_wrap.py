@@ -436,6 +436,13 @@ class TestWrapIntegrity:
                     "CKR_WRAPPED_KEY_INVALID",
                     "CKR_ENCRYPTED_DATA_INVALID",
                     "CKR_WRAPPED_KEY_LEN_RANGE",
+                    # OpenCryptoki quirk: rejects unwrap templates
+                    # containing CKA_CLASS / CKA_KEY_TYPE with
+                    # CKR_ATTRIBUTE_READ_ONLY before integrity check.
+                    # Still a rejection of the tampered ciphertext;
+                    # the test's security goal (no CKR_OK on bit-flip)
+                    # is met.
+                    "CKR_ATTRIBUTE_READ_ONLY",
                 ]
                 # CKR_GENERAL_ERROR removed from base — too lenient. If a
                 # specific module needs it as a documented fallback, add

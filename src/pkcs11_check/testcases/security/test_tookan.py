@@ -327,6 +327,10 @@ class TestKeyTypeConfusionOnUnwrap:
                 accepted = (
                     "CKR_TEMPLATE_INCONSISTENT",
                     "CKR_ATTRIBUTE_VALUE_INVALID",
+                    "CKR_ATTRIBUTE_READ_ONLY",  # OC quirk: rejects
+                                                # CKA_CLASS / CKA_KEY_TYPE
+                                                # in unwrap template; still
+                                                # a legitimate rejection.
                     "CKR_KEY_TYPE_INCONSISTENT",
                     "CKR_KEY_SIZE_RANGE",
                     "CKR_WRAPPED_KEY_INVALID",
