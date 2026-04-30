@@ -190,10 +190,31 @@ class TestDestroyable:
             raise
 
         if val is not False:
-            pytest.skip("Module did not honour CKA_DESTROYABLE=False")
+            # Lying-module pattern: accepted CKA_DESTROYABLE=False at gen
+            # but readback returns True. Surface as a CRITICAL finding
+            # rather than skip — silent ignore at create time is itself a
+            # spec violation (parallel to test_modifiable_false_blocks_set_attribute
+            # in test_access_control.py).
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                f"Module accepted CKA_DESTROYABLE=False at C_CreateObject "
+                f"but readback returns {val!r} — silent ignore at create time.",
+                ComplianceLevel.CRITICAL,
+                reference="PKCS#11 v3.1 Sec.4.1.2",
+            )
+            pytest.fail(
+                "SECURITY: module silently ignored CKA_DESTROYABLE=False "
+                "at create time. Lying-module pattern hides the destroy "
+                "enforcement test."
+            )
 
         rv = rs.raw.C_DestroyObject(rs.sh, key)
         if rv == CKR_OK:
+            # GAP-T7 closure: replace pytest.xfail with pytest.fail per
+            # feedback_pkcs11check_philosophy. The compliance.note() call
+            # records the CRITICAL violation; the failure now surfaces in
+            # CI rather than being silently absorbed by an xfail.
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -201,7 +222,11 @@ class TestDestroyable:
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.4.1.2: CKA_DESTROYABLE=False must prevent destroy",
             )
-            pytest.xfail("Module ignores CKA_DESTROYABLE=False (spec violation)")
+            pytest.fail(
+                "SECURITY: C_DestroyObject succeeded on CKA_DESTROYABLE=False "
+                "key — DESTROYABLE access control silently ignored "
+                "(expected CKR_ACTION_PROHIBITED)."
+            )
         assert rv != CKR_OK, (
             "C_DestroyObject succeeded on CKA_DESTROYABLE=False key "
             "(expected CKR_ACTION_PROHIBITED)"
