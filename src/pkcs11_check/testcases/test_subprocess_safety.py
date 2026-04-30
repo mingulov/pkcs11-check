@@ -175,9 +175,9 @@ class TestSessionObjectProcessIsolation:
             CKO_DATA, CKR_OK, CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID,
         )
 
-        # Login error swallow rule (audit fix iter-50): catch only the two
-        # documented "already logged in / wrong user type" cases per the
-        # CLAUDE.md PIN handling section. Other login failures must surface.
+        # Login error swallow rule: catch only the two documented
+        # "already logged in / wrong user type" cases per the CLAUDE.md
+        # PIN handling section. Other login failures must surface.
         _LOGIN_OK_TO_IGNORE = ("CKR_USER_ALREADY_LOGGED_IN", "CKR_USER_TYPE_INVALID")
 
         def _safe_login(raw_obj, sess_h, user_type, pin_bytes):
@@ -267,12 +267,12 @@ class TestSessionObjectProcessIsolation:
                 sys.stdout.flush()
                 os._exit(0)
             except Exception as exc:
-                # Audit-fix (iter-50): narrowed from BaseException to
-                # Exception so KeyboardInterrupt / SystemExit / signal-
-                # raised exits propagate normally. The exit-5 path is
-                # only for in-process Python errors that the parent can
-                # use to disambiguate "init worked but later step
-                # crashed" from "init never started".
+                # `except Exception` (not BaseException) so
+                # KeyboardInterrupt / SystemExit / signal-raised exits
+                # propagate normally. The exit-5 path is only for
+                # in-process Python errors that the parent can use to
+                # disambiguate "init worked but later step crashed"
+                # from "init never started".
                 print(f"CHILD_EXC:{{type(exc).__name__}}:{{exc}}")
                 sys.stdout.flush()
                 os._exit(5)
@@ -291,10 +291,9 @@ class TestSessionObjectProcessIsolation:
             close_session_quietly(raw, sh)
             raw.C_Finalize(None)
         """
-        # Audit-fix (iter-50): bumped timeout from 30s → 90s to give
-        # tabrmd-backed tpm2-pkcs11 enough headroom for cold-start
-        # post-fork re-Initialize. Real-world fork+TPM2_Startup can
-        # exceed 30s on busy systems.
+        # 90s timeout — tabrmd-backed tpm2-pkcs11 needs cold-start
+        # headroom for post-fork re-Initialize. Real-world fork+
+        # TPM2_Startup can exceed 30s on busy systems.
         rc, output = _run_script(script, timeout=90)
         if rc != 0:
             pytest.fail(
@@ -308,22 +307,22 @@ class TestSessionObjectProcessIsolation:
             pytest.fail(f"Parent didn't create the session object: {output}")
         if "CHILD_EXIT:" not in output:
             pytest.fail(f"Child didn't exit cleanly: {output}")
-        # Audit-fix (iter-50): a child killed by signal (CHILD_SIGNAL: in
-        # output) is a CRASH — that IS the finding, not a skip condition.
-        # Per CLAUDE.md: "A segfault IS the finding."
+        # A child killed by signal (CHILD_SIGNAL: in output) is a CRASH
+        # — that IS the finding, not a skip condition. Per CLAUDE.md:
+        # "A segfault IS the finding."
         if "CHILD_SIGNAL:" in output:
             pytest.fail(
                 f"SECURITY: child process was killed by a signal (likely "
                 f"crash) during cross-process isolation test:\n{output}"
             )
 
-        # Audit-fix (iter-50): narrowed skip-on-CHILD_FATAL/EXC. Skip
-        # only on the documented daemon-coordination cases — namely
-        # CHILD_FATAL:Init or CHILD_FATAL:Login with daemon-related CKRs
-        # (CKR_FUNCTION_FAILED / CKR_DEVICE_ERROR / CKR_GENERAL_ERROR
-        # /CKR_TOKEN_NOT_PRESENT / CKR_SLOT_ID_INVALID).
-        # CHILD_EXC paths and other CHILD_FATAL paths fail the test —
-        # those represent real bugs, not module-environment limits.
+        # Narrow skip-on-CHILD_FATAL/EXC: skip only on documented
+        # daemon-coordination cases — namely CHILD_FATAL:Init or
+        # CHILD_FATAL:Login with daemon-related CKRs (CKR_FUNCTION_FAILED
+        # / CKR_DEVICE_ERROR / CKR_GENERAL_ERROR / CKR_TOKEN_NOT_PRESENT
+        # / CKR_SLOT_ID_INVALID). CHILD_EXC paths and other CHILD_FATAL
+        # paths fail the test — those represent real bugs, not
+        # module-environment limits.
         daemon_failure_ckrs = (
             "0x00000005",  # CKR_FUNCTION_FAILED
             "0x00000030",  # CKR_DEVICE_ERROR

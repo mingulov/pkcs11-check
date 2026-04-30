@@ -708,9 +708,9 @@ class TestEcdhAesKeyWrap:
         the hybrid blob, attempt unwrap. The AES-KW RFC 3394 magic-field
         ICV check should reject the tampered ciphertext.
 
-        Split from the GAP-W3 roundtrip test (iter 63 audit fix) so that
-        a skip on the roundtrip path doesn't silently hide the integrity
-        coverage from pytest output.
+        Kept separate from the roundtrip test so a skip on the roundtrip
+        path (e.g. an unwrap-template quirk) doesn't silently hide the
+        integrity coverage from pytest output.
         """
         from pkcs11_check.raw.ec import encode_named_curve_parameters
         from pkcs11_check.raw.pack import mech_ecdh_aes_kw
