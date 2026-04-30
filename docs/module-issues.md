@@ -709,6 +709,29 @@ and wrong CKR on wrap).
 **Root cause:** SoftHSM2 does not validate AES key sizes on import; its
 wrap path catches the failure too late and returns a generic error.
 
+### Wrong CKR on tampered AES-KEY-WRAP ciphertext (NEW iter-47 2026-04-30)
+`test_authenticated_wrap.py::TestWrapIntegrity::test_aes_key_wrap_bit_flip_detected`
+— when the ICV-protected (RFC 3394 §2.2.2 A6A6A6A6 magic) AES-KEY-WRAP
+ciphertext is bit-flipped and submitted to `C_UnwrapKey`, SoftHSM2
+returns `CKR_GENERAL_ERROR` (0x05) instead of the spec-conformant
+`CKR_WRAPPED_KEY_INVALID` (0x110) or `CKR_ENCRYPTED_DATA_INVALID` (0x40).
+The integrity check **is** happening (the unwrap is rejected), only the
+reported code is wrong. Unmasked by the iter-46 anti-masking commit
+(`ce29ab1`) which removed `CKR_GENERAL_ERROR` from the test's global
+accepted set; the prior CKR-tolerant version had been silently absorbing
+this deviation since iter 44.
+
+**Severity:** MEDIUM (conformance — wrong CKR; still rejects).
+**Root cause:** SoftHSM2's AES-KEY-WRAP unwrap path uses a generic
+exception → CKR_GENERAL_ERROR translation rather than mapping the
+RFC-3394 ICV mismatch to a specific code. Reportable upstream.
+
+A SoftHSM2-specific quirk could be registered in `_module_quirks.py`
+to silence this on the test, but per the project guardrails this is
+NOT done — `CKR_GENERAL_ERROR` is too generic to mask globally for a
+module, and the deviation is real enough to keep surfacing in CI
+until SoftHSM2 fixes it upstream.
+
 ### Tookan §3.3 — CKA_SENSITIVE downgrade on unwrap (NEW 2026-04-30)
 `test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive`
 — SoftHSM2 honours an attacker-supplied `CKA_SENSITIVE=False` in the

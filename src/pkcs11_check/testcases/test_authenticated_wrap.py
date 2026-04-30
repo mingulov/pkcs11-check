@@ -228,7 +228,10 @@ class TestAuthenticatedWrapAAD:
     """
 
     def test_aes_gcm_unwrap_with_different_aad_rejected(
-        self, p11_raw_session: Any, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        p11_interface_version: str,
+        p11_config: Any,
     ) -> None:
         """Wrap with AAD=X, unwrap with AAD=Y. Unwrap MUST fail."""
         rs = p11_raw_session
@@ -264,9 +267,29 @@ class TestAuthenticatedWrapAAD:
                 wrapped, tag = wrap_key_authenticated(
                     rs.raw, rs.sh, wrap_h, target, CKM_AES_GCM, mech_param=gcm_wrap
                 )
-            except (NotImplementedError, AttributeError, TypeError, AssertionError) as exc:
-                pytest.skip(f"AES-GCM authenticated wrap unavailable: {exc}")
+            except (NotImplementedError, AttributeError, TypeError) as exc:
+                # API not available on this module — skip cleanly.
+                pytest.skip(f"AES-GCM authenticated wrap API not available: {exc}")
                 return
+            except AssertionError as exc:
+                # Wrap-side failure. Skip ONLY when the failure looks
+                # like a legitimate "module rejected this configuration"
+                # (mech-not-supported / AAD-too-long / GCM-params-bad).
+                # Crashes (CKR_GENERAL_ERROR / CKR_FUNCTION_FAILED /
+                # CKR_DEVICE_ERROR) re-raise — those are findings, not
+                # skip conditions.
+                msg = str(exc)
+                wrap_skip_codes = (
+                    "CKR_MECHANISM_INVALID",
+                    "CKR_MECHANISM_PARAM_INVALID",
+                    "CKR_FUNCTION_NOT_SUPPORTED",
+                    "CKR_KEY_FUNCTION_NOT_PERMITTED",
+                    "CKR_ARGUMENTS_BAD",
+                )
+                if any(code in msg for code in wrap_skip_codes):
+                    pytest.skip(f"AES-GCM authenticated wrap rejected: {exc}")
+                    return
+                raise
 
             # Unwrap with a DIFFERENT AAD — AEAD must reject.
             gcm_unwrap = mech_gcm(CKM_AES_GCM, iv, aad=aad_y, tag_bits=128)
@@ -281,9 +304,33 @@ class TestAuthenticatedWrapAAD:
                     attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
                     mech_param=gcm_unwrap,
                 )
-            except AssertionError:
-                # Expected: AEAD detected the AAD mismatch.
-                return
+            except AssertionError as exc:
+                # Expected: AEAD detected the AAD mismatch. Match against
+                # specific rejection CKRs so a recipe-side assert (buffer
+                # shape, ctypes mismatch, etc.) cannot silently pass as
+                # "AAD detected".
+                msg = str(exc)
+                aead_reject_codes = (
+                    "CKR_ENCRYPTED_DATA_INVALID",
+                    "CKR_WRAPPED_KEY_INVALID",
+                    "CKR_SIGNATURE_INVALID",
+                    "CKR_DATA_INVALID",
+                )
+                # Plus per-module documented quirks (e.g. Kryoptic returns
+                # CKR_DEVICE_ERROR for any verification failure).
+                from pkcs11_check.raw.rv import ckr_name as _ckr_name
+                from pkcs11_check.testcases._module_quirks import quirk_extras
+
+                quirk_codes = [
+                    _ckr_name(c)
+                    for c in quirk_extras(p11_config, "verify_or_integrity_failure")
+                ]
+                if any(
+                    code in msg
+                    for code in (*aead_reject_codes, *quirk_codes)
+                ):
+                    return
+                raise
 
             from pkcs11_check.compliance import ComplianceLevel, note
 

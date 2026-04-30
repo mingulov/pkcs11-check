@@ -317,6 +317,12 @@ class TestKeyTypeConfusionOnUnwrap:
                 )
             except AssertionError as exc:
                 # Expected: module rejected the type-confused unwrap.
+                # Note: CKR_MECHANISM_INVALID is deliberately NOT
+                # accepted here. has_mechanism("AES_KEY_WRAP") was
+                # checked at the top of the test, so a sudden
+                # mechanism-disappear on unwrap (after a successful
+                # wrap with the same mechanism) is itself a module
+                # bug, not a legitimate type-confusion rejection.
                 msg = str(exc)
                 accepted = (
                     "CKR_TEMPLATE_INCONSISTENT",
@@ -325,7 +331,6 @@ class TestKeyTypeConfusionOnUnwrap:
                     "CKR_KEY_SIZE_RANGE",
                     "CKR_WRAPPED_KEY_INVALID",
                     "CKR_WRAPPED_KEY_LEN_RANGE",
-                    "CKR_MECHANISM_INVALID",
                 )
                 if any(code in msg for code in accepted):
                     return
@@ -334,14 +339,17 @@ class TestKeyTypeConfusionOnUnwrap:
             # Module accepted the wrong type — confirm whether the
             # resulting "DES3" key has the AES-128 bytes (the security
             # signature of the Tookan §3.2 attack).
+            read_error: str | None = None
             try:
-                bad_attrs = read_attributes(
+                bad_attrs: dict[int, Any] = read_attributes(
                     rs.raw, rs.sh, fake_des3, [CKA_VALUE, CKA_KEY_TYPE]
                 )
-            except AssertionError:
+            except AssertionError as exc:
                 # Module produced an opaque key — still wrong type,
                 # but at least the bytes are not directly readable.
+                # Capture the error so triage isn't done blind.
                 bad_attrs = {}
+                read_error = str(exc)
 
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -349,7 +357,8 @@ class TestKeyTypeConfusionOnUnwrap:
                 f"Module unwrapped AES-wrapped blob as CKK_DES3 — "
                 f"key-type confusion (Tookan §3.2). Resulting key has "
                 f"CKA_KEY_TYPE={bad_attrs.get(CKA_KEY_TYPE)} and value of "
-                f"length {len(bad_attrs.get(CKA_VALUE, b''))}.",
+                f"length {len(bad_attrs.get(CKA_VALUE, b''))}."
+                + (f" (read-back error: {read_error})" if read_error else ""),
                 ComplianceLevel.CRITICAL,
                 reference="Tookan paper §3.2 / PKCS#11 v3.1 Sec.5.14.4",
             )
