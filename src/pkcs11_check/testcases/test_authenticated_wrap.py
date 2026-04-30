@@ -226,7 +226,9 @@ class TestWrapIntegrity:
     Closes Phase 4.5 GAP-W2 (HIGH).
     """
 
-    def test_aes_key_wrap_bit_flip_detected(self, p11_raw_session: Any) -> None:
+    def test_aes_key_wrap_bit_flip_detected(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         """AES-KEY-WRAP RFC-3394 magic-field integrity check.
 
         Wrap a real key, flip a middle byte of the ciphertext, attempt to
@@ -235,6 +237,8 @@ class TestWrapIntegrity:
         silently produces a different unwrapped key (or returns CKR_OK
         with garbage bytes) is malleable.
         """
+        from pkcs11_check.testcases._module_quirks import quirk_extras
+
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
@@ -283,19 +287,27 @@ class TestWrapIntegrity:
                 )
             except AssertionError as exc:
                 # Expected: module rejected the tampered ciphertext.
-                # CKR_DEVICE_ERROR is accepted as a documented fallback —
-                # Kryoptic returns this for all integrity-check failures
-                # (`docs/module-issues.md` Kryoptic §"CKR_DEVICE_ERROR on
-                # verify failure"). The integrity *was* detected; only the
-                # CKR is non-conformant.
+                # The base set is the spec-conformant rejection codes.
+                # Per-module fallbacks (e.g. Kryoptic's wrong-CKR habit
+                # returning CKR_DEVICE_ERROR for all integrity failures)
+                # are added via the quirk registry, NOT hard-coded here —
+                # so a different module returning CKR_DEVICE_ERROR is
+                # surfaced as a finding rather than silently accepted.
                 msg = str(exc)
-                accepted = (
+                accepted = [
                     "CKR_WRAPPED_KEY_INVALID",
                     "CKR_ENCRYPTED_DATA_INVALID",
                     "CKR_WRAPPED_KEY_LEN_RANGE",
-                    "CKR_GENERAL_ERROR",
-                    "CKR_DEVICE_ERROR",
-                )
+                ]
+                # CKR_GENERAL_ERROR removed from base — too lenient. If a
+                # specific module needs it as a documented fallback, add
+                # it as a quirk in `_module_quirks.py`.
+                from pkcs11_check.raw.rv import ckr_name as _ckr_name
+
+                accepted += [
+                    _ckr_name(c)
+                    for c in quirk_extras(p11_config, "verify_or_integrity_failure")
+                ]
                 if any(code in msg for code in accepted):
                     return
                 raise

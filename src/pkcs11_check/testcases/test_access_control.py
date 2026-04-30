@@ -201,7 +201,30 @@ class TestModifiableAttribute:
                     pytest.skip(f"Module does not expose CKA_MODIFIABLE: {e}")
                 raise
             if attrs.get(CKA_MODIFIABLE) is not False:
-                pytest.skip("Module did not honour CKA_MODIFIABLE=False on creation")
+                # The module accepted CKA_MODIFIABLE=False at create-time
+                # without raising, but the readback shows it didn't take
+                # effect. This is the worst-case "lying module" pattern:
+                # the test would silently skip and the SetAttribute path
+                # below would never run, leaving a real conformance bug
+                # invisible. Surface as a CRITICAL finding instead of
+                # skipping (per project rule: "xfail / skip only with
+                # evidence and spec refs, never suppress").
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"Module accepted CKA_MODIFIABLE=False at C_CreateObject "
+                    f"but readback returns {attrs.get(CKA_MODIFIABLE)!r} — "
+                    f"the attribute was silently ignored at create time, "
+                    f"making downstream MODIFIABLE enforcement untestable.",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.4.1.2",
+                )
+                pytest.fail(
+                    "SECURITY: module silently ignored CKA_MODIFIABLE=False "
+                    "at create time (read-back returned True) — would have "
+                    "skipped the SetAttribute test and hidden a real "
+                    "conformance bug. Lying-module pattern."
+                )
 
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_LABEL: "mod-false-after"})

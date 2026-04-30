@@ -27,9 +27,12 @@ from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKM_AES_ECB,
     CKM_SHA256,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED,
+    CKR_SESSION_HANDLE_INVALID,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
@@ -37,11 +40,26 @@ pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
 # Acceptable "not initialised" return codes.
 # Some modules return CKR_FUNCTION_FAILED rather than the specific code.
 _NOT_INIT_RVCS: frozenset[int] = frozenset(
-    [
-        int(CKR_OPERATION_NOT_INITIALIZED),
-        0x00000005,  # CKR_FUNCTION_FAILED -- non-spec-compliant but widely seen
-        0x00000020,  # CKR_GENERAL_ERROR
-    ]
+    {
+        CKR_OPERATION_NOT_INITIALIZED,
+        CKR_FUNCTION_FAILED,  # non-spec-compliant but widely seen
+        CKR_GENERAL_ERROR,
+    }
+)
+
+# Strict subset for cross-session-state-confusion tests. CKR_FUNCTION_FAILED /
+# CKR_GENERAL_ERROR are EXPLICITLY NOT accepted here: a module that crashes or
+# panics during cross-session probing and recovers with one of those codes is
+# exhibiting exactly the state-confusion bug class the test is meant to catch.
+# If a real module legitimately needs a fallback, register it as a quirk in
+# `_module_quirks.py` and call `quirk_extras(...)` instead of widening this set.
+_CROSS_SESSION_NOT_INIT_RVCS: frozenset[int] = frozenset(
+    {
+        CKR_OPERATION_NOT_INITIALIZED,
+        CKR_SESSION_HANDLE_INVALID,  # some modules return this if they
+                                     # keyed the operation table on the
+                                     # wrong handle
+    }
 )
 
 # Acceptable "already active" return codes.
@@ -372,11 +390,13 @@ class TestMultiPartCrossSession:
             rv_b = rs.raw.C_EncryptUpdate(
                 sh_b, in_buf, len(data), out_buf, byref(out_len)
             )
-            assert rv_b in _NOT_INIT_RVCS, (
+            assert rv_b in _CROSS_SESSION_NOT_INIT_RVCS, (
                 f"C_EncryptUpdate from un-initialised session B returned "
                 f"0x{rv_b:08x}, expected CKR_OPERATION_NOT_INITIALIZED — "
-                f"if session A's state leaked into session B, this is a "
-                f"cross-session state-confusion bug"
+                f"CKR_FUNCTION_FAILED / CKR_GENERAL_ERROR are explicitly "
+                f"NOT accepted here because they indicate exactly the "
+                f"crash-on-cross-session-probe pattern this test guards "
+                f"against (see _CROSS_SESSION_NOT_INIT_RVCS comment)"
             )
         finally:
             try:
@@ -410,10 +430,11 @@ class TestMultiPartCrossSession:
             data = b"\x66" * 16
             in_buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
             rv_b = rs.raw.C_DigestUpdate(sh_b, in_buf, len(data))
-            assert rv_b in _NOT_INIT_RVCS, (
+            assert rv_b in _CROSS_SESSION_NOT_INIT_RVCS, (
                 f"C_DigestUpdate from un-initialised session B returned "
                 f"0x{rv_b:08x}, expected CKR_OPERATION_NOT_INITIALIZED — "
-                f"cross-session state-confusion if session A's state leaked"
+                f"CKR_FUNCTION_FAILED / CKR_GENERAL_ERROR are explicitly "
+                f"NOT accepted here (see _CROSS_SESSION_NOT_INIT_RVCS)"
             )
         finally:
             try:
