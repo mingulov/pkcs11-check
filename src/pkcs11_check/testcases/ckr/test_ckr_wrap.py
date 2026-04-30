@@ -102,9 +102,11 @@ class TestWrapKeyErrors:
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.1 Sec.5.14.3",
                 )
-                pytest.xfail(
+                pytest.fail(
                     "SECURITY: module returns CKR_OK for C_WrapKey on "
-                    "CKA_EXTRACTABLE=False key (expected CKR_KEY_UNEXTRACTABLE)"
+                    "CKA_EXTRACTABLE=False key (expected CKR_KEY_UNEXTRACTABLE) — "
+                    "non-extractable keys can be exported, defeating the "
+                    "extractability access control"
                 )
             # CKR_KEY_UNEXTRACTABLE or CKR_KEY_NOT_WRAPPABLE - both acceptable
         finally:
