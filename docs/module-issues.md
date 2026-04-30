@@ -834,7 +834,15 @@ error handling.
 
 ---
 
-## OpenCryptoki 3.26 (v3.0)
+## OpenCryptoki master (3.27 dev branch, iter-42+ findings)
+
+> The earlier `## OpenCryptoki 3.26 (v3.0)` section above (line 652)
+> covers the v0.1.0 Phase 1 release-tested behaviour against the
+> Fedora 3.26.0 RPM image. This section covers the unfiltered Phase 1
+> work against the OpenCryptoki master branch (`--depth 1` HEAD)
+> exercised in iters 42-63. Some entries below may also reproduce on
+> 3.26 — they're documented here because that's where they were
+> surfaced.
 
 ### SSL3 master key derive crash
 - `test_ssl3.py::TestSSL3MasterKeyDerive::test_derive_master_secret` - segfault on
