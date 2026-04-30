@@ -158,6 +158,82 @@ class TestModifiableAttribute:
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
+    def test_modifiable_false_blocks_set_attribute(
+        self, p11_raw_session: Any
+    ) -> None:
+        """CKA_MODIFIABLE=False MUST block C_SetAttributeValue on any attribute.
+
+        PKCS#11 v3.1 Sec.4.1.2: when CKA_MODIFIABLE=False, the object's
+        attributes are immutable. The spec does NOT carve out a "non-security
+        attributes are still settable" exception — even CKA_LABEL changes
+        must be rejected.
+
+        Closes Phase 4.5 GAP-T1 (HIGH).
+        """
+        rs = p11_raw_session
+        try:
+            key_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={CKA_MODIFIABLE: False, CKA_LABEL: "mod-false-src"},
+            )
+        except AssertionError as e:
+            msg = str(e)
+            if any(
+                code in msg
+                for code in (
+                    "CKR_TEMPLATE_INCONSISTENT",
+                    "CKR_ATTRIBUTE_VALUE_INVALID",
+                    "CKR_ATTRIBUTE_TYPE_INVALID",
+                )
+            ):
+                pytest.skip(
+                    f"Module does not allow CKA_MODIFIABLE=False at gen time: {e}"
+                )
+            raise
+
+        try:
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
+            except AssertionError as e:
+                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                    pytest.skip(f"Module does not expose CKA_MODIFIABLE: {e}")
+                raise
+            if attrs.get(CKA_MODIFIABLE) is not False:
+                pytest.skip("Module did not honour CKA_MODIFIABLE=False on creation")
+
+            try:
+                set_attributes(rs.raw, rs.sh, key_h, {CKA_LABEL: "mod-false-after"})
+            except AssertionError as e:
+                msg = str(e)
+                accepted = (
+                    "CKR_ACTION_PROHIBITED",
+                    "CKR_ATTRIBUTE_READ_ONLY",
+                    "CKR_ATTRIBUTE_VALUE_INVALID",
+                    "CKR_TEMPLATE_INCONSISTENT",
+                )
+                if any(code in msg for code in accepted):
+                    return
+                raise
+
+            # SetAttribute returned CKR_OK on a CKA_MODIFIABLE=False key.
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                "C_SetAttributeValue succeeded on CKA_MODIFIABLE=False key "
+                "(expected CKR_ACTION_PROHIBITED).",
+                ComplianceLevel.CRITICAL,
+                reference="PKCS#11 v3.1 Sec.4.1.2",
+            )
+            pytest.fail(
+                "SECURITY: module accepted C_SetAttributeValue on a "
+                "CKA_MODIFIABLE=False key — attribute mutability "
+                "constraint silently ignored"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
+
 
 class TestCopyableAttribute:
     """Test CKA_COPYABLE flag semantics."""
@@ -195,6 +271,7 @@ class TestCopyableAttribute:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
+
 
 
 class TestCopyObject:
@@ -286,18 +363,34 @@ class TestCopyObject:
                 pytest.skip("Module did not honour CKA_COPYABLE=False in template")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "should-fail"})
-                # Should not reach here
-                destroy_quietly(rs.raw, rs.sh, copied_h)
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "Module ignores CKA_COPYABLE=False: C_CopyObject succeeded on non-copyable key",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.1.2: CKA_COPYABLE=False must prevent copy",
+            except AssertionError as exc:
+                msg = str(exc)
+                accepted = (
+                    "CKR_ACTION_PROHIBITED",
+                    "CKR_FUNCTION_NOT_SUPPORTED",
+                    "CKR_ATTRIBUTE_READ_ONLY",
+                    "CKR_TEMPLATE_INCONSISTENT",
                 )
-                pytest.xfail("Module ignores CKA_COPYABLE=False (spec violation)")
-            except AssertionError:
-                pass  # Expected
+                if any(code in msg for code in accepted):
+                    return
+                raise
+
+            # C_CopyObject succeeded on a CKA_COPYABLE=False key — spec
+            # violation. Per Phase 4.5 GAP-T2, this must be a hard failure
+            # so that conformance regressions in any module are surfaced
+            # rather than silently xfailed (was previously pytest.xfail).
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                "Module ignores CKA_COPYABLE=False: C_CopyObject succeeded on non-copyable key",
+                ComplianceLevel.CRITICAL,
+                reference="PKCS#11 v3.1 Sec.4.1.2: CKA_COPYABLE=False must prevent copy",
+            )
+            destroy_quietly(rs.raw, rs.sh, copied_h)
+            pytest.fail(
+                "SECURITY: module copied a CKA_COPYABLE=False key — "
+                "copy-prohibition silently ignored"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
