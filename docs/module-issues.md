@@ -696,6 +696,19 @@ This is a regression in the SoftHSM2 dev branch compared to the stable 2.7.0 rel
 
 **Root cause:** Development branch EC code regression. Not a pkcs11-check issue.
 
+### Accepts undersized AES wrap key, returns CKR_GENERAL_ERROR (NEW 2026-04-30)
+`test_ckr_wrap.py::test_wrapping_key_size_range` — SoftHSM2 accepts a 64-bit
+"AES" key on `C_CreateObject` (AES requires 128/192/256 bits per FIPS 197).
+When the undersized key is then used for `C_WrapKey` with `CKM_AES_KEY_WRAP`,
+the module returns `CKR_GENERAL_ERROR` (0x05) instead of the
+spec-conformant `CKR_WRAPPING_KEY_SIZE_RANGE` (0x114) or
+`CKR_KEY_SIZE_RANGE` (0x62).
+
+**Severity:** MEDIUM (conformance — two issues: lax import-time validation
+and wrong CKR on wrap).
+**Root cause:** SoftHSM2 does not validate AES key sizes on import; its
+wrap path catches the failure too late and returns a generic error.
+
 ---
 
 ## Qryptotoken 0.4.1 (Rust PQC)
@@ -793,3 +806,25 @@ when used. The mechanism is recognized but not implemented.
 15 crashes on CKM_EXTRACT_KEY_FROM_KEY and certain AES-CCM vectors.
 FIPS mode correctly rejects non-approved operations but aborts instead of
 returning CKR_MECHANISM_INVALID.
+
+### Type-confusion: generic-secret accepted as AES wrap key (NEW 2026-04-30)
+`test_ckr_wrap.py::test_wrapping_key_type_inconsistent` — Kryoptic accepts a
+`CKK_GENERIC_SECRET` key as the wrap-key argument to `C_WrapKey` with
+`CKM_AES_KEY_WRAP`, returning `CKR_OK` and producing wrap output. PKCS#11
+v3.1 Sec.5.14.3 explicitly requires `CKR_WRAPPING_KEY_TYPE_INCONSISTENT`
+when "the type of the key specified to wrap another key is not consistent
+with the mechanism."
+
+**Severity:** **HIGH (security)**. Type-confusion in the wrap path opens a
+key-misuse attack vector — any secret material (HMAC keys, KDF outputs,
+import-attacker-supplied generic-secret blobs) becomes wrap-eligible. An
+attacker who can place a generic secret into the token can then re-package
+sensitive keys against it, bypassing the type-based access controls that
+PKCS#11 relies on for key isolation. Reportable upstream as a security
+finding, not a generic conformance issue.
+
+**Root cause:** Kryoptic's wrap-mechanism dispatcher does not check the
+wrap-key's `CKA_KEY_TYPE` against the mechanism's required type before
+invoking the underlying AES primitive. The output is whatever the AES
+primitive produces when fed the generic-secret bytes as if they were an
+AES key.
