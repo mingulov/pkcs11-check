@@ -214,6 +214,97 @@ class TestAuthenticatedWrap:
             destroy_quietly(rs.raw, rs.sh, target)
 
 
+class TestAuthenticatedWrapAAD:
+    """GAP-W4: tampered-AAD path on authenticated wrap/unwrap (v3.2).
+
+    The v3.2 authenticated-wrap test_tampered_tag_rejected covers
+    ciphertext-tag tampering. AAD is a separate AEAD input — its
+    tampering must also produce an AEAD verification failure. A module
+    that authenticates only the ciphertext-and-tag tuple while ignoring
+    AAD has a real authentication-bypass bug (CWE-354 "Improper
+    Validation of Integrity Check Value").
+
+    Closes Phase 4.5 GAP-W4 (MED).
+    """
+
+    def test_aes_gcm_unwrap_with_different_aad_rejected(
+        self, p11_raw_session: Any, p11_interface_version: str
+    ) -> None:
+        """Wrap with AAD=X, unwrap with AAD=Y. Unwrap MUST fail."""
+        rs = p11_raw_session
+        if p11_interface_version not in ("3.2",):
+            pytest.skip("Authenticated wrapping requires v3.2 interface")
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+
+        wrap_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+            },
+        )
+        target = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+        )
+        try:
+            iv = generate_random(rs.raw, rs.sh, 12)
+            aad_x = b"context-X-" + b"\xaa" * 16
+            aad_y = b"context-Y-" + b"\xbb" * 16
+
+            gcm_wrap = mech_gcm(CKM_AES_GCM, iv, aad=aad_x, tag_bits=128)
+            try:
+                wrapped, tag = wrap_key_authenticated(
+                    rs.raw, rs.sh, wrap_h, target, CKM_AES_GCM, mech_param=gcm_wrap
+                )
+            except (NotImplementedError, AttributeError, TypeError, AssertionError) as exc:
+                pytest.skip(f"AES-GCM authenticated wrap unavailable: {exc}")
+                return
+
+            # Unwrap with a DIFFERENT AAD — AEAD must reject.
+            gcm_unwrap = mech_gcm(CKM_AES_GCM, iv, aad=aad_y, tag_bits=128)
+            try:
+                bad_unwrap = unwrap_key_authenticated(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    wrapped,
+                    tag if tag else b"",
+                    CKM_AES_GCM,
+                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                    mech_param=gcm_unwrap,
+                )
+            except AssertionError:
+                # Expected: AEAD detected the AAD mismatch.
+                return
+
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                "Authenticated unwrap accepted a different-AAD GCM blob "
+                "(AAD did not participate in tag computation, or AAD "
+                "tampering was not validated).",
+                ComplianceLevel.CRITICAL,
+                reference="NIST SP 800-38D §7.2 / PKCS#11 v3.2 Sec.6.13.7",
+            )
+            destroy_quietly(rs.raw, rs.sh, bad_unwrap)
+            pytest.fail(
+                "SECURITY: AES-GCM authenticated unwrap accepted a wrap "
+                "produced under a different AAD — AAD integrity not "
+                "enforced (CWE-354)."
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, wrap_h)
+            destroy_quietly(rs.raw, rs.sh, target)
+
+
 class TestWrapIntegrity:
     """GAP-W2: integrity comparison between authenticated and unauthenticated wraps.
 
