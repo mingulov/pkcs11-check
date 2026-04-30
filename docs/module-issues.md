@@ -718,6 +718,64 @@ error handling.
 
 **Root cause:** OpenCryptoki SW token bug. Not a pkcs11-check issue.
 
+### ECDH P-384 derivation broken (NEW 2026-04-30)
+`test_acvp_ecdh.py` — **1,403 failures** (Wycheproof-ECDH P-384 vectors). All
+return `CKR_FUNCTION_FAILED` on `C_DeriveKey` with `CKM_ECDH1_DERIVE`. P-256
+ECDH works; P-384 does not. The opencryptoki-master SW token does not support
+ECDH for curves wider than P-256, despite advertising the mechanism without
+curve filtering. Affects `test_acvp_ecdh.py`, `test_wycheproof_ecdh.py`.
+
+**Severity:** HIGH (compliance — silently fails on standard NIST curve).
+**Root cause:** OpenCryptoki SW token ECDH limited to P-256.
+
+### AES-XTS produces wrong ciphertext (NEW 2026-04-30)
+`test_xts.py` — **382 failures** on ACVP AES-XTS encrypt/decrypt vectors. The
+SW token returns ciphertext that does not match the IEEE Std 1619-2007 / NIST
+SP 800-38E reference output, but `C_Encrypt` returns `CKR_OK`. Plaintext that
+round-trips through encrypt+decrypt is recoverable, but interop with any other
+XTS implementation is broken.
+
+**Severity:** HIGH (data-at-rest correctness — encrypted volumes written by
+this token cannot be read by any conformant XTS reader).
+**Root cause:** OpenCryptoki AES-XTS implementation deviates from NIST/IEEE
+reference. Likely tweak-derivation or polynomial-multiplication bug.
+
+### ML-DSA signs but signatures fail to verify (NEW 2026-04-30)
+`test_acvp_mldsa.py::test_mldsa_siggen` — **164 failures**. `C_Sign` with
+`CKM_ML_DSA` returns `CKR_OK` and produces output of the expected size, but
+the signature does not verify against the corresponding public key (using
+either OpenCryptoki itself or any external ML-DSA verifier). The signature
+bytes appear unrelated to the message.
+
+**Severity:** HIGH (signing primitive broken — produced "signatures" carry
+no cryptographic guarantee).
+**Root cause:** OpenCryptoki ML-DSA implementation broken at sign time.
+Likely a key-binding / domain-separation bug.
+
+### RSA-PSS distinct hash and MGF rejected (NEW 2026-04-30)
+`test_wycheproof_rsa_pss.py` — **435 failures**. RSA-PSS signatures where
+the message hash (e.g. SHA-256) differs from the MGF1 hash (e.g. SHA-1) are
+rejected with `CKR_MECHANISM_PARAM_INVALID`. RFC 8017 / FIPS 186-4 explicitly
+allow distinct hash and MGF — a common, conformant configuration in TLS 1.2
+and RFC 5756. SoftHSM2 has the same restriction (already documented above).
+
+**Severity:** MEDIUM (conformance — interop with peers that use distinct
+hash/MGF impossible).
+**Root cause:** OpenCryptoki RSA-PSS limited to matched hash/MGF only.
+
+### AES-KWP wraps to wrong length (NEW 2026-04-30)
+`test_wycheproof_aes.py::test_aes_kwp` — **107 failures**. Wycheproof AES-KWP
+(RFC 5649) test vectors produce ciphertext of length 40B where the reference
+expects 24B (and similarly for other plaintext sizes — the output is always
+larger than RFC 5649 specifies). The bytes themselves also do not match.
+The implementation appears to be wrapping under a different mode (possibly
+classic AES Key Wrap RFC 3394 with extra padding, or KWP with extra blocks).
+
+**Severity:** HIGH (interop — wrapped keys cannot be unwrapped by any
+RFC-5649-conformant reader).
+**Root cause:** OpenCryptoki AES-KWP either implements the wrong RFC or
+applies extra blocks beyond the RFC 5649 padding. Reportable upstream.
+
 ---
 
 ## Kryoptic v1.5.0 / main (v3.2)
