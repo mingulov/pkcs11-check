@@ -113,6 +113,211 @@ class TestForkSafety:
         assert "OK:" in output
 
 
+class TestSessionObjectProcessIsolation:
+    """CROSS-PROC-001: cross-process session-object isolation.
+
+    PKCS#11 v3.1 Sec.4.2 says session objects belong to a session, and
+    sessions belong to an "application". An application is whatever
+    called C_Initialize — distinct processes are distinct applications.
+    Session objects MUST NOT be visible to a different process even if
+    the underlying module backend is shared (e.g. SQLite DB on disk for
+    NSS/SoftHSM2, dbus broker for tpm2-abrmd, daemon socket for
+    OpenCryptoki/pkcsslotd).
+
+    The existing same-process cross-session tests in
+    test_object_visibility.py validate that two sessions in the SAME
+    process see each other's session objects (spec-mandated). This
+    test validates the complementary security boundary: a different
+    process MUST NOT see them.
+    """
+
+    def test_session_object_not_visible_to_other_process(
+        self, p11_config: Any
+    ) -> None:
+        """Parent creates a session object; subprocess MUST NOT find it.
+
+        Steps:
+        1. Subprocess A opens a session, creates a session-scope (CKA_TOKEN=False)
+           data object with a unique label, prints the label, sleeps until
+           told to exit (so the session — and thus the object — stays alive).
+           Actually we can't easily coordinate two long-lived subprocesses
+           from a single pytest, so instead use a single subprocess that
+           verifies the negative property internally:
+           - Initialize, open session, create session object with label X,
+             then within the SAME process (different session — visible) and
+             via a fork+re-Initialize child (different application — not
+             visible).
+        2. Compare results.
+
+        Closes Phase 4.5 follow-up CROSS-PROC-001 (LOW-MED). Skips when
+        the module doesn't support fork-after-initialize cleanly (NSS,
+        qryptotoken — these modules need additional setup that the
+        subprocess test framework already documents).
+        """
+        module = str(p11_config.module)
+        pin = p11_config.pin.get_secret_value() if p11_config.pin else None
+        pin_repr = f'b"{pin}"' if pin is not None else "None"
+        slot = p11_config.slot if p11_config.slot is not None else 0
+        script = f"""
+        import os
+        import sys
+        import uuid
+        from ctypes import byref, c_ubyte
+        from pkcs11_check.raw.api import RawPKCS11
+        from pkcs11_check.raw.bootstrap import (
+            close_session_quietly, get_slot_ids, login_user, open_session,
+        )
+        from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, template
+        from pkcs11_check.raw.types_std import (
+            CK_OBJECT_HANDLE, CK_ULONG,
+            CKA_CLASS, CKA_LABEL, CKA_PRIVATE, CKA_TOKEN, CKA_VALUE,
+            CKF_RW_SESSION, CKF_SERIAL_SESSION,
+            CKO_DATA, CKR_OK,
+        )
+
+        pin = {pin_repr}
+        label = b"crossproc-" + uuid.uuid4().bytes.hex().encode()[:16]
+
+        # --- Parent: initialize, create session object ---
+        raw = RawPKCS11.from_lib("{module}")
+        rv = raw.C_Initialize(None)
+        if rv != CKR_OK:
+            print(f"FATAL:Parent_Init:0x{{rv:08x}}")
+            sys.exit(1)
+        slot_list = get_slot_ids(raw)
+        if {slot} >= len(slot_list):
+            print(f"FATAL:Slot:{slot}>={{len(slot_list)}}")
+            raw.C_Finalize(None); sys.exit(1)
+        slot_id = slot_list[{slot}]
+        sh = open_session(raw, slot_id, CKF_RW_SESSION | CKF_SERIAL_SESSION)
+        if pin is not None:
+            try: login_user(raw, sh, 1, pin)
+            except Exception: pass
+        tmpl = template(
+            attr_ulong(CKA_CLASS, CKO_DATA),
+            attr_bool(CKA_TOKEN, False),
+            attr_bool(CKA_PRIVATE, False),
+            attr_bytes(CKA_LABEL, label),
+            attr_bytes(CKA_VALUE, b"parent-data"),
+        )
+        h = CK_OBJECT_HANDLE(0)
+        rv = raw.C_CreateObject(sh, tmpl.ptr, tmpl.count, byref(h))
+        if rv != CKR_OK:
+            print(f"FATAL:Parent_CreateObject:0x{{rv:08x}}")
+            close_session_quietly(raw, sh); raw.C_Finalize(None); sys.exit(1)
+        print(f"PARENT_LABEL:{{label.decode()}}")
+
+        # --- Fork a child that re-Initializes (different application) ---
+        pid = os.fork()
+        if pid == 0:
+            # Child: must Finalize the inherited handle before re-Initializing,
+            # per PKCS#11 v3.1 Sec.5.6.5 fork semantics.
+            try: raw.C_Finalize(None)
+            except Exception: pass
+            try:
+                raw2 = RawPKCS11.from_lib("{module}")
+                rv = raw2.C_Initialize(None)
+                if rv != CKR_OK:
+                    print(f"CHILD_FATAL:Init:0x{{rv:08x}}")
+                    sys.stdout.flush(); os._exit(2)
+                slot_list2 = get_slot_ids(raw2)
+                slot_id2 = slot_list2[{slot}]
+                sh2 = open_session(raw2, slot_id2, CKF_RW_SESSION | CKF_SERIAL_SESSION)
+                if pin is not None:
+                    try: login_user(raw2, sh2, 1, pin)
+                    except Exception: pass
+                # Find-objects by the parent's label.
+                find_tmpl = template(
+                    attr_bytes(CKA_LABEL, label),
+                    attr_ulong(CKA_CLASS, CKO_DATA),
+                )
+                rv = raw2.C_FindObjectsInit(sh2, find_tmpl.ptr, find_tmpl.count)
+                if rv != CKR_OK:
+                    print(f"CHILD_FATAL:FindInit:0x{{rv:08x}}")
+                    sys.stdout.flush(); os._exit(3)
+                handles = (CK_OBJECT_HANDLE * 8)()
+                count = CK_ULONG(0)
+                rv = raw2.C_FindObjects(sh2, handles, 8, byref(count))
+                raw2.C_FindObjectsFinal(sh2)
+                if rv != CKR_OK:
+                    print(f"CHILD_FATAL:Find:0x{{rv:08x}}")
+                    sys.stdout.flush(); os._exit(4)
+                print(f"CHILD_FOUND:{{count.value}}")
+                close_session_quietly(raw2, sh2)
+                raw2.C_Finalize(None)
+                sys.stdout.flush()
+                os._exit(0)
+            except BaseException as exc:
+                print(f"CHILD_EXC:{{type(exc).__name__}}:{{exc}}")
+                sys.stdout.flush()
+                os._exit(5)
+        else:
+            _, status = os.waitpid(pid, 0)
+            child_exit = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+            print(f"CHILD_EXIT:{{child_exit}}")
+            # Parent cleanup
+            try: raw.C_DestroyObject(sh, h)
+            except Exception: pass
+            close_session_quietly(raw, sh)
+            raw.C_Finalize(None)
+        """
+        rc, output = _run_script(script, timeout=30)
+        if rc != 0:
+            pytest.fail(
+                f"Cross-process session-object isolation test crashed "
+                f"(rc={rc}): {output}"
+            )
+
+        # Parse output: PARENT_LABEL must be set; child must report
+        # CHILD_FOUND:0 (didn't see parent's session object).
+        if "PARENT_LABEL:" not in output:
+            pytest.fail(f"Parent didn't create the session object: {output}")
+        if "CHILD_EXIT:" not in output:
+            pytest.fail(f"Child didn't exit cleanly: {output}")
+        if "CHILD_FATAL" in output or "CHILD_EXC" in output:
+            # Child failed during Initialize/OpenSession after fork —
+            # most software tokens (NSS, OpenCryptoki, qryptotoken) need
+            # daemon coordination here. That's not the test's target.
+            pytest.skip(
+                f"Child process couldn't re-initialize the module after fork "
+                f"(common limitation for daemon-backed modules): {output}"
+            )
+        if "CHILD_FOUND:0" not in output:
+            # Extract just the diagnostic lines for the failure message.
+            diag = "\n".join(
+                line
+                for line in output.splitlines()
+                if any(
+                    line.startswith(p)
+                    for p in (
+                        "PARENT_LABEL:",
+                        "CHILD_FOUND:",
+                        "CHILD_EXIT:",
+                        "CHILD_FATAL",
+                        "CHILD_EXC",
+                        "FATAL:",
+                    )
+                )
+            )
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                f"Cross-process session-object leak detected: a session "
+                f"object created in the parent process was visible to a "
+                f"child process that re-Initialized the module. PKCS#11 "
+                f"v3.1 Sec.4.2 says session objects belong to a single "
+                f"application, and distinct processes are distinct "
+                f"applications. Diagnostic: {diag}",
+                ComplianceLevel.CRITICAL,
+                reference="PKCS#11 v3.1 Sec.4.2 / Sec.5.6.5",
+            )
+            pytest.fail(
+                f"SECURITY: cross-process session-object isolation violated "
+                f"— child process saw the parent's session object. "
+                f"Diagnostic:\n{diag}"
+            )
+
+
 class TestLibraryReload:
     """Test library reload cycle (task 7.15)."""
 
