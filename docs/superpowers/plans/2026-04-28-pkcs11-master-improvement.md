@@ -725,14 +725,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 40 |
+| current_iteration | 41 |
 | phase0_last_run | 2026-04-28 (DONE) |
-| phase1_last_run | in-progress 2026-04-30 — kryoptic-main + softhsm2-main DONE; nss-main running; opencryptoki-master / tpm2 pending. Background task: `bwueo1zox`. |
+| phase1_last_run | in-progress 2026-04-30 — kryoptic / softhsm2 / nss-main DONE; opencryptoki-master running; tpm2 pending. Background task: `bwueo1zox`. |
 | phase1_due | false (in flight) |
 | phase3_audit_complete_for_iteration | 3.1 done (0 gaps); 3.2 done (0 defects) |
-| phase4_gap_complete_for_iteration | 4.2 done (19 zero-cov CKR / 5 HIGH); 4.3 done (82/104, 10 priority untested); 4.5 done (36 gaps, 10 HIGH); 4.1 still running (a13e92f19d6cd7b36) |
+| phase4_gap_complete_for_iteration | 4.1 done (PQC 0%, KDF 4%); 4.2 done (19 zero-cov CKR / 5 HIGH); 4.3 done (82/104, 10 priority untested); 4.5 done (36 gaps, 10 HIGH) |
 | last_action_at | 2026-04-30 |
-| last_action | softhsm2-main unfiltered: 61,314 P / 2,697 F / 18,149 S / 41 XF / 82,201 T / 0 crashed (vs filtered 77,619 T → +4,582 T unmasked: +68 P, **+123 real failures previously hidden**, +4,391 legit skips). Phase 4.2 subagent ingested: 19 zero-coverage CKR codes; top-leverage finding is that 3 HIGH gaps in C_WrapKey failure paths can be closed by extending test_ckr_wrap.py with 3 cases. |
+| last_action | nss-main unfiltered: 47,438 P / 2,008 F / 34,665 S / 105 XF / 84,217 T / 1 crashed (vs filtered 79,635 T → +4,582 T unmasked: +3,143 P, **+126 real failures previously hidden**, +1,313 legit skips). Combined across 3/5 providers: **+497 real failures unmasked total** (kryoptic +248, softhsm2 +123, nss +126). |
 
 ### Findings Table (Phase 1 → Phase 2)
 
