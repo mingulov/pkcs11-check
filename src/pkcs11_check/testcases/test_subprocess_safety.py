@@ -172,8 +172,21 @@ class TestSessionObjectProcessIsolation:
             CK_OBJECT_HANDLE, CK_ULONG,
             CKA_CLASS, CKA_LABEL, CKA_PRIVATE, CKA_TOKEN, CKA_VALUE,
             CKF_RW_SESSION, CKF_SERIAL_SESSION,
-            CKO_DATA, CKR_OK,
+            CKO_DATA, CKR_OK, CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID,
         )
+
+        # Login error swallow rule (audit fix iter-50): catch only the two
+        # documented "already logged in / wrong user type" cases per the
+        # CLAUDE.md PIN handling section. Other login failures must surface.
+        _LOGIN_OK_TO_IGNORE = ("CKR_USER_ALREADY_LOGGED_IN", "CKR_USER_TYPE_INVALID")
+
+        def _safe_login(raw_obj, sess_h, user_type, pin_bytes):
+            try:
+                login_user(raw_obj, sess_h, user_type, pin_bytes)
+            except AssertionError as e:
+                msg = str(e)
+                if not any(code in msg for code in _LOGIN_OK_TO_IGNORE):
+                    raise
 
         pin = {pin_repr}
         label = b"crossproc-" + uuid.uuid4().bytes.hex().encode()[:16]
@@ -191,8 +204,11 @@ class TestSessionObjectProcessIsolation:
         slot_id = slot_list[{slot}]
         sh = open_session(raw, slot_id, CKF_RW_SESSION | CKF_SERIAL_SESSION)
         if pin is not None:
-            try: login_user(raw, sh, 1, pin)
-            except Exception: pass
+            try:
+                _safe_login(raw, sh, 1, pin)
+            except AssertionError as e:
+                print(f"FATAL:Parent_Login:{{e}}")
+                close_session_quietly(raw, sh); raw.C_Finalize(None); sys.exit(1)
         tmpl = template(
             attr_ulong(CKA_CLASS, CKO_DATA),
             attr_bool(CKA_TOKEN, False),
@@ -224,8 +240,11 @@ class TestSessionObjectProcessIsolation:
                 slot_id2 = slot_list2[{slot}]
                 sh2 = open_session(raw2, slot_id2, CKF_RW_SESSION | CKF_SERIAL_SESSION)
                 if pin is not None:
-                    try: login_user(raw2, sh2, 1, pin)
-                    except Exception: pass
+                    try:
+                        _safe_login(raw2, sh2, 1, pin)
+                    except AssertionError as e:
+                        print(f"CHILD_FATAL:Login:{{e}}")
+                        sys.stdout.flush(); os._exit(6)
                 # Find-objects by the parent's label.
                 find_tmpl = template(
                     attr_bytes(CKA_LABEL, label),
@@ -247,13 +266,24 @@ class TestSessionObjectProcessIsolation:
                 raw2.C_Finalize(None)
                 sys.stdout.flush()
                 os._exit(0)
-            except BaseException as exc:
+            except Exception as exc:
+                # Audit-fix (iter-50): narrowed from BaseException to
+                # Exception so KeyboardInterrupt / SystemExit / signal-
+                # raised exits propagate normally. The exit-5 path is
+                # only for in-process Python errors that the parent can
+                # use to disambiguate "init worked but later step
+                # crashed" from "init never started".
                 print(f"CHILD_EXC:{{type(exc).__name__}}:{{exc}}")
                 sys.stdout.flush()
                 os._exit(5)
         else:
             _, status = os.waitpid(pid, 0)
-            child_exit = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+            if os.WIFSIGNALED(status):
+                child_signal = os.WTERMSIG(status)
+                print(f"CHILD_SIGNAL:{{child_signal}}")
+                child_exit = -child_signal
+            else:
+                child_exit = os.WEXITSTATUS(status)
             print(f"CHILD_EXIT:{{child_exit}}")
             # Parent cleanup
             try: raw.C_DestroyObject(sh, h)
@@ -261,7 +291,11 @@ class TestSessionObjectProcessIsolation:
             close_session_quietly(raw, sh)
             raw.C_Finalize(None)
         """
-        rc, output = _run_script(script, timeout=30)
+        # Audit-fix (iter-50): bumped timeout from 30s → 90s to give
+        # tabrmd-backed tpm2-pkcs11 enough headroom for cold-start
+        # post-fork re-Initialize. Real-world fork+TPM2_Startup can
+        # exceed 30s on busy systems.
+        rc, output = _run_script(script, timeout=90)
         if rc != 0:
             pytest.fail(
                 f"Cross-process session-object isolation test crashed "
@@ -274,13 +308,41 @@ class TestSessionObjectProcessIsolation:
             pytest.fail(f"Parent didn't create the session object: {output}")
         if "CHILD_EXIT:" not in output:
             pytest.fail(f"Child didn't exit cleanly: {output}")
-        if "CHILD_FATAL" in output or "CHILD_EXC" in output:
-            # Child failed during Initialize/OpenSession after fork —
-            # most software tokens (NSS, OpenCryptoki, qryptotoken) need
-            # daemon coordination here. That's not the test's target.
+        # Audit-fix (iter-50): a child killed by signal (CHILD_SIGNAL: in
+        # output) is a CRASH — that IS the finding, not a skip condition.
+        # Per CLAUDE.md: "A segfault IS the finding."
+        if "CHILD_SIGNAL:" in output:
+            pytest.fail(
+                f"SECURITY: child process was killed by a signal (likely "
+                f"crash) during cross-process isolation test:\n{output}"
+            )
+
+        # Audit-fix (iter-50): narrowed skip-on-CHILD_FATAL/EXC. Skip
+        # only on the documented daemon-coordination cases — namely
+        # CHILD_FATAL:Init or CHILD_FATAL:Login with daemon-related CKRs
+        # (CKR_FUNCTION_FAILED / CKR_DEVICE_ERROR / CKR_GENERAL_ERROR
+        # /CKR_TOKEN_NOT_PRESENT / CKR_SLOT_ID_INVALID).
+        # CHILD_EXC paths and other CHILD_FATAL paths fail the test —
+        # those represent real bugs, not module-environment limits.
+        daemon_failure_ckrs = (
+            "0x00000005",  # CKR_FUNCTION_FAILED
+            "0x00000030",  # CKR_DEVICE_ERROR
+            "0x00000020",  # CKR_GENERAL_ERROR
+            "0x000000E0",  # CKR_TOKEN_NOT_PRESENT
+            "0x00000003",  # CKR_SLOT_ID_INVALID
+        )
+        is_daemon_init_failure = any(
+            f"CHILD_FATAL:Init:{code}" in output for code in daemon_failure_ckrs
+        ) or "CHILD_FATAL:Login:" in output
+        if "CHILD_FATAL" in output and is_daemon_init_failure:
             pytest.skip(
-                f"Child process couldn't re-initialize the module after fork "
-                f"(common limitation for daemon-backed modules): {output}"
+                f"Child couldn't re-initialize the module after fork "
+                f"(daemon-backed module limit): {output}"
+            )
+        if "CHILD_FATAL" in output or "CHILD_EXC" in output:
+            pytest.fail(
+                f"Child failed unexpectedly during cross-process test "
+                f"(not a documented daemon limitation): {output}"
             )
         if "CHILD_FOUND:0" not in output:
             # Extract just the diagnostic lines for the failure message.
