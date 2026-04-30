@@ -461,7 +461,24 @@ class TestAESPaddingOracle:
         plaintext = b"vaudenay POODLE all 16 positions"  # 32 bytes
         assert len(plaintext) == 32
 
-        all_errors: dict[tuple[int, int], str] = {}  # (trial, pos) → CKR
+        # Classification per probe:
+        #   "CKR_<X>"            — module raised; recorded CKR
+        #   "CKR_OK_MATCH"       — decrypt returned CKR_OK with bytes
+        #                          matching the original plaintext (only
+        #                          possible if the bit-flip happened to
+        #                          produce a self-consistent plaintext;
+        #                          extremely unlikely for AES-CBC, but
+        #                          counted distinctly for completeness)
+        #   "CKR_OK_DIFFERENT"   — decrypt returned CKR_OK with garbage
+        #                          plaintext (the canonical Vaudenay
+        #                          leak: padding validated, content
+        #                          differs from original)
+        # Distinguishing "_MATCH" / "_DIFFERENT" / CKR sets disambiguates
+        # the M1 + M5 audit findings: a module that silently accepts ALL
+        # corrupted CTs as CKR_OK with garbage plaintext is leaking CT
+        # malleability (worse than Vaudenay), distinct from a module
+        # that uniformly rejects (real mitigation).
+        all_errors: dict[tuple[int, int], str] = {}
 
         keys: list[int] = []
         try:
@@ -484,7 +501,7 @@ class TestAESPaddingOracle:
                     corrupted = bytearray(ct)
                     corrupted[last_block_start + pos] ^= 0xFF
                     try:
-                        decrypt_single(
+                        result = decrypt_single(
                             rs.raw,
                             rs.sh,
                             key,
@@ -495,25 +512,33 @@ class TestAESPaddingOracle:
                     except AssertionError as exc:
                         all_errors[(trial, pos)] = _extract_ckr(exc)
                     else:
-                        # Decrypt succeeded on bit-flipped CBC-PAD —
-                        # accidentally-valid padding case (the very
-                        # leak Vaudenay 2002 exploits).
-                        all_errors[(trial, pos)] = "CKR_OK"
+                        # Decrypt succeeded — disambiguate match vs
+                        # different plaintext (M1 / M5 mitigation).
+                        all_errors[(trial, pos)] = (
+                            "CKR_OK_MATCH"
+                            if result == plaintext
+                            else "CKR_OK_DIFFERENT"
+                        )
 
             distinct = set(all_errors.values())
             if len(distinct) > 1:
+                # Tally for the failure message so triage can see
+                # whether the leak is the canonical Vaudenay path
+                # (CKR_OK_DIFFERENT vs CKR_ENCRYPTED_DATA_INVALID) or
+                # a malleability finding (all CKR_OK_DIFFERENT).
+                from collections import Counter
+
+                tally = Counter(all_errors.values())
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
-                    f"AES-CBC-PAD returns distinguishable CKRs across "
+                    f"AES-CBC-PAD returns distinguishable outcomes across "
                     f"corruption positions over {trials} trials: "
-                    f"{sorted(distinct)}. This is the Vaudenay 2002 / "
-                    f"POODLE leak channel — the spec permits both CKR_OK "
-                    f"(accidentally valid padding) and "
-                    f"CKR_ENCRYPTED_DATA_INVALID, but a module that "
-                    f"returns both at distinguishable rates leaks the "
-                    f"padding-validity bit of the (otherwise random) "
-                    f"corrupted plaintext to a chosen-ciphertext attacker.",
+                    f"{dict(tally)}. This is the Vaudenay 2002 / POODLE "
+                    f"leak channel — a module that returns "
+                    f"CKR_OK_DIFFERENT (accidentally valid padding) "
+                    f"distinguishably from CKR_ENCRYPTED_DATA_INVALID "
+                    f"leaks the padding-validity bit per chosen-CT query.",
                     ComplianceLevel.CRITICAL,
                     reference="Vaudenay 'Security Flaws Induced by CBC "
                     "Padding' (EUROCRYPT 2002); POODLE (CVE-2014-3566); "
@@ -521,12 +546,38 @@ class TestAESPaddingOracle:
                 )
                 pytest.fail(
                     f"SECURITY: AES-CBC-PAD padding oracle (Vaudenay 2002) — "
-                    f"distinct error codes {sorted(distinct)} across "
-                    f"{trials * 16} corruption probes. An attacker with "
-                    f"chosen-ciphertext access can recover plaintext "
-                    f"byte-by-byte via ~256 oracle queries per byte. "
-                    f"Mitigation is application-level: use AES-GCM or "
-                    f"encrypt-then-MAC instead of bare CBC-PAD."
+                    f"distinct outcomes {dict(tally)} across {trials * 16} "
+                    f"corruption probes. An attacker with chosen-ciphertext "
+                    f"access can recover plaintext byte-by-byte via ~256 "
+                    f"oracle queries per byte. Mitigation is application-"
+                    f"level: use AES-GCM or encrypt-then-MAC instead of "
+                    f"bare CBC-PAD."
+                )
+
+            # Single-outcome path: surface the *kind* of single outcome.
+            # All CKR_OK_DIFFERENT = malleability finding; all
+            # CKR_ENCRYPTED_DATA_INVALID = real Vaudenay mitigation.
+            single = next(iter(distinct))
+            if single == "CKR_OK_DIFFERENT":
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"AES-CBC-PAD accepts ALL bit-flipped ciphertexts and "
+                    f"returns CKR_OK with corrupted plaintext over "
+                    f"{trials * 16} probes — ciphertext malleability is "
+                    f"unchecked. This is strictly worse than the Vaudenay "
+                    f"channel (the channel needs distinguishability; "
+                    f"unchecked malleability allows direct plaintext "
+                    f"manipulation).",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.5.4: padding validation "
+                    "expected on padded mechanisms",
+                )
+                pytest.fail(
+                    "SECURITY: AES-CBC-PAD silently accepts every bit-"
+                    "flipped ciphertext (CKR_OK with mismatched "
+                    "plaintext) — no padding validation at all. CT "
+                    "malleability is unchecked."
                 )
         finally:
             for k in keys:
@@ -598,16 +649,24 @@ class TestTimingBasic:
     def test_aes_cbc_pad_decrypt_timing_sanity(self, p11_raw_session: Any) -> None:
         """AES-CBC-PAD decrypt: valid vs invalid-padding timing should be similar.
 
-        Lucky13 (CVE-2013-0169) and similar attacks exploit the small
-        timing difference between "valid PKCS#7 padding, then MAC check"
-        and "invalid PKCS#7 padding, MAC check skipped" code paths. PKCS#11
-        modules without a MAC layer have the inverse: valid-padding paths
-        unpad-and-return; invalid-padding paths reject early. A large
-        timing gap (>3x) is a real channel.
+        Lucky13 (CVE-2013-0169, Al Fardan & Paterson 2013) exploits
+        sub-microsecond timing differences amplified across millions of
+        samples. **This test does NOT detect Lucky13-class signals** —
+        the 3x threshold + N=50 sample size only catch GROSS timing
+        oracles (e.g. 100ms vs 5ms). Real Lucky13-resistance testing
+        requires N ≥ 10⁶ samples + Welch's t-test in a controlled
+        environment with cgroups CPU pinning, jitter calibration, and
+        clock-source disambiguation — well beyond the scope of a unit
+        test.
 
-        This is a sanity check, not lab-grade analysis. CV / multi-trial
-        statistical methods would be more rigorous; the 3x threshold
-        catches gross differences. Closes Phase 4.5 GAP-P4 (MED).
+        Use this test as an "obvious-bug detector" only. A pass here
+        does not mean the module is Lucky13-resistant; a fail means
+        the gap is large enough to be visible without statistical
+        machinery (likely a missing constant-time path).
+
+        Phase 4.5 GAP-P4 status: gross-timing sanity covered here.
+        Lab-grade Lucky13 detection remains future work (would belong
+        in an offline timing-analysis tool, not a pytest unit).
         """
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC_PAD"):
@@ -627,7 +686,9 @@ class TestTimingBasic:
             )
             assert len(valid_ct) % 16 == 0
 
-            # Valid decrypts: CT with intact PKCS#7 padding.
+            # Valid decrypts: CT with intact PKCS#7 padding. The valid
+            # path MUST NOT raise — if it does, that is itself a finding
+            # (and timing measurement of failures is meaningless).
             valid_times: list[float] = []
             for _ in range(50):
                 start = time.perf_counter()
@@ -640,16 +701,27 @@ class TestTimingBasic:
                         valid_ct,
                         mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
                     )
-                except AssertionError:
-                    pass
+                except AssertionError as exc:
+                    pytest.fail(
+                        f"Valid CBC-PAD decrypt failed unexpectedly "
+                        f"({exc}) — timing comparison invalid"
+                    )
                 valid_times.append(time.perf_counter() - start)
 
             # Invalid decrypts: corrupt the LAST block to invalidate
             # padding. Use a fresh corrupted ct each iteration so we
             # don't accidentally settle on a stable "accidentally valid"
-            # padding pattern.
+            # padding pattern. We accept ONLY explicit padding-failure
+            # CKRs as legitimate "invalid path" timing samples;
+            # CKR_GENERAL_ERROR / CKR_FUNCTION_FAILED / unrelated
+            # AssertionErrors fail the test (those would skew timing).
             invalid_times: list[float] = []
             last_block_start = len(valid_ct) - 16
+            invalid_path_codes = (
+                "CKR_ENCRYPTED_DATA_INVALID",
+                "CKR_DATA_INVALID",
+                "CKR_DATA_LEN_RANGE",
+            )
             for i in range(50):
                 bad_ct = bytearray(valid_ct)
                 # Vary the corruption position so we sample the response
@@ -665,8 +737,20 @@ class TestTimingBasic:
                         bytes(bad_ct),
                         mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
                     )
-                except AssertionError:
-                    pass
+                except AssertionError as exc:
+                    msg = str(exc)
+                    if not any(code in msg for code in invalid_path_codes):
+                        # Some bit-flips happen to produce valid padding
+                        # → CKR_OK + garbage plaintext, no exception. That
+                        # is fine; timing is still on the rejection path
+                        # the test is comparing. Other (non-padding) CKRs
+                        # indicate broken decrypt and would skew timing.
+                        if "CKR_OK" not in msg:
+                            pytest.fail(
+                                f"Unexpected non-padding error on bit-"
+                                f"flipped CBC-PAD decrypt: {exc} — timing "
+                                f"comparison invalid"
+                            )
                 invalid_times.append(time.perf_counter() - start)
 
             valid_avg = sum(valid_times) / len(valid_times)

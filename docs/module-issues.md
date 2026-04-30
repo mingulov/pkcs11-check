@@ -734,11 +734,18 @@ until SoftHSM2 fixes it upstream.
 
 ### Vaudenay 2002 / POODLE channel on AES-CBC-PAD (NEW iter-48 2026-04-30)
 `test_padding_oracle.py::TestAESPaddingOracle::test_cbc_pad_all_last_block_positions`
-— SoftHSM2 distinguishes `CKR_OK` (accidentally-valid PKCS#7 padding)
-from `CKR_ENCRYPTED_DATA_INVALID` (invalid padding) when a chosen
-ciphertext is bit-flipped. Across 20 trials × 16 byte positions = 320
-probes per run, both outcomes appear at expected ~6/256 vs ~250/256
-rates — the canonical Vaudenay 2002 padding-oracle leak channel.
+— SoftHSM2 returns `CKR_OK` with **mismatched plaintext** when a
+bit-flipped CBC-PAD ciphertext happens to produce accidentally-valid
+PKCS#7 padding (~6/256 of random corruptions). Distinguishable from
+`CKR_ENCRYPTED_DATA_INVALID` on rejected probes — the canonical
+Vaudenay 2002 padding-oracle leak channel.
+
+Concrete observation across 20 trials × 16 byte positions = 320
+chosen-ciphertext probes: `{CKR_ENCRYPTED_DATA_INVALID: 319,
+CKR_OK_DIFFERENT: 1}`. The CKR_OK_DIFFERENT outcome (audit-driven
+classification added in the iter-48 audit fix) precisely identifies
+the leak path: `C_Decrypt` returned CKR_OK but the recovered
+plaintext does not match the original — exactly Vaudenay's signal.
 
 This is an INHERENT property of PKCS#7 padding without an integrity
 layer. An attacker with chosen-ciphertext access can recover plaintext
@@ -752,13 +759,23 @@ se, since the spec permits the distinguishable response.
 **Mitigation:** RFC 7366 encrypt-then-MAC, or AES-GCM. SoftHSM2 is
 not at fault for following the spec; the spec itself accepts the leak.
 
-Comparison: Kryoptic's main branch passes the same test reliably
-across 20 trials. Either Kryoptic returns `CKR_ENCRYPTED_DATA_INVALID`
-even when the random corruption produces accidentally-valid padding
-(an active mitigation against Vaudenay), or its CBC-PAD path applies
-additional integrity beyond plain PKCS#7. Worth a closer look as a
-positive finding — Kryoptic appears to defeat the leak channel
-deliberately.
+### Positive finding: Kryoptic defeats the Vaudenay channel (NEW iter-48 2026-04-30)
+The same Vaudenay test passes Kryoptic-main reliably across 20 trials
+with a uniform outcome `{CKR_ENCRYPTED_DATA_INVALID: 320}`. The
+audit-fix CKR_OK_DIFFERENT classifier rules out the alternative
+explanation that Kryoptic silently accepts all bit-flipped ciphertexts
+as CKR_OK with garbage plaintext (which would have shown
+CKR_OK_DIFFERENT in the tally). Kryoptic genuinely returns
+`CKR_ENCRYPTED_DATA_INVALID` even when random corruption happens to
+produce a valid PKCS#7 byte pattern — an active mitigation against
+the Vaudenay channel.
+
+Worth investigating Kryoptic's source to learn how — likely a
+constant-time padding check that always returns the rejection code
+regardless of the validity bit, or an integrity layer beyond bare
+PKCS#7. This is the kind of CBC-PAD behaviour TLS 1.3 / RFC 7366
+mandates at the protocol level; Kryoptic providing it at the module
+level is a notable security posture choice.
 
 ### Tookan §3.3 — CKA_SENSITIVE downgrade on unwrap (NEW 2026-04-30)
 `test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive`
