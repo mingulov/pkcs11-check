@@ -31,6 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_END_DATE,
     CKA_KEY_GEN_MECHANISM,
+    CKA_LABEL,
     CKA_SIGN,
     CKA_START_DATE,
     CKA_TOKEN,
@@ -248,6 +249,109 @@ class TestDestroyable:
             raise
         # Should succeed without error
         rs.raw.C_DestroyObject(rs.sh, key)
+
+
+class TestTokenAttributePromotion:
+    """GAP-A5: session-object → token-object promotion via SetAttribute.
+
+    PKCS#11 v3.1 Sec.4.7 lists CKA_TOKEN as a Common Object Attribute
+    with "R/W after creation" semantics — promotion IS allowed by the
+    spec, but only by an authenticated user with R/W token access. The
+    security concerns:
+
+    1. Lying-module pattern: SetAttribute returns CKR_OK but the value
+       silently doesn't change (readback shows CKA_TOKEN=False after
+       a "successful" set to True). Mirrors GAP-T1 / GAP-T7.
+    2. Half-promoted state: SetAttribute returns CKR_OK and readback
+       shows True, but the object doesn't actually persist on the
+       token (would require a separate-session check; out of scope
+       for this baseline test).
+
+    Closes Phase 4.5 GAP-A5 (MED).
+    """
+
+    def test_setattr_token_promotion_consistency(
+        self, p11_raw_session: Any
+    ) -> None:
+        """C_SetAttributeValue(CKA_TOKEN=True) must either (a) be rejected,
+        or (b) actually take effect (readback shows True).
+
+        A module that returns CKR_OK without actually promoting the
+        object is in a confused half-promoted state — the object looks
+        like a token object to the caller but isn't persistent. That
+        breaks the application's expectations (would write sensitive
+        data to a token that doesn't actually persist) and is the
+        lying-module masking pattern at the persistence boundary.
+        """
+        rs = p11_raw_session
+        try:
+            key = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={CKA_TOKEN: False, CKA_LABEL: "session-key-promote-test"},
+            )
+        except AssertionError as e:
+            pytest.skip(f"Could not generate baseline session AES key: {e}")
+            return
+
+        try:
+            # Pre-check: confirm the object is genuinely session-scope.
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_TOKEN])
+            except AssertionError as e:
+                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                    pytest.skip(f"Module does not expose CKA_TOKEN: {e}")
+                raise
+            initial = attrs.get(CKA_TOKEN)
+            if initial is not False:
+                pytest.skip(f"Module did not honour CKA_TOKEN=False at gen ({initial!r})")
+
+            # Attempt the promotion.
+            try:
+                set_attributes(rs.raw, rs.sh, key, {CKA_TOKEN: True})
+            except AssertionError as e:
+                msg = str(e)
+                accepted_rejection = (
+                    "CKR_ATTRIBUTE_READ_ONLY",
+                    "CKR_ACTION_PROHIBITED",
+                    "CKR_USER_NOT_LOGGED_IN",
+                    "CKR_SESSION_READ_ONLY",
+                    "CKR_TEMPLATE_INCONSISTENT",
+                    "CKR_ATTRIBUTE_VALUE_INVALID",
+                )
+                if any(code in msg for code in accepted_rejection):
+                    return
+                raise
+
+            # SetAttribute returned CKR_OK; verify the change actually
+            # took effect at the readback level. A module that silently
+            # no-ops is in the lying-module pattern.
+            attrs2 = read_attributes(rs.raw, rs.sh, key, [CKA_TOKEN])
+            if attrs2.get(CKA_TOKEN) is not True:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"C_SetAttributeValue(CKA_TOKEN=True) returned CKR_OK but "
+                    f"readback still reports CKA_TOKEN={attrs2.get(CKA_TOKEN)!r}. "
+                    f"Module silently ignored the promotion request — "
+                    f"caller believes object is now a token object but it "
+                    f"isn't.",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.4.7 CKA_TOKEN R/W semantics",
+                )
+                pytest.fail(
+                    "SECURITY: module silently ignored "
+                    "C_SetAttributeValue(CKA_TOKEN=True) — half-promoted "
+                    "state. Lying-module pattern at the persistence "
+                    "boundary."
+                )
+            # CKR_OK + readback shows True: spec-conformant promotion.
+            # Persistence verification (open new session, find object)
+            # is out of scope for this baseline test — see CROSS-PROC-001
+            # for the cross-process visibility companion.
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
 
 
 class TestKeyGenMechanism:
