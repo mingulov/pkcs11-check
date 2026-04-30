@@ -32,6 +32,7 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     generate_random,
     read_attributes,
+    set_attributes,
     sign_single,
 )
 from pkcs11_check.raw.rv import ckr_name, expect_rv
@@ -690,7 +691,12 @@ class TestTrustedAttribute:
             close_session_quietly(rs.raw, s1)
 
     def test_user_cannot_set_trusted(self, p11_raw_session: Any) -> None:
-        """USER session should not be able to set CKA_TRUSTED=True."""
+        """USER session must not be able to gen a key with CKA_TRUSTED=True.
+
+        Per PKCS#11 v3.1 Sec.4.7, only the SO can mark a key as TRUSTED.
+        A USER session creating a TRUSTED=True key bypasses the SO trust
+        boundary used by CKA_WRAP_WITH_TRUSTED to gate sensitive wraps.
+        """
         rs = p11_raw_session
         try:
             key_h = gen_aes_key(
@@ -707,15 +713,102 @@ class TestTrustedAttribute:
             # Expected: module rejects CKA_TRUSTED from USER
             return
 
-        # If we get here, module allowed it (some modules are lenient)
+        # If we get here, module allowed creating a CKA_TRUSTED key from a
+        # USER session — a security boundary violation. Closes Phase 4.5
+        # GAP-T5 (was previously suppressed via compliance.note() only).
         try:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                "USER session can set CKA_TRUSTED=True (should require SO)",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 spec: CKA_TRUSTED set by SO only",
+                "USER session can create CKA_TRUSTED=True key (should require SO)",
+                ComplianceLevel.CRITICAL,
+                reference="PKCS#11 v3.1 Sec.4.7: CKA_TRUSTED set by SO only",
             )
+            # Read back to confirm the violation rather than just trust the
+            # gen success — some modules silently drop the attribute.
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
+            except AssertionError as e:
+                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                    return  # Module doesn't expose CKA_TRUSTED
+                raise
+            if attrs.get(CKA_TRUSTED) is True:
+                pytest.fail(
+                    "SECURITY: USER session created and was granted "
+                    "CKA_TRUSTED=True on a freshly-generated key — "
+                    "trust boundary breached"
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key_h)
+
+    def test_user_cannot_setattr_trusted(self, p11_raw_session: Any) -> None:
+        """USER session must not be able to set CKA_TRUSTED=True on an
+        existing TRUSTED=False key via C_SetAttributeValue.
+
+        Closes Phase 4.5 GAP-T5 (HIGH-side coverage — the create-time
+        case is covered by test_user_cannot_set_trusted; the
+        SetAttributeValue path was missing).
+        """
+        rs = p11_raw_session
+        # First generate a key without CKA_TRUSTED to avoid colliding with
+        # modules that reject TRUSTED in templates entirely.
+        try:
+            key_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={CKA_TOKEN: False, CKA_WRAP: True},
+            )
+        except AssertionError as e:
+            pytest.skip(f"Could not generate baseline AES key: {e}")
+            return
+
+        try:
+            # Pre-check: the key must exist and be readable.
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
+            except AssertionError as e:
+                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                    pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
+                raise
+            if attrs.get(CKA_TRUSTED) is True:
+                pytest.skip("Key created TRUSTED=True by default — unrelated path")
+
+            # Attempt the escalation.
+            try:
+                set_attributes(rs.raw, rs.sh, key_h, {CKA_TRUSTED: True})
+            except AssertionError as e:
+                # Module rejected the SetAttribute — correct behaviour.
+                msg = str(e)
+                if any(
+                    code in msg
+                    for code in (
+                        "CKR_ACTION_PROHIBITED",
+                        "CKR_ATTRIBUTE_READ_ONLY",
+                        "CKR_USER_NOT_LOGGED_IN",
+                        "CKR_ATTRIBUTE_VALUE_INVALID",
+                    )
+                ):
+                    return
+                raise
+
+            # SetAttribute returned CKR_OK — confirm whether the change
+            # actually took effect (some modules silently no-op).
+            attrs2 = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
+            if attrs2.get(CKA_TRUSTED) is True:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "USER session escalated CKA_TRUSTED=False → True via "
+                    "C_SetAttributeValue (should require SO)",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.1 Sec.4.7: CKA_TRUSTED set by SO only",
+                )
+                pytest.fail(
+                    "SECURITY: USER session escalated a key's CKA_TRUSTED "
+                    "from False to True via C_SetAttributeValue — trust "
+                    "boundary breached, opens CKA_WRAP_WITH_TRUSTED bypass"
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
