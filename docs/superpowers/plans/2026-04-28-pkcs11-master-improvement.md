@@ -702,6 +702,103 @@ Apply the Exit Criteria. If met, write `## Loop Exit — Met YYYY-MM-DD` and sto
 
 ---
 
+## Anti-Masking Guardrails
+
+> **Why this section exists.** In iter 46, an audit by the
+> `silent-failure-hunter` agent of iters 42-45 found 3 cases where my own
+> commits had introduced lenient accepted-CKR sets that would silently
+> absorb the very bug-classes the new tests were meant to surface — the
+> exact "fix that masks a real issue" failure mode the user flagged. The
+> rules below codify what to watch for so that future closures stay honest.
+
+### Core principle
+
+Failures ARE findings. A test that PASSES on a buggy module is worth less
+than a test that FAILS and surfaces the bug. Every accepted-CKR fallback,
+every `pytest.skip` precondition, every `pytest.xfail`, every
+`compliance.note(...)`-without-`pytest.fail` is a place where a real
+module bug can hide — and the burden of proof is on the test author to
+demonstrate why the relaxation is necessary.
+
+### Patterns to watch for during code review
+
+| Pattern | Risk | Action |
+|---|---|---|
+| Accepted-CKR list contains CKR_GENERAL_ERROR or CKR_FUNCTION_FAILED | A module that segfaults internally and recovers may return one of these — the test silently passes a real crash. | Remove unless gated by a per-module quirk in `_module_quirks.py`. |
+| Accepted-CKR list contains CKR_DEVICE_ERROR | Same risk as above; CKR_DEVICE_ERROR is "internal exception" for many modules. Kryoptic uses it broadly for verify failures (documented). | Gate to specific modules via `quirk_extras(p11_config, "verify_or_integrity_failure")`. |
+| `if not has_property: pytest.skip(...)` after a positive enforcement check | The skip path may be the worst-case "lying module" pattern: module accepted the constraint at create-time but ignored it. | Consider `pytest.fail` with `compliance.note(CRITICAL)` for the silent-ignore case. |
+| `pytest.xfail("known X bug")` on a security-relevant assertion | Suppresses regressions on every other module. | Convert to `pytest.fail` with explicit accepted-CKR list; document the existing module bug in `module-issues.md`. |
+| `compliance.note(...)` with no following `pytest.fail` | Notes are reportable but tests still pass — module-conformance regressions surface only in the post-run report. | Add `pytest.fail` for security-relevant cases. |
+| Fallback added without a `module-issues.md` entry | A new accepted CKR with no spec deviation documented = silent absorption. | Refuse the fallback; either document the deviation or fix the underlying test. |
+
+### Per-module CKR quirks: the registry
+
+When a module legitimately returns a non-spec CKR for a documented
+reason (e.g. Kryoptic uses CKR_DEVICE_ERROR for *all* verification
+failures), record it in `src/pkcs11_check/testcases/_module_quirks.py`:
+
+```python
+MODULE_QUIRKS[ModuleId.X]["quirk_key"] = Quirk(
+    description="...",
+    spec_ref="PKCS#11 v3.1 Sec.X.Y",
+    issue_ref="docs/module-issues.md X §heading",
+    extra_ckrs=(CKR_Y,),
+)
+```
+
+Tests use `quirk_extras(p11_config, "quirk_key")` instead of hard-coding
+the CKR — keeping the deviation in one auditable file.
+
+`tests/test_module_quirks.py` enforces:
+- every `quirk_key` string used in a test references a real entry,
+- every entry points at a heading that exists in `module-issues.md`,
+- unknown modules get the strictest assertions (no quirk extras).
+
+### Per-iteration audit (Phase 6 sub-step)
+
+Before closing an iteration where any new test was added or any test
+suppression was relaxed:
+
+- [ ] **6.0 — Run silent-failure-hunter audit on the iteration's diff.**
+  Dispatch the `pr-review-toolkit:silent-failure-hunter` agent with the
+  diff range (`6c58a4a..HEAD` or the iteration's first/last commit
+  range) and the prompt structure used in iter 46. Triage every
+  CRITICAL or HIGH finding before continuing.
+- [ ] **6.0a — For each finding, decide: fix-now or document-as-quirk.**
+  If the finding is real (lenient set, unjustified skip, etc.), fix it.
+  If the finding describes a documented module deviation, register a
+  Quirk in `_module_quirks.py` so the fallback is gated to that module.
+- [ ] **6.0b — Re-run the affected tests on softhsm2-main +
+  kryoptic-main (minimum)** to confirm the stricter assertion still
+  passes for the modules that don't have the quirk, and the quirk
+  properly applies for the modules that do.
+
+This audit is now a hard gate on the iteration: closing without it
+risks accumulating masking patterns again.
+
+### What NOT to register as a quirk
+
+- A test failure on a module that has no `module-issues.md` entry
+  documenting the deviation. (Document the bug first; the quirk is for
+  *known* deviations.)
+- A CKR difference where the security outcome is also different.
+  Quirks only cover wrong-CKR-but-same-outcome (e.g. CKR_DEVICE_ERROR
+  vs CKR_SIGNATURE_INVALID — both reject the input). They do NOT
+  cover CKR_OK vs CKR_X — that's a real bug.
+- A timing or behavioural difference. Quirks are CKR-only.
+- "Most modules return X, this one returns Y" — without a
+  `module-issues.md` entry, that's a real finding to report, not a
+  quirk to silence.
+
+### Periodic guardrail re-runs
+
+Every 3-5 iterations, re-dispatch silent-failure-hunter against the
+iteration log to look for slow drift — accepted-CKR sets that have
+grown over time, xfails that have not been revisited, skips that
+turned out to be permanent. Bring findings to the Fix Queue.
+
+---
+
 ## Loop Exit Criteria
 
 **ALL** of the following must hold for the loop to exit:
@@ -712,8 +809,9 @@ Apply the Exit Criteria. If met, write `## Loop Exit — Met YYYY-MM-DD` and sto
 4. `uv run ruff check src/ tests/`, `uv run mypy --strict src/`, `uv run python -m pytest tests/ -q` all green.
 5. `docs/architecture.md`, `docs/module-issues.md`, `docs/gap-analysis-*.md` are up to date (no `TODO`, no stale section, no contradiction with the State Tracker).
 6. `docs/cve-regression.md` lists every CVE that has a regression test, with a one-line summary per CVE.
+7. **Anti-masking audit** (Phase 6.0) clean for the most recent iteration: silent-failure-hunter reports zero CRITICAL findings, every HIGH finding is either fixed or registered as a Quirk with a corresponding `module-issues.md` entry.
 
-If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Phase 1 result table copied below it, then halts (no `ScheduleWakeup`).
+If 1–7 hold, the agent writes `## Loop Exit — Met <date>` with the final Phase 1 result table copied below it, then halts (no `ScheduleWakeup`).
 
 ---
 
@@ -725,14 +823,14 @@ If 1–6 hold, the agent writes `## Loop Exit — Met <date>` with the final Pha
 
 | Field | Value |
 |---|---|
-| current_iteration | 45 |
+| current_iteration | 46 |
 | phase0_last_run | 2026-04-28 (DONE) |
 | phase1_last_run | **2026-04-30 DONE for all 5 providers**. kryoptic / softhsm2 / nss-main / opencryptoki-master / tpm2 all refreshed unfiltered. tpm2 retry validated TPM-DBUS-001 + TPM-FIXTURE-001 fixes: errors 1,027 → 851 (−17%). Background task `bl3xxk6sl` complete. |
 | phase1_due | false (full unfiltered Phase 1 done; next due after the fix queue is drained or vendor data is refreshed again) |
 | phase3_audit_complete_for_iteration | 3.1 done (0 gaps); 3.2 done (0 defects) |
 | phase4_gap_complete_for_iteration | 4.1 done (PQC 0%, KDF 4%); 4.2 done (19 zero-cov CKR / 5 HIGH — **3 HIGH closed** via CKR-WRAP-3IN1); 4.3 done (82/104, 10 priority untested — corrected: HELPER-ONLY count was 4, actually 1); 4.5 done (36 gaps, **all 10 HIGH closed iters 42-45**: S1 / W1 / W2 / T1 / T2 / T3 / T5 / A1 / A2 / P1 / P2; the 5 MEDs and 21 LOWs remain) |
 | last_action_at | 2026-04-30 |
-| last_action | iter-42 productive drain: closed GAP-S1 (false CVE coverage), OC-IT42-TRIAGE-001 (5 NEW OpenCryptoki findings: 4 HIGH + 1 MED), CKR-WRAP-3IN1 (3 new tests + 2 NEW findings: HIGH Kryoptic type-confusion security bug + MED SoftHSM2 conformance), TPM-DBUS-001 (root cause: ff8cc65 used wrong tpm2-abrmd flag names + out-of-range values). tpm2 retry launched. |
+| last_action | iter-46: anti-masking remediation. User-driven audit by `silent-failure-hunter` agent on iters 42-45 found 3 CRITICAL self-introduced masking patterns (lenient cross-session NOT_INIT set; global CKR_DEVICE_ERROR fallback in wrap-integrity; lying-module skip on CKA_MODIFIABLE). All fixed. Added `_module_quirks.py` per-module CKR-quirk registry + 6 meta-tests + new "Anti-Masking Guardrails" section to plan + new Loop Exit Criterion #7 requiring audit clean per iteration. |
 
 ### Findings Table (Phase 1 → Phase 2)
 
@@ -829,6 +927,7 @@ Aggregate-level findings (file-grouped where root cause is shared). Per-test tri
 | 43 | 2026-04-30 | GAP-T1, GAP-T2, GAP-W1, GAP-T3, GAP-T5, TPM-FIXTURE-001 | 2 NEW HIGH security findings (Tookan §3.3 sensitive-flag downgrade on both SoftHSM2 + Kryoptic) | tpm2 8,375 P / 5,042 F / 851 E / 63,699 T (vs 8,272 / 5,029 / 1,027 / 59,225 baseline) | 5 GAP closures + TPM-FIXTURE-001 validated. Multiple xfail→fail upgrades replaced suppressive patterns with positive security assertions (per `feedback_pkcs11check_philosophy`). The Tookan §3.3 test discovered both major modules vulnerable to a 2010-era key-extraction attack — significant security finding. |
 | 44 | 2026-04-30 | GAP-W2 | (no new MOD findings) | (no Phase 1 run) | Wrap-integrity bit-flip tests for AES-KEY-WRAP RFC 3394 magic + AES-GCM AEAD ciphertext (complementary to existing tampered-tag test). Both pass on softhsm2 + kryoptic. |
 | 45 | 2026-04-30 | GAP-A1, GAP-A2 (audit), GAP-P1, GAP-P2 | (no new MOD findings) | (no Phase 1 run) | **All 10 Phase 4.5 HIGH gaps closed**. Multi-part API security tests (cross-session state confusion + zero-data Final), Manger 2001 structured RSA-OAEP oracle (50 cat-1 + 50 cat-2 ciphertexts), Bleichenbacher 1998 structured RSA-PKCS oracle (50 cat-1 + 50 cat-2). All pass on softhsm2 + kryoptic — both modules pass the strongest-feasible chosen-ciphertext oracle tests. |
+| 46 | 2026-04-30 | (anti-masking remediation) | 3 self-introduced masking patterns surfaced by silent-failure-hunter audit, all fixed | (no Phase 1 run) | User asked "are these real fixes or masking?" → dispatched silent-failure-hunter on iters 42-45 → 3 CRITICAL findings (lenient cross-session NOT_INIT set, global CKR_DEVICE_ERROR fallback, lying-module skip path). All fixed. Added `_module_quirks.py` registry + 6 meta-tests + new "Anti-Masking Guardrails" section to this plan. New Loop Exit Criterion #7 requires silent-failure-hunter audit clean per iteration. |
 
 ---
 
