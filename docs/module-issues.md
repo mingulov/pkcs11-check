@@ -725,6 +725,29 @@ finding.
 without enforcing the "sensitive can never be unset" rule from
 PKCS#11 v3.1 Sec.4.7.
 
+### Tookan §3.2 — key-type confusion on unwrap (NEW 2026-04-30)
+`test_tookan.py::TestKeyTypeConfusionOnUnwrap::test_unwrap_aes_as_des3_rejected`
+— SoftHSM2 unwraps an AES-wrapped blob as `CKK_DES3` (Triple-DES) when
+the attacker requests it via the unwrap template. The wrap blob carries
+an AES-128 key (16 bytes), which the module reinterprets as a DES3 key
+without size validation, parity adjustment, or weak-key checking. The
+attacker can then run DES3 operations on bytes that were originally an
+AES key, creating a side-channel that bypasses the type-based key
+isolation PKCS#11 relies on.
+
+**Severity:** **HIGH (security — known attack class)**. Tookan paper
+§3.2 attack from 2010. Combines well with §3.3 (sensitive-flag
+downgrade): an attacker with wrap + unwrap permission can both
+extract the bytes and reinterpret them under different cryptographic
+primitives, making it strictly easier to mount cross-algorithm
+side-channel and integrity attacks.
+**Root cause:** SoftHSM2's unwrap path does not validate the
+relationship between the wrap mechanism, the wrapped-blob length,
+and the requested CKA_KEY_TYPE.
+
+Kryoptic correctly rejects this attack — its unwrap path enforces
+type-and-size matching against the mechanism.
+
 ---
 
 ## Qryptotoken 0.4.1 (Rust PQC)
