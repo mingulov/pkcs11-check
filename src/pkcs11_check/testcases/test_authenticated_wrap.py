@@ -16,18 +16,25 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     generate_random,
     read_attributes,
+    unwrap_key,
     unwrap_key_authenticated,
+    wrap_key,
     wrap_key_authenticated,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKA_UNWRAP,
     CKA_VALUE,
     CKA_WRAP,
+    CKK_AES,
     CKM_AES_GCM,
+    CKM_AES_KEY_WRAP,
+    CKO_SECRET_KEY,
 )
 
 pytestmark = pytest.mark.keymgmt
@@ -204,4 +211,195 @@ class TestAuthenticatedWrap:
             # If no C_WrapKeyAuthenticated method, test passes
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+            destroy_quietly(rs.raw, rs.sh, target)
+
+
+class TestWrapIntegrity:
+    """GAP-W2: integrity comparison between authenticated and unauthenticated wraps.
+
+    AES-KEY-WRAP (RFC 3394) has a fixed-magic A6A6A6A6 integrity field, so
+    bit-flipping the ciphertext should be detected on unwrap. AES-GCM
+    (AEAD) has a real authentication tag and bit-flipping the ciphertext
+    must be detected. Both rules are explicit security guarantees of their
+    respective wrap mechanisms.
+
+    Closes Phase 4.5 GAP-W2 (HIGH).
+    """
+
+    def test_aes_key_wrap_bit_flip_detected(self, p11_raw_session: Any) -> None:
+        """AES-KEY-WRAP RFC-3394 magic-field integrity check.
+
+        Wrap a real key, flip a middle byte of the ciphertext, attempt to
+        unwrap. Per RFC 3394 §2.2.2, the unwrap MUST verify the A6A6A6A6
+        integrity check value and reject mismatches. A module that
+        silently produces a different unwrapped key (or returns CKR_OK
+        with garbage bytes) is malleable.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("AES_KEY_WRAP not supported")
+
+        wrap_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
+        )
+        target = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+        )
+        try:
+            try:
+                wrapped = wrap_key(
+                    rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP
+                )
+            except AssertionError as exc:
+                pytest.skip(f"Wrap failed: {exc}")
+
+            assert len(wrapped) >= 16, "Unexpectedly short wrap output"
+
+            # Flip a bit in a middle byte (avoiding the first 8 bytes which
+            # carry the integrity ICV — flipping there is a different test).
+            mid = len(wrapped) // 2
+            tampered = bytearray(wrapped)
+            tampered[mid] ^= 0xFF
+            tampered_bytes = bytes(tampered)
+
+            try:
+                unwrapped = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    tampered_bytes,
+                    CKM_AES_KEY_WRAP,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_EXTRACTABLE: True,
+                    },
+                )
+            except AssertionError as exc:
+                # Expected: module rejected the tampered ciphertext.
+                # CKR_DEVICE_ERROR is accepted as a documented fallback —
+                # Kryoptic returns this for all integrity-check failures
+                # (`docs/module-issues.md` Kryoptic §"CKR_DEVICE_ERROR on
+                # verify failure"). The integrity *was* detected; only the
+                # CKR is non-conformant.
+                msg = str(exc)
+                accepted = (
+                    "CKR_WRAPPED_KEY_INVALID",
+                    "CKR_ENCRYPTED_DATA_INVALID",
+                    "CKR_WRAPPED_KEY_LEN_RANGE",
+                    "CKR_GENERAL_ERROR",
+                    "CKR_DEVICE_ERROR",
+                )
+                if any(code in msg for code in accepted):
+                    return
+                raise
+
+            # Unwrap returned CKR_OK on tampered ciphertext — security violation.
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                "C_UnwrapKey accepted bit-flipped AES-KEY-WRAP ciphertext "
+                "(expected CKR_WRAPPED_KEY_INVALID per RFC 3394 §2.2.2 ICV check).",
+                ComplianceLevel.CRITICAL,
+                reference="RFC 3394 §2.2.2 / PKCS#11 v3.1 Sec.6.13.6",
+            )
+            destroy_quietly(rs.raw, rs.sh, unwrapped)
+            pytest.fail(
+                "SECURITY: AES-KEY-WRAP unwrap accepted bit-flipped "
+                "ciphertext — RFC 3394 integrity check missing or bypassed"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, wrap_h)
+            destroy_quietly(rs.raw, rs.sh, target)
+
+    def test_aes_gcm_wrap_bit_flip_detected(
+        self, p11_raw_session: Any, p11_interface_version: str
+    ) -> None:
+        """AES-GCM authenticated-wrap ciphertext bit-flip MUST be rejected.
+
+        Complementary to test_tampered_tag_rejected: this test tampers the
+        ciphertext (not the tag), to catch implementations that only
+        validate the tag against the original-ciphertext hash and skip
+        the AAD/CT integrity check.
+        """
+        rs = p11_raw_session
+        if p11_interface_version not in ("3.2",):
+            pytest.skip("Authenticated wrapping requires v3.2 interface")
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+
+        wrap_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+            },
+        )
+        target = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+        )
+        try:
+            iv = generate_random(rs.raw, rs.sh, 12)
+            gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
+            try:
+                wrapped, tag = wrap_key_authenticated(
+                    rs.raw, rs.sh, wrap_h, target, CKM_AES_GCM, mech_param=gcm,
+                )
+            except (NotImplementedError, AttributeError, TypeError, AssertionError) as e:
+                pytest.skip(f"AES-GCM authenticated wrap unavailable: {e}")
+                return
+
+            assert len(wrapped) >= 1, "Unexpectedly empty wrap ciphertext"
+
+            # Flip a bit in the ciphertext, NOT the tag.
+            tampered_ct = bytearray(wrapped)
+            tampered_ct[0] ^= 0x01
+            tampered_bytes = bytes(tampered_ct)
+
+            gcm2 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
+            try:
+                unwrapped = unwrap_key_authenticated(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    tampered_bytes,
+                    tag if tag else b"",
+                    CKM_AES_GCM,
+                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                    mech_param=gcm2,
+                )
+            except AssertionError:
+                # Expected: AEAD detected the ciphertext tampering.
+                return
+
+            # Unwrap returned CKR_OK on tampered AEAD ciphertext —
+            # AEAD authentication broken.
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                "Authenticated unwrap accepted bit-flipped AES-GCM "
+                "ciphertext (AEAD tag verification missing or bypassed).",
+                ComplianceLevel.CRITICAL,
+                reference="NIST SP 800-38D / PKCS#11 v3.2 Sec.6.13.7",
+            )
+            destroy_quietly(rs.raw, rs.sh, unwrapped)
+            pytest.fail(
+                "SECURITY: AES-GCM authenticated unwrap accepted "
+                "bit-flipped ciphertext — AEAD integrity check missing"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
