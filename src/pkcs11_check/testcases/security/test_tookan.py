@@ -273,7 +273,9 @@ class TestKeyTypeConfusionOnUnwrap:
     Closes Phase 4.5 GAP-T4 (MED).
     """
 
-    def test_unwrap_aes_as_des3_rejected(self, p11_raw_session: Any) -> None:
+    def test_unwrap_aes_as_des3_rejected(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
@@ -324,17 +326,28 @@ class TestKeyTypeConfusionOnUnwrap:
                 # wrap with the same mechanism) is itself a module
                 # bug, not a legitimate type-confusion rejection.
                 msg = str(exc)
-                accepted = (
+                accepted: tuple[str, ...] = (
                     "CKR_TEMPLATE_INCONSISTENT",
                     "CKR_ATTRIBUTE_VALUE_INVALID",
-                    "CKR_ATTRIBUTE_READ_ONLY",  # OC quirk: rejects
-                                                # CKA_CLASS / CKA_KEY_TYPE
-                                                # in unwrap template; still
-                                                # a legitimate rejection.
                     "CKR_KEY_TYPE_INCONSISTENT",
                     "CKR_KEY_SIZE_RANGE",
                     "CKR_WRAPPED_KEY_INVALID",
                     "CKR_WRAPPED_KEY_LEN_RANGE",
+                )
+                # OC's CKR_ATTRIBUTE_READ_ONLY rejection of unwrap
+                # templates containing CKA_CLASS / CKA_KEY_TYPE is
+                # routed through the per-module quirk registry rather
+                # than hard-coded here — this prevents OTHER modules
+                # from silently masking a real type-confusion bug
+                # behind the same CKR.
+                from pkcs11_check.raw.rv import ckr_name as _ckr_name
+                from pkcs11_check.testcases._module_quirks import quirk_extras
+
+                accepted += tuple(
+                    _ckr_name(c)
+                    for c in quirk_extras(
+                        p11_config, "unwrap_template_class_keytype_rejected"
+                    )
                 )
                 if any(code in msg for code in accepted):
                     return

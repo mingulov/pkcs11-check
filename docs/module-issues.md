@@ -948,6 +948,34 @@ but with a different CKR set (NSS uses `CKR_ARGUMENTS_BAD` instead of
 CKRs depending on which validation step failed, leaking the boundary
 the Manger attack exploits.
 
+### Unwrap-template attribute rejection (CKR_ATTRIBUTE_READ_ONLY, NEW iter-63 2026-04-30 — LOW)
+`C_UnwrapKey` returns `CKR_ATTRIBUTE_READ_ONLY` (0x10) when the unwrap
+template includes `CKA_CLASS` or `CKA_KEY_TYPE`, before any
+cryptographic check is performed. PKCS#11 v3.1 Sec.5.14.4 explicitly
+shows examples of unwrap templates that include these two attributes
+(they identify the type of key being unwrapped); other modules
+(SoftHSM2, Kryoptic, NSS) accept the template without complaint.
+
+Surfaced during iter-58 / iter-61 by tests in `test_tookan.py` and
+`test_authenticated_wrap.py` whose unwrap templates pre-fill
+CKA_CLASS / CKA_KEY_TYPE — a pattern aligned with the spec examples.
+
+**Severity:** LOW (conformance — restrictive template parsing; rejects
+spec-allowed templates). The behaviour is consistent and prevents
+the test from reaching its security assertion, but no security gap
+is opened: every cryptographic primitive on OC is still gated by
+the regular checks once a working template is supplied.
+**Root cause:** OpenCryptoki's unwrap-template parser appears to mark
+CKA_CLASS / CKA_KEY_TYPE as read-only-after-creation rather than
+treating them as type-identification hints permitted in unwrap
+templates. Reportable upstream.
+
+A per-module quirk is registered in
+`src/pkcs11_check/testcases/_module_quirks.py`
+(key `unwrap_template_class_keytype_rejected`) so that affected
+tests can route this CKR through the quirk registry rather than
+hard-coding it in their accepted-rejection lists.
+
 ---
 
 ## Kryoptic v1.5.0 / main (v3.2)

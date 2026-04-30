@@ -30,6 +30,7 @@ from enum import Enum
 from typing import Any
 
 from pkcs11_check.raw.types_std import (
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_DEVICE_ERROR,
     CKR_GENERAL_ERROR,
 )
@@ -125,6 +126,26 @@ MODULE_QUIRKS: dict[ModuleId, dict[str, Quirk]] = {
                 "docs/module-issues.md Kryoptic §CKR_DEVICE_ERROR on verify failure"
             ),
             extra_ckrs=(CKR_DEVICE_ERROR,),
+        ),
+    },
+    ModuleId.OPENCRYPTOKI: {
+        "unwrap_template_class_keytype_rejected": Quirk(
+            description=(
+                "OpenCryptoki rejects unwrap templates that include "
+                "CKA_CLASS or CKA_KEY_TYPE with CKR_ATTRIBUTE_READ_ONLY "
+                "before any cryptographic check happens. The behaviour "
+                "is consistent across CKM_AES_KEY_WRAP / "
+                "CKM_ECDH_AES_KEY_WRAP and the same template that other "
+                "modules accept. Tests that assert 'unwrap rejects X' "
+                "still observe a rejection — just with this CKR rather "
+                "than the spec-conformant code."
+            ),
+            spec_ref="PKCS#11 v3.1 Sec.5.14.4",
+            issue_ref=(
+                "docs/module-issues.md OpenCryptoki §"
+                "Unwrap-template attribute rejection (CKR_ATTRIBUTE_READ_ONLY"
+            ),
+            extra_ckrs=(CKR_ATTRIBUTE_READ_ONLY,),
         ),
     },
     ModuleId.SOFTHSM2: {
