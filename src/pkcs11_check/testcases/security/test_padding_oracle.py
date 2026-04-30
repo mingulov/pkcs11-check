@@ -145,6 +145,117 @@ class TestRSAPaddingOracle:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
+    def test_pkcs1v15_bleichenbacher_structured_oracle(
+        self, p11_raw_session: Any
+    ) -> None:
+        """RSA PKCS#1 v1.5 Bleichenbacher 1998 structured-ciphertext oracle.
+
+        Bleichenbacher's attack distinguishes ciphertexts whose decryption
+        starts with the correct ``00 02`` PKCS#1 v1.5 prefix (cat-1, "valid
+        padding format / bad content") from those that don't (cat-2,
+        "invalid padding format"). A secure module returns identical
+        errors for both categories — distinct CKRs are the leak channel.
+
+        The pre-existing test_pkcs1v15_error_uniformity uses 10 random
+        ciphertexts which overwhelmingly fall in cat-2 because random m
+        almost never starts with ``00 02``. This test explicitly
+        constructs cat-1 ciphertexts by choosing m with the ``00 02``
+        prefix and short / no PS-separator, ensuring the per-category
+        error sets are populated.
+
+        Closes Phase 4.5 GAP-P2 (HIGH).
+        """
+        rs = p11_raw_session
+        pub, priv = gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
+        )
+
+        try:
+            try:
+                attrs = read_attributes(
+                    rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT]
+                )
+            except AssertionError as exc:
+                pytest.skip(
+                    f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}"
+                )
+                return
+
+            n_bytes = attrs[CKA_MODULUS]
+            e_bytes = attrs[CKA_PUBLIC_EXPONENT]
+            if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
+                pytest.skip("Modulus / exponent not returned as bytes")
+                return
+            n = int.from_bytes(n_bytes, "big")
+            e = int.from_bytes(e_bytes, "big")
+            k = (n.bit_length() + 7) // 8
+
+            cat1_errors: set[str] = set()  # 00 02 prefix, missing PS-separator
+            cat2_errors: set[str] = set()  # arbitrary, no 00 02 prefix
+
+            samples_per_category = 50
+            for _ in range(samples_per_category):
+                # Cat-1: m starts with 0x00 0x02 followed by random non-zero
+                # bytes through to the end (no 0x00 separator → garbled
+                # plaintext but valid prefix). PS must be ≥ 8 bytes per
+                # PKCS#1 v1.5; our cat-1 has ≥ k-2 bytes which is far over.
+                ps_body = bytes(
+                    [b if b != 0 else 0x01 for b in secrets.token_bytes(k - 2)]
+                )
+                m1_bytes = b"\x00\x02" + ps_body
+                m1 = int.from_bytes(m1_bytes, "big")
+                if m1 >= n:
+                    # Force m < n by clearing the top bit of byte 2.
+                    m1_bytes = bytes([0x00, 0x02, ps_body[0] & 0x7F]) + ps_body[1:]
+                    m1 = int.from_bytes(m1_bytes, "big")
+                c1 = pow(m1, e, n)
+                c1_bytes = c1.to_bytes(k, "big")
+                try:
+                    decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, c1_bytes)
+                except AssertionError as exc:
+                    cat1_errors.add(_extract_ckr(exc))
+
+                # Cat-2: m has random non-{00,02} prefix → invalid padding
+                # format. Force the top byte != 0 to ensure cat-2.
+                while True:
+                    m2_bytes = secrets.token_bytes(k)
+                    if m2_bytes[0] != 0x00:  # any non-zero high byte → not cat-1
+                        break
+                m2 = int.from_bytes(m2_bytes, "big") % n
+                c2 = pow(m2, e, n)
+                c2_bytes = c2.to_bytes(k, "big")
+                try:
+                    decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, c2_bytes)
+                except AssertionError as exc:
+                    cat2_errors.add(_extract_ckr(exc))
+
+            if cat1_errors != cat2_errors:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"RSA PKCS#1 v1.5 returns category-distinguishable error "
+                    f"codes — cat-1 (00 02 prefix, bad PS): {cat1_errors}, "
+                    f"cat-2 (no 00 02 prefix): {cat2_errors}. This is the "
+                    f"Bleichenbacher 1998 leak channel.",
+                    ComplianceLevel.CRITICAL,
+                    reference="Bleichenbacher 'Chosen Ciphertext Attacks "
+                    "Against Protocols Based on the RSA Encryption Standard "
+                    "PKCS #1' (CRYPTO 1998); RFC 3218",
+                )
+                pytest.fail(
+                    f"SECURITY: RSA PKCS#1 v1.5 Bleichenbacher 1998 oracle — "
+                    f"cat-1 errors {cat1_errors} != cat-2 errors {cat2_errors}. "
+                    f"An attacker who can submit chosen ciphertexts can "
+                    f"recover the plaintext via roughly 2^20 oracle queries."
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
     def test_oaep_manger_structured_oracle(self, p11_raw_session: Any) -> None:
         """RSA-OAEP Manger 2001 structured-ciphertext oracle.
 
