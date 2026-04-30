@@ -816,6 +816,11 @@ and the requested CKA_KEY_TYPE.
 Kryoptic correctly rejects this attack — its unwrap path enforces
 type-and-size matching against the mechanism.
 
+### Wrong CKR on tampered AES-KEY-WRAP — confirmed by iter-54 Phase 1 (CONFIRMED 2026-04-30)
+The iter-47 finding for `test_aes_key_wrap_bit_flip_detected` reproduces
+in the iter-54 Phase 1 re-run: SoftHSM2 returns `CKR_GENERAL_ERROR` on
+a bit-flipped AES-KEY-WRAP ciphertext. No additional information.
+
 ---
 
 ## Qryptotoken 0.4.1 (Rust PQC)
@@ -949,3 +954,86 @@ and exfiltrate the key bytes. Reportable upstream as a security finding.
 **Root cause:** Kryoptic applies the attacker's CKA_SENSITIVE in the
 unwrap template without enforcing the "sensitive can never be unset"
 invariant from PKCS#11 v3.1 Sec.4.7.
+
+### CKA_TRUSTED escalation by USER session (NEW iter-54 2026-04-30)
+`test_access_levels.py::TestTrustedAttribute::test_user_cannot_set_trusted`
+— Kryoptic accepts CKA_TRUSTED=True on a freshly-generated key from a
+USER (CKU_USER) session. PKCS#11 v3.1 Sec.4.7 designates CKA_TRUSTED
+as SO-only: only a Security Officer (CKU_SO) is allowed to mark a key
+as trusted. A USER-session caller who can create CKA_TRUSTED keys
+bypasses the `CKA_WRAP_WITH_TRUSTED` policy gate that protects sensitive
+wrap operations.
+
+**Severity:** **HIGH (security — privilege escalation)**. The TRUSTED
+flag is the SO-trust boundary for `CKA_WRAP_WITH_TRUSTED` enforcement.
+A USER session creating TRUSTED keys can wrap any
+`CKA_WRAP_WITH_TRUSTED=True` key, defeating the attribute's purpose.
+**Root cause:** Kryoptic's create-object path does not authorise the
+CKA_TRUSTED attribute against the session's user type. Reportable
+upstream as a security finding.
+
+### Vaudenay 2002 channel on AES-CBC-PAD — present (REVISED iter-54 2026-04-30)
+**Update from iter-48's claim that "Kryoptic defeats Vaudenay":**
+the iter-54 Phase 1 re-run on `test_cbc_pad_all_last_block_positions`
+shows Kryoptic also has the channel, just at a much lower hit rate
+than SoftHSM2. Tally: `{CKR_ENCRYPTED_DATA_INVALID: 319,
+CKR_OK_DIFFERENT: 1}` across the 320 probes — 1 / 320 ≈ 0.3% leak rate
+vs SoftHSM2's similar rate. The earlier iter-48 / iter-51 claim that
+Kryoptic defeats the channel was based on lucky runs where no probe
+hit the rare accidentally-valid-padding case. The Vaudenay channel
+is real on Kryoptic too — same caveats and mitigation as the SoftHSM2
+note in the SoftHSM2 section.
+
+**Severity:** MEDIUM (well-known channel; spec permits the
+distinguishable response). Same as SoftHSM2's entry — applications
+should use AES-GCM or RFC 7366 encrypt-then-MAC instead of bare
+CBC-PAD. The earlier "positive finding" claim is retracted.
+
+---
+
+## NSS main (3.121 dev branch, iter-54 findings)
+
+### Tookan §3.3 — CKA_SENSITIVE downgrade on unwrap (NEW iter-54 2026-04-30)
+`test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive`
+— NSS softoken, like SoftHSM2 and Kryoptic, honours an attacker-
+supplied `CKA_SENSITIVE=False` in the unwrap template. A
+`CKA_SENSITIVE=True` key, once wrapped and unwrapped under attacker
+control, becomes a non-sensitive copy whose value is readable via
+`C_GetAttributeValue(CKA_VALUE)`.
+
+**Severity:** **HIGH (security — known attack class)**. Tookan paper
+§3.3 attack from 2010. The same canonical attack now confirmed
+present on **all three major open-source PKCS#11 providers**
+(SoftHSM2 + Kryoptic + NSS). A 2010-era key-extraction attack is
+universally effective in 2026 against open-source PKCS#11
+implementations. Reportable upstream.
+**Root cause:** NSS softoken's unwrap path applies the attacker's
+template without enforcing the "sensitive can never be unset"
+invariant from PKCS#11 v3.1 Sec.4.7.
+
+### CKA_TRUSTED escalation by USER session (NEW iter-54 2026-04-30)
+`test_access_levels.py::TestTrustedAttribute::test_user_cannot_set_trusted`
+— NSS softoken accepts CKA_TRUSTED=True on a freshly-generated key
+from a USER (CKU_USER) session, same shape as the Kryoptic finding
+above. The TRUSTED-flag SO-trust boundary used by
+`CKA_WRAP_WITH_TRUSTED` is breached.
+
+**Severity:** **HIGH (security — privilege escalation)**. Same
+attack class and same reportability as the Kryoptic entry above.
+Two independent providers exhibiting the same defect suggests a
+shared incorrect mental model of CKA_TRUSTED's authorisation rule
+in mainstream PKCS#11 implementations.
+**Root cause:** NSS softoken's create-object path does not
+authorise CKA_TRUSTED against the session's user type.
+
+### RSA-OAEP padding oracle confirmed and surfaced (CONFIRMED iter-54 2026-04-30)
+`test_padding_oracle.py::TestRSAPaddingOracle::test_oaep_error_uniformity`
+— NSS RSA-OAEP returns non-uniform CKRs for invalid ciphertexts:
+`{CKR_ENCRYPTED_DATA_INVALID, CKR_ARGUMENTS_BAD}`. This is the
+documented Manger 2001 leak channel and was previously tracked via
+`pytest.xfail` (suppressive pattern). Iter-45 upgraded the test to
+`pytest.fail`; the iter-54 Phase 1 re-run is the first time NSS-main
+exercises the upgraded version, surfacing the long-known leak as a
+hard CI failure. Not a NEW finding — the bug has been public since at
+least the v0.1.0 release report. Reportable upstream as a security
+finding (already in upstream NSS Bugzilla per the v0.1.0 report).
