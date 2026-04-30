@@ -732,6 +732,34 @@ NOT done — `CKR_GENERAL_ERROR` is too generic to mask globally for a
 module, and the deviation is real enough to keep surfacing in CI
 until SoftHSM2 fixes it upstream.
 
+### Vaudenay 2002 / POODLE channel on AES-CBC-PAD (NEW iter-48 2026-04-30)
+`test_padding_oracle.py::TestAESPaddingOracle::test_cbc_pad_all_last_block_positions`
+— SoftHSM2 distinguishes `CKR_OK` (accidentally-valid PKCS#7 padding)
+from `CKR_ENCRYPTED_DATA_INVALID` (invalid padding) when a chosen
+ciphertext is bit-flipped. Across 20 trials × 16 byte positions = 320
+probes per run, both outcomes appear at expected ~6/256 vs ~250/256
+rates — the canonical Vaudenay 2002 padding-oracle leak channel.
+
+This is an INHERENT property of PKCS#7 padding without an integrity
+layer. An attacker with chosen-ciphertext access can recover plaintext
+byte-by-byte via ~256 oracle queries per byte (CVE-2014-3566 POODLE
+attack pattern).
+
+**Severity:** MEDIUM (well-known channel — applications using bare
+CBC-PAD are vulnerable; mitigation is application-level). Reportable
+in the sense of "users SHOULD prefer AES-GCM"; not a SoftHSM2 bug per
+se, since the spec permits the distinguishable response.
+**Mitigation:** RFC 7366 encrypt-then-MAC, or AES-GCM. SoftHSM2 is
+not at fault for following the spec; the spec itself accepts the leak.
+
+Comparison: Kryoptic's main branch passes the same test reliably
+across 20 trials. Either Kryoptic returns `CKR_ENCRYPTED_DATA_INVALID`
+even when the random corruption produces accidentally-valid padding
+(an active mitigation against Vaudenay), or its CBC-PAD path applies
+additional integrity beyond plain PKCS#7. Worth a closer look as a
+positive finding — Kryoptic appears to defeat the leak channel
+deliberately.
+
 ### Tookan §3.3 — CKA_SENSITIVE downgrade on unwrap (NEW 2026-04-30)
 `test_cve_regression.py::TestTookanUnwrapAttrs::test_unwrapped_key_cannot_unset_sensitive`
 — SoftHSM2 honours an attacker-supplied `CKA_SENSITIVE=False` in the

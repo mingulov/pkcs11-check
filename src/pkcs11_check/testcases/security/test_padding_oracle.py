@@ -429,6 +429,109 @@ class TestAESPaddingOracle:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
+    def test_cbc_pad_all_last_block_positions(self, p11_raw_session: Any) -> None:
+        """AES-CBC-PAD: corrupting each of the 16 byte positions of the last
+        ciphertext block — sweep across many independent key+IV trials.
+
+        Vaudenay 2002 / POODLE-style padding-oracle attacks exploit
+        differences between "valid PKCS#7 padding, wrong content" and
+        "invalid PKCS#7 padding". When an attacker bit-flips the last
+        block of a CBC-PAD ciphertext, the resulting plaintext is
+        randomly distributed — about 6/256 of corruptions produce
+        accidentally-valid padding (0x01, 0x0202, 0x030303 … 16×0x10).
+        A module that distinguishes the accidentally-valid path
+        (CKR_OK) from the invalid-padding path
+        (CKR_ENCRYPTED_DATA_INVALID) leaks the oracle bit on each
+        chosen-ciphertext query.
+
+        This is an INHERENT property of PKCS#7 padding without
+        integrity — every conforming CBC-PAD implementation that
+        responds with CKR_OK on accidentally-valid padding leaks the
+        Vaudenay channel. The mitigation lives at the application
+        layer (use AES-GCM or RFC 7366 encrypt-then-MAC), not the
+        module layer. This test surfaces the channel by sweeping
+        20 trials × 16 positions = 320 corruption probes; with
+        ~6/256 ≈ 2.3% chance per probe of producing CKR_OK, the
+        chance that all 320 land on CKR_ENCRYPTED_DATA_INVALID is
+        about 0.05%. Effectively-deterministic detection.
+
+        Closes Phase 4.5 GAP-P3 (MED).
+        """
+        rs = p11_raw_session
+        plaintext = b"vaudenay POODLE all 16 positions"  # 32 bytes
+        assert len(plaintext) == 32
+
+        all_errors: dict[tuple[int, int], str] = {}  # (trial, pos) → CKR
+
+        keys: list[int] = []
+        try:
+            trials = 20
+            for trial in range(trials):
+                key = gen_aes_key(rs.raw, rs.sh, 256)
+                keys.append(key)
+                iv = generate_random(rs.raw, rs.sh, 16)
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CBC_PAD,
+                    plaintext,
+                    mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+                )
+                assert len(ct) >= 32, f"Unexpectedly short CT: {len(ct)}"
+                last_block_start = len(ct) - 16
+                for pos in range(16):
+                    corrupted = bytearray(ct)
+                    corrupted[last_block_start + pos] ^= 0xFF
+                    try:
+                        decrypt_single(
+                            rs.raw,
+                            rs.sh,
+                            key,
+                            CKM_AES_CBC_PAD,
+                            bytes(corrupted),
+                            mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+                        )
+                    except AssertionError as exc:
+                        all_errors[(trial, pos)] = _extract_ckr(exc)
+                    else:
+                        # Decrypt succeeded on bit-flipped CBC-PAD —
+                        # accidentally-valid padding case (the very
+                        # leak Vaudenay 2002 exploits).
+                        all_errors[(trial, pos)] = "CKR_OK"
+
+            distinct = set(all_errors.values())
+            if len(distinct) > 1:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"AES-CBC-PAD returns distinguishable CKRs across "
+                    f"corruption positions over {trials} trials: "
+                    f"{sorted(distinct)}. This is the Vaudenay 2002 / "
+                    f"POODLE leak channel — the spec permits both CKR_OK "
+                    f"(accidentally valid padding) and "
+                    f"CKR_ENCRYPTED_DATA_INVALID, but a module that "
+                    f"returns both at distinguishable rates leaks the "
+                    f"padding-validity bit of the (otherwise random) "
+                    f"corrupted plaintext to a chosen-ciphertext attacker.",
+                    ComplianceLevel.CRITICAL,
+                    reference="Vaudenay 'Security Flaws Induced by CBC "
+                    "Padding' (EUROCRYPT 2002); POODLE (CVE-2014-3566); "
+                    "RFC 7366 (encrypt-then-MAC mitigation)",
+                )
+                pytest.fail(
+                    f"SECURITY: AES-CBC-PAD padding oracle (Vaudenay 2002) — "
+                    f"distinct error codes {sorted(distinct)} across "
+                    f"{trials * 16} corruption probes. An attacker with "
+                    f"chosen-ciphertext access can recover plaintext "
+                    f"byte-by-byte via ~256 oracle queries per byte. "
+                    f"Mitigation is application-level: use AES-GCM or "
+                    f"encrypt-then-MAC instead of bare CBC-PAD."
+                )
+        finally:
+            for k in keys:
+                destroy_quietly(rs.raw, rs.sh, k)
+
 
 class TestTimingBasic:
     """Basic timing difference checks.
