@@ -141,5 +141,6 @@ note("Module does X above spec Y", ComplianceLevel.VENDOR)
 
 ## PKCS#11 Specification
 
-OASIS spec in Markdown: `/home/user/src/m/pkcs11-proxy/doc/oasis-tcs-pkcs11/working/doc/spec/`
-Key files: `rsa.md`, `aes.md`, `elliptic_curves.md`, `ml_dsa.md`, `slh-dsa.md`, `session_mgmt_functions.md`, `function_return_values.md`
+OASIS spec in Markdown is not vendored in this repository. When working from a local checkout of
+the OASIS PKCS#11 spec, useful files include `rsa.md`, `aes.md`, `elliptic_curves.md`,
+`ml_dsa.md`, `slh-dsa.md`, `session_mgmt_functions.md`, and `function_return_values.md`.

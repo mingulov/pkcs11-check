@@ -534,14 +534,10 @@ class TestTokenPrivateInteraction:
         rs = p11_raw_session
         label = _ulabel("priv-sess")
         try:
-            h = _create_data_obj(
-                rs.raw, rs.sh, label, b"priv-session", token=False, private=True
-            )
+            h = _create_data_obj(rs.raw, rs.sh, label, b"priv-session", token=False, private=True)
         except AssertionError as exc:
             if "CKR_ATTRIBUTE_VALUE_INVALID" in str(exc):
-                pytest.skip(
-                    "Module does not support CKA_PRIVATE=True on CKO_DATA objects"
-                )
+                pytest.skip("Module does not support CKA_PRIVATE=True on CKO_DATA objects")
             raise
         try:
             found = _find_data_by_label(rs.raw, rs.sh, label)

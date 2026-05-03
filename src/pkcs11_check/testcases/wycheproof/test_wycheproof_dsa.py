@@ -107,8 +107,12 @@ def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
 
     try:
         pub_key = import_dsa_public_key(
-            rs.raw, rs.sh,
-            prime=prime, subprime=subprime, base_g=base, value=value,
+            rs.raw,
+            rs.sh,
+            prime=prime,
+            subprime=subprime,
+            base_g=base,
+            value=value,
             attrs={CKA_VERIFY: True},
         )
     except AssertionError:

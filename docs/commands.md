@@ -40,8 +40,8 @@ OpenSSL 3.6.1, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.26, pkcs11-moc
 Kryoptic requires OpenSSL 3.5.0+. In worktrees, use the pre-built module:
 
 ```bash
-LD_LIBRARY_PATH=/home/user/src/m/pkcs11-check/local-builds/openssl/install/lib64 \
-P11TEST_MODULE=/home/user/src/m/pkcs11-check/local-builds/kryoptic/lib/libkryoptic_pkcs11.so \
+LD_LIBRARY_PATH="$PWD/local-builds/openssl/install/lib64" \
+P11TEST_MODULE="$PWD/local-builds/kryoptic/lib/libkryoptic_pkcs11.so" \
 P11TEST_PIN=1234 uv run python -m pytest src/pkcs11_check/testcases/<test_file>.py -v
 ```
 

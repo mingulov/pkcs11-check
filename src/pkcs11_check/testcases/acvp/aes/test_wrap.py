@@ -81,7 +81,9 @@ def _load_kw_vectors() -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str
         "pt_expected": "pt",
     }
     enc, dec = _load_vectors(
-        "ACVP-AES-KW-1.0", encrypt_fields, decrypt_fields,
+        "ACVP-AES-KW-1.0",
+        encrypt_fields,
+        decrypt_fields,
         extra_group_fields={"kw_cipher": "kwCipher"},
     )
     return (
@@ -194,7 +196,9 @@ def _load_kwp_vectors() -> tuple[
         "pt_expected": "pt",
     }
     enc, dec = _load_vectors(
-        "ACVP-AES-KWP-1.0", encrypt_fields, decrypt_fields,
+        "ACVP-AES-KWP-1.0",
+        encrypt_fields,
+        decrypt_fields,
         extra_group_fields={"kw_cipher": "kwCipher"},
     )
     return (

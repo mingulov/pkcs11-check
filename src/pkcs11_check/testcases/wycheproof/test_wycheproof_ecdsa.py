@@ -208,8 +208,10 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 
     try:
         pub_key = import_ec_public_key(
-            rs.raw, rs.sh,
-            ec_params=ec_params, ec_point=ec_point_der,
+            rs.raw,
+            rs.sh,
+            ec_params=ec_params,
+            ec_point=ec_point_der,
             attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:

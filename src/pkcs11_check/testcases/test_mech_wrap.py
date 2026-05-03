@@ -330,9 +330,7 @@ def _build_des_wrap_key(rs: RawSession, config: MechConfig) -> int:
     return handle.value
 
 
-def _build_generic_cipher_wrap_key(
-    rs: RawSession, entry: MechEntry, config: MechConfig
-) -> int:
+def _build_generic_cipher_wrap_key(rs: RawSession, entry: MechEntry, config: MechConfig) -> int:
     """Generate a wrapping key for non-AES, non-DES, non-RSA cipher mechanisms.
 
     Uses config.keygen_mech and config.key_type from the registry to produce the

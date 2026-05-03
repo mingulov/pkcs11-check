@@ -4,6 +4,7 @@ Tests the C_SignRecoverInit / C_SignRecover / C_VerifyRecoverInit / C_VerifyReco
 API path using high-level recipes.  Low-level raw-ctypes and CKR error-path tests
 live in test_sign_recover.py and testcases/ckr/.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -67,15 +68,11 @@ class TestSignRecover:
             assert len(sig) == 256, f"Unexpected signature length: {len(sig)}"
 
             try:
-                ok, recovered = verify_recover_single(
-                    rs.raw, rs.sh, pub, CKM_RSA_X_509, sig
-                )
+                ok, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, sig)
             except NotImplementedError:
                 pytest.skip("C_VerifyRecover not supported by this module")
             assert ok, "verify_recover_single reported invalid signature"
-            assert recovered == data, (
-                f"Recovered data mismatch: {recovered!r} != {data!r}"
-            )
+            assert recovered == data, f"Recovered data mismatch: {recovered!r} != {data!r}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -108,9 +105,7 @@ class TestSignRecover:
             tampered = sig[:-1] + bytes([sig[-1] ^ 0xFF])
 
             try:
-                ok, recovered = verify_recover_single(
-                    rs.raw, rs.sh, pub, CKM_RSA_X_509, tampered
-                )
+                ok, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, tampered)
             except NotImplementedError:
                 pytest.skip("C_VerifyRecover not supported by this module")
 

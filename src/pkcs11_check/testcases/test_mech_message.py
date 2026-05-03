@@ -207,9 +207,7 @@ class TestMessageEncrypt:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_message_encrypt_rejects_decrypt_only_key(
-        self, p11_raw_session: RawSession
-    ) -> None:
+    def test_message_encrypt_rejects_decrypt_only_key(self, p11_raw_session: RawSession) -> None:
         """C_MessageEncryptInit must reject a key with CKA_ENCRYPT=False.
 
         Phase 4.5 GAP-A3 closure: the v3.0 message-based API has separate

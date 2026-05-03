@@ -259,10 +259,10 @@ class TestCorruptedUnwrap:
         )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
-            context=(
-                f"{ckm_name} {api}: corruption={corruption}"
-            ),
+            rc,
+            stdout,
+            stderr,
+            context=(f"{ckm_name} {api}: corruption={corruption}"),
         )
 
 
@@ -302,8 +302,8 @@ class TestBitFlipUnwrap:
         )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
-            context=(
-                f"{ckm_name} unwrap: bit_flip at byte {offset}"
-            ),
+            rc,
+            stdout,
+            stderr,
+            context=(f"{ckm_name} unwrap: bit_flip at byte {offset}"),
         )

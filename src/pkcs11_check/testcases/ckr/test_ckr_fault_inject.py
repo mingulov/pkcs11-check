@@ -30,9 +30,7 @@ _PROXY_PATH = next((p for p in _FAULT_PROXY_PATHS if p.exists()), None)
 def _skip_if_no_proxy() -> None:
     """Skip if fault-proxy.so is not built."""
     if _PROXY_PATH is None or not _PROXY_PATH.exists():
-        pytest.skip(
-            "fault-proxy not built (run: bash local-builds/build.sh fault-proxy)"
-        )
+        pytest.skip("fault-proxy not built (run: bash local-builds/build.sh fault-proxy)")
 
 
 class TestFaultInjection:

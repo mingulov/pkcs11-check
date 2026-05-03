@@ -211,11 +211,15 @@ def _ensure_manifest(config: pytest.Config) -> CapabilityManifest | None:
     )
     os.close(manifest_fd)
     manifest_path = Path(manifest_raw_path)
+    interface_option = config.getoption("p11_interface", default=None)
+    interface = "auto" if interface_option is None else str(interface_option)
+    slot_option = config.getoption("p11_slot", default=None)
+    slot = 0 if slot_option is None else int(slot_option)
     try:
         manifest = run_preflight_subprocess(
             Path(module_path),
-            interface=config.getoption("p11_interface", default="auto"),
-            slot=config.getoption("p11_slot", default=0),
+            interface=interface,
+            slot=slot,
             timeout=30,
             output_path=manifest_path,
         )
@@ -476,8 +480,7 @@ def _build_stacked_strings(
 ) -> list[str]:
     """Build sorted stacked strings like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
     return sorted(
-        _build_one_stacked_string(mech_id, dict(subs_frozen))
-        for mech_id, subs_frozen in detail_set
+        _build_one_stacked_string(mech_id, dict(subs_frozen)) for mech_id, subs_frozen in detail_set
     )
 
 

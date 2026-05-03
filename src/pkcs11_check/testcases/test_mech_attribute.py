@@ -13,6 +13,7 @@ Tests:
 These tests complement test_mech_keygen.py (which only checks handle validity)
 with full attribute readback.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,9 +41,7 @@ from pkcs11_check.testcases.mechanism_helpers import (
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.keygen]
 
 
-def _read_attr_safe(
-    rs: RawSession, handle: int, attr_id: int, label: str
-) -> Any | None:
+def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> Any | None:
     """Read a single attribute; return None if the module does not expose it."""
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [attr_id])
@@ -51,13 +50,14 @@ def _read_attr_safe(
         err = str(exc)
         if any(
             tok in err
-            for tok in ("CKR_ATTRIBUTE_TYPE_INVALID", "CKR_ATTRIBUTE_SENSITIVE",
-                        "CKR_TEMPLATE_INCONSISTENT")
+            for tok in (
+                "CKR_ATTRIBUTE_TYPE_INVALID",
+                "CKR_ATTRIBUTE_SENSITIVE",
+                "CKR_TEMPLATE_INCONSISTENT",
+            )
         ):
             return None
-        raise AssertionError(
-            f"Unexpected error reading {label} on handle {handle}: {exc}"
-        ) from exc
+        raise AssertionError(f"Unexpected error reading {label} on handle {handle}: {exc}") from exc
 
 
 class TestKeyAttributes:

@@ -151,9 +151,7 @@ def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
         )
     except AssertionError as exc:
         if result == "valid":
-            pytest.fail(
-                f"PBES2 key derivation failed for valid vector {vec_id}: {exc}"
-            )
+            pytest.fail(f"PBES2 key derivation failed for valid vector {vec_id}: {exc}")
         return
 
     try:

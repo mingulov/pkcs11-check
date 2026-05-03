@@ -25,14 +25,14 @@ pytestmark = [pytest.mark.interop, pytest.mark.stress]
 
 _PKCS11_PROVIDER_PATHS = [
     "/usr/lib/x86_64-linux-gnu/ossl-modules/pkcs11.so",  # Debian x86_64
-    "/usr/lib64/ossl-modules/pkcs11.so",                   # Fedora/RHEL x86_64
-    "/usr/lib/ossl-modules/pkcs11.so",                     # Fedora multilib
+    "/usr/lib64/ossl-modules/pkcs11.so",  # Fedora/RHEL x86_64
+    "/usr/lib/ossl-modules/pkcs11.so",  # Fedora multilib
 ]
 
 _P11KIT_PROXY_PATHS = [
-    "/usr/lib/x86_64-linux-gnu/p11-kit-proxy.so",         # Debian x86_64
-    "/usr/lib64/p11-kit-proxy.so",                          # Fedora/RHEL x86_64
-    "/usr/lib/p11-kit-proxy.so",                            # Fedora multilib
+    "/usr/lib/x86_64-linux-gnu/p11-kit-proxy.so",  # Debian x86_64
+    "/usr/lib64/p11-kit-proxy.so",  # Fedora/RHEL x86_64
+    "/usr/lib/p11-kit-proxy.so",  # Fedora multilib
 ]
 
 

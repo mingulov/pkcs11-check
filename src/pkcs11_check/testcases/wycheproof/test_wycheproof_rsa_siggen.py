@@ -133,10 +133,16 @@ def test_rsa_pkcs1_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
     try:
         try:
             key_obj = import_rsa_private_key(
-                rs.raw, rs.sh,
-                n=_i2b(pub_nums.n), e=_i2b(pub_nums.e), d=_i2b(nums.d),
-                p=_i2b(nums.p), q=_i2b(nums.q),
-                dmp1=_i2b(nums.dmp1), dmq1=_i2b(nums.dmq1), iqmp=_i2b(nums.iqmp),
+                rs.raw,
+                rs.sh,
+                n=_i2b(pub_nums.n),
+                e=_i2b(pub_nums.e),
+                d=_i2b(nums.d),
+                p=_i2b(nums.p),
+                q=_i2b(nums.q),
+                dmp1=_i2b(nums.dmp1),
+                dmq1=_i2b(nums.dmq1),
+                iqmp=_i2b(nums.iqmp),
                 attrs={CKA_SIGN: True},
             )
         except AssertionError as e:

@@ -2126,9 +2126,14 @@ def run_isolated_pytest_units(
                         _record_result(state, result)
                         per_unit_details[unit] = {
                             "counts": {
-                                "passed": 0, "failed": 0, "skipped": 0,
-                                "xfailed": 0, "xpassed": 0, "error": 0,
-                                "crashed": 0, "timeout": 0,
+                                "passed": 0,
+                                "failed": 0,
+                                "skipped": 0,
+                                "xfailed": 0,
+                                "xpassed": 0,
+                                "error": 0,
+                                "crashed": 0,
+                                "timeout": 0,
                             },
                             "tests": [],
                             "skip_reasons": {reason: 1},

@@ -193,7 +193,9 @@ class TestECDHDerive:
     def _generate_ec_keypair(self, rs: Any) -> tuple[int, int]:
         curve_oid = encode_named_curve_parameters("secp256r1")
         return gen_ec_keypair(
-            rs.raw, rs.sh, curve_oid,
+            rs.raw,
+            rs.sh,
+            curve_oid,
             private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
         )
 
@@ -376,7 +378,10 @@ class TestSHA3ShakeKeyDerive:
         try:
             data = b"same derivation data"
             d1 = derive_key(
-                rs.raw, rs.sh, base_key, ckm,
+                rs.raw,
+                rs.sh,
+                base_key,
+                ckm,
                 attrs={
                     CKA_CLASS: int(CKO_SECRET_KEY),
                     CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),
@@ -388,7 +393,10 @@ class TestSHA3ShakeKeyDerive:
                 mech_param=mech_string_data(ckm, data),
             )
             d2 = derive_key(
-                rs.raw, rs.sh, base_key, ckm,
+                rs.raw,
+                rs.sh,
+                base_key,
+                ckm,
                 attrs={
                     CKA_CLASS: int(CKO_SECRET_KEY),
                     CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),

@@ -270,9 +270,7 @@ class TestTokenAttributePromotion:
     Closes Phase 4.5 GAP-A5 (MED).
     """
 
-    def test_setattr_token_promotion_consistency(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_setattr_token_promotion_consistency(self, p11_raw_session: Any) -> None:
         """C_SetAttributeValue(CKA_TOKEN=True) must either (a) be rejected,
         or (b) actually take effect (readback shows True).
 

@@ -71,6 +71,7 @@ class TestMechSignRoundtrip:
             # Hash the test data so these mechanisms get correctly-sized input.
             if config.input_constraint == "prehash":
                 import hashlib
+
                 data = hashlib.sha256(data).digest()
             mech_param = make_mech_param_or_skip(entry)
 
@@ -109,6 +110,7 @@ class TestMechSignRoundtrip:
             data_b = b"tampered data XXXXXXXXXXX"
             if config.input_constraint == "prehash":
                 import hashlib
+
                 data_a = hashlib.sha256(data_a).digest()
                 data_b = hashlib.sha256(data_b).digest()
             mech_param = make_mech_param_or_skip(entry)
@@ -225,9 +227,7 @@ def _run_asymmetric_sign_kat(
     elif "ec_private_scalar_hex" in vec:
         # EC/Edwards: import private key; public point not in vector so verify via round-trip
         ec_params = bytes.fromhex(vec["ec_params_hex"])
-        ec_key_type = (
-            int(CKK_EC_EDWARDS) if ec_params.startswith(_EDWARDS_OID_PREFIXES) else None
-        )
+        ec_key_type = int(CKK_EC_EDWARDS) if ec_params.startswith(_EDWARDS_OID_PREFIXES) else None
         priv_key = import_ec_private_key(
             rs.raw,
             rs.sh,
@@ -247,9 +247,7 @@ def _run_asymmetric_sign_kat(
                 input_data,
                 mech_param=mech_param,
             )
-            assert len(sig) > 0, (
-                f"KAT sign returned empty signature for {vec.get('id', '?')}"
-            )
+            assert len(sig) > 0, f"KAT sign returned empty signature for {vec.get('id', '?')}"
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_key)
 

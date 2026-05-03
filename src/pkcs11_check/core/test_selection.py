@@ -48,7 +48,7 @@ class DisabledCandidateReviewRecord:
 
 
 _REQUIRED_MECHANISMS_RE = re.compile(
-    r'^REQUIRED_MECHANISMS\s*=\s*\[([^\]]*)\]',
+    r"^REQUIRED_MECHANISMS\s*=\s*\[([^\]]*)\]",
     re.MULTILINE,
 )
 

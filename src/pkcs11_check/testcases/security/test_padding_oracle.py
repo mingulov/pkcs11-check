@@ -145,9 +145,7 @@ class TestRSAPaddingOracle:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_pkcs1v15_bleichenbacher_structured_oracle(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_pkcs1v15_bleichenbacher_structured_oracle(self, p11_raw_session: Any) -> None:
         """RSA PKCS#1 v1.5 Bleichenbacher 1998 structured-ciphertext oracle.
 
         Bleichenbacher's attack distinguishes ciphertexts whose decryption
@@ -176,13 +174,9 @@ class TestRSAPaddingOracle:
 
         try:
             try:
-                attrs = read_attributes(
-                    rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT]
-                )
+                attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
             except AssertionError as exc:
-                pytest.skip(
-                    f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}"
-                )
+                pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
                 return
 
             n_bytes = attrs[CKA_MODULUS]
@@ -203,9 +197,7 @@ class TestRSAPaddingOracle:
                 # bytes through to the end (no 0x00 separator → garbled
                 # plaintext but valid prefix). PS must be ≥ 8 bytes per
                 # PKCS#1 v1.5; our cat-1 has ≥ k-2 bytes which is far over.
-                ps_body = bytes(
-                    [b if b != 0 else 0x01 for b in secrets.token_bytes(k - 2)]
-                )
+                ps_body = bytes([b if b != 0 else 0x01 for b in secrets.token_bytes(k - 2)])
                 m1_bytes = b"\x00\x02" + ps_body
                 m1 = int.from_bytes(m1_bytes, "big")
                 if m1 >= n:
@@ -286,9 +278,7 @@ class TestRSAPaddingOracle:
 
         try:
             try:
-                attrs = read_attributes(
-                    rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT]
-                )
+                attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
             except AssertionError as exc:
                 pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
                 return
@@ -515,9 +505,7 @@ class TestAESPaddingOracle:
                         # Decrypt succeeded — disambiguate match vs
                         # different plaintext (M1 / M5 mitigation).
                         all_errors[(trial, pos)] = (
-                            "CKR_OK_MATCH"
-                            if result == plaintext
-                            else "CKR_OK_DIFFERENT"
+                            "CKR_OK_MATCH" if result == plaintext else "CKR_OK_DIFFERENT"
                         )
 
             distinct = set(all_errors.values())

@@ -227,8 +227,7 @@ def test_command(
                     disabled_path = auto_discover_disabled_baseline()
                     if disabled_path is not None:
                         console.print(
-                            f"[dim]Using auto-discovered disabled"
-                            f" baseline: {disabled_path}[/dim]"
+                            f"[dim]Using auto-discovered disabled baseline: {disabled_path}[/dim]"
                         )
                 baseline = load_disabled_baseline(disabled_path)
             disabled_nodeids = set(baseline.disabled_nodeids) if baseline is not None else set()

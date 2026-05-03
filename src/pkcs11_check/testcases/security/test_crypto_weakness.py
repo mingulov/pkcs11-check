@@ -57,12 +57,8 @@ _WEAK_RSA_SIZES = [
 _DEPRECATED_MECHANISMS: list[Any] = [
     pytest.param("DES_ECB", "HIGH", "56-bit key, brute-forceable", id="DES_ECB"),
     pytest.param("DES_CBC", "HIGH", "56-bit key, brute-forceable", id="DES_CBC"),
-    pytest.param(
-        "DES3_ECB", "MEDIUM", "Sweet32 birthday attack (CVE-2016-2183)", id="DES3_ECB"
-    ),
-    pytest.param(
-        "DES3_CBC", "MEDIUM", "Sweet32 birthday attack (CVE-2016-2183)", id="DES3_CBC"
-    ),
+    pytest.param("DES3_ECB", "MEDIUM", "Sweet32 birthday attack (CVE-2016-2183)", id="DES3_ECB"),
+    pytest.param("DES3_CBC", "MEDIUM", "Sweet32 birthday attack (CVE-2016-2183)", id="DES3_CBC"),
     pytest.param("RC4", "CRITICAL", "stream cipher broken per RFC 7465", id="RC4"),
     pytest.param("MD2", "HIGH", "obsolete hash, collision-broken", id="MD2"),
     pytest.param("MD5", "MEDIUM", "collision attacks practical since 2004", id="MD5"),
@@ -129,9 +125,7 @@ _DEPRECATED_SIGN_MECHS: list[Any] = [
 _WEAK_SYMMETRIC_SIZES: list[Any] = [
     pytest.param("AES_ECB", "AES_KEY_GEN", 64, "AES with 64-bit key", id="AES-64"),
     pytest.param("DES_ECB", "DES_KEY_GEN", 56, "DES with 56-bit key", id="DES-56"),
-    pytest.param(
-        "DES3_ECB", "DES3_KEY_GEN", 80, "3DES with 80-bit key", id="3DES-80"
-    ),
+    pytest.param("DES3_ECB", "DES3_KEY_GEN", 80, "3DES with 80-bit key", id="3DES-80"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -146,9 +140,7 @@ class TestWeakRsaKeySize:
     """Probe whether the module accepts generation of weak RSA key sizes."""
 
     @pytest.mark.parametrize("bits,severity", _WEAK_RSA_SIZES)
-    def test_weak_rsa_key_generation(
-        self, p11_raw_session: Any, bits: int, severity: str
-    ) -> None:
+    def test_weak_rsa_key_generation(self, p11_raw_session: Any, bits: int, severity: str) -> None:
         """Attempt to generate an RSA keypair with a weak modulus size."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -235,8 +227,7 @@ class TestDeprecatedMechanismOperation:
             # SSL3 MAC mechanisms need a generic secret key; these typically
             # require SSL-specific parameters. Just note the availability.
             note(
-                f"Module advertises deprecated {mech_name} and may accept "
-                f"sign operations",
+                f"Module advertises deprecated {mech_name} and may accept sign operations",
                 ComplianceLevel.VENDOR,
                 reference=f"CKM_{mech_name} is part of deprecated SSL 3.0",
             )
@@ -270,9 +261,7 @@ class TestRsaPkcsV15Encrypt:
 class TestWeakKeySizeAcceptance:
     """Probe whether symmetric mechanisms accept unusually small key sizes."""
 
-    @pytest.mark.parametrize(
-        "mech_name,keygen_name,bits,description", _WEAK_SYMMETRIC_SIZES
-    )
+    @pytest.mark.parametrize("mech_name,keygen_name,bits,description", _WEAK_SYMMETRIC_SIZES)
     def test_weak_key_size_acceptance(
         self,
         p11_raw_session: Any,
@@ -322,9 +311,7 @@ class TestWeakKeySizeAcceptance:
 class TestPinTimingSideChannel:
     """Analyse whether PIN validation timing leaks information."""
 
-    def test_pin_timing_side_channel(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_pin_timing_side_channel(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Time correct vs wrong PIN logins to detect timing side channels.
 
         Measures login latency for correct and incorrect PINs, then compares

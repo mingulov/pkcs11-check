@@ -176,9 +176,7 @@ def run_gcm_decrypt_test(
                     "CKR_ARGUMENTS_BAD",
                 )
             ):
-                pytest.skip(
-                    f"GCM iv={len(iv)}B tag={tag_bytes}B not supported: {exc_msg}"
-                )
+                pytest.skip(f"GCM iv={len(iv)}B tag={tag_bytes}B not supported: {exc_msg}")
             if any(
                 name in exc_msg
                 for name in (

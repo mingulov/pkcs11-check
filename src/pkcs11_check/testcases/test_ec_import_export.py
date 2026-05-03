@@ -71,8 +71,10 @@ class TestECPublicKeyImport:
 
             # Import the exported public key as a new object
             imported_pub = import_ec_public_key(
-                rs.raw, rs.sh,
-                ec_params=ec_params, ec_point=ec_point_der,
+                rs.raw,
+                rs.sh,
+                ec_params=ec_params,
+                ec_point=ec_point_der,
                 attrs={CKA_VERIFY: True},
             )
 

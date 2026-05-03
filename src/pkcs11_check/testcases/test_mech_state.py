@@ -13,6 +13,7 @@ These tests are NOT parametrized -- they use hard-coded AES and SHA-256 mechanis
 which are widely supported.  Mechanism-specific state tests belong in the
 mechanism-specific test files.
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -57,8 +58,8 @@ _CROSS_SESSION_NOT_INIT_RVCS: frozenset[int] = frozenset(
     {
         CKR_OPERATION_NOT_INITIALIZED,
         CKR_SESSION_HANDLE_INVALID,  # some modules return this if they
-                                     # keyed the operation table on the
-                                     # wrong handle
+        # keyed the operation table on the
+        # wrong handle
     }
 )
 
@@ -86,9 +87,7 @@ class TestEncryptState:
         out_buf = (ctypes.c_ubyte * 32)()
         out_len = CK_ULONG(32)
 
-        rv = rs.raw.C_Encrypt(
-            rs.sh, in_buf, len(plaintext), out_buf, byref(out_len)
-        )
+        rv = rs.raw.C_Encrypt(rs.sh, in_buf, len(plaintext), out_buf, byref(out_len))
         assert rv in _NOT_INIT_RVCS, (
             f"C_Encrypt without init returned 0x{rv:08x}, "
             f"expected CKR_OPERATION_NOT_INITIALIZED (0x{int(CKR_OPERATION_NOT_INITIALIZED):08x})"
@@ -155,12 +154,9 @@ class TestDecryptState:
         out_buf = (ctypes.c_ubyte * 32)()
         out_len = CK_ULONG(32)
 
-        rv = rs.raw.C_Decrypt(
-            rs.sh, in_buf, len(ct), out_buf, byref(out_len)
-        )
+        rv = rs.raw.C_Decrypt(rs.sh, in_buf, len(ct), out_buf, byref(out_len))
         assert rv in _NOT_INIT_RVCS, (
-            f"C_Decrypt without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+            f"C_Decrypt without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
         )
 
     def test_decrypt_final_without_init(self, p11_raw_session: RawSession) -> None:
@@ -192,8 +188,7 @@ class TestSignState:
 
         rv = rs.raw.C_Sign(rs.sh, in_buf, len(data), sig_buf, byref(sig_len))
         assert rv in _NOT_INIT_RVCS, (
-            f"C_Sign without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+            f"C_Sign without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
         )
 
     def test_sign_update_without_init(self, p11_raw_session: RawSession) -> None:
@@ -204,8 +199,7 @@ class TestSignState:
         in_buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
         rv = rs.raw.C_SignUpdate(rs.sh, in_buf, len(data))
         assert rv in _NOT_INIT_RVCS, (
-            f"C_SignUpdate without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+            f"C_SignUpdate without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
         )
 
     def test_sign_final_without_init(self, p11_raw_session: RawSession) -> None:
@@ -216,8 +210,7 @@ class TestSignState:
         sig_len = CK_ULONG(256)
         rv = rs.raw.C_SignFinal(rs.sh, sig_buf, byref(sig_len))
         assert rv in _NOT_INIT_RVCS, (
-            f"C_SignFinal without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+            f"C_SignFinal without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
         )
 
 
@@ -237,10 +230,7 @@ class TestVerifyState:
         assert rv in _NOT_INIT_RVCS | {
             0x000000C4,  # CKR_SIGNATURE_INVALID
             0x000000C5,  # CKR_SIGNATURE_LEN_RANGE
-        }, (
-            f"C_Verify without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
-        )
+        }, f"C_Verify without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
 
     def test_verify_update_without_init(self, p11_raw_session: RawSession) -> None:
         """C_VerifyUpdate without prior C_VerifyInit must return CKR_OPERATION_NOT_INITIALIZED."""
@@ -264,10 +254,7 @@ class TestVerifyState:
         assert rv in _NOT_INIT_RVCS | {
             0x000000C4,  # CKR_SIGNATURE_INVALID
             0x000000C5,  # CKR_SIGNATURE_LEN_RANGE
-        }, (
-            f"C_VerifyFinal without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
-        )
+        }, f"C_VerifyFinal without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
 
 
 class TestDigestState:
@@ -286,8 +273,7 @@ class TestDigestState:
 
         rv = rs.raw.C_Digest(rs.sh, in_buf, len(data), out_buf, byref(out_len))
         assert rv in _NOT_INIT_RVCS, (
-            f"C_Digest without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED"
+            f"C_Digest without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
         )
 
     def test_digest_update_without_init(self, p11_raw_session: RawSession) -> None:
@@ -354,9 +340,7 @@ class TestMultiPartCrossSession:
     per the spec (PKCS#11 v3.1 Sec.5.6, Sec.5.10.1).
     """
 
-    def test_encrypt_update_from_other_session(
-        self, p11_raw_session: RawSession
-    ) -> None:
+    def test_encrypt_update_from_other_session(self, p11_raw_session: RawSession) -> None:
         """C_EncryptInit in session A; C_EncryptUpdate from session B must fail.
 
         Session B never called C_EncryptInit so its operation slot is
@@ -387,9 +371,7 @@ class TestMultiPartCrossSession:
 
             # Session B has no encrypt operation initialised; Update here
             # must be rejected.
-            rv_b = rs.raw.C_EncryptUpdate(
-                sh_b, in_buf, len(data), out_buf, byref(out_len)
-            )
+            rv_b = rs.raw.C_EncryptUpdate(sh_b, in_buf, len(data), out_buf, byref(out_len))
             assert rv_b in _CROSS_SESSION_NOT_INIT_RVCS, (
                 f"C_EncryptUpdate from un-initialised session B returned "
                 f"0x{rv_b:08x}, expected CKR_OPERATION_NOT_INITIALIZED — "
@@ -408,9 +390,7 @@ class TestMultiPartCrossSession:
             close_session_quietly(rs.raw, sh_b)
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_digest_update_from_other_session(
-        self, p11_raw_session: RawSession
-    ) -> None:
+    def test_digest_update_from_other_session(self, p11_raw_session: RawSession) -> None:
         """C_DigestInit in session A; C_DigestUpdate from session B must fail."""
         from pkcs11_check.raw.bootstrap import close_session_quietly
         from pkcs11_check.raw.bootstrap import open_session as raw_open_session

@@ -94,20 +94,25 @@ def test_mldsa_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
     try:
         if param_set is not None:
             pub_key = import_pqc_public_key(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 key_type=int(CKK_ML_DSA),
                 value=pk_bytes,
                 parameter_set=param_set,
                 attrs={CKA_VERIFY: True},
             )
         else:
-            pub_key = create_object(rs.raw, rs.sh, {
-                CKA_CLASS: CKO_PUBLIC_KEY,
-                CKA_KEY_TYPE: CKK_ML_DSA,
-                CKA_VALUE: pk_bytes,
-                CKA_TOKEN: False,
-                CKA_VERIFY: True,
-            })
+            pub_key = create_object(
+                rs.raw,
+                rs.sh,
+                {
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_ML_DSA,
+                    CKA_VALUE: pk_bytes,
+                    CKA_TOKEN: False,
+                    CKA_VERIFY: True,
+                },
+            )
     except AssertionError as exc:
         exc_msg = str(exc)
         if any(

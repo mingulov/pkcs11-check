@@ -311,9 +311,7 @@ def _gen_hkdf_base_key(rs: RawSession) -> int:
     tmpl = template(*packed)
     mech = mech_simple(CKM(CKM_HKDF_KEY_GEN))
     handle = CK_OBJECT_HANDLE(0)
-    rv = rs.raw.C_GenerateKey(
-        rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
-    )
+    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
     assert rv == CKR_OK, f"HKDF base key gen failed: {rv}"
     return handle.value
 
@@ -485,9 +483,7 @@ def _gen_des_base_key(rs: RawSession, des3: bool) -> int:
     tmpl = template(*packed)
     mech = mech_simple(keygen_ckm)
     handle = CK_OBJECT_HANDLE(0)
-    rv = rs.raw.C_GenerateKey(
-        rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
-    )
+    rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
     assert rv == CKR_OK, f"DES{'3' if des3 else ''} base key gen failed: {rv}"
     return handle.value
 

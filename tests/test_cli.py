@@ -435,9 +435,7 @@ class TestTestCommand:
             )[1],
         )
 
-        result = runner.invoke(
-            app, ["test", "--module", str(module), "--ignore-disabled-tests"]
-        )
+        result = runner.invoke(app, ["test", "--module", str(module), "--ignore-disabled-tests"])
 
         assert result.exit_code == 0
         assert called["granularity"] == "mixed"

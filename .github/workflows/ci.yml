@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   lint:
@@ -14,7 +14,7 @@ jobs:
         with:
           submodules: recursive
       - uses: astral-sh/setup-uv@v4
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra dev
       - run: uv run ruff check src/ tests/
       - run: uv run ruff format --check src/ tests/
 
@@ -25,7 +25,7 @@ jobs:
         with:
           submodules: recursive
       - uses: astral-sh/setup-uv@v4
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra dev
       - run: uv run mypy src/
 
   meta-tests:
@@ -35,7 +35,7 @@ jobs:
         with:
           submodules: recursive
       - uses: astral-sh/setup-uv@v4
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra dev
       - run: uv run pytest tests/ -v --timeout=60
 
   strict-markers:
@@ -45,7 +45,7 @@ jobs:
         with:
           submodules: recursive
       - uses: astral-sh/setup-uv@v4
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra dev
       - run: uv run pytest --strict-markers src/pkcs11_check/testcases/ --collect-only -q
 
   smoke-softhsm2:
@@ -56,7 +56,7 @@ jobs:
           submodules: recursive
       - uses: astral-sh/setup-uv@v4
       - run: sudo apt-get update && sudo apt-get install -y softhsm2
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra dev
       - name: Setup SoftHSM2 token
         run: |
           mkdir -p /tmp/pkcs11-check-tokens

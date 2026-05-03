@@ -189,7 +189,11 @@ class TestMlKemEncapsulate:
                 # a ciphertext of the expected length.
                 mech = get_mlkem_mechanism(param_set)
                 secret_handle, ciphertext = encapsulate_key(
-                    rs.raw, rs.sh, pub_key, mech, attrs=_SECRET_KEY_ATTRS,
+                    rs.raw,
+                    rs.sh,
+                    pub_key,
+                    mech,
+                    attrs=_SECRET_KEY_ATTRS,
                 )
                 assert secret_handle != 0, f"{vec_id}: Secret key handle is zero"
                 assert ciphertext, f"{vec_id}: Ciphertext is empty"
@@ -212,7 +216,11 @@ class TestMlKemEncapsulate:
 
             # Encapsulate: produces ciphertext + shared secret
             secret_handle, ciphertext = encapsulate_key(
-                rs.raw, rs.sh, pub_key, mech, attrs=_SECRET_KEY_ATTRS,
+                rs.raw,
+                rs.sh,
+                pub_key,
+                mech,
+                attrs=_SECRET_KEY_ATTRS,
             )
             assert secret_handle != 0, f"{vec_id}: Secret key handle is zero"
             assert ciphertext, f"{vec_id}: Ciphertext is empty"
@@ -223,7 +231,11 @@ class TestMlKemEncapsulate:
 
             # Decapsulate with private key to recover shared secret
             decap_handle = decapsulate_key(
-                rs.raw, rs.sh, priv_key, mech, ciphertext,
+                rs.raw,
+                rs.sh,
+                priv_key,
+                mech,
+                ciphertext,
                 attrs=_SECRET_KEY_ATTRS,
             )
             assert decap_handle != 0, f"{vec_id}: Decapsulated key handle is zero"

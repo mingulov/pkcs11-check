@@ -116,8 +116,10 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     # Import Montgomery private key
     try:
         priv_key = import_ec_private_key(
-            rs.raw, rs.sh,
-            ec_params=oid, value=private_bytes,
+            rs.raw,
+            rs.sh,
+            ec_params=oid,
+            value=private_bytes,
             key_type=int(CKK_EC_MONTGOMERY),
             attrs={CKA_DERIVE: True},
         )

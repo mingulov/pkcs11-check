@@ -72,9 +72,7 @@ def test_every_quirk_has_issue_reference() -> None:
             # exact `### heading` line, since wording can vary slightly).
             heading_marker = quirk.issue_ref.split("§", 1)[-1].strip()
             if not heading_marker:
-                failures.append(
-                    f"{module_id.value}/{quirk_name}: issue_ref has no heading"
-                )
+                failures.append(f"{module_id.value}/{quirk_name}: issue_ref has no heading")
                 continue
             # Take the first 6 words of the heading as the search phrase to
             # tolerate minor wording differences.
@@ -85,9 +83,7 @@ def test_every_quirk_has_issue_reference() -> None:
                     f'"{heading_marker}" but the phrase "{phrase}" is not '
                     f"in docs/module-issues.md"
                 )
-    assert not failures, "Quirk registry has unverified issue refs:\n" + "\n".join(
-        failures
-    )
+    assert not failures, "Quirk registry has unverified issue refs:\n" + "\n".join(failures)
 
 
 def test_every_quirk_has_extra_ckrs() -> None:

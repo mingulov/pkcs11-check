@@ -148,9 +148,7 @@ class TestRNGStatistical:
         )
 
         skip_rvs = (CKR_RANDOM_SEED_NOT_SUPPORTED, CKR_FUNCTION_NOT_SUPPORTED)
-        rv = p11_session.seed_random(
-            b"entropy seed data for testing 12345", extra_ok=skip_rvs
-        )
+        rv = p11_session.seed_random(b"entropy seed data for testing 12345", extra_ok=skip_rvs)
         if rv in skip_rvs:
             pytest.skip(f"C_SeedRandom not supported ({rv:#x})")
         assert rv == CKR_OK

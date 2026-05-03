@@ -250,9 +250,7 @@ def test_build_quality_audit_merges_selection_reports_by_scenario() -> None:
         "framework_constraint": 3,
         "not_implemented": 1,
     }
-    mechanism_findings = {
-        finding["mechanism"]: finding for finding in report["mechanism_findings"]
-    }
+    mechanism_findings = {finding["mechanism"]: finding for finding in report["mechanism_findings"]}
     assert mechanism_findings == {
         "CKM_AES_CBC": {
             "mechanism": "CKM_AES_CBC",
@@ -437,9 +435,7 @@ def test_build_quality_audit_keeps_distinct_aggregated_skip_reasons_for_same_uni
 
     report = build_quality_audit(results=results)
 
-    by_reason = {
-        finding["reason"]: finding for finding in report["framework_skip_candidates"]
-    }
+    by_reason = {finding["reason"]: finding for finding in report["framework_skip_candidates"]}
     assert by_reason["CKM_AES_CBC not supported"]["count"] == 1
     assert by_reason["No mechanism catalog"]["count"] == 1
     assert by_reason["No mechanism catalog"]["category"] == "framework_constraint"

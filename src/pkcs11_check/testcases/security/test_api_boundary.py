@@ -97,7 +97,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"{func_name}(handle={handle:#x})",
         )
 
@@ -179,7 +181,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"{func_name}(object_handle={handle:#x})",
         )
 
@@ -229,7 +233,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"{func_name}(mechanism=NULL)",
         )
 
@@ -274,7 +280,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"{func_name}(pParameter=NULL, ulParameterLen=16)",
         )
 
@@ -344,7 +352,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"{func_name}(template=NULL, count=5)",
         )
 
@@ -494,7 +504,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"{operation}(mechanism={mech_name}, data_len=0)",
         )
 
@@ -525,7 +537,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="C_Login(pin=NULL, pin_len=8)",
         )
 
@@ -603,7 +617,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=5)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="C_GenerateKeyPair(CKA_MODULUS_BITS=0xFFFFFFFF)",
         )
 
@@ -680,7 +696,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="C_GenerateKeyPair(CKA_MODULUS_BITS=0)",
         )
 
@@ -741,6 +759,8 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=5)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"C_GenerateKey(CKA_VALUE_LEN={_CK_ULONG_MAX_64:#x})",
         )

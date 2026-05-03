@@ -97,7 +97,8 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) -> N
 
     try:
         priv = import_pqc_private_key(
-            rs.raw, rs.sh,
+            rs.raw,
+            rs.sh,
             key_type=int(CKK_ML_DSA),
             value=private_key_bytes,
             parameter_set=vec["_parameter_set"],

@@ -11,10 +11,10 @@
 
 ## Shared Scripts
 
-- [docker/run-with-artifacts.sh](/home/user/src/m/pkcs11-check/docker/run-with-artifacts.sh)
+- `docker/run-with-artifacts.sh`
   - wraps an arbitrary command
   - if `PKCS11_CHECK_ARTIFACT_DIR` is set, it writes combined stdout/stderr to `console.log`
-- [docker/run-pkcs11-check.sh](/home/user/src/m/pkcs11-check/docker/run-pkcs11-check.sh)
+- `docker/run-pkcs11-check.sh`
   - translates environment variables into a `pkcs11-check test` invocation
   - writes `results.json`, `state.json`, and `policy.json` when `PKCS11_CHECK_ARTIFACT_DIR` is set
 
@@ -77,13 +77,13 @@ Complex providers:
 
 Examples:
 
-- [docker/opencryptoki/run-opencryptoki.sh](/home/user/src/m/pkcs11-check/docker/opencryptoki/run-opencryptoki.sh)
-- [docker/bouncyhsm/run-bouncyhsm.sh](/home/user/src/m/pkcs11-check/docker/bouncyhsm/run-bouncyhsm.sh)
-- [docker/tpm2-pkcs11/run-tpm2.sh](/home/user/src/m/pkcs11-check/docker/tpm2-pkcs11/run-tpm2.sh)
+- `docker/opencryptoki/run-opencryptoki.sh`
+- `docker/bouncyhsm/run-bouncyhsm.sh`
+- `docker/tpm2-pkcs11/run-tpm2.sh`
 
 ## Passing Custom Runner Parameters
 
-Use [docker/test.sh](/home/user/src/m/pkcs11-check/docker/test.sh) on the host.
+Use `docker/test.sh` on the host.
 
 - arguments before `--` are passed as extra `pkcs11-check test` options
 - arguments after `--` are treated as explicit pytest targets/nodeids

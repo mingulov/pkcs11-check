@@ -65,12 +65,8 @@ def load_cbc_cs_vectors(
         pl = v.get("payload_len_bits")
         return pl is None or pl % 8 == 0
 
-    encrypt_vecs = [
-        (f"CBC-CS{cs_version}-{vid}", v) for vid, v in encrypt_vecs if _byte_aligned(v)
-    ]
-    decrypt_vecs = [
-        (f"CBC-CS{cs_version}-{vid}", v) for vid, v in decrypt_vecs if _byte_aligned(v)
-    ]
+    encrypt_vecs = [(f"CBC-CS{cs_version}-{vid}", v) for vid, v in encrypt_vecs if _byte_aligned(v)]
+    decrypt_vecs = [(f"CBC-CS{cs_version}-{vid}", v) for vid, v in decrypt_vecs if _byte_aligned(v)]
 
     return encrypt_vecs, decrypt_vecs
 
@@ -103,7 +99,9 @@ def _detect_cts_variant(rs: Any) -> str | None:
     key = 0
     try:
         key = _gen_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
     except (AssertionError, OSError):
@@ -116,7 +114,11 @@ def _detect_cts_variant(rs: Any) -> str | None:
         pt1 = bytes(range(33))
         try:
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CTS, pt1,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CTS,
+                pt1,
                 mech_param=mech_bytes(CKM_AES_CTS, iv),
             )
         except AssertionError:
@@ -125,11 +127,19 @@ def _detect_cts_variant(rs: Any) -> str | None:
             pt2 = bytes(range(32))
             try:
                 ct2 = encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_CTS, pt2,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CTS,
+                    pt2,
                     mech_param=mech_bytes(CKM_AES_CTS, iv),
                 )
                 cbc2 = encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_CBC, pt2,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CBC,
+                    pt2,
                     mech_param=mech_bytes(CKM_AES_CBC, iv),
                 )
                 if ct2 == cbc2:
@@ -145,7 +155,11 @@ def _detect_cts_variant(rs: Any) -> str | None:
 
         # Compare with standard AES-CBC to detect block order
         cbc_c1 = encrypt_single(
-            rs.raw, rs.sh, key, CKM_AES_CBC, pt1[:16],
+            rs.raw,
+            rs.sh,
+            key,
+            CKM_AES_CBC,
+            pt1[:16],
             mech_param=mech_bytes(CKM_AES_CBC, iv),
         )
 
@@ -153,7 +167,11 @@ def _detect_cts_variant(rs: Any) -> str | None:
             # First block matches CBC(block1) -- candidate for CS3.
             pt1_padded = pt1 + b"\x00" * (48 - len(pt1))  # pad to 3 blocks
             cbc_full = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CBC, pt1_padded,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC,
+                pt1_padded,
                 mech_param=mech_bytes(CKM_AES_CBC, iv),
             )
             # In CS3, middle 16 bytes should be C3 (last full CBC block)
@@ -164,11 +182,19 @@ def _detect_cts_variant(rs: Any) -> str | None:
         # CS1 or CS2 -- need aligned probe to distinguish
         pt2 = bytes(range(32))
         ct2 = encrypt_single(
-            rs.raw, rs.sh, key, CKM_AES_CTS, pt2,
+            rs.raw,
+            rs.sh,
+            key,
+            CKM_AES_CTS,
+            pt2,
             mech_param=mech_bytes(CKM_AES_CTS, iv),
         )
         cbc_ct2 = encrypt_single(
-            rs.raw, rs.sh, key, CKM_AES_CBC, pt2,
+            rs.raw,
+            rs.sh,
+            key,
+            CKM_AES_CBC,
+            pt2,
             mech_param=mech_bytes(CKM_AES_CBC, iv),
         )
 
@@ -205,9 +231,7 @@ def skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
     if detected is None:
         pytest.skip("CTS variant detection failed (module errors on CTS encrypt)")
     if detected != expected_cs:
-        pytest.skip(
-            f"Module implements CS{detected}, skipping CS{expected_cs} vectors"
-        )
+        pytest.skip(f"Module implements CS{detected}, skipping CS{expected_cs} vectors")
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +266,12 @@ def run_cbc_cs_encrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, An
         try:
             mech = mech_bytes(CKM_AES_CTS, vec["iv"])
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CTS, vec["pt"], mech_param=mech,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CTS,
+                vec["pt"],
+                mech_param=mech,
             )
         except AssertionError as exc:
             _handle_cts_error(exc, vec_id, "encrypt")
@@ -269,7 +298,12 @@ def run_cbc_cs_decrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, An
         try:
             mech = mech_bytes(CKM_AES_CTS, vec["iv"])
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_CTS, vec["ct"], mech_param=mech,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CTS,
+                vec["ct"],
+                mech_param=mech,
             )
         except AssertionError as exc:
             _handle_cts_error(exc, vec_id, "decrypt")

@@ -176,8 +176,10 @@ class TestMLDSASignVerify:
         try:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
-            except AssertionError:
-                pytest.xfail("ML-DSA sign failed")
+            except AssertionError as exc:
+                pytest.xfail(
+                    f"Advertised CKM_ML_DSA sign operation is not operational on this module: {exc}"
+                )
                 raise  # unreachable
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(rs.raw, rs.sh, pub, CKM_ML_DSA, _PLAINTEXT, sig)
@@ -194,8 +196,10 @@ class TestMLDSASignVerify:
         try:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
-            except AssertionError:
-                pytest.xfail("ML-DSA sign failed")
+            except AssertionError as exc:
+                pytest.xfail(
+                    f"Advertised CKM_ML_DSA sign operation is not operational on this module: {exc}"
+                )
                 raise  # unreachable
             tampered = _PLAINTEXT[:-1] + bytes([_PLAINTEXT[-1] ^ 0xFF])
             try:
@@ -220,13 +224,18 @@ class TestMLDSASignVerify:
             try:
                 sig1 = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
                 sig2 = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
-            except AssertionError:
-                pytest.xfail("ML-DSA sign failed")
+            except AssertionError as exc:
+                pytest.xfail(
+                    f"Advertised CKM_ML_DSA sign operation is not operational on this module: {exc}"
+                )
                 raise  # unreachable
             # ML-DSA is randomized - two signatures should differ (with overwhelming probability)
             # Note: some implementations may use deterministic signing, so xfail not assert
             if sig1 == sig2:
-                pytest.xfail("ML-DSA produced identical signatures (deterministic mode?)")
+                pytest.xfail(
+                    "Module appears to use deterministic ML-DSA signing; this randomized-signing "
+                    "probe is provider-specific"
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -245,7 +254,13 @@ class TestMLDSAHedgeVariants:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param)
             assert len(sig) > 0
             result = verify_single(
-                rs.raw, rs.sh, pub, CKM_ML_DSA, _PLAINTEXT, sig, mech_param=mech_param,
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_ML_DSA,
+                _PLAINTEXT,
+                sig,
+                mech_param=mech_param,
             )
             assert result is True
         finally:
@@ -262,7 +277,13 @@ class TestMLDSAHedgeVariants:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param)
             assert len(sig) > 0
             result = verify_single(
-                rs.raw, rs.sh, pub, CKM_ML_DSA, _PLAINTEXT, sig, mech_param=mech_param,
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_ML_DSA,
+                _PLAINTEXT,
+                sig,
+                mech_param=mech_param,
             )
             assert result is True
         finally:
@@ -276,17 +297,34 @@ class TestMLDSAHedgeVariants:
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
             mech_param = mech_sign_context(
-                CKM_ML_DSA, hedge=int(CKH_DETERMINISTIC_REQUIRED),
+                CKM_ML_DSA,
+                hedge=int(CKH_DETERMINISTIC_REQUIRED),
             )
             sig1 = sign_single(
-                rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param,
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_ML_DSA,
+                _PLAINTEXT,
+                mech_param=mech_param,
             )
             sig2 = sign_single(
-                rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT, mech_param=mech_param,
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_ML_DSA,
+                _PLAINTEXT,
+                mech_param=mech_param,
             )
             assert sig1 == sig2, "Deterministic mode should produce identical signatures"
             result = verify_single(
-                rs.raw, rs.sh, pub, CKM_ML_DSA, _PLAINTEXT, sig1, mech_param=mech_param,
+                rs.raw,
+                rs.sh,
+                pub,
+                CKM_ML_DSA,
+                _PLAINTEXT,
+                sig1,
+                mech_param=mech_param,
             )
             assert result is True
         finally:
@@ -307,8 +345,10 @@ class TestSLHDSAKeyGeneration:
         _skip_if_no(rs, "SLH_DSA")
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
-        except (AssertionError, OSError):
-            pytest.xfail("SLH-DSA key generation failed")
+        except (AssertionError, OSError) as exc:
+            pytest.xfail(
+                f"Advertised CKM_SLH_DSA key generation is not operational on this module: {exc}"
+            )
             raise  # unreachable
         try:
             assert pub != 0
@@ -323,8 +363,10 @@ class TestSLHDSAKeyGeneration:
         _skip_if_no(rs, "SLH_DSA")
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
-        except (AssertionError, OSError):
-            pytest.xfail("SLH-DSA key generation failed")
+        except (AssertionError, OSError) as exc:
+            pytest.xfail(
+                f"Advertised CKM_SLH_DSA key generation is not operational on this module: {exc}"
+            )
             raise  # unreachable
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
@@ -366,8 +408,10 @@ class TestSLHDSASignVerify:
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SLH_DSA, _PLAINTEXT)
-        except (AssertionError, OSError):
-            pytest.xfail("SLH-DSA sign failed")
+        except (AssertionError, OSError) as exc:
+            pytest.xfail(
+                f"Advertised CKM_SLH_DSA sign operation is not operational on this module: {exc}"
+            )
             raise  # unreachable
         try:
             assert isinstance(sig, bytes) and len(sig) > 0
@@ -384,8 +428,10 @@ class TestSLHDSASignVerify:
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SLH_DSA, _PLAINTEXT)
-        except (AssertionError, OSError):
-            pytest.xfail("SLH-DSA sign failed")
+        except (AssertionError, OSError) as exc:
+            pytest.xfail(
+                f"Advertised CKM_SLH_DSA sign operation is not operational on this module: {exc}"
+            )
             raise  # unreachable
         try:
             tampered = _PLAINTEXT[:-1] + bytes([_PLAINTEXT[-1] ^ 0xFF])

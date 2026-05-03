@@ -3550,20 +3550,22 @@ def test_file_skip_for_missing_mechanism(tmp_path: Path) -> None:
 
     test_file = tmp_path / "test_example.py"
     test_file.write_text(
-        'import pytest\n'
-        'REQUIRED_MECHANISMS = ["AES_CCM"]\n'
-        'def test_dummy(): pass\n'
+        'import pytest\nREQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_dummy(): pass\n'
     )
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({
-        "status": "ok",
-        "module_path": "/lib/mod.so",
-        "requested_interface": "PKCS11",
-        "interface_version": "2.40",
-        "slot_index": 0,
-        "slot_count": 1,
-        "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB"],
-    }))
+    manifest.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "module_path": "/lib/mod.so",
+                "requested_interface": "PKCS11",
+                "interface_version": "2.40",
+                "slot_index": 0,
+                "slot_count": 1,
+                "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB"],
+            }
+        )
+    )
 
     mechs = _load_available_mechanisms(["--p11-manifest", str(manifest)])
     required = extract_required_mechanisms(str(test_file))
@@ -3581,15 +3583,19 @@ def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:
     test_file = tmp_path / "test_example.py"
     test_file.write_text('REQUIRED_MECHANISMS = ["AES_CBC"]\n')
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({
-        "status": "ok",
-        "module_path": "/lib/mod.so",
-        "requested_interface": "PKCS11",
-        "interface_version": "2.40",
-        "slot_index": 0,
-        "slot_count": 1,
-        "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB"],
-    }))
+    manifest.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "module_path": "/lib/mod.so",
+                "requested_interface": "PKCS11",
+                "interface_version": "2.40",
+                "slot_index": 0,
+                "slot_count": 1,
+                "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB"],
+            }
+        )
+    )
     mechs = _load_available_mechanisms(["--p11-manifest", str(manifest)])
     required = extract_required_mechanisms(str(test_file))
     assert required is not None
@@ -3601,15 +3607,19 @@ def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:
 
 def test_load_available_mechanisms_from_manifest(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({
-        "status": "ok",
-        "module_path": "/lib/mod.so",
-        "requested_interface": "PKCS11",
-        "interface_version": "2.40",
-        "slot_index": 0,
-        "slot_count": 1,
-        "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB", "CKM_RSA_PKCS"],
-    }))
+    manifest.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "module_path": "/lib/mod.so",
+                "requested_interface": "PKCS11",
+                "interface_version": "2.40",
+                "slot_index": 0,
+                "slot_count": 1,
+                "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB", "CKM_RSA_PKCS"],
+            }
+        )
+    )
     result = _load_available_mechanisms(["--p11-manifest", str(manifest)])
     assert result is not None
     assert "AES_CBC" in result
