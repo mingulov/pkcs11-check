@@ -1,4 +1,5 @@
 """Mechanism-driven KEM (encapsulate/decapsulate) tests."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -70,9 +71,7 @@ class TestMechKEM:
             pytest.skip("ML_KEM not supported")
         pub, priv = _ml_kem_keypair(rs)
         try:
-            enc_key, ct = encapsulate_key(
-                rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_AES_DERIVED_ATTRS
-            )
+            enc_key, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_AES_DERIVED_ATTRS)
             try:
                 dec_key = decapsulate_key(
                     rs.raw, rs.sh, priv, CKM_ML_KEM, ct, attrs=_AES_DERIVED_ATTRS
@@ -80,15 +79,9 @@ class TestMechKEM:
                 try:
                     # Verify both keys produce the same encryption result
                     plaintext = b"KEM roundtrip test data!12345678"
-                    ciphertext = encrypt_single(
-                        rs.raw, rs.sh, enc_key, CKM_AES_ECB, plaintext
-                    )
-                    recovered = decrypt_single(
-                        rs.raw, rs.sh, dec_key, CKM_AES_ECB, ciphertext
-                    )
-                    assert recovered == plaintext, (
-                        "Decapsulated key differs from encapsulated key"
-                    )
+                    ciphertext = encrypt_single(rs.raw, rs.sh, enc_key, CKM_AES_ECB, plaintext)
+                    recovered = decrypt_single(rs.raw, rs.sh, dec_key, CKM_AES_ECB, ciphertext)
+                    assert recovered == plaintext, "Decapsulated key differs from encapsulated key"
                 finally:
                     destroy_quietly(rs.raw, rs.sh, dec_key)
             finally:
@@ -112,9 +105,7 @@ class TestMechKEM:
         pub1, priv1 = _ml_kem_keypair(rs)
         pub2, priv2 = _ml_kem_keypair(rs)
         try:
-            enc_key, ct = encapsulate_key(
-                rs.raw, rs.sh, pub1, CKM_ML_KEM, attrs=_AES_DERIVED_ATTRS
-            )
+            enc_key, ct = encapsulate_key(rs.raw, rs.sh, pub1, CKM_ML_KEM, attrs=_AES_DERIVED_ATTRS)
             try:
                 # Decapsulate with wrong private key -- produces a different derived key
                 dec_key_wrong = decapsulate_key(
@@ -122,9 +113,7 @@ class TestMechKEM:
                 )
                 try:
                     plaintext = b"KEM wrong-key test data!12345678"
-                    ciphertext = encrypt_single(
-                        rs.raw, rs.sh, enc_key, CKM_AES_ECB, plaintext
-                    )
+                    ciphertext = encrypt_single(rs.raw, rs.sh, enc_key, CKM_AES_ECB, plaintext)
                     # Decrypting with the wrong-key-derived key should yield garbage
                     wrong_plaintext = decrypt_single(
                         rs.raw, rs.sh, dec_key_wrong, CKM_AES_ECB, ciphertext

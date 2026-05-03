@@ -687,9 +687,7 @@ def _collect_selection_findings(
                 "rejected_mechanisms": rejected,
                 "selected_but_not_invoked": selected_but_not_invoked,
                 "rejected_reason_counts": rejected_reason_counts,
-                "rejected_reason_categories": _classify_reason_code_counts(
-                    rejected_reason_counts
-                ),
+                "rejected_reason_categories": _classify_reason_code_counts(rejected_reason_counts),
             }
         )
 

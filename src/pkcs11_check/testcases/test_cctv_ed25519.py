@@ -70,7 +70,8 @@ def test_ed25519_cctv(vec: dict[str, Any], p11_raw_session: Any) -> None:
     try:
         try:
             pub = import_ec_public_key(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 ec_params=bytes.fromhex("06032b6570"),  # OID for Ed25519
                 ec_point=pub_key_bytes,
                 key_type=int(CKK_EC_EDWARDS),

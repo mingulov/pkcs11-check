@@ -105,7 +105,8 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
     is_semi_expanded = "semi_expanded" in filename
     try:
         priv = import_pqc_private_key(
-            rs.raw, rs.sh,
+            rs.raw,
+            rs.sh,
             key_type=int(CKK_ML_KEM),
             value=private_key_bytes,
             parameter_set=param_set,
@@ -160,8 +161,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
                     reference="FIPS 203 Section 6.4; PKCS#11 v3.2",
                 )
                 pytest.fail(
-                    f"NSS does not support ML-KEM 'semi_expanded' key format decapsulation: "
-                    f"{exc}"
+                    f"NSS does not support ML-KEM 'semi_expanded' key format decapsulation: {exc}"
                 )
             pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}: {exc}")
         # acceptable/invalid: reject is fine

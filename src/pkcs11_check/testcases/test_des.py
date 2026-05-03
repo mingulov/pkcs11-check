@@ -1029,12 +1029,14 @@ class TestDESKeyDerivation:
 
 
 # DES weak keys (before parity adjustment) -- 4 weak + 12 semi-weak
-_DES_WEAK_KEYS = frozenset([
-    bytes.fromhex("0101010101010101"),
-    bytes.fromhex("FEFEFEFEFEFEFEFE"),
-    bytes.fromhex("E0E0E0E0F1F1F1F1"),
-    bytes.fromhex("1F1F1F1F0E0E0E0E"),
-])
+_DES_WEAK_KEYS = frozenset(
+    [
+        bytes.fromhex("0101010101010101"),
+        bytes.fromhex("FEFEFEFEFEFEFEFE"),
+        bytes.fromhex("E0E0E0E0F1F1F1F1"),
+        bytes.fromhex("1F1F1F1F0E0E0E0E"),
+    ]
+)
 
 
 class TestDESWeakKeys:
@@ -1049,7 +1051,9 @@ class TestDESWeakKeys:
         # Generate multiple keys and check none are weak
         for _ in range(10):
             key = _gen_des_key(
-                rs.raw, rs.sh, CKM_DES_KEY_GEN,
+                rs.raw,
+                rs.sh,
+                CKM_DES_KEY_GEN,
                 {
                     CKA_ENCRYPT: True,
                     CKA_TOKEN: False,

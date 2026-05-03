@@ -291,9 +291,7 @@ class TestEd448:
         result = _verify_eddsa(rs, pub, data, signature)
         assert result is True
 
-    def test_wrong_data_fails(
-        self, p11_raw_session: Any, ed448_keypair: tuple[int, int]
-    ) -> None:
+    def test_wrong_data_fails(self, p11_raw_session: Any, ed448_keypair: tuple[int, int]) -> None:
         """Verification with wrong data must fail."""
         rs = p11_raw_session
         pub, priv = ed448_keypair
@@ -301,9 +299,7 @@ class TestEd448:
         result = _verify_eddsa(rs, pub, b"tampered data", sig)
         assert result is False
 
-    def test_signature_length(
-        self, p11_raw_session: Any, ed448_keypair: tuple[int, int]
-    ) -> None:
+    def test_signature_length(self, p11_raw_session: Any, ed448_keypair: tuple[int, int]) -> None:
         """Ed448 signatures are always exactly 114 bytes."""
         rs = p11_raw_session
         _, priv = ed448_keypair

@@ -109,9 +109,7 @@ class TestWrongKeyType:
         try:
             mech = mech_simple(CKM_ECDSA)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
-            assert rv != CKR_OK, (
-                "C_SignInit(CKM_ECDSA, RSA_priv) should fail but returned CKR_OK"
-            )
+            assert rv != CKR_OK, "C_SignInit(CKM_ECDSA, RSA_priv) should fail but returned CKR_OK"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -220,17 +218,13 @@ class TestMissingPermission:
         tmpl = template(*packed)
         mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
         handle = CK_OBJECT_HANDLE(0)
-        rv = rs.raw.C_GenerateKey(
-            rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
-        )
+        rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
         assert rv == CKR_OK, f"Key gen failed: {rv}"
         key = handle.value
         try:
             sign_mech = mech_simple(CKM_SHA256_HMAC)
             rv2 = rs.raw.C_SignInit(rs.sh, sign_mech.byref(), key)
-            assert rv2 != CKR_OK, (
-                "C_SignInit with CKA_SIGN=False should fail but returned CKR_OK"
-            )
+            assert rv2 != CKR_OK, "C_SignInit with CKA_SIGN=False should fail but returned CKR_OK"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -253,9 +247,7 @@ class TestMissingPermission:
         tmpl = template(*packed)
         mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
         handle = CK_OBJECT_HANDLE(0)
-        rv = rs.raw.C_GenerateKey(
-            rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
-        )
+        rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
         assert rv == CKR_OK, f"Key gen failed: {rv}"
         key = handle.value
         try:
@@ -298,9 +290,7 @@ class TestMissingPermission:
             rv = rs.raw.C_WrapKey(
                 rs.sh, wrap_mech.byref(), wrapping_key, target_key, None, byref(out_len)
             )
-            assert rv != CKR_OK, (
-                "C_WrapKey with CKA_WRAP=False should fail but returned CKR_OK"
-            )
+            assert rv != CKR_OK, "C_WrapKey with CKA_WRAP=False should fail but returned CKR_OK"
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
             destroy_quietly(rs.raw, rs.sh, target_key)
@@ -329,9 +319,7 @@ class TestMissingPermission:
         tmpl = template(*packed)
         mech = mech_simple(CKM(CKM_GENERIC_SECRET_KEY_GEN))
         handle = CK_OBJECT_HANDLE(0)
-        rv = rs.raw.C_GenerateKey(
-            rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
-        )
+        rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
         assert rv == CKR_OK, f"Key gen failed: {rv}"
         base_key = handle.value
 

@@ -48,6 +48,7 @@ _PARAM_CONFIGS: list[tuple[str, int, Path]] = [
     ("ML-DSA-87", CKP_ML_DSA_87, _BENCHMARK_DIR / "ML-DSA-87.json"),
 ]
 
+
 def _load_messages(path: Path) -> list[bytes]:
     """Load benchmark message strings, encoded to UTF-8 bytes."""
     if not path.exists():

@@ -142,8 +142,10 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     # Import EC private key
     try:
         priv_key = import_ec_private_key(
-            rs.raw, rs.sh,
-            ec_params=oid, value=private_scalar,
+            rs.raw,
+            rs.sh,
+            ec_params=oid,
+            value=private_scalar,
             attrs={CKA_DERIVE: True},
         )
     except AssertionError as exc:

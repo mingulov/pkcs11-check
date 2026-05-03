@@ -184,8 +184,7 @@ class TestAESCTR:
             mech = mech_ctr(CKM_AES_CTR, bits=0)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             assert rv != CKR_OK, (
-                f"C_EncryptInit accepted ulCounterBits=0 (rv=0x{rv:08x}), "
-                "spec requires rejection"
+                f"C_EncryptInit accepted ulCounterBits=0 (rv=0x{rv:08x}), spec requires rejection"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -200,8 +199,7 @@ class TestAESCTR:
             mech = mech_ctr(CKM_AES_CTR, bits=129)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             assert rv != CKR_OK, (
-                f"C_EncryptInit accepted ulCounterBits=129 (rv=0x{rv:08x}), "
-                "spec requires rejection"
+                f"C_EncryptInit accepted ulCounterBits=129 (rv=0x{rv:08x}), spec requires rejection"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -524,17 +522,16 @@ class TestAESMACGeneral:
             destroy_quietly(rs.raw, rs.sh, key1)
             destroy_quietly(rs.raw, rs.sh, key2)
 
-
     @pytest.mark.parametrize("mac_len", [1, 4, 8, 12, 16])
-    def test_aes_mac_general_variable_lengths(
-        self, p11_raw_session: Any, mac_len: int
-    ) -> None:
+    def test_aes_mac_general_variable_lengths(self, p11_raw_session: Any, mac_len: int) -> None:
         """AES-MAC-GENERAL with variable output lengths (1 to 16 bytes)."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_MAC_GENERAL"):
             pytest.skip("CKM_AES_MAC_GENERAL not supported")
         key = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={CKA_SIGN: True, CKA_VERIFY: True, CKA_TOKEN: False},
         )
         try:
@@ -542,15 +539,17 @@ class TestAESMACGeneral:
             import ctypes
 
             mac = sign_single(
-                rs.raw, rs.sh, key, CKM_AES_MAC_GENERAL, data,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_MAC_GENERAL,
+                data,
                 mech_param=mech_bytes(
                     CKM_AES_MAC_GENERAL,
                     mac_len.to_bytes(ctypes.sizeof(ctypes.c_ulong), "little"),
                 ),
             )
-            assert len(mac) == mac_len, (
-                f"Requested {mac_len}-byte MAC, got {len(mac)} bytes"
-            )
+            assert len(mac) == mac_len, f"Requested {mac_len}-byte MAC, got {len(mac)} bytes"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

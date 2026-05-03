@@ -62,6 +62,55 @@ def test_p11_config_uses_env_pin_when_cli_pin_missing(
     assert config.pin.get_secret_value() == "secret123"
 
 
+def test_ensure_manifest_defaults_unset_interface_and_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+    options = {
+        "p11_module": str(module_path),
+        "p11_manifest": None,
+        "p11_interface": None,
+        "p11_slot": None,
+    }
+    calls: list[tuple[str, int]] = []
+
+    def getoption(name: str, default: object | None = None) -> object | None:
+        return options.get(name, default)
+
+    def fake_preflight(
+        module: Path,
+        *,
+        interface: str,
+        slot: int,
+        timeout: int,
+        output_path: Path,
+    ) -> CapabilityManifest:
+        del timeout, output_path
+        calls.append((interface, slot))
+        return CapabilityManifest(
+            status="ok",
+            module_path=str(module),
+            requested_interface=interface,
+            interface_version="2.40",
+            slot_index=slot,
+            slot_count=1,
+            mechanisms=[],
+        )
+
+    monkeypatch.setattr(plugin_mod, "run_preflight_subprocess", fake_preflight)
+    stash = pytest.Stash()
+    stash[plugin_mod._MANIFEST_KEY] = None
+    config = SimpleNamespace(stash=stash, getoption=getoption)
+
+    manifest = plugin_mod._ensure_manifest(config)
+
+    assert calls == [("auto", 0)]
+    assert manifest is not None
+    assert manifest.requested_interface == "auto"
+    assert manifest.slot_index == 0
+
+
 class _FakeItem:
     def __init__(self, path: Path, markers: dict[str, object]) -> None:
         self.path = path
@@ -225,12 +274,8 @@ def test_pytest_generate_tests_records_multipart_encrypt_selection_telemetry(
     assert telemetry_key is not None
     telemetry = config.stash.get(telemetry_key)
     assert telemetry is not None
-    assert telemetry["multipart_encrypt_roundtrip"]["selected_mechanisms"] == {
-        "CKM_ENCRYPT_OK"
-    }
-    assert telemetry["multipart_encrypt_roundtrip"]["rejected_mechanisms"] == {
-        "CKM_ENCRYPT_REJECT"
-    }
+    assert telemetry["multipart_encrypt_roundtrip"]["selected_mechanisms"] == {"CKM_ENCRYPT_OK"}
+    assert telemetry["multipart_encrypt_roundtrip"]["rejected_mechanisms"] == {"CKM_ENCRYPT_REJECT"}
     assert telemetry["multipart_encrypt_roundtrip"]["rejected_reason_counts"] == Counter(
         {"unsupported_multi_part": 1}
     )
@@ -275,9 +320,7 @@ def test_pytest_generate_tests_records_multipart_sign_selection_telemetry(
     assert telemetry_key is not None
     telemetry = config.stash.get(telemetry_key)
     assert telemetry is not None
-    assert telemetry["multipart_sign_verify_roundtrip"]["selected_mechanisms"] == {
-        "CKM_SIGN_OK"
-    }
+    assert telemetry["multipart_sign_verify_roundtrip"]["selected_mechanisms"] == {"CKM_SIGN_OK"}
     assert telemetry["multipart_sign_verify_roundtrip"]["rejected_mechanisms"] == {
         "CKM_SIGN_REJECT"
     }

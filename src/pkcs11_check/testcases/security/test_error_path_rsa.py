@@ -343,6 +343,8 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="RSA SHA256_RSA_PKCS verify: corrupted (bit-flipped) signature",
         )

@@ -158,9 +158,7 @@ class TestModifiableAttribute:
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
-    def test_modifiable_false_blocks_set_attribute(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_modifiable_false_blocks_set_attribute(self, p11_raw_session: Any) -> None:
         """CKA_MODIFIABLE=False MUST block C_SetAttributeValue on any attribute.
 
         PKCS#11 v3.1 Sec.4.1.2: when CKA_MODIFIABLE=False, the object's
@@ -188,9 +186,7 @@ class TestModifiableAttribute:
                     "CKR_ATTRIBUTE_TYPE_INVALID",
                 )
             ):
-                pytest.skip(
-                    f"Module does not allow CKA_MODIFIABLE=False at gen time: {e}"
-                )
+                pytest.skip(f"Module does not allow CKA_MODIFIABLE=False at gen time: {e}")
             raise
 
         try:
@@ -294,7 +290,6 @@ class TestCopyableAttribute:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
-
 
 
 class TestCopyObject:

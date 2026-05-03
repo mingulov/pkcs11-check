@@ -159,15 +159,15 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
 
     cache_key = (mechanism, len(key_bytes))
     if cache_key in _UNSUPPORTED_HMAC_KEYS:
-        pytest.skip(
-            f"{mech_display} {len(key_bytes)}-byte key not supported (cached)"
-        )
+        pytest.skip(f"{mech_display} {len(key_bytes)}-byte key not supported (cached)")
 
     # Try typed key, fall back to GENERIC_SECRET
     key = None
     _permanent_ckr = (
-        "CKR_KEY_SIZE_RANGE", "CKR_ATTRIBUTE_VALUE_INVALID",
-        "CKR_TEMPLATE_INCONSISTENT", "CKR_TEMPLATE_INCOMPLETE",
+        "CKR_KEY_SIZE_RANGE",
+        "CKR_ATTRIBUTE_VALUE_INVALID",
+        "CKR_TEMPLATE_INCONSISTENT",
+        "CKR_TEMPLATE_INCOMPLETE",
     )
     saw_permanent_rejection = False
     last_exc_msg = ""

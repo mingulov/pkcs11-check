@@ -93,9 +93,7 @@ class TestGcmTagSize:
     """
 
     @pytest.mark.parametrize("tag_bits", _WEAK_GCM_TAG_BITS)
-    def test_gcm_weak_tag_size(
-        self, p11_raw_session: Any, tag_bits: int
-    ) -> None:
+    def test_gcm_weak_tag_size(self, p11_raw_session: Any, tag_bits: int) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("AES_GCM not supported")
@@ -107,8 +105,13 @@ class TestGcmTagSize:
             overhead = tag_bits // 8 if tag_bits > 0 else 0
             try:
                 encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_GCM, pt,
-                    mech_param=mech, output_overhead=overhead,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_GCM,
+                    pt,
+                    mech_param=mech,
+                    output_overhead=overhead,
                 )
                 # Module accepted a weak tag -- report finding
                 note(
@@ -152,8 +155,13 @@ class TestGcmIvWeakness:
             mech = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             try:
                 encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_GCM, pt,
-                    mech_param=mech, output_overhead=16,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_GCM,
+                    pt,
+                    mech_param=mech,
+                    output_overhead=16,
                 )
                 note(
                     f"AES-GCM accepts {len(iv)}-byte IV -- NIST recommends 96-bit (12-byte)",
@@ -190,21 +198,30 @@ class TestGcmIvReuse:
             pt2 = b"B" * 32
             mech1 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             ct1 = encrypt_single(
-                rs.raw, rs.sh, key, CKM_AES_GCM, pt1,
-                mech_param=mech1, output_overhead=16,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_GCM,
+                pt1,
+                mech_param=mech1,
+                output_overhead=16,
             )
             # Second encrypt with SAME key + SAME IV
             mech2 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             try:
                 ct2 = encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_GCM, pt2,
-                    mech_param=mech2, output_overhead=16,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_GCM,
+                    pt2,
+                    mech_param=mech2,
+                    output_overhead=16,
                 )
                 # Both succeeded -- IV reuse not prevented
                 _ = ct1, ct2  # suppress unused warnings
                 note(
-                    "AES-GCM allows IV reuse with same key "
-                    "-- NIST SP 800-38D violation",
+                    "AES-GCM allows IV reuse with same key -- NIST SP 800-38D violation",
                     ComplianceLevel.CRITICAL,
                     reference="NIST SP 800-38D: IVs must be unique per key",
                 )
@@ -236,7 +253,9 @@ class TestGcmAadNullWithLength:
             str(p11_config.module),
             pin=p11_config.pin.get_secret_value() if p11_config.pin else None,
         )
-        script = preamble + '''
+        script = (
+            preamble
+            + """
 import ctypes
 from pkcs11_check.raw.types_std import CK_AES_GCM_PARAMS, CKM_AES_GCM, CK_MECHANISM
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
@@ -259,10 +278,13 @@ try:
 finally:
     destroy_quietly(raw, sh, key)
 cleanup()
-'''
+"""
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context="GCM NULL AAD pointer with nonzero ulAADLen",
         )
 
@@ -284,16 +306,16 @@ class TestPssSaltLength:
     """
 
     @pytest.mark.parametrize("salt_len", _PSS_SALT_LENGTHS)
-    def test_pss_zero_salt_length(
-        self, p11_raw_session: Any, salt_len: int
-    ) -> None:
+    def test_pss_zero_salt_length(self, p11_raw_session: Any, salt_len: int) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
         if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
             pytest.skip("SHA256_RSA_PKCS_PSS not supported")
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
+            rs.raw,
+            rs.sh,
+            2048,
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
         )
@@ -307,8 +329,12 @@ class TestPssSaltLength:
             data = b"PSS salt length test"
             try:
                 sig = sign_single(
-                    rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS_PSS,
-                    data, mech_param=pss,
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_SHA256_RSA_PKCS_PSS,
+                    data,
+                    mech_param=pss,
                 )
                 note(
                     f"RSA-PSS accepts sLen={salt_len} -- deterministic signatures "
@@ -336,7 +362,9 @@ class TestPssSaltLength:
         if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
             pytest.skip("SHA256_RSA_PKCS_PSS not supported")
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
+            rs.raw,
+            rs.sh,
+            2048,
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
         )
@@ -351,15 +379,18 @@ class TestPssSaltLength:
             data = b"PSS excessive salt test"
             try:
                 sig = sign_single(
-                    rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS_PSS,
-                    data, mech_param=pss,
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_SHA256_RSA_PKCS_PSS,
+                    data,
+                    mech_param=pss,
                 )
                 note(
                     f"RSA-PSS accepts sLen=255 exceeding maximum of 222 "
                     f"(produced {len(sig)}-byte signature)",
                     ComplianceLevel.VENDOR,
-                    reference="RFC 8017 Section 9.1: sLen must not exceed "
-                    "emLen - hLen - 2",
+                    reference="RFC 8017 Section 9.1: sLen must not exceed emLen - hLen - 2",
                 )
             except (AssertionError, OSError):
                 pass  # Module rejected excessive salt -- correct
@@ -390,7 +421,10 @@ class TestXtsKeyValidation:
         key_material = half + half  # Both halves identical
         try:
             key = import_secret_key(
-                rs.raw, rs.sh, CKK_AES, key_material,
+                rs.raw,
+                rs.sh,
+                CKK_AES,
+                key_material,
                 attrs={
                     CKA_ENCRYPT: True,
                     CKA_DECRYPT: True,
@@ -435,9 +469,7 @@ class TestRsaExponent:
     """
 
     @pytest.mark.parametrize("exponent", _WEAK_RSA_EXPONENTS)
-    def test_rsa_weak_public_exponent(
-        self, p11_raw_session: Any, exponent: int
-    ) -> None:
+    def test_rsa_weak_public_exponent(self, p11_raw_session: Any, exponent: int) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
@@ -446,7 +478,9 @@ class TestRsaExponent:
         exp_bytes = exponent.to_bytes(byte_len, "big")
         try:
             pub, priv = gen_rsa_keypair(
-                rs.raw, rs.sh, 2048,
+                rs.raw,
+                rs.sh,
+                2048,
                 public_attrs={CKA_PUBLIC_EXPONENT: exp_bytes},
             )
         except (AssertionError, OSError):
@@ -455,8 +489,7 @@ class TestRsaExponent:
             note(
                 f"Module accepts RSA keygen with public exponent e={exponent}",
                 ComplianceLevel.VENDOR,
-                reference="FIPS 186-5: public exponent must be odd and >= 65537 "
-                "for key generation",
+                reference="FIPS 186-5: public exponent must be odd and >= 65537 for key generation",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -483,9 +516,7 @@ class TestEcPointValidation:
     """
 
     @pytest.mark.parametrize("point_type", _INVALID_EC_POINTS)
-    def test_ecdh_invalid_point(
-        self, p11_raw_session: Any, point_type: str
-    ) -> None:
+    def test_ecdh_invalid_point(self, p11_raw_session: Any, point_type: str) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC key generation not supported")
@@ -494,7 +525,9 @@ class TestEcPointValidation:
 
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(
-            rs.raw, rs.sh, curve_oid,
+            rs.raw,
+            rs.sh,
+            curve_oid,
             private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
         )
         try:
@@ -508,7 +541,10 @@ class TestEcPointValidation:
 
             try:
                 derived = derive_key(
-                    rs.raw, rs.sh, priv, CKM_ECDH1_DERIVE,
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_ECDH1_DERIVE,
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_GENERIC_SECRET,
@@ -528,8 +564,7 @@ class TestEcPointValidation:
 
             try:
                 note(
-                    f"ECDH derive accepts {point_type} point -- "
-                    f"invalid curve attack risk",
+                    f"ECDH derive accepts {point_type} point -- invalid curve attack risk",
                     ComplianceLevel.CRITICAL,
                     reference="NIST SP 800-56A Section 5.6.2.3.3: "
                     "full public key validation required",
@@ -587,7 +622,9 @@ class TestRsaOaepSha1Mgf:
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("RSA_PKCS_OAEP not supported")
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
+            rs.raw,
+            rs.sh,
+            2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
@@ -600,7 +637,11 @@ class TestRsaOaepSha1Mgf:
             pt = b"OAEP SHA-1 MGF test"
             try:
                 ct = encrypt_single(
-                    rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, pt,
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    pt,
                     mech_param=oaep,
                 )
                 _ = ct
@@ -632,7 +673,9 @@ class TestRsaPssMd5Hash:
         if not rs.has_mechanism("RSA_PKCS_PSS"):
             pytest.skip("RSA_PKCS_PSS not supported")
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048,
+            rs.raw,
+            rs.sh,
+            2048,
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
         )
@@ -648,8 +691,12 @@ class TestRsaPssMd5Hash:
             data = b"PSS MD5 hash test"
             try:
                 sig = sign_single(
-                    rs.raw, rs.sh, priv, CKM_RSA_PKCS_PSS,
-                    data, mech_param=pss,
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_RSA_PKCS_PSS,
+                    data,
+                    mech_param=pss,
                 )
                 _ = sig
                 note(
@@ -684,7 +731,11 @@ class TestCbcIvAllZeros:
             pt = b"D" * 16  # Single AES block
             try:
                 ct = encrypt_single(
-                    rs.raw, rs.sh, key, CKM_AES_CBC, pt,
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CBC,
+                    pt,
                     mech_param=mech_bytes(CKM_AES_CBC, zero_iv),
                 )
                 _ = ct

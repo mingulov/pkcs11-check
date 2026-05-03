@@ -147,9 +147,7 @@ class TestWrapKeyErrors:
             destroy_quietly(rs.raw, rs.sh, wrap_key)
             destroy_quietly(rs.raw, rs.sh, target)
 
-    def test_wrapping_key_handle_invalid(
-        self, p11_raw_session: Any, ckr_strict: bool
-    ) -> None:
+    def test_wrapping_key_handle_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Stale wrap-key handle -> CKR_WRAPPING_KEY_HANDLE_INVALID.
 
         PKCS#11 v3.1 Sec.5.14.3: "the key handle specified to be used to
@@ -173,9 +171,7 @@ class TestWrapKeyErrors:
         rv = rs.raw.C_DestroyObject(rs.sh, wrap_key)
         if rv != CKR_OK:
             destroy_quietly(rs.raw, rs.sh, target)
-            pytest.skip(
-                f"Could not destroy wrap key for stale-handle test (CKR=0x{rv:08x})"
-            )
+            pytest.skip(f"Could not destroy wrap key for stale-handle test (CKR=0x{rv:08x})")
         try:
             mech = mech_simple(CKM_AES_KEY_WRAP)
             wrapped_len = CK_ULONG(256)
@@ -211,9 +207,7 @@ class TestWrapKeyErrors:
         finally:
             destroy_quietly(rs.raw, rs.sh, target)
 
-    def test_wrapping_key_type_inconsistent(
-        self, p11_raw_session: Any, ckr_strict: bool
-    ) -> None:
+    def test_wrapping_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Wrap key of wrong type for mechanism -> CKR_WRAPPING_KEY_TYPE_INCONSISTENT.
 
         PKCS#11 v3.1 Sec.5.14.3: "the type of the key specified to wrap
@@ -281,9 +275,7 @@ class TestWrapKeyErrors:
             destroy_quietly(rs.raw, rs.sh, wrap_key)
             destroy_quietly(rs.raw, rs.sh, target)
 
-    def test_wrapping_key_size_range(
-        self, p11_raw_session: Any, ckr_strict: bool
-    ) -> None:
+    def test_wrapping_key_size_range(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Wrap key of out-of-range size -> CKR_WRAPPING_KEY_SIZE_RANGE.
 
         PKCS#11 v3.1 Sec.5.14.3: "the supplied wrapping key's size is

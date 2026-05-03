@@ -13,6 +13,7 @@ Tests confirm that:
 Registered mechanisms (with a registry config) are skipped here -- they are
 fully exercised by test_mech_encrypt.py, test_mech_sign.py, etc.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -148,9 +149,7 @@ class TestMechProbeNoRegistry:
             return
 
         # rv must be a recognisable CKR integer -- not a process crash
-        assert isinstance(rv, int), (
-            f"{entry.mech_name}: Init returned non-integer {rv!r}"
-        )
+        assert isinstance(rv, int), f"{entry.mech_name}: Init returned non-integer {rv!r}"
         # If the call somehow returned CKR_OK (shouldn't happen with handle=0),
         # abort the pending operation to avoid contaminating session state.
         if rv == CKR_OK:

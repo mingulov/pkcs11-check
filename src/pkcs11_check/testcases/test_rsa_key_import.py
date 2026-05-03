@@ -67,8 +67,10 @@ class TestRSAPublicKeyImport:
         comp = _export_rsa_components(key)
 
         imported = import_rsa_public_key(
-            rs.raw, rs.sh,
-            n=comp["modulus"], e=comp["public_exponent"],
+            rs.raw,
+            rs.sh,
+            n=comp["modulus"],
+            e=comp["public_exponent"],
             attrs={CKA_VERIFY: True},
         )
         try:
@@ -90,8 +92,10 @@ class TestRSAPublicKeyImport:
 
         # Import public key into PKCS#11
         imported = import_rsa_public_key(
-            rs.raw, rs.sh,
-            n=comp["modulus"], e=comp["public_exponent"],
+            rs.raw,
+            rs.sh,
+            n=comp["modulus"],
+            e=comp["public_exponent"],
             attrs={CKA_VERIFY: True},
         )
         try:
@@ -111,10 +115,16 @@ class TestRSAPrivateKeyImport:
         comp = _export_rsa_components(key)
 
         imported = import_rsa_private_key(
-            rs.raw, rs.sh,
-            n=comp["modulus"], e=comp["public_exponent"], d=comp["private_exponent"],
-            p=comp["prime_1"], q=comp["prime_2"],
-            dmp1=comp["exponent_1"], dmq1=comp["exponent_2"], iqmp=comp["coefficient"],
+            rs.raw,
+            rs.sh,
+            n=comp["modulus"],
+            e=comp["public_exponent"],
+            d=comp["private_exponent"],
+            p=comp["prime_1"],
+            q=comp["prime_2"],
+            dmp1=comp["exponent_1"],
+            dmq1=comp["exponent_2"],
+            iqmp=comp["coefficient"],
             attrs={CKA_SIGN: True, CKA_DECRYPT: True},
         )
         try:
@@ -132,10 +142,16 @@ class TestRSAPrivateKeyImport:
 
         # Import private key into PKCS#11
         p11_priv = import_rsa_private_key(
-            rs.raw, rs.sh,
-            n=comp["modulus"], e=comp["public_exponent"], d=comp["private_exponent"],
-            p=comp["prime_1"], q=comp["prime_2"],
-            dmp1=comp["exponent_1"], dmq1=comp["exponent_2"], iqmp=comp["coefficient"],
+            rs.raw,
+            rs.sh,
+            n=comp["modulus"],
+            e=comp["public_exponent"],
+            d=comp["private_exponent"],
+            p=comp["prime_1"],
+            q=comp["prime_2"],
+            dmp1=comp["exponent_1"],
+            dmq1=comp["exponent_2"],
+            iqmp=comp["coefficient"],
             attrs={CKA_SIGN: True},
         )
         try:
@@ -155,8 +171,10 @@ class TestRSAPrivateKeyImport:
         comp = _export_rsa_components(key)
 
         imported = import_rsa_public_key(
-            rs.raw, rs.sh,
-            n=comp["modulus"], e=comp["public_exponent"],
+            rs.raw,
+            rs.sh,
+            n=comp["modulus"],
+            e=comp["public_exponent"],
             attrs={CKA_VERIFY: True},
         )
         try:

@@ -67,6 +67,10 @@ exclude = [
     "patches/",
     ".worktrees/",
     ".serena/",
+    ".github/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/superpowers/",
 ]
 
 [tool.hatch.build.targets.wheel]

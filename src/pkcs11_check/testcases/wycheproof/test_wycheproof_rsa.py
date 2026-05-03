@@ -154,17 +154,24 @@ def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) 
 
     try:
         pub_key = import_rsa_public_key(
-            rs.raw, rs.sh,
-            n=modulus, e=exponent,
+            rs.raw,
+            rs.sh,
+            n=modulus,
+            e=exponent,
             attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:
         exc_msg = str(exc)
         # Only cache permanent key-size rejections, not transient errors.
-        if any(code in exc_msg for code in (
-            "CKR_KEY_SIZE_RANGE", "CKR_ATTRIBUTE_VALUE_INVALID",
-            "CKR_TEMPLATE_INCONSISTENT", "CKR_TEMPLATE_INCOMPLETE",
-        )):
+        if any(
+            code in exc_msg
+            for code in (
+                "CKR_KEY_SIZE_RANGE",
+                "CKR_ATTRIBUTE_VALUE_INVALID",
+                "CKR_TEMPLATE_INCONSISTENT",
+                "CKR_TEMPLATE_INCOMPLETE",
+            )
+        ):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
         pytest.skip(f"Cannot import RSA {key_bits}-bit public key: {exc_msg}")
 

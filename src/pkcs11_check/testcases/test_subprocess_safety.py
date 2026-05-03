@@ -94,8 +94,7 @@ class TestForkSafety:
         pid = os.fork()
         if pid == 0:
             try:
-                try: raw.C_Finalize(None)
-                except Exception: pass  # Best-effort cleanup before reinit
+                raw.C_Finalize(None)
                 raw.C_Initialize(None)
                 get_slot_ids(raw)
                 raw.C_Finalize(None)
@@ -131,9 +130,7 @@ class TestSessionObjectProcessIsolation:
     process MUST NOT see them.
     """
 
-    def test_session_object_not_visible_to_other_process(
-        self, p11_config: Any
-    ) -> None:
+    def test_session_object_not_visible_to_other_process(self, p11_config: Any) -> None:
         """Parent creates a session object; subprocess MUST NOT find it.
 
         Steps:
@@ -176,7 +173,7 @@ class TestSessionObjectProcessIsolation:
         )
 
         # Login error swallow rule: catch only the two documented
-        # "already logged in / wrong user type" cases per the CLAUDE.md
+        # "already logged in / wrong user type" cases per the project login policy.
         # PIN handling section. Other login failures must surface.
         _LOGIN_OK_TO_IGNORE = ("CKR_USER_ALREADY_LOGGED_IN", "CKR_USER_TYPE_INVALID")
 
@@ -228,8 +225,7 @@ class TestSessionObjectProcessIsolation:
         if pid == 0:
             # Child: must Finalize the inherited handle before re-Initializing,
             # per PKCS#11 v3.1 Sec.5.6.5 fork semantics.
-            try: raw.C_Finalize(None)
-            except Exception: pass
+            raw.C_Finalize(None)
             try:
                 raw2 = RawPKCS11.from_lib("{module}")
                 rv = raw2.C_Initialize(None)
@@ -286,8 +282,7 @@ class TestSessionObjectProcessIsolation:
                 child_exit = os.WEXITSTATUS(status)
             print(f"CHILD_EXIT:{{child_exit}}")
             # Parent cleanup
-            try: raw.C_DestroyObject(sh, h)
-            except Exception: pass
+            raw.C_DestroyObject(sh, h)
             close_session_quietly(raw, sh)
             raw.C_Finalize(None)
         """
@@ -296,10 +291,7 @@ class TestSessionObjectProcessIsolation:
         # TPM2_Startup can exceed 30s on busy systems.
         rc, output = _run_script(script, timeout=90)
         if rc != 0:
-            pytest.fail(
-                f"Cross-process session-object isolation test crashed "
-                f"(rc={rc}): {output}"
-            )
+            pytest.fail(f"Cross-process session-object isolation test crashed (rc={rc}): {output}")
 
         # Parse output: PARENT_LABEL must be set; child must report
         # CHILD_FOUND:0 (didn't see parent's session object).
@@ -308,7 +300,7 @@ class TestSessionObjectProcessIsolation:
         if "CHILD_EXIT:" not in output:
             pytest.fail(f"Child didn't exit cleanly: {output}")
         # A child killed by signal (CHILD_SIGNAL: in output) is a CRASH
-        # — that IS the finding, not a skip condition. Per CLAUDE.md:
+        # — that IS the finding, not a skip condition. Project rule:
         # "A segfault IS the finding."
         if "CHILD_SIGNAL:" in output:
             pytest.fail(
@@ -330,9 +322,10 @@ class TestSessionObjectProcessIsolation:
             "0x000000E0",  # CKR_TOKEN_NOT_PRESENT
             "0x00000003",  # CKR_SLOT_ID_INVALID
         )
-        is_daemon_init_failure = any(
-            f"CHILD_FATAL:Init:{code}" in output for code in daemon_failure_ckrs
-        ) or "CHILD_FATAL:Login:" in output
+        is_daemon_init_failure = (
+            any(f"CHILD_FATAL:Init:{code}" in output for code in daemon_failure_ckrs)
+            or "CHILD_FATAL:Login:" in output
+        )
         if "CHILD_FATAL" in output and is_daemon_init_failure:
             pytest.skip(
                 f"Child couldn't re-initialize the module after fork "

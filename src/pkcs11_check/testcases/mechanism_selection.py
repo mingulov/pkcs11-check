@@ -176,17 +176,13 @@ def encrypt_roundtrip(entry: _EntryLike) -> SelectionDecision:
             ),
         )
 
-    return _select_required_flags(
-        entry, ENCRYPT_ROUNDTRIP, int(CKF_ENCRYPT) | int(CKF_DECRYPT)
-    )
+    return _select_required_flags(entry, ENCRYPT_ROUNDTRIP, int(CKF_ENCRYPT) | int(CKF_DECRYPT))
 
 
 def sign_verify_roundtrip(entry: _EntryLike) -> SelectionDecision:
     """Select mechanisms that support sign and verify semantics."""
 
-    return _select_required_flags(
-        entry, SIGN_VERIFY_ROUNDTRIP, int(CKF_SIGN) | int(CKF_VERIFY)
-    )
+    return _select_required_flags(entry, SIGN_VERIFY_ROUNDTRIP, int(CKF_SIGN) | int(CKF_VERIFY))
 
 
 def multipart_encrypt_roundtrip(entry: _EntryLike) -> SelectionDecision:

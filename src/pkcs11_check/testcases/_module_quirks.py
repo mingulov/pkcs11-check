@@ -122,9 +122,7 @@ MODULE_QUIRKS: dict[ModuleId, dict[str, Quirk]] = {
                 "only the reported code is wrong."
             ),
             spec_ref="PKCS#11 v3.1 Sec.5.13.2 / Sec.5.14.4 / Sec.6.13.6",
-            issue_ref=(
-                "docs/module-issues.md Kryoptic §CKR_DEVICE_ERROR on verify failure"
-            ),
+            issue_ref=("docs/module-issues.md Kryoptic §CKR_DEVICE_ERROR on verify failure"),
             extra_ckrs=(CKR_DEVICE_ERROR,),
         ),
     },
@@ -158,10 +156,7 @@ MODULE_QUIRKS: dict[ModuleId, dict[str, Quirk]] = {
                 "wrap is rejected; only the reported code is wrong."
             ),
             spec_ref="PKCS#11 v3.1 Sec.5.14.3 / FIPS 197 §6.1",
-            issue_ref=(
-                "docs/module-issues.md SoftHSM2 main "
-                "§Accepts undersized AES wrap key"
-            ),
+            issue_ref=("docs/module-issues.md SoftHSM2 main §Accepts undersized AES wrap key"),
             extra_ckrs=(CKR_GENERAL_ERROR,),
         ),
     },

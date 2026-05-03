@@ -17,6 +17,7 @@ Patterns covered:
  10. Generate multiple AES keys -> batch encrypt -> destroy all
  11. AES-GCM encrypt -> AES-GCM decrypt (AEAD full cycle)
 """
+
 from __future__ import annotations
 
 import os
@@ -120,9 +121,7 @@ class TestAESWrapUnwrapUse:
             ciphertext = encrypt_single(rs.raw, rs.sh, target, CKM_AES_ECB, plaintext)
 
             # Wrap the target key
-            wrapped = wrap_key(
-                rs.raw, rs.sh, wrap_key_handle, target, CKM(int(CKM_AES_KEY_WRAP))
-            )
+            wrapped = wrap_key(rs.raw, rs.sh, wrap_key_handle, target, CKM(int(CKM_AES_KEY_WRAP)))
             assert len(wrapped) > 0, "wrap produced empty blob"
 
             # Destroy original -- only the wrapped copy remains
@@ -150,8 +149,7 @@ class TestAESWrapUnwrapUse:
 
             recovered = decrypt_single(rs.raw, rs.sh, unwrapped_key, CKM_AES_ECB, ciphertext)
             assert recovered == plaintext, (
-                f"wrap/unwrap key mismatch: expected {plaintext.hex()!r}, "
-                f"got {recovered.hex()!r}"
+                f"wrap/unwrap key mismatch: expected {plaintext.hex()!r}, got {recovered.hex()!r}"
             )
         finally:
             if target != 0:
@@ -187,7 +185,9 @@ class TestECDHDerivedKeyUse:
 
         try:
             pub_a, priv_a = gen_ec_keypair(
-                rs.raw, rs.sh, p256_oid,
+                rs.raw,
+                rs.sh,
+                p256_oid,
                 private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
             )
             pub_b, priv_b = gen_ec_keypair(rs.raw, rs.sh, p256_oid)
@@ -285,9 +285,7 @@ class TestHKDFDerivedKeyUse:
             tmpl = template(*packed)
             gen_mech = mech_simple(CKM(CKM_HKDF_KEY_GEN))
             handle = CK_OBJECT_HANDLE(0)
-            rv = rs.raw.C_GenerateKey(
-                rs.sh, gen_mech.byref(), tmpl.ptr, tmpl.count, byref(handle)
-            )
+            rv = rs.raw.C_GenerateKey(rs.sh, gen_mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
             assert rv == CKR_OK, f"HKDF base key gen failed: {rv}"
             base_key = handle.value
 
@@ -359,15 +357,22 @@ class TestRSAOAEPWrapLifecycle:
 
         try:
             rsa_pub, rsa_priv = gen_rsa_keypair(
-                rs.raw, rs.sh, 2048,
+                rs.raw,
+                rs.sh,
+                2048,
                 public_attrs={CKA_WRAP: True, CKA_ENCRYPT: True, CKA_TOKEN: False},
                 private_attrs={CKA_UNWRAP: True, CKA_DECRYPT: True, CKA_TOKEN: False},
             )
             target = gen_aes_key(
-                rs.raw, rs.sh, 128,
+                rs.raw,
+                rs.sh,
+                128,
                 attrs={
-                    CKA_ENCRYPT: True, CKA_DECRYPT: True,
-                    CKA_EXTRACTABLE: True, CKA_SENSITIVE: False, CKA_TOKEN: False,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                    CKA_TOKEN: False,
                 },
             )
 
@@ -381,7 +386,11 @@ class TestRSAOAEPWrapLifecycle:
             )
 
             wrapped = wrap_key(
-                rs.raw, rs.sh, rsa_pub, target, CKM(int(CKM_RSA_PKCS_OAEP)),
+                rs.raw,
+                rs.sh,
+                rsa_pub,
+                target,
+                CKM(int(CKM_RSA_PKCS_OAEP)),
                 mech_param=oaep_param,
             )
             assert len(wrapped) > 0
@@ -392,7 +401,11 @@ class TestRSAOAEPWrapLifecycle:
             # CKA_CLASS is required by PKCS#11 spec for C_UnwrapKey -- Kryoptic
             # returns CKR_TEMPLATE_INCONSISTENT when it is absent.
             unwrapped_key = unwrap_key(
-                rs.raw, rs.sh, rsa_priv, wrapped, CKM(int(CKM_RSA_PKCS_OAEP)),
+                rs.raw,
+                rs.sh,
+                rsa_priv,
+                wrapped,
+                CKM(int(CKM_RSA_PKCS_OAEP)),
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
@@ -489,7 +502,10 @@ class TestExportReimportAES:
 
             # Re-import the raw bytes
             key2 = import_secret_key(
-                rs.raw, rs.sh, CKK_AES, key_bytes,
+                rs.raw,
+                rs.sh,
+                CKK_AES,
+                key_bytes,
                 attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
             )
             assert key2 != 0
@@ -587,11 +603,20 @@ class TestAESGCMFullCycle:
             gcm_param = mech_gcm(CKM(int(CKM_AES_GCM)), iv, tag_bits=128)
 
             ct = encrypt_single(
-                rs.raw, rs.sh, key, CKM(int(CKM_AES_GCM)), plaintext,
-                mech_param=gcm_param, output_overhead=16,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM(int(CKM_AES_GCM)),
+                plaintext,
+                mech_param=gcm_param,
+                output_overhead=16,
             )
             pt = decrypt_single(
-                rs.raw, rs.sh, key, CKM(int(CKM_AES_GCM)), ct,
+                rs.raw,
+                rs.sh,
+                key,
+                CKM(int(CKM_AES_GCM)),
+                ct,
                 mech_param=gcm_param,
             )
             assert pt == plaintext, (

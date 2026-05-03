@@ -303,14 +303,23 @@ class TestRSAOAEPHashCombos:
         """RSA-OAEP with SHA-384/MGF1-SHA384 roundtrip."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048, public_attrs=_PUB_ATTRS, private_attrs=_PRIV_ATTRS,
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs=_PUB_ATTRS,
+            private_attrs=_PRIV_ATTRS,
         )
         try:
             plaintext = b"OAEP SHA-384 test"
             mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA384, mgf=CKG_MGF1_SHA384)
             ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext, mech_param=mech)
             pt = decrypt_single(
-                rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=mech,
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_RSA_PKCS_OAEP,
+                ct,
+                mech_param=mech,
             )
             assert pt == plaintext
         finally:
@@ -321,7 +330,11 @@ class TestRSAOAEPHashCombos:
         """RSA-OAEP with SHA-512/MGF1-SHA512 roundtrip."""
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair(
-            rs.raw, rs.sh, 2048, public_attrs=_PUB_ATTRS, private_attrs=_PRIV_ATTRS,
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs=_PUB_ATTRS,
+            private_attrs=_PRIV_ATTRS,
         )
         try:
             # SHA-512 with RSA-2048: max plaintext = 256 - 2*64 - 2 = 126 bytes
@@ -329,7 +342,12 @@ class TestRSAOAEPHashCombos:
             mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA512, mgf=CKG_MGF1_SHA512)
             ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext, mech_param=mech)
             pt = decrypt_single(
-                rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, ct, mech_param=mech,
+                rs.raw,
+                rs.sh,
+                priv,
+                CKM_RSA_PKCS_OAEP,
+                ct,
+                mech_param=mech,
             )
             assert pt == plaintext
         finally:

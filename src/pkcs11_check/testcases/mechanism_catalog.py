@@ -3,6 +3,7 @@
 Built from CapabilityManifest + MechanismRegistry. Provides filtered
 lists of (mech_id, mech_name, info, config) tuples for pytest parametrization.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -65,11 +66,7 @@ class MechanismCatalog:
 
     def filter_registered(self, flag: int) -> list[MechEntry]:
         """Return entries with flag AND a registry config."""
-        return [
-            e
-            for e in self._entries.values()
-            if (e.flags & flag) and e.config is not None
-        ]
+        return [e for e in self._entries.values() if (e.flags & flag) and e.config is not None]
 
     def filter_for_scenario(self, scenario: str) -> list[MechEntry]:
         """Return entries selected for a semantic scenario."""

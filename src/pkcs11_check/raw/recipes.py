@@ -716,7 +716,11 @@ def decrypt_single(
     expect_rv(rv, CKR_OK)
     in_buf = _to_ubyte_buf(ciphertext)
     return _two_call_output(
-        raw, "C_Decrypt", session, in_buf, len(ciphertext),
+        raw,
+        "C_Decrypt",
+        session,
+        in_buf,
+        len(ciphertext),
         retry_on_buffer_too_small=retry_on_buffer_too_small,
     )
 

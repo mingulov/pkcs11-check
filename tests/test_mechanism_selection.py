@@ -28,9 +28,7 @@ def _entry(
     config: MechConfig | None | object = _UNSET,
 ) -> MechEntry:
     resolved_config = (
-        MechConfig(multi_part_supported=multi_part_supported)
-        if config is _UNSET
-        else config
+        MechConfig(multi_part_supported=multi_part_supported) if config is _UNSET else config
     )
     return MechEntry(
         mech_id=1,
@@ -70,9 +68,7 @@ def test_encrypt_roundtrip_rejects_encrypt_only_mechanism() -> None:
 
 
 def test_encrypt_roundtrip_accepts_encrypt_and_decrypt_mechanism() -> None:
-    decision = selection.encrypt_roundtrip(
-        _entry(flags=int(CKF_ENCRYPT) | int(CKF_DECRYPT))
-    )
+    decision = selection.encrypt_roundtrip(_entry(flags=int(CKF_ENCRYPT) | int(CKF_DECRYPT)))
 
     assert decision.selected
     assert decision.reasons == ()

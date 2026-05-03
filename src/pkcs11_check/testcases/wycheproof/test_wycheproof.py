@@ -278,7 +278,8 @@ class TestECDSAP256Wycheproof:
 
         try:
             pub_key = import_ec_public_key(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 ec_params=encode_named_curve_parameters("secp256r1"),
                 ec_point=ec_point_der,
                 attrs={CKA_VERIFY: True},
@@ -412,7 +413,8 @@ class TestECDSAP384Wycheproof:
 
         try:
             pub_key = import_ec_public_key(
-                rs.raw, rs.sh,
+                rs.raw,
+                rs.sh,
                 ec_params=encode_named_curve_parameters("secp384r1"),
                 ec_point=ec_point_der,
                 attrs={CKA_VERIFY: True},
@@ -481,8 +483,10 @@ class TestRSASigWycheproof:
 
         try:
             pub_key = import_rsa_public_key(
-                rs.raw, rs.sh,
-                n=modulus, e=exponent,
+                rs.raw,
+                rs.sh,
+                n=modulus,
+                e=exponent,
                 attrs={CKA_VERIFY: True},
             )
         except AssertionError:

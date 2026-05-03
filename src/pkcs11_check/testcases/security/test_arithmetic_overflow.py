@@ -89,7 +89,9 @@ class TestDataLengthOverflow:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         preamble = _preamble(p11_config)
-        script = preamble + f"""
+        script = (
+            preamble
+            + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM, CKM_AES_ECB, CK_ULONG, CKR_OK,
@@ -116,9 +118,12 @@ finally:
     destroy_quietly(raw, sh, key)
 cleanup()
 """
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"{func}(ulDataLen={data_len:#x})",
         )
 
@@ -154,7 +159,9 @@ class TestMechanismParamLengthOverflow:
         if not rs.has_mechanism(mech_check):
             pytest.skip(f"CKM_{mech_check} not supported")
         preamble = _preamble(p11_config)
-        script = preamble + f"""
+        script = (
+            preamble
+            + f"""
 import ctypes
 from pkcs11_check.raw.types_std import CK_MECHANISM, {mech_name}
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
@@ -172,9 +179,12 @@ finally:
     destroy_quietly(raw, sh, key)
 cleanup()
 """
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=(
                 f"C_EncryptInit({mech_name}, "
                 f"pParameter={real_size}B, ulParameterLen={_ULONG_MAX:#x})"
@@ -212,7 +222,9 @@ class TestGcmTagBitsOverflow:
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
         preamble = _preamble(p11_config)
-        script = preamble + f"""
+        script = (
+            preamble
+            + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
     CK_AES_GCM_PARAMS, CK_MECHANISM, CKM_AES_GCM,
@@ -239,9 +251,12 @@ finally:
     destroy_quietly(raw, sh, key)
 cleanup()
 """
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"C_EncryptInit(AES_GCM, ulTagBits={tag_bits:#x})",
         )
 
@@ -275,7 +290,9 @@ class TestPssSaltLengthOverflow:
         if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
             pytest.skip("CKM_SHA256_RSA_PKCS_PSS not supported")
         preamble = _preamble(p11_config)
-        script = preamble + f"""
+        script = (
+            preamble
+            + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
     CK_RSA_PKCS_PSS_PARAMS, CK_MECHANISM, CKM_SHA256_RSA_PKCS_PSS,
@@ -303,9 +320,12 @@ finally:
     destroy_quietly(raw, sh, priv)
 cleanup()
 """
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"C_SignInit(SHA256_RSA_PKCS_PSS, sLen={salt_len:#x})",
         )
 
@@ -458,7 +478,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"{op}(template_count={count:#x})",
         )
 
@@ -492,7 +514,9 @@ class TestKeyValueLenOverflow:
         if not rs.has_mechanism(mech_check):
             pytest.skip(f"CKM_{mech_check} not supported")
         preamble = _preamble(p11_config)
-        script = preamble + f"""
+        script = (
+            preamble
+            + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM, {mech_name}, CK_OBJECT_HANDLE,
@@ -528,9 +552,12 @@ rv = raw.C_GenerateKey(
 print(f"rv={{rv}}")
 cleanup()
 """
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=5)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"C_GenerateKey({mech_name}, CKA_VALUE_LEN={_ULONG_MAX:#x})",
         )
 
@@ -612,7 +639,9 @@ cleanup()
         script = preamble + body
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
+            rc,
+            stdout,
+            stderr,
             context=f"{op}(ulValueLen={_ULONG_MAX:#x})",
         )
 
@@ -654,7 +683,9 @@ class TestGenerateKeyPairCountOverflow:
             pub_count = 1
             priv_count = _ULONG_MAX
 
-        script = preamble + f"""
+        script = (
+            preamble
+            + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM, CKM_RSA_PKCS_KEY_PAIR_GEN, CK_OBJECT_HANDLE,
@@ -691,11 +722,11 @@ rv = raw.C_GenerateKeyPair(
 print(f"rv={{rv}}")
 cleanup()
 """
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=10)
         assert_subprocess_no_crash(
-            rc, stdout, stderr,
-            context=(
-                f"C_GenerateKeyPair("
-                f"pub_count={pub_count:#x}, priv_count={priv_count:#x})"
-            ),
+            rc,
+            stdout,
+            stderr,
+            context=(f"C_GenerateKeyPair(pub_count={pub_count:#x}, priv_count={priv_count:#x})"),
         )

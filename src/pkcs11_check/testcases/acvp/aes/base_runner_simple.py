@@ -279,7 +279,10 @@ def run_multiblock_encrypt_test(
         key_handle = 0
         try:
             key_handle = _import_aes_key(
-                rs, block["key"], encrypt=True, decrypt=False,
+                rs,
+                block["key"],
+                encrypt=True,
+                decrypt=False,
             )
             initial_iv = block["iv"]
             iv = initial_iv
@@ -293,7 +296,11 @@ def run_multiblock_encrypt_test(
                     mech = mech_bytes(mech_constant, iv)
                 try:
                     ct = encrypt_single(
-                        rs.raw, rs.sh, key_handle, mech_constant, pt,
+                        rs.raw,
+                        rs.sh,
+                        key_handle,
+                        mech_constant,
+                        pt,
                         mech_param=mech,
                     )
                 except AssertionError as exc:
@@ -304,7 +311,10 @@ def run_multiblock_encrypt_test(
                 iv = _mct_next_iv(mech_constant, iv, ct, pt)
                 if j + 1 < _MCT_ITERATIONS:
                     pt = _mct_enc_next_input(
-                        mech_constant, j + 1, initial_iv, ct_history,
+                        mech_constant,
+                        j + 1,
+                        initial_iv,
+                        ct_history,
                     )
 
             assert ct == block["ct_expected"], (
@@ -343,7 +353,10 @@ def run_multiblock_decrypt_test(
         key_handle = 0
         try:
             key_handle = _import_aes_key(
-                rs, block["key"], encrypt=False, decrypt=True,
+                rs,
+                block["key"],
+                encrypt=False,
+                decrypt=True,
             )
             initial_iv = block["iv"]
             iv = initial_iv
@@ -357,7 +370,11 @@ def run_multiblock_decrypt_test(
                     mech = mech_bytes(mech_constant, iv)
                 try:
                     pt = decrypt_single(
-                        rs.raw, rs.sh, key_handle, mech_constant, ct,
+                        rs.raw,
+                        rs.sh,
+                        key_handle,
+                        mech_constant,
+                        ct,
                         mech_param=mech,
                     )
                 except AssertionError as exc:
@@ -369,7 +386,10 @@ def run_multiblock_decrypt_test(
                 iv = _mct_next_iv(mech_constant, iv, ct, pt)
                 if j + 1 < _MCT_ITERATIONS:
                     ct = _mct_dec_next_input(
-                        mech_constant, j + 1, initial_iv, pt_history,
+                        mech_constant,
+                        j + 1,
+                        initial_iv,
+                        pt_history,
                     )
 
             assert pt == block["pt_expected"], (

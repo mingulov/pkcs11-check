@@ -325,8 +325,8 @@ def gen_symmetric_key(
         mech_param_result = make_mech_param(entry)
         if mech_param_result == "SKIP":
             pytest.skip(f"{entry.mech_name} requires runtime parameters for keygen")
-        mech = mech_param_result if mech_param_result is not None else mech_simple(
-            CKM(entry.mech_id)
+        mech = (
+            mech_param_result if mech_param_result is not None else mech_simple(CKM(entry.mech_id))
         )
     else:
         mech = mech_simple(CKM(entry.mech_id))

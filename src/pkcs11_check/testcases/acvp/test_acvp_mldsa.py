@@ -263,7 +263,12 @@ class TestMlDsaSigVer:
             mech_param = mech_sign_context(mech, context=context) if context else None
             try:
                 verified = verify_single(
-                    rs.raw, rs.sh, pub_key, mech, vec["msg"], vec["sig"],
+                    rs.raw,
+                    rs.sh,
+                    pub_key,
+                    mech,
+                    vec["msg"],
+                    vec["sig"],
                     mech_param=mech_param,
                 )
             except AssertionError as exc:

@@ -273,9 +273,7 @@ class TestKeyTypeConfusionOnUnwrap:
     Closes Phase 4.5 GAP-T4 (MED).
     """
 
-    def test_unwrap_aes_as_des3_rejected(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_unwrap_aes_as_des3_rejected(self, p11_raw_session: Any, p11_config: Any) -> None:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
@@ -345,9 +343,7 @@ class TestKeyTypeConfusionOnUnwrap:
 
                 accepted += tuple(
                     _ckr_name(c)
-                    for c in quirk_extras(
-                        p11_config, "unwrap_template_class_keytype_rejected"
-                    )
+                    for c in quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
                 )
                 if any(code in msg for code in accepted):
                     return

@@ -1,4 +1,5 @@
 """Tests for data path resolution logic."""
+
 from __future__ import annotations
 
 import importlib
@@ -21,9 +22,7 @@ class TestResolveDataDir:
 
     def test_xdg_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("PKCS11_CHECK_DATA_DIR", raising=False)
-        monkeypatch.setattr(
-            "pkcs11_check.testcases.data._find_repo_data_dir", lambda: None
-        )
+        monkeypatch.setattr("pkcs11_check.testcases.data._find_repo_data_dir", lambda: None)
         from pkcs11_check.testcases.data import resolve_data_dir
 
         result = resolve_data_dir()
@@ -57,8 +56,7 @@ class TestDisabledAutoDiscovery:
     ) -> None:
         baseline_file = tmp_path / "disabled-tests.txt"
         baseline_file.write_text(
-            "# test baseline\n"
-            "src/pkcs11_check/testcases/test_foo.py::TestFoo::test_bar\n"
+            "# test baseline\nsrc/pkcs11_check/testcases/test_foo.py::TestFoo::test_bar\n"
         )
         monkeypatch.setenv("PKCS11_CHECK_DATA_DIR", str(tmp_path))
 

@@ -130,18 +130,28 @@ class TestAuthenticatedWrap:
             pytest.skip("CKM_AES_GCM not supported")
 
         wrap_h = gen_aes_key(
-            rs.raw, rs.sh, 256,
+            rs.raw,
+            rs.sh,
+            256,
             attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
         target = gen_aes_key(
-            rs.raw, rs.sh, 128, attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
             iv = generate_random(rs.raw, rs.sh, 12)
             gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             try:
                 wrapped, tag = wrap_key_authenticated(
-                    rs.raw, rs.sh, wrap_h, target, CKM_AES_GCM, mech_param=gcm,
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    target,
+                    CKM_AES_GCM,
+                    mech_param=gcm,
                 )
             except (NotImplementedError, AttributeError, TypeError, AssertionError):
                 pytest.skip("wrap_key_authenticated not available")
@@ -156,7 +166,12 @@ class TestAuthenticatedWrap:
             gcm2 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             try:
                 unwrapped = unwrap_key_authenticated(
-                    rs.raw, rs.sh, wrap_h, wrapped, tampered_tag, CKM_AES_GCM,
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    wrapped,
+                    tampered_tag,
+                    CKM_AES_GCM,
                     attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
                     mech_param=gcm2,
                 )
@@ -322,13 +337,9 @@ class TestAuthenticatedWrapAAD:
                 from pkcs11_check.testcases._module_quirks import quirk_extras
 
                 quirk_codes = [
-                    _ckr_name(c)
-                    for c in quirk_extras(p11_config, "verify_or_integrity_failure")
+                    _ckr_name(c) for c in quirk_extras(p11_config, "verify_or_integrity_failure")
                 ]
-                if any(
-                    code in msg
-                    for code in (*aead_reject_codes, *quirk_codes)
-                ):
+                if any(code in msg for code in (*aead_reject_codes, *quirk_codes)):
                     return
                 raise
 
@@ -364,9 +375,7 @@ class TestWrapIntegrity:
     Closes Phase 4.5 GAP-W2 (HIGH).
     """
 
-    def test_aes_key_wrap_bit_flip_detected(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_aes_key_wrap_bit_flip_detected(self, p11_raw_session: Any, p11_config: Any) -> None:
         """AES-KEY-WRAP RFC-3394 magic-field integrity check.
 
         Wrap a real key, flip a middle byte of the ciphertext, attempt to
@@ -395,9 +404,7 @@ class TestWrapIntegrity:
         )
         try:
             try:
-                wrapped = wrap_key(
-                    rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP
-                )
+                wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP)
             except AssertionError as exc:
                 pytest.skip(f"Wrap failed: {exc}")
 
@@ -448,14 +455,11 @@ class TestWrapIntegrity:
                 from pkcs11_check.raw.rv import ckr_name as _ckr_name
 
                 accepted += [
-                    _ckr_name(c)
-                    for c in quirk_extras(p11_config, "verify_or_integrity_failure")
+                    _ckr_name(c) for c in quirk_extras(p11_config, "verify_or_integrity_failure")
                 ]
                 accepted += [
                     _ckr_name(c)
-                    for c in quirk_extras(
-                        p11_config, "unwrap_template_class_keytype_rejected"
-                    )
+                    for c in quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
                 ]
                 if any(code in msg for code in accepted):
                     return
@@ -517,7 +521,12 @@ class TestWrapIntegrity:
             gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             try:
                 wrapped, tag = wrap_key_authenticated(
-                    rs.raw, rs.sh, wrap_h, target, CKM_AES_GCM, mech_param=gcm,
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    target,
+                    CKM_AES_GCM,
+                    mech_param=gcm,
                 )
             except (NotImplementedError, AttributeError, TypeError, AssertionError) as e:
                 pytest.skip(f"AES-GCM authenticated wrap unavailable: {e}")
@@ -579,9 +588,7 @@ class TestEcdhAesKeyWrap:
     Closes Phase 4.5 GAP-W3 (MED).
     """
 
-    def test_ecdh_aes_kw_roundtrip(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_ecdh_aes_kw_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap an AES key with CKM_ECDH_AES_KEY_WRAP, unwrap, verify
         roundtrip succeeds. The bit-flip integrity assertion is in a
         separate test (`test_ecdh_aes_kw_bit_flip_integrity`) so that
@@ -637,7 +644,11 @@ class TestEcdhAesKeyWrap:
             # --- Roundtrip ---
             try:
                 wrapped = wrap_key(
-                    rs.raw, rs.sh, pub, target, CKM_ECDH_AES_KEY_WRAP,
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    target,
+                    CKM_ECDH_AES_KEY_WRAP,
                     mech_param=mech,
                 )
             except AssertionError as exc:
@@ -699,9 +710,7 @@ class TestEcdhAesKeyWrap:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, target)
 
-    def test_ecdh_aes_kw_bit_flip_integrity(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_ecdh_aes_kw_bit_flip_integrity(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Bit-flip integrity check for CKM_ECDH_AES_KEY_WRAP.
 
         Wrap a target key, flip a byte in the AES-KW ciphertext region of
@@ -746,7 +755,9 @@ class TestEcdhAesKeyWrap:
             return
 
         target = gen_aes_key(
-            rs.raw, rs.sh, 128,
+            rs.raw,
+            rs.sh,
+            128,
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
         try:
@@ -757,7 +768,11 @@ class TestEcdhAesKeyWrap:
             )
             try:
                 wrapped = wrap_key(
-                    rs.raw, rs.sh, pub, target, CKM_ECDH_AES_KEY_WRAP,
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    target,
+                    CKM_ECDH_AES_KEY_WRAP,
                     mech_param=mech,
                 )
             except AssertionError as exc:
@@ -776,7 +791,11 @@ class TestEcdhAesKeyWrap:
             )
             try:
                 bad = unwrap_key(
-                    rs.raw, rs.sh, priv, bytes(tampered), CKM_ECDH_AES_KEY_WRAP,
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    bytes(tampered),
+                    CKM_ECDH_AES_KEY_WRAP,
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_AES,
@@ -799,14 +818,11 @@ class TestEcdhAesKeyWrap:
                 from pkcs11_check.testcases._module_quirks import quirk_extras
 
                 accepted += tuple(
-                    _ckr_name(c)
-                    for c in quirk_extras(p11_config, "verify_or_integrity_failure")
+                    _ckr_name(c) for c in quirk_extras(p11_config, "verify_or_integrity_failure")
                 )
                 accepted += tuple(
                     _ckr_name(c)
-                    for c in quirk_extras(
-                        p11_config, "unwrap_template_class_keytype_rejected"
-                    )
+                    for c in quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
                 )
                 if any(code in msg for code in accepted):
                     return

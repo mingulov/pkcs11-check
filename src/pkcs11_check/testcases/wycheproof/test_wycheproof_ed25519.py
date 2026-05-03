@@ -77,8 +77,10 @@ def test_ed25519_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, An
 
     try:
         pub_key = import_ec_public_key(
-            rs.raw, rs.sh,
-            ec_params=ed25519_oid, ec_point=ec_point,
+            rs.raw,
+            rs.sh,
+            ec_params=ed25519_oid,
+            ec_point=ec_point,
             key_type=int(CKK_EC_EDWARDS),
             attrs={CKA_VERIFY: True},
         )
@@ -157,8 +159,10 @@ def test_ed448_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 
     try:
         pub_key = import_ec_public_key(
-            rs.raw, rs.sh,
-            ec_params=ed448_oid, ec_point=ec_point,
+            rs.raw,
+            rs.sh,
+            ec_params=ed448_oid,
+            ec_point=ec_point,
             key_type=int(CKK_EC_EDWARDS),
             attrs={CKA_VERIFY: True},
         )

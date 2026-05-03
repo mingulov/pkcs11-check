@@ -74,8 +74,10 @@ def test_rfc6979_ecdsa_verify(p11_raw_session: Any) -> None:
     try:
         try:
             pub_key = import_ec_public_key(
-                rs.raw, rs.sh,
-                ec_params=_EC_PARAMS, ec_point=_EC_POINT_DER,
+                rs.raw,
+                rs.sh,
+                ec_params=_EC_PARAMS,
+                ec_point=_EC_POINT_DER,
                 attrs={CKA_VERIFY: True},
             )
         except AssertionError as e:
@@ -116,8 +118,10 @@ def test_rfc6979_ecdsa_sign_deterministic(p11_raw_session: Any) -> None:
     try:
         try:
             priv_key = import_ec_private_key(
-                rs.raw, rs.sh,
-                ec_params=_EC_PARAMS, value=_PRIV_D,
+                rs.raw,
+                rs.sh,
+                ec_params=_EC_PARAMS,
+                value=_PRIV_D,
                 attrs={CKA_SIGN: True},
             )
         except AssertionError as e:

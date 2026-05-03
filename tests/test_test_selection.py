@@ -34,8 +34,7 @@ def test_parse_disabled_nodeids_ignores_comments_blanks_and_duplicates() -> None
 
     assert nodeids == [
         "src/pkcs11_check/testcases/test_encrypt.py::test_roundtrip",
-        "src/pkcs11_check/testcases/acvp/aes/test_cfb.py::"
-        "test_acvp_aes_cfb[AES-enc-tc1021]",
+        "src/pkcs11_check/testcases/acvp/aes/test_cfb.py::test_acvp_aes_cfb[AES-enc-tc1021]",
     ]
 
 
@@ -473,11 +472,11 @@ def test_extract_required_mechanisms_multiple(tmp_path: Path) -> None:
 
 def test_extract_required_mechanisms_absent(tmp_path: Path) -> None:
     f = tmp_path / "test_example.py"
-    f.write_text('pytestmark = [pytest.mark.kat]\n')
+    f.write_text("pytestmark = [pytest.mark.kat]\n")
     assert extract_required_mechanisms(str(f)) is None
 
 
 def test_extract_required_mechanisms_empty_list(tmp_path: Path) -> None:
     f = tmp_path / "test_example.py"
-    f.write_text('REQUIRED_MECHANISMS = []\n')
+    f.write_text("REQUIRED_MECHANISMS = []\n")
     assert extract_required_mechanisms(str(f)) is None

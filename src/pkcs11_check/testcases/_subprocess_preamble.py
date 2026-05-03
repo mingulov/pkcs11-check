@@ -18,9 +18,7 @@ _subprocess_call_counts: Counter[str] = Counter()
 _subprocess_mechanism_counts: Counter[str] = Counter()
 
 
-def run_with_coverage(
-    script: str, timeout: int = 15
-) -> tuple[int, str, str]:
+def run_with_coverage(script: str, timeout: int = 15) -> tuple[int, str, str]:
     """Run subprocess script with coverage capture."""
     cov_fd, cov_path = tempfile.mkstemp(suffix=".json", prefix="p11cov_")
     os.close(cov_fd)
@@ -28,7 +26,10 @@ def run_with_coverage(
 
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=timeout, env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
     )
 
     try:
@@ -114,7 +115,7 @@ def subprocess_session_preamble(
         f"\n"
         f'raw = RawPKCS11.from_lib("{module_path}")\n'
         f"rv = raw.C_Initialize(None)\n"
-        f'assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), '
+        f"assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), "
         f'f"C_Initialize: 0x{{rv:08x}}"\n'
         f"\n"
         f"{slot_discovery}\n"
@@ -131,7 +132,7 @@ def subprocess_session_preamble(
         f"                'mechanism_counts': "
         f"{{str(k): v for k, v in raw.mechanism_counts.items()}},\n"
         f"            }}, open(_cov_path, 'w'))\n"
-        f"        except Exception:\n"
+        f"        except (OSError, TypeError, ValueError):\n"
         f"            pass\n"
         f"    close_session_quietly(raw, sh)\n"
         f"    raw.C_Finalize(None)\n"
