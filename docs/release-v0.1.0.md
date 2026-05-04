@@ -1,8 +1,39 @@
-# Release v0.1.0 — Baseline Test Results
+# Release v0.1.0 - First Public Release Notes
+
+`pkcs11-check` v0.1.0 is the first public release of the project. Earlier
+`0.1.0` notes were internal release-candidate evidence and were not published to
+PyPI.
+
+## Public Release Summary
+
+- CLI-first PKCS#11 validation with `test`, `info`, `state`,
+  `compliance-report`, and test-vector fetching commands.
+- Pytest plugin for reusing the suite in downstream projects with
+  `pytest --p11-module=...`.
+- Pure Python `ctypes` raw binding for PKCS#11 v2.40 plus v3.x surfaces, with no
+  C extension build step.
+- Crash-aware execution model that can isolate provider crashes and preserve the
+  finding instead of taking down the whole run.
+- Broad provider tooling for local and Docker-based validation across SoftHSM2,
+  Kryoptic, NSS, OpenCryptoki, TPM2, BouncyHSM, pkcs11-mock, qryptotoken, and
+  related targets.
+- Security regression coverage for key wrapping, access control, Tookan-style
+  attribute escalation, RSA/CBC oracle classes, API boundary misuse, and known
+  CVE families.
+- Release-hardening pass covering download safety, archive extraction safety,
+  subprocess boundaries, scanner annotations for intentional legacy mechanisms,
+  dependency audit, secret scan, package metadata, and wheel/sdist install smoke.
+
+## Baseline Test Results
 
 **Date:** 2026-04-09
 **pkcs11-check commit:** `d6dff62` (dev branch)
 **Test runner:** pytest 8.x with per-file subprocess isolation
+
+These are internal baseline results from a deliberate full provider validation
+run. They should only be refreshed after another deliberate full validation run;
+the release-hardening changes after this date were verified with focused quality,
+security, packaging, and SoftHSM2 smoke gates.
 
 ---
 
