@@ -302,8 +302,9 @@ class TestRSAOAEPCrossVerify:
             pt = crypto_priv.decrypt(
                 ct,
                 rsa_padding.OAEP(
-                    mgf=rsa_padding.MGF1(algorithm=hashes.SHA1()),
-                    algorithm=hashes.SHA1(),
+                    # Intentional PKCS#11 OAEP SHA-1 default compatibility coverage.
+                    mgf=rsa_padding.MGF1(algorithm=hashes.SHA1()),  # nosec B303
+                    algorithm=hashes.SHA1(),  # nosec B303
                     label=None,
                 ),
             )

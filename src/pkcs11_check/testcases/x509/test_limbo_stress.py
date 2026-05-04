@@ -81,28 +81,26 @@ def test_exhaustive_cert_import_no_crash(
         # stored cert data, this will FAIL (not just silently pass).
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-            stored = attrs.get(CKA_VALUE, b"")
-            if isinstance(stored, bytes) and stored:
-                assert stored == der_bytes, (
-                    f"{tc_id}: CKA_VALUE round-trip mismatch "
-                    f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
-                )
         except AssertionError:
-            raise  # Round-trip mismatch is a real failure
-        except Exception:
-            pass  # CKR error reading VALUE is acceptable
+            attrs = {}  # CKR error reading VALUE is acceptable
+        stored = attrs.get(CKA_VALUE, b"")
+        if isinstance(stored, bytes) and stored and stored != der_bytes:
+            pytest.fail(
+                f"{tc_id}: CKA_VALUE round-trip mismatch "
+                f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+            )
 
         # Force the module to parse the DER by reading computed attributes.
         # A module that lazily parses may crash here on malformed certs.
         try:
             read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT, CKA_ISSUER, CKA_SERIAL_NUMBER])
-        except Exception:
+        except AssertionError:
             pass  # CKR error reading attrs is fine, crash is not
 
         # C_GetObjectSize may also trigger internal parsing.
         try:
             get_object_size(rs.raw, rs.sh, h)
-        except Exception:
+        except AssertionError:
             pass
     finally:
         destroy_quietly(rs.raw, rs.sh, h)
@@ -144,20 +142,18 @@ def test_exhaustive_crl_import_no_crash(
         # Verify CKA_VALUE round-trips correctly.
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-            stored = attrs.get(CKA_VALUE, b"")
-            if isinstance(stored, bytes) and stored:
-                assert stored == der_bytes, (
-                    f"{tc_id}: CRL CKA_VALUE round-trip mismatch "
-                    f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
-                )
         except AssertionError:
-            raise  # Round-trip mismatch is a real failure
-        except Exception:
-            pass  # CKR error is acceptable
+            attrs = {}  # CKR error reading VALUE is acceptable
+        stored = attrs.get(CKA_VALUE, b"")
+        if isinstance(stored, bytes) and stored and stored != der_bytes:
+            pytest.fail(
+                f"{tc_id}: CRL CKA_VALUE round-trip mismatch "
+                f"(stored {len(stored)}B vs original {len(der_bytes)}B)"
+            )
 
         try:
             get_object_size(rs.raw, rs.sh, h)
-        except Exception:
+        except AssertionError:
             pass
     finally:
         destroy_quietly(rs.raw, rs.sh, h)

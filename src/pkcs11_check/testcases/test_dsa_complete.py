@@ -182,7 +182,7 @@ class TestDSARaw:
 
         dp, pub, priv = _generate_dsa_keypair(rs)
         try:
-            digest = hashlib.sha1(b"raw DSA test data").digest()  # noqa: S324
+            digest = hashlib.sha1(b"raw DSA test data", usedforsecurity=False).digest()  # noqa: S324
             assert len(digest) == 20
 
             sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
@@ -203,8 +203,8 @@ class TestDSARaw:
 
         dp, pub, priv = _generate_dsa_keypair(rs)
         try:
-            digest = hashlib.sha1(b"original data").digest()  # noqa: S324
-            wrong_digest = hashlib.sha1(b"tampered data").digest()  # noqa: S324
+            digest = hashlib.sha1(b"original data", usedforsecurity=False).digest()  # noqa: S324
+            wrong_digest = hashlib.sha1(b"tampered data", usedforsecurity=False).digest()  # noqa: S324
 
             sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
             result = verify_single(rs.raw, rs.sh, pub, CKM_DSA, wrong_digest, sig)
@@ -222,7 +222,7 @@ class TestDSARaw:
 
         dp, pub, priv = _generate_dsa_keypair(rs)
         try:
-            digest = hashlib.sha1(b"nonce test").digest()  # noqa: S324
+            digest = hashlib.sha1(b"nonce test", usedforsecurity=False).digest()  # noqa: S324
 
             sig1 = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
             sig2 = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
@@ -487,7 +487,7 @@ class TestDSAParameterGen:
 
             try:
                 if has_raw:
-                    digest = hashlib.sha1(b"param gen sign test").digest()  # noqa: S324
+                    digest = hashlib.sha1(b"param gen sign test", usedforsecurity=False).digest()  # noqa: S324
                     sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
                     result = verify_single(rs.raw, rs.sh, pub, CKM_DSA, digest, sig)
                 else:

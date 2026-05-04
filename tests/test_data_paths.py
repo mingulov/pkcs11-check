@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import importlib
+import zipfile
 from pathlib import Path
 
 import pytest
 
 import pkcs11_check.testcases.data as data_mod
+from pkcs11_check.cli.fetch_cmd import _download_with_progress, _extract_filtered
 
 
 class TestResolveDataDir:
@@ -48,6 +50,28 @@ class TestSourcesManifest:
             assert "repo" in entry, f"{name} missing 'repo'"
             assert "commit" in entry, f"{name} missing 'commit'"
             assert "archive_sha256" in entry, f"{name} missing 'archive_sha256'"
+
+
+class TestFetchDataSecurity:
+    def test_download_rejects_non_https_url(self, tmp_path: Path) -> None:
+        dest = tmp_path / "download.zip"
+
+        with pytest.raises(ValueError, match="HTTPS"):
+            _download_with_progress("file:///etc/passwd", dest, "bad")
+
+        assert not dest.exists()
+
+    def test_extract_filtered_rejects_path_traversal(self, tmp_path: Path) -> None:
+        zip_path = tmp_path / "archive.zip"
+        outside = tmp_path / "escape.txt"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("repo-main/ok.txt", "ok")
+            zf.writestr("repo-main/../escape.txt", "bad")
+
+        with pytest.raises(ValueError, match="unsafe archive member"):
+            _extract_filtered(zip_path, tmp_path / "dest", None)
+
+        assert not outside.exists()
 
 
 class TestDisabledAutoDiscovery:

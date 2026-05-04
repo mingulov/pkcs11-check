@@ -35,12 +35,78 @@ def test_public_docs_do_not_reference_workstation_paths_or_agent_plans() -> None
 def test_no_exact_exception_pass_swallows() -> None:
     offenders: list[str] = []
     for path in _python_files():
-        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-            stripped = line.strip()
-            if stripped == "except Exception: pass" or stripped.startswith(
-                "except Exception: pass "
-            ):
-                offenders.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {stripped}")
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if not isinstance(node.type, ast.Name) or node.type.id != "Exception":
+                continue
+            if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+    assert offenders == []
+
+
+def test_source_subprocess_calls_do_not_use_shell_true() -> None:
+    offenders: list[str] = []
+    for path in _python_files():
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr not in {"run", "Popen", "call", "check_call", "check_output"}:
+                continue
+            if getattr(node.func.value, "id", None) != "subprocess":
+                continue
+            for keyword in node.keywords:
+                if keyword.arg == "shell" and isinstance(keyword.value, ast.Constant):
+                    if keyword.value.value is True:
+                        offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+    assert offenders == []
+
+
+def test_sha1_calls_declare_non_security_use() -> None:
+    offenders: list[str] = []
+    for path in _python_files():
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr != "sha1" or getattr(node.func.value, "id", None) != "hashlib":
+                continue
+            has_context = any(
+                keyword.arg == "usedforsecurity"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is False
+                for keyword in node.keywords
+            )
+            if not has_context:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+    assert offenders == []
+
+
+def test_legacy_crypto_reference_calls_are_explicitly_annotated() -> None:
+    offenders: list[str] = []
+    for path in _python_files():
+        source_lines = path.read_text().splitlines()
+        tree = ast.parse("\n".join(source_lines))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Attribute):
+                continue
+            module_name = getattr(node.func.value, "id", None)
+            if module_name == "hashes" and node.func.attr == "SHA1":
+                expected = "# nosec B303"
+            elif module_name == "modes" and node.func.attr == "ECB":
+                expected = "# nosec B305"
+            else:
+                continue
+            if expected not in source_lines[node.lineno - 1]:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
     assert offenders == []
 
 

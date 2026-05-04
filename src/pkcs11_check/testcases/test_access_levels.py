@@ -490,7 +490,7 @@ class TestSOSessionCapabilities:
             try:
                 login_user(rs.raw, restore_sh, CKU_USER, new_pin)
                 set_pin(rs.raw, restore_sh, new_pin, pin_bytes)
-            except Exception:
+            except AssertionError:
                 # Best-effort restore; if it fails, token may need re-init
                 pass
             finally:

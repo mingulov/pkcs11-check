@@ -88,7 +88,7 @@ class TestDigestProperties:
         """SHA-1 of empty string matches known value."""
         rs = p11_raw_session
         digest = digest_single(rs.raw, rs.sh, CKM_SHA_1, b"")
-        assert digest.hex() == hashlib.sha1(b"").hexdigest()
+        assert digest.hex() == hashlib.sha1(b"", usedforsecurity=False).hexdigest()
 
     def test_digest_large_data(self, p11_raw_session: Any) -> None:
         """Digest of 1 MiB data succeeds and matches hashlib."""

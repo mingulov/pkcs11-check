@@ -393,14 +393,14 @@ class TestV30CertAttributes:
                 serialization.Encoding.DER,
                 serialization.PublicFormat.SubjectPublicKeyInfo,
             )
-            attr_val = hashlib.sha1(spki).digest()
+            attr_val = hashlib.sha1(spki, usedforsecurity=False).digest()
         else:
             attr_id = CKA_HASH_OF_ISSUER_PUBLIC_KEY
             spki = cert.public_key().public_bytes(
                 serialization.Encoding.DER,
                 serialization.PublicFormat.SubjectPublicKeyInfo,
             )
-            attr_val = hashlib.sha1(spki).digest()
+            attr_val = hashlib.sha1(spki, usedforsecurity=False).digest()
 
         # Start from a v2.40 base template
         tmpl = _build_cert_template(ca_cert_der, "2.40")

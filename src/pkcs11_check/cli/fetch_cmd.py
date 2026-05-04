@@ -8,6 +8,7 @@ import tempfile
 import tomllib
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import typer
@@ -29,6 +30,14 @@ _DISABLED_BASELINE_URL = (
 )
 
 
+def _validate_https_url(url: str) -> None:
+    """Require HTTPS URLs before handing them to urlopen."""
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        msg = f"only HTTPS downloads are allowed: {url}"
+        raise ValueError(msg)
+
+
 def _load_manifest() -> dict[str, dict[str, object]]:
     """Load the sources.toml manifest from the package."""
     with open(SOURCES_TOML, "rb") as f:
@@ -37,7 +46,9 @@ def _load_manifest() -> dict[str, dict[str, object]]:
 
 def _download_with_progress(url: str, dest: Path, label: str) -> None:
     """Download a URL to a file with a rich progress bar."""
-    with urlopen(url) as resp:  # noqa: S310
+    _validate_https_url(url)
+    # _validate_https_url rejects local and non-HTTPS schemes before urlopen.
+    with urlopen(url) as resp:  # nosec B310
         total = int(resp.headers.get("Content-Length", 0))
         with Progress(
             TextColumn("[bold blue]{task.description}"),
@@ -82,6 +93,9 @@ def _extract_filtered(zip_path: Path, dest: Path, include: list[str] | None) -> 
         for info in zf.infolist():
             if info.is_dir():
                 continue
+            if not info.filename.startswith(prefix):
+                msg = f"unsafe archive member outside root prefix: {info.filename}"
+                raise ValueError(msg)
             rel = info.filename[len(prefix) :]
             if not rel:
                 continue
@@ -89,6 +103,11 @@ def _extract_filtered(zip_path: Path, dest: Path, include: list[str] | None) -> 
                 if not any(rel.startswith(pat.rstrip("/")) for pat in include):
                     continue
             target = dest / rel
+            try:
+                target.resolve().relative_to(dest.resolve())
+            except ValueError as exc:
+                msg = f"unsafe archive member path: {info.filename}"
+                raise ValueError(msg) from exc
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as src, open(target, "wb") as dst:
                 shutil.copyfileobj(src, dst)
@@ -223,9 +242,9 @@ def fetch_disabled_command(
     console.print("[bold]Fetching disabled-tests baseline...[/bold]")
 
     try:
-        with urlopen(  # noqa: S310
-            _DISABLED_BASELINE_URL
-        ) as resp:
+        _validate_https_url(_DISABLED_BASELINE_URL)
+        # _DISABLED_BASELINE_URL is an HTTPS constant and is validated above.
+        with urlopen(_DISABLED_BASELINE_URL) as resp:  # nosec B310
             content = resp.read().decode("utf-8")
     except Exception as exc:
         console.print(f"[red]Download failed:[/red] {exc}")

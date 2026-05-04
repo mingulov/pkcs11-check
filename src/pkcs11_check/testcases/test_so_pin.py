@@ -120,7 +120,7 @@ class TestSetPIN:
             # Restore original PIN
             try:
                 set_pin(rs.raw, s2, new_pin, pin_bytes)
-            except Exception:
-                pass  # Best effort restore
+            except AssertionError:
+                pass  # Best-effort restore; token may need re-init if this fails
             rs.raw.C_Logout(s2)
             close_session_quietly(rs.raw, s2)

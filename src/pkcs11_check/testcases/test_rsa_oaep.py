@@ -215,8 +215,9 @@ class TestRSAOAEPCrossVerify:
             ct = pub_crypto.encrypt(
                 plaintext,
                 padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA1()),
-                    algorithm=hashes.SHA1(),
+                    # Intentional PKCS#11 OAEP SHA-1 default compatibility coverage.
+                    mgf=padding.MGF1(algorithm=hashes.SHA1()),  # nosec B303
+                    algorithm=hashes.SHA1(),  # nosec B303
                     label=None,
                 ),
             )
