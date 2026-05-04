@@ -143,7 +143,8 @@ class TestRSAInterop:
     @pytest.mark.parametrize(
         "hash_mech,hash_class",
         [
-            (CKM_SHA1_RSA_PKCS, hashes.SHA1()),
+            # Intentional CKM_SHA1_RSA_PKCS compatibility coverage for legacy modules.
+            (CKM_SHA1_RSA_PKCS, hashes.SHA1()),  # nosec B303
             (CKM_SHA256_RSA_PKCS, hashes.SHA256()),
             (CKM_SHA384_RSA_PKCS, hashes.SHA384()),
             (CKM_SHA512_RSA_PKCS, hashes.SHA512()),
@@ -268,7 +269,8 @@ class TestAESInterop:
         try:
             ct = encrypt_single(rs.raw, rs.sh, key_h, CKM_AES_ECB, plaintext)
 
-            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())
+            # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
+            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
             dec = cipher.decryptor()
             pt = dec.update(ct) + dec.finalize()
             assert pt == plaintext
@@ -281,7 +283,8 @@ class TestAESInterop:
         key_bytes = bytes(range(32))
         plaintext = b"reverse interop!"  # 16 bytes
 
-        cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())
+        # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
+        cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
         enc = cipher.encryptor()
         ct = enc.update(plaintext) + enc.finalize()
 
@@ -397,7 +400,8 @@ class TestHMACInterop:
         try:
             p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA_1_HMAC, data)
 
-            h = hmac.HMAC(key_bytes, hashes.SHA1())
+            # Intentional CKM_SHA_1_HMAC compatibility coverage for legacy modules.
+            h = hmac.HMAC(key_bytes, hashes.SHA1())  # nosec B303
             h.update(data)
             crypto_mac = h.finalize()
 

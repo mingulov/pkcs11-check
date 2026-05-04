@@ -55,18 +55,23 @@ def _have_p11kit() -> bool:
     return _find_lib(_P11KIT_PROXY_PATHS) is not None
 
 
-def _run(cmd: str, env: dict[str, str] | None = None, timeout: int = 30) -> tuple[int, str, str]:
-    """Run shell command, return (exitcode, stdout, stderr)."""
+def _run(
+    cmd: list[str],
+    env: dict[str, str] | None = None,
+    timeout: int = 30,
+    input_text: str | None = None,
+) -> tuple[int, str, str]:
+    """Run a command with argv isolation, return (exitcode, stdout, stderr)."""
     full_env = os.environ.copy()
     if env:
         full_env.update(env)
     r = subprocess.run(
         cmd,
-        shell=True,
         capture_output=True,
         text=True,
         timeout=timeout,
         env=full_env,
+        input=input_text,
     )
     return r.returncode, r.stdout, r.stderr
 
@@ -83,7 +88,7 @@ class TestOpenSSLPkcs11Provider:
 
         # Use PKCS11_PROVIDER_MODULE env var
         rc, out, err = _run(
-            "openssl list -providers -provider pkcs11",
+            ["openssl", "list", "-providers", "-provider", "pkcs11"],
             env={"PKCS11_PROVIDER_MODULE": module},
         )
         # Provider may or may not load depending on token state
@@ -101,7 +106,8 @@ class TestOpenSSLPkcs11Provider:
 
         # Simple digest - doesn't need token login
         rc, out, err = _run(
-            'echo -n "test" | openssl dgst -sha256 -provider default',
+            ["openssl", "dgst", "-sha256", "-provider", "default"],
+            input_text="test",
         )
         assert rc == 0, f"openssl dgst failed: {err}"
         assert "SHA2-256" in out or "sha256" in out.lower() or len(out) > 10
@@ -128,7 +134,7 @@ class TestOpenSSLPkcs11Provider:
         )
         print(f"rc={{r.returncode}}")
         """
-        rc, out, err = _run(f'{sys.executable} -c "{textwrap.dedent(script).strip()}"')
+        rc, out, err = _run([sys.executable, "-c", textwrap.dedent(script).strip()])
         assert rc != -11, f"OpenSSL genrsa segfaulted: {err}"
 
 
@@ -142,7 +148,7 @@ class TestP11KitProxy:
 
     def test_p11kit_list_modules(self) -> None:
         """p11-kit can list registered modules."""
-        rc, out, err = _run("p11-kit list-modules 2>&1")
+        rc, out, err = _run(["p11-kit", "list-modules"])
         # p11-kit may return 0 or non-zero depending on config
         # The key test: no crash
         assert rc != -11, f"p11-kit segfaulted: {err}"

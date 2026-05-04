@@ -201,8 +201,8 @@ class TestRsaKeyGenBySize:
                     f"RSA {bits}-bit not supported (mechanism limits: "
                     f"{min_key_size}-{max_key_size})"
                 )
-        except Exception:
-            pass  # Continue anyway, will fail in generation if truly unsupported
+        except AssertionError:
+            pass  # Continue anyway; generation below exposes unsupported limits
 
         pub_key = priv_key = 0
         try:

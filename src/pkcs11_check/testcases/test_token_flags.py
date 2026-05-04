@@ -92,8 +92,8 @@ class TestTokenFlags:
             data = generate_random(rs.raw, rs.sh, 32)
             assert len(data) == 32
             has_rng = True
-        except Exception:
-            pass  # RNG not available or failed
+        except AssertionError:
+            has_rng = False  # RNG not available or failed
 
         if has_rng:
             info = CK_TOKEN_INFO()

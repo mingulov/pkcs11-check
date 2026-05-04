@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 
 from pkcs11_check.raw.recipes import (
@@ -235,7 +236,7 @@ def _build_cert_template(
                 serialization.Encoding.DER,
                 serialization.PublicFormat.SubjectPublicKeyInfo,
             )
-        except Exception:
+        except (TypeError, ValueError, UnsupportedAlgorithm):
             pass
 
     if extra_attrs:

@@ -131,12 +131,9 @@ class TestEncryptState:
             )
         finally:
             # Abort any pending operation by calling C_EncryptFinal with a discard buffer
-            try:
-                out_buf = (ctypes.c_ubyte * 64)()
-                out_len = CK_ULONG(64)
-                rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))
-            except Exception:
-                pass  # Best-effort cleanup: EncryptFinal may fail if op already terminated
+            out_buf = (ctypes.c_ubyte * 64)()
+            out_len = CK_ULONG(64)
+            rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))
             destroy_quietly(rs.raw, rs.sh, key)
 
 
@@ -323,12 +320,9 @@ class TestDigestState:
         )
 
         # Abort the pending digest by completing it
-        try:
-            out_buf = (ctypes.c_ubyte * 64)()
-            out_len = CK_ULONG(64)
-            rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
-        except Exception:
-            pass  # Best-effort cleanup: DigestFinal may fail if op already terminated
+        out_buf = (ctypes.c_ubyte * 64)()
+        out_len = CK_ULONG(64)
+        rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
 
 
 class TestMultiPartCrossSession:
@@ -381,12 +375,9 @@ class TestMultiPartCrossSession:
                 f"against (see _CROSS_SESSION_NOT_INIT_RVCS comment)"
             )
         finally:
-            try:
-                out_buf = (ctypes.c_ubyte * 64)()
-                out_len = CK_ULONG(64)
-                rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))
-            except Exception:
-                pass
+            out_buf = (ctypes.c_ubyte * 64)()
+            out_len = CK_ULONG(64)
+            rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))
             close_session_quietly(rs.raw, sh_b)
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -417,12 +408,9 @@ class TestMultiPartCrossSession:
                 f"NOT accepted here (see _CROSS_SESSION_NOT_INIT_RVCS)"
             )
         finally:
-            try:
-                out_buf = (ctypes.c_ubyte * 64)()
-                out_len = CK_ULONG(64)
-                rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
-            except Exception:
-                pass
+            out_buf = (ctypes.c_ubyte * 64)()
+            out_len = CK_ULONG(64)
+            rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
             close_session_quietly(rs.raw, sh_b)
 
 

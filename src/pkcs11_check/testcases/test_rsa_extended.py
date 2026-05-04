@@ -197,7 +197,7 @@ class TestRSAX931:
 
         pub, priv = _rsa_keypair(rs, sign=True)
         try:
-            digest = hashlib.sha1(b"test data for X9.31 SHA-1").digest()  # noqa: S324
+            digest = hashlib.sha1(b"test data for X9.31 SHA-1", usedforsecurity=False).digest()  # noqa: S324
             assert len(digest) == 20
 
             try:

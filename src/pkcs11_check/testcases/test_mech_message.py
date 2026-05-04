@@ -269,10 +269,7 @@ class TestMessageEncrypt:
                 )
                 # Try to clean up — if MessageEncryptFinal exists, cancel.
                 if hasattr(rs.raw, "C_MessageEncryptFinal"):
-                    try:
-                        rs.raw.C_MessageEncryptFinal(rs.sh)
-                    except Exception:
-                        pass
+                    rs.raw.C_MessageEncryptFinal(rs.sh)
                 pytest.fail(
                     "SECURITY: C_MessageEncryptInit accepted a key with "
                     "CKA_ENCRYPT=False — usage-attribute enforcement "

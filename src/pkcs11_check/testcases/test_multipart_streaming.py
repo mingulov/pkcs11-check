@@ -92,7 +92,8 @@ class TestMultipartEncrypt:
         try:
             ct_p11 = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, data)
 
-            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())
+            # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
+            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
             enc = cipher.encryptor()
             ct_crypto = enc.update(data) + enc.finalize()
 

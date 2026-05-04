@@ -91,7 +91,8 @@ class TestAESCrossVerify:
         try:
             p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
 
-            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())
+            # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
+            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
             enc = cipher.encryptor()
             crypto_ct = enc.update(plaintext) + enc.finalize()
 
@@ -109,7 +110,8 @@ class TestAESCrossVerify:
         try:
             p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
 
-            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())
+            # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
+            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
             enc = cipher.encryptor()
             crypto_ct = enc.update(plaintext) + enc.finalize()
 
@@ -123,7 +125,8 @@ class TestAESCrossVerify:
         key_bytes = bytes(range(32))
         plaintext = b"decrypt-xverify!"
 
-        cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())
+        # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
+        cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
         enc = cipher.encryptor()
         ciphertext = enc.update(plaintext) + enc.finalize()
 
@@ -144,7 +147,8 @@ class TestAESCrossVerify:
         try:
             p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
 
-            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())
+            # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
+            cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
             enc = cipher.encryptor()
             crypto_ct = enc.update(plaintext) + enc.finalize()
 
@@ -311,7 +315,10 @@ class TestDigestCrossVerify:
     def test_sha1(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         data = b"sha1 cross-verify"
-        assert digest_single(rs.raw, rs.sh, CKM_SHA_1, data) == hashlib.sha1(data).digest()
+        assert (
+            digest_single(rs.raw, rs.sh, CKM_SHA_1, data)
+            == hashlib.sha1(data, usedforsecurity=False).digest()
+        )
 
     def test_sha256_empty(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -451,7 +458,8 @@ class TestRSAKeySizeCrossVerify:
             data = b"RSA SHA-1 cross-verify"
             signature = sign_single(rs.raw, rs.sh, priv, CKM_SHA1_RSA_PKCS, data)
             pub_crypto = self._export_rsa_pubkey(rs, pub)
-            pub_crypto.verify(signature, data, padding.PKCS1v15(), hashes.SHA1())
+            # Intentional CKM_SHA1_RSA_PKCS compatibility coverage for legacy modules.
+            pub_crypto.verify(signature, data, padding.PKCS1v15(), hashes.SHA1())  # nosec B303
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
