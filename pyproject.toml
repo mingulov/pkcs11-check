@@ -1,0 +1,129 @@
+[project]
+name = "pkcs11-check"
+version = "0.1.0"
+description = "CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin"
+readme = "README.md"
+authors = [
+    { name = "Denis Mingulov", email = "denis@mingulov.com" }
+]
+requires-python = ">=3.13"
+license = "MIT OR Apache-2.0"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Software Development :: Testing",
+]
+
+dependencies = [
+    "typer>=0.15",
+    "rich>=13.0",
+    "pydantic>=2.0",
+    "pydantic-settings[toml]>=2.0",
+    "psutil>=5.9",
+    "pytest>=8.0",
+    "pytest-xdist>=3.5",
+    "pytest-timeout>=2.3",
+    "asn1crypto>=1.5",
+    "cryptography>=46.0.5",
+    "pytest-reportlog>=1.0.0",
+    "hypothesis>=6.100",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest-cov",
+    "mypy",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/mingulov/pkcs11-check"
+Repository = "https://github.com/mingulov/pkcs11-check"
+Documentation = "https://github.com/mingulov/pkcs11-check/tree/main/docs"
+Issues = "https://github.com/mingulov/pkcs11-check/issues"
+
+[project.scripts]
+pkcs11-check = "pkcs11_check.cli.app:main"
+
+[project.entry-points."pytest11"]
+pkcs11-check = "pkcs11_check.plugin"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+exclude = [
+    "local-builds/",
+    "/data/",
+    "artifacts/",
+    "artifacts2/",
+    "docker/",
+    "patches/",
+    ".worktrees/",
+    ".serena/",
+    ".github/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/superpowers/",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pkcs11_check"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"third_party/pkcs11-headers/3.2/pkcs11.h" = "pkcs11_check/_vendor/pkcs11-headers/3.2/pkcs11.h"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+exclude = [
+    "src/pkcs11_check/testcases/data/",
+    "src/pkcs11_check/raw/metadata_std.py",
+    "src/pkcs11_check/raw/types_std.py",
+    "tests/data/",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/pkcs11_check/raw/api.py" = ["F405"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+packages = ["pkcs11_check"]
+mypy_path = "src"
+exclude = ["pkcs11_check/testcases/data/"]
+
+[[tool.mypy.overrides]]
+module = ["psutil"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pkcs11_check.testcases.data.*"]
+ignore_errors = true
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.13"
+pythonPlatform = "Linux"
+reportMissingImports = false
+reportAttributeAccessIssue = false
+reportArgumentType = "warning"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+timeout = 300
+
+[dependency-groups]
+dev = [
+    "pytest-benchmark>=5.2.3",
+]

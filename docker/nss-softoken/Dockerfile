@@ -1,0 +1,37 @@
+# NSS softoken — stable (Fedora 44, latest release)
+# Well-tested NSS with v3.0 support
+FROM fedora:44
+
+RUN dnf install -y \
+    nss nss-tools nss-softokn \
+    python3.14 python3.14-devel \
+    gcc openssl-devel git \
+    && dnf clean all
+
+RUN rpm -q nss nss-softokn
+
+# Test tooling: fault-proxy, pkcs11-provider, p11-kit
+COPY docker/fault-proxy.c /tmp/fault-proxy.c
+COPY docker/install-test-tools.sh /tmp/install-test-tools.sh
+RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+ENV NSS_DB_DIR=/var/lib/nss
+RUN mkdir -p $NSS_DB_DIR && \
+    certutil -d sql:$NSS_DB_DIR -N --empty-password
+
+RUN find /usr/lib64 /usr/lib -name "libsoftokn3.so" 2>/dev/null | head -1 > /tmp/module_path
+ENV PKCS11_CHECK_SLOT=1
+
+WORKDIR /app
+# Install deps first (cached unless pyproject.toml/uv.lock change)
+COPY pyproject.toml uv.lock README.md ./
+COPY src/pkcs11_check/__init__.py src/pkcs11_check/__init__.py
+COPY third_party/ third_party/
+RUN uv sync --frozen --python python3.14
+
+# Copy test code (changes frequently, does not invalidate deps cache)
+COPY . .
+
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "sh", "-c", "echo 'NSS (stable):' && rpm -q nss && export PKCS11_CHECK_MODULE=$(cat /tmp/module_path) && bash /app/docker/run-pkcs11-check.sh"]

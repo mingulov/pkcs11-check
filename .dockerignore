@@ -1,0 +1,33 @@
+# Third-party test vector data (bind-mounted at runtime, not copied)
+data/
+
+# Local builds (large, not needed in Docker)
+local-builds/
+
+# Artifacts from previous Docker runs
+artifacts/
+artifacts*/
+
+# All dotfiles/dirs (caches, editor state, git)
+.*
+
+# Python caches
+**/__pycache__/
+*.pyc
+
+# Documentation — not needed at runtime
+docs/
+
+# Host-side scripts (fetch-data, analysis, etc.)
+scripts/
+
+# Meta-tests (pkcs11-check's own tests, not product testcases)
+tests/
+
+# Dockerfiles and compose (not needed inside containers; run-*.sh ARE needed)
+docker/*/Dockerfile*
+docker/docker-compose*.yml
+
+# Root analysis/investigation/dev files
+CLAUDE.md
+AGENTS.md

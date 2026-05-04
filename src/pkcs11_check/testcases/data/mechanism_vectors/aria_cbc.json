@@ -1,0 +1,47 @@
+{
+  "mechanism": "CKM_ARIA_CBC",
+  "family": "aria_cbc",
+  "key_type": "CKK_ARIA",
+  "source": "generated via OpenSSL EVP ctypes",
+  "vectors": [
+    {
+      "id": "aria_cbc_128",
+      "type": "positive",
+      "mechanism_name": "CKM_ARIA_CBC",
+      "key_type": "symmetric",
+      "key_hex": "19633b5f925a19d91c4d9511e1b5c764",
+      "key_bits": 128,
+      "plaintext_hex": "94099429d97d4081b9e7bec44c9fd09e8de2b6879b356c1c925fd1a73f9a7e25",
+      "ciphertext_hex": "798ad766758dd2b0249dbddae0055eb7031b72d7eac98b4c18965bf115ac7f67",
+      "params": {
+        "iv_hex": "36d4e77a02e68205acfb57406d2a1880"
+      }
+    },
+    {
+      "id": "aria_cbc_192",
+      "type": "positive",
+      "mechanism_name": "CKM_ARIA_CBC",
+      "key_type": "symmetric",
+      "key_hex": "93c0de988a4dd4bba590117f6adec6b11c2f29a90b8e6548",
+      "key_bits": 192,
+      "plaintext_hex": "b8cf1766eaaa05858833eeb1f5e715a7414042c0ba7bb2efafc286f7a9be2c3d",
+      "ciphertext_hex": "f4b12ba9874fa07487df3004d2c1cfa7294a21caafdf152b7be196a72005fb66",
+      "params": {
+        "iv_hex": "90d518653949131bcb8e9fd9f2ff6dd4"
+      }
+    },
+    {
+      "id": "aria_cbc_256",
+      "type": "positive",
+      "mechanism_name": "CKM_ARIA_CBC",
+      "key_type": "symmetric",
+      "key_hex": "cb97883be7c8d37a59cffca46a744e5ee5c3844af590cba8d84b16a1fdb7c8ef",
+      "key_bits": 256,
+      "plaintext_hex": "0ac14451330d242814e9319319828b61b4eed7ca944193c6fba1ae5f8043fd5d",
+      "ciphertext_hex": "bbc4623c11723efe7d17526484526042454e5d859e29c0f707680b155c11b4f8",
+      "params": {
+        "iv_hex": "327b73cca4517c57283d266a229299bb"
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# Extracted third-party data (fetched by pkcs11-check fetch-data)
+# Only this .gitignore is tracked; sources.toml ships inside the package.
+wycheproof/
+cctv/
+acvp/
+x509-limbo/

@@ -1,0 +1,3 @@
+# Global production disabled baseline.
+# One exact pytest nodeid per line.
+#src/pkcs11_check/testcases/acvp/aes/test_cfb128.py::test_acvp_aes_cfb128_decrypt[AES-dec-tc1185]

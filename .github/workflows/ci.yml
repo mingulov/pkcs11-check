@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen --extra dev
+      - run: uv run ruff check src/ tests/
+      - run: uv run ruff format --check src/ tests/
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen --extra dev
+      - run: uv run mypy src/
+
+  meta-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen --extra dev
+      - run: uv run pytest tests/ -v --timeout=60
+
+  strict-markers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen --extra dev
+      - run: uv run pytest --strict-markers src/pkcs11_check/testcases/ --collect-only -q
+
+  smoke-softhsm2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v4
+      - run: sudo apt-get update && sudo apt-get install -y softhsm2
+      - run: uv sync --frozen --extra dev
+      - name: Setup SoftHSM2 token
+        run: |
+          mkdir -p /tmp/pkcs11-check-tokens
+          printf 'directories.tokendir = /tmp/pkcs11-check-tokens\nobjectstore.backend = file\n' > /tmp/softhsm2.conf
+          export SOFTHSM2_CONF=/tmp/softhsm2.conf
+          softhsm2-util --init-token --slot 0 --label pkcs11-check --so-pin 87654321 --pin 1234
+      - name: Run smoke tests
+        env:
+          SOFTHSM2_CONF: /tmp/softhsm2.conf
+        run: |
+          uv run pkcs11-check test \
+            --module /usr/lib/softhsm/libsofthsm2.so \
+            --pin 1234 \
+            --timeout 60 \
+            --isolation auto \
+            --match "test_encrypt or test_sign or test_digest"
