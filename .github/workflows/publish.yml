@@ -1,0 +1,80 @@
+name: Publish to PyPI
+
+# Manual-only release workflow. The owner clicks "Run workflow" in the
+# Actions tab and provides the version they intend to release; the build
+# step aborts if it does not match pyproject.toml.
+#
+# Publishing uses PyPI Trusted Publishing (OIDC) — no API tokens are stored
+# in the repository. Configure the matching pending publisher at
+# https://pypi.org/manage/account/publishing/ with:
+#   Owner          = mingulov
+#   Repository     = pkcs11-check
+#   Workflow name  = publish.yml
+#   Environment    = pypi
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_version:
+        description: "Version to publish (must match pyproject.toml [project].version)"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Verify input version matches pyproject.toml
+        env:
+          REQUESTED_VERSION: ${{ inputs.confirm_version }}
+        run: |
+          declared=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$declared" != "$REQUESTED_VERSION" ]; then
+            echo "::error::pyproject [project].version is '$declared' but workflow input requested '$REQUESTED_VERSION'"
+            exit 1
+          fi
+          echo "Version OK: $declared"
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Show built artifacts
+        run: ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pkcs11-check
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,0 +1,176 @@
+"""Wycheproof X25519 and X448 key exchange vectors.
+
+Tests Montgomery curve Diffie-Hellman (RFC 7748) using CKM_ECDH1_DERIVE
+with EC_MONTGOMERY key type across raw, ASN.1, PEM, and JWK encodings.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import pytest
+
+from pkcs11_check.raw.pack import mech_ecdh
+from pkcs11_check.raw.recipes import (
+    derive_key,
+    destroy_quietly,
+    import_ec_private_key,
+    read_attributes,
+)
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_DERIVE,
+    CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
+    CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKD_NULL,
+    CKK_EC_MONTGOMERY,
+    CKK_GENERIC_SECRET,
+    CKM_ECDH1_DERIVE,
+    CKO_SECRET_KEY,
+)
+from pkcs11_check.testcases.wycheproof._key_decoders import (
+    decode_xdh_private_bytes,
+    decode_xdh_public_bytes,
+)
+
+pytestmark = pytest.mark.wycheproof
+REQUIRED_MECHANISMS = ["ECDH1_DERIVE"]
+
+from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+
+# Module-level cache of curve OIDs that failed C_CreateObject with a domain/curve error.
+# Keyed by OID bytes; avoids redundant probe calls for unsupported Montgomery curves.
+_UNSUPPORTED_CURVE_OIDS: set[bytes] = set()
+
+# OIDs for Montgomery curves
+X25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x6E])  # 1.3.101.110
+X448_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x6F])  # 1.3.101.111
+
+_X25519_X448_FILES = [
+    ("x25519_test.json", X25519_OID, 32, "raw"),
+    ("x25519_asn_test.json", X25519_OID, 32, "asn"),
+    ("x25519_jwk_test.json", X25519_OID, 32, "jwk"),
+    ("x25519_pem_test.json", X25519_OID, 32, "pem"),
+    ("x448_test.json", X448_OID, 56, "raw"),
+    ("x448_asn_test.json", X448_OID, 56, "asn"),
+    ("x448_jwk_test.json", X448_OID, 56, "jwk"),
+    ("x448_pem_test.json", X448_OID, 56, "pem"),
+]
+
+
+def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
+    """Load X25519/X448 key exchange vectors."""
+    vectors = []
+    for filename, oid, key_size, encoding_name in _X25519_X448_FILES:
+        path = WYCHEPROOF_DIR / filename
+        if not path.exists():
+            continue
+        with open(path) as f:
+            data = json.load(f)
+        for group in data["testGroups"]:
+            for test in group["tests"]:
+                test["_group"] = {k: v for k, v in group.items() if k != "tests"}
+                test["_oid"] = oid
+                test["_key_size"] = key_size
+                test["_encoding"] = encoding_name
+                test["_file"] = filename
+                vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
+                vectors.append((vec_id, test))
+    return vectors
+
+
+_ALL_XDH_VECTORS = _load_xdh_vectors()
+
+
+@pytest.mark.parametrize("vec_id,vec", _ALL_XDH_VECTORS, ids=[v[0] for v in _ALL_XDH_VECTORS])
+def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+    """X25519/X448 key exchange from Wycheproof vectors."""
+    rs = p11_raw_session
+    if not rs.has_mechanism("ECDH1_DERIVE"):
+        pytest.skip("ECDH1_DERIVE not supported")
+
+    oid = vec["_oid"]
+    key_size = vec["_key_size"]
+    encoding_name = vec["_encoding"]
+    result = vec["result"]
+    try:
+        private_bytes = decode_xdh_private_bytes(vec["private"], encoding_name)
+    except Exception as exc:
+        if result == "invalid":
+            return  # Can't import a private key on our side; invalid vector passes
+        pytest.skip(f"Cannot decode {encoding_name} XDH private key: {type(exc).__name__}")
+    try:
+        public_bytes = decode_xdh_public_bytes(vec["public"], encoding_name)
+    except Exception as exc:
+        pytest.skip(f"Cannot decode {encoding_name} XDH public key: {type(exc).__name__}")
+    shared_expected = bytes.fromhex(vec["shared"])
+
+    if oid in _UNSUPPORTED_CURVE_OIDS:
+        pytest.skip(f"Montgomery curve OID {oid.hex()} not supported (cached)")
+
+    # Import Montgomery private key
+    try:
+        priv_key = import_ec_private_key(
+            rs.raw,
+            rs.sh,
+            ec_params=oid,
+            value=private_bytes,
+            key_type=int(CKK_EC_MONTGOMERY),
+            attrs={CKA_DERIVE: True},
+        )
+    except AssertionError as exc:
+        exc_msg = str(exc)
+        if any(
+            name in exc_msg
+            for name in (
+                "CKR_CURVE_NOT_SUPPORTED",
+                "CKR_DOMAIN_PARAMS_INVALID",
+            )
+        ):
+            _UNSUPPORTED_CURVE_OIDS.add(oid)
+        if result == "invalid":
+            return
+        pytest.skip(f"Cannot import Montgomery private key: {exc_msg}")
+    except AttributeError as exc:
+        if result == "invalid":
+            return
+        pytest.skip(f"Cannot import Montgomery private key: {exc}")
+
+    # Derive shared secret
+    ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=public_bytes)
+    shared = None
+    try:
+        derived = derive_key(
+            rs.raw,
+            rs.sh,
+            priv_key,
+            CKM_ECDH1_DERIVE,
+            attrs={
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                CKA_VALUE_LEN: key_size,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            mech_param=ecdh_param,
+        )
+        attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+        shared = attrs[CKA_VALUE]
+        assert isinstance(shared, bytes)
+        destroy_quietly(rs.raw, rs.sh, derived)
+    except (AssertionError, TypeError) as exc:
+        if result == "valid":
+            pytest.fail(f"X25519/X448 derive failed for valid vector {vec_id}: {exc}")
+        # acceptable: reject is fine
+        return
+    finally:
+        destroy_quietly(rs.raw, rs.sh, priv_key)
+
+    if result == "valid" and shared is not None:
+        assert shared == shared_expected

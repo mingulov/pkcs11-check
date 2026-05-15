@@ -1,0 +1,129 @@
+# pkcs11-check
+
+CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin.
+
+## What it does
+
+pkcs11-check runs comprehensive tests against PKCS#11 modules (hardware HSMs, software tokens, smart cards). It catches:
+
+- **Crashes and segfaults** — per-file subprocess isolation recovers from SIGSEGV
+- **CKR return code violations** — different spec conditions checked against OASIS PKCS#11 standard
+- **CVE regressions** — tests for known CVEs across NSS, SoftHSM2, TPM2, OpenCryptoki
+- **Security policy violations** — Tookan paper vectors, attribute fuzzing, padding oracle detection
+- **Interface negotiation bugs** — v2.40/v3.0/v3.1/v3.2 with automatic fallback
+
+## Quick start
+
+```bash
+# Install
+git clone https://github.com/mingulov/pkcs11-check
+cd pkcs11-check
+uv sync
+
+# Run against SoftHSM2
+bash local-builds/build.sh softhsm2
+bash local-builds/test.sh softhsm2
+
+# Run against Kryoptic (v3.2 with PQC)
+bash local-builds/build.sh kryoptic
+bash local-builds/test.sh kryoptic
+
+# Run against system NSS
+bash local-builds/test.sh nss-softokn
+```
+
+### From PyPI (installed)
+
+```bash
+pip install pkcs11-check
+pkcs11-check fetch-data all # download test vectors (~800 MB)
+pkcs11-check test --module /path/to/module.so --pin 1234
+```
+
+## Test suite
+
+Test categories:
+
+| Category | Description |
+|----------|-------------|
+| Core crypto | AES, RSA, ECDSA, EdDSA, HMAC, digest |
+| Wycheproof | Edge-case vectors from C2SP |
+| PQC (v3.2) | ML-KEM, ML-DSA, SLH-DSA |
+| CKR compliance | Return code verification per OASIS spec |
+| CVE regression | Known vulnerability tests |
+| Security | Attribute fuzz, Tookan, handle reuse |
+| Stress | Threading, resource exhaustion |
+
+## Supported modules
+
+| Module | Version | Status |
+|--------|---------|--------|
+| SoftHSM2 | 2.7.0 | Full support |
+| Kryoptic | 1.5.0+PQC | Full support (v3.2) |
+| NSS softokn | system | Crypto services (slot 0) |
+| OpenCryptoki | 3.26 | Docker only |
+| pkcs11-mock | 2.0.0 | Stub testing |
+| tpm2-pkcs11 | 1.9.0 | Hardware TPM |
+| BouncyHSM | 2.0.1 | Docker only |
+| qryptotoken | 0.4.1 | Docker only |
+
+## Known limitations in v0.1.0
+
+- SO login is not implemented yet, so trusted-certificate import with
+  `CKA_TRUSTED=True` is not fully covered through `CKU_SO` workflows.
+- CloudHSM/Thales in-band IV profiles, proxy/loader mutable-parameter
+  preservation checks, and broader mutable-output simulator targets are tracked
+  as post-v0.1.0 interop work.
+
+## Architecture
+
+```
+src/pkcs11_check/
+  raw/          — pure ctypes PKCS#11 binding (v2.40-v3.2, PQC)
+  cli/          — typer CLI (test, info, version commands)
+  core/         — module loader, isolation runner, preflight
+  testcases/    — test files (the product)
+    ckr/        — CKR return code compliance tests
+  plugin.py     — pytest plugin (markers, fixtures, collection)
+  fixtures.py   — p11_session, p11_module, p11_config
+  config.py     — four-layer config (CLI > env > TOML > defaults)
+
+local-builds/   — build scripts for soft token providers
+docker/         — Docker test targets
+```
+
+## Key features
+
+- **`pkcs11_check.raw`** — pure Python ctypes binding with v2.40/v3.0/v3.1/v3.2 interface negotiation, 50+ PQC mechanisms, all 68 standard functions
+- **`--isolation file`** mode runs each test file in its own subprocess — crashes don't kill the suite
+- **`--ckr-strict`** mode enforces exact OASIS spec CKR codes (not just "any error")
+- **Wycheproof + ACVP vectors** — cross-verification against C2SP and NIST test vectors
+
+## Documentation
+
+- `docs/architecture.md` — codebase structure and test writing guide
+- `docs/commands.md` — build, test, and Docker commands
+- `docs/module-issues.md` — per-module bugs and quirks
+- `docs/mechanism-output-parameters.md` — generated IV/nonce/tag output-parameter coverage
+- `docs/docker-provider-results.md` — release Docker provider source and result snapshot
+- `docs/todo.md` — public roadmap and known limitations
+- `docs/cve-regression.md` — CVE coverage tracker
+- `docs/file-isolation.md` — isolation runner design
+- `docs/docker-artifacts.md` — Docker test runner contract
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
+
+### Third-party attributions
+
+pkcs11-check bundles the public-domain PKCS#11 v3.2 header from
+`latchset/pkcs11-headers`, and its `fetch-data` command downloads test
+vectors from C2SP and NIST. See
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for the full list and
+per-source license terms.

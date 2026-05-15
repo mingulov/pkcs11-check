@@ -1,0 +1,46 @@
+# Third-party test vector sources — single source of truth.
+# Run:    pkcs11-check fetch-data [name|all|--status]
+# Update: change commit + archive_sha256, then re-fetch.
+#
+# license       — SPDX identifier (or LicenseRef-*) summarising the upstream
+#                 license; see THIRD_PARTY_LICENSES.md for the full picture.
+# license_files — paths inside the upstream repo (at `commit`) that document
+#                 the license. Used by the fetch CLI to (a) construct a URL
+#                 https://github.com/{repo}/blob/{commit}/{path} for display
+#                 and (b) locate the on-disk license after extraction.
+
+[wycheproof]
+repo = "C2SP/wycheproof"
+commit = "6d9d6de30f02e229dfc160323722c3ddac866181"
+archive_sha256 = "3336021e3d1cff8374f87209f79220a23994d0d7e735873aa45f36fbc9722460"
+description = "Wycheproof edge-case cryptographic test vectors"
+include = ["testvectors_v1/", "LICENSE"]
+license = "Apache-2.0"
+license_files = ["LICENSE"]
+
+[cctv]
+repo = "C2SP/CCTV"
+commit = "67c1397af2a57f935cc96ee112b446c051cdb68a"
+archive_sha256 = "9380931cfd5bf238bd44ee993f1aee6453b5e52413ddfd20a3e41d66e4d119cd"
+description = "C2SP Comprehensive Cryptographic Test Vectors"
+include = ["ed25519/", "ML-DSA/", "ML-KEM/", "RFC6979/", "jq255/", "keygen/", "README.md", "LICENSE"]
+license = "BSD-3-Clause AND BSD-1-Clause"
+license_files = ["ed25519/LICENSE"]
+
+[acvp]
+repo = "usnistgov/ACVP-Server"
+commit = "15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0"
+archive_sha256 = "12c1c7956b0c06a82d7f873f97f85900520ad0cddf9d769f976802443dce1ceb"
+description = "NIST ACVP Automated Cryptographic Validation"
+include = ["gen-val/json-files/", "README.md"]
+license = "LicenseRef-NIST-PD"
+license_files = ["README.md"]
+
+[x509-limbo]
+repo = "C2SP/x509-limbo"
+commit = "086b0da8b83d78ed0f491d6df6672b2673406500"
+archive_sha256 = "a7d1a02029fdb8c9a6bb5ac960c0077171e937f000031efc666e0246be959385"
+description = "C2SP x509-limbo pathological X.509 certificates"
+# No include = extract everything
+license = "Apache-2.0"
+license_files = ["LICENSE"]

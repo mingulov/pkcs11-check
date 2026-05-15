@@ -1,0 +1,236 @@
+"""Tests for PKCS#11 digest and hash operations.
+
+Covers all SHA-family digests, known-answer vectors, length validation,
+determinism, collision resistance properties, and large-data digests.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import hashlib
+from ctypes import byref
+from typing import Any
+
+import pytest
+
+from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    digest_single,
+    digest_single_with_key,
+    gen_aes_key,
+    read_attributes,
+)
+from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.types_std import (
+    CK_ULONG,
+    CKA_EXTRACTABLE,
+    CKA_SENSITIVE,
+    CKA_VALUE,
+    CKM_SHA224,
+    CKM_SHA256,
+    CKM_SHA384,
+    CKM_SHA512,
+    CKM_SHA_1,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_OK,
+)
+
+pytestmark = pytest.mark.full
+
+
+class TestDigestLengths:
+    """Verify correct output lengths for all hash mechanisms."""
+
+    @pytest.mark.parametrize(
+        "mechanism,expected_len",
+        [
+            (CKM_SHA_1, 20),
+            (CKM_SHA224, 28),
+            (CKM_SHA256, 32),
+            (CKM_SHA384, 48),
+            (CKM_SHA512, 64),
+        ],
+        ids=["SHA-1", "SHA-224", "SHA-256", "SHA-384", "SHA-512"],
+    )
+    def test_digest_length(self, p11_raw_session: Any, mechanism: Any, expected_len: int) -> None:
+        """Each hash mechanism produces the correct output length."""
+        rs = p11_raw_session
+        digest = digest_single(rs.raw, rs.sh, mechanism, b"test data")
+        assert len(digest) == expected_len
+
+
+class TestDigestProperties:
+    """Test fundamental hash function properties."""
+
+    def test_sha256_deterministic(self, p11_raw_session: Any) -> None:
+        """Same input produces same SHA-256 digest."""
+        rs = p11_raw_session
+        data = b"deterministic test"
+        d1 = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
+        d2 = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
+        assert d1 == d2
+
+    def test_sha256_different_input_different_digest(self, p11_raw_session: Any) -> None:
+        """Different inputs produce different digests."""
+        rs = p11_raw_session
+        d1 = digest_single(rs.raw, rs.sh, CKM_SHA256, b"input one")
+        d2 = digest_single(rs.raw, rs.sh, CKM_SHA256, b"input two")
+        assert d1 != d2
+
+    def test_sha256_empty_data(self, p11_raw_session: Any) -> None:
+        """Digest of empty data produces known SHA-256 hash of empty string."""
+        rs = p11_raw_session
+        digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"")
+        assert digest.hex() == hashlib.sha256(b"").hexdigest()
+
+    def test_sha1_empty_data(self, p11_raw_session: Any) -> None:
+        """SHA-1 of empty string matches known value."""
+        rs = p11_raw_session
+        digest = digest_single(rs.raw, rs.sh, CKM_SHA_1, b"")
+        assert digest.hex() == hashlib.sha1(b"", usedforsecurity=False).hexdigest()
+
+    def test_digest_large_data(self, p11_raw_session: Any) -> None:
+        """Digest of 1 MiB data succeeds and matches hashlib."""
+        rs = p11_raw_session
+        data = b"\xab" * (1024 * 1024)
+        p11_digest = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
+        expected = hashlib.sha256(data).digest()
+        assert p11_digest == expected
+
+
+class TestDigestCrossVerify:
+    """Cross-verify PKCS#11 digests against Python hashlib."""
+
+    @pytest.mark.parametrize(
+        "mechanism,hashlib_name",
+        [
+            (CKM_SHA_1, "sha1"),
+            (CKM_SHA224, "sha224"),
+            (CKM_SHA256, "sha256"),
+            (CKM_SHA384, "sha384"),
+            (CKM_SHA512, "sha512"),
+        ],
+        ids=["SHA-1", "SHA-224", "SHA-256", "SHA-384", "SHA-512"],
+    )
+    def test_cross_verify(self, p11_raw_session: Any, mechanism: Any, hashlib_name: str) -> None:
+        """PKCS#11 digest matches hashlib for each algorithm."""
+        rs = p11_raw_session
+        data = b"cross-verification test data for digest operations"
+        p11_digest = digest_single(rs.raw, rs.sh, mechanism, data)
+        expected = hashlib.new(hashlib_name, data).digest()
+        assert p11_digest == expected
+
+    @pytest.mark.parametrize(
+        "mechanism,hashlib_name",
+        [
+            (CKM_SHA256, "sha256"),
+            (CKM_SHA512, "sha512"),
+        ],
+        ids=["SHA-256", "SHA-512"],
+    )
+    def test_cross_verify_binary_data(
+        self, p11_raw_session: Any, mechanism: Any, hashlib_name: str
+    ) -> None:
+        """Digest of binary data (all byte values) matches hashlib."""
+        rs = p11_raw_session
+        data = bytes(range(256))
+        p11_digest = digest_single(rs.raw, rs.sh, mechanism, data)
+        expected = hashlib.new(hashlib_name, data).digest()
+        assert p11_digest == expected
+
+
+class TestDigestKey:
+    """Tests for C_DigestKey - digesting key material directly.
+
+    Source: PKCS#11 v3.2 Sec.5.13.4 (C_DigestKey).
+
+    C_DigestKey continues an ongoing digest operation by digesting the value of
+    a secret key, as if that value had been passed to C_DigestUpdate.  Uses raw
+    C_DigestInit / C_DigestKey / C_DigestFinal calls since there is no single
+    recipe for this multi-step pattern.
+    """
+
+    def test_digest_key_matches_hashlib(self, p11_raw_session: Any) -> None:
+        """DigestKey of extractable AES-128 key matches hashlib digest of key bytes."""
+        rs = p11_raw_session
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+        )
+        try:
+            try:
+                p11_digest = digest_single_with_key(rs.raw, rs.sh, CKM_SHA256, key)
+            except AssertionError:
+                pytest.skip("C_DigestKey not supported by this module")
+            # Compare with hashlib
+            key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(key_bytes, bytes)
+            ref_digest = hashlib.sha256(key_bytes).digest()
+            assert p11_digest == ref_digest
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_digest_key_with_data(self, p11_raw_session: Any) -> None:
+        """DigestKey mixed with data: SHA-256(data_prefix + key_bytes)."""
+        rs = p11_raw_session
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+        )
+        data_prefix = b"prefix-data-for-digest"
+        try:
+            # C_DigestInit
+            mech = mech_simple(CKM_SHA256)
+            rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
+            expect_rv(rv, CKR_OK)
+            # C_DigestUpdate with data prefix
+            in_buf = (ctypes.c_ubyte * len(data_prefix))(*data_prefix)
+            rv = rs.raw.C_DigestUpdate(rs.sh, in_buf, len(data_prefix))
+            expect_rv(rv, CKR_OK)
+            # C_DigestKey
+            rv = rs.raw.C_DigestKey(rs.sh, key)
+            if rv == CKR_FUNCTION_NOT_SUPPORTED:
+                pytest.skip("C_DigestKey not supported by this module")
+            expect_rv(rv, CKR_OK)
+            # C_DigestFinal (two-call pattern)
+            out_len = CK_ULONG(0)
+            rv = rs.raw.C_DigestFinal(rs.sh, None, byref(out_len))
+            expect_rv(rv, CKR_OK)
+            out_buf = (ctypes.c_ubyte * out_len.value)()
+            rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
+            expect_rv(rv, CKR_OK)
+            p11_digest = bytes(out_buf[: out_len.value])
+            # Compare with hashlib
+            key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(key_bytes, bytes)
+            ref_digest = hashlib.sha256(data_prefix + key_bytes).digest()
+            assert p11_digest == ref_digest
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_digest_key_256bit(self, p11_raw_session: Any) -> None:
+        """DigestKey works with AES-256 key."""
+        rs = p11_raw_session
+        key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+        )
+        try:
+            try:
+                p11_digest = digest_single_with_key(rs.raw, rs.sh, CKM_SHA256, key)
+            except AssertionError:
+                pytest.skip("C_DigestKey not supported by this module")
+            # Compare with hashlib
+            key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(key_bytes, bytes)
+            ref_digest = hashlib.sha256(key_bytes).digest()
+            assert p11_digest == ref_digest
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)

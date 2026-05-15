@@ -1,0 +1,41 @@
+{
+  "mechanism": "CKM_ARIA_ECB",
+  "family": "aria_ecb",
+  "key_type": "CKK_ARIA",
+  "source": "generated via OpenSSL EVP ctypes",
+  "vectors": [
+    {
+      "id": "aria_ecb_128",
+      "type": "positive",
+      "mechanism_name": "CKM_ARIA_ECB",
+      "key_type": "symmetric",
+      "key_hex": "6de74ebf339ee34b1abaf3fbab7feee5",
+      "key_bits": 128,
+      "plaintext_hex": "f7a6894b0a98a691101659f3225c28ea7a4e746119c28e7caa65e9a6b76b683f",
+      "ciphertext_hex": "b5c11c1494615dc7d4bcd3aecf6852e42c07e75bb72faea760aaa47eb873c028",
+      "params": {}
+    },
+    {
+      "id": "aria_ecb_192",
+      "type": "positive",
+      "mechanism_name": "CKM_ARIA_ECB",
+      "key_type": "symmetric",
+      "key_hex": "7f592e7d182fe5dc3a8b099e9ebf44785ba45170c2075def",
+      "key_bits": 192,
+      "plaintext_hex": "cd37ac2b13ae058133d7103a4daf55afd09afb0a00df314dfd56178543590cc1",
+      "ciphertext_hex": "824ce1cbcd794b77cf5a3cd9ba6c524177ac2937cfa07c000a1fc5ec6b883fb4",
+      "params": {}
+    },
+    {
+      "id": "aria_ecb_256",
+      "type": "positive",
+      "mechanism_name": "CKM_ARIA_ECB",
+      "key_type": "symmetric",
+      "key_hex": "3853d8486cc86b3520cfd7a880c15222c3bb432afa7709e21017fc8f0730738d",
+      "key_bits": 256,
+      "plaintext_hex": "36802b59f9eb293f552a697ab698a9ab1c2a1d5efdb5af336b121f73b5bcdd0f",
+      "ciphertext_hex": "c3b4c2ac5b38563a303aae148cc310047200438869a16c75107ace70b6b80510",
+      "params": {}
+    }
+  ]
+}

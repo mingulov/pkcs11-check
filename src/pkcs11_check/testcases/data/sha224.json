@@ -1,0 +1,8 @@
+{
+  "algorithm": "SHA-224",
+  "source": "NIST SHAVS / FIPS 180-4",
+  "vectors": [
+    {"msg": "", "digest": "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f"},
+    {"msg": "616263", "digest": "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7"}
+  ]
+}
