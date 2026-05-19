@@ -129,6 +129,15 @@ Inherits all quirks from NSS 3.120.1 above. Additional findings below.
 
 ### Security Findings
 
+> **NSS softokn is a software-only PKCS#11 token.** Severities below use
+> pkcs11-check's hardware-token threat model — they describe what each behavior
+> would mean if NSS softokn claimed to be a hardware secure element resistant
+> to key extraction. Upstream does not aim to enforce that boundary in softokn,
+> so the CRITICAL / HIGH attribute-enforcement rows are upstream-known
+> properties of the software-token design rather than defects to be fixed.
+> They are recorded here so the same checks reuse against any module that
+> does claim the harder boundary.
+
 **CRITICAL: Sensitive key material readable (CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE)**
 
 - `CKA_VALUE` readable on `CKA_SENSITIVE=True` AES keys via `C_GetAttributeValue`
@@ -503,7 +512,10 @@ All 25 are NSS softoken bugs, spec violations, or known vendor extensions. None 
 
 #### Group 9: Security Findings as Xfails (13 xfails)
 
-These are high-severity security bugs confirmed as xfails (not just noted in documentation):
+These are findings confirmed as xfails (not just noted in documentation).
+Severities use the hardware-token threat model described under
+[Security Findings](#security-findings); CRITICAL rows are upstream-known
+properties of NSS softokn rather than defects.
 
 | Tests | Security Finding | Severity |
 |-------|-----------------|---------|

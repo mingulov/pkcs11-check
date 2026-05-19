@@ -142,6 +142,15 @@ Using SoftHSM2 (main) as reference — totals vary per module based on mechanism
 
 ## Issues Found by Module
 
+**Severity model.** Severities below are pkcs11-check's internal classification
+under a hardware-token threat model — they describe what the same behavior would
+mean if the module claimed to be a hardware secure element resistant to key
+extraction. They are not CVE-grade vulnerability claims against the upstream
+projects. Several rows on software-only tokens — most notably NSS softokn — are
+upstream-known properties of the software-token design rather than defects; they
+are recorded here so the same testing reuses cleanly against modules that do
+claim that boundary.
+
 ### SoftHSM2 (main)
 
 | Severity | Finding |
@@ -166,6 +175,13 @@ Using SoftHSM2 (main) as reference — totals vary per module based on mechanism
 | LOW | AES-CTS advertised but returns CKR_DEVICE_ERROR |
 
 ### NSS (main)
+
+NSS softokn is a software-only PKCS#11 token; upstream does not aim to enforce
+hardware-style key-extraction boundaries in it. The two CRITICAL rows below — and
+several of the HIGH / MEDIUM attribute-enforcement rows — are upstream-known
+properties of that design rather than bugs to be fixed. They are listed under the
+hardware-token threat model this report uses for severity, so the same checks
+reuse against any module that does claim the harder boundary.
 
 | Severity | Finding |
 |----------|---------|
@@ -215,6 +231,11 @@ Using SoftHSM2 (main) as reference — totals vary per module based on mechanism
 | HIGH | 9 | NSS (3), Kryoptic (2), BouncyHSM (2), OpenCryptoki (2) |
 | MEDIUM | 9 | NSS (5), Kryoptic (2), SoftHSM2 (2) |
 | LOW | 8 | All modules |
+
+> Severities use the hardware-token threat model described in
+> [Issues Found by Module](#issues-found-by-module); they are not CVE-grade
+> vulnerability claims. The two CRITICAL rows are upstream-known properties of
+> NSS softokn (software-only token) — see the NSS section.
 
 ---
 

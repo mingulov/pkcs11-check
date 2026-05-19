@@ -87,9 +87,12 @@ Tested 6 modules, ~510K total test executions across 237 test files:
 | NSS (main) | 46,185 | 2,018 | 34,454 | 105 | 82,763 |
 | tpm2-pkcs11 (1.9.1) | 8,202 | 5,028 | 47,977 | 2 | 62,242 |
 
-Key findings: 2 CRITICAL (NSS sensitive key exposure, Tookan CKA_EXTRACTABLE escalation),
-9 HIGH-severity issues across 4 modules, real SIGSEGV crashes in all 6 modules.
-See [docs/release-v0.1.0.md](docs/release-v0.1.0.md) for full breakdown.
+Findings are classified under a hardware-token threat model and are not CVE-grade
+vulnerability claims against upstream projects. The two CRITICAL rows are
+upstream-known properties of NSS softokn (software-only token) rather than
+defects; HIGH-severity issues span 4 modules; real SIGSEGV crashes in all 6
+modules. See [docs/release-v0.1.0.md](docs/release-v0.1.0.md) for the
+severity-model note and full breakdown.
 
 ### Requirements
 
