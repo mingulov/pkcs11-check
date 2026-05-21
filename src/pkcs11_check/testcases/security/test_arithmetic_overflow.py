@@ -105,7 +105,7 @@ try:
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.{init_func}(sh, ctypes.byref(mech), key)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         # Small real buffer, but claim huge length
         buf = (ctypes.c_ubyte * 16)(*range(16))
         out_len = CK_ULONG(256)

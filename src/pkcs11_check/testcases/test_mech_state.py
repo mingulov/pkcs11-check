@@ -66,7 +66,7 @@ _CROSS_SESSION_NOT_INIT_RVCS: frozenset[int] = frozenset(
 # Acceptable "already active" return codes.
 _ALREADY_ACTIVE_RVCS: frozenset[int] = frozenset(
     [
-        int(CKR_OPERATION_ACTIVE),
+        CKR_OPERATION_ACTIVE,
         0x00000005,  # CKR_FUNCTION_FAILED
         0x00000020,  # CKR_GENERAL_ERROR
     ]
@@ -90,7 +90,7 @@ class TestEncryptState:
         rv = rs.raw.C_Encrypt(rs.sh, in_buf, len(plaintext), out_buf, byref(out_len))
         assert rv in _NOT_INIT_RVCS, (
             f"C_Encrypt without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED (0x{int(CKR_OPERATION_NOT_INITIALIZED):08x})"
+            f"expected CKR_OPERATION_NOT_INITIALIZED (0x{CKR_OPERATION_NOT_INITIALIZED:08x})"
         )
 
     def test_encrypt_final_without_init(self, p11_raw_session: RawSession) -> None:
@@ -127,7 +127,7 @@ class TestEncryptState:
             rv2 = rs.raw.C_EncryptInit(rs.sh, mech2.byref(), key)
             assert rv2 in _ALREADY_ACTIVE_RVCS, (
                 f"Double C_EncryptInit returned 0x{rv2:08x}, "
-                f"expected CKR_OPERATION_ACTIVE (0x{int(CKR_OPERATION_ACTIVE):08x})"
+                f"expected CKR_OPERATION_ACTIVE (0x{CKR_OPERATION_ACTIVE:08x})"
             )
         finally:
             # Abort any pending operation by calling C_EncryptFinal with a discard buffer
@@ -316,7 +316,7 @@ class TestDigestState:
         rv2 = rs.raw.C_DigestInit(rs.sh, mech2.byref())
         assert rv2 in _ALREADY_ACTIVE_RVCS, (
             f"Double C_DigestInit returned 0x{rv2:08x}, "
-            f"expected CKR_OPERATION_ACTIVE (0x{int(CKR_OPERATION_ACTIVE):08x})"
+            f"expected CKR_OPERATION_ACTIVE (0x{CKR_OPERATION_ACTIVE:08x})"
         )
 
         # Abort the pending digest by completing it
@@ -448,7 +448,7 @@ class TestZeroDataFinal:
             accepted = (
                 CKR_OK,
                 0x00000021,  # CKR_DATA_LEN_RANGE
-                int(CKR_OPERATION_NOT_INITIALIZED),  # some treat 0-byte as no-op
+                CKR_OPERATION_NOT_INITIALIZED,  # some treat 0-byte as no-op
                 0x00000063,  # CKR_BUFFER_TOO_SMALL on length-query
             )
             assert rv in accepted, (

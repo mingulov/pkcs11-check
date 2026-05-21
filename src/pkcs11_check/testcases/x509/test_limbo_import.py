@@ -140,9 +140,9 @@ class TestLimboCertImport:
             if is_known_error(
                 e,
                 {
-                    int(CKR_TEMPLATE_INCONSISTENT),
-                    int(CKR_ATTRIBUTE_VALUE_INVALID),
-                    int(CKR_FUNCTION_FAILED),
+                    CKR_TEMPLATE_INCONSISTENT,
+                    CKR_ATTRIBUTE_VALUE_INVALID,
+                    CKR_FUNCTION_FAILED,
                 },
             ):
                 if tc["expected_result"] == "FAILURE":
@@ -195,9 +195,9 @@ class TestLimboCertImport:
                     if is_known_error(
                         e,
                         {
-                            int(CKR_ATTRIBUTE_TYPE_INVALID),
-                            int(CKR_ATTRIBUTE_READ_ONLY),
-                            int(CKR_USER_NOT_LOGGED_IN),
+                            CKR_ATTRIBUTE_TYPE_INVALID,
+                            CKR_ATTRIBUTE_READ_ONLY,
+                            CKR_USER_NOT_LOGGED_IN,
                         },
                     ):
                         h, _ = import_cert_raw(
@@ -216,9 +216,9 @@ class TestLimboCertImport:
                 if is_known_error(
                     e,
                     {
-                        int(CKR_TEMPLATE_INCONSISTENT),
-                        int(CKR_ATTRIBUTE_VALUE_INVALID),
-                        int(CKR_FUNCTION_FAILED),
+                        CKR_TEMPLATE_INCONSISTENT,
+                        CKR_ATTRIBUTE_VALUE_INVALID,
+                        CKR_FUNCTION_FAILED,
                     },
                 ):
                     note(
@@ -273,14 +273,14 @@ def test_import_limbo_failure_cert_raw(
 
     except AssertionError as e:
         if is_known_error(
-            e, {int(CKR_TEMPLATE_INCONSISTENT), int(CKR_ATTRIBUTE_VALUE_INVALID)}
+            e, {CKR_TEMPLATE_INCONSISTENT, CKR_ATTRIBUTE_VALUE_INVALID}
         ):
             note(
                 f"[FAILURE cert] Module rejected {tc['id']} "
                 f"({str(e).split(';')[0]}) - validates on import",
                 ComplianceLevel.VENDOR,
             )
-        elif is_known_error(e, {int(CKR_FUNCTION_FAILED)}):
+        elif is_known_error(e, {CKR_FUNCTION_FAILED}):
             note(
                 f"[FAILURE cert] Module returned CKR_FUNCTION_FAILED for {tc['id']}",
                 ComplianceLevel.VENDOR,

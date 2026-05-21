@@ -375,11 +375,11 @@ class TestAuthenticatedWrapAAD:
                 if is_known_error(
                     exc,
                     {
-                        int(CKR_MECHANISM_INVALID),
-                        int(CKR_MECHANISM_PARAM_INVALID),
-                        int(CKR_FUNCTION_NOT_SUPPORTED),
-                        int(CKR_KEY_FUNCTION_NOT_PERMITTED),
-                        int(CKR_ARGUMENTS_BAD),
+                        CKR_MECHANISM_INVALID,
+                        CKR_MECHANISM_PARAM_INVALID,
+                        CKR_FUNCTION_NOT_SUPPORTED,
+                        CKR_KEY_FUNCTION_NOT_PERMITTED,
+                        CKR_ARGUMENTS_BAD,
                     },
                 ):
                     pytest.skip(f"AES-GCM authenticated wrap rejected: {exc}")
@@ -730,7 +730,7 @@ class TestEcdhAesKeyWrap:
                 # implement it / accept CKA_WRAP=True on EC pub keys —
                 # that IS the advertise-but-don't-implement bug class
                 # this test should surface, not skip.
-                if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
+                if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
                     pytest.skip(f"Module rejected ECDH-AES-KW params: {exc}")
                     return
                 raise
@@ -762,7 +762,7 @@ class TestEcdhAesKeyWrap:
                 # CKR_ATTRIBUTE_READ_ONLY. The wrap already succeeded,
                 # which validates the wrap-side construction; the
                 # unwrap-template quirk is a different code path.
-                if is_known_error(exc, {int(CKR_ATTRIBUTE_READ_ONLY)}):
+                if is_known_error(exc, {CKR_ATTRIBUTE_READ_ONLY}):
                     pytest.skip(
                         f"Module rejects unwrap template (likely OC's "
                         f"CKA_CLASS/CKA_KEY_TYPE quirk): {exc}"
@@ -842,7 +842,7 @@ class TestEcdhAesKeyWrap:
                     mech_param=mech,
                 )
             except AssertionError as exc:
-                if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
+                if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
                     pytest.skip(f"Module rejected ECDH-AES-KW params: {exc}")
                     return
                 raise

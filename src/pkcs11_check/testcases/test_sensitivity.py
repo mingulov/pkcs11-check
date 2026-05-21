@@ -141,7 +141,7 @@ class TestExtractableEnforcement:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
                 extractable = attrs[CKA_EXTRACTABLE]
             except AssertionError as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip("Module does not support CKA_EXTRACTABLE attribute")
                 raise
         finally:

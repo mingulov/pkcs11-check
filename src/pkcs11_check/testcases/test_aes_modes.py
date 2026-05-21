@@ -636,7 +636,7 @@ class TestAESXCBCMAC:
             try:
                 assert verify_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC, data, mac)
             except AssertionError as exc:
-                if is_known_error(exc, {int(CKR_KEY_TYPE_INCONSISTENT)}):
+                if is_known_error(exc, {CKR_KEY_TYPE_INCONSISTENT}):
                     pytest.xfail(_XCBC_VERIFY_XFAIL_MSG)
                 raise
         finally:
@@ -664,7 +664,7 @@ class TestAESXCBCMAC:
             try:
                 assert verify_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC_96, data, mac)
             except AssertionError as exc:
-                if is_known_error(exc, {int(CKR_KEY_TYPE_INCONSISTENT)}):
+                if is_known_error(exc, {CKR_KEY_TYPE_INCONSISTENT}):
                     pytest.xfail(_XCBC_VERIFY_XFAIL_MSG)
                 raise
         finally:

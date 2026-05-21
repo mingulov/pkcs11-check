@@ -423,7 +423,7 @@ try:
     {iv_setup}
     rv = raw.{init_func}(sh, ctypes.byref(mech), key)
     print(f"init_rv={{rv}}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         out_len = CK_ULONG(256)
         out_buf = (ctypes.c_ubyte * 256)()
         rv2 = raw.{c_func}(sh, None, 0, out_buf, ctypes.byref(out_len))
@@ -454,7 +454,7 @@ try:
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
     print(f"init_rv={{rv}}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         sig_len = CK_ULONG(512)
         sig_buf = (ctypes.c_ubyte * 512)()
         rv2 = raw.C_Sign(sh, None, 0, sig_buf, ctypes.byref(sig_len))
@@ -487,7 +487,7 @@ try:
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
     print(f"init_rv={{rv}}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         sig_len = CK_ULONG(256)
         sig_buf = (ctypes.c_ubyte * 256)()
         rv2 = raw.C_Sign(sh, None, 0, sig_buf, ctypes.byref(sig_len))

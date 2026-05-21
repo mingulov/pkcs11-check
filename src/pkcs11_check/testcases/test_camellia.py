@@ -82,7 +82,7 @@ def _encrypt_or_skip(
     try:
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if is_known_error(exc, {int(CKR_MECHANISM_INVALID)}):
+        if is_known_error(exc, {CKR_MECHANISM_INVALID}):
             pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
         raise
 
@@ -100,7 +100,7 @@ def _sign_or_skip(
     try:
         return sign_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if is_known_error(exc, {int(CKR_MECHANISM_INVALID)}):
+        if is_known_error(exc, {CKR_MECHANISM_INVALID}):
             pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
         raise
 

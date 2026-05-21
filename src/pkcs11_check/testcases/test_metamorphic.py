@@ -233,7 +233,7 @@ class TestCopyEquivalence:
                     {CKA_LABEL: "copy-equiv"},
                 )
             except AssertionError as exc:
-                if is_known_error(exc, {int(CKR_FUNCTION_NOT_SUPPORTED)}):
+                if is_known_error(exc, {CKR_FUNCTION_NOT_SUPPORTED}):
                     pytest.skip("C_CopyObject not supported")
                 raise
 
@@ -260,7 +260,7 @@ class TestCopyEquivalence:
                     {CKA_LABEL: "copy-decrypt"},
                 )
             except AssertionError as exc:
-                if is_known_error(exc, {int(CKR_FUNCTION_NOT_SUPPORTED)}):
+                if is_known_error(exc, {CKR_FUNCTION_NOT_SUPPORTED}):
                     pytest.skip("C_CopyObject not supported")
                 raise
 

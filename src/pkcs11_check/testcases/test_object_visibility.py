@@ -541,7 +541,7 @@ class TestTokenPrivateInteraction:
         try:
             h = _create_data_obj(rs.raw, rs.sh, label, b"priv-session", token=False, private=True)
         except AssertionError as exc:
-            if is_known_error(exc, {int(CKR_ATTRIBUTE_VALUE_INVALID)}):
+            if is_known_error(exc, {CKR_ATTRIBUTE_VALUE_INVALID}):
                 pytest.skip("Module does not support CKA_PRIVATE=True on CKO_DATA objects")
             raise
         try:

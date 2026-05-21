@@ -53,17 +53,17 @@ from pkcs11_check.testcases.conftest import is_known_error
 pytestmark = [pytest.mark.security]
 
 _TEMPLATE_ERROR_RVS = {
-    int(CKR_ATTRIBUTE_TYPE_INVALID),
-    int(CKR_ATTRIBUTE_VALUE_INVALID),
-    int(CKR_TEMPLATE_INCONSISTENT),
-    int(CKR_FUNCTION_FAILED),
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_FUNCTION_FAILED,
 }
 
 _SET_ATTR_ERROR_RVS = {
-    int(CKR_ATTRIBUTE_READ_ONLY),
-    int(CKR_ATTRIBUTE_TYPE_INVALID),
-    int(CKR_ATTRIBUTE_VALUE_INVALID),
-    int(CKR_ACTION_PROHIBITED),
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ACTION_PROHIBITED,
 }
 
 
@@ -98,7 +98,7 @@ class TestCopyableOneWay:
             if attrs[CKA_COPYABLE] is not False:
                 pytest.skip("Module did not honour CKA_COPYABLE=False")
         except AssertionError as e:
-            if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not support reading CKA_COPYABLE: {e}")
             raise
 
@@ -132,7 +132,7 @@ class TestCopyableOneWay:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_COPYABLE])
                 initial = attrs[CKA_COPYABLE]
             except AssertionError as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not support reading CKA_COPYABLE: {e}")
                 raise
             if initial is not True:
@@ -164,7 +164,7 @@ class TestDestroyable:
             val = attrs[CKA_DESTROYABLE]
             assert val is True, f"Expected default CKA_DESTROYABLE=True, got {val}"
         except AssertionError as e:
-            if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not support CKA_DESTROYABLE: {e}")
             raise
         finally:
@@ -191,7 +191,7 @@ class TestDestroyable:
                 pytest.skip("CKA_DESTROYABLE not supported by module")
             val = attrs[CKA_DESTROYABLE]
         except AssertionError as e:
-            if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not support reading CKA_DESTROYABLE: {e}")
             raise
 
@@ -303,7 +303,7 @@ class TestTokenAttributePromotion:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_TOKEN])
             except AssertionError as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_TOKEN: {e}")
                 raise
             initial = attrs.get(CKA_TOKEN)
@@ -329,12 +329,12 @@ class TestTokenAttributePromotion:
                 if is_known_error(
                     e,
                     {
-                        int(CKR_ATTRIBUTE_READ_ONLY),
-                        int(CKR_ACTION_PROHIBITED),
-                        int(CKR_USER_NOT_LOGGED_IN),
-                        int(CKR_SESSION_READ_ONLY),
-                        int(CKR_TEMPLATE_INCONSISTENT),
-                        int(CKR_ATTRIBUTE_VALUE_INVALID),
+                        CKR_ATTRIBUTE_READ_ONLY,
+                        CKR_ACTION_PROHIBITED,
+                        CKR_USER_NOT_LOGGED_IN,
+                        CKR_SESSION_READ_ONLY,
+                        CKR_TEMPLATE_INCONSISTENT,
+                        CKR_ATTRIBUTE_VALUE_INVALID,
                     },
                 ):
                     return
@@ -384,7 +384,7 @@ class TestKeyGenMechanism:
             mech = attrs[CKA_KEY_GEN_MECHANISM]
             assert mech == CKM_AES_KEY_GEN, f"Expected CKM_AES_KEY_GEN, got {mech}"
         except AssertionError as e:
-            if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
             raise
         finally:
@@ -407,7 +407,7 @@ class TestKeyGenMechanism:
                     f"Expected CKM_RSA_PKCS_KEY_PAIR_GEN, got {mech}"
                 )
             except AssertionError as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
                 raise
         finally:
@@ -432,7 +432,7 @@ class TestKeyGenMechanism:
                     pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
                 mech = attrs[CKA_KEY_GEN_MECHANISM]
             except (AssertionError, Exception) as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
                 raise
             # CK_UNAVAILABLE_INFORMATION is ~0 (all bits set).
@@ -455,7 +455,7 @@ class TestKeyGenMechanism:
                 if CKA_KEY_GEN_MECHANISM not in attrs:
                     pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
             except AssertionError as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
                 raise
 
@@ -493,7 +493,7 @@ class TestCheckValue:
         except KeyError:
             pytest.skip("Module does not expose CKA_CHECK_VALUE")
         except AssertionError as e:
-            if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
             raise
         finally:
@@ -521,7 +521,7 @@ class TestCheckValue:
             except KeyError:
                 pytest.skip("Module does not expose CKA_CHECK_VALUE")
             except AssertionError as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
                 raise
 
@@ -562,7 +562,7 @@ class TestCheckValue:
             except KeyError:
                 pytest.skip("Module does not expose CKA_CHECK_VALUE")
             except AssertionError as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
                 raise
 
@@ -596,7 +596,7 @@ class TestAlwaysAuthenticate:
             val = attrs[CKA_ALWAYS_AUTHENTICATE]
             assert val is False, f"Default CKA_ALWAYS_AUTHENTICATE should be False, got {val}"
         except AssertionError as e:
-            if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
             raise
         finally:
@@ -626,7 +626,7 @@ class TestAlwaysAuthenticate:
                 attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
                 val = attrs[CKA_ALWAYS_AUTHENTICATE]
             except AssertionError as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
                 raise
 

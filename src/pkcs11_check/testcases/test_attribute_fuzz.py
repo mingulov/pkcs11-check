@@ -89,7 +89,7 @@ class TestMalformedAttributes:
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
-            if _is_template_error(e) or is_known_error(e, {int(CKR_KEY_SIZE_RANGE)}):
+            if _is_template_error(e) or is_known_error(e, {CKR_KEY_SIZE_RANGE}):
                 pass  # Correct to reject empty key value
             else:
                 raise
@@ -112,7 +112,7 @@ class TestMalformedAttributes:
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
             if _is_template_error(e) or is_known_error(
-                e, {int(CKR_DATA_LEN_RANGE), int(CKR_KEY_SIZE_RANGE)}
+                e, {CKR_DATA_LEN_RANGE, CKR_KEY_SIZE_RANGE}
             ):
                 pass  # Correct to reject wrong key size
             else:
@@ -226,7 +226,7 @@ class TestLargeAttributes:
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
-            if _is_template_error(e) or is_known_error(e, {int(CKR_DEVICE_MEMORY)}):
+            if _is_template_error(e) or is_known_error(e, {CKR_DEVICE_MEMORY}):
                 pass  # Acceptable: reject large label or out of memory
             else:
                 raise
@@ -248,7 +248,7 @@ class TestLargeAttributes:
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
-            if _is_template_error(e) or is_known_error(e, {int(CKR_DEVICE_MEMORY)}):
+            if _is_template_error(e) or is_known_error(e, {CKR_DEVICE_MEMORY}):
                 pass  # Acceptable: reject large value or out of memory
             else:
                 raise

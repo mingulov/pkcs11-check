@@ -305,7 +305,7 @@ def run_multiblock_encrypt_test(
                         mech_param=mech,
                     )
                 except AssertionError as exc:
-                    if is_known_error(exc, {int(CKR_MECHANISM_INVALID)}):
+                    if is_known_error(exc, {CKR_MECHANISM_INVALID}):
                         pytest.skip(f"{mech_name} not supported: {exc}")
                     raise
                 ct_history.append(ct)
@@ -379,7 +379,7 @@ def run_multiblock_decrypt_test(
                         mech_param=mech,
                     )
                 except AssertionError as exc:
-                    if is_known_error(exc, {int(CKR_MECHANISM_INVALID)}):
+                    if is_known_error(exc, {CKR_MECHANISM_INVALID}):
                         pytest.skip(f"{mech_name} not supported: {exc}")
                     raise
                 pt_history.append(pt)

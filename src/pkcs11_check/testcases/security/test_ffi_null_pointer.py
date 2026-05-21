@@ -137,7 +137,7 @@ try:
     mech.ulParameterLen = 16
     rv = raw.{init_func}(sh, ctypes.byref(mech), key)
     print(f"init_rv={{rv}}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         out_len = CK_ULONG(256)
         out_buf = (ctypes.c_ubyte * 256)()
         rv2 = raw.{update_func}(
@@ -169,7 +169,7 @@ try:
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
     print(f"init_rv={rv}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         rv2 = raw.C_SignUpdate(sh, None, 32)
         print(f"rv={rv2}")
     else:
@@ -197,7 +197,7 @@ try:
     mech.ulParameterLen = 0
     rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key)
     print(f"init_rv={rv}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         rv2 = raw.C_VerifyUpdate(sh, None, 32)
         print(f"rv={rv2}")
     else:
@@ -217,7 +217,7 @@ mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
 print(f"init_rv={rv}")
-if rv == int(CKR_OK):
+if rv == CKR_OK:
     rv2 = raw.C_DigestUpdate(sh, None, 32)
     print(f"rv={rv2}")
 else:
@@ -314,7 +314,7 @@ try:
     mech.ulParameterLen = 16
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
     print(f"init_rv={rv}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         data = (ctypes.c_ubyte * 16)(*range(16))
         upd_len = CK_ULONG(256)
         upd_buf = (ctypes.c_ubyte * 256)()
@@ -322,7 +322,7 @@ try:
             sh, data, 16, upd_buf, ctypes.byref(upd_len),
         )
         print(f"update_rv={rv2}")
-        if rv2 == int(CKR_OK):
+        if rv2 == CKR_OK:
             fin_len = CK_ULONG(32)
             rv3 = raw.C_EncryptFinal(
                 sh, None, ctypes.byref(fin_len),
@@ -355,7 +355,7 @@ try:
     mech.ulParameterLen = 16
     rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
     print(f"init_rv={rv}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         data = (ctypes.c_ubyte * 16)(*range(16))
         upd_len = CK_ULONG(256)
         upd_buf = (ctypes.c_ubyte * 256)()
@@ -363,7 +363,7 @@ try:
             sh, data, 16, upd_buf, ctypes.byref(upd_len),
         )
         print(f"update_rv={rv2}")
-        if rv2 == int(CKR_OK):
+        if rv2 == CKR_OK:
             fin_len = CK_ULONG(32)
             rv3 = raw.C_DecryptFinal(
                 sh, None, ctypes.byref(fin_len),
@@ -396,11 +396,11 @@ try:
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
     print(f"init_rv={rv}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         data = (ctypes.c_ubyte * 16)(*range(16))
         rv2 = raw.C_SignUpdate(sh, data, 16)
         print(f"update_rv={rv2}")
-        if rv2 == int(CKR_OK):
+        if rv2 == CKR_OK:
             sig_len = CK_ULONG(512)
             rv3 = raw.C_SignFinal(
                 sh, None, ctypes.byref(sig_len),
@@ -427,11 +427,11 @@ mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
 print(f"init_rv={rv}")
-if rv == int(CKR_OK):
+if rv == CKR_OK:
     data = (ctypes.c_ubyte * 16)(*range(16))
     rv2 = raw.C_DigestUpdate(sh, data, 16)
     print(f"update_rv={rv2}")
-    if rv2 == int(CKR_OK):
+    if rv2 == CKR_OK:
         dig_len = CK_ULONG(64)
         rv3 = raw.C_DigestFinal(
             sh, None, ctypes.byref(dig_len),
@@ -820,7 +820,7 @@ try:
     mech.ulParameterLen = 0
     rv = raw.{init_func}(sh, ctypes.byref(mech), key)
     print(f"init_rv={{rv}}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         out_len = CK_ULONG(256)
         out_buf = (ctypes.c_ubyte * 256)()
         rv2 = raw.{func_name}(
@@ -852,7 +852,7 @@ try:
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
     print(f"init_rv={rv}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         sig_len = CK_ULONG(512)
         sig_buf = (ctypes.c_ubyte * 512)()
         rv2 = raw.C_Sign(
@@ -884,7 +884,7 @@ try:
     mech.ulParameterLen = 0
     rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key)
     print(f"init_rv={rv}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         fake_sig = (ctypes.c_ubyte * 32)(*([0xAA] * 32))
         rv2 = raw.C_Verify(sh, None, 32, fake_sig, 32)
         print(f"rv={rv2}")
@@ -907,7 +907,7 @@ mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
 print(f"init_rv={rv}")
-if rv == int(CKR_OK):
+if rv == CKR_OK:
     dig_len = CK_ULONG(64)
     digest_buf = (ctypes.c_ubyte * 64)()
     rv2 = raw.C_Digest(
@@ -978,7 +978,7 @@ try:
     mech.ulParameterLen = 0
     rv = raw.C_MessageEncryptInit(sh, ctypes.byref(mech), key)
     print(f"init_rv={rv}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         iv_buf = (ctypes.c_ubyte * 12)()
         tag_buf = (ctypes.c_ubyte * 16)()
         params = CK_GCM_MESSAGE_PARAMS()
@@ -1050,7 +1050,7 @@ try:
     mech.ulParameterLen = 0
     rv = raw.C_MessageDecryptInit(sh, ctypes.byref(mech), key)
     print(f"init_rv={rv}")
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         iv_buf = (ctypes.c_ubyte * 12)(*range(12))
         tag_buf = (ctypes.c_ubyte * 16)()
         params = CK_GCM_MESSAGE_PARAMS()

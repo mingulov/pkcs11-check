@@ -93,7 +93,7 @@ class TestVerifySignatureRoundtrip:
             assert rv == CKR_OK, f"C_VerifySignatureFinal failed with 0x{rv:08x}"
         except AssertionError as e:
             if is_known_error(
-                e, {int(CKR_OPERATION_NOT_INITIALIZED), int(CKR_FUNCTION_NOT_SUPPORTED)}
+                e, {CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED}
             ):
                 pytest.skip("Module does not support multipart C_VerifySignatureUpdate")
             raise

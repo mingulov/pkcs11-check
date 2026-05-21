@@ -44,7 +44,7 @@ def _sign_eddsa(rs: Any, priv: int, data: bytes) -> bytes:
     try:
         return sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
     except AssertionError as exc:
-        if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
+        if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
             pytest.xfail(_EDDSA_PARAM_XFAIL_MSG)
         raise
 
@@ -54,7 +54,7 @@ def _verify_eddsa(rs: Any, pub: int, data: bytes, sig: bytes) -> bool:
     try:
         return verify_single(rs.raw, rs.sh, pub, CKM_EDDSA, data, sig)
     except AssertionError as exc:
-        if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
+        if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
             pytest.xfail(_EDDSA_PARAM_XFAIL_MSG)
         raise
 

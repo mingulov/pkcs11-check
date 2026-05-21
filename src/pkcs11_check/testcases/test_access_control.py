@@ -198,7 +198,7 @@ class TestModifiableAttribute:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
             except AssertionError as e:
-                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_MODIFIABLE: {e}")
                 raise
             if attrs.get(CKA_MODIFIABLE) is not False:

@@ -105,7 +105,7 @@ def _try_or_xfail(fn: Any, msg: str) -> Any:
     try:
         return fn()
     except AssertionError as exc:
-        if is_known_error(exc, {int(CKR_MECHANISM_INVALID), int(CKR_FUNCTION_FAILED)}):
+        if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_FUNCTION_FAILED}):
             pytest.xfail(f"{msg}: {exc}")
         raise
 

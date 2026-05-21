@@ -95,7 +95,7 @@ try:
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         buf = (ctypes.c_ubyte * 16)(*range(16))
         out_len = CK_ULONG(256)
         out_buf = (ctypes.c_ubyte * 256)()
@@ -145,7 +145,7 @@ try:
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         buf = (ctypes.c_ubyte * 16)(*range(16))
         out_len = CK_ULONG(256)
         out_buf = (ctypes.c_ubyte * 256)()
@@ -228,7 +228,7 @@ rv = raw.C_CreateObject(
     sh, ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={{rv}}")
     cleanup()
     raise SystemExit(0)
@@ -239,7 +239,7 @@ try:
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         buf = (ctypes.c_ubyte * 16)(*range(16))
         sig_len = CK_ULONG(64)
         sig_buf = (ctypes.c_ubyte * 64)()
@@ -286,7 +286,7 @@ mech.mechanism = int(CKM_SHA256)
 mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-if rv == int(CKR_OK):
+if rv == CKR_OK:
     buf = (ctypes.c_ubyte * 16)(*range(16))
     digest_len = CK_ULONG(64)
     digest_buf = (ctypes.c_ubyte * 64)()
@@ -660,7 +660,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)
@@ -808,7 +808,7 @@ rv = raw.C_CreateObject(
     sh, ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={{rv}}")
     cleanup()
     raise SystemExit(0)
@@ -819,7 +819,7 @@ try:
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         data = (ctypes.c_ubyte * 16)(*range(16))
         sig_buf = (ctypes.c_ubyte * 64)()
         sig_len = CK_ULONG({out_len})
@@ -867,7 +867,7 @@ mech.mechanism = int(CKM_SHA256)
 mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-if rv == int(CKR_OK):
+if rv == CKR_OK:
     data = (ctypes.c_ubyte * 16)(*range(16))
     digest_buf = (ctypes.c_ubyte * 64)()
     digest_len = CK_ULONG({out_len})
@@ -949,7 +949,7 @@ rv = raw.C_CreateObject(
     sh, ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={{rv}}")
     cleanup()
     raise SystemExit(0)
@@ -960,7 +960,7 @@ try:
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key.value)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         data = (ctypes.c_ubyte * 16)(*range(16))
         sig_buf = (ctypes.c_ubyte * 64)()
         rv2 = raw.C_Verify(
@@ -1057,7 +1057,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)
@@ -1330,7 +1330,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)
@@ -1467,7 +1467,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)
@@ -1621,7 +1621,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)

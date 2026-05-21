@@ -90,7 +90,7 @@ class TestRsaPkcs15:
             sig = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["message"])
             assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig)
         except AssertionError as exc:
-            if is_known_error(exc, {int(CKR_KEY_SIZE_RANGE), int(CKR_MECHANISM_INVALID)}):
+            if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_MECHANISM_INVALID}):
                 pytest.skip(f"RSA {key_bits}-bit not supported")
             raise
         finally:
@@ -134,9 +134,9 @@ class TestRsaPss:
                 rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig, mech_param=mech_param
             )
         except AssertionError as exc:
-            if is_known_error(exc, {int(CKR_KEY_SIZE_RANGE), int(CKR_MECHANISM_INVALID)}):
+            if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_MECHANISM_INVALID}):
                 pytest.skip(f"RSA {key_bits}-bit not supported")
-            if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
+            if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
                 pytest.skip("PSS params not supported (hashAlg != mgf)")
             raise
         finally:
@@ -174,14 +174,14 @@ class TestRsaSigVer:
             if expected_pass and not verified:
                 pytest.fail(f"{vec_id}: rejected VALID signature")
         except AssertionError as exc:
-            if is_known_error(exc, {int(CKR_KEY_SIZE_RANGE), int(CKR_TEMPLATE_INCONSISTENT)}):
+            if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_TEMPLATE_INCONSISTENT}):
                 pytest.skip("RSA key import failed")
             if not expected_pass and is_known_error(
                 exc,
                 {
-                    int(CKR_SIGNATURE_INVALID),
-                    int(CKR_SIGNATURE_LEN_RANGE),
-                    int(CKR_DEVICE_ERROR),
+                    CKR_SIGNATURE_INVALID,
+                    CKR_SIGNATURE_LEN_RANGE,
+                    CKR_DEVICE_ERROR,
                 },
             ):
                 pass  # Expected
@@ -227,16 +227,16 @@ class TestRsaSigVer:
             if expected_pass and not verified:
                 pytest.fail(f"{vec_id}: rejected VALID PSS signature")
         except AssertionError as exc:
-            if is_known_error(exc, {int(CKR_KEY_SIZE_RANGE), int(CKR_TEMPLATE_INCONSISTENT)}):
+            if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_TEMPLATE_INCONSISTENT}):
                 pytest.skip("RSA key import failed")
-            if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
+            if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
                 pytest.skip("PSS params not supported")
             if not expected_pass and is_known_error(
                 exc,
                 {
-                    int(CKR_SIGNATURE_INVALID),
-                    int(CKR_SIGNATURE_LEN_RANGE),
-                    int(CKR_DEVICE_ERROR),
+                    CKR_SIGNATURE_INVALID,
+                    CKR_SIGNATURE_LEN_RANGE,
+                    CKR_DEVICE_ERROR,
                 },
             ):
                 pass  # Expected

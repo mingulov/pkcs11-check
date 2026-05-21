@@ -340,7 +340,7 @@ class TestPinTimingSideChannel:
             t0 = time.perf_counter_ns()
             rv_ok = rs.raw.C_Login(rs.sh, int(CKU_USER), pin_buf, len(pin_bytes))
             t1 = time.perf_counter_ns()
-            if rv_ok in (int(CKR_USER_ALREADY_LOGGED_IN), int(CKR_USER_TYPE_INVALID)):
+            if rv_ok in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID):
                 # Cannot measure -- session state prevents re-login
                 return
             correct_times.append(t1 - t0)
@@ -351,9 +351,9 @@ class TestPinTimingSideChannel:
             t0 = time.perf_counter_ns()
             rv_bad = rs.raw.C_Login(rs.sh, int(CKU_USER), wrong_buf, len(wrong_pin))
             t1 = time.perf_counter_ns()
-            if rv_bad == int(CKR_USER_ALREADY_LOGGED_IN):
+            if rv_bad == CKR_USER_ALREADY_LOGGED_IN:
                 return  # Cannot measure
-            if rv_bad != int(CKR_PIN_INCORRECT):
+            if rv_bad != CKR_PIN_INCORRECT:
                 # Unexpected error -- abort measurement
                 return
             wrong_times.append(t1 - t0)
@@ -385,5 +385,5 @@ class TestPinTimingSideChannel:
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
         rv_final = rs.raw.C_Login(rs.sh, int(CKU_USER), pin_buf, len(pin_bytes))
         # Ignore CKR_USER_ALREADY_LOGGED_IN here
-        if rv_final not in (0, int(CKR_USER_ALREADY_LOGGED_IN)):
+        if rv_final not in (0, CKR_USER_ALREADY_LOGGED_IN):
             pass  # Best-effort re-login

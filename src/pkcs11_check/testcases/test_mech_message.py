@@ -474,9 +474,9 @@ class TestMessageEncrypt:
                 )
 
             accepted_rejection = (
-                int(CKR_KEY_FUNCTION_NOT_PERMITTED),
-                int(CKR_KEY_HANDLE_INVALID),
-                int(CKR_KEY_TYPE_INCONSISTENT),
+                CKR_KEY_FUNCTION_NOT_PERMITTED,
+                CKR_KEY_HANDLE_INVALID,
+                CKR_KEY_TYPE_INCONSISTENT,
             )
             assert rv in accepted_rejection, (
                 f"C_MessageEncryptInit on CKA_ENCRYPT=False key returned "
