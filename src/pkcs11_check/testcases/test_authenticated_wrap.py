@@ -37,10 +37,15 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
+    CKR_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_WRAPPED_KEY_LEN_RANGE,
 )
 from pkcs11_check.testcases.conftest import is_known_error
 
@@ -398,23 +403,19 @@ class TestAuthenticatedWrapAAD:
                 # Expected: AEAD detected the AAD mismatch. Match against
                 # specific rejection CKRs so a recipe-side assert (buffer
                 # shape, ctypes mismatch, etc.) cannot silently pass as
-                # "AAD detected".
-                msg = str(exc)
-                aead_reject_codes = (
-                    "CKR_ENCRYPTED_DATA_INVALID",
-                    "CKR_WRAPPED_KEY_INVALID",
-                    "CKR_SIGNATURE_INVALID",
-                    "CKR_DATA_INVALID",
-                )
-                # Plus per-module documented quirks (e.g. Kryoptic returns
-                # CKR_DEVICE_ERROR for any verification failure).
-                from pkcs11_check.raw.rv import ckr_name as _ckr_name
+                # "AAD detected".  Plus per-module documented quirks
+                # (e.g. Kryoptic returns CKR_DEVICE_ERROR for any
+                # verification failure).
                 from pkcs11_check.testcases._module_quirks import quirk_extras
 
-                quirk_codes = [
-                    _ckr_name(c) for c in quirk_extras(p11_config, "verify_or_integrity_failure")
-                ]
-                if any(code in msg for code in (*aead_reject_codes, *quirk_codes)):
+                aead_reject_rvs = {
+                    CKR_ENCRYPTED_DATA_INVALID,
+                    CKR_WRAPPED_KEY_INVALID,
+                    CKR_SIGNATURE_INVALID,
+                    CKR_DATA_INVALID,
+                    *quirk_extras(p11_config, "verify_or_integrity_failure"),
+                }
+                if is_known_error(exc, aead_reject_rvs):
                     return
                 raise
 
@@ -513,12 +514,7 @@ class TestWrapIntegrity:
                 # are added via the quirk registry, NOT hard-coded here —
                 # so a different module returning CKR_DEVICE_ERROR is
                 # surfaced as a finding rather than silently accepted.
-                msg = str(exc)
-                accepted = [
-                    "CKR_WRAPPED_KEY_INVALID",
-                    "CKR_ENCRYPTED_DATA_INVALID",
-                    "CKR_WRAPPED_KEY_LEN_RANGE",
-                ]
+                #
                 # CKR_GENERAL_ERROR removed from base — too lenient. If a
                 # specific module needs it as a documented fallback, add
                 # it as a quirk in `_module_quirks.py`.
@@ -527,16 +523,14 @@ class TestWrapIntegrity:
                 # are routed through the quirk registry so the rejection is
                 # accepted ONLY for the module that documents the deviation,
                 # not as a global fallback.
-                from pkcs11_check.raw.rv import ckr_name as _ckr_name
-
-                accepted += [
-                    _ckr_name(c) for c in quirk_extras(p11_config, "verify_or_integrity_failure")
-                ]
-                accepted += [
-                    _ckr_name(c)
-                    for c in quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
-                ]
-                if any(code in msg for code in accepted):
+                accepted_rvs = {
+                    CKR_WRAPPED_KEY_INVALID,
+                    CKR_ENCRYPTED_DATA_INVALID,
+                    CKR_WRAPPED_KEY_LEN_RANGE,
+                    *quirk_extras(p11_config, "verify_or_integrity_failure"),
+                    *quirk_extras(p11_config, "unwrap_template_class_keytype_rejected"),
+                }
+                if is_known_error(exc, accepted_rvs):
                     return
                 raise
 
@@ -875,27 +869,20 @@ class TestEcdhAesKeyWrap:
                     mech_param=mech_t,
                 )
             except AssertionError as exc:
-                msg = str(exc)
-                accepted: tuple[str, ...] = (
-                    "CKR_WRAPPED_KEY_INVALID",
-                    "CKR_ENCRYPTED_DATA_INVALID",
-                    "CKR_WRAPPED_KEY_LEN_RANGE",
-                )
                 # Per-module quirks via the registry — Kryoptic's
                 # CKR_DEVICE_ERROR for verify failures, OpenCryptoki's
                 # CKR_ATTRIBUTE_READ_ONLY rejecting unwrap templates that
                 # contain CKA_CLASS/CKA_KEY_TYPE before crypto check.
-                from pkcs11_check.raw.rv import ckr_name as _ckr_name
                 from pkcs11_check.testcases._module_quirks import quirk_extras
 
-                accepted += tuple(
-                    _ckr_name(c) for c in quirk_extras(p11_config, "verify_or_integrity_failure")
-                )
-                accepted += tuple(
-                    _ckr_name(c)
-                    for c in quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
-                )
-                if any(code in msg for code in accepted):
+                accepted_rvs = {
+                    CKR_WRAPPED_KEY_INVALID,
+                    CKR_ENCRYPTED_DATA_INVALID,
+                    CKR_WRAPPED_KEY_LEN_RANGE,
+                    *quirk_extras(p11_config, "verify_or_integrity_failure"),
+                    *quirk_extras(p11_config, "unwrap_template_class_keytype_rejected"),
+                }
+                if is_known_error(exc, accepted_rvs):
                     return
                 raise
 
