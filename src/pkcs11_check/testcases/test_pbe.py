@@ -15,6 +15,7 @@ import pytest
 
 from pkcs11_check.raw.pack import PackedMechanism, mech_pbe, mech_pbkdf2
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_CLASS,
@@ -90,7 +91,7 @@ def _build_pbe_mech(
     )
 
 
-def _pbe_gen_key_with_mech(
+def _pbe_gen_key(
     rs: Any,
     mech_type: int,
     key_type: int,
@@ -101,7 +102,15 @@ def _pbe_gen_key_with_mech(
     iv_len: int = 8,
     extra_attrs: dict[int, Any] | None = None,
 ) -> tuple[int | None, PackedMechanism]:
-    """Generate a PBE key and keep mechanism output buffers inspectable."""
+    """Generate a PBE key.
+
+    Returns ``(handle_or_None, packed_mechanism)``.  Callers that only need
+    the handle index with ``[0]``; callers that want to inspect the
+    mechanism's output buffers (e.g. ``pm.buffer_bytes("init_vector")``)
+    destructure the tuple.  ``handle`` is ``None`` if the module returned a
+    PBE-acceptable error from ``_PBE_ERROR_RVS``; any other CKR raises
+    AssertionError via ``expect_rv``.
+    """
     from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
 
     packed = [
@@ -123,39 +132,10 @@ def _pbe_gen_key_with_mech(
     pm = _build_pbe_mech(mech_type, password, salt, iterations, iv_len)
     key_h = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, pm.byref(), tmpl.ptr, tmpl.count, byref(key_h))
-    if rv != CKR_OK:
-        if rv in _PBE_ERROR_RVS:
-            return None, pm
-        from pkcs11_check.raw.rv import ckr_name
-
-        raise AssertionError(f"Unexpected CKR from PBE keygen: {ckr_name(rv)}")
+    if rv in _PBE_ERROR_RVS:
+        return None, pm
+    expect_rv(rv, CKR_OK)
     return key_h.value, pm
-
-
-def _pbe_gen_key(
-    rs: Any,
-    mech_type: int,
-    key_type: int,
-    key_bits: int,
-    password: bytes,
-    salt: bytes,
-    iterations: int,
-    iv_len: int = 8,
-    extra_attrs: dict[int, Any] | None = None,
-) -> int | None:
-    """Generate a key via PBE mechanism. Returns handle or None on PBE error."""
-    handle, _pm = _pbe_gen_key_with_mech(
-        rs,
-        mech_type,
-        key_type,
-        key_bits,
-        password,
-        salt,
-        iterations,
-        iv_len,
-        extra_attrs,
-    )
-    return handle
 
 
 def _pbkdf2_gen_key(
@@ -197,12 +177,9 @@ def _pbkdf2_gen_key(
 
     key_h = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mp.byref(), tmpl.ptr, tmpl.count, byref(key_h))
-    if rv != CKR_OK:
-        if rv in _PBE_ERROR_RVS:
-            return None
-        from pkcs11_check.raw.rv import ckr_name
-
-        raise AssertionError(f"Unexpected CKR from PBKDF2 keygen: {ckr_name(rv)}")
+    if rv in _PBE_ERROR_RVS:
+        return None
+    expect_rv(rv, CKR_OK)
     return key_h.value
 
 
@@ -225,7 +202,7 @@ class TestPBESHA1DES3:
             _PASSWORD,
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         if handle is None:
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
@@ -239,7 +216,7 @@ class TestPBESHA1DES3:
         if not rs.has_mechanism("PBE_SHA1_DES3_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not supported")
 
-        handle, mech = _pbe_gen_key_with_mech(
+        handle, mech = _pbe_gen_key(
             rs,
             CKM_PBE_SHA1_DES3_EDE_CBC,
             CKK_DES3,
@@ -271,7 +248,7 @@ class TestPBESHA1DES3:
             _PASSWORD,
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         h2 = _pbe_gen_key(
             rs,
             CKM_PBE_SHA1_DES3_EDE_CBC,
@@ -280,7 +257,7 @@ class TestPBESHA1DES3:
             _PASSWORD,
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         if h1 is None or h2 is None:
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
@@ -303,7 +280,7 @@ class TestPBESHA1DES3:
             _PASSWORD,
             b"\x00" * 8,
             _ITERATIONS,
-        )
+        )[0]
         hb = _pbe_gen_key(
             rs,
             CKM_PBE_SHA1_DES3_EDE_CBC,
@@ -312,7 +289,7 @@ class TestPBESHA1DES3:
             _PASSWORD,
             b"\xff" * 8,
             _ITERATIONS,
-        )
+        )[0]
         if ha is None or hb is None:
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
@@ -335,7 +312,7 @@ class TestPBESHA1DES3:
             b"PasswordAlpha",
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         hb = _pbe_gen_key(
             rs,
             CKM_PBE_SHA1_DES3_EDE_CBC,
@@ -344,7 +321,7 @@ class TestPBESHA1DES3:
             b"PasswordBravo",
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         if ha is None or hb is None:
             pytest.skip("CKM_PBE_SHA1_DES3_EDE_CBC not operational")
         try:
@@ -375,7 +352,7 @@ class TestPBESHA1DES2:
             _PASSWORD,
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         if handle is None:
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
         try:
@@ -389,7 +366,7 @@ class TestPBESHA1DES2:
         if not rs.has_mechanism("PBE_SHA1_DES2_EDE_CBC"):
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not supported")
 
-        handle, mech = _pbe_gen_key_with_mech(
+        handle, mech = _pbe_gen_key(
             rs,
             CKM_PBE_SHA1_DES2_EDE_CBC,
             CKK_DES2,
@@ -421,7 +398,7 @@ class TestPBESHA1DES2:
             _PASSWORD,
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         h2 = _pbe_gen_key(
             rs,
             CKM_PBE_SHA1_DES2_EDE_CBC,
@@ -430,7 +407,7 @@ class TestPBESHA1DES2:
             _PASSWORD,
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         if h1 is None or h2 is None:
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
         try:
@@ -453,7 +430,7 @@ class TestPBESHA1DES2:
             b"PasswordAlpha",
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         hb = _pbe_gen_key(
             rs,
             CKM_PBE_SHA1_DES2_EDE_CBC,
@@ -462,7 +439,7 @@ class TestPBESHA1DES2:
             b"PasswordBravo",
             _SALT,
             _ITERATIONS,
-        )
+        )[0]
         if ha is None or hb is None:
             pytest.skip("CKM_PBE_SHA1_DES2_EDE_CBC not operational")
         try:
@@ -502,7 +479,7 @@ class TestPBASHA1:
             _ITERATIONS,
             iv_len=20,
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
-        )
+        )[0]
         if handle is None:
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
@@ -542,7 +519,7 @@ class TestPBASHA1:
             _ITERATIONS,
             iv_len=20,
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
-        )
+        )[0]
         h2 = _pbe_gen_key(
             rs,
             CKM_PBA_SHA1_WITH_SHA1_HMAC,
@@ -553,7 +530,7 @@ class TestPBASHA1:
             _ITERATIONS,
             iv_len=20,
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
-        )
+        )[0]
         if h1 is None or h2 is None:
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
@@ -578,7 +555,7 @@ class TestPBASHA1:
             _ITERATIONS,
             iv_len=20,
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
-        )
+        )[0]
         hb = _pbe_gen_key(
             rs,
             CKM_PBA_SHA1_WITH_SHA1_HMAC,
@@ -589,7 +566,7 @@ class TestPBASHA1:
             _ITERATIONS,
             iv_len=20,
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
-        )
+        )[0]
         if ha is None or hb is None:
             pytest.skip("CKM_PBA_SHA1_WITH_SHA1_HMAC not operational")
         try:
