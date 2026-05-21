@@ -1035,21 +1035,35 @@ def test_sdist_and_wheel_include_vendored_standard_headers_and_generated_raw_mod
 
 
 # ---------------------------------------------------------------------------
-# _alloc_writable_pointer and KeyMatMechanism
+# Writable-pointer ownership invariant + KeyMatMechanism
 # ---------------------------------------------------------------------------
 
 
-def test_alloc_writable_pointer_points_struct_field_at_buffer() -> None:
-    """The buffer the helper returns IS what params.<field> points at."""
-    from pkcs11_check.raw.pack_mechanisms import _alloc_writable_pointer
-    from pkcs11_check.raw.types_std import CK_GCM_MESSAGE_PARAMS
+def test_mech_gcm_message_tag_buffer_aliases_struct_field() -> None:
+    """Writes through params.pTag are visible via the registered ``tag`` buffer.
 
-    params = CK_GCM_MESSAGE_PARAMS()
-    buf = _alloc_writable_pointer(params, "pTag", 16)
+    Locks the ownership invariant that the internal allocator helper relies on:
+    the bytes ``buffer_bytes("tag")`` returns must be the same memory the
+    mechanism param struct points at.
+    """
+    from pkcs11_check.raw.pack import mech_gcm_message
+    from pkcs11_check.raw.types_std import CKM_AES_GCM
 
-    assert len(buf) == 16
-    ctypes.cast(params.pTag, ctypes.POINTER(ctypes.c_ubyte * 16))[0][0] = 0x42
-    assert buf[0] == 0x42
+    mech = mech_gcm_message(CKM_AES_GCM, bytes(12), tag_bits=128)
+    ctypes.cast(mech.params.pTag, ctypes.POINTER(ctypes.c_ubyte * 16))[0][3] = 0x42
+    assert mech.buffer_bytes("tag")[3] == 0x42
+
+
+def test_packed_mechanism_buffer_storage_exposes_underlying_buffer() -> None:
+    """``buffer_storage`` returns the live ctypes array for shared mutation."""
+    from pkcs11_check.raw.pack import mech_gcm_message
+    from pkcs11_check.raw.types_std import CKM_AES_GCM
+
+    mech = mech_gcm_message(CKM_AES_GCM, bytes(12), tag_bits=128)
+    storage, length = mech.buffer_storage("tag")
+    assert length == 16
+    storage[5] = 0x99
+    assert mech.buffer_bytes("tag")[5] == 0x99
 
 
 def test_key_mat_mechanism_owns_key_mat_out_struct() -> None:

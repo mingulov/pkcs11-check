@@ -215,7 +215,7 @@ def mech_gcm_message_inherit_tag(
     bytes ``source.buffer_bytes("tag")`` does.  ``source`` is kept alive
     via the new mechanism's keepalive list.
     """
-    tag_storage, tag_len = source._named_buffers["tag"]
+    tag_storage, tag_len = source.buffer_storage("tag")
     ka: list[Any] = [source]
     params = CK_GCM_MESSAGE_PARAMS()
     params.pIv, params.ulIvLen = _pack_bytes(iv, ka)

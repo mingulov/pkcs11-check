@@ -165,6 +165,16 @@ class PackedMechanism:
         storage, length = self._named_buffers[name]
         return bytes(storage[:length])
 
+    def buffer_storage(self, name: str) -> tuple[Any, int]:
+        """Return the ``(storage, length)`` pair behind a named buffer.
+
+        Use this to share the underlying ctypes buffer with another mechanism
+        (e.g. so an unwrap-side ``CK_GCM_MESSAGE_PARAMS`` can reuse the wrap
+        side's pTag) or to mutate it in place.  Raises ``KeyError`` if no
+        buffer of that name has been registered.
+        """
+        return self._named_buffers[name]
+
 
 class KeyMatMechanism(PackedMechanism):
     """PackedMechanism variant that also owns a CK_*_KEY_MAT_OUT struct.

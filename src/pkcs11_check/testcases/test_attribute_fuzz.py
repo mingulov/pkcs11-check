@@ -30,46 +30,22 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKO_DATA,
     CKO_SECRET_KEY,
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_TYPE_INVALID,
-    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_MEMORY,
-    CKR_FUNCTION_FAILED,
     CKR_KEY_SIZE_RANGE,
-    CKR_MECHANISM_INVALID,
-    CKR_TEMPLATE_INCOMPLETE,
-    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._error_tuples import KEY_SIZE_ERRORS, TEMPLATE_ERRORS
 from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.security
 
-_TEMPLATE_ERROR_RVS = {
-    int(CKR_ATTRIBUTE_TYPE_INVALID),
-    int(CKR_ATTRIBUTE_VALUE_INVALID),
-    int(CKR_TEMPLATE_INCOMPLETE),
-    int(CKR_TEMPLATE_INCONSISTENT),
-    int(CKR_ARGUMENTS_BAD),
-    int(CKR_FUNCTION_FAILED),
-}
-
-_KEY_SIZE_ERROR_RVS = {
-    int(CKR_ATTRIBUTE_VALUE_INVALID),
-    int(CKR_KEY_SIZE_RANGE),
-    int(CKR_MECHANISM_INVALID),
-    int(CKR_ARGUMENTS_BAD),
-    int(CKR_TEMPLATE_INCOMPLETE),
-    int(CKR_FUNCTION_FAILED),
-}
-
 
 def _is_template_error(e: BaseException) -> bool:
-    return is_known_error(e, _TEMPLATE_ERROR_RVS)
+    return is_known_error(e, TEMPLATE_ERRORS)
 
 
 def _is_key_size_error(e: BaseException) -> bool:
-    return is_known_error(e, _KEY_SIZE_ERROR_RVS)
+    return is_known_error(e, KEY_SIZE_ERRORS)
 
 
 class TestMalformedAttributes:

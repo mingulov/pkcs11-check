@@ -13,6 +13,9 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
+
 
 def needs_mechanism(name: str) -> Callable[[Any], Any]:
     """Decorator that skips the test if the mechanism is not supported."""
@@ -72,39 +75,6 @@ def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:
         pytest.skip("Token is write-protected -- cannot create token objects")
 
 
-def xfail_if_known_ckr(
-    exc: Exception,
-    known_ckrs: set[Any] | tuple[Any, ...] | frozenset[Any],
-    msg: str,
-) -> None:
-    """xfail if ``exc`` corresponds to a known CKR, otherwise re-raise.
-
-    Prefers the exact ``CkrAssertionError.rv`` attribute when present
-    (raised by ``expect_rv``).  Falls back to substring matching on the
-    exception message for assertions raised by other call paths.
-
-    Use this instead of ``except (AssertionError, Exception): pytest.xfail(...)``
-    so that only specific CKR failures become expected failures, while
-    Python coding bugs and wrong-output assertions propagate as real failures.
-
-    Args:
-        exc: The caught exception.
-        known_ckrs: Iterable of CKR integer values to match against.
-        msg: Message for pytest.xfail if a known CKR is matched.
-    """
-    from pkcs11_check.raw.rv import ckr_name
-
-    rv = getattr(exc, "rv", None)
-    if rv is not None and rv in known_ckrs:
-        pytest.xfail(f"{msg}: {ckr_name(rv)}")
-    elif rv is None:
-        exc_str = str(exc)
-        for ckr in known_ckrs:
-            if ckr_name(ckr) in exc_str:
-                pytest.xfail(f"{msg}: {ckr_name(ckr)}")
-    raise  # Not a known CKR -- propagate as real failure
-
-
 def is_known_error(
     exc: BaseException,
     error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
@@ -117,13 +87,48 @@ def is_known_error(
     misfire when one CKR name is a prefix of another, so prefer raising
     via ``expect_rv`` where possible.
     """
-    from pkcs11_check.raw.rv import ckr_name
-
     rv = getattr(exc, "rv", None)
     if rv is not None:
         return rv in error_rvs
     msg = str(exc)
     return any(ckr_name(r) in msg for r in error_rvs)
+
+
+def _matched_ckr_name(exc: BaseException, known_ckrs: Any) -> str | None:
+    """Return the CKR name that matched ``exc``, or None if no match."""
+    rv = getattr(exc, "rv", None)
+    if rv is not None:
+        return ckr_name(rv) if rv in known_ckrs else None
+    msg = str(exc)
+    for ckr in known_ckrs:
+        if ckr_name(ckr) in msg:
+            return ckr_name(ckr)
+    return None
+
+
+def xfail_if_known_ckr(
+    exc: Exception,
+    known_ckrs: set[Any] | tuple[Any, ...] | frozenset[Any],
+    msg: str,
+) -> None:
+    """xfail if ``exc`` corresponds to a known CKR, otherwise re-raise.
+
+    Prefers exact ``CkrAssertionError.rv`` matching (via ``is_known_error``);
+    falls back to substring matching for assertions raised by other call paths.
+
+    Use this instead of ``except (AssertionError, Exception): pytest.xfail(...)``
+    so that only specific CKR failures become expected failures, while
+    Python coding bugs and wrong-output assertions propagate as real failures.
+
+    Args:
+        exc: The caught exception.
+        known_ckrs: Iterable of CKR integer values to match against.
+        msg: Message for pytest.xfail if a known CKR is matched.
+    """
+    matched = _matched_ckr_name(exc, known_ckrs)
+    if matched is not None:
+        pytest.xfail(f"{msg}: {matched}")
+    raise  # Not a known CKR -- propagate as real failure
 
 
 def destroy_returned_handles(rs: Any, *handles: int) -> None:
@@ -146,8 +151,6 @@ def skip_if_mech_param_unsupported(exc: BaseException, context: str) -> None:
     Prefers exact ``CkrAssertionError.rv`` matching when present (via
     ``is_known_error``).
     """
-    from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
-
     if is_known_error(exc, MECH_PARAM_UNSUPPORTED_ERRORS):
         pytest.skip(f"{context} not supported: {exc}")
     raise exc

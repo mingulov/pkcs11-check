@@ -6,7 +6,6 @@ AES-GCM AEAD. Requires PKCS#11 v3.2 interface (C_WrapKeyAuthenticated).
 
 from __future__ import annotations
 
-import ctypes
 from typing import Any
 
 import pytest
@@ -237,10 +236,10 @@ class TestAuthenticatedWrap:
                 pytest.skip("Module did not write an authentication tag to pTag")
                 return
 
-            # Tamper with the tag inside a fresh mech_param's pTag buffer.
-            tampered_tag = bytes([tag[0] ^ 0xFF]) + tag[1:]
-            unwrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
-            ctypes.memmove(unwrap_mech.params.pTag, tampered_tag, len(tampered_tag))
+            # Tamper with the tag in-place via the shared pTag buffer.
+            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+            tag_storage, _ = unwrap_mech.buffer_storage("tag")
+            tag_storage[0] ^= 0xFF
             try:
                 unwrapped = unwrap_key_authenticated(
                     rs.raw,
