@@ -42,6 +42,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.security]
 
@@ -309,16 +310,29 @@ class TestTokenAttributePromotion:
             try:
                 set_attributes(rs.raw, rs.sh, key, {CKA_TOKEN: True})
             except AssertionError as e:
-                msg = str(e)
-                accepted_rejection = (
-                    "CKR_ATTRIBUTE_READ_ONLY",
-                    "CKR_ACTION_PROHIBITED",
-                    "CKR_USER_NOT_LOGGED_IN",
-                    "CKR_SESSION_READ_ONLY",
-                    "CKR_TEMPLATE_INCONSISTENT",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
+                # Exact rv match (via CkrAssertionError.rv) avoids the
+                # CKR_SESSION_READ_ONLY ⊂ CKR_SESSION_READ_ONLY_EXISTS
+                # substring collision the older `code in msg` pattern hit.
+                from pkcs11_check.raw.types_std import (
+                    CKR_ACTION_PROHIBITED,
+                    CKR_ATTRIBUTE_READ_ONLY,
+                    CKR_ATTRIBUTE_VALUE_INVALID,
+                    CKR_SESSION_READ_ONLY,
+                    CKR_TEMPLATE_INCONSISTENT,
+                    CKR_USER_NOT_LOGGED_IN,
                 )
-                if any(code in msg for code in accepted_rejection):
+
+                if is_known_error(
+                    e,
+                    {
+                        int(CKR_ATTRIBUTE_READ_ONLY),
+                        int(CKR_ACTION_PROHIBITED),
+                        int(CKR_USER_NOT_LOGGED_IN),
+                        int(CKR_SESSION_READ_ONLY),
+                        int(CKR_TEMPLATE_INCONSISTENT),
+                        int(CKR_ATTRIBUTE_VALUE_INVALID),
+                    },
+                ):
                     return
                 raise
 
