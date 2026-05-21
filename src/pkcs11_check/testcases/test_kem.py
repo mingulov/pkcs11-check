@@ -21,7 +21,7 @@ from pkcs11_check.raw.pack import (
     template_ptr_count,
 )
 from pkcs11_check.raw.recipes import (
-    _to_ubyte_buf,
+    to_ubyte_buf,
     decapsulate_key,
     destroy_quietly,
     encapsulate_key,
@@ -648,7 +648,7 @@ class TestMLKEMNegative:
                 attr_ulong(CKA_KEY_TYPE, CKK_AES),
                 attr_bytes(CKA_VALUE, b"injected"),
             )
-            ct_buf = _to_ubyte_buf(ct)
+            ct_buf = to_ubyte_buf(ct)
             rv = rs.raw.C_DecapsulateKey(
                 rs.sh,
                 mech.byref(),
@@ -682,7 +682,7 @@ class TestMLKEMNegative:
             tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY), attr_ulong(CKA_KEY_TYPE, CKK_AES)
             )
-            short_ct_buf = _to_ubyte_buf(short_ct)
+            short_ct_buf = to_ubyte_buf(short_ct)
             rv = rs.raw.C_DecapsulateKey(
                 rs.sh,
                 mech.byref(),
@@ -721,7 +721,7 @@ class TestMLKEMNegative:
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_ulong(CKA_KEY_TYPE, CKK_AES),
             )
-            ct_buf = _to_ubyte_buf(ct)
+            ct_buf = to_ubyte_buf(ct)
             rv = rs.raw.C_DecapsulateKey(
                 rs.sh,
                 mech.byref(),

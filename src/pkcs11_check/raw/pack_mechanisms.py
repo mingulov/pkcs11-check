@@ -825,7 +825,7 @@ def mech_ssl3_key_mat(
     key_size_bits: int = 128,
     iv_size_bits: int = 128,
     is_export: bool = False,
-) -> PackedMechanism:
+) -> KeyMatMechanism:
     """Pack CK_SSL3_KEY_MAT_PARAMS.
 
     Used for CKM_SSL3_KEY_AND_MAC_DERIVE and CKM_TLS_KEY_AND_MAC_DERIVE.
@@ -907,7 +907,7 @@ def mech_tls12_key_mat(
     key_size_bits: int = 128,
     iv_size_bits: int = 128,
     is_export: bool = False,
-) -> PackedMechanism:
+) -> KeyMatMechanism:
     """Pack CK_TLS12_KEY_MAT_PARAMS.
 
     Used for CKM_TLS12_KEY_AND_MAC_DERIVE and CKM_TLS12_KEY_SAFE_DERIVE.
@@ -1101,7 +1101,7 @@ def mech_wtls_key_mat(
     iv_size_bits: int = 0,
     sequence_number: int = 0,
     is_export: bool = False,
-) -> PackedMechanism:
+) -> KeyMatMechanism:
     """Pack CK_WTLS_KEY_MAT_PARAMS.
 
     Used for CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE and
