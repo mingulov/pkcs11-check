@@ -178,9 +178,7 @@ class TestX2RatchetDerive:
         except AssertionError as exc:
             # Check if it's a known "not yet operational" CKR
             if is_known_error(exc, _RATCHET_ERROR_RVS):
-
                 pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
-
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -230,9 +228,7 @@ class TestX2RatchetDerive:
                 destroy_quietly(rs.raw, rs.sh, derived_b)
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
-
                 pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
-
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_a)
@@ -286,9 +282,7 @@ class TestX2RatchetDerive:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
-
                 pytest.xfail(f"CKM_X2RATCHET_RESPOND not yet operational: {exc}")
-
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -329,9 +323,7 @@ class TestX2RatchetDerive:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
-
                 pytest.xfail(f"CKM_X2RATCHET_RESPOND X2RATCHET key not operational: {exc}")
-
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -376,9 +368,7 @@ class TestX2RatchetEncrypt:
             assert len(ciphertext) > 0
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
-
                 pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
-
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -405,9 +395,7 @@ class TestX2RatchetEncrypt:
             assert ciphertext != plaintext, "Ciphertext must not equal plaintext"
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
-
                 pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
-
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -449,9 +437,7 @@ class TestX2RatchetEncrypt:
             assert plaintext is not None
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
-
                 pytest.xfail(f"CKM_X2RATCHET_DECRYPT not yet operational: {exc}")
-
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -491,9 +477,7 @@ class TestX2RatchetEncrypt:
             assert recovered == plaintext, "Roundtrip plaintext mismatch"
         except AssertionError as exc:
             if is_known_error(exc, _RATCHET_ERROR_RVS):
-
                 pytest.xfail(f"CKM_X2RATCHET encrypt/decrypt roundtrip not operational: {exc}")
-
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, enc_key)

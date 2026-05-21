@@ -91,7 +91,7 @@ class TestRsaPkcs15:
             assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig)
         except AssertionError as exc:
             if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_MECHANISM_INVALID}):
-                pytest.skip(f"RSA {key_bits}-bit not supported")
+                pytest.skip(f"RSA {key_bits}-bit not supported: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -135,9 +135,9 @@ class TestRsaPss:
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_MECHANISM_INVALID}):
-                pytest.skip(f"RSA {key_bits}-bit not supported")
+                pytest.skip(f"RSA {key_bits}-bit not supported: {exc}")
             if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip("PSS params not supported (hashAlg != mgf)")
+                pytest.skip(f"PSS params not supported (hashAlg != mgf): {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -175,7 +175,7 @@ class TestRsaSigVer:
                 pytest.fail(f"{vec_id}: rejected VALID signature")
         except AssertionError as exc:
             if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_TEMPLATE_INCONSISTENT}):
-                pytest.skip("RSA key import failed")
+                pytest.skip(f"RSA key import failed: {exc}")
             if not expected_pass and is_known_error(
                 exc,
                 {
@@ -228,9 +228,9 @@ class TestRsaSigVer:
                 pytest.fail(f"{vec_id}: rejected VALID PSS signature")
         except AssertionError as exc:
             if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_TEMPLATE_INCONSISTENT}):
-                pytest.skip("RSA key import failed")
+                pytest.skip(f"RSA key import failed: {exc}")
             if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip("PSS params not supported")
+                pytest.skip(f"PSS params not supported: {exc}")
             if not expected_pass and is_known_error(
                 exc,
                 {

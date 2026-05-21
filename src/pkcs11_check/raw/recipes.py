@@ -729,14 +729,17 @@ def decrypt_single(
 ) -> bytes:
     """Decrypt data in a single operation. Returns plaintext.
 
-    ``retry_on_buffer_too_small`` when True, if the module returns
-    CKR_BUFFER_TOO_SMALL with an updated size, re-allocates and retries once.
+    The two output-sizing kwargs are independent and combine cleanly:
 
-    ``output_size_hint`` skips the NULL-buffer size-query and pre-allocates
-    a buffer of that size.  Needed for modules (e.g. NSS softoken) that fail
-    to report the required size on a NULL probe or consume operation state
-    during it.  For AEAD ciphertexts pass ``len(ciphertext)`` (plaintext is
-    at most that size).
+    - ``output_size_hint > 0`` skips the NULL-buffer size probe and goes
+      straight to a single call with a pre-allocated ``output_size_hint``-byte
+      buffer.  Needed for modules (e.g. NSS softoken) that fail the NULL
+      probe or consume operation state during it.  Pass ``len(ciphertext)``
+      for AEAD (plaintext is at most that size).
+    - ``retry_on_buffer_too_small`` when True, if the (single or post-probe)
+      call returns CKR_BUFFER_TOO_SMALL with an updated size, re-allocates
+      and retries once.  Useful as a safety net when ``output_size_hint``
+      might under-estimate the real output (e.g. AEAD with unknown padding).
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_DecryptInit(session, mech.byref(), key)
