@@ -77,23 +77,31 @@ def xfail_if_known_ckr(
     known_ckrs: set[Any] | tuple[Any, ...] | frozenset[Any],
     msg: str,
 ) -> None:
-    """xfail if the exception message contains a known CKR name, otherwise re-raise.
+    """xfail if ``exc`` corresponds to a known CKR, otherwise re-raise.
+
+    Prefers the exact ``CkrAssertionError.rv`` attribute when present
+    (raised by ``expect_rv``).  Falls back to substring matching on the
+    exception message for assertions raised by other call paths.
 
     Use this instead of ``except (AssertionError, Exception): pytest.xfail(...)``
-    to ensure that only specific CKR failures become expected failures, while
+    so that only specific CKR failures become expected failures, while
     Python coding bugs and wrong-output assertions propagate as real failures.
 
     Args:
         exc: The caught exception.
-        known_ckrs: Set of CKR integer values to match against.
-        msg: Message for pytest.xfail if a known CKR is found.
+        known_ckrs: Iterable of CKR integer values to match against.
+        msg: Message for pytest.xfail if a known CKR is matched.
     """
     from pkcs11_check.raw.rv import ckr_name
 
-    exc_str = str(exc)
-    for ckr in known_ckrs:
-        if ckr_name(ckr) in exc_str:
-            pytest.xfail(f"{msg}: {ckr_name(ckr)}")
+    rv = getattr(exc, "rv", None)
+    if rv is not None and rv in known_ckrs:
+        pytest.xfail(f"{msg}: {ckr_name(rv)}")
+    elif rv is None:
+        exc_str = str(exc)
+        for ckr in known_ckrs:
+            if ckr_name(ckr) in exc_str:
+                pytest.xfail(f"{msg}: {ckr_name(ckr)}")
     raise  # Not a known CKR -- propagate as real failure
 
 
@@ -101,11 +109,21 @@ def is_known_error(
     exc: BaseException,
     error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
 ) -> bool:
-    """Check if an AssertionError from expect_rv matches a known CKR."""
+    """Return True if ``exc`` corresponds to one of ``error_rvs``.
+
+    Prefers exact integer equality via ``CkrAssertionError.rv`` (set by
+    ``expect_rv``).  Falls back to substring matching against the
+    exception message for legacy AssertionError paths — that fallback can
+    misfire when one CKR name is a prefix of another, so prefer raising
+    via ``expect_rv`` where possible.
+    """
     from pkcs11_check.raw.rv import ckr_name
 
+    rv = getattr(exc, "rv", None)
+    if rv is not None:
+        return rv in error_rvs
     msg = str(exc)
-    return any(ckr_name(rv) in msg for rv in error_rvs)
+    return any(ckr_name(r) in msg for r in error_rvs)
 
 
 def destroy_returned_handles(rs: Any, *handles: int) -> None:
