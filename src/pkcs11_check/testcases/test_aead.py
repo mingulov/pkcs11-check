@@ -20,7 +20,6 @@ from pkcs11_check.raw.recipes import (
     generate_random,
     import_secret_key,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -28,7 +27,7 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKM_AES_GCM,
 )
-from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
+from pkcs11_check.testcases.conftest import skip_if_mech_param_unsupported
 
 pytestmark = pytest.mark.crossverify
 
@@ -74,13 +73,11 @@ def _encrypt_gcm_generated_iv(
             retry_on_buffer_too_small=True,
         )
     except AssertionError as exc:
-        text = str(exc)
-        if any(ckr_name(rv) in text for rv in MECH_PARAM_UNSUPPORTED_ERRORS):
-            pytest.skip(
-                f"CKM_AES_GCM provider-generated IV convention {convention!r} "
-                f"not supported: {text}"
-            )
-        raise
+        skip_if_mech_param_unsupported(
+            exc,
+            f"CKM_AES_GCM provider-generated IV convention {convention!r}",
+        )
+        return b""  # unreachable — helper either skips or re-raises
 
 
 class TestAESGCMCrossVerify:

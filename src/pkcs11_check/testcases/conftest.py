@@ -133,3 +133,21 @@ def destroy_returned_handles(rs: Any, *handles: int) -> None:
     for handle in handles:
         if handle:
             destroy_quietly(rs.raw, rs.sh, int(handle))
+
+
+def skip_if_mech_param_unsupported(exc: BaseException, context: str) -> None:
+    """pytest.skip if ``exc`` carries one of MECH_PARAM_UNSUPPORTED_ERRORS, else re-raise.
+
+    Provider-generated IV / nonce / wrap-output parameter conventions are
+    allowed to be rejected even when the base mechanism is advertised; this
+    helper turns those rejections into a clean skip while letting other
+    failures propagate as real findings.
+
+    Prefers exact ``CkrAssertionError.rv`` matching when present (via
+    ``is_known_error``).
+    """
+    from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
+
+    if is_known_error(exc, MECH_PARAM_UNSUPPORTED_ERRORS):
+        pytest.skip(f"{context} not supported: {exc}")
+    raise exc
