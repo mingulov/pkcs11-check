@@ -24,8 +24,11 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKK_AES_XTS,
     CKM_AES_XTS,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases.acvp.aes.base import _load_vectors
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_XTS"]
@@ -100,9 +103,8 @@ def test_acvp_aes_xts_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
                 mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"XTS encrypt not supported: {exc_msg}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+                pytest.skip(f"XTS encrypt not supported: {exc}")
             raise
 
         assert ct == vec["ct_expected"], (
@@ -148,9 +150,8 @@ def test_acvp_aes_xts_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
                 mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"XTS decrypt not supported: {exc_msg}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+                pytest.skip(f"XTS decrypt not supported: {exc}")
             raise
 
         assert pt == vec["pt_expected"], (

@@ -26,21 +26,30 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_WRAP,
     CKM_AES_KEY_WRAP_KWP,
+    CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_WRAPPED_KEY_INVALID,
 )
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
+from pkcs11_check.testcases.conftest import is_known_error
 
 # CKR errors that indicate the module correctly rejected invalid ciphertext
 # during unwrap integrity checking.  OpenSSL-backed modules often return
 # CKR_GENERAL_ERROR instead of the more specific CKR codes.  Kryoptic
 # returns CKR_DEVICE_ERROR for integrity check failures.
-_UNWRAP_REJECT_ERRORS = (
-    "CKR_ENCRYPTED_DATA_INVALID",
-    "CKR_ENCRYPTED_DATA_LEN_RANGE",
-    "CKR_GENERAL_ERROR",
-    "CKR_FUNCTION_FAILED",
-    "CKR_WRAPPED_KEY_INVALID",
-    "CKR_DEVICE_ERROR",
-)
+_UNWRAP_REJECT_RVS = {
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_GENERAL_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_DEVICE_ERROR,
+}
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -122,9 +131,8 @@ def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
             f"  expected: {_hex(vec['ct_expected'])}"
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-            pytest.skip(f"AES-KW encrypt not supported: {exc_msg}")
+        if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+            pytest.skip(f"AES-KW encrypt not supported: {exc}")
         raise
     finally:
         if key:
@@ -153,13 +161,12 @@ def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, An
                 mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"AES-KW decrypt not supported: {exc_msg}")
-            if any(e in exc_msg for e in _UNWRAP_REJECT_ERRORS):
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+                pytest.skip(f"AES-KW decrypt not supported: {exc}")
+            if is_known_error(exc, _UNWRAP_REJECT_RVS):
                 if not test_passed:
                     return  # module correctly rejected invalid ciphertext
-                pytest.fail(f"{vec_id}: valid KW vector rejected: {exc_msg}")
+                pytest.fail(f"{vec_id}: valid KW vector rejected: {exc}")
                 return
             raise
 
@@ -240,9 +247,8 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
             f"  expected: {_hex(vec['ct_expected'])}"
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-            pytest.skip(f"AES-KWP encrypt not supported: {exc_msg}")
+        if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+            pytest.skip(f"AES-KWP encrypt not supported: {exc}")
         raise
     finally:
         if key:
@@ -273,13 +279,12 @@ def test_acvp_aes_kwp_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, A
                 mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"AES-KWP decrypt not supported: {exc_msg}")
-            if any(e in exc_msg for e in _UNWRAP_REJECT_ERRORS):
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+                pytest.skip(f"AES-KWP decrypt not supported: {exc}")
+            if is_known_error(exc, _UNWRAP_REJECT_RVS):
                 if not test_passed:
                     return  # module correctly rejected invalid ciphertext
-                pytest.fail(f"{vec_id}: valid KWP vector rejected: {exc_msg}")
+                pytest.fail(f"{vec_id}: valid KWP vector rejected: {exc}")
                 return
             raise
 

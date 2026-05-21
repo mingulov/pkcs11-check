@@ -23,8 +23,12 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKM_AES_CBC,
     CKM_AES_CTS,
+    CKR_DEVICE_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
+from pkcs11_check.testcases.conftest import is_known_error
 
 # ---------------------------------------------------------------------------
 # Vector loading
@@ -241,10 +245,9 @@ def skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
 
 def _handle_cts_error(exc: AssertionError, vec_id: str, direction: str) -> None:
     """Handle CTS encrypt/decrypt errors with appropriate reporting."""
-    exc_msg = str(exc)
-    if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-        pytest.skip(f"CBC-CS {direction} not supported: {exc_msg}")
-    if "CKR_DEVICE_ERROR" in exc_msg:
+    if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+        pytest.skip(f"CBC-CS {direction} not supported: {exc}")
+    if is_known_error(exc, {CKR_DEVICE_ERROR}):
         note(
             f"CKM_AES_CTS {direction} returned CKR_DEVICE_ERROR for {vec_id}. "
             "Module advertises CTS but fails on valid input.",
