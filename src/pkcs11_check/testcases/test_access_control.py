@@ -47,7 +47,11 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
+from pkcs11_check.testcases.conftest import (
+    get_pin_bytes,
+    is_known_error,
+    skip_if_token_write_protected,
+)
 
 pytestmark = pytest.mark.security
 
@@ -193,7 +197,7 @@ class TestModifiableAttribute:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
                     pytest.skip(f"Module does not expose CKA_MODIFIABLE: {e}")
                 raise
             if attrs.get(CKA_MODIFIABLE) is not False:

@@ -78,7 +78,7 @@ from pkcs11_check.raw.types_std import (
     CKU_SO,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import get_pin_bytes, is_known_error
 
 pytestmark = pytest.mark.access
 
@@ -729,7 +729,7 @@ class TestTrustedAttribute:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
                     return  # Module doesn't expose CKA_TRUSTED
                 raise
             if attrs.get(CKA_TRUSTED) is True:
@@ -768,7 +768,7 @@ class TestTrustedAttribute:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
                     pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
                 raise
             if attrs.get(CKA_TRUSTED) is True:

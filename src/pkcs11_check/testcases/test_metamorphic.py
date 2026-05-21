@@ -51,7 +51,9 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512,
     CKM_SHA_1,
     CKO_SECRET_KEY,
+    CKR_FUNCTION_NOT_SUPPORTED,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.metamorphic
 
@@ -231,7 +233,7 @@ class TestCopyEquivalence:
                     {CKA_LABEL: "copy-equiv"},
                 )
             except AssertionError as exc:
-                if "CKR_FUNCTION_NOT_SUPPORTED" in str(exc):
+                if is_known_error(exc, {int(CKR_FUNCTION_NOT_SUPPORTED)}):
                     pytest.skip("C_CopyObject not supported")
                 raise
 
@@ -258,7 +260,7 @@ class TestCopyEquivalence:
                     {CKA_LABEL: "copy-decrypt"},
                 )
             except AssertionError as exc:
-                if "CKR_FUNCTION_NOT_SUPPORTED" in str(exc):
+                if is_known_error(exc, {int(CKR_FUNCTION_NOT_SUPPORTED)}):
                     pytest.skip("C_CopyObject not supported")
                 raise
 

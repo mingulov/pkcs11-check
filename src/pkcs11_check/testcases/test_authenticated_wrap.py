@@ -36,7 +36,14 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_GCM,
     CKM_AES_KEY_WRAP,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.keymgmt
 
@@ -361,15 +368,16 @@ class TestAuthenticatedWrapAAD:
                 # Crashes (CKR_GENERAL_ERROR / CKR_FUNCTION_FAILED /
                 # CKR_DEVICE_ERROR) re-raise — those are findings, not
                 # skip conditions.
-                msg = str(exc)
-                wrap_skip_codes = (
-                    "CKR_MECHANISM_INVALID",
-                    "CKR_MECHANISM_PARAM_INVALID",
-                    "CKR_FUNCTION_NOT_SUPPORTED",
-                    "CKR_KEY_FUNCTION_NOT_PERMITTED",
-                    "CKR_ARGUMENTS_BAD",
-                )
-                if any(code in msg for code in wrap_skip_codes):
+                if is_known_error(
+                    exc,
+                    {
+                        int(CKR_MECHANISM_INVALID),
+                        int(CKR_MECHANISM_PARAM_INVALID),
+                        int(CKR_FUNCTION_NOT_SUPPORTED),
+                        int(CKR_KEY_FUNCTION_NOT_PERMITTED),
+                        int(CKR_ARGUMENTS_BAD),
+                    },
+                ):
                     pytest.skip(f"AES-GCM authenticated wrap rejected: {exc}")
                     return
                 raise
@@ -719,7 +727,6 @@ class TestEcdhAesKeyWrap:
                     mech_param=mech,
                 )
             except AssertionError as exc:
-                msg = str(exc)
                 # has_mechanism("ECDH_AES_KEY_WRAP") was checked at the
                 # top, so the only legitimate "skip" reason here is a
                 # vendor-specific disagreement about the parameter
@@ -730,7 +737,7 @@ class TestEcdhAesKeyWrap:
                 # implement it / accept CKA_WRAP=True on EC pub keys —
                 # that IS the advertise-but-don't-implement bug class
                 # this test should surface, not skip.
-                if "CKR_MECHANISM_PARAM_INVALID" in msg:
+                if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
                     pytest.skip(f"Module rejected ECDH-AES-KW params: {exc}")
                     return
                 raise
@@ -757,13 +764,12 @@ class TestEcdhAesKeyWrap:
                     mech_param=mech2,
                 )
             except AssertionError as exc:
-                msg = str(exc)
                 # OpenCryptoki quirk: rejects unwrap templates that
                 # include CKA_CLASS / CKA_KEY_TYPE with
                 # CKR_ATTRIBUTE_READ_ONLY. The wrap already succeeded,
                 # which validates the wrap-side construction; the
                 # unwrap-template quirk is a different code path.
-                if "CKR_ATTRIBUTE_READ_ONLY" in msg:
+                if is_known_error(exc, {int(CKR_ATTRIBUTE_READ_ONLY)}):
                     pytest.skip(
                         f"Module rejects unwrap template (likely OC's "
                         f"CKA_CLASS/CKA_KEY_TYPE quirk): {exc}"
@@ -843,8 +849,7 @@ class TestEcdhAesKeyWrap:
                     mech_param=mech,
                 )
             except AssertionError as exc:
-                msg = str(exc)
-                if "CKR_MECHANISM_PARAM_INVALID" in msg:
+                if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
                     pytest.skip(f"Module rejected ECDH-AES-KW params: {exc}")
                     return
                 raise

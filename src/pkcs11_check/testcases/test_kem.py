@@ -21,12 +21,12 @@ from pkcs11_check.raw.pack import (
     template_ptr_count,
 )
 from pkcs11_check.raw.recipes import (
-    to_ubyte_buf,
     decapsulate_key,
     destroy_quietly,
     encapsulate_key,
     gen_keypair,
     read_attributes,
+    to_ubyte_buf,
 )
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,

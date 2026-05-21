@@ -25,7 +25,9 @@ from pkcs11_check.raw.types_std import (
     CKM,
     CKM_AES_CFB8,
     CKM_AES_OFB,
+    CKR_MECHANISM_INVALID,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 
 def _cfb1_mask(data: bytes, payload_len_bits: int) -> bytes:
@@ -304,7 +306,7 @@ def run_multiblock_encrypt_test(
                         mech_param=mech,
                     )
                 except AssertionError as exc:
-                    if "CKR_MECHANISM_INVALID" in str(exc):
+                    if is_known_error(exc, {int(CKR_MECHANISM_INVALID)}):
                         pytest.skip(f"{mech_name} not supported: {exc}")
                     raise
                 ct_history.append(ct)
@@ -378,7 +380,7 @@ def run_multiblock_decrypt_test(
                         mech_param=mech,
                     )
                 except AssertionError as exc:
-                    if "CKR_MECHANISM_INVALID" in str(exc):
+                    if is_known_error(exc, {int(CKR_MECHANISM_INVALID)}):
                         pytest.skip(f"{mech_name} not supported: {exc}")
                     raise
                 pt_history.append(pt)

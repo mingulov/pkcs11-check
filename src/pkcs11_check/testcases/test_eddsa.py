@@ -28,7 +28,9 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_EDWARDS,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKM_EDDSA,
+    CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 _EDDSA_PARAM_XFAIL_MSG = (
     "Module returns CKR_MECHANISM_PARAM_INVALID for CK_EDDSA_PARAMS; "
@@ -42,7 +44,7 @@ def _sign_eddsa(rs: Any, priv: int, data: bytes) -> bytes:
     try:
         return sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
     except AssertionError as exc:
-        if "CKR_MECHANISM_PARAM_INVALID" in str(exc):
+        if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
             pytest.xfail(_EDDSA_PARAM_XFAIL_MSG)
         raise
 
@@ -52,7 +54,7 @@ def _verify_eddsa(rs: Any, pub: int, data: bytes, sig: bytes) -> bool:
     try:
         return verify_single(rs.raw, rs.sh, pub, CKM_EDDSA, data, sig)
     except AssertionError as exc:
-        if "CKR_MECHANISM_PARAM_INVALID" in str(exc):
+        if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
             pytest.xfail(_EDDSA_PARAM_XFAIL_MSG)
         raise
 

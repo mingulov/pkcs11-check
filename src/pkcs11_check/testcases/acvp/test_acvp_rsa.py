@@ -28,7 +28,17 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.types_std import CKA_SIGN, CKA_VERIFY
+from pkcs11_check.raw.types_std import (
+    CKA_SIGN,
+    CKA_VERIFY,
+    CKR_DEVICE_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.acvp.rsa.base_loader import (
     load_siggen_pkcs15_vectors,
@@ -36,6 +46,7 @@ from pkcs11_check.testcases.acvp.rsa.base_loader import (
     load_sigver_pkcs15_vectors,
     load_sigver_pss_vectors,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -79,7 +90,7 @@ class TestRsaPkcs15:
             sig = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["message"])
             assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig)
         except AssertionError as exc:
-            if "CKR_KEY_SIZE_RANGE" in str(exc) or "CKR_MECHANISM_INVALID" in str(exc):
+            if is_known_error(exc, {int(CKR_KEY_SIZE_RANGE), int(CKR_MECHANISM_INVALID)}):
                 pytest.skip(f"RSA {key_bits}-bit not supported")
             raise
         finally:
@@ -123,10 +134,9 @@ class TestRsaPss:
                 rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig, mech_param=mech_param
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if "CKR_KEY_SIZE_RANGE" in exc_msg or "CKR_MECHANISM_INVALID" in exc_msg:
+            if is_known_error(exc, {int(CKR_KEY_SIZE_RANGE), int(CKR_MECHANISM_INVALID)}):
                 pytest.skip(f"RSA {key_bits}-bit not supported")
-            if "CKR_MECHANISM_PARAM_INVALID" in exc_msg:
+            if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
                 pytest.skip("PSS params not supported (hashAlg != mgf)")
             raise
         finally:
@@ -164,16 +174,15 @@ class TestRsaSigVer:
             if expected_pass and not verified:
                 pytest.fail(f"{vec_id}: rejected VALID signature")
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_KEY_SIZE_RANGE", "CKR_TEMPLATE_INCONSISTENT")):
+            if is_known_error(exc, {int(CKR_KEY_SIZE_RANGE), int(CKR_TEMPLATE_INCONSISTENT)}):
                 pytest.skip("RSA key import failed")
-            if not expected_pass and any(
-                c in exc_msg
-                for c in (
-                    "CKR_SIGNATURE_INVALID",
-                    "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DEVICE_ERROR",
-                )
+            if not expected_pass and is_known_error(
+                exc,
+                {
+                    int(CKR_SIGNATURE_INVALID),
+                    int(CKR_SIGNATURE_LEN_RANGE),
+                    int(CKR_DEVICE_ERROR),
+                },
             ):
                 pass  # Expected
             elif expected_pass:
@@ -218,18 +227,17 @@ class TestRsaSigVer:
             if expected_pass and not verified:
                 pytest.fail(f"{vec_id}: rejected VALID PSS signature")
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_KEY_SIZE_RANGE", "CKR_TEMPLATE_INCONSISTENT")):
+            if is_known_error(exc, {int(CKR_KEY_SIZE_RANGE), int(CKR_TEMPLATE_INCONSISTENT)}):
                 pytest.skip("RSA key import failed")
-            if "CKR_MECHANISM_PARAM_INVALID" in exc_msg:
+            if is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}):
                 pytest.skip("PSS params not supported")
-            if not expected_pass and any(
-                c in exc_msg
-                for c in (
-                    "CKR_SIGNATURE_INVALID",
-                    "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DEVICE_ERROR",
-                )
+            if not expected_pass and is_known_error(
+                exc,
+                {
+                    int(CKR_SIGNATURE_INVALID),
+                    int(CKR_SIGNATURE_LEN_RANGE),
+                    int(CKR_DEVICE_ERROR),
+                },
             ):
                 pass  # Expected
             elif expected_pass:

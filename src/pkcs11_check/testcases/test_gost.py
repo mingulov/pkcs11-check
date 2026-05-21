@@ -46,8 +46,11 @@ from pkcs11_check.raw.types_std import (
     CKM_GOSTR3410_WITH_GOSTR3411,
     CKM_GOSTR3411,
     CKM_GOSTR3411_HMAC,
+    CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.full
 
@@ -102,8 +105,7 @@ def _try_or_xfail(fn: Any, msg: str) -> Any:
     try:
         return fn()
     except AssertionError as exc:
-        exc_str = str(exc)
-        if "CKR_MECHANISM_INVALID" in exc_str or "CKR_FUNCTION_FAILED" in exc_str:
+        if is_known_error(exc, {int(CKR_MECHANISM_INVALID), int(CKR_FUNCTION_FAILED)}):
             pytest.xfail(f"{msg}: {exc}")
         raise
 

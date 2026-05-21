@@ -44,7 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.object
 
@@ -67,7 +67,6 @@ def _create_ec_domain_params(rs: Any, on_token: bool = False) -> int | None:
 
     Returns handle on success, None if unsupported (known CKR), re-raises otherwise.
     """
-    from pkcs11_check.raw.rv import ckr_name
 
     curve_oid = encode_named_curve_parameters("secp256r1")
     handle = 0
@@ -84,10 +83,8 @@ def _create_ec_domain_params(rs: Any, on_token: bool = False) -> int | None:
         )
         return handle
     except (AssertionError, Exception) as exc:
-        exc_str = str(exc)
-        for ckr in _DOMAIN_PARAM_ERROR_RVS:
-            if ckr_name(ckr) in exc_str:
-                return None
+        if is_known_error(exc, _DOMAIN_PARAM_ERROR_RVS):
+            return None
         raise
 
 

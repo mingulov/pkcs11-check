@@ -23,10 +23,13 @@ from pkcs11_check.raw.types_std import (
     CK_BYTE_PTR,
     CKM_RSA_PKCS,
     CKR_DEVICE_ERROR,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_HANDLE_INVALID,
     CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
     CKR_SIGNATURE_INVALID,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.full
 
@@ -89,7 +92,9 @@ class TestVerifySignatureRoundtrip:
             rv = rs.raw.C_VerifySignatureFinal(rs.sh)
             assert rv == CKR_OK, f"C_VerifySignatureFinal failed with 0x{rv:08x}"
         except AssertionError as e:
-            if "CKR_OPERATION_NOT_INITIALIZED" in str(e) or "CKR_FUNCTION_NOT_SUPPORTED" in str(e):
+            if is_known_error(
+                e, {int(CKR_OPERATION_NOT_INITIALIZED), int(CKR_FUNCTION_NOT_SUPPORTED)}
+            ):
                 pytest.skip("Module does not support multipart C_VerifySignatureUpdate")
             raise
         finally:

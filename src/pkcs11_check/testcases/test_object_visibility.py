@@ -36,9 +36,14 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKK_AES,
     CKO_DATA,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
+from pkcs11_check.testcases.conftest import (
+    get_pin_bytes,
+    is_known_error,
+    skip_if_token_write_protected,
+)
 
 pytestmark = pytest.mark.access
 
@@ -536,7 +541,7 @@ class TestTokenPrivateInteraction:
         try:
             h = _create_data_obj(rs.raw, rs.sh, label, b"priv-session", token=False, private=True)
         except AssertionError as exc:
-            if "CKR_ATTRIBUTE_VALUE_INVALID" in str(exc):
+            if is_known_error(exc, {int(CKR_ATTRIBUTE_VALUE_INVALID)}):
                 pytest.skip("Module does not support CKA_PRIVATE=True on CKO_DATA objects")
             raise
         try:

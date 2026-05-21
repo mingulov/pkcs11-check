@@ -40,8 +40,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SEED_KEY_GEN,
     CKM_SEED_MAC,
     CKM_SEED_MAC_GENERAL,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.full
 
@@ -76,7 +78,7 @@ def _encrypt_or_xfail(
     try:
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if "CKR_MECHANISM_INVALID" in str(exc):
+        if is_known_error(exc, {int(CKR_MECHANISM_INVALID)}):
             pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
         raise
 
@@ -94,7 +96,7 @@ def _sign_or_xfail(
     try:
         return sign_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if "CKR_MECHANISM_INVALID" in str(exc):
+        if is_known_error(exc, {int(CKR_MECHANISM_INVALID)}):
             pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
         raise
 

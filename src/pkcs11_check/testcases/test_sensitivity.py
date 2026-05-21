@@ -23,7 +23,9 @@ from pkcs11_check.raw.types_std import (
     CKA_PRIVATE_EXPONENT,
     CKA_SENSITIVE,
     CKA_VALUE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.security
 
@@ -139,7 +141,7 @@ class TestExtractableEnforcement:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
                 extractable = attrs[CKA_EXTRACTABLE]
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {int(CKR_ATTRIBUTE_TYPE_INVALID)}):
                     pytest.skip("Module does not support CKA_EXTRACTABLE attribute")
                 raise
         finally:
