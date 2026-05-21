@@ -1032,3 +1032,76 @@ def test_sdist_and_wheel_include_vendored_standard_headers_and_generated_raw_mod
         module_prefix="src/pkcs11_check",
         header_prefix="third_party/pkcs11-headers/3.2",
     )
+
+
+# ---------------------------------------------------------------------------
+# _alloc_writable_pointer and KeyMatMechanism
+# ---------------------------------------------------------------------------
+
+
+def test_alloc_writable_pointer_points_struct_field_at_buffer() -> None:
+    """The buffer the helper returns IS what params.<field> points at."""
+    from pkcs11_check.raw.pack_mechanisms import _alloc_writable_pointer
+    from pkcs11_check.raw.types_std import CK_GCM_MESSAGE_PARAMS
+
+    params = CK_GCM_MESSAGE_PARAMS()
+    buf = _alloc_writable_pointer(params, "pTag", 16)
+
+    assert len(buf) == 16
+    ctypes.cast(params.pTag, ctypes.POINTER(ctypes.c_ubyte * 16))[0][0] = 0x42
+    assert buf[0] == 0x42
+
+
+def test_key_mat_mechanism_owns_key_mat_out_struct() -> None:
+    """mech_*_key_mat packers return KeyMatMechanism with key_mat_out populated."""
+    from pkcs11_check.raw.pack import KeyMatMechanism, mech_ssl3_key_mat
+    from pkcs11_check.raw.types_std import (
+        CK_SSL3_KEY_MAT_OUT,
+        CKM_SSL3_KEY_AND_MAC_DERIVE,
+    )
+
+    mech = mech_ssl3_key_mat(
+        CKM_SSL3_KEY_AND_MAC_DERIVE,
+        client_random=bytes(28),
+        server_random=bytes(28),
+        mac_size_bits=160,
+        key_size_bits=128,
+        iv_size_bits=128,
+    )
+    assert isinstance(mech, KeyMatMechanism)
+    assert isinstance(mech.key_mat_out, CK_SSL3_KEY_MAT_OUT)
+
+
+def test_key_mat_mechanism_iv_buffers_round_trip_provider_writes() -> None:
+    """IV buffers registered by mech_tls12_key_mat reflect provider writes."""
+    from pkcs11_check.raw.pack import mech_tls12_key_mat
+    from pkcs11_check.raw.types_std import CKM_SHA256, CKM_TLS12_KEY_AND_MAC_DERIVE
+
+    mech = mech_tls12_key_mat(
+        CKM_TLS12_KEY_AND_MAC_DERIVE,
+        client_random=bytes(32),
+        server_random=bytes(32),
+        hash_mech=int(CKM_SHA256),
+        mac_size_bits=256,
+        key_size_bits=128,
+        iv_size_bits=128,
+    )
+    iv_client_addr = mech.key_mat_out.pIVClient
+    iv_client_buf = ctypes.cast(iv_client_addr, ctypes.POINTER(ctypes.c_ubyte * 16))
+    iv_client_buf[0][3] = 0xAB
+    assert mech.buffer_bytes("iv_client")[3] == 0xAB
+
+
+def test_mech_gcm_message_inherit_tag_shares_buffer_with_source() -> None:
+    """unwrap-side mech sees the same tag bytes as the wrap-side source."""
+    from pkcs11_check.raw.pack import mech_gcm_message, mech_gcm_message_inherit_tag
+    from pkcs11_check.raw.types_std import CKM_AES_GCM
+
+    iv = bytes(range(12))
+    wrap = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
+    # Simulate provider writing the tag.
+    ctypes.cast(wrap.params.pTag, ctypes.POINTER(ctypes.c_ubyte * 16))[0][0] = 0x7E
+
+    unwrap = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap)
+    assert unwrap.buffer_bytes("tag") == wrap.buffer_bytes("tag")
+    assert unwrap.buffer_bytes("tag")[0] == 0x7E
