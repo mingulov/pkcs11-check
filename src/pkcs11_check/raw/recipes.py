@@ -694,13 +694,26 @@ def sign_single(
     data: bytes,
     *,
     mech_param: PackedMechanism | None = None,
+    output_size_hint: int = 0,
 ) -> bytes:
-    """Sign data in a single operation. Returns signature."""
+    """Sign data in a single operation. Returns signature.
+
+    ``output_size_hint`` skips the NULL-buffer size-query and pre-allocates a
+    fixed-size buffer.  Useful for fixed-length signatures (ECDSA, Ed25519)
+    on modules that fail the NULL probe.
+    """
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_SignInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     in_buf = to_ubyte_buf(data)
-    return _two_call_output(raw, "C_Sign", session, in_buf, len(data))
+    return _two_call_output(
+        raw,
+        "C_Sign",
+        session,
+        in_buf,
+        len(data),
+        output_size_hint=output_size_hint,
+    )
 
 
 def decrypt_single(
@@ -712,11 +725,18 @@ def decrypt_single(
     *,
     mech_param: PackedMechanism | None = None,
     retry_on_buffer_too_small: bool = False,
+    output_size_hint: int = 0,
 ) -> bytes:
     """Decrypt data in a single operation. Returns plaintext.
 
     ``retry_on_buffer_too_small`` when True, if the module returns
     CKR_BUFFER_TOO_SMALL with an updated size, re-allocates and retries once.
+
+    ``output_size_hint`` skips the NULL-buffer size-query and pre-allocates
+    a buffer of that size.  Needed for modules (e.g. NSS softoken) that fail
+    to report the required size on a NULL probe or consume operation state
+    during it.  For AEAD ciphertexts pass ``len(ciphertext)`` (plaintext is
+    at most that size).
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_DecryptInit(session, mech.byref(), key)
@@ -729,6 +749,7 @@ def decrypt_single(
         in_buf,
         len(ciphertext),
         retry_on_buffer_too_small=retry_on_buffer_too_small,
+        output_size_hint=output_size_hint,
     )
 
 
