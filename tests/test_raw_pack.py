@@ -394,33 +394,22 @@ def test_tls_key_material_iv_buffers_reflect_provider_writes() -> None:
 
 
 def test_sp800_108_additional_key_handles_are_writable() -> None:
-    from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
-    from pkcs11_check.raw.types_std import (
-        CK_DERIVED_KEY,
-        CK_OBJECT_HANDLE,
-        CKA_CLASS,
-        CKA_KEY_TYPE,
-        CKA_TOKEN,
-        CKA_VALUE_LEN,
-        CKK_AES,
-        CKO_SECRET_KEY,
-    )
+    """Provider writes to ``phKey`` inside CK_DERIVED_KEY entries must be observable.
 
-    tmpl = template(
-        attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-        attr_ulong(CKA_KEY_TYPE, CKK_AES),
-        attr_ulong(CKA_VALUE_LEN, 16),
-        attr_bool(CKA_TOKEN, False),
-    )
-    handle = CK_OBJECT_HANDLE(0)
-    derived = CK_DERIVED_KEY()
-    derived.pTemplate = ctypes.cast(tmpl.ptr, ctypes.c_void_p)
-    derived.ulAttributeCount = tmpl.count
-    derived.phKey = ctypes.cast(ctypes.pointer(handle), ctypes.c_void_p)
+    Exercises ``_additional_derived_keys`` (the helper used by the real
+    SP800-108 KDF tests), not bare ctypes mechanics, so any change that
+    breaks the ownership/keepalive chain shows up here.
+    """
+    from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
+    from pkcs11_check.testcases.test_sp800_108_kdf import _additional_derived_keys
 
-    ctypes.cast(derived.phKey, ctypes.POINTER(CK_OBJECT_HANDLE))[0] = CK_OBJECT_HANDLE(1234)
+    derived, handles, _keepalive = _additional_derived_keys(count=3, key_bits=128)
 
-    assert handle.value == 1234
+    for index, handle in enumerate(handles):
+        slot = ctypes.cast(derived[index].phKey, ctypes.POINTER(CK_OBJECT_HANDLE))
+        slot[0] = CK_OBJECT_HANDLE(1000 + index)
+
+    assert [h.value for h in handles] == [1000, 1001, 1002]
 
 
 def test_prf_output_buffers_reflect_provider_writes() -> None:
