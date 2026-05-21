@@ -379,12 +379,12 @@ class TestWTLSKeyAndMacDerive:
                     mech_param=mech,
                 )
                 try:
-                    out = mech._key_mat_out_ref
+                    out = mech.key_mat_out
                     assert out.hKey != 0
                     assert any(mech.buffer_bytes("iv"))
                     assert derived != 0
                 finally:
-                    out = mech._key_mat_out_ref
+                    out = mech.key_mat_out
                     destroy_returned_handles(rs, out.hMacSecret, out.hKey)
                     destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
@@ -425,12 +425,12 @@ class TestWTLSKeyAndMacDerive:
                     mech_param=mech,
                 )
                 try:
-                    out = mech._key_mat_out_ref
+                    out = mech.key_mat_out
                     assert out.hKey != 0
                     assert any(mech.buffer_bytes("iv"))
                     assert derived != 0
                 finally:
-                    out = mech._key_mat_out_ref
+                    out = mech.key_mat_out
                     destroy_returned_handles(rs, out.hMacSecret, out.hKey)
                     destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:

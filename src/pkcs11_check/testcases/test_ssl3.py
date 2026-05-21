@@ -362,7 +362,7 @@ class TestSSL3KeyAndMacDerive:
                 mech_param=mech,
             )
             try:
-                out = mech._key_mat_out_ref
+                out = mech.key_mat_out
                 assert out.hClientKey != 0
                 assert out.hServerKey != 0
                 assert any(mech.buffer_bytes("iv_client"))
@@ -371,7 +371,7 @@ class TestSSL3KeyAndMacDerive:
                 assert isinstance(raw_val, bytes)
                 assert len(raw_val) == 16, f"Expected 16 bytes, got {len(raw_val)}"
             finally:
-                out = mech._key_mat_out_ref
+                out = mech.key_mat_out
                 destroy_returned_handles(
                     rs,
                     out.hClientMacSecret,

@@ -10,6 +10,7 @@ import ctypes
 from typing import Any, Literal
 
 from .pack import (
+    KeyMatMechanism,
     PackedMechanism,
     _mech_struct,
     _pack_bytes,
@@ -795,8 +796,8 @@ def mech_ssl3_key_mat(
     """Pack CK_SSL3_KEY_MAT_PARAMS.
 
     Used for CKM_SSL3_KEY_AND_MAC_DERIVE and CKM_TLS_KEY_AND_MAC_DERIVE.
-    Returns a PackedMechanism whose .params.pReturnedKeyMaterial points to a
-    CK_SSL3_KEY_MAT_OUT struct (accessible as pm.params._key_mat_out_ref).
+    Returns a KeyMatMechanism whose .params.pReturnedKeyMaterial points to a
+    CK_SSL3_KEY_MAT_OUT struct (accessible as ``mech.key_mat_out``).
     """
     ka: list[Any] = []
     params = CK_SSL3_KEY_MAT_PARAMS()
@@ -820,12 +821,14 @@ def mech_ssl3_key_mat(
         ctypes.pointer(key_mat_out),
         CK_VOID_PTR,
     )
-    result = _mech_struct(mechanism_type, params, "mech_ssl3_key_mat", ka)
+    result = _mech_struct(
+        mechanism_type, params, "mech_ssl3_key_mat", ka, cls=KeyMatMechanism
+    )
     if iv_bytes:
         result.add_buffer("iv_client", iv_client, iv_bytes)
         result.add_buffer("iv_server", iv_server, iv_bytes)
-    # Stash for callers to read output key handles
-    result._key_mat_out_ref = key_mat_out
+    assert isinstance(result, KeyMatMechanism)
+    result.key_mat_out = key_mat_out
     return result
 
 
@@ -904,11 +907,13 @@ def mech_tls12_key_mat(
         "mech_tls12_key_mat",
         ka,
         sub_mechanisms={"prfHashMechanism": hash_mech},
+        cls=KeyMatMechanism,
     )
     if iv_bytes:
         result.add_buffer("iv_client", iv_client, iv_bytes)
         result.add_buffer("iv_server", iv_server, iv_bytes)
-    result._key_mat_out_ref = key_mat_out
+    assert isinstance(result, KeyMatMechanism)
+    result.key_mat_out = key_mat_out
     return result
 
 
@@ -1096,10 +1101,12 @@ def mech_wtls_key_mat(
         "mech_wtls_key_mat",
         ka,
         sub_mechanisms={"DigestMechanism": digest_mechanism},
+        cls=KeyMatMechanism,
     )
     if iv_bytes:
         result.add_buffer("iv", iv_buf, iv_bytes)
-    result._key_mat_out_ref = key_mat_out
+    assert isinstance(result, KeyMatMechanism)
+    result.key_mat_out = key_mat_out
     return result
 
 

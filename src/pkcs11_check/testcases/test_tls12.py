@@ -429,7 +429,7 @@ class TestTLS12KeyAndMacDerive:
                 mech_param=mech,
             )
             try:
-                out = mech._key_mat_out_ref
+                out = mech.key_mat_out
                 assert out.hClientKey != 0
                 assert out.hServerKey != 0
                 assert any(mech.buffer_bytes("iv_client"))
@@ -438,7 +438,7 @@ class TestTLS12KeyAndMacDerive:
                 assert isinstance(value, bytes)
                 assert len(value) == 16
             finally:
-                out = mech._key_mat_out_ref
+                out = mech.key_mat_out
                 destroy_returned_handles(
                     rs,
                     out.hClientMacSecret,

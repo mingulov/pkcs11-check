@@ -380,11 +380,11 @@ def test_tls_key_material_iv_buffers_reflect_provider_writes() -> None:
         iv_size_bits=64,
     )
 
-    _provider_write(ssl3._key_mat_out_ref.pIVClient, bytes(range(16)))
-    _provider_write(ssl3._key_mat_out_ref.pIVServer, bytes(range(16, 32)))
-    _provider_write(tls12._key_mat_out_ref.pIVClient, bytes(range(32, 48)))
-    _provider_write(tls12._key_mat_out_ref.pIVServer, bytes(range(48, 64)))
-    _provider_write(wtls._key_mat_out_ref.pIV, bytes(range(64, 72)))
+    _provider_write(ssl3.key_mat_out.pIVClient, bytes(range(16)))
+    _provider_write(ssl3.key_mat_out.pIVServer, bytes(range(16, 32)))
+    _provider_write(tls12.key_mat_out.pIVClient, bytes(range(32, 48)))
+    _provider_write(tls12.key_mat_out.pIVServer, bytes(range(48, 64)))
+    _provider_write(wtls.key_mat_out.pIV, bytes(range(64, 72)))
 
     assert ssl3.buffer_bytes("iv_client") == bytes(range(16))
     assert ssl3.buffer_bytes("iv_server") == bytes(range(16, 32))
