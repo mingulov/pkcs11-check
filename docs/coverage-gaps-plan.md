@@ -196,18 +196,39 @@ Verification surprises:
 
 ---
 
-## Tier 4 — Items deferred per user instruction
+## Tier 4 — Destructive items (now implemented)
 
-These were on the initial plan but are destructive (touch C_Initialize,
-mutex callbacks, token state):
+These were originally deferred because they touch `C_Initialize` /
+`C_Finalize` cycles.  Round 2 added them as subprocess-isolated tests
+gated by `@pytest.mark.destructive`:
 
-- **T1.1 `CK_C_INITIALIZE_ARGS` matrix** — 4 init modes × callback
-  variants. Requires `C_Initialize`/`C_Finalize` cycles ⇒ destructive.
-- **T1.2 Reentrancy from mutex callbacks** — requires custom callbacks
-  passed into `C_Initialize` ⇒ destructive.
+- **T1.1 `CK_C_INITIALIZE_ARGS` matrix** — 7 tests in
+  `test_initialize_args.py`: NULL args, empty struct,
+  `CKF_OS_LOCKING_OK` only, app-mutex-callbacks only, both modes,
+  `pReserved` non-NULL, partial callbacks.  Each runs in a fresh
+  subprocess so any crash is isolated.
+- **T1.2 Mutex callback safety** — 3 tests in
+  `test_mutex_callback_safety.py`: `CreateMutex` returning
+  `CKR_GENERAL_ERROR`, `LockMutex` returning failure during a real
+  call, Python exception raised inside the callback.  All subprocess-
+  isolated; verifies the module doesn't crash when caller-side
+  callbacks signal failure.
 
-Per the current round's instruction, these are **deferred**. They remain
-high-leverage if revisited.
+## Tier 2 (additional, round 2)
+
+- **T2.5 `C_LoginUser` username edge cases** — added 3 tests in
+  `test_v30_session.py` (`TestCLoginUser` class): UTF-8 multi-byte
+  username, 1024-byte long username, embedded-NUL username.  Existing
+  empty + non-empty cases already covered the basics.
+
+## Items verified not real gaps (round 2)
+
+- **T2.6 `C_WaitForSlotEvent` modes** — non-blocking path already
+  covered in `test_remaining_gaps.py`.  Blocking-mode test requires
+  destructive `C_Finalize` from another thread; out of scope.
+- **T3.4 BLAKE2 custom output length** — PKCS#11 spec defines only
+  four fixed-output BLAKE2B variants (160/256/384/512), all covered.
+  No `CKM_BLAKE2*_GENERAL` digest mechanism exists in the spec.
 
 ---
 
