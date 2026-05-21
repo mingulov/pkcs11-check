@@ -75,9 +75,9 @@ All take `raw: RawPKCS11` as first parameter and use `expect_rv()` for errors.
 - `gen_ec_keypair(raw, session, curve_oid, public_attrs, private_attrs)` - generate EC keypair
 - `import_secret_key(raw, session, key_type, value, attrs)` - import secret key
 - `destroy_quietly(raw, session, handle)` - destroy object, ignore errors
-- `encrypt_single(raw, session, key, mechanism, plaintext)` - single-part encrypt
-- `decrypt_single(raw, session, key, mechanism, ciphertext)` - single-part decrypt
-- `sign_single(raw, session, key, mechanism, data)` - single-part sign
+- `encrypt_single(raw, session, key, mechanism, plaintext, *, output_overhead=0)` - single-part encrypt; `output_overhead` adds bytes beyond plaintext (e.g. 16 for GCM tag) for the NSS NULL-probe workaround
+- `decrypt_single(raw, session, key, mechanism, ciphertext, *, output_size_hint=0, retry_on_buffer_too_small=False)` - single-part decrypt
+- `sign_single(raw, session, key, mechanism, data, *, output_size_hint=0)` - single-part sign (use the hint for fixed-length sigs on NSS)
 - `verify_single(raw, session, key, mechanism, data, signature)` - single-part verify
 - `digest_single(raw, session, mechanism, data)` - single-part digest
 - `encrypt_multipart(raw, session, key, mechanism, chunks)` - multi-part encrypt
@@ -85,7 +85,7 @@ All take `raw: RawPKCS11` as first parameter and use `expect_rv()` for errors.
 - `sign_multipart(raw, session, key, mechanism, chunks)` - multi-part sign
 - `verify_multipart(raw, session, key, mechanism, chunks, signature)` - multi-part verify
 - `digest_multipart(raw, session, mechanism, chunks)` - multi-part digest
-- `wrap_key(raw, session, wrapping_key, target_key, mechanism)` - wrap key
+- `wrap_key(raw, session, wrapping_key, target_key, mechanism, *, output_size_hint=0)` - wrap key (use the hint for NSS AES-KEY-WRAP-KWP)
 - `unwrap_key(raw, session, unwrapping_key, wrapped_key, mechanism, attrs)` - unwrap key
 - `derive_key(raw, session, base_key, mechanism, attrs)` - derive key
 - `generate_random(raw, session, length)` - generate random bytes
@@ -103,8 +103,8 @@ All take `raw: RawPKCS11` as first parameter and use `expect_rv()` for errors.
 - `message_decrypt(raw, session, key, mechanism, ciphertext)` - v3.0 message decrypt
 - `encapsulate_key(raw, session, pub_key, mechanism, attrs)` - v3.2 KEM encapsulate
 - `decapsulate_key(raw, session, priv_key, mechanism, ciphertext, attrs)` - v3.2 KEM decapsulate
-- `wrap_key_authenticated(raw, session, wrapping_key, target_key, mechanism, *, aad, mech_param)` - v3.2 auth wrap; tag lives in mech_param (e.g. `CK_GCM_MESSAGE_PARAMS.pTag`)
-- `unwrap_key_authenticated(raw, session, unwrapping_key, wrapped, mechanism, attrs, *, aad, mech_param)` - v3.2 auth unwrap; AEAD tag is supplied via mech_param's pTag
+- `wrap_key_authenticated(raw, session, wrapping_key, target_key, mechanism, *, aad, mech_param, output_size_hint=0)` - v3.2 auth wrap; tag lives in mech_param (e.g. `CK_GCM_MESSAGE_PARAMS.pTag`)
+- `unwrap_key_authenticated(raw, session, unwrapping_key, wrapped, mechanism, attrs, *, aad, mech_param)` - v3.2 auth unwrap; AEAD tag is supplied via mech_param's pTag (use `mech_gcm_message_inherit_tag(source=wrap_mech)` to share it from the wrap leg)
 
 Recipes call `expect_rv()` and raise on non-OK. For exact CK_RV control, use raw C_* calls.
 

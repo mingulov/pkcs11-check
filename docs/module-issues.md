@@ -103,6 +103,17 @@ Updated as Docker targets are analyzed.
   EdDSA, contrary to PKCS#11 v3.0 which mandates explicit `CK_EDDSA_PARAMS`. Tests in
   `test_eddsa.py` xfail with a descriptive message on both NSS 3.120.1 and NSS-PQC 3.121.0.
 - **AES-XCBC-MAC verification**: NSS returns `CKR_KEY_TYPE_INCONSISTENT` on verify operations even with `CKA_VERIFY=True` key attribute. XCBC-MAC sign works but verify fails. This is an NSS softoken quirk.
+- **NULL-buffer size probe does not set output length (AES-GCM / AES-KEY-WRAP-KWP)**:
+  NSS softoken returns `CKR_OK` from the standard PKCS#11 size-query call
+  (output buffer `NULL`, `*pulLen=0`) but does not write the required size
+  to `*pulLen`. The follow-up call with the allocated buffer then either
+  fails or under-reports size; some mechanisms (KWP) also consume operation
+  state on the NULL pass, making retry impossible. Worked around in the
+  recipes via the ``output_size_hint`` parameter on ``encrypt_single``,
+  ``decrypt_single``, ``sign_single``, ``wrap_key``, and
+  ``wrap_key_authenticated`` — callers supply the expected output length
+  and the recipes skip the NULL probe entirely. Affected paths in this
+  project: ``test_aead.py`` (AEAD), ``test_aead_wrap_outputs.py`` (wrap).
 
 ---
 
