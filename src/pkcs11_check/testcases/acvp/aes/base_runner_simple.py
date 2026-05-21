@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CFB8,
     CKM_AES_OFB,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases.conftest import is_known_error
 
@@ -117,9 +118,8 @@ def run_simple_encrypt_test(
                 mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"{mech_name} not supported: {exc_msg}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+                pytest.skip(f"{mech_name} not supported: {exc}")
             raise
 
         expected = vec["ct_expected"]
@@ -175,9 +175,8 @@ def run_simple_decrypt_test(
                 mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"{mech_name} not supported: {exc_msg}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+                pytest.skip(f"{mech_name} not supported: {exc}")
             raise
 
         expected = vec["pt_expected"]

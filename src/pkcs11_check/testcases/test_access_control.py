@@ -43,8 +43,10 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKO_DATA,
     CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
@@ -181,14 +183,13 @@ class TestModifiableAttribute:
                 attrs={CKA_MODIFIABLE: False, CKA_LABEL: "mod-false-src"},
             )
         except AssertionError as e:
-            msg = str(e)
-            if any(
-                code in msg
-                for code in (
-                    "CKR_TEMPLATE_INCONSISTENT",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
-                    "CKR_ATTRIBUTE_TYPE_INVALID",
-                )
+            if is_known_error(
+                e,
+                {
+                    CKR_TEMPLATE_INCONSISTENT,
+                    CKR_ATTRIBUTE_VALUE_INVALID,
+                    CKR_ATTRIBUTE_TYPE_INVALID,
+                },
             ):
                 pytest.skip(f"Module does not allow CKA_MODIFIABLE=False at gen time: {e}")
             raise
@@ -229,14 +230,15 @@ class TestModifiableAttribute:
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_LABEL: "mod-false-after"})
             except AssertionError as e:
-                msg = str(e)
-                accepted = (
-                    "CKR_ACTION_PROHIBITED",
-                    "CKR_ATTRIBUTE_READ_ONLY",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
-                    "CKR_TEMPLATE_INCONSISTENT",
-                )
-                if any(code in msg for code in accepted):
+                if is_known_error(
+                    e,
+                    {
+                        CKR_ACTION_PROHIBITED,
+                        CKR_ATTRIBUTE_READ_ONLY,
+                        CKR_ATTRIBUTE_VALUE_INVALID,
+                        CKR_TEMPLATE_INCONSISTENT,
+                    },
+                ):
                     return
                 raise
 
@@ -386,14 +388,15 @@ class TestCopyObject:
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "should-fail"})
             except AssertionError as exc:
-                msg = str(exc)
-                accepted = (
-                    "CKR_ACTION_PROHIBITED",
-                    "CKR_FUNCTION_NOT_SUPPORTED",
-                    "CKR_ATTRIBUTE_READ_ONLY",
-                    "CKR_TEMPLATE_INCONSISTENT",
-                )
-                if any(code in msg for code in accepted):
+                if is_known_error(
+                    exc,
+                    {
+                        CKR_ACTION_PROHIBITED,
+                        CKR_FUNCTION_NOT_SUPPORTED,
+                        CKR_ATTRIBUTE_READ_ONLY,
+                        CKR_TEMPLATE_INCONSISTENT,
+                    },
+                ):
                     return
                 raise
 

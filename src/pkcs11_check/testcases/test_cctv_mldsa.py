@@ -34,7 +34,10 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_44,
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
+    CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.data import CCTV_DIR
 
 pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.cctv]
@@ -138,15 +141,8 @@ def test_cctv_mldsa_sign_verify(p11_raw_session: Any, vec_id: str, vec: dict[str
         try:
             pub_key, priv_key = _gen_mldsa_keypair(rs, param_set)
         except AssertionError as e:
-            exc_msg = str(e)
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_MECHANISM_INVALID",
-                    "CKR_FUNCTION_FAILED",
-                )
-            ):
-                pytest.skip(f"{param_name}: key generation failed - {exc_msg}")
+            if is_known_error(e, {CKR_MECHANISM_INVALID, CKR_FUNCTION_FAILED}):
+                pytest.skip(f"{param_name}: key generation failed - {e}")
             raise
 
         sig = sign_single(rs.raw, rs.sh, priv_key, CKM_ML_DSA, msg)

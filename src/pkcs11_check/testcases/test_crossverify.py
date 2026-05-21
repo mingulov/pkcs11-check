@@ -53,7 +53,11 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS,
     CKM_SHA_1,
     CKM_SHA_1_HMAC,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.crossverify
 
@@ -364,13 +368,13 @@ class TestHMACCrossVerify:
                 )
                 break
             except AssertionError as exc:
-                if any(
-                    name in str(exc)
-                    for name in (
-                        "CKR_MECHANISM_INVALID",
-                        "CKR_KEY_SIZE_RANGE",
-                        "CKR_TEMPLATE_INCONSISTENT",
-                    )
+                if is_known_error(
+                    exc,
+                    {
+                        CKR_MECHANISM_INVALID,
+                        CKR_KEY_SIZE_RANGE,
+                        CKR_TEMPLATE_INCONSISTENT,
+                    },
                 ):
                     continue
                 raise

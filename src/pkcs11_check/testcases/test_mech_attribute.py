@@ -30,7 +30,11 @@ from pkcs11_check.raw.types_std import (
     CKO_PRIVATE_KEY,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     gen_keypair_for_mech,
@@ -47,14 +51,13 @@ def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> An
         attrs = read_attributes(rs.raw, rs.sh, handle, [attr_id])
         return attrs.get(attr_id)
     except (AssertionError, Exception) as exc:
-        err = str(exc)
-        if any(
-            tok in err
-            for tok in (
-                "CKR_ATTRIBUTE_TYPE_INVALID",
-                "CKR_ATTRIBUTE_SENSITIVE",
-                "CKR_TEMPLATE_INCONSISTENT",
-            )
+        if is_known_error(
+            exc,
+            {
+                CKR_ATTRIBUTE_TYPE_INVALID,
+                CKR_ATTRIBUTE_SENSITIVE,
+                CKR_TEMPLATE_INCONSISTENT,
+            },
         ):
             return None
         raise AssertionError(f"Unexpected error reading {label} on handle {handle}: {exc}") from exc
