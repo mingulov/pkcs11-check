@@ -7,10 +7,13 @@ Based on OASIS PKCS#11 conventions for function output.
 
 from __future__ import annotations
 
+import ctypes
+from ctypes import byref
 from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -25,6 +28,7 @@ from pkcs11_check.raw.recipes import (
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
+    CK_ULONG,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
@@ -36,6 +40,9 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
+    CKR_ARGUMENTS_BAD,
+    CKR_BUFFER_TOO_SMALL,
+    CKR_OK,
 )
 
 pytestmark = pytest.mark.boundary
@@ -280,3 +287,245 @@ class TestRandomBufferSizes:
     def test_4096_bytes(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
         assert len(generate_random(rs.raw, rs.sh, 4096)) == 4096
+
+
+class TestOutputBufferEdgeCases:
+    """Output-buffer edge cases the existing input-size tests skip.
+
+    PKCS#11 two-call probe protocol leaves several behaviors
+    implementation-defined; we catalogue them per module and fail on the
+    cases the spec is unambiguous about (e.g. state preservation across
+    repeated CKR_BUFFER_TOO_SMALL retries).
+    """
+
+    def test_digest_final_buffer_too_small_then_correct(
+        self, p11_raw_session: Any
+    ) -> None:
+        """C_DigestFinal with too-small buffer → CKR_BUFFER_TOO_SMALL,
+        then correct-size buffer → CKR_OK with valid digest.
+
+        Spec §5.2: when CKR_BUFFER_TOO_SMALL is returned, the operation
+        state is preserved and the caller may retry with a larger buffer.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("SHA256"):
+            pytest.skip("CKM_SHA256 not supported")
+
+        mech = mech_simple(CKM_SHA256)
+        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
+        if rv != CKR_OK:
+            pytest.skip(f"C_DigestInit failed: 0x{rv:08x}")
+
+        # Feed input
+        msg = b"buffer-edge-case-test-vector"
+        msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
+        rv = int(rs.raw.C_DigestUpdate(rs.sh, msg_buf, len(msg)))
+        assert rv == CKR_OK, f"C_DigestUpdate: 0x{rv:08x}"
+
+        # First Final: undersized buffer should return BUFFER_TOO_SMALL
+        # with required size written to pulSize.  State must be preserved.
+        small_buf = (ctypes.c_ubyte * 8)()
+        small_len = CK_ULONG(8)
+        rv = int(rs.raw.C_DigestFinal(rs.sh, small_buf, byref(small_len)))
+        assert rv == CKR_BUFFER_TOO_SMALL, (
+            f"C_DigestFinal with 8-byte buffer for SHA256 returned 0x{rv:08x}, "
+            f"expected CKR_BUFFER_TOO_SMALL"
+        )
+        assert small_len.value == 32, (
+            f"After CKR_BUFFER_TOO_SMALL, pulSize must equal required size; "
+            f"got {small_len.value}, expected 32"
+        )
+
+        # Retry with correct size — state must be preserved per spec.
+        out_buf = (ctypes.c_ubyte * 32)()
+        out_len = CK_ULONG(32)
+        rv = int(rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len)))
+        assert rv == CKR_OK, (
+            f"Retry C_DigestFinal with 32-byte buffer returned 0x{rv:08x} — "
+            f"module failed to preserve operation state across "
+            f"CKR_BUFFER_TOO_SMALL"
+        )
+        assert out_len.value == 32
+
+    def test_digest_final_preserves_state_across_multiple_retries(
+        self, p11_raw_session: Any
+    ) -> None:
+        """Three sequential CKR_BUFFER_TOO_SMALL retries followed by correct size.
+
+        Operation state must remain intact through repeated too-small
+        attempts.  Caller's buffer-size negotiation logic relies on this.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("SHA256"):
+            pytest.skip("CKM_SHA256 not supported")
+
+        mech = mech_simple(CKM_SHA256)
+        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
+        if rv != CKR_OK:
+            pytest.skip(f"C_DigestInit failed: 0x{rv:08x}")
+
+        msg = b"retry-state-preservation"
+        msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
+        int(rs.raw.C_DigestUpdate(rs.sh, msg_buf, len(msg)))
+
+        # Three retries with progressively-larger but still-too-small buffers
+        for attempt_size in (1, 8, 16):
+            buf = (ctypes.c_ubyte * attempt_size)()
+            buf_len = CK_ULONG(attempt_size)
+            rv = int(rs.raw.C_DigestFinal(rs.sh, buf, byref(buf_len)))
+            assert rv == CKR_BUFFER_TOO_SMALL, (
+                f"Retry #{attempt_size}: expected CKR_BUFFER_TOO_SMALL, "
+                f"got 0x{rv:08x}"
+            )
+            assert buf_len.value == 32, (
+                f"Retry #{attempt_size}: pulSize must be 32, got {buf_len.value}"
+            )
+
+        # Final attempt with correct size: state must still be intact
+        out_buf = (ctypes.c_ubyte * 32)()
+        out_len = CK_ULONG(32)
+        rv = int(rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len)))
+        assert rv == CKR_OK, (
+            f"After 3 retries, correct-size C_DigestFinal returned 0x{rv:08x} — "
+            f"state was not preserved"
+        )
+
+    def test_digest_final_probe_null_buffer_returns_size(
+        self, p11_raw_session: Any
+    ) -> None:
+        """C_DigestFinal(NULL pBuffer, &pulSize) must populate pulSize.
+
+        Spec §5.2 two-call probe: NULL output buffer returns the required
+        size without writing data, with rv = CKR_OK.  State is preserved.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("SHA256"):
+            pytest.skip("CKM_SHA256 not supported")
+
+        mech = mech_simple(CKM_SHA256)
+        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
+        if rv != CKR_OK:
+            pytest.skip(f"C_DigestInit failed: 0x{rv:08x}")
+
+        msg = b"probe-null-buffer"
+        msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
+        int(rs.raw.C_DigestUpdate(rs.sh, msg_buf, len(msg)))
+
+        probe_len = CK_ULONG(0)  # garbage; should be overwritten
+        rv = int(rs.raw.C_DigestFinal(rs.sh, None, byref(probe_len)))
+        assert rv == CKR_OK, (
+            f"C_DigestFinal(NULL, &size) returned 0x{rv:08x}; spec says CKR_OK "
+            f"with size populated"
+        )
+        assert probe_len.value == 32, (
+            f"Probe must populate pulSize with 32 (SHA256 output); got {probe_len.value}"
+        )
+
+        # State must still be intact: a follow-up Final with real buffer succeeds.
+        out_buf = (ctypes.c_ubyte * 32)()
+        out_len = CK_ULONG(32)
+        rv = int(rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len)))
+        assert rv == CKR_OK, (
+            f"After NULL-buffer probe, real C_DigestFinal returned 0x{rv:08x} — "
+            f"state was lost"
+        )
+
+    def test_digest_final_with_oversize_buffer_writes_actual_size(
+        self, p11_raw_session: Any
+    ) -> None:
+        """Oversize buffer is accepted; pulSize set to actual written bytes."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SHA256"):
+            pytest.skip("CKM_SHA256 not supported")
+
+        mech = mech_simple(CKM_SHA256)
+        rv = int(rs.raw.C_DigestInit(rs.sh, mech.byref()))
+        if rv != CKR_OK:
+            pytest.skip(f"C_DigestInit failed: 0x{rv:08x}")
+
+        msg = b"oversize-buffer-test"
+        msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
+        int(rs.raw.C_DigestUpdate(rs.sh, msg_buf, len(msg)))
+
+        oversize_buf = (ctypes.c_ubyte * 1024)()
+        oversize_len = CK_ULONG(1024)
+        rv = int(rs.raw.C_DigestFinal(rs.sh, oversize_buf, byref(oversize_len)))
+        assert rv == CKR_OK, f"C_DigestFinal with 1024-byte buffer: 0x{rv:08x}"
+        assert oversize_len.value == 32, (
+            f"With oversize buffer, pulSize must reflect actual written bytes (32); "
+            f"got {oversize_len.value}"
+        )
+
+    def test_sign_final_buffer_too_small_then_correct(
+        self, p11_raw_session: Any
+    ) -> None:
+        """C_SignFinal with too-small buffer → BUFFER_TOO_SMALL, retry → OK.
+
+        Asymmetric signature sizes (RSA-2048 → 256 bytes) make the
+        too-small case easy to set up.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("SHA256_RSA_PKCS"):
+            pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported")
+
+        pub, priv = gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            bits=2048,
+            public_attrs={CKA_VERIFY: True},
+            private_attrs={CKA_SIGN: True},
+        )
+        try:
+            mech = mech_simple(CKM_SHA256_RSA_PKCS)
+            rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv))
+            if rv != CKR_OK:
+                pytest.skip(f"C_SignInit failed: 0x{rv:08x}")
+
+            msg = b"signature-buffer-edge"
+            msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
+            int(rs.raw.C_SignUpdate(rs.sh, msg_buf, len(msg)))
+
+            # Too-small buffer
+            small_buf = (ctypes.c_ubyte * 16)()
+            small_len = CK_ULONG(16)
+            rv = int(rs.raw.C_SignFinal(rs.sh, small_buf, byref(small_len)))
+            assert rv == CKR_BUFFER_TOO_SMALL, (
+                f"C_SignFinal with 16-byte buffer for RSA-2048 returned 0x{rv:08x}, "
+                f"expected CKR_BUFFER_TOO_SMALL"
+            )
+            assert small_len.value == 256, (
+                f"After CKR_BUFFER_TOO_SMALL, pulSize must be 256 (RSA-2048); "
+                f"got {small_len.value}"
+            )
+
+            # Retry with correct size
+            sig_buf = (ctypes.c_ubyte * 256)()
+            sig_len = CK_ULONG(256)
+            rv = int(rs.raw.C_SignFinal(rs.sh, sig_buf, byref(sig_len)))
+            assert rv == CKR_OK, (
+                f"Retry C_SignFinal with 256-byte buffer returned 0x{rv:08x} — "
+                f"signature state was not preserved across BUFFER_TOO_SMALL"
+            )
+            assert sig_len.value == 256
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_generate_random_zero_length_buffer(self, p11_raw_session: Any) -> None:
+        """C_GenerateRandom with length=0 must complete cleanly.
+
+        Spec §5.19 doesn't carve out zero-length specifically; it is a
+        no-op writing zero bytes.  Some modules return CKR_ARGUMENTS_BAD;
+        either is acceptable but a segfault or hang is not.
+        """
+        rs = p11_raw_session
+        buf = (ctypes.c_ubyte * 1)()
+        rv = int(rs.raw.C_GenerateRandom(rs.sh, buf, 0))
+        # Either CKR_OK (zero-length read is a no-op) or CKR_ARGUMENTS_BAD
+        # (some modules treat 0-length as bad arg) is acceptable.
+        assert rv in (CKR_OK, CKR_ARGUMENTS_BAD), (
+            f"C_GenerateRandom(buf, 0) returned 0x{rv:08x}; expected "
+            f"CKR_OK or CKR_ARGUMENTS_BAD"
+        )

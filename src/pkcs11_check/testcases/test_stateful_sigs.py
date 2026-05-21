@@ -58,6 +58,10 @@ from pkcs11_check.raw.types_std import (
     CKM_XMSSMT_KEY_PAIR_GEN,
     CKO_PRIVATE_KEY,
     CKO_PUBLIC_KEY,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_KEY_EXHAUSTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_OK,
 )
 
@@ -531,5 +535,91 @@ class TestXMSSMTSignVerify:
                 pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
             else:
                 raise
+        finally:
+            _destroy_pair(rs, pub, priv)
+
+
+# ---------------------------------------------------------------------------
+# Key-pool exhaustion (stress)
+# ---------------------------------------------------------------------------
+
+# Spec-recognised CKR codes for "the stateful key has been exhausted".
+# CKR_KEY_EXHAUSTED is the PKCS#11 v3.2 specific code; some modules also
+# return CKR_DEVICE_ERROR or CKR_FUNCTION_FAILED.  All three are acceptable.
+# What's *not* acceptable: CKR_OK (silent leaf reuse — security gap) or
+# a segfault.
+_EXHAUSTION_OK_RVS: frozenset[int] = frozenset(
+    {
+        int(CKR_KEY_EXHAUSTED),
+        int(CKR_DEVICE_ERROR),
+        int(CKR_FUNCTION_FAILED),
+        int(CKR_KEY_HANDLE_INVALID),  # Module destroys key handle on exhaustion
+    }
+)
+
+
+@pytest.mark.stress
+class TestHSSKeyExhaustion:
+    """Sign past the leaf budget — verify the module returns CKR_KEY_EXHAUSTED.
+
+    HSS with single-level LMS_SHA256_M32_H5 has 2^5 = 32 one-time keys.
+    Signing 33 times must return a key-exhausted error on attempt #33,
+    not silently re-use a leaf (which would be a security gap) and not
+    segfault.
+
+    Marked @stress because 32+ HSS signatures can take 10-60 seconds
+    depending on module.
+    """
+
+    def test_hss_sign_past_leaf_budget_returns_key_exhausted(
+        self, p11_raw_session: Any
+    ) -> None:
+        """Sign 33 times on a 32-leaf HSS key; the 33rd attempt must error."""
+        rs = p11_raw_session
+        _skip_if_no(rs, "HSS")
+        _skip_if_no(rs, "HSS_KEY_PAIR_GEN")
+
+        pub, priv = _try_keygen(_generate_hss_keypair, rs, "HSS")
+        try:
+            # Sign all 32 leaves
+            for i in range(32):
+                try:
+                    sig = sign_single(rs.raw, rs.sh, priv, CKM_HSS, _MESSAGE)
+                except AssertionError as exc:
+                    rv = getattr(exc, "rv", None)
+                    # If module exhausts earlier than expected (e.g. 16-leaf
+                    # internal limit), still observe the spec-compliant CKR.
+                    if rv in _EXHAUSTION_OK_RVS:
+                        pytest.xfail(
+                            f"Module exhausted HSS key at signature #{i + 1} "
+                            f"(expected at #33): {exc}.  This is the "
+                            f"spec-compliant return code; module may use a "
+                            f"smaller leaf budget than RFC 8554 LMS_SHA256_M32_H5."
+                        )
+                    raise
+                assert isinstance(sig, bytes) and len(sig) > 0
+
+            # 33rd signature attempt: must fail with CKR_KEY_EXHAUSTED
+            # (or one of the spec-compatible alternatives).  Must NOT
+            # succeed silently — that would mean leaf reuse.
+            try:
+                bad_sig = sign_single(rs.raw, rs.sh, priv, CKM_HSS, _MESSAGE)
+            except AssertionError as exc:
+                rv = getattr(exc, "rv", None)
+                if rv in _EXHAUSTION_OK_RVS:
+                    return  # Expected: module correctly rejected the over-budget sign.
+                pytest.fail(
+                    f"33rd sign on 32-leaf HSS returned unexpected CKR: {exc}. "
+                    f"Expected CKR_KEY_EXHAUSTED."
+                )
+
+            # If we got here, the sign succeeded.  That's a security gap.
+            pytest.fail(
+                f"33rd C_Sign on a 32-leaf HSS key succeeded "
+                f"(sig_len={len(bad_sig)}).  Module is reusing one-time "
+                f"keys past the leaf budget — this is a security gap "
+                f"(RFC 8554 §6.3 mandates one-time use).  Spec requires "
+                f"CKR_KEY_EXHAUSTED."
+            )
         finally:
             _destroy_pair(rs, pub, priv)

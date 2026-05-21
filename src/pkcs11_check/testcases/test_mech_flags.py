@@ -6,16 +6,49 @@ module against the OASIS PKCS#11 spec expectations stored in the registry.
 Tests:
   - Expected CKF_* flags from the registry are a subset of reported flags
   - min_key_size <= max_key_size (sanity check on C_GetMechanismInfo output)
+  - Each advertised CKF_*Init flag (CKF_ENCRYPT, CKF_DIGEST, CKF_SIGN, etc.)
+    corresponds to a callable function: i.e. the matching C_*Init does NOT
+    return CKR_MECHANISM_INVALID / CKR_FUNCTION_NOT_SUPPORTED.  This catches
+    the most common conformance bug — modules over-advertising flags they
+    don't actually implement.
 """
 
 from __future__ import annotations
 
+import ctypes
+from ctypes import byref
+from typing import Any
+
 import pytest
 
 from pkcs11_check.fixtures import RawSession
+from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.types_std import (
+    CK_ULONG,
+    CKF_DECRYPT,
+    CKF_DIGEST,
+    CKF_ENCRYPT,
+    CKF_SIGN,
+    CKF_SIGN_RECOVER,
+    CKF_VERIFY,
+    CKF_VERIFY_RECOVER,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
+    CKR_OK,
+)
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.flag_validation]
+
+# CKR codes that mean "the module says this mechanism is not implemented".
+# If the module advertised the corresponding flag in C_GetMechanismInfo, one
+# of these returns is a contradiction (a flag-lie).
+_LIE_RVCS: frozenset[int] = frozenset(
+    {
+        int(CKR_MECHANISM_INVALID),
+        int(CKR_FUNCTION_NOT_SUPPORTED),
+    }
+)
 
 # Mechanism-flag names for readable failure messages.
 # These are the standard CKF_* flags returned by C_GetMechanismInfo.
@@ -100,3 +133,155 @@ class TestMechFlags:
             f"{entry.mech_name}: min_key_size ({entry.min_key_size}) > "
             f"max_key_size ({entry.max_key_size}) -- invalid C_GetMechanismInfo output"
         )
+
+
+def _abort_op(rs: RawSession, final_func_name: str) -> None:
+    """Best-effort cleanup of a pending operation via the matching *Final."""
+    final_fn: Any = getattr(rs.raw, final_func_name, None)
+    if final_fn is None:
+        return
+    out_buf = (ctypes.c_ubyte * 256)()
+    out_len = CK_ULONG(256)
+    final_fn(rs.sh, out_buf, byref(out_len))
+
+
+def _probe_init_with_key(
+    rs: RawSession,
+    init_func_name: str,
+    mech_id: int,
+) -> int | None:
+    """Call C_*Init with a dummy key handle (0).
+
+    Returns the CKR code, or None if the function isn't in the module's
+    function list.  Using handle 0 separates mechanism-rejection
+    (CKR_MECHANISM_INVALID — a flag lie) from key-rejection
+    (CKR_KEY_HANDLE_INVALID etc. — mech accepted, key irrelevant).
+    """
+    init_fn: Any = getattr(rs.raw, init_func_name, None)
+    if init_fn is None or not callable(init_fn):
+        return None
+    mech = mech_simple(mech_id)
+    rv: Any = init_fn(rs.sh, mech.byref(), 0)
+    return int(rv)
+
+
+def _probe_digest_init(rs: RawSession, mech_id: int) -> int | None:
+    """C_DigestInit takes no key handle — probe directly."""
+    init_fn: Any = getattr(rs.raw, "C_DigestInit", None)
+    if init_fn is None:
+        return None
+    mech = mech_simple(mech_id)
+    rv: Any = init_fn(rs.sh, mech.byref())
+    return int(rv)
+
+
+def _assert_not_lie(
+    entry: MechEntry, flag_name: str, init_name: str, rv: int | None
+) -> None:
+    """Assert rv is not CKR_MECHANISM_INVALID / CKR_FUNCTION_NOT_SUPPORTED."""
+    if rv is None:
+        pytest.skip(f"{init_name} not present in module function list")
+    if rv in _LIE_RVCS:
+        rv_name = {
+            int(CKR_MECHANISM_INVALID): "CKR_MECHANISM_INVALID",
+            int(CKR_FUNCTION_NOT_SUPPORTED): "CKR_FUNCTION_NOT_SUPPORTED",
+        }.get(rv, f"0x{rv:08x}")
+        pytest.fail(
+            f"{entry.mech_name} advertises {flag_name} in C_GetMechanismInfo "
+            f"(flags=0x{entry.flags:08x}), but {init_name} returned {rv_name}. "
+            f"Module is advertising a mechanism it does not actually implement."
+        )
+
+
+class TestMechFlagBehavioralConformance:
+    """For each advertised CKF_* flag, the corresponding C_*Init function must
+    not reject the mechanism as unknown.
+
+    Other return codes (CKR_KEY_HANDLE_INVALID, CKR_KEY_TYPE_INCONSISTENT,
+    CKR_TEMPLATE_INCOMPLETE) indicate the mechanism IS supported and the
+    minimal probe didn't supply the right key/template — that's fine.  We
+    only fail when the module specifically claims the flag but rejects
+    the mechanism itself.
+    """
+
+    def test_encrypt_flag_callable(
+        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+    ) -> None:
+        entry = mech_any_entry
+        if not (entry.flags & int(CKF_ENCRYPT)):
+            pytest.skip(f"{entry.mech_name}: CKF_ENCRYPT not advertised")
+        rv = _probe_init_with_key(p11_raw_session, "C_EncryptInit", entry.mech_id)
+        try:
+            _assert_not_lie(entry, "CKF_ENCRYPT", "C_EncryptInit", rv)
+        finally:
+            if rv == CKR_OK:
+                _abort_op(p11_raw_session, "C_EncryptFinal")
+
+    def test_decrypt_flag_callable(
+        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+    ) -> None:
+        entry = mech_any_entry
+        if not (entry.flags & int(CKF_DECRYPT)):
+            pytest.skip(f"{entry.mech_name}: CKF_DECRYPT not advertised")
+        rv = _probe_init_with_key(p11_raw_session, "C_DecryptInit", entry.mech_id)
+        try:
+            _assert_not_lie(entry, "CKF_DECRYPT", "C_DecryptInit", rv)
+        finally:
+            if rv == CKR_OK:
+                _abort_op(p11_raw_session, "C_DecryptFinal")
+
+    def test_digest_flag_callable(
+        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+    ) -> None:
+        entry = mech_any_entry
+        if not (entry.flags & int(CKF_DIGEST)):
+            pytest.skip(f"{entry.mech_name}: CKF_DIGEST not advertised")
+        rv = _probe_digest_init(p11_raw_session, entry.mech_id)
+        try:
+            _assert_not_lie(entry, "CKF_DIGEST", "C_DigestInit", rv)
+        finally:
+            if rv == CKR_OK:
+                _abort_op(p11_raw_session, "C_DigestFinal")
+
+    def test_sign_flag_callable(
+        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+    ) -> None:
+        entry = mech_any_entry
+        if not (entry.flags & int(CKF_SIGN)):
+            pytest.skip(f"{entry.mech_name}: CKF_SIGN not advertised")
+        rv = _probe_init_with_key(p11_raw_session, "C_SignInit", entry.mech_id)
+        try:
+            _assert_not_lie(entry, "CKF_SIGN", "C_SignInit", rv)
+        finally:
+            if rv == CKR_OK:
+                _abort_op(p11_raw_session, "C_SignFinal")
+
+    def test_verify_flag_callable(
+        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+    ) -> None:
+        entry = mech_any_entry
+        if not (entry.flags & int(CKF_VERIFY)):
+            pytest.skip(f"{entry.mech_name}: CKF_VERIFY not advertised")
+        rv = _probe_init_with_key(p11_raw_session, "C_VerifyInit", entry.mech_id)
+        # C_VerifyFinal needs an input signature; skip cleanup — Final
+        # without buffer is best-effort only.  Module may end up in odd
+        # state, but the probe itself completed.
+        _assert_not_lie(entry, "CKF_VERIFY", "C_VerifyInit", rv)
+
+    def test_sign_recover_flag_callable(
+        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+    ) -> None:
+        entry = mech_any_entry
+        if not (entry.flags & int(CKF_SIGN_RECOVER)):
+            pytest.skip(f"{entry.mech_name}: CKF_SIGN_RECOVER not advertised")
+        rv = _probe_init_with_key(p11_raw_session, "C_SignRecoverInit", entry.mech_id)
+        _assert_not_lie(entry, "CKF_SIGN_RECOVER", "C_SignRecoverInit", rv)
+
+    def test_verify_recover_flag_callable(
+        self, p11_raw_session: RawSession, mech_any_entry: MechEntry
+    ) -> None:
+        entry = mech_any_entry
+        if not (entry.flags & int(CKF_VERIFY_RECOVER)):
+            pytest.skip(f"{entry.mech_name}: CKF_VERIFY_RECOVER not advertised")
+        rv = _probe_init_with_key(p11_raw_session, "C_VerifyRecoverInit", entry.mech_id)
+        _assert_not_lie(entry, "CKF_VERIFY_RECOVER", "C_VerifyRecoverInit", rv)
