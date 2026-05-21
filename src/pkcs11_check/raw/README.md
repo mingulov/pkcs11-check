@@ -103,8 +103,8 @@ All take `raw: RawPKCS11` as first parameter and use `expect_rv()` for errors.
 - `message_decrypt(raw, session, key, mechanism, ciphertext)` - v3.0 message decrypt
 - `encapsulate_key(raw, session, pub_key, mechanism, attrs)` - v3.2 KEM encapsulate
 - `decapsulate_key(raw, session, priv_key, mechanism, ciphertext, attrs)` - v3.2 KEM decapsulate
-- `wrap_key_authenticated(raw, session, wrapping_key, target_key, mechanism)` - v3.2 auth wrap
-- `unwrap_key_authenticated(raw, session, unwrapping_key, wrapped, tag, mechanism, attrs)` - v3.2 auth unwrap
+- `wrap_key_authenticated(raw, session, wrapping_key, target_key, mechanism, *, aad, mech_param)` - v3.2 auth wrap; tag lives in mech_param (e.g. `CK_GCM_MESSAGE_PARAMS.pTag`)
+- `unwrap_key_authenticated(raw, session, unwrapping_key, wrapped, mechanism, attrs, *, aad, mech_param)` - v3.2 auth unwrap; AEAD tag is supplied via mech_param's pTag
 
 Recipes call `expect_rv()` and raise on non-OK. For exact CK_RV control, use raw C_* calls.
 

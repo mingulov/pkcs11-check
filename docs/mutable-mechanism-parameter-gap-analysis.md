@@ -188,28 +188,14 @@ Current files:
 - `src/pkcs11_check/testcases/test_authenticated_wrap.py`
 - `src/pkcs11_check/raw/recipes.py`
 
-Authenticated wrap tests currently use explicit classic GCM parameters through
-`mech_gcm()`. They validate basic wrap/unwrap and tampered tag/AAD rejection,
-which is valuable, but they do not exercise generated-IV parameter output.
+Authenticated wrap tests use `mech_gcm_message` parameter structures to convey
+the authentication tag via `CK_GCM_MESSAGE_PARAMS.pTag`. They cover basic
+wrap/unwrap, tampered tag rejection, tampered ciphertext rejection, AAD
+mismatch rejection, and generated-IV writeback for AES-GCM.
 
-The v3.2 spec text and examples use message parameter structures for
-authenticated wrap/unwrap. The existing recipe also has a design issue for this
-surface: `wrap_key_authenticated()` uses `C_WrapKey` as a sizing heuristic, which
-does not necessarily match `C_WrapKeyAuthenticated` when generated IV/tag
-outputs are involved.
-
-Recommended acceptance criteria:
-
-- Add a dedicated authenticated-wrap recipe path that does not depend on
-  `C_WrapKey` for sizing when exercising generated message params.
-- Add a positive generated-IV/tag authenticated wrap test for AES-GCM.
-- Add AES-CCM authenticated-wrap generated nonce/MAC only after MP-03/MP-04
-  helpers are stable.
-
-Implementation status: `wrap_key_authenticated_output()` now sizes through
-`C_WrapKeyAuthenticated` itself, and `test_authenticated_wrap.py` covers
-AES-GCM generated IV/tag authenticated wrap. AES-CCM authenticated wrap remains
-follow-up work.
+Implementation status: `wrap_key_authenticated()` matches the PKCS#11 v3.2
+§5.13 signature directly (AAD input, wrapped-key output, tag written into
+`mech_param`'s pTag buffer). AES-CCM authenticated wrap remains follow-up work.
 
 ### MP-06: TLS/SSL/WTLS Nested Output Structures Are Under-Asserted
 

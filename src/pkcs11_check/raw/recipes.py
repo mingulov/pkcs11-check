@@ -138,7 +138,6 @@ def _two_call_output(
     - C_EncryptUpdate / C_DecryptUpdate (conditional zero-length output, use _multipart_output)
     - C_EncryptMessage / C_DecryptMessage (extra aad args, use _message_crypto)
     - C_EncapsulateKey (output buffer not the last arg, extra handle output after it)
-    - C_WrapKeyAuthenticated (two output pairs: wrapped + tag)
     - C_GetMechanismList / C_GetSlotList / C_GetAttributeValue (non-byte array types)
 
     ``output_size_hint`` enables single-call mode for modules that do not support the
@@ -1584,107 +1583,37 @@ def wrap_key_authenticated(
     target_key: int,
     mechanism: CKM | int,
     *,
-    mech_param: PackedMechanism | None = None,
-) -> tuple[bytes, bytes]:
-    """C_WrapKeyAuthenticated -- returns (wrapped_key, tag).
-
-    C_WrapKeyAuthenticated signature: (session, mech_ptr, wrapping_key, target_key,
-    wrapped_ptr, wrapped_len[CK_ULONG], tag_ptr, tag_len_ptr[CK_ULONG_PTR]).
-    wrapped_len is an input size; tag_len_ptr is an output pointer.
-    Use NULL/0 for wrapped and NULL/byref for tag on first call to get sizes.
-    """
-    mech = _resolve_mech(mechanism, mech_param)
-
-    # First call: get tag size; wrapped_len is input so pass 0 with NULL wrapped_ptr
-    tag_len = CK_ULONG(0)
-    rv = raw.C_WrapKeyAuthenticated(
-        session,
-        mech.byref(),
-        wrapping_key,
-        target_key,
-        None,
-        0,
-        None,
-        byref(tag_len),
-    )
-    # CKR_BUFFER_TOO_SMALL is expected when NULL is passed for wrapped_ptr
-    if rv not in (CKR_OK, CKR_BUFFER_TOO_SMALL):
-        expect_rv(rv, CKR_OK)
-
-    # For wrapped key size, C_WrapKey uses the same NULL pattern -- try with large buffer
-    # then retry if needed. Use C_WrapKey size as a heuristic first call.
-    wrapped_len = CK_ULONG(0)
-    rv2 = raw.C_WrapKey(
-        session,
-        mech.byref(),
-        wrapping_key,
-        target_key,
-        None,
-        byref(wrapped_len),
-    )
-    expect_rv(rv2, CKR_OK)
-
-    wrapped_buf = (ctypes.c_ubyte * wrapped_len.value)()
-    tag_buf = (ctypes.c_ubyte * tag_len.value)()
-    rv = raw.C_WrapKeyAuthenticated(
-        session,
-        mech.byref(),
-        wrapping_key,
-        target_key,
-        wrapped_buf,
-        wrapped_len.value,
-        tag_buf,
-        byref(tag_len),
-    )
-    expect_rv(rv, CKR_OK)
-    return bytes(wrapped_buf[: wrapped_len.value]), bytes(tag_buf[: tag_len.value])
-
-
-def wrap_key_authenticated_output(
-    raw: RawPKCS11,
-    session: int,
-    wrapping_key: int,
-    target_key: int,
-    mechanism: CKM | int,
-    *,
     aad: bytes = b"",
     mech_param: PackedMechanism | None = None,
 ) -> bytes:
-    """C_WrapKeyAuthenticated using AAD input and wrapped-key output.
+    """C_WrapKeyAuthenticated — wrap ``target_key`` and return wrapped bytes.
 
-    Authentication outputs such as GCM tag bytes live in the mechanism
-    parameter structure, for example CK_GCM_MESSAGE_PARAMS.pTag.
+    PKCS#11 v3.2 §5.13 signature:
+        (hSession, pMechanism, hWrappingKey, hKey,
+         pAssociatedData, ulAssociatedDataLen,
+         pWrappedKey,      pulWrappedKeyLen)
+
+    The C function does NOT return the authentication tag.  For AEAD modes
+    (AES-GCM, AES-CCM) the tag is written into a buffer inside the mechanism
+    parameter struct (e.g. ``CK_GCM_MESSAGE_PARAMS.pTag``).  Build the
+    mech_param with a packer that registers a "tag" buffer (e.g.
+    ``mech_gcm_message``) and retrieve it via
+    ``mech_param.buffer_bytes("tag")`` after the call.  The classical
+    ``mech_gcm`` packer has no pTag field and is NOT a valid mech_param for
+    this function.
     """
     mech = _resolve_mech(mechanism, mech_param)
     aad_buf = to_ubyte_buf(aad) if aad else None
-    aad_len = len(aad)
-    wrapped_len = CK_ULONG(0)
-    rv = raw.C_WrapKeyAuthenticated(
+    return _two_call_output(
+        raw,
+        "C_WrapKeyAuthenticated",
         session,
         mech.byref(),
         wrapping_key,
         target_key,
         aad_buf,
-        aad_len,
-        None,
-        byref(wrapped_len),
+        len(aad),
     )
-    if rv not in (CKR_OK, CKR_BUFFER_TOO_SMALL):
-        expect_rv(rv, CKR_OK)
-
-    wrapped_buf = (ctypes.c_ubyte * wrapped_len.value)()
-    rv = raw.C_WrapKeyAuthenticated(
-        session,
-        mech.byref(),
-        wrapping_key,
-        target_key,
-        aad_buf,
-        aad_len,
-        wrapped_buf,
-        byref(wrapped_len),
-    )
-    expect_rv(rv, CKR_OK)
-    return bytes(wrapped_buf[: wrapped_len.value])
 
 
 def unwrap_key_authenticated(
@@ -1692,18 +1621,31 @@ def unwrap_key_authenticated(
     session: int,
     unwrapping_key: int,
     wrapped_key: bytes,
-    tag: bytes,
     mechanism: CKM | int,
     attrs: Mapping[Any, Any] | None = None,
     *,
+    aad: bytes = b"",
     mech_param: PackedMechanism | None = None,
 ) -> int:
-    """C_UnwrapKeyAuthenticated -- returns key handle."""
+    """C_UnwrapKeyAuthenticated — returns key handle.
+
+    PKCS#11 v3.2 §5.13 signature:
+        (hSession, pMechanism, hUnwrappingKey,
+         pWrappedKey, ulWrappedKeyLen,
+         pTemplate,   ulAttributeCount,
+         pAssociatedData, ulAssociatedDataLen,
+         phKey)
+
+    The ``aad`` argument is the same AAD that was supplied to the corresponding
+    ``wrap_key_authenticated`` call; AEAD modes cross-verify it.  The
+    authentication tag is conveyed via the mechanism parameter struct
+    (e.g. ``CK_GCM_MESSAGE_PARAMS.pTag``), not via this argument.
+    """
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
     wrapped_buf = to_ubyte_buf(wrapped_key)
-    tag_buf = to_ubyte_buf(tag)
+    aad_buf = to_ubyte_buf(aad) if aad else None
     key_handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_UnwrapKeyAuthenticated(
         session,
@@ -1712,8 +1654,8 @@ def unwrap_key_authenticated(
         wrapped_buf,
         len(wrapped_key),
         *template_ptr_count(tmpl),
-        tag_buf,
-        len(tag),
+        aad_buf,
+        len(aad),
         byref(key_handle),
     )
     expect_rv(rv, CKR_OK)
@@ -1774,5 +1716,4 @@ __all__ = [
     "verify_single",
     "wrap_key",
     "wrap_key_authenticated",
-    "wrap_key_authenticated_output",
 ]
