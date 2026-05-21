@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_gcm_message
+from pkcs11_check.raw.pack import mech_gcm_message, mech_gcm_message_inherit_tag
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
@@ -100,8 +100,7 @@ class TestAuthenticatedWrap:
             )
 
             # Unwrap: share the wrap-side pTag so the module sees the auth tag.
-            unwrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
-            unwrap_mech.params.pTag = wrap_mech.params.pTag
+            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
             unwrapped = unwrap_key_authenticated(
                 rs.raw,
                 rs.sh,
@@ -172,8 +171,7 @@ class TestAuthenticatedWrap:
             assert any(iv)
             assert any(tag)
 
-            unwrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
-            unwrap_mech.params.pTag = wrap_mech.params.pTag
+            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
             unwrapped = unwrap_key_authenticated(
                 rs.raw,
                 rs.sh,
@@ -377,8 +375,7 @@ class TestAuthenticatedWrapAAD:
                 raise
 
             # Unwrap with a DIFFERENT AAD — AEAD must reject.
-            unwrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
-            unwrap_mech.params.pTag = wrap_mech.params.pTag
+            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
             try:
                 bad_unwrap = unwrap_key_authenticated(
                     rs.raw,
@@ -610,8 +607,7 @@ class TestWrapIntegrity:
             tampered_ct[0] ^= 0x01
             tampered_bytes = bytes(tampered_ct)
 
-            unwrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
-            unwrap_mech.params.pTag = wrap_mech.params.pTag
+            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
             try:
                 unwrapped = unwrap_key_authenticated(
                     rs.raw,

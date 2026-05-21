@@ -195,6 +195,39 @@ def mech_gcm_message(
     return result
 
 
+def mech_gcm_message_inherit_tag(
+    mechanism_type: CKM | int,
+    iv: bytes,
+    *,
+    source: PackedMechanism,
+    iv_fixed_bits: int = 0,
+    iv_generator: int = 0,
+) -> PackedMechanism:
+    """Pack CK_GCM_MESSAGE_PARAMS that shares its pTag with ``source``.
+
+    Used to wire an AEAD unwrap mechanism to the tag buffer the matching
+    wrap call wrote, without callers reaching into ``source.params.pTag``
+    directly (which orphans the unwrap-side buffer from the new mech's
+    ``buffer_bytes("tag")``).
+
+    The shared tag buffer is registered under the name ``"tag"`` on the
+    returned mechanism, so ``mech.buffer_bytes("tag")`` returns the same
+    bytes ``source.buffer_bytes("tag")`` does.  ``source`` is kept alive
+    via the new mechanism's keepalive list.
+    """
+    tag_storage, tag_len = source._named_buffers["tag"]
+    ka: list[Any] = [source]
+    params = CK_GCM_MESSAGE_PARAMS()
+    params.pIv, params.ulIvLen = _pack_bytes(iv, ka)
+    params.ulIvFixedBits = iv_fixed_bits
+    params.ivGenerator = iv_generator
+    params.pTag = source.params.pTag
+    params.ulTagBits = source.params.ulTagBits
+    result = _mech_struct(mechanism_type, params, "mech_gcm_message_inherit_tag", ka)
+    result.add_buffer("tag", tag_storage, tag_len)
+    return result
+
+
 def mech_gcm_message_generated_iv(
     mechanism_type: CKM | int,
     *,
@@ -1208,6 +1241,7 @@ __all__ = [
     "mech_gcm_generated_iv",
     "mech_gcm_message",
     "mech_gcm_message_generated_iv",
+    "mech_gcm_message_inherit_tag",
     "mech_gcm_wrap",
     "mech_gcm_wrap_generated_iv",
     "mech_hash_sign_context",
