@@ -21,6 +21,7 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     generate_random,
     import_secret_key,
+    to_ubyte_buf,
 )
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
@@ -29,22 +30,12 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKK_AES,
     CKM_AES_GCM,
-    CKR_ARGUMENTS_BAD,
     CKR_BUFFER_TOO_SMALL,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
 
 pytestmark = pytest.mark.crossverify
-
-_GENERATED_IV_UNSUPPORTED_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-)
 
 
 def _import_aes(rs: Any, key_bytes: bytes) -> int:
@@ -60,10 +51,6 @@ def _import_aes(rs: Any, key_bytes: bytes) -> int:
             CKA_TOKEN: False,
         },
     )
-
-
-def _to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
-    return (ctypes.c_ubyte * len(data))(*data)
 
 
 def _skip_generated_iv_unsupported(rv: int, convention: str) -> None:
@@ -82,14 +69,14 @@ def _encrypt_gcm_generated_iv_two_call(
     convention: str,
 ) -> bytes:
     rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-    if rv in _GENERATED_IV_UNSUPPORTED_RVS:
+    if rv in MECH_PARAM_UNSUPPORTED_ERRORS:
         _skip_generated_iv_unsupported(rv, convention)
     assert rv == CKR_OK, f"C_EncryptInit failed: 0x{int(rv):08x}"
 
-    pt_buf = _to_ubyte_buf(plaintext)
+    pt_buf = to_ubyte_buf(plaintext)
     out_len = CK_ULONG(0)
     rv = rs.raw.C_Encrypt(rs.sh, pt_buf, len(plaintext), None, byref(out_len))
-    if rv in _GENERATED_IV_UNSUPPORTED_RVS:
+    if rv in MECH_PARAM_UNSUPPORTED_ERRORS:
         _skip_generated_iv_unsupported(rv, convention)
     assert rv in (CKR_OK, CKR_BUFFER_TOO_SMALL), f"C_Encrypt size query failed: 0x{int(rv):08x}"
 
@@ -102,7 +89,7 @@ def _encrypt_gcm_generated_iv_two_call(
         out_buf = (ctypes.c_ubyte * out_size)()
         out_len = CK_ULONG(out_size)
         rv = rs.raw.C_Encrypt(rs.sh, pt_buf, len(plaintext), out_buf, byref(out_len))
-    if rv in _GENERATED_IV_UNSUPPORTED_RVS:
+    if rv in MECH_PARAM_UNSUPPORTED_ERRORS:
         _skip_generated_iv_unsupported(rv, convention)
     assert rv == CKR_OK, f"C_Encrypt failed: 0x{int(rv):08x}"
     return bytes(out_buf[: out_len.value])
@@ -356,7 +343,7 @@ class TestAESGCMProviderGeneratedIV:
                 convention="strict",
             )
             iv = mech.buffer_bytes("iv")
-            if iv == b"\x00" * 12:
+            if not any(iv):
                 pytest.skip(
                     "module accepted strict generated-IV-shaped parameters, but no "
                     "provider-generated IV writeback was observed"
@@ -411,7 +398,7 @@ class TestAESGCMProviderGeneratedIV:
                 convention="aws",
             )
             iv = mech.buffer_bytes("iv")
-            if iv == b"\x00" * 12:
+            if not any(iv):
                 pytest.skip(
                     "module treated AWS-style parameters as caller-supplied zero IV; "
                     "no provider-generated IV writeback observed"

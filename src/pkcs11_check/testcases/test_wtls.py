@@ -32,7 +32,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DERIVE,
@@ -56,6 +55,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import destroy_returned_handles, is_known_error
 
 pytestmark = pytest.mark.keymgmt
 
@@ -70,12 +70,6 @@ _WTLS_ERROR_RVS = {
 # WTLS client/server random values (16 bytes each)
 _CLIENT_RANDOM = bytes(range(16))
 _SERVER_RANDOM = bytes(range(16, 32))
-
-
-def _is_known_error(exc: AssertionError, error_rvs: set[Any] | frozenset[Any]) -> bool:
-    """Check if an AssertionError from expect_rv matches a known CKR."""
-    msg = str(exc)
-    return any(ckr_name(rv) in msg for rv in error_rvs)
 
 
 def _create_generic_secret(rs: Any, size: int = 48) -> int:
@@ -95,12 +89,6 @@ def _create_generic_secret(rs: Any, size: int = 48) -> int:
             CKA_EXTRACTABLE: True,
         },
     )
-
-
-def _destroy_returned_handles(rs: Any, *handles: int) -> None:
-    for handle in handles:
-        if handle:
-            destroy_quietly(rs.raw, rs.sh, int(handle))
 
 
 class TestWTLSPreMasterKeyGen:
@@ -149,7 +137,7 @@ class TestWTLSPreMasterKeyGen:
             finally:
                 destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
-            if _is_known_error(exc, _WTLS_ERROR_RVS):
+            if is_known_error(exc, _WTLS_ERROR_RVS):
                 pytest.xfail(f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}")
             raise
 
@@ -191,7 +179,7 @@ class TestWTLSPreMasterKeyGen:
             finally:
                 destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
-            if _is_known_error(exc, _WTLS_ERROR_RVS):
+            if is_known_error(exc, _WTLS_ERROR_RVS):
                 pytest.xfail(f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}")
             raise
 
@@ -243,7 +231,7 @@ class TestWTLSPreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key2.value)
                 destroy_quietly(rs.raw, rs.sh, key1.value)
         except AssertionError as exc:
-            if _is_known_error(exc, _WTLS_ERROR_RVS):
+            if is_known_error(exc, _WTLS_ERROR_RVS):
                 pytest.xfail(f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}")
             raise
 
@@ -290,7 +278,7 @@ class TestWTLSMasterKeyDerive:
                 finally:
                     destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
-                if _is_known_error(exc, _WTLS_ERROR_RVS):
+                if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_MASTER_KEY_DERIVE not operational: {exc}")
                 raise
         finally:
@@ -340,7 +328,7 @@ class TestWTLSMasterKeyDeriveDHECC:
                 finally:
                     destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
-                if _is_known_error(exc, _WTLS_ERROR_RVS):
+                if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC not operational: {exc}")
                 raise
         finally:
@@ -393,14 +381,14 @@ class TestWTLSKeyAndMacDerive:
                 try:
                     out = mech._key_mat_out_ref
                     assert out.hKey != 0
-                    assert mech.buffer_bytes("iv") != b"\x00" * 8
+                    assert any(mech.buffer_bytes("iv"))
                     assert derived != 0
                 finally:
                     out = mech._key_mat_out_ref
-                    _destroy_returned_handles(rs, out.hMacSecret, out.hKey)
+                    destroy_returned_handles(rs, out.hMacSecret, out.hKey)
                     destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
-                if _is_known_error(exc, _WTLS_ERROR_RVS):
+                if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE not operational: {exc}")
                 raise
         finally:
@@ -439,14 +427,14 @@ class TestWTLSKeyAndMacDerive:
                 try:
                     out = mech._key_mat_out_ref
                     assert out.hKey != 0
-                    assert mech.buffer_bytes("iv") != b"\x00" * 8
+                    assert any(mech.buffer_bytes("iv"))
                     assert derived != 0
                 finally:
                     out = mech._key_mat_out_ref
-                    _destroy_returned_handles(rs, out.hMacSecret, out.hKey)
+                    destroy_returned_handles(rs, out.hMacSecret, out.hKey)
                     destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
-                if _is_known_error(exc, _WTLS_ERROR_RVS):
+                if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE not operational: {exc}")
                 raise
         finally:
@@ -511,7 +499,7 @@ class TestWTLSKeyAndMacDerive:
                     "Server and client key derivation must produce different keys"
                 )
             except AssertionError as exc:
-                if _is_known_error(exc, _WTLS_ERROR_RVS):
+                if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"WTLS key-and-MAC derivation not operational: {exc}")
                 raise
             finally:
@@ -570,7 +558,7 @@ class TestWTLSPRF:
                 finally:
                     destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
-                if _is_known_error(exc, _WTLS_ERROR_RVS):
+                if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
                 raise
         finally:
@@ -635,7 +623,7 @@ class TestWTLSPRF:
                 val2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
                 assert val1 == val2, "CKM_WTLS_PRF must be deterministic for identical inputs"
             except AssertionError as exc:
-                if _is_known_error(exc, _WTLS_ERROR_RVS):
+                if is_known_error(exc, _WTLS_ERROR_RVS):
                     pytest.xfail(f"CKM_WTLS_PRF not operational: {exc}")
                 raise
             finally:

@@ -39,25 +39,15 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CCM,
     CKM_AES_GCM,
     CKO_SECRET_KEY,
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
 
 pytestmark = [pytest.mark.keymgmt, pytest.mark.wrap, pytest.mark.requires_v32]
-
-_UNSUPPORTED_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-)
 
 
 def _skip_if_unsupported(exc: AssertionError, context: str) -> None:
     text = str(exc)
-    if any(ckr_name(rv) in text for rv in _UNSUPPORTED_RVS):
+    if any(ckr_name(rv) in text for rv in MECH_PARAM_UNSUPPORTED_ERRORS):
         pytest.skip(f"{context} not supported: {text}")
     raise exc
 
@@ -112,7 +102,7 @@ def test_gcm_wrap_generated_iv_roundtrip(p11_raw_session: Any, p11_interface_ver
             _skip_if_unsupported(exc, "CK_GCM_WRAP_PARAMS generated IV C_WrapKey")
 
         iv = wrap_mech.buffer_bytes("iv")
-        assert iv != b"\x00" * 12, "C_WrapKey accepted CKG_GENERATE but did not write pIv"
+        assert any(iv), "C_WrapKey accepted CKG_GENERATE but did not write pIv"
 
         unwrap_mech = mech_gcm_wrap(CKM_AES_GCM, iv, aad=aad, tag_bits=128)
         unwrapped = unwrap_key(
@@ -164,7 +154,7 @@ def test_ccm_wrap_generated_nonce_roundtrip(
             _skip_if_unsupported(exc, "CK_CCM_WRAP_PARAMS generated nonce C_WrapKey")
 
         nonce = wrap_mech.buffer_bytes("nonce")
-        assert nonce != b"\x00" * 12, "C_WrapKey accepted CKG_GENERATE but did not write pNonce"
+        assert any(nonce), "C_WrapKey accepted CKG_GENERATE but did not write pNonce"
 
         unwrap_mech = mech_ccm_wrap(
             CKM_AES_CCM,

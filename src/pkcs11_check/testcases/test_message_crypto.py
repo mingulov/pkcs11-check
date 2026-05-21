@@ -13,6 +13,7 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
     gen_rsa_keypair,
+    to_ubyte_buf,
     verify_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -67,10 +68,6 @@ def _skip_unless_message_functions(rs: Any, funcs: list[str]) -> None:
             pytest.skip(f"{name} not available")
 
 
-def _to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
-    return (ctypes.c_ubyte * len(data))(*data)
-
-
 def _message_sign(
     rs: Any,
     key: int,
@@ -89,7 +86,7 @@ def _message_sign(
     if rv != CKR_OK:
         pytest.skip(f"C_MessageSignInit returned 0x{rv:08x}")
 
-    in_buf = _to_ubyte_buf(data)
+    in_buf = to_ubyte_buf(data)
     sig_len = CK_ULONG(0)
     rv = rs.raw.C_SignMessage(rs.sh, None, 0, in_buf, len(data), None, byref(sig_len))
     if rv != CKR_OK:
@@ -115,8 +112,8 @@ def _message_verify(
     if rv != CKR_OK:
         pytest.skip(f"C_MessageVerifyInit returned 0x{rv:08x}")
 
-    in_buf = _to_ubyte_buf(data)
-    sig_buf = _to_ubyte_buf(signature)
+    in_buf = to_ubyte_buf(data)
+    sig_buf = to_ubyte_buf(signature)
     rv = rs.raw.C_VerifyMessage(rs.sh, None, 0, in_buf, len(data), sig_buf, len(signature))
     return bool(rv == CKR_OK)
 
@@ -135,7 +132,7 @@ def _message_sign_multipart(
         pytest.skip(f"C_MessageSignInit returned 0x{rv:08x}")
 
     for part in parts:
-        in_buf = _to_ubyte_buf(part)
+        in_buf = to_ubyte_buf(part)
         rv = rs.raw.C_SignMessageBegin(rs.sh, None, 0, in_buf, len(part))
         if rv != CKR_OK:
             pytest.skip(f"C_SignMessageBegin returned 0x{rv:08x}")
@@ -217,7 +214,7 @@ class TestMessageEncryptDecrypt:
             if rv != CKR_OK:
                 pytest.skip(f"C_MessageEncryptInit returned 0x{rv:08x}")
 
-            in_buf = _to_ubyte_buf(plaintext)
+            in_buf = to_ubyte_buf(plaintext)
             rv = rs.raw.C_EncryptMessageBegin(rs.sh, None, 0, in_buf, len(plaintext))
             if rv != CKR_OK:
                 pytest.skip(f"C_EncryptMessageBegin returned 0x{rv:08x}")
@@ -262,7 +259,7 @@ class TestMessageEncryptDecrypt:
             if rv != CKR_OK:
                 pytest.skip(f"C_MessageDecryptInit returned 0x{rv:08x}")
 
-            in_buf = _to_ubyte_buf(ct)
+            in_buf = to_ubyte_buf(ct)
             rv = rs.raw.C_DecryptMessageBegin(rs.sh, None, 0, in_buf, len(ct))
             if rv != CKR_OK:
                 pytest.skip(f"C_DecryptMessageBegin returned 0x{rv:08x}")

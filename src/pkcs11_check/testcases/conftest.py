@@ -95,3 +95,23 @@ def xfail_if_known_ckr(
         if ckr_name(ckr) in exc_str:
             pytest.xfail(f"{msg}: {ckr_name(ckr)}")
     raise  # Not a known CKR -- propagate as real failure
+
+
+def is_known_error(
+    exc: BaseException,
+    error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
+) -> bool:
+    """Check if an AssertionError from expect_rv matches a known CKR."""
+    from pkcs11_check.raw.rv import ckr_name
+
+    msg = str(exc)
+    return any(ckr_name(rv) in msg for rv in error_rvs)
+
+
+def destroy_returned_handles(rs: Any, *handles: int) -> None:
+    """Destroy a sequence of object handles, silently skipping zeros and errors."""
+    from pkcs11_check.raw.recipes import destroy_quietly
+
+    for handle in handles:
+        if handle:
+            destroy_quietly(rs.raw, rs.sh, int(handle))

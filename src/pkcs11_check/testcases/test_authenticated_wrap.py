@@ -168,8 +168,8 @@ class TestAuthenticatedWrap:
             )
             iv = wrap_mech.buffer_bytes("iv")
             tag = wrap_mech.buffer_bytes("tag")
-            assert iv != b"\x00" * 12
-            assert tag != b"\x00" * 16
+            assert any(iv)
+            assert any(tag)
 
             unwrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
             unwrap_mech.params.pTag = wrap_mech.params.pTag

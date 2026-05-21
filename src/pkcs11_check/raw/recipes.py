@@ -90,9 +90,17 @@ from .types_std import (
 _VERIFY_FAIL_RVS = (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE)
 
 
-def _to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
-    """Convert bytes to a ctypes c_ubyte array."""
-    return (ctypes.c_ubyte * len(data))(*data)
+def to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
+    """Convert bytes to a ctypes c_ubyte array.
+
+    Uses ``from_buffer_copy`` so large payloads (AEAD plaintext, wrapped keys,
+    signed data) copy at memcpy speed instead of per-byte Python conversion
+    that ``(c_ubyte * N)(*data)`` would impose.
+    """
+    n = len(data)
+    if n == 0:
+        return (ctypes.c_ubyte * 0)()
+    return (ctypes.c_ubyte * n).from_buffer_copy(data)
 
 
 def _resolve_mech(
@@ -666,7 +674,7 @@ def encrypt_single(
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_EncryptInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
-    in_buf = _to_ubyte_buf(plaintext)
+    in_buf = to_ubyte_buf(plaintext)
     hint = (len(plaintext) + output_overhead) if output_overhead > 0 else 0
     return _two_call_output(
         raw,
@@ -692,7 +700,7 @@ def sign_single(
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_SignInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
-    in_buf = _to_ubyte_buf(data)
+    in_buf = to_ubyte_buf(data)
     return _two_call_output(raw, "C_Sign", session, in_buf, len(data))
 
 
@@ -714,7 +722,7 @@ def decrypt_single(
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_DecryptInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
-    in_buf = _to_ubyte_buf(ciphertext)
+    in_buf = to_ubyte_buf(ciphertext)
     return _two_call_output(
         raw,
         "C_Decrypt",
@@ -744,8 +752,8 @@ def verify_single(
     rv = raw.C_VerifyInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
 
-    data_buf = _to_ubyte_buf(data)
-    sig_buf = _to_ubyte_buf(signature)
+    data_buf = to_ubyte_buf(data)
+    sig_buf = to_ubyte_buf(signature)
     rv = raw.C_Verify(session, data_buf, len(data), sig_buf, len(signature))
 
     if rv == CKR_OK:
@@ -771,7 +779,7 @@ def sign_recover_single(
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
         raise NotImplementedError("C_SignRecover not supported by this module")
     expect_rv(rv, CKR_OK)
-    in_buf = _to_ubyte_buf(data)
+    in_buf = to_ubyte_buf(data)
     return _two_call_output(raw, "C_SignRecover", session, in_buf, len(data))
 
 
@@ -796,7 +804,7 @@ def verify_recover_single(
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
         raise NotImplementedError("C_VerifyRecover not supported by this module")
     expect_rv(rv, CKR_OK)
-    sig_buf = _to_ubyte_buf(signature)
+    sig_buf = to_ubyte_buf(signature)
     rec_len = CK_ULONG(0)
     rv = raw.C_VerifyRecover(session, sig_buf, len(signature), None, byref(rec_len))
     if rv in _VERIFY_FAIL_RVS:
@@ -822,7 +830,7 @@ def digest_single(
     mech = _resolve_mech(mechanism, mech_param)
     rv = raw.C_DigestInit(session, mech.byref())
     expect_rv(rv, CKR_OK)
-    in_buf = _to_ubyte_buf(data)
+    in_buf = to_ubyte_buf(data)
     return _two_call_output(raw, "C_Digest", session, in_buf, len(data))
 
 
@@ -1021,7 +1029,7 @@ def unwrap_key(
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
-    in_buf = _to_ubyte_buf(wrapped_key)
+    in_buf = to_ubyte_buf(wrapped_key)
     handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_UnwrapKey(
         session,
@@ -1124,7 +1132,7 @@ def _multipart_output(
     expect_rv(rv, CKR_OK)
     parts: list[bytes] = []
     for chunk in chunks:
-        in_buf = _to_ubyte_buf(chunk)
+        in_buf = to_ubyte_buf(chunk)
         # Allocate a conservative output buffer upfront (chunk + 256 bytes for
         # block cipher expansion). Do NOT use the two-call size-probe pattern for
         # Update functions -- probing feeds the same chunk twice, corrupting cipher
@@ -1204,7 +1212,7 @@ def sign_multipart(
     rv = raw.C_SignInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     for chunk in chunks:
-        in_buf = _to_ubyte_buf(chunk)
+        in_buf = to_ubyte_buf(chunk)
         rv = raw.C_SignUpdate(session, in_buf, len(chunk))
         expect_rv(rv, CKR_OK)
     return _two_call_output(raw, "C_SignFinal", session)
@@ -1228,10 +1236,10 @@ def verify_multipart(
     rv = raw.C_VerifyInit(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     for chunk in chunks:
-        in_buf = _to_ubyte_buf(chunk)
+        in_buf = to_ubyte_buf(chunk)
         rv = raw.C_VerifyUpdate(session, in_buf, len(chunk))
         expect_rv(rv, CKR_OK)
-    sig_buf = _to_ubyte_buf(signature)
+    sig_buf = to_ubyte_buf(signature)
     rv = raw.C_VerifyFinal(session, sig_buf, len(signature))
     if rv == CKR_OK:
         return True
@@ -1254,7 +1262,7 @@ def digest_multipart(
     rv = raw.C_DigestInit(session, mech.byref())
     expect_rv(rv, CKR_OK)
     for chunk in chunks:
-        in_buf = _to_ubyte_buf(chunk)
+        in_buf = to_ubyte_buf(chunk)
         rv = raw.C_DigestUpdate(session, in_buf, len(chunk))
         expect_rv(rv, CKR_OK)
     return _two_call_output(raw, "C_DigestFinal", session)
@@ -1276,7 +1284,7 @@ def restore_operation_state(
     auth_key: int = 0,
 ) -> None:
     """C_SetOperationState -- restore previously saved operation state."""
-    buf = _to_ubyte_buf(state)
+    buf = to_ubyte_buf(state)
     rv = raw.C_SetOperationState(session, buf, len(state), encrypt_key, auth_key)
     expect_rv(rv, CKR_OK)
 
@@ -1290,22 +1298,22 @@ def init_token(raw: RawPKCS11, slot_id: int, so_pin: bytes, label: str) -> None:
     # ctypes c_char array constructor accepts bytes per-element at runtime; the
     # static type stub flags the splat as Iterable[c_char] mismatch.
     label_buf = (ctypes.c_char * 32)(*[bytes([b]) for b in label_bytes])
-    pin_buf = _to_ubyte_buf(so_pin)
+    pin_buf = to_ubyte_buf(so_pin)
     rv = raw.C_InitToken(slot_id, pin_buf, len(so_pin), label_buf)
     expect_rv(rv, CKR_OK)
 
 
 def init_pin(raw: RawPKCS11, session: int, pin: bytes) -> None:
     """Set user PIN with C_InitPIN."""
-    pin_buf = _to_ubyte_buf(pin)
+    pin_buf = to_ubyte_buf(pin)
     rv = raw.C_InitPIN(session, pin_buf, len(pin))
     expect_rv(rv, CKR_OK)
 
 
 def set_pin(raw: RawPKCS11, session: int, old_pin: bytes, new_pin: bytes) -> None:
     """Change PIN with C_SetPIN."""
-    old_buf = _to_ubyte_buf(old_pin)
-    new_buf = _to_ubyte_buf(new_pin)
+    old_buf = to_ubyte_buf(old_pin)
+    new_buf = to_ubyte_buf(new_pin)
     rv = raw.C_SetPIN(session, old_buf, len(old_pin), new_buf, len(new_pin))
     expect_rv(rv, CKR_OK)
 
@@ -1314,7 +1322,7 @@ def seed_random(
     raw: RawPKCS11, session: int, seed: bytes, *, extra_ok: tuple[int, ...] = ()
 ) -> int:
     """Seed the RNG with C_SeedRandom.  Returns the raw CK_RV."""
-    buf = _to_ubyte_buf(seed)
+    buf = to_ubyte_buf(seed)
     rv = raw.C_SeedRandom(session, buf, len(seed))
     expect_rv(rv, CKR_OK, *extra_ok)  # type: ignore[arg-type]
     return int(rv)
@@ -1391,9 +1399,9 @@ def _message_crypto(
     rv = getattr(raw, init_fn)(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
 
-    aad_buf = _to_ubyte_buf(aad) if aad else None
+    aad_buf = to_ubyte_buf(aad) if aad else None
     aad_len = len(aad) if aad else 0
-    in_buf = _to_ubyte_buf(data)
+    in_buf = to_ubyte_buf(data)
 
     out_len = CK_ULONG(0)
     fn = getattr(raw, msg_fn)
@@ -1551,7 +1559,7 @@ def decapsulate_key(
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
     tmpl = template(*packed)
-    ct_buf = _to_ubyte_buf(ciphertext)
+    ct_buf = to_ubyte_buf(ciphertext)
     key_handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_DecapsulateKey(
         session,
@@ -1648,7 +1656,7 @@ def wrap_key_authenticated_output(
     parameter structure, for example CK_GCM_MESSAGE_PARAMS.pTag.
     """
     mech = _resolve_mech(mechanism, mech_param)
-    aad_buf = _to_ubyte_buf(aad) if aad else None
+    aad_buf = to_ubyte_buf(aad) if aad else None
     aad_len = len(aad)
     wrapped_len = CK_ULONG(0)
     rv = raw.C_WrapKeyAuthenticated(
@@ -1694,8 +1702,8 @@ def unwrap_key_authenticated(
     mech = _resolve_mech(mechanism, mech_param)
     packed = pack_attrs(attrs)
     tmpl = template(*packed) if packed else None
-    wrapped_buf = _to_ubyte_buf(wrapped_key)
-    tag_buf = _to_ubyte_buf(tag)
+    wrapped_buf = to_ubyte_buf(wrapped_key)
+    tag_buf = to_ubyte_buf(tag)
     key_handle = CK_OBJECT_HANDLE(0)
     rv = raw.C_UnwrapKeyAuthenticated(
         session,
@@ -1758,6 +1766,7 @@ __all__ = [
     "sign_multipart",
     "sign_recover_single",
     "sign_single",
+    "to_ubyte_buf",
     "unwrap_key",
     "unwrap_key_authenticated",
     "verify_multipart",

@@ -461,9 +461,13 @@ def _pack_bytes(
     """
     if data is None:
         return None, 0
-    buf = (ctypes.c_ubyte * len(data))(*data)
+    n = len(data)
+    if n == 0:
+        buf: ctypes.Array[ctypes.c_ubyte] = (ctypes.c_ubyte * 0)()
+    else:
+        buf = (ctypes.c_ubyte * n).from_buffer_copy(data)
     keepalive.append(buf)
-    return ctypes.cast(buf, CK_VOID_PTR), len(data)
+    return ctypes.cast(buf, CK_VOID_PTR), n
 
 
 def _mech_struct(

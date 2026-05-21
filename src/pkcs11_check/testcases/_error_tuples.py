@@ -21,6 +21,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_NOT_WRAPPABLE,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_SESSION_CLOSED,
     CKR_SESSION_HANDLE_INVALID,
@@ -74,6 +75,17 @@ MECHANISM_ERRORS = (
     CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
+)
+
+# Mechanism parameter combination not accepted by the module (provider-generated
+# IV / nonce conventions, wrap-output struct variants). Used to skip — not xfail —
+# because the module is allowed to reject these even when the base mechanism is
+# advertised; the test is probing whether the parameter convention is supported.
+MECH_PARAM_UNSUPPORTED_ERRORS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 # Conflicting security attributes (Tookan vectors)
