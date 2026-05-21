@@ -1585,6 +1585,7 @@ def wrap_key_authenticated(
     *,
     aad: bytes = b"",
     mech_param: PackedMechanism | None = None,
+    output_size_hint: int = 0,
 ) -> bytes:
     """C_WrapKeyAuthenticated — wrap ``target_key`` and return wrapped bytes.
 
@@ -1601,6 +1602,11 @@ def wrap_key_authenticated(
     ``mech_param.buffer_bytes("tag")`` after the call.  The classical
     ``mech_gcm`` packer has no pTag field and is NOT a valid mech_param for
     this function.
+
+    ``output_size_hint`` skips the NULL-buffer size-query first call and
+    issues a single call with a pre-allocated buffer of that size.  Needed
+    for modules (e.g. NSS softoken) that either fail to report the required
+    size on a NULL probe or consume operation state during it.
     """
     mech = _resolve_mech(mechanism, mech_param)
     aad_buf = to_ubyte_buf(aad) if aad else None
@@ -1613,6 +1619,7 @@ def wrap_key_authenticated(
         target_key,
         aad_buf,
         len(aad),
+        output_size_hint=output_size_hint,
     )
 
 
