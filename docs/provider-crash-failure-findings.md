@@ -139,6 +139,25 @@ A focused NSS Docker check after the fix selected 1,956 Wycheproof DSA tests:
 be represented as a PKCS#11 raw DSA signature input. The full provider matrix
 still needs to be rerun before updating provider result counts.
 
+### Follow-Up: Generic Wycheproof Buckets
+
+The `pkcs11-mock` `generic Wycheproof 729` bucket was a pkcs11-check capability
+guard bug. The legacy aggregate Wycheproof test file did not check advertised
+mechanisms before running AES-GCM, HMAC-SHA256, ECDSA, AES-CBC-PAD, and RSA
+signature vectors. `pkcs11-mock` does not advertise those mechanisms, so the old
+failures should have been capability skips. After adding the same style of
+mechanism guards used by the split Wycheproof files, a focused pkcs11-mock
+Docker run selected 1,953 generic Wycheproof tests and skipped all 1,953.
+
+The largest known part of the TPM2 `generic Wycheproof` bucket had the same
+classification issue. The P-384 ECDSA subset accounted for 504 failures where
+tpm2-pkcs11 rejected `secp384r1` public-key import with
+`CKR_ATTRIBUTE_VALUE_INVALID`. That is an unsupported-curve/import condition for
+this vector file, not a failed signature result. A focused TPM2 run now selects
+504 P-384 generic ECDSA tests and skips all 504. The remaining TPM2 generic
+Wycheproof failures still need follow-up: AES-GCM, AES-CBC-PAD, and
+HMAC-SHA256 are advertised, but provider operations return `CKR_GENERAL_ERROR`.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

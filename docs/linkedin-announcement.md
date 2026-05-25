@@ -85,8 +85,9 @@ matrix results, use [docker-provider-results.md](docker-provider-results.md).
   evidence, not performance ranking.
 - Say that failures and crashes are retained as findings. Do not imply that a
   clean pass rate is the only useful result.
-- Do not foreground BouncyHSM. It is useful as a long-tail simulator example,
-  but the article should center the tool and the broader provider method.
+- Do not foreground BouncyHSM. Treat it as long-tail simulator evidence: useful
+  for showing that pkcs11-check can exercise less commonly deployed providers,
+  but not a central production-provider conclusion.
 - Mention proprietary/internal modules explicitly: users can run the tool
   locally without publishing their provider or results.
 - If the provider result pages are not on `main` yet, use a branch or commit
