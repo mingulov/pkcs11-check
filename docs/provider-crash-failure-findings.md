@@ -235,6 +235,13 @@ placeholder no longer calls `C_GenerateKey` with `CKM_KIP_DERIVE`; it skips as
 an explicit coverage/precondition gap until the test supplies the
 mechanism-specific CT-KIP parameter setup.
 
+### Follow-Up: PBE/PBKDF2 Runtime Rejections
+
+PBE and PBKDF2 key-generation helpers no longer translate known `C_GenerateKey`
+rejections into `None` followed by a skip. After a provider advertises a PBE or
+PBKDF2 mechanism, specific CKR rejects now become xfail findings with the
+returned CKR named in the reason; missing mechanisms still skip normally.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

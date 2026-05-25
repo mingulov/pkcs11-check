@@ -27,6 +27,7 @@ _RUNTIME_SKIP_PATTERNS = {
         "not operational",
         "CKM_KIP_DERIVE rejected",
     ),
+    Path("src/pkcs11_check/testcases/test_pbe.py"): ("not operational",),
 }
 
 
