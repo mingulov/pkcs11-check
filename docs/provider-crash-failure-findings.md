@@ -491,6 +491,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   Explicit CKR runtime rejects from the PKCS#11 operation become xfail findings,
   while ciphertext, plaintext, digest, signature, crash, and timeout mismatches
   remain failures.
+- **Mechanism attribute readback**: mechanism-generated key attribute tests now
+  distinguish attribute read support from attribute value correctness. A module
+  that rejects `C_GetAttributeValue` with a non-clean CKR such as
+  `CKR_ATTRIBUTE_VALUE_INVALID` is reported as xfail evidence; a generated key
+  that exposes an attribute with the wrong value, such as `CKA_LOCAL=False`,
+  remains a real failure.
 - **Stateful AES lifecycle setup**: stateful lifecycle tests now use AES-128 for
   setup keys, matching the operational AES keygen probe. These tests are about
   session/object lifecycle, not AES-256 support. If advertised AES setup still

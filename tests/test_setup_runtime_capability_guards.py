@@ -24,6 +24,7 @@ from pkcs11_check.testcases import (
     test_buffers,
     test_generic_secret,
     test_key_usage_policy,
+    test_mech_attribute,
     test_object_size,
     test_rsa_oaep,
     test_sensitivity,
@@ -400,3 +401,19 @@ def test_access_levels_wrap_with_trusted_uses_cbc_pad_iv_when_key_wrap_absent(
     test_access_levels.TestTrustedAttribute().test_wrap_with_trusted_rejects_untrusted(rs)
 
     assert mech_calls == [(int(CKM_AES_CBC_PAD), b"\x00" * 16)]
+
+
+def test_mechanism_attribute_read_value_invalid_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _read_attributes(*_args: Any, **_kwargs: Any) -> dict[int, Any]:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID",
+            int(CKR_ATTRIBUTE_VALUE_INVALID),
+        )
+
+    monkeypatch.setattr(test_mech_attribute, "read_attributes", _read_attributes)
+    rs = _session_with_mechanisms()
+
+    with pytest.raises(pytest.xfail.Exception, match="non-clean CKR"):
+        test_mech_attribute._read_attr_safe(rs, 1, 2, "CKA_KEY_TYPE")

@@ -32,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import is_known_error
@@ -44,22 +45,27 @@ from pkcs11_check.testcases.mechanism_helpers import (
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.keygen]
 
+_ATTRIBUTE_READ_UNSUPPORTED_RVS = (
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_ATTRIBUTE_READ_NONCLEAN_RVS = (CKR_ATTRIBUTE_VALUE_INVALID,)
+
 
 def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> Any | None:
     """Read a single attribute; return None if the module does not expose it."""
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [attr_id])
         return attrs.get(attr_id)
-    except (AssertionError, Exception) as exc:
-        if is_known_error(
-            exc,
-            {
-                CKR_ATTRIBUTE_TYPE_INVALID,
-                CKR_ATTRIBUTE_SENSITIVE,
-                CKR_TEMPLATE_INCONSISTENT,
-            },
-        ):
+    except AssertionError as exc:
+        if is_known_error(exc, _ATTRIBUTE_READ_UNSUPPORTED_RVS):
             return None
+        if is_known_error(exc, _ATTRIBUTE_READ_NONCLEAN_RVS):
+            pytest.xfail(
+                f"{label} attribute read rejected with non-clean CKR: CKR_ATTRIBUTE_VALUE_INVALID"
+            )
         raise AssertionError(f"Unexpected error reading {label} on handle {handle}: {exc}") from exc
 
 
