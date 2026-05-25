@@ -52,6 +52,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     get_pin_bytes,
     is_known_error,
+    require_operational_aes_keygen,
     skip_if_token_write_protected,
 )
 
@@ -66,8 +67,7 @@ _COPY_REJECT_RVS = (
 
 
 def _require_aes_keygen(rs: Any) -> None:
-    if not rs.has_mechanism("AES_KEY_GEN"):
-        pytest.skip("AES_KEY_GEN not supported by module")
+    require_operational_aes_keygen(rs)
 
 
 class TestPrivateAttribute:

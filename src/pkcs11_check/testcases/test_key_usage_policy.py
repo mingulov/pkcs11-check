@@ -20,7 +20,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     gen_aes_key,
-    gen_rsa_keypair,
     read_attributes,
 )
 from pkcs11_check.raw.rv import ckr_name
@@ -36,6 +35,10 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_TYPE_INCONSISTENT,
+)
+from pkcs11_check.testcases.conftest import (
+    gen_rsa_keypair_or_xfail,
+    require_operational_aes_keygen,
 )
 
 # Acceptable CKR codes for key usage policy violations.
@@ -57,6 +60,7 @@ class TestAESKeyUsagePolicy:
     def test_encrypt_only_key_cannot_decrypt(self, p11_raw_session: Any) -> None:
         """AES key with ENCRYPT=True, DECRYPT=False cannot be used for decrypt."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -86,6 +90,7 @@ class TestAESKeyUsagePolicy:
     def test_decrypt_only_key_cannot_encrypt(self, p11_raw_session: Any) -> None:
         """AES key with DECRYPT=True, ENCRYPT=False cannot be used for encrypt."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -112,6 +117,7 @@ class TestAESKeyUsagePolicy:
     def test_sign_only_key_cannot_encrypt(self, p11_raw_session: Any) -> None:
         """Key with SIGN=True but ENCRYPT=False cannot encrypt."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -135,6 +141,7 @@ class TestAESKeyUsagePolicy:
     def test_full_capabilities_key(self, p11_raw_session: Any) -> None:
         """Key with all capabilities can encrypt."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -164,9 +171,8 @@ class TestRSAKeyUsagePolicy:
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={
                 CKA_ENCRYPT: False,
@@ -206,9 +212,8 @@ class TestRSAKeyUsagePolicy:
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={
                 CKA_ENCRYPT: True,
@@ -247,6 +252,7 @@ class TestCapabilityReadback:
     def test_aes_capabilities_match_template(self, p11_raw_session: Any) -> None:
         """Generated key's capability flags match what was requested."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -279,9 +285,8 @@ class TestCapabilityReadback:
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
 
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_VERIFY: False},
             private_attrs={CKA_DECRYPT: True, CKA_SIGN: False},

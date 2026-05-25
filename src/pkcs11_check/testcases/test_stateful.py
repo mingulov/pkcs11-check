@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA256,
 )
+from pkcs11_check.testcases.conftest import require_operational_aes_keygen
 
 pytestmark = [pytest.mark.stateful, pytest.mark.fuzz]
 
@@ -35,6 +36,7 @@ pytestmark = [pytest.mark.stateful, pytest.mark.fuzz]
 def test_pkcs11_stateful(p11_raw_session: Any) -> None:
     """Run the stateful state machine test."""
     rs = p11_raw_session
+    require_operational_aes_keygen(rs)
     # Stateful lifecycle: create, use, search, destroy, verify gone
     key1 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "stateful-manual-1"})
     key2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "stateful-manual-2"})
@@ -65,6 +67,7 @@ def test_pkcs11_stateful(p11_raw_session: Any) -> None:
 def test_generate_use_destroy_cycle(p11_raw_session: Any) -> None:
     """Generate keys, use them, destroy them - verify lifecycle consistency."""
     rs = p11_raw_session
+    require_operational_aes_keygen(rs)
     keys: list[int] = []
     labels: list[str] = []
 
@@ -120,6 +123,7 @@ def test_generate_use_destroy_cycle(p11_raw_session: Any) -> None:
 def test_object_count_consistency(p11_raw_session: Any) -> None:
     """Object count must reflect creates and destroys."""
     rs = p11_raw_session
+    require_operational_aes_keygen(rs)
     label_prefix = "stateful-count-"
 
     # Create 3 keys with unique labels

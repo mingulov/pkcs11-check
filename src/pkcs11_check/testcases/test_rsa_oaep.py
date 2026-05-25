@@ -17,7 +17,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    gen_rsa_keypair,
     read_attributes,
 )
 from pkcs11_check.raw.rv import ckr_name
@@ -36,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA_1,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.crossverify
 
@@ -51,9 +51,8 @@ class TestRSAOAEPRoundtrip:
     def test_oaep_encrypt_decrypt(self, p11_raw_session: Any) -> None:
         """RSA-OAEP: encrypt then decrypt returns original."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,
@@ -71,9 +70,8 @@ class TestRSAOAEPRoundtrip:
     def test_oaep_randomized(self, p11_raw_session: Any) -> None:
         """RSA-OAEP produces different ciphertext for same plaintext."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,
@@ -113,9 +111,8 @@ class TestRSAOAEPRoundtrip:
     def test_oaep_empty_plaintext(self, p11_raw_session: Any) -> None:
         """RSA-OAEP with empty plaintext."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,
@@ -135,9 +132,8 @@ class TestRSAOAEPRoundtrip:
         For RSA-2048 with SHA-1 OAEP: max = 256 - 2*20 - 2 = 214 bytes.
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,
@@ -162,9 +158,8 @@ class TestRSAOAEPRoundtrip:
     def test_oaep_ciphertext_size(self, p11_raw_session: Any) -> None:
         """RSA-OAEP ciphertext is always modulus-length (256 bytes for 2048)."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,
@@ -201,9 +196,8 @@ class TestRSAOAEPCrossVerify:
     def test_encrypt_crypto_decrypt_p11(self, p11_raw_session: Any) -> None:
         """Encrypt with cryptography, decrypt with PKCS#11."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,
@@ -248,16 +242,14 @@ class TestRSAOAEPCrossVerify:
     def test_wrong_key_decrypt_fails(self, p11_raw_session: Any) -> None:
         """Decrypting with wrong private key should fail."""
         rs = p11_raw_session
-        pub1, priv1 = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub1, priv1 = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,
         )
-        pub2, priv2 = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub2, priv2 = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,
@@ -303,9 +295,8 @@ class TestRSAOAEPHashCombos:
     def test_oaep_sha384_roundtrip(self, p11_raw_session: Any) -> None:
         """RSA-OAEP with SHA-384/MGF1-SHA384 roundtrip."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,
@@ -330,9 +321,8 @@ class TestRSAOAEPHashCombos:
     def test_oaep_sha512_roundtrip(self, p11_raw_session: Any) -> None:
         """RSA-OAEP with SHA-512/MGF1-SHA512 roundtrip."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs=_PUB_ATTRS,
             private_attrs=_PRIV_ATTRS,

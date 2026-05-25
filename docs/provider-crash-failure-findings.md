@@ -437,16 +437,25 @@ The following paths were tightened after inspecting the all-fail artifacts:
   keygen mechanism is absent and xfails when advertised key generation rejects
   at runtime. KAT encrypt/decrypt paths now xfail explicit runtime CKRs but
   still fail ciphertext mismatches.
-- **Older general AES/access-control tests**: AES secret-key tests now guard
-  `AES_KEY_GEN` before calling `C_GenerateKey`. This removes missing keygen
-  capability from provider-failure buckets without suppressing access-control
-  findings that do not depend on AES key generation.
+- **Older general AES/access-control tests**: AES secret-key tests now probe
+  `AES_KEY_GEN` before using it. Missing keygen is a skip; advertised keygen
+  returning explicit setup errors is an xfail finding. This removes keygen setup
+  capability from provider-failure buckets without suppressing the actual
+  access-control checks.
+- **General RSA/EC setup paths**: RSA-OAEP, RSA wrapping, padding-oracle,
+  key-lifecycle, tool-template, sign-recover, ECDSA nonce-quality, and
+  mechanism-driven keypair helpers now treat advertised keypair generation
+  rejected at runtime as xfail setup evidence. Wrong crypto output, accepted
+  invalid input, crashes, and timeouts still fail.
+- **Generic-secret HMAC smoke tests**: imported HMAC keys that reach
+  `C_SignInit`/`C_Sign` and receive explicit runtime rejects are now xfailed,
+  matching the ACVP HMAC classification.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
-TPM2 RSA setup rejects the requested templates with `CKR_ATTRIBUTE_VALUE_INVALID`,
-and the `CKA_PRIVATE=False` data-object visibility probe still fails during data
-object creation on TPM2. Those should remain findings unless a narrower provider
-configuration explanation is found.
+the `CKA_PRIVATE=False` data-object visibility probe still fails during data
+object creation on TPM2, and the low-level raw CKR subprocess crash probes
+still report process-level failures. Those should remain findings unless a
+narrower provider configuration explanation is found.
 
 ## Provider-Specific Notes
 

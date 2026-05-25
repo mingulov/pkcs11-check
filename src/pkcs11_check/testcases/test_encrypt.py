@@ -33,13 +33,13 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
 )
+from pkcs11_check.testcases.conftest import require_operational_aes_keygen
 
 pytestmark = pytest.mark.full
 
 
 def _require_aes_keygen(rs: Any) -> None:
-    if not rs.has_mechanism("AES_KEY_GEN"):
-        pytest.skip("AES_KEY_GEN not supported by module")
+    require_operational_aes_keygen(rs)
 
 
 class TestAESEncryption:

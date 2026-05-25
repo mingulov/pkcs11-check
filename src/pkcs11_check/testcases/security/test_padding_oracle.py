@@ -23,7 +23,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     gen_aes_key,
-    gen_rsa_keypair,
     generate_random,
     read_attributes,
 )
@@ -38,6 +37,10 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
+)
+from pkcs11_check.testcases.conftest import (
+    gen_rsa_keypair_or_xfail,
+    require_operational_aes_keygen,
 )
 
 pytestmark = pytest.mark.security
@@ -62,9 +65,8 @@ class TestRSAPaddingOracle:
         'valid padding but wrong content' vs 'invalid padding structure'.
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -95,9 +97,8 @@ class TestRSAPaddingOracle:
     def test_oaep_error_uniformity(self, p11_raw_session: Any) -> None:
         """RSA-OAEP: all invalid ciphertexts must return same error."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -164,9 +165,8 @@ class TestRSAPaddingOracle:
         Closes Phase 4.5 GAP-P2 (HIGH).
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -268,9 +268,8 @@ class TestRSAPaddingOracle:
         Closes Phase 4.5 GAP-P1 (HIGH).
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -364,6 +363,9 @@ class TestAESPaddingOracle:
         a padding oracle.
         """
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_PAD"):
+            pytest.skip("CKM_AES_CBC_PAD not supported")
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"padding oracle!!"  # 16 bytes
@@ -448,6 +450,9 @@ class TestAESPaddingOracle:
         Closes Phase 4.5 GAP-P3 (MED).
         """
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_PAD"):
+            pytest.skip("CKM_AES_CBC_PAD not supported")
+        require_operational_aes_keygen(rs)
         plaintext = b"vaudenay POODLE all 16 positions"  # 32 bytes
         assert len(plaintext) == 32
 
@@ -586,9 +591,8 @@ class TestTimingBasic:
         If the difference is >2x, there may be a timing oracle.
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -659,6 +663,7 @@ class TestTimingBasic:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC_PAD"):
             pytest.skip("CKM_AES_CBC_PAD not supported")
+        require_operational_aes_keygen(rs)
 
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:

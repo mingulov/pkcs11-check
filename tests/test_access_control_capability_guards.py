@@ -6,6 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from pkcs11_check.raw import recipes as raw_recipes
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases import test_access_control
 
 
@@ -21,4 +24,22 @@ def test_secret_key_access_control_skips_when_aes_keygen_is_absent(
     rs = SimpleNamespace(has_mechanism=lambda _name: False)
 
     with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
+        test_access_control.TestPrivateAttribute().test_private_key_default_is_private(rs)
+
+
+def test_secret_key_access_control_xfails_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Advertised-but-nonoperational AES key generation is an xfail finding."""
+
+    def _rejected_keygen(*_args: object, **_kwargs: object) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+            int(CKR_FUNCTION_NOT_SUPPORTED),
+        )
+
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _rejected_keygen)
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
         test_access_control.TestPrivateAttribute().test_private_key_default_is_private(rs)

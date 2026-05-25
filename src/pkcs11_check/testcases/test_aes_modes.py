@@ -54,9 +54,14 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, require_operational_aes_keygen
 
 pytestmark = pytest.mark.encrypt
+
+
+@pytest.fixture(autouse=True)
+def _require_operational_aes_keygen(p11_raw_session: Any) -> None:
+    require_operational_aes_keygen(p11_raw_session)
 
 
 class TestAESCTR:
@@ -67,6 +72,7 @@ class TestAESCTR:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CTR"):
             pytest.skip("CKM_AES_CTR not supported")
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         plaintext = b"AES-CTR test data, any length ok"
         try:

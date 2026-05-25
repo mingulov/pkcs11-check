@@ -7,10 +7,13 @@ import pytest
 from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKK_AES,
+    CKK_RSA,
     CKK_SHA256_HMAC,
     CKM_AES_CBC,
     CKM_AES_KEY_GEN,
+    CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256_KEY_GEN,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
 )
@@ -25,9 +28,11 @@ class _FakeMech:
 
 
 class _FakeRaw:
-    def __init__(self, rv: int = int(CKR_OK)) -> None:
+    def __init__(self, rv: int = int(CKR_OK), keypair_rv: int = int(CKR_OK)) -> None:
         self.calls: list[tuple[int, object, object, int]] = []
+        self.keypair_calls: list[tuple[object, ...]] = []
         self.rv = rv
+        self.keypair_rv = keypair_rv
 
     def C_GenerateKey(  # noqa: N802
         self,
@@ -40,6 +45,12 @@ class _FakeRaw:
         self.calls.append((sh, mech, tmpl_ptr, tmpl_count))
         handle_ptr._obj.value = 99
         return self.rv
+
+    def C_GenerateKeyPair(self, *args: object) -> int:  # noqa: N802
+        self.keypair_calls.append(args)
+        args[-2]._obj.value = 101  # type: ignore[attr-defined]
+        args[-1]._obj.value = 102  # type: ignore[attr-defined]
+        return self.keypair_rv
 
 
 def test_gen_symmetric_key_falls_back_to_mechanism_info_when_registry_sizes_missing(
@@ -157,3 +168,28 @@ def test_gen_symmetric_key_xfails_when_advertised_keygen_rejects_runtime() -> No
         helpers.gen_symmetric_key(rs, entry, config)
 
     assert len(fake_raw.calls) == 1
+
+
+def test_gen_keypair_for_mech_xfails_when_advertised_keypair_rejects_runtime() -> None:
+    fake_raw = _FakeRaw(keypair_rv=int(CKR_ATTRIBUTE_VALUE_INVALID))
+    rs = SimpleNamespace(raw=fake_raw, sh=7, has_mechanism=lambda _name: True)
+    entry = MechEntry(
+        mech_id=int(CKM_RSA_PKCS_KEY_PAIR_GEN),
+        mech_name="RSA_PKCS_KEY_PAIR_GEN",
+        flags=0,
+        min_key_size=256,
+        max_key_size=512,
+        config=None,
+    )
+    config = MechConfig(
+        key_type=int(CKK_RSA),
+        keygen_mech=int(CKM_RSA_PKCS_KEY_PAIR_GEN),
+        key_sizes=(2048,),
+        is_keypair=True,
+        keygen_recipe=KeygenRecipe("rsa"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN keypair rejected"):
+        helpers.gen_keypair_for_mech(rs, entry, config)
+
+    assert len(fake_raw.keypair_calls) == 1

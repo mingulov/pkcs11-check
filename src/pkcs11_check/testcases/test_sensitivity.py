@@ -14,7 +14,6 @@ import pytest
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
-    gen_rsa_keypair,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -25,7 +24,11 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKR_ATTRIBUTE_TYPE_INVALID,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import (
+    gen_rsa_keypair_or_xfail,
+    is_known_error,
+    require_operational_aes_keygen,
+)
 
 pytestmark = pytest.mark.security
 
@@ -36,6 +39,7 @@ class TestSensitiveKeyValue:
     def test_sensitive_aes_value_not_readable(self, p11_raw_session: Any) -> None:
         """Reading CKA_VALUE on a SENSITIVE=True AES key must fail."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -72,6 +76,7 @@ class TestSensitiveKeyValue:
     def test_non_sensitive_aes_value_readable(self, p11_raw_session: Any) -> None:
         """CKA_VALUE is readable when SENSITIVE=False."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -89,9 +94,8 @@ class TestSensitiveKeyValue:
     def test_sensitive_rsa_private_exponent_not_readable(self, p11_raw_session: Any) -> None:
         """Reading CKA_PRIVATE_EXPONENT on a sensitive RSA private key must fail."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             private_attrs={CKA_SENSITIVE: True},
         )
@@ -135,6 +139,7 @@ class TestExtractableEnforcement:
         This test documents which default the module uses via a compliance note.
         """
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             try:
@@ -167,6 +172,7 @@ class TestExtractableEnforcement:
     def test_extractable_when_requested(self, p11_raw_session: Any) -> None:
         """AES key with EXTRACTABLE=True allows VALUE read (when also not sensitive)."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -188,6 +194,7 @@ class TestSensitiveFlag:
     def test_sensitive_flag_is_true_when_requested(self, p11_raw_session: Any) -> None:
         """AES key with SENSITIVE=True has SENSITIVE=True."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
@@ -198,6 +205,7 @@ class TestSensitiveFlag:
     def test_sensitive_flag_settable_at_creation(self, p11_raw_session: Any) -> None:
         """SENSITIVE=False can be set at creation time."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: False})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
@@ -208,6 +216,7 @@ class TestSensitiveFlag:
     def test_always_sensitive_flag(self, p11_raw_session: Any) -> None:
         """CKA_ALWAYS_SENSITIVE is readable and consistent."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key_sensitive = gen_aes_key(
             rs.raw,
             rs.sh,

@@ -8,13 +8,48 @@ collection-safe capability manifest before test setup.
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
 
 from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
+
+AES_KEYGEN_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+)
+
+KEYPAIR_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 def needs_mechanism(name: str) -> Callable[[Any], Any]:
@@ -36,6 +71,85 @@ def needs_mechanism(name: str) -> Callable[[Any], Any]:
 def skip_unless_mechanism(rs: Any, name: str) -> None:
     if not rs.has_mechanism(name):
         pytest.skip(f"{name} not supported")
+
+
+def require_operational_aes_keygen(rs: Any) -> None:
+    """Skip or xfail when AES_KEY_GEN cannot provide setup keys for a test."""
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+
+    from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+    key = 0
+    try:
+        key = gen_aes_key(rs.raw, rs.sh, 128)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but key generation is not operational",
+        )
+    finally:
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+
+def gen_rsa_keypair_or_xfail(
+    rs: Any,
+    bits: int = 2048,
+    public_attrs: Mapping[Any, Any] | None = None,
+    private_attrs: Mapping[Any, Any] | None = None,
+) -> tuple[int, int]:
+    """Generate an RSA keypair, xfail-ing explicit setup rejection CKRs."""
+    if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+        pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported by module")
+
+    from pkcs11_check.raw.recipes import gen_rsa_keypair
+
+    try:
+        return gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            bits,
+            public_attrs=public_attrs,
+            private_attrs=private_attrs,
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "RSA_PKCS_KEY_PAIR_GEN advertised but keypair generation is not operational",
+        )
+    raise
+
+
+def gen_ec_keypair_or_xfail(
+    rs: Any,
+    curve_oid: bytes,
+    public_attrs: Mapping[Any, Any] | None = None,
+    private_attrs: Mapping[Any, Any] | None = None,
+) -> tuple[int, int]:
+    """Generate an EC keypair, xfail-ing explicit setup rejection CKRs."""
+    if not (rs.has_mechanism("EC_KEY_PAIR_GEN") or rs.has_mechanism("ECDSA_KEY_PAIR_GEN")):
+        pytest.skip("EC_KEY_PAIR_GEN not supported by module")
+
+    from pkcs11_check.raw.recipes import gen_ec_keypair
+
+    try:
+        return gen_ec_keypair(
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            public_attrs=public_attrs,
+            private_attrs=private_attrs,
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "EC_KEY_PAIR_GEN advertised but keypair generation is not operational",
+        )
+    raise
 
 
 def get_pin_bytes(p11_config: Any) -> bytes | None:

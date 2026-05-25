@@ -7,6 +7,7 @@ used by all test_mech_*.py files. Avoids duplicating logic across files.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from ctypes import byref
 from typing import Any
 
@@ -57,12 +58,19 @@ from pkcs11_check.raw.types_std import (
     CKM_EC_KEY_PAIR_GEN,
     CKM_GENERIC_SECRET_KEY_GEN,
     CKM_PKCS5_PBKD2,
+    CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
@@ -97,6 +105,20 @@ _KEYGEN_RUNTIME_REJECT_RVS = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
+)
+
+_KEYPAIR_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 # Default curve OIDs
@@ -141,6 +163,36 @@ def _xfail_if_keygen_runtime_reject(rv: int, mech_name: str) -> None:
     import pytest
 
     pytest.xfail(f"{mech_name} keygen rejected at runtime: {ckr_name(rv)}")
+
+
+def _xfail_if_keypair_runtime_reject(exc: AssertionError, mech_name: str) -> None:
+    rv = getattr(exc, "rv", None)
+    if rv is not None:
+        if rv in _KEYPAIR_RUNTIME_REJECT_RVS:
+            import pytest
+
+            pytest.xfail(f"{mech_name} keypair rejected at runtime: {ckr_name(rv)}")
+        return
+    msg = str(exc)
+    for candidate in _KEYPAIR_RUNTIME_REJECT_RVS:
+        if ckr_name(candidate) in msg:
+            import pytest
+
+            pytest.xfail(f"{mech_name} keypair rejected at runtime: {ckr_name(candidate)}")
+
+
+def _generate_keypair_or_xfail(
+    rs: Any,
+    entry: MechEntry,
+    keygen_mech: int,
+    callback: Callable[[], tuple[int, int]],
+) -> tuple[int, int]:
+    _skip_if_keygen_mechanism_absent(rs, keygen_mech, entry.mech_name)
+    try:
+        return callback()
+    except AssertionError as exc:
+        _xfail_if_keypair_runtime_reject(exc, entry.mech_name)
+        raise
 
 
 def _get_curve_oids() -> tuple[bytes, bytes, bytes]:
@@ -424,12 +476,22 @@ def gen_keypair_for_mech(
 
     if kt == int(CKK_RSA):
         key_size = pick_key_size(entry, config) or 2048
-        return gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            key_size,
-            public_attrs={CKA_VERIFY: True, CKA_ENCRYPT: True, CKA_TOKEN: False},
-            private_attrs={CKA_SIGN: True, CKA_DECRYPT: True, CKA_TOKEN: False},
+        keygen_mech = (
+            int(config.keygen_mech)
+            if config.keygen_mech is not None
+            else int(CKM_RSA_PKCS_KEY_PAIR_GEN)
+        )
+        return _generate_keypair_or_xfail(
+            rs,
+            entry,
+            keygen_mech,
+            lambda: gen_rsa_keypair(
+                rs.raw,
+                rs.sh,
+                key_size,
+                public_attrs={CKA_VERIFY: True, CKA_ENCRYPT: True, CKA_TOKEN: False},
+                private_attrs={CKA_SIGN: True, CKA_DECRYPT: True, CKA_TOKEN: False},
+            ),
         )
 
     if kt in EC_KEY_TYPES:
@@ -446,15 +508,20 @@ def gen_keypair_for_mech(
         keygen_mech = (
             int(config.keygen_mech) if config.keygen_mech is not None else int(CKM_EC_KEY_PAIR_GEN)
         )
-        return gen_keypair(
-            rs.raw,
-            rs.sh,
+        return _generate_keypair_or_xfail(
+            rs,
+            entry,
             keygen_mech,
-            pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
-            priv_base=[],
-            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
-            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
-            pub_skip={int(CKA_EC_PARAMS)},
+            lambda: gen_keypair(
+                rs.raw,
+                rs.sh,
+                keygen_mech,
+                pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+                priv_base=[],
+                public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                pub_skip={int(CKA_EC_PARAMS)},
+            ),
         )
 
     # PQC key types
@@ -478,15 +545,20 @@ def gen_keypair_for_mech(
                 if config.keygen_mech is not None
                 else int(CKM_ML_KEM_KEY_PAIR_GEN)
             )
-            return gen_keypair(
-                rs.raw,
-                rs.sh,
+            return _generate_keypair_or_xfail(
+                rs,
+                entry,
                 keygen_mech,
-                pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768)],
-                priv_base=[],
-                public_attrs={CKA_TOKEN: False},
-                private_attrs={CKA_TOKEN: False},
-                pub_skip={CKA_PARAMETER_SET},
+                lambda: gen_keypair(
+                    rs.raw,
+                    rs.sh,
+                    keygen_mech,
+                    pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768)],
+                    priv_base=[],
+                    public_attrs={CKA_TOKEN: False},
+                    private_attrs={CKA_TOKEN: False},
+                    pub_skip={CKA_PARAMETER_SET},
+                ),
             )
         if kt == int(CKK_ML_DSA):
             keygen_mech = (
@@ -494,15 +566,20 @@ def gen_keypair_for_mech(
                 if config.keygen_mech is not None
                 else int(CKM_ML_DSA_KEY_PAIR_GEN)
             )
-            return gen_keypair(
-                rs.raw,
-                rs.sh,
+            return _generate_keypair_or_xfail(
+                rs,
+                entry,
                 keygen_mech,
-                pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65)],
-                priv_base=[],
-                public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
-                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
-                pub_skip={CKA_PARAMETER_SET},
+                lambda: gen_keypair(
+                    rs.raw,
+                    rs.sh,
+                    keygen_mech,
+                    pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65)],
+                    priv_base=[],
+                    public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+                    private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                    pub_skip={CKA_PARAMETER_SET},
+                ),
             )
         if kt == int(CKK_SLH_DSA):
             keygen_mech = (
@@ -510,15 +587,20 @@ def gen_keypair_for_mech(
                 if config.keygen_mech is not None
                 else int(CKM_SLH_DSA_KEY_PAIR_GEN)
             )
-            return gen_keypair(
-                rs.raw,
-                rs.sh,
+            return _generate_keypair_or_xfail(
+                rs,
+                entry,
                 keygen_mech,
-                pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_SLH_DSA_SHA2_128S)],
-                priv_base=[],
-                public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
-                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
-                pub_skip={CKA_PARAMETER_SET},
+                lambda: gen_keypair(
+                    rs.raw,
+                    rs.sh,
+                    keygen_mech,
+                    pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_SLH_DSA_SHA2_128S)],
+                    priv_base=[],
+                    public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+                    private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                    pub_skip={CKA_PARAMETER_SET},
+                ),
             )
     except ImportError:
         pass
