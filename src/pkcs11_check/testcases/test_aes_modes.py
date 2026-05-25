@@ -6,6 +6,7 @@ AES-MAC-GENERAL, AES-XCBC-MAC, and AES-KEY-WRAP-PKCS7.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -15,7 +16,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
     generate_random,
     import_secret_key,
     read_attributes,
@@ -23,6 +23,9 @@ from pkcs11_check.raw.recipes import (
     unwrap_key,
     verify_single,
     wrap_key,
+)
+from pkcs11_check.raw.recipes import (
+    gen_aes_key as _raw_gen_aes_key,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -44,6 +47,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CFB128,
     CKM_AES_CTR,
     CKM_AES_CTS,
+    CKM_AES_KEY_GEN,
     CKM_AES_KEY_WRAP_PKCS7,
     CKM_AES_MAC,
     CKM_AES_MAC_GENERAL,
@@ -54,9 +58,42 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import is_known_error, require_operational_aes_keygen
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    is_known_error,
+    require_operational_aes_keygen,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.encrypt
+
+_AES_MODE_SETUP_KEY_BITS = 128
+
+
+def gen_aes_key(
+    raw: Any,
+    sh: int,
+    bits: int = _AES_MODE_SETUP_KEY_BITS,
+    attrs: Mapping[Any, Any] | None = None,
+    mechanism: int = CKM_AES_KEY_GEN,
+) -> int:
+    """Generate an AES setup key for mode smoke tests.
+
+    These tests exercise mode behavior, not AES-256 key-size support.  Keep
+    legacy 256-bit call sites compatible but use the same 128-bit setup size
+    as the operational keygen probe.
+    """
+    setup_bits = _AES_MODE_SETUP_KEY_BITS if bits == 256 else bits
+    try:
+        return _raw_gen_aes_key(raw, sh, setup_bits, attrs=attrs, mechanism=mechanism)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but AES-{setup_bits} mode setup key generation "
+            "is not operational",
+        )
+        raise
 
 
 @pytest.fixture(autouse=True)

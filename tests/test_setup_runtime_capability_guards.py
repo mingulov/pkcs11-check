@@ -60,6 +60,37 @@ def test_aes_modes_xfail_when_advertised_aes_keygen_rejects_runtime(
         test_aes_modes.TestAESCTR().test_aes_ctr_roundtrip(rs)
 
 
+def test_aes_modes_use_operational_aes128_setup_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _gen_aes128_key(*_args: Any, bits: int = 256, **_kwargs: Any) -> int:
+        if len(_args) >= 3:
+            bits = int(_args[2])
+        if bits != 128:
+            raise CkrAssertionError(
+                "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+                int(CKR_FUNCTION_NOT_SUPPORTED),
+            )
+        return 1
+
+    monkeypatch.setattr(test_aes_modes, "require_operational_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_aes_modes, "_raw_gen_aes_key", _gen_aes128_key)
+    monkeypatch.setattr(
+        test_aes_modes,
+        "encrypt_single",
+        lambda *args, **_kwargs: b"x" * len(args[4]),
+    )
+    monkeypatch.setattr(
+        test_aes_modes,
+        "decrypt_single",
+        lambda *_args, **_kwargs: b"AES-CTR test data, any length ok",
+    )
+    monkeypatch.setattr(test_aes_modes, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = _session_with_mechanisms("AES_CTR", "AES_KEY_GEN")
+
+    test_aes_modes.TestAESCTR().test_aes_ctr_roundtrip(rs)
+
+
 def test_key_usage_policy_xfail_when_advertised_aes_keygen_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

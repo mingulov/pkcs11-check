@@ -6,6 +6,7 @@ and basic properties: roundtrip, key independence, ciphertext randomness.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -33,21 +34,46 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
 )
-from pkcs11_check.testcases.conftest import require_operational_aes_keygen
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    require_operational_aes_keygen,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
+
+_AES_SETUP_KEY_BITS = 128
 
 
 def _require_aes_keygen(rs: Any) -> None:
     require_operational_aes_keygen(rs)
 
 
+def _gen_aes_key_or_xfail(
+    rs: Any,
+    *,
+    bits: int = _AES_SETUP_KEY_BITS,
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "setup",
+) -> int:
+    try:
+        return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but AES-{bits} key generation for {purpose} "
+            "is not operational",
+        )
+        raise
+
+
 class TestAESEncryption:
     def test_aes_generate_key(self, p11_raw_session: Any) -> None:
-        """Generate an AES-256 session key."""
+        """Generate an AES session key."""
         rs = p11_raw_session
         _require_aes_keygen(rs)
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = _gen_aes_key_or_xfail(rs)
         try:
             assert key is not None
         finally:
@@ -57,7 +83,7 @@ class TestAESEncryption:
         """Encrypt and decrypt with AES-CBC produces original plaintext."""
         rs = p11_raw_session
         _require_aes_keygen(rs)
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = _gen_aes_key_or_xfail(rs)
         iv = generate_random(rs.raw, rs.sh, 16)
         # AES-CBC requires data aligned to block size (16 bytes)
         plaintext = b"hello pkcs11!!\x02\x02"  # 16 bytes with PKCS padding
@@ -90,8 +116,8 @@ class TestAESEncryption:
         """Same plaintext encrypted with different keys should differ."""
         rs = p11_raw_session
         _require_aes_keygen(rs)
-        key1 = gen_aes_key(rs.raw, rs.sh, 256)
-        key2 = gen_aes_key(rs.raw, rs.sh, 256)
+        key1 = _gen_aes_key_or_xfail(rs)
+        key2 = _gen_aes_key_or_xfail(rs)
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"test data 123456"  # 16 bytes
 
@@ -121,7 +147,7 @@ class TestAESEncryption:
         """AES-ECB encrypt/decrypt roundtrip."""
         rs = p11_raw_session
         _require_aes_keygen(rs)
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = _gen_aes_key_or_xfail(rs)
         plaintext = b"sixteen bytes!!" + b"\x01"  # 16 bytes
 
         try:
@@ -137,7 +163,7 @@ class TestAESEncryption:
         """Generate AES keys of all standard sizes."""
         rs = p11_raw_session
         _require_aes_keygen(rs)
-        key = gen_aes_key(rs.raw, rs.sh, key_bits)
+        key = _gen_aes_key_or_xfail(rs, bits=key_bits, purpose="key-size coverage")
         try:
             assert key is not None
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
@@ -149,7 +175,7 @@ class TestAESEncryption:
         """AES-ECB ciphertext should be same length as plaintext (block-aligned)."""
         rs = p11_raw_session
         _require_aes_keygen(rs)
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = _gen_aes_key_or_xfail(rs)
         plaintext = b"\x00" * 32  # 2 blocks
         try:
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
@@ -161,7 +187,7 @@ class TestAESEncryption:
         """AES-CBC with different IVs produces different ciphertexts."""
         rs = p11_raw_session
         _require_aes_keygen(rs)
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = _gen_aes_key_or_xfail(rs)
         plaintext = b"determinism test"  # 16 bytes
         iv1 = generate_random(rs.raw, rs.sh, 16)
         iv2 = generate_random(rs.raw, rs.sh, 16)
@@ -191,8 +217,8 @@ class TestAESEncryption:
         """Decrypting with wrong key should produce garbage (ECB)."""
         rs = p11_raw_session
         _require_aes_keygen(rs)
-        key1 = gen_aes_key(rs.raw, rs.sh, 256)
-        key2 = gen_aes_key(rs.raw, rs.sh, 256)
+        key1 = _gen_aes_key_or_xfail(rs)
+        key2 = _gen_aes_key_or_xfail(rs)
         plaintext = b"wrong key test!!"  # 16 bytes
 
         try:
@@ -207,7 +233,7 @@ class TestAESEncryption:
         """AES-ECB with exactly one block of zeros."""
         rs = p11_raw_session
         _require_aes_keygen(rs)
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = _gen_aes_key_or_xfail(rs)
         plaintext = b"\x00" * 16
         try:
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)

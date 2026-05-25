@@ -438,10 +438,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
   at runtime. KAT encrypt/decrypt paths now xfail explicit runtime CKRs but
   still fail ciphertext mismatches.
 - **Older general AES/access-control tests**: AES secret-key tests now probe
-  `AES_KEY_GEN` before using it. Missing keygen is a skip; advertised keygen
-  returning explicit setup errors is an xfail finding. This removes keygen setup
-  capability from provider-failure buckets without suppressing the actual
-  access-control checks.
+  `AES_KEY_GEN` before using it. General AES encryption and AES mode smoke
+  tests use 128-bit setup keys unless they are explicitly checking AES key-size
+  coverage, so providers are not failed just because an otherwise unrelated
+  test chose AES-256 setup material. Missing keygen is a skip; advertised
+  keygen returning explicit setup errors is an xfail finding. This removes
+  keygen setup capability from provider-failure buckets without suppressing the
+  actual encryption, mode, or access-control checks.
 - **General RSA/EC setup paths**: RSA-OAEP, RSA wrapping, padding-oracle,
   key-lifecycle, tool-template, sign-recover, ECDSA nonce-quality, and
   mechanism-driven keypair helpers now treat advertised keypair generation
