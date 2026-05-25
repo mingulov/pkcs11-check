@@ -45,8 +45,8 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | OpenCryptoki | `master` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | same as release |
 | NSS | `NSS_3_124_RTM` | `089afe88dd219cf4b1516fd04f3b1c1fda3b7b61` | 2026-05-15T14:57:13Z | official RTM tag |
 | NSPR | `NSPR_4_39_RTM` | `54e7c1b0803d151e142e30dc0d05f12e1ec67a13` | 2026-05-05T12:48:55Z | official RTM tag |
-| NSS | `tip` | `1a02ab2a26b719d5a2ba23aed6e7b06b5d3e9370` | 2026-05-19T16:33:46Z | Mercurial tip |
-| NSPR | `tip` | `764a204fce9a069633c2eb75890f8194f0c54853` | 2026-05-05T12:49:29Z | Mercurial tip |
+| NSS | `tip` | `1a02ab2a26b719d5a2ba23aed6e7b06b5d3e9370` | 2026-05-19T16:33:46Z | Mercurial tip for `nss-main` comparison |
+| NSPR | `tip` | `764a204fce9a069633c2eb75890f8194f0c54853` | 2026-05-05T12:49:29Z | Mercurial tip for `nss-main` comparison |
 | BouncyHSM | `v2.1.0` | `3bfedeec38d10f69cf43a98a864ea4d519266d94` | 2026-05-04T15:25:36Z | release and main |
 | tpm2-pkcs11 | `1.10.0` | `a95465ce672c5fda92a2d34bc5cbeda4b0511c80` | 2026-05-19T20:44:58Z | release and master |
 | libtpms | `v0.10.2` | `03ff2481e133540be3b3ffe3daa1483d2a73d967` | 2026-01-02T15:56:41Z | TPM support |
@@ -63,9 +63,9 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | `test-kryoptic` | Kryoptic v1.5.0 | OpenSSL 4.0.0 |
 | `test-kryoptic-main` | Kryoptic main | OpenSSL 4.0.0 |
 | `test-kryoptic-fips` | Kryoptic FIPS/PQC | custom `simo5/openssl:kryoptic_ossl40`; official OpenSSL 4.0.0 compiled Kryoptic but `hmacify` failed because `.rodata1` was absent |
-| `test-nss` | Fedora NSS softoken packages | not OpenSSL-based; slot 1 |
+| `test-nss` | Fedora 44 NSS softoken package `nss-3.123.1-1.fc44` | not OpenSSL-based; slot 1 |
 | `test-nss-pqc` | NSS/NSPR official RTM tags | not OpenSSL-based; slot 1 |
-| `test-nss-main` | NSS/NSPR source tips | not OpenSSL-based; slot 1 |
+| `test-nss-main` | NSS/NSPR source tips, comparison only | not OpenSSL-based; slot 1 |
 | `test-opencryptoki` | OpenCryptoki v3.27.0 SWToken | OpenSSL 4.0.0 |
 | `test-opencryptoki-master` | OpenCryptoki master SWToken | OpenSSL 4.0.0 |
 | `test-bouncyhsm` | BouncyHSM v2.1.0 | .NET/BouncyCastle provider; not OpenSSL-based |
@@ -83,7 +83,7 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 103,789 | 67,503 | 2,839 | 33,376 | 71 | 0 | 0 | 0 |
 | `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 87,712 | 53,404 | 4,733 | 29,490 | 73 | 0 | 12 | 0 |
 | `nss` | Fedora NSS softoken packages | full | 85,515 | 48,928 | 2,111 | 34,372 | 101 | 0 | 3 | 0 |
-| `nss-pqc` | NSS/NSPR source tips (pre-retag artifact) | full | 84,819 | 47,548 | 2,019 | 35,147 | 101 | 0 | 4 | 0 |
+| `nss-pqc` | legacy NSS/NSPR source-tip artifact; current target defaults to RTM tags | full | 84,819 | 47,548 | 2,019 | 35,147 | 101 | 0 | 4 | 0 |
 | `nss-main` | NSS/NSPR source tips | full | 84,819 | 47,549 | 2,018 | 35,147 | 101 | 0 | 4 | 0 |
 | `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 89,899 | 78,656 | 2,593 | 8,593 | 57 | 0 | 0 | 0 |
 | `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 89,899 | 78,657 | 2,589 | 8,595 | 58 | 0 | 0 | 0 |
@@ -145,14 +145,14 @@ Important BouncyHSM article points:
   FIPS/PQC currently needs the custom OpenSSL branch because official OpenSSL
   4.0.0 produced a Kryoptic shared object without `.rodata1`, causing
   `hmacify` to fail.
-- NSS stable uses Fedora packages; the current PQC source target uses official
-  NSS and NSPR RTM tags, while `nss-main` is an opt-in Mercurial tip
-  comparison target. Use `nss-pqc` for the source-built NSS article/release
-  row. The published `nss-pqc` result row above is from the earlier source-tip
-  artifact and must be rerun before using it as RTM-tag result evidence. The
-  existing source-built artifacts remove the stable ML-DSA failure cluster but
-  still show ML-KEM, ECDH, DSA, HMAC/general, NULL pointer, and
-  security-boundary findings.
+- NSS stable uses the Fedora 44 `nss-3.123.1-1.fc44` package; the current PQC
+  source target uses official NSS and NSPR RTM tags, while `nss-main` is an
+  opt-in Mercurial tip comparison target. Use `nss-pqc` for the source-built
+  NSS article/release row. The published `nss-pqc` result row above is from the
+  earlier source-tip artifact and must be rerun before using it as RTM-tag
+  result evidence. The existing source-built artifacts remove the stable ML-DSA
+  failure cluster but still show ML-KEM, ECDH, DSA, HMAC/general, NULL pointer,
+  and security-boundary findings.
 - OpenCryptoki release and master currently resolve to the same commit and
   both build with OpenSSL 4.0.0. Remaining large clusters look provider-side
   after pkcs11-check validation-order and optional-function fixes.

@@ -100,7 +100,7 @@ selector = "NSPR_4_39_RTM"
 commit = "54e7c1b0803d151e142e30dc0d05f12e1ec67a13"
 commit_date = "2026-05-05T12:48:55Z"
 
-[sources.nss_tip]
+[sources.nss_main_tip]
 kind = "hg_tip"
 repo = "https://hg.mozilla.org/projects/nss"
 selector = "tip"
@@ -108,7 +108,7 @@ commit = "1a02ab2a26b719d5a2ba23aed6e7b06b5d3e9370"
 commit_date = "2026-05-19T16:33:46Z"
 push_date = "2026-05-19T16:35:56Z"
 
-[sources.nspr_tip]
+[sources.nspr_main_tip]
 kind = "hg_tip"
 repo = "https://hg.mozilla.org/projects/nspr"
 selector = "tip"
@@ -238,6 +238,7 @@ build_evidence = "2026-05-25 docker compose build --build-arg OPENSSL_REPO=https
 service = "test-nss"
 provider = "NSS softoken"
 package_source = "nss_fedora_44"
+result_tag = "Fedora 44 nss-3.123.1-1.fc44 package"
 openssl = "not applicable: NSS does not build against OpenSSL"
 build_evidence = "2026-05-24/25 matrix artifacts: stable Dockerfile used Fedora 44 nss/nss-softokn packages with PKCS11_CHECK_SLOT=1; full result in artifacts/nss. Source tips are tracked separately for source-built NSS targets."
 
@@ -246,14 +247,16 @@ service = "test-nss-pqc"
 provider = "NSS softoken official source tags with PQC"
 release_source = "nss_3_124_rtm"
 supporting_source = "nspr_4_39_rtm"
+result_tag = "NSS_3_124_RTM / NSPR_4_39_RTM"
 openssl = "not applicable: NSS does not build against OpenSSL"
 build_evidence = "Current Dockerfile defaults build from official NSS_3_124_RTM and NSPR_4_39_RTM Mercurial tags; rerun full matrix before publishing refreshed result counts."
 
 [targets.nss_main]
 service = "test-nss-main"
-provider = "NSS softoken source tip"
-branch_source = "nss_tip"
-supporting_source = "nspr_tip"
+provider = "NSS softoken source tip comparison"
+branch_source = "nss_main_tip"
+supporting_source = "nspr_main_tip"
+result_tag = "Mercurial tip comparison only"
 openssl = "not applicable: NSS does not build against OpenSSL"
 build_evidence = "2026-05-24/25 matrix artifacts: source build intended observed NSS tip 1a02ab2a26b719d5a2ba23aed6e7b06b5d3e9370 and NSPR tip 764a204fce9a069633c2eb75890f8194f0c54853; full result in artifacts/nss-main"
 

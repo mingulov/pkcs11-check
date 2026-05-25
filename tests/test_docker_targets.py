@@ -63,3 +63,27 @@ def test_default_docker_matrix_uses_tagged_nss_source_not_tip() -> None:
 
     assert "nss-pqc" in default_block
     assert "nss-main" not in default_block
+
+
+def test_nss_source_manifest_distinguishes_packages_tags_and_tip() -> None:
+    manifest = (ROOT / "docker/provider-sources.toml").read_text()
+
+    assert "[sources.nss_tip]" not in manifest
+    assert "[sources.nss_main_tip]" in manifest
+    assert "[sources.nspr_main_tip]" in manifest
+
+    nss_block = manifest.split("[targets.nss]")[1].split("[targets.", maxsplit=1)[0]
+    nss_pqc_block = manifest.split("[targets.nss_pqc]")[1].split("[targets.", maxsplit=1)[0]
+    nss_main_block = manifest.split("[targets.nss_main]")[1].split("[targets.", maxsplit=1)[0]
+
+    assert 'package_source = "nss_fedora_44"' in nss_block
+    assert 'result_tag = "Fedora 44 nss-3.123.1-1.fc44 package"' in nss_block
+    assert "nss_main_tip" not in nss_block
+
+    assert 'release_source = "nss_3_124_rtm"' in nss_pqc_block
+    assert 'supporting_source = "nspr_4_39_rtm"' in nss_pqc_block
+    assert 'result_tag = "NSS_3_124_RTM / NSPR_4_39_RTM"' in nss_pqc_block
+
+    assert 'branch_source = "nss_main_tip"' in nss_main_block
+    assert 'supporting_source = "nspr_main_tip"' in nss_main_block
+    assert 'result_tag = "Mercurial tip comparison only"' in nss_main_block
