@@ -90,8 +90,10 @@ class TestRsaPkcs15:
             sig = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["message"])
             assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig)
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_MECHANISM_INVALID}):
+            if is_known_error(exc, {CKR_KEY_SIZE_RANGE}):
                 pytest.skip(f"RSA {key_bits}-bit not supported: {exc}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+                pytest.xfail(f"{mech_name} advertised but sign/verify is not operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -134,10 +136,12 @@ class TestRsaPss:
                 rs.raw, rs.sh, pub_key, mech_int, vec["message"], sig, mech_param=mech_param
             )
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_MECHANISM_INVALID}):
+            if is_known_error(exc, {CKR_KEY_SIZE_RANGE}):
                 pytest.skip(f"RSA {key_bits}-bit not supported: {exc}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+                pytest.xfail(f"{mech_name} advertised but sign/verify is not operational: {exc}")
             if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip(f"PSS params not supported (hashAlg != mgf): {exc}")
+                pytest.xfail(f"{mech_name} advertised but PSS params are not operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -230,7 +234,7 @@ class TestRsaSigVer:
             if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_TEMPLATE_INCONSISTENT}):
                 pytest.skip(f"RSA key import failed: {exc}")
             if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip(f"PSS params not supported: {exc}")
+                pytest.xfail(f"{mech_name} advertised but PSS params are not operational: {exc}")
             if not expected_pass and is_known_error(
                 exc,
                 {

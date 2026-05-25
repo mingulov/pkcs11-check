@@ -42,6 +42,7 @@ _RUNTIME_SKIP_PATTERNS = {
         "Cannot import",
         "Key not valid for HMAC mechanism",
     ),
+    Path("src/pkcs11_check/testcases/acvp/test_acvp_rsa.py"): ("PSS params not supported",),
 }
 
 

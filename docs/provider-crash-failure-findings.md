@@ -279,6 +279,13 @@ typed-key import failure and key-handle invalid use no longer hide advertised
 HMAC mechanisms; if both key forms are rejected, the test records an xfail
 finding with the specific setup or use CKR evidence.
 
+### Follow-Up: ACVP RSA-PSS Parameter Rejections
+
+ACVP RSA still skips key sizes that a provider cannot generate or import, but
+RSA-PSS parameter rejection after an advertised PSS mechanism is now xfail
+evidence. This keeps mixed hash/MGF or salt-length limitations visible instead
+of treating them as missing test capability.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
