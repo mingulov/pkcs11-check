@@ -450,6 +450,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
 - **Generic-secret HMAC smoke tests**: imported HMAC keys that reach
   `C_SignInit`/`C_Sign` and receive explicit runtime rejects are now xfailed,
   matching the ACVP HMAC classification.
+- **Mechanism-driven sign coverage**: `test_mech_sign.py` now uses the same
+  split for advertised signing mechanisms. Valid sign/verify operations that
+  return explicit runtime rejects become xfail findings, tampered-signature
+  verification still fails if the provider accepts the tampering, and non-clean
+  tampered-signature rejects use the shared signature policy. Known-answer tests
+  skip only when their setup requires importing a private-key form that the
+  provider rejects before any sign operation is reached.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
 the `CKA_PRIVATE=False` data-object visibility probe still fails during data
