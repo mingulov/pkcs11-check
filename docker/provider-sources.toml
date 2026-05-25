@@ -238,9 +238,10 @@ build_evidence = "2026-05-25 docker compose build --build-arg OPENSSL_REPO=https
 service = "test-nss"
 provider = "NSS softoken"
 package_source = "nss_fedora_44"
+package_tag = "nss-3.123.1-1.fc44.x86_64"
 result_tag = "Fedora 44 nss-3.123.1-1.fc44 package"
 openssl = "not applicable: NSS does not build against OpenSSL"
-build_evidence = "2026-05-24/25 matrix artifacts: stable Dockerfile used Fedora 44 nss/nss-softokn packages with PKCS11_CHECK_SLOT=1; full result in artifacts/nss. Source tips are tracked separately for source-built NSS targets."
+build_evidence = "2026-05-24/25 matrix artifacts: stable Dockerfile used Fedora 44 nss/nss-softokn packages with PKCS11_CHECK_SLOT=1; full result in artifacts/nss. This is a package-version target, not an hg tip target. Source tags and source tips are tracked separately for source-built NSS targets."
 
 [targets.nss_pqc]
 service = "test-nss-pqc"

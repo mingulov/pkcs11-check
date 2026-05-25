@@ -77,6 +77,7 @@ def test_nss_source_manifest_distinguishes_packages_tags_and_tip() -> None:
     nss_main_block = manifest.split("[targets.nss_main]")[1].split("[targets.", maxsplit=1)[0]
 
     assert 'package_source = "nss_fedora_44"' in nss_block
+    assert 'package_tag = "nss-3.123.1-1.fc44.x86_64"' in nss_block
     assert 'result_tag = "Fedora 44 nss-3.123.1-1.fc44 package"' in nss_block
     assert "nss_main_tip" not in nss_block
 
