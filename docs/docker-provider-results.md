@@ -5,6 +5,8 @@ article/report. It is evidence from the current artifact set, not a live
 dashboard.
 
 For the size of the test suite itself, see [test-universe.md](test-universe.md).
+For focused crash, timeout, and broad failure classification, see
+[provider-crash-failure-findings.md](provider-crash-failure-findings.md).
 
 ## Snapshot Metadata
 

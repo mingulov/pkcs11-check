@@ -1,0 +1,142 @@
+# Provider Crash And Failure Findings
+
+This document summarizes crash, timeout, and broad failure evidence from the
+current Docker provider artifact set. It complements
+[docker-provider-results.md](docker-provider-results.md), which is the compact
+source and result snapshot.
+
+Source artifacts:
+
+- `artifacts/_matrix/provider-summary.json`
+- per-provider `artifacts/*/results.json`
+- segmented BouncyHSM `artifacts/bouncyhsm-*/*results.json` and
+  `artifacts/_focused/bouncyhsm-*/*results.json`
+
+## Method
+
+The extraction separates three different signals:
+
+- **Runner-level crashes/timeouts**: `results.json` summary counters and unit
+  counters where a pytest file-level worker crashed or timed out.
+- **Subprocess signal findings**: ordinary failed tests whose `longrepr`
+  records a subprocess crash, signal, abort, or `pytest-timeout`. These are
+  intentional pkcs11-check isolation probes and are provider findings even when
+  the top-level runner summary says `crashed=0`.
+- **Broad failed-file buckets**: the largest failed test files by provider, to
+  show whether a result is dominated by a small number of mechanism families.
+
+The signal matcher used only explicit crash/timeout words such as
+`Fatal Python error`, `Segmentation fault`, `Bus error`, `Aborted`,
+`signal <number>`, `pytest-timeout`, `Timeout (>...)`, `TimeoutExpired`, and
+`timed out`. It intentionally does not count cryptographic names such as
+`sigGen`, `SigVer`, `signature`, or `signing`.
+
+These counts are artifact-derived evidence, not root-cause proof. One provider
+bug can produce many vector failures, and one broad vector family can dominate
+a provider's failed count.
+
+## Runner-Level Crashes
+
+These are crashes counted by the provider summary itself.
+
+| Target | Runner crashes | Runner timeouts | Evidence units |
+| --- | ---: | ---: | --- |
+| `kryoptic-fips` | 12 | 0 | `acvp/aes/test_ccm.py` 3, `test_mech_derive.py` 1, `test_mech_encrypt.py` 2, `test_misc_kdf.py` 3, `wycheproof/test_wycheproof_aes.py` 3 |
+| `nss` | 3 | 0 | `test_mech_flags.py` 3 |
+| `nss-pqc` | 4 | 0 | `test_mech_flags.py` 3, `test_mech_negative.py` 1 |
+| `nss-main` | 4 | 0 | `test_mech_flags.py` 3, `test_mech_negative.py` 1 |
+| `bouncyhsm-segmented` | 4 | 0 | `acvp/aes/test_cfb8.py` 1, `security/test_parameter_validation.py` 3 |
+
+No runner-level crashes are recorded for SoftHSM2, Kryoptic release/main,
+OpenCryptoki release/master, TPM2 source, TPM2 archived Fedora package, or
+pkcs11-mock. That does not mean those providers had no crash findings: several
+crash probes were contained inside subprocess-based tests and therefore appear
+as ordinary failed tests.
+
+## Subprocess Signal And Timeout Findings
+
+| Target | Signal/timeout findings | Main evidence clusters | Frequent PKCS#11 calls in traces |
+| --- | ---: | --- | --- |
+| `softhsm2` | 9 | arithmetic-overflow template counts; GCM null-IV boundary | `C_CreateObject`, `C_GenerateKey`, `C_GenerateKeyPair`, `C_EncryptInit` |
+| `softhsm2-generated-iv` | 8 | arithmetic-overflow template counts; generated-IV patch removes the GCM null-IV crash from this artifact | `C_CreateObject`, `C_GenerateKey`, `C_GenerateKeyPair` |
+| `softhsm2-main` | 9 | arithmetic-overflow template counts; GCM null-IV boundary | `C_CreateObject`, `C_GenerateKey`, `C_GenerateKeyPair`, `C_EncryptInit` |
+| `kryoptic` | 19 | NULL template/pointer probes, length-boundary probes, arithmetic-overflow probes, v3.0 session init behavior | `C_FindObjectsInit`, `C_GenerateKey`, `C_Sign`, `C_Digest`, `C_Initialize`, `C_DeriveKey` |
+| `kryoptic-main` | 15 | length-boundary probes, arithmetic-overflow probes, NULL pointer probes, AES extreme key-size panic | `C_GenerateKey`, `C_FindObjectsInit`, `C_Sign`, `C_Digest`, `C_Initialize`, `C_DeriveKey` |
+| `kryoptic-fips` | 45 | runner aborts plus arithmetic-overflow, length-boundary, NULL pointer, AES-CCM, and extract-key findings | `C_GenerateKey`, `C_Encrypt`, `C_Decrypt`, `C_FindObjectsInit`, `C_CreateObject`, `C_UnwrapKey` |
+| `nss` | 17 | NULL pointer/template/data probes plus sign-flag mechanism probes | `C_Sign`, `C_DigestInit`, `C_CreateObject`, `C_FindObjectsInit`, `C_GenerateKey`, `C_EncryptInit` |
+| `nss-pqc` | 18 | same as `nss`, plus one negative HMAC/RSA-key mechanism crash | `C_Sign`, `C_DigestInit`, `C_CreateObject`, `C_FindObjectsInit`, `C_GenerateKey`, `C_EncryptInit` |
+| `nss-main` | 18 | same as `nss-pqc` | `C_Sign`, `C_DigestInit`, `C_CreateObject`, `C_FindObjectsInit`, `C_GenerateKey`, `C_EncryptInit` |
+| `opencryptoki` | 7 | signal 7/bus-error boundary findings in template-count and data-length probes | `C_FindObjectsInit`, `C_Sign`, `C_Digest` |
+| `opencryptoki-master` | 7 | same commit and same boundary finding shape as release | `C_FindObjectsInit`, `C_Sign`, `C_Digest` |
+| `tpm2-source` | 4 | digest NULL-mechanism/data-length subprocess crashes and fork-after-initialize timeout | `C_DigestInit`, `C_Digest`, `C_Finalize`, `C_Initialize` |
+| `tpm2-fedora-package-20260525` | 4 | archived package comparison: digest boundary crashes and fork-after-initialize timeout | `C_DigestInit`, `C_Digest`, `C_Finalize`, `C_Initialize` |
+| `bouncyhsm-segmented` | 42 | CFB8/CFB128/OFB multiblock timeouts or segfaults; security arithmetic/length/parameter validation crashes | `C_Encrypt`, `C_Decrypt`, `C_GenerateKeyPair`, `C_CreateObject`, `C_SetAttributeValue`, `C_VerifyInit` |
+
+`pkcs11-mock` has no signal/timeout findings in the current artifact set, but
+it is a mock baseline rather than a provider conformance result. `qryptotoken`
+has no provider test findings because the Docker target fails before producing
+a PKCS#11 module.
+
+## Largest Failure Buckets
+
+These are the largest failed test files per target. They are useful for article
+wording because they show which areas dominate each provider's failure shape.
+
+| Target | Largest failed buckets |
+| --- | --- |
+| `softhsm2` | ACVP ECDH 1,403; Wycheproof RSA-OAEP 668; Wycheproof RSA-PSS 435; Wycheproof ECDH 32; Wycheproof HMAC 24 |
+| `softhsm2-generated-iv` | ACVP ECDH 1,403; Wycheproof RSA-OAEP 668; Wycheproof RSA-PSS 435; Wycheproof ECDH 32; Wycheproof HMAC 24 |
+| `softhsm2-main` | ACVP ECDH 1,403; Wycheproof RSA-OAEP 668; Wycheproof RSA-PSS 435; ACVP ML-DSA 93; Wycheproof ECDH 32 |
+| `kryoptic` | ACVP ECDH 1,403; Wycheproof ECDSA 467; ACVP AES-CTS 405; ACVP ML-DSA 249; Wycheproof AES 123 |
+| `kryoptic-main` | ACVP ECDH 1,403; Wycheproof ECDSA 467; ACVP AES-CTS 405; ACVP ML-DSA 249; Wycheproof AES 123 |
+| `kryoptic-fips` | ACVP ECDH 1,403; Wycheproof PBES2 1,080; Wycheproof ECDSA 467; ACVP AES-CTS 405; ACVP RSA 268 |
+| `nss` | ACVP ECDH 1,403; Wycheproof DSA 296; ACVP ML-DSA 93; Wycheproof AES 77; ACVP ML-KEM 50 |
+| `nss-pqc` | ACVP ECDH 1,403; Wycheproof DSA 296; Wycheproof AES 77; ACVP ML-KEM 50; mechanism attributes 39 |
+| `nss-main` | ACVP ECDH 1,403; Wycheproof DSA 296; Wycheproof AES 77; ACVP ML-KEM 50; mechanism attributes 39 |
+| `opencryptoki` | ACVP ECDH 1,403; Wycheproof RSA-PSS 435; ACVP AES-XTS 382; ACVP ML-DSA 164; Wycheproof AES 107 |
+| `opencryptoki-master` | ACVP ECDH 1,403; Wycheproof RSA-PSS 435; ACVP AES-XTS 382; ACVP ML-DSA 164; Wycheproof AES 107 |
+| `tpm2-source` | ACVP AES-CFB128 2,144; ACVP ECDH 1,734; generic Wycheproof 856; Wycheproof RSA-PSS 813; ACVP HMAC 444 |
+| `tpm2-fedora-package-20260525` | ACVP AES-CFB128 2,144; generic Wycheproof 871; Wycheproof RSA-PSS 813; ACVP HMAC 444; Wycheproof HMAC 198 |
+| `pkcs11-mock` | X.509 limbo stress 1,009; generic Wycheproof 729; Wycheproof RSA-OAEP 700; X.509 limbo import 169; ACVP RSA 162 |
+| `bouncyhsm-segmented` | Wycheproof ECDH 11,945; ACVP AES-CCM 7,370; ACVP ECDH 1,736; Wycheproof AES 414; Wycheproof HMAC 180 |
+
+## Provider-Specific Notes
+
+- SoftHSM2 release has no runner-level crashes, but the security probes still
+  show signal 11 in extreme template-count handling. The generated-IV variant
+  removes the GCM null-IV crash observed in the release and main artifacts.
+- Kryoptic release/main build against official OpenSSL 4.0.0. Their crash
+  clusters are concentrated in boundary and NULL-parameter probes. Kryoptic
+  FIPS/PQC has materially more crash evidence and is still a custom OpenSSL
+  branch target, not an official OpenSSL 4.0.0 result.
+- NSS stable and source-tip targets have similar crash shapes. Source-tip
+  removes the stable ML-DSA failure cluster, but it does not remove the
+  NULL-pointer, sign-flag, ML-KEM, ECDH, DSA, HMAC/general, or security
+  boundary findings.
+- OpenCryptoki release and master currently resolve to the same commit, and
+  their signal findings are the same boundary-probe class.
+- TPM2 source is the current upstream headline; the Fedora package row is kept
+  only as archived comparison evidence. Both show digest-boundary subprocess
+  crashes and fork-after-initialize timeout behavior.
+- BouncyHSM slowness should not be attributed to ".NET on Linux" from the
+  current evidence. The artifacts prove a specific pathological tail in CFB8,
+  CFB128, and OFB multiblock provider calls, plus broad AES-CCM and ECDH
+  failures. Runtime choice may be a hypothesis, but the evidence is mechanism
+  and operation specific.
+- qryptotoken should be discussed as a build/configuration state, not as a
+  conformance result: the current Docker target fails before module creation.
+
+## Article-Relevant Takeaways
+
+- A crash is a valid pkcs11-check finding. It should not be skipped just
+  because the provider is otherwise usable.
+- The article should avoid pass-rate ranking. The more defensible framing is
+  behavioral coverage: which providers build, which mechanisms are reachable,
+  which areas fail, and whether failures are ordinary CKR mismatches, isolated
+  subprocess crashes, runner crashes, or build/configuration gaps.
+- For BouncyHSM, use "segmented evidence" rather than "full monolithic run".
+  The bounded segments are useful, but the stopped full run and timeout tail
+  are part of the result.
+- For proprietary or internal PKCS#11 providers, the practical message is that
+  users can run the same suite locally and keep results private while still
+  getting crash-surviving, mechanism-level evidence.
