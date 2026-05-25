@@ -17,6 +17,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases import (
     test_aes_modes,
     test_authenticated_wrap,
+    test_buffers,
     test_generic_secret,
     test_key_usage_policy,
     test_object_size,
@@ -232,3 +233,44 @@ def test_authenticated_wrap_v240_probe_xfails_when_aes_keygen_rejects_runtime(
             rs,
             "2.40",
         )
+
+
+def test_buffer_encrypt_xfails_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(test_buffers, "gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_ECB", "AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_buffers.TestEncryptBufferSizes().test_single_block(rs)
+
+
+def test_buffer_encrypt_uses_operational_aes128_setup_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+
+    def _gen_aes_key(*_args: Any, bits: int = 256, **_kwargs: Any) -> int:
+        if len(_args) >= 3:
+            bits = int(_args[2])
+        calls.append(bits)
+        if bits != 128:
+            raise CkrAssertionError(
+                "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+                int(CKR_FUNCTION_NOT_SUPPORTED),
+            )
+        return 1
+
+    monkeypatch.setattr(test_buffers, "require_operational_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_buffers, "gen_aes_key", _gen_aes_key)
+    monkeypatch.setattr(
+        test_buffers, "encrypt_single", lambda *args, **_kwargs: b"x" * len(args[4])
+    )
+    monkeypatch.setattr(test_buffers, "decrypt_single", lambda *_args, **_kwargs: b"X" * 16)
+    monkeypatch.setattr(test_buffers, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = _session_with_mechanisms("AES_ECB", "AES_KEY_GEN")
+
+    test_buffers.TestEncryptBufferSizes().test_single_block(rs)
+
+    assert calls == [128]

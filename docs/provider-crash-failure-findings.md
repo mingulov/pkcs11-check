@@ -467,6 +467,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   setup key policy. Providers that cannot generate setup AES keys after
   advertising `AES_KEY_GEN` are reported as setup xfail evidence instead of
   failing before the authenticated-wrap API behavior is reached.
+- **Buffer-size AES ECB smoke tests**: the input-size buffer tests now use the
+  same AES setup policy. They still test one-block through 1 MiB AES-ECB buffer
+  behavior, but they no longer turn an unrelated AES-256 setup-key rejection
+  into a buffer-management failure.
 - **General RSA/EC setup paths**: RSA-OAEP, RSA wrapping, padding-oracle,
   key-lifecycle, tool-template, sign-recover, ECDSA nonce-quality, and
   mechanism-driven keypair helpers now treat advertised keypair generation

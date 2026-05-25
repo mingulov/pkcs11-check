@@ -44,8 +44,21 @@ from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import require_operational_aes_keygen
 
 pytestmark = pytest.mark.boundary
+
+
+def _gen_aes_ecb_buffer_key(rs: Any) -> int:
+    if not rs.has_mechanism("AES_ECB"):
+        pytest.skip("CKM_AES_ECB not supported")
+    require_operational_aes_keygen(rs)
+    return gen_aes_key(
+        rs.raw,
+        rs.sh,
+        128,
+        attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
+    )
 
 
 class TestEncryptBufferSizes:
@@ -54,8 +67,7 @@ class TestEncryptBufferSizes:
     def test_single_block(self, p11_raw_session: Any) -> None:
         """Encrypt exactly one AES block (16 bytes)."""
         rs = p11_raw_session
-        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        key = _gen_aes_ecb_buffer_key(rs)
         try:
             pt = b"X" * 16
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
@@ -68,8 +80,7 @@ class TestEncryptBufferSizes:
     def test_two_blocks(self, p11_raw_session: Any) -> None:
         """Encrypt exactly two blocks."""
         rs = p11_raw_session
-        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        key = _gen_aes_ecb_buffer_key(rs)
         try:
             pt = b"Y" * 32
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
@@ -82,8 +93,7 @@ class TestEncryptBufferSizes:
     def test_100_blocks(self, p11_raw_session: Any) -> None:
         """Encrypt 100 blocks (1600 bytes)."""
         rs = p11_raw_session
-        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        key = _gen_aes_ecb_buffer_key(rs)
         try:
             pt = b"Z" * 1600
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
@@ -96,8 +106,7 @@ class TestEncryptBufferSizes:
     def test_64kb(self, p11_raw_session: Any) -> None:
         """Encrypt 64KB payload."""
         rs = p11_raw_session
-        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        key = _gen_aes_ecb_buffer_key(rs)
         try:
             pt = bytes(range(256)) * 256  # 64KB, block-aligned
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
@@ -110,8 +119,7 @@ class TestEncryptBufferSizes:
     def test_1mb(self, p11_raw_session: Any) -> None:
         """Encrypt 1MB payload - tests streaming/chunking."""
         rs = p11_raw_session
-        enc_attrs = {CKA_ENCRYPT: True, CKA_DECRYPT: True}
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs=enc_attrs)
+        key = _gen_aes_ecb_buffer_key(rs)
         try:
             pt = b"\xab" * (1024 * 1024)  # 1MB
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, pt)
@@ -298,9 +306,7 @@ class TestOutputBufferEdgeCases:
     repeated CKR_BUFFER_TOO_SMALL retries).
     """
 
-    def test_digest_final_buffer_too_small_then_correct(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_digest_final_buffer_too_small_then_correct(self, p11_raw_session: Any) -> None:
         """C_DigestFinal with too-small buffer → CKR_BUFFER_TOO_SMALL,
         then correct-size buffer → CKR_OK with valid digest.
 
@@ -374,8 +380,7 @@ class TestOutputBufferEdgeCases:
             buf_len = CK_ULONG(attempt_size)
             rv = int(rs.raw.C_DigestFinal(rs.sh, buf, byref(buf_len)))
             assert rv == CKR_BUFFER_TOO_SMALL, (
-                f"Retry #{attempt_size}: expected CKR_BUFFER_TOO_SMALL, "
-                f"got 0x{rv:08x}"
+                f"Retry #{attempt_size}: expected CKR_BUFFER_TOO_SMALL, got 0x{rv:08x}"
             )
             assert buf_len.value == 32, (
                 f"Retry #{attempt_size}: pulSize must be 32, got {buf_len.value}"
@@ -390,9 +395,7 @@ class TestOutputBufferEdgeCases:
             f"state was not preserved"
         )
 
-    def test_digest_final_probe_null_buffer_returns_size(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_digest_final_probe_null_buffer_returns_size(self, p11_raw_session: Any) -> None:
         """C_DigestFinal(NULL pBuffer, &pulSize) must populate pulSize.
 
         Spec §5.2 two-call probe: NULL output buffer returns the required
@@ -414,8 +417,7 @@ class TestOutputBufferEdgeCases:
         probe_len = CK_ULONG(0)  # garbage; should be overwritten
         rv = int(rs.raw.C_DigestFinal(rs.sh, None, byref(probe_len)))
         assert rv == CKR_OK, (
-            f"C_DigestFinal(NULL, &size) returned 0x{rv:08x}; spec says CKR_OK "
-            f"with size populated"
+            f"C_DigestFinal(NULL, &size) returned 0x{rv:08x}; spec says CKR_OK with size populated"
         )
         assert probe_len.value == 32, (
             f"Probe must populate pulSize with 32 (SHA256 output); got {probe_len.value}"
@@ -426,8 +428,7 @@ class TestOutputBufferEdgeCases:
         out_len = CK_ULONG(32)
         rv = int(rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len)))
         assert rv == CKR_OK, (
-            f"After NULL-buffer probe, real C_DigestFinal returned 0x{rv:08x} — "
-            f"state was lost"
+            f"After NULL-buffer probe, real C_DigestFinal returned 0x{rv:08x} — state was lost"
         )
 
     def test_digest_final_with_oversize_buffer_writes_actual_size(
@@ -456,9 +457,7 @@ class TestOutputBufferEdgeCases:
             f"got {oversize_len.value}"
         )
 
-    def test_sign_final_buffer_too_small_then_correct(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_sign_final_buffer_too_small_then_correct(self, p11_raw_session: Any) -> None:
         """C_SignFinal with too-small buffer → BUFFER_TOO_SMALL, retry → OK.
 
         Asymmetric signature sizes (RSA-2048 → 256 bytes) make the
@@ -496,8 +495,7 @@ class TestOutputBufferEdgeCases:
                 f"expected CKR_BUFFER_TOO_SMALL"
             )
             assert small_len.value == 256, (
-                f"After CKR_BUFFER_TOO_SMALL, pulSize must be 256 (RSA-2048); "
-                f"got {small_len.value}"
+                f"After CKR_BUFFER_TOO_SMALL, pulSize must be 256 (RSA-2048); got {small_len.value}"
             )
 
             # Retry with correct size
@@ -526,6 +524,5 @@ class TestOutputBufferEdgeCases:
         # Either CKR_OK (zero-length read is a no-op) or CKR_ARGUMENTS_BAD
         # (some modules treat 0-length as bad arg) is acceptable.
         assert rv in (CKR_OK, CKR_ARGUMENTS_BAD), (
-            f"C_GenerateRandom(buf, 0) returned 0x{rv:08x}; expected "
-            f"CKR_OK or CKR_ARGUMENTS_BAD"
+            f"C_GenerateRandom(buf, 0) returned 0x{rv:08x}; expected CKR_OK or CKR_ARGUMENTS_BAD"
         )
