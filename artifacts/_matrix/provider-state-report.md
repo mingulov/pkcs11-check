@@ -38,7 +38,7 @@ Data sources recorded in
   `2026-05-22T00:33:27Z`.
 
 Upstream default heads for all four data sources were rechecked with
-`git ls-remote HEAD` on `2026-05-25T07:44:11Z`; all still matched the pinned
+`git ls-remote HEAD` on `2026-05-25T08:21:09Z`; all still matched the pinned
 commits above.
 
 ## Collected Test Universe
@@ -82,7 +82,7 @@ CTS variant add-on counts:
 | Raw generated nodes before CTS deselection | 7,499 | 109,608 |
 
 Provider source manifest: `docker/provider-sources.toml`, observed
-`2026-05-25T07:44:11Z`. The release-tag refresh checked non-RC/non-test
+`2026-05-25T08:21:09Z`. The release-tag refresh checked non-RC/non-test
 semantic release tags for OpenSSL, SoftHSM2, Kryoptic, OpenCryptoki,
 BouncyHSM, tpm2-pkcs11, pkcs11-mock, qryptotoken, libtpms, and swtpm; all
 selected release tags remain latest. Main/master/tip refs for the tracked

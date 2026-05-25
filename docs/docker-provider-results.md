@@ -14,7 +14,7 @@ For focused crash, timeout, and broad failure classification, see
 | --- | --- |
 | Report generated | 2026-05-25 |
 | Source manifest | `docker/provider-sources.toml` |
-| Source manifest observed at | `2026-05-25T07:44:11Z` |
+| Source manifest observed at | `2026-05-25T08:21:09Z` |
 | Provider summary artifact | `artifacts/_matrix/provider-summary.json` |
 | Provider summary generated at | `2026-05-25T06:19:14Z` |
 | Artifact source | `artifacts/` plus focused BouncyHSM shards under `artifacts/_focused/` |
