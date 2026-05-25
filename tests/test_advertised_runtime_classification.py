@@ -128,3 +128,30 @@ def test_wycheproof_ec_import_guards_use_structured_ckr_checks() -> None:
         )
 
     assert offenders == []
+
+
+def test_stateful_signature_guards_use_structured_ckr_checks() -> None:
+    """Stateful signature guards should not parse CKR names from text."""
+    path = Path("src/pkcs11_check/testcases/test_stateful_sigs.py")
+    tree = ast.parse(path.read_text())
+
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id.endswith("_CKR_NAMES"):
+                    offenders.append(f"{path}:{node.lineno}: {target.id}")
+        if (
+            isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Constant)
+            and isinstance(node.left.value, str)
+            and node.left.value.startswith("CKR_")
+            and any(isinstance(op, ast.In) for op in node.ops)
+            and any(
+                isinstance(comparator, ast.Name) and comparator.id == "exc_msg"
+                for comparator in node.comparators
+            )
+        ):
+            offenders.append(f"{path}:{node.lineno}: {node.left.value}")
+
+    assert offenders == []

@@ -62,8 +62,13 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_KEY_EXHAUSTED,
     CKR_KEY_HANDLE_INVALID,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
+    CKR_SIGNATURE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.pqc]
 
@@ -81,18 +86,18 @@ _XMSS_SHA2_10_256 = 0x00000001  # XMSS-SHA2_10_256: height 10
 _XMSSMT_SHA2_20_2_256 = 0x00000001  # XMSSMT-SHA2_20/2_256
 
 # Common keygen errors for stateful sigs - modules may reject templates.
-_KEYGEN_CKR_NAMES = (
-    "CKR_MECHANISM_INVALID",
-    "CKR_FUNCTION_FAILED",
-    "CKR_DEVICE_ERROR",
-    "CKR_TEMPLATE_INCOMPLETE",
-    "CKR_TEMPLATE_INCONSISTENT",
+_KEYGEN_ERROR_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
-_SIGN_CKR_NAMES = (
-    "CKR_MECHANISM_INVALID",
-    "CKR_FUNCTION_FAILED",
-    "CKR_DEVICE_ERROR",
+_SIGN_ERROR_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
 )
 
 
@@ -207,9 +212,8 @@ def _try_keygen(gen_fn: Any, rs: Any, name: str) -> tuple[int, int]:
         result: tuple[int, int] = gen_fn(rs)
         return result
     except AssertionError as exc:
-        exc_msg = str(exc)
-        if any(n in exc_msg for n in _KEYGEN_CKR_NAMES):
-            pytest.xfail(f"{name} key generation failed: {exc_msg}")
+        if is_known_error(exc, _KEYGEN_ERROR_RVS):
+            pytest.xfail(f"{name} key generation failed: {exc}")
         raise
 
 
@@ -218,10 +222,18 @@ def _try_sign(rs: Any, priv: int, mech: int, name: str) -> bytes:
     try:
         return sign_single(rs.raw, rs.sh, priv, mech, _MESSAGE)
     except AssertionError as exc:
-        exc_msg = str(exc)
-        if any(n in exc_msg for n in _SIGN_CKR_NAMES):
-            pytest.xfail(f"{name} sign failed: {exc_msg}")
+        if is_known_error(exc, _SIGN_ERROR_RVS):
+            pytest.xfail(f"{name} sign failed: {exc}")
         raise
+
+
+def _handle_tampered_verify_error(exc: BaseException) -> None:
+    """Accept signature-invalid and expose provider-specific substitute CKRs."""
+    if is_known_error(exc, {CKR_SIGNATURE_INVALID}):
+        return
+    if is_known_error(exc, {CKR_DEVICE_ERROR}):
+        pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
+    raise exc
 
 
 # ---------------------------------------------------------------------------
@@ -318,13 +330,7 @@ class TestHSSSignVerify:
             result = verify_single(rs.raw, rs.sh, pub, CKM_HSS, tampered, sig)
             assert not result, "Tampered message should fail HSS verification"
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if "CKR_SIGNATURE_INVALID" in exc_msg:
-                pass  # Correct PKCS#11 behavior
-            elif "CKR_DEVICE_ERROR" in exc_msg:
-                pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
-            else:
-                raise
+            _handle_tampered_verify_error(exc)
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -423,13 +429,7 @@ class TestXMSSSignVerify:
             result = verify_single(rs.raw, rs.sh, pub, CKM_XMSS, tampered, sig)
             assert not result, "Tampered message should fail XMSS verification"
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if "CKR_SIGNATURE_INVALID" in exc_msg:
-                pass  # Correct PKCS#11 behavior
-            elif "CKR_DEVICE_ERROR" in exc_msg:
-                pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
-            else:
-                raise
+            _handle_tampered_verify_error(exc)
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -528,13 +528,7 @@ class TestXMSSMTSignVerify:
             result = verify_single(rs.raw, rs.sh, pub, CKM_XMSSMT, tampered, sig)
             assert not result, "Tampered message should fail XMSS^MT verification"
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if "CKR_SIGNATURE_INVALID" in exc_msg:
-                pass  # Correct PKCS#11 behavior
-            elif "CKR_DEVICE_ERROR" in exc_msg:
-                pytest.xfail("Module returns CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID")
-            else:
-                raise
+            _handle_tampered_verify_error(exc)
         finally:
             _destroy_pair(rs, pub, priv)
 
@@ -571,9 +565,7 @@ class TestHSSKeyExhaustion:
     depending on module.
     """
 
-    def test_hss_sign_past_leaf_budget_returns_key_exhausted(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_hss_sign_past_leaf_budget_returns_key_exhausted(self, p11_raw_session: Any) -> None:
         """Sign 33 times on a 32-leaf HSS key; the 33rd attempt must error."""
         rs = p11_raw_session
         _skip_if_no(rs, "HSS")

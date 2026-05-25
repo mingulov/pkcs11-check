@@ -310,6 +310,11 @@ Ed25519/Ed448 import guards now also use exact CKR constants for Edwards curve
 and public-key import rejects. Signature verification failures after a key was
 successfully imported remain failures, not skips.
 
+Stateful HSS/XMSS/XMSSMT keygen, sign, and tampered-verify guards were also
+converted away from CKR-name substring checks. These tests still xfail known
+provider substitutes such as `CKR_DEVICE_ERROR` for signature-invalid, but
+unexpected CKRs remain visible.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
