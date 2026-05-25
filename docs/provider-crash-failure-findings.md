@@ -227,6 +227,14 @@ mechanism is advertised. X448 remains a clean skip when the provider rejects
 that specific curve with a known unsupported-curve/template CKR, because a
 provider can reasonably support X25519 without supporting X448.
 
+### Follow-Up: OTP Runtime Rejections And CT-KIP Placeholder
+
+OTP key-generation and sign-operation rejects now remain xfail findings after a
+provider advertises the HOTP, SecurID, or ACTI mechanism. The CT-KIP derive
+placeholder no longer calls `C_GenerateKey` with `CKM_KIP_DERIVE`; it skips as
+an explicit coverage/precondition gap until the test supplies the
+mechanism-specific CT-KIP parameter setup.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

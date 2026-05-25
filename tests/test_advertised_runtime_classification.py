@@ -22,6 +22,11 @@ _RUNTIME_SKIP_PATTERNS = {
     ),
     Path("src/pkcs11_check/testcases/test_mech_message.py"): ("CKR_MECHANISM_INVALID for CKM_",),
     Path("src/pkcs11_check/testcases/test_kdf.py"): ("HKDF derivation not operational",),
+    Path("src/pkcs11_check/testcases/test_otp.py"): (
+        "keygen rejected",
+        "not operational",
+        "CKM_KIP_DERIVE rejected",
+    ),
 }
 
 
