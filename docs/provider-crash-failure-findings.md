@@ -509,6 +509,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
   explicit setup/wrap/unwrap CKR rejects as xfail evidence. Wrong unwrapped key
   material, such as the `RSA_X_509` leading-vs-trailing raw block bug, remains
   a real failure.
+- **Mechanism flag coverage**: registry expected flags are now treated as
+  expected capability coverage, not hard universal OASIS minima. A module that
+  advertises a mechanism but omits expected operation flags is reported as an
+  xfail partial-capability finding. A module that advertises an operation flag
+  and then rejects the matching `C_*Init` call with
+  `CKR_MECHANISM_INVALID`/`CKR_FUNCTION_NOT_SUPPORTED` remains a real
+  conformance failure.
 - **Stateful AES lifecycle setup**: stateful lifecycle tests now use AES-128 for
   setup keys, matching the operational AES keygen probe. These tests are about
   session/object lifecycle, not AES-256 support. If advertised AES setup still

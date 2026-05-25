@@ -10,6 +10,8 @@ import pytest
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
     CKK_AES,
     CKM_AES_CBC_PAD,
     CKM_AES_KEY_WRAP_KWP,
@@ -29,6 +31,7 @@ from pkcs11_check.testcases import (
     test_generic_secret,
     test_key_usage_policy,
     test_mech_attribute,
+    test_mech_flags,
     test_mech_keygen,
     test_mech_wrap,
     test_object_size,
@@ -586,3 +589,17 @@ def test_mech_wrap_runtime_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="wrap rejected at runtime"):
         test_mech_wrap.TestMechWrapRoundtrip().test_wrap_unwrap_aes_key(rs, entry)
+
+
+def test_mech_flags_missing_expected_flags_are_xfail() -> None:
+    entry = SimpleNamespace(
+        mech_name="PARTIAL_RSA_PKCS",
+        flags=int(CKF_ENCRYPT),
+        config=SimpleNamespace(expected_flags=int(CKF_ENCRYPT) | int(CKF_DECRYPT)),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="missing expected mechanism capability"):
+        test_mech_flags.TestMechFlags().test_expected_flags_present(
+            SimpleNamespace(),
+            entry,
+        )

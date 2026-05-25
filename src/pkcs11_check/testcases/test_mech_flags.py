@@ -1,10 +1,12 @@
 """Mechanism flag validation tests.
 
 Parametrized by mech_any_entry -- checks every mechanism advertised by the
-module against the OASIS PKCS#11 spec expectations stored in the registry.
+module against the PKCS#11 mechanism capability expectations stored in the
+registry.
 
 Tests:
-  - Expected CKF_* flags from the registry are a subset of reported flags
+  - Expected CKF_* flags from the registry are reported as partial-capability
+    xfail findings when missing
   - min_key_size <= max_key_size (sanity check on C_GetMechanismInfo output)
   - Each advertised CKF_*Init flag (CKF_ENCRYPT, CKF_DIGEST, CKF_SIGN, etc.)
     corresponds to a callable function: i.e. the matching C_*Init does NOT
@@ -21,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.types_std import (
@@ -95,11 +98,12 @@ class TestMechFlags:
     def test_expected_flags_present(
         self, p11_raw_session: RawSession, mech_any_entry: MechEntry
     ) -> None:
-        """Every expected CKF_* flag from the registry must appear in actual flags.
+        """Report registry-expected CKF_* flags missing from actual flags.
 
-        The registry records the minimum flags the OASIS spec mandates for each
-        mechanism.  A module may advertise additional flags (e.g. CKF_HW), but
-        must not be missing required ones.
+        The registry records the expected capability surface for each mechanism.
+        Missing flags are useful interoperability evidence, but PKCS#11
+        mechanism flags are capability reports from the module rather than a
+        universal requirement that every implementation expose every operation.
         """
         entry = mech_any_entry
         if entry.config is None:
@@ -112,8 +116,15 @@ class TestMechFlags:
         missing = expected & ~actual
         if missing:
             missing_names = _flag_names(missing)
-            pytest.fail(
-                f"{entry.mech_name}: missing expected flags {missing_names} "
+            note(
+                f"{entry.mech_name}: missing expected mechanism capability flags {missing_names}",
+                ComplianceLevel.VENDOR,
+                reference=(
+                    "PKCS#11 C_GetMechanismInfo flags report operations supported by this module"
+                ),
+            )
+            pytest.xfail(
+                f"{entry.mech_name}: missing expected mechanism capability flags {missing_names} "
                 f"(registry expected=0x{expected:08x}, "
                 f"module reported=0x{actual:08x})"
             )
@@ -175,9 +186,7 @@ def _probe_digest_init(rs: RawSession, mech_id: int) -> int | None:
     return int(rv)
 
 
-def _assert_not_lie(
-    entry: MechEntry, flag_name: str, init_name: str, rv: int | None
-) -> None:
+def _assert_not_lie(entry: MechEntry, flag_name: str, init_name: str, rv: int | None) -> None:
     """Assert rv is not CKR_MECHANISM_INVALID / CKR_FUNCTION_NOT_SUPPORTED."""
     if rv is None:
         pytest.skip(f"{init_name} not present in module function list")
