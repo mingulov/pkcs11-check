@@ -30,9 +30,36 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDSA,
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.benchmark
+
+_AES_KEYGEN_RUNTIME_ERROR_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+def _xfail_aes_keygen_reject(exc: AssertionError, msg: str) -> None:
+    xfail_if_known_ckr(exc, _AES_KEYGEN_RUNTIME_ERROR_CKRS, msg)
+    raise exc
 
 
 @pytest.fixture()
@@ -83,7 +110,7 @@ def test_bench_aes256_cbc_encrypt(benchmark: Any, p11_raw_session: Any) -> None:
     try:
         key = gen_aes_key(rs.raw, rs.sh, 256)
     except AssertionError as e:
-        pytest.skip(f"Cannot generate AES-256 key: {e}")
+        _xfail_aes_keygen_reject(e, "CKM_AES_KEY_GEN advertised but AES-256 keygen rejected")
     iv = generate_random(rs.raw, rs.sh, 16)
 
     # Verify mechanism works before benchmarking
@@ -123,7 +150,7 @@ def test_bench_aes256_ecb_encrypt(benchmark: Any, p11_raw_session: Any) -> None:
     try:
         key = gen_aes_key(rs.raw, rs.sh, 256)
     except AssertionError as e:
-        pytest.skip(f"Cannot generate AES-256 key: {e}")
+        _xfail_aes_keygen_reject(e, "CKM_AES_KEY_GEN advertised but AES-256 keygen rejected")
 
     def encrypt() -> bytes:
         return encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
@@ -198,7 +225,7 @@ def test_bench_aes_keygen(benchmark: Any, p11_raw_session: Any) -> None:
         probe = gen_aes_key(rs.raw, rs.sh, 256)
         destroy_quietly(rs.raw, rs.sh, probe)
     except AssertionError as e:
-        pytest.skip(f"AES key generation not operational: {e}")
+        _xfail_aes_keygen_reject(e, "CKM_AES_KEY_GEN advertised but keygen is not operational")
 
     def keygen() -> None:
         key = gen_aes_key(rs.raw, rs.sh, 256)

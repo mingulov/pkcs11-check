@@ -250,6 +250,13 @@ CKRs fail, and the derive-usability test can still try both `CKK_HKDF` and
 `CKK_GENERIC_SECRET` before xfail-reporting that no tested key type was
 operational.
 
+### Follow-Up: Benchmark AES Keygen Rejections
+
+Benchmark tests still skip when `CKM_AES_KEY_GEN` is absent, but an advertised
+AES key-generation mechanism that rejects AES-256 keygen now becomes xfail
+evidence. This preserves the TPM2 finding shape where `CKM_AES_KEY_GEN` was
+listed but `C_GenerateKey` returned `CKR_FUNCTION_NOT_SUPPORTED`.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

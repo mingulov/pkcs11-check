@@ -32,6 +32,10 @@ _RUNTIME_SKIP_PATTERNS = {
         "CKM_HKDF_KEY_GEN with key_type=",
         "CKM_HKDF_KEY_GEN not operational with any key type",
     ),
+    Path("src/pkcs11_check/testcases/test_benchmark.py"): (
+        "Cannot generate AES-256 key",
+        "AES key generation not operational",
+    ),
 }
 
 
