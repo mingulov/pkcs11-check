@@ -1079,8 +1079,8 @@ Run status:
   unit entered a pathological timeout tail. This preserved the remaining matrix
   run for TPM2, pkcs11-mock, and qryptotoken.
 - No final full-suite `artifacts/bouncyhsm/results.json` exists for this
-  target. Segmented ACVP, core/ECDH/partial-ECDSA Wycheproof, security, and
-  general reruns below have their own complete `results.json` files.
+  target. Segmented ACVP, core/ECDH/ECDSA Wycheproof, security, and general
+  reruns below have their own complete `results.json` files.
 - `test_cfb128.py` was rerun in two bounded parts: all 2,138 non-multiblock
   vectors passed, while all 6 multiblock vectors timed out inside provider
   `C_Encrypt`/`C_Decrypt` calls.
@@ -1098,16 +1098,14 @@ Run status:
   per-test timeout: 13,128 total, 1,183 passed, 11,945 failed, and no crashes
   or timeouts. It needed adaptive timeout retry but produced a final
   `results.json`.
-- Two split Wycheproof ECDSA segments completed under the same 20-second
-  per-test timeout: brainpool 6,398 total/6,398 passed and secp160/secp192
-  3,390 total/3,390 passed. Neither segment had skipped, failed, crashed, or
-  timeout results.
-- The secp224 Wycheproof ECDSA segment also completed cleanly: 5,810 total,
-  5,810 passed, no skipped, failed, crashed, or timeout results.
-- The secp256 Wycheproof ECDSA segment completed cleanly with a three-hour
-  outer wall-clock wrapper and the same 20-second per-test timeout: 7,569
-  total, 7,569 passed, no skipped, failed, crashed, or timeout results.
-  Remaining ECDSA shard is secp384/secp521.
+- Split Wycheproof ECDSA completed cleanly under the same 20-second per-test
+  timeout and three-hour outer wall-clock wrapper where needed: 28,915 total,
+  28,915 passed, no skipped, failed, crashed, or timeout results.
+  - Brainpool: 6,398 passed.
+  - secp160/secp192: 3,390 passed.
+  - secp224: 5,810 passed.
+  - secp256: 7,569 passed.
+  - secp384/secp521: 5,748 passed.
 - The security segment completed under the same 20-second per-test timeout:
   267 total, 169 passed, 35 failed, 57 skipped, 3 xfailed, 3 crashed, and no
   timeouts.
@@ -1145,6 +1143,8 @@ Focused artifacts:
 - `artifacts/bouncyhsm-wycheproof-ecdsa-secp224`: 5,810 total, 5,810
   passed, no skipped/failed/error/crashed/timeout results.
 - `artifacts/bouncyhsm-wycheproof-ecdsa-secp256`: 7,569 total, 7,569
+  passed, no skipped/failed/error/crashed/timeout results.
+- `artifacts/bouncyhsm-wycheproof-ecdsa-secp384-521`: 5,748 total, 5,748
   passed, no skipped/failed/error/crashed/timeout results.
 - `artifacts/bouncyhsm-security`: 267 total, 169 passed, 35 failed, 57
   skipped, 3 xfailed, 3 crashed, no timeouts.
@@ -1194,10 +1194,9 @@ Failure classification for focused units:
   timeouts. Failure traces are dominated by `CKR_MECHANISM_PARAM_INVALID`, so
   this is a broad mechanism-parameter/correctness cluster rather than an
   isolated curve or vector issue.
-- Wycheproof ECDSA: brainpool, secp160/secp192, secp224, and secp256 split
-  shards passed cleanly, 23,167/23,167 total, with no skips, failures,
-  crashes, or timeouts. This is now evidence-backed for those curve families;
-  secp384/secp521 remains to be run before treating ECDSA as complete.
+- Wycheproof ECDSA: all split shards passed cleanly, 28,915/28,915 total, with
+  no skips, failures, crashes, or timeouts. This is evidence-backed across
+  brainpool, secp160/secp192, secp224, secp256, and secp384/secp521.
 - Security: failures clustered in arithmetic overflow (16), padding oracle
   (7), FFI length boundary (5), API security (4), CVE regression (2), and API
   boundary (1). The segment recorded 3 crashes for
@@ -1238,9 +1237,8 @@ Current classification:
   ECDSA are strong or mostly clean; ECDH is a broad failure cluster; ML-DSA,
   EdDSA, RSA-PSS/SHA3, hash/SHA3, and SLH-DSA have narrower correctness or
   validation failures.
-- Split Wycheproof ECDSA is clean so far across brainpool, secp160/secp192,
-  secp224, and secp256, but the remaining secp384/secp521 shard is still
-  needed before final ECDSA coverage can be called complete.
+- Split Wycheproof ECDSA is complete and clean across brainpool,
+  secp160/secp192, secp224, secp256, and secp384/secp521.
 - Core Wycheproof shows clean X25519, HKDF, ChaCha, ML-KEM, and RSA decrypt
   coverage in this bounded segment; AES, HMAC, RSA-OAEP/PSS/signature, and
   ML-DSA signing or verification remain important failure clusters.
@@ -1255,9 +1253,9 @@ Current classification:
   uneven: BLAKE2 keygen/HMAC/digest, AES/Salsa/ChaCha KATs, ML-DSA hash and
   multipart signing, EXTRACT_KEY_FROM_KEY, session-state semantics, and v3
   certificate `CKA_PUBLIC_KEY_INFO` import all need follow-up.
-- Full-provider statistics should only include BouncyHSM after the remaining
-  Wycheproof ECDSA shards and any intentionally excluded CCTV/stress/fuzz/slow
-  families are rerun in split/bounded mode.
+- Full-provider statistics should only include BouncyHSM after any
+  intentionally excluded CCTV/stress/fuzz/slow families are rerun in
+  split/bounded mode if they are in scope for the final number.
 
 ## TPM2
 
@@ -1573,6 +1571,9 @@ not overwrite full provider statistics.
 - `artifacts/bouncyhsm-wycheproof-ecdsa-secp256`: BouncyHSM completed the
   secp256 Wycheproof ECDSA shard with 7,569 passed and no
   skipped/failed/error/crashed/timeout results.
+- `artifacts/bouncyhsm-wycheproof-ecdsa-secp384-521`: BouncyHSM completed the
+  secp384/secp521 Wycheproof ECDSA shard with 5,748 passed and no
+  skipped/failed/error/crashed/timeout results.
 - `artifacts/bouncyhsm-security`: BouncyHSM completed the security family with
   169 passed, 35 failed, 57 skipped, 3 xfailed, and 3 crashes. It had no
   timeouts. Findings include weak-RSA-exponent keygen segfaults, arithmetic and
@@ -1597,11 +1598,9 @@ not overwrite full provider statistics.
 - Parse completed provider artifacts into a compact machine-readable summary
   after each provider completes.
 - If BouncyHSM should become an official full-suite provider statistic, rerun
-  the remaining Wycheproof ECDSA shard (`secp384 or secp521`) and any
-  intentionally excluded CCTV/stress/fuzz/slow
-  families in split/bounded mode. Avoid one monolithic Wycheproof target
-  because large ECDH/ECDSA files dominate runtime and trigger file-level
-  timeout retries.
+  any intentionally excluded CCTV/stress/fuzz/slow families in split/bounded
+  mode. Avoid one monolithic Wycheproof target because large ECDH/ECDSA files
+  dominate runtime and trigger file-level timeout retries.
 - For SoftHSM2 main ML-DSA, inspect exact failed vector groups and CKR/result
   messages before assigning blame to provider or test.
 - Deep-dive TPM2 source-built failures into provider limitations versus
