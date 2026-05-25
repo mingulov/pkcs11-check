@@ -43,22 +43,14 @@ def test_tpm2_background_daemon_does_not_hold_artifact_pipe() -> None:
     assert 'kill -0 "$tpm2_abrmd_pid"' in script
 
 
-def test_qryptotoken_is_not_in_default_or_all_provider_matrix() -> None:
+def test_qryptotoken_is_not_an_active_docker_provider() -> None:
     script = (ROOT / "docker/test-all.sh").read_text()
+    compose = (ROOT / "docker/docker-compose.test.yml").read_text()
 
     default_block = script.split("DEFAULT_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
     all_block = script.split("ALL_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
 
     assert "qryptotoken" not in default_block
     assert "qryptotoken" not in all_block
-
-
-def test_qryptotoken_build_failure_is_recorded_as_artifact() -> None:
-    dockerfile = (ROOT / "docker/qryptotoken/Dockerfile").read_text()
-    script = (ROOT / "docker/qryptotoken/run-qryptotoken.sh").read_text()
-
-    assert 'ARG QRYPTOTOKEN_REF="v0.4.1"' in dockerfile
-    assert "qryptotoken build failed with exit code" in dockerfile
-    assert "/tmp/qryptotoken_build_failed" in dockerfile
-    assert "build-status.json" in script
-    assert '"status": "build_failed"' in script
+    assert "test-qryptotoken" not in compose
+    assert not (ROOT / "docker/qryptotoken").exists()

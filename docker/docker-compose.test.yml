@@ -17,7 +17,6 @@
 #   docker compose -f docker/docker-compose.test.yml run test-tpm2
 #   docker compose -f docker/docker-compose.test.yml run test-bouncyhsm
 #   docker compose -f docker/docker-compose.test.yml run test-pkcs11-mock
-#   docker compose -f docker/docker-compose.test.yml run test-qryptotoken
 
 x-common: &common
   volumes:
@@ -203,13 +202,3 @@ services:
       dockerfile: docker/pkcs11-mock/Dockerfile
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/pkcs11-mock
-
-  # qryptotoken — experimental Rust PQC token (QUBIP)
-  test-qryptotoken:
-    <<: *common
-    build:
-      context: ..
-      dockerfile: docker/qryptotoken/Dockerfile
-    environment:
-      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/qryptotoken
-      PKCS11_CHECK_PIN: "1234"

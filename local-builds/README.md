@@ -31,7 +31,6 @@ Each file in `providers/` defines `build()` and `setup()` for one token:
 | **OpenCryptoki** | `opencryptoki.sh` | C | v3.27.0 | v3.0, needs pkcsslotd daemon |
 | **tpm2-pkcs11** | `tpm2-pkcs11.sh` | C | 1.10.0 | Uses hardware TPM or swtpm |
 | **pkcs11-mock** | `pkcs11-mock.sh` | C | v2.0.0 | v3.1 stub, single file |
-| **qryptotoken** | `qryptotoken.sh` | Rust | v0.4.1 | Experimental PQC (QUBIP) |
 | **BouncyHSM** | `bouncyhsm.sh` | .NET | v2.1.0 | Needs dotnet SDK 10.0, TCP server |
 
 ## Custom OpenSSL
@@ -64,7 +63,6 @@ local-builds/
 │   ├── opencryptoki.sh
 │   ├── tpm2-pkcs11.sh
 │   ├── pkcs11-mock.sh
-│   ├── qryptotoken.sh
 │   └── bouncyhsm.sh
 ├── <token>/src/      # cloned source (gitignored)
 ├── <token>/lib/      # built .so files (gitignored)

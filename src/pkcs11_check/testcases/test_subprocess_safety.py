@@ -147,9 +147,9 @@ class TestSessionObjectProcessIsolation:
         2. Compare results.
 
         Closes Phase 4.5 follow-up CROSS-PROC-001 (LOW-MED). Skips when
-        the module doesn't support fork-after-initialize cleanly (NSS,
-        qryptotoken — these modules need additional setup that the
-        subprocess test framework already documents).
+        the module doesn't support fork-after-initialize cleanly. Those modules
+        need additional setup that the subprocess test framework already
+        documents.
         """
         module = str(p11_config.module)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
@@ -380,8 +380,8 @@ class TestLibraryReload:
 
         A negative exit code (signal/segfault) is a module bug and kept as failure.
         A positive exit code (rc > 0) means the module raised a Python exception
-        during reinit -- common causes: token label not found after reinit (NSS,
-        qryptotoken), daemon not provisioned (tpm2-pkcs11). These are module
+        during reinit -- common causes: token label not found after reinit (NSS)
+        or daemon not provisioned (tpm2-pkcs11). These are module
         environment limitations, not crashes, so xfail.
         """
         module = str(p11_config.module)

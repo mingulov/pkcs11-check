@@ -49,7 +49,6 @@ _FINGERPRINT_ENV_PREFIXES = (
     "NSS_",
     "OPENCRYPTOKI_",
     "PKCS11_",
-    "QRYPTOTOKEN_",
     "SOFTHSM2_",
     "TPM2_",
 )
