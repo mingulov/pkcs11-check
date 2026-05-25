@@ -17,8 +17,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
-    gen_rsa_keypair,
     import_secret_key,
     read_attributes,
     sign_single,
@@ -42,6 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKM_SHA_1,
 )
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.keymgmt
 
@@ -53,7 +52,7 @@ class TestAESKeySizes:
     def test_aes_generate(self, p11_raw_session: Any, key_bits: int) -> None:
         """Generate AES key at each standard size."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, key_bits)
+        key = gen_aes_key_or_xfail(rs, key_bits, purpose="key-size coverage")
         try:
             assert key != 0
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
@@ -65,11 +64,11 @@ class TestAESKeySizes:
     def test_aes_ecb_roundtrip(self, p11_raw_session: Any, key_bits: int) -> None:
         """AES-ECB encrypt/decrypt roundtrip at each key size."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             key_bits,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
+            purpose="AES-ECB key-size roundtrip",
         )
         plaintext = b"key size test!!!"  # 16 bytes
         try:
@@ -109,9 +108,7 @@ class TestRSAKeySizes:
     def test_rsa_generate(self, p11_raw_session: Any, key_bits: int) -> None:
         """Generate RSA key pair at each size."""
         rs = p11_raw_session
-        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
-            pytest.skip("RSA key generation not supported")
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, key_bits)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, key_bits)
         try:
             modulus = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])[CKA_MODULUS]
             assert len(modulus) == key_bits // 8
@@ -123,11 +120,8 @@ class TestRSAKeySizes:
     def test_rsa_sign_verify(self, p11_raw_session: Any, key_bits: int) -> None:
         """RSA sign/verify at each key size."""
         rs = p11_raw_session
-        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
-            pytest.skip("RSA key generation not supported")
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             key_bits,
             public_attrs={CKA_VERIFY: True},
             private_attrs={CKA_SIGN: True},
@@ -147,9 +141,8 @@ class TestRSAKeySizes:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             key_bits,
             public_attrs={CKA_ENCRYPT: True},
             private_attrs={CKA_DECRYPT: True},

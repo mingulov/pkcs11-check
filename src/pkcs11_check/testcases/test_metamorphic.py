@@ -22,8 +22,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     encrypt_single,
-    gen_aes_key,
-    gen_rsa_keypair,
     generate_random,
     import_secret_key,
     read_attributes,
@@ -53,7 +51,11 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_FUNCTION_NOT_SUPPORTED,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    is_known_error,
+)
 
 pytestmark = pytest.mark.metamorphic
 
@@ -65,7 +67,7 @@ class TestRoundTripInvariants:
     def test_aes_ecb_roundtrip(self, p11_raw_session: Any, key_size: int) -> None:
         """AES-ECB: decrypt(encrypt(pt)) == pt for all key sizes."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, key_size)
+        key = gen_aes_key_or_xfail(rs, key_size, purpose="AES-ECB metamorphic roundtrip")
         try:
             plaintext = b"roundtrip_verify"  # exactly 16 bytes
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
@@ -77,7 +79,7 @@ class TestRoundTripInvariants:
     def test_aes_cbc_roundtrip(self, p11_raw_session: Any) -> None:
         """AES-CBC: decrypt(encrypt(pt, iv), iv) == pt."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="AES-CBC metamorphic roundtrip")
         try:
             iv = generate_random(rs.raw, rs.sh, 16)
             plaintext = b"cbc roundtrip!!!"  # 16 bytes
@@ -104,7 +106,7 @@ class TestRoundTripInvariants:
     def test_rsa_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
         """RSA: verify(sign(data)) == True."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"sign-verify roundtrip"
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
@@ -116,7 +118,7 @@ class TestRoundTripInvariants:
     def test_rsa_wrong_data_verify_fails(self, p11_raw_session: Any) -> None:
         """RSA: verify(sign(data), different_data) must fail."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"original data")
             result = verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, b"tampered data", sig)
@@ -133,14 +135,14 @@ class TestRoundTripInvariants:
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
 
-        wrapping_key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        wrapping_key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_WRAP: True,
                 CKA_UNWRAP: True,
             },
+            purpose="AES key-wrap metamorphic invariant",
         )
         key_bytes = bytes(range(16))
         original = import_secret_key(
@@ -185,7 +187,7 @@ class TestDeterminismInvariants:
     def test_ecb_deterministic(self, p11_raw_session: Any) -> None:
         """AES-ECB with same key+plaintext must produce same ciphertext."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="AES-ECB determinism invariant")
         try:
             plaintext = b"determinism test"
             ct1 = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
@@ -205,8 +207,8 @@ class TestDeterminismInvariants:
     def test_different_keys_different_ciphertext(self, p11_raw_session: Any) -> None:
         """AES-ECB with different keys must produce different ciphertext."""
         rs = p11_raw_session
-        k1 = gen_aes_key(rs.raw, rs.sh, 256)
-        k2 = gen_aes_key(rs.raw, rs.sh, 256)
+        k1 = gen_aes_key_or_xfail(rs, 256, purpose="different-key invariant")
+        k2 = gen_aes_key_or_xfail(rs, 256, purpose="different-key invariant")
         try:
             plaintext = b"different keys!!"
             ct1 = encrypt_single(rs.raw, rs.sh, k1, CKM_AES_ECB, plaintext)
@@ -223,7 +225,7 @@ class TestCopyEquivalence:
     def test_copy_produces_same_ciphertext(self, p11_raw_session: Any) -> None:
         """Encrypting with original and copy produces identical output."""
         rs = p11_raw_session
-        original = gen_aes_key(rs.raw, rs.sh, 256)
+        original = gen_aes_key_or_xfail(rs, 256, purpose="copy equivalence invariant")
         try:
             try:
                 copy = copy_object(
@@ -250,7 +252,7 @@ class TestCopyEquivalence:
     def test_copy_can_decrypt_original(self, p11_raw_session: Any) -> None:
         """Copy can decrypt what original encrypted."""
         rs = p11_raw_session
-        original = gen_aes_key(rs.raw, rs.sh, 256)
+        original = gen_aes_key_or_xfail(rs, 256, purpose="copy decrypt invariant")
         try:
             try:
                 copy = copy_object(

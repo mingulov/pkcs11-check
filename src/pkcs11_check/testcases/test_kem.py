@@ -59,6 +59,9 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
@@ -66,6 +69,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = [pytest.mark.pqc, pytest.mark.keymgmt, pytest.mark.requires_v32]
 
@@ -81,6 +85,18 @@ _PARAM_MAP = {
     "ML_KEM_768": CKP_ML_KEM_768,
     "ML_KEM_1024": CKP_ML_KEM_1024,
 }
+
+_KEM_OPERATION_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 def _skip_if_no_ml_kem(rs: Any) -> None:
@@ -128,14 +144,21 @@ def _generate_ml_kem_keypair(
     )
 
 
-def _encap_attrs(key_type: int = CKK_AES) -> dict[int, Any]:
+def _encap_attrs(key_type: int = CKK_AES, value_len: int | None = None) -> dict[int, Any]:
     """Standard template for encapsulated key. Kryoptic mandates Class/KeyType."""
-    return {
+    attrs: dict[int, Any] = {
         CKA_CLASS: CKO_SECRET_KEY,
         CKA_KEY_TYPE: key_type,
         CKA_SENSITIVE: False,
         CKA_EXTRACTABLE: True,
     }
+    if value_len is not None:
+        attrs[CKA_VALUE_LEN] = value_len
+    return attrs
+
+
+def _xfail_kem_operation_reject(exc: AssertionError, operation: str) -> None:
+    xfail_if_known_ckr(exc, _KEM_OPERATION_REJECT_RVS, f"ML-KEM {operation} not operational")
 
 
 class TestMLKEMKeyGeneration:
@@ -542,13 +565,16 @@ class TestMLKEMDecapsulation:
         decap_handle = 0
         try:
             # Encapsulate
-            encap_handle, ct = encapsulate_key(
-                rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs(CKK_AES)
-            )
+            attrs = _encap_attrs(CKK_AES, value_len=aes_len)
+            try:
+                encap_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=attrs)
+            except AssertionError as exc:
+                _xfail_kem_operation_reject(exc, "AES encapsulate")
             # Decapsulate specifying minimal template
-            decap_handle = decapsulate_key(
-                rs.raw, rs.sh, priv, CKM_ML_KEM, ct, attrs=_encap_attrs(CKK_AES)
-            )
+            try:
+                decap_handle = decapsulate_key(rs.raw, rs.sh, priv, CKM_ML_KEM, ct, attrs=attrs)
+            except AssertionError as exc:
+                _xfail_kem_operation_reject(exc, "AES decapsulate")
 
             # Verification
             enc_val = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]

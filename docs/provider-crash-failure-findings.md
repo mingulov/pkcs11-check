@@ -606,6 +606,23 @@ The following paths were tightened after inspecting the all-fail artifacts:
   under test, such as `CKA_MODIFIABLE=False` or `CKA_COPYABLE=False`, still keep
   their specific rejection handling. Copying a non-copyable key remains a hard
   security failure.
+- **Key-size and metamorphic setup paths**: AES key-size checks and metamorphic
+  invariants now use the shared advertised-keygen setup classification. Missing
+  `AES_KEY_GEN` or `RSA_PKCS_KEY_PAIR_GEN` stays a skip, while explicit
+  runtime rejection after advertisement is an xfail setup finding. Roundtrip,
+  determinism, copy-equivalence, and wrong-output assertions still fail when
+  the setup succeeds and the cryptographic invariant is wrong.
+- **ECDSA prehash negative verification**: tampered-data checks for
+  `CKM_ECDSA_SHA*` now use the same invalid-signature policy as Wycheproof,
+  ACVP, and mechanism-driven sign tests. Clean signature rejects pass the
+  negative test; non-specific rejects such as `CKR_DEVICE_ERROR` are visible
+  xfail evidence; accepting the tampered signature remains a hard failure.
+- **ML-KEM AES decapsulation key-size templates**: the AES-128/192/256
+  decapsulation coverage now includes `CKA_VALUE_LEN` in both encapsulation and
+  decapsulation templates, so the parametrized cases actually request different
+  target key sizes. Explicit KEM operation or template rejects after `ML_KEM`
+  advertisement are reported as xfail evidence; mismatched shared-secret bytes
+  remain hard failures.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
 AES-CTS variant detection still fails when a provider advertises `CKM_AES_CTS`

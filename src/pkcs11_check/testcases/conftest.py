@@ -94,6 +94,31 @@ def require_operational_aes_keygen(rs: Any) -> None:
             destroy_quietly(rs.raw, rs.sh, key)
 
 
+def gen_aes_key_or_xfail(
+    rs: Any,
+    bits: int = 128,
+    attrs: Mapping[Any, Any] | None = None,
+    *,
+    purpose: str = "setup",
+) -> int:
+    """Generate an AES key, xfail-ing explicit setup rejection CKRs."""
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+
+    from pkcs11_check.raw.recipes import gen_aes_key
+
+    try:
+        return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but AES-{bits} key generation for {purpose} "
+            "is not operational",
+        )
+    raise
+
+
 def gen_rsa_keypair_or_xfail(
     rs: Any,
     bits: int = 2048,
