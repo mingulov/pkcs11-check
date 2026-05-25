@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.der import ecdsa_sig_der_to_p1363
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     generate_random,
@@ -65,11 +66,23 @@ def _load_dsa_vectors() -> list[tuple[str, dict[str, Any]]]:
             mechanism = _SHA_MECHANISMS.get(sha)
             if mechanism is None:
                 continue
+            is_p1363 = "p1363" in filename
+            q = int.from_bytes(bytes.fromhex(group.get("publicKey", {}).get("q", "")), "big")
+            q_len = (q.bit_length() + 7) // 8
             for test in group["tests"]:
                 test["_group"] = {k: v for k, v in group.items() if k != "tests"}
                 test["_mechanism"] = mechanism
                 test["_file"] = filename
-                test["_is_p1363"] = "p1363" in filename
+                test["_is_p1363"] = is_p1363
+                if is_p1363:
+                    test["_pkcs11_sig"] = test["sig"]
+                else:
+                    try:
+                        sig = ecdsa_sig_der_to_p1363(bytes.fromhex(test["sig"]), q_len)
+                    except (OverflowError, ValueError) as exc:
+                        test["_pkcs11_sig_error"] = str(exc)
+                    else:
+                        test["_pkcs11_sig"] = sig.hex()
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
     return vectors
@@ -88,8 +101,13 @@ def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         pytest.skip(f"{name} not supported")
 
     msg = bytes.fromhex(vec["msg"])
-    sig = bytes.fromhex(vec["sig"])
     result = vec["result"]
+    sig_error = vec.get("_pkcs11_sig_error")
+    if sig_error is not None:
+        if result == "valid":
+            pytest.fail(f"Valid DSA sig {vec_id} cannot be converted for PKCS#11: {sig_error}")
+        pytest.skip(f"DSA signature cannot be represented as PKCS#11 P1363: {sig_error}")
+    sig = bytes.fromhex(vec["_pkcs11_sig"])
     mechanism = vec["_mechanism"]
     group = vec["_group"]
     pk = group.get("publicKey", {})

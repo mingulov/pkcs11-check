@@ -87,7 +87,7 @@ provider package versions where the finding was first recorded.
 ### Failure breakdown (362 total)
 | Count | Area | Reason |
 |-------|------|--------|
-| 296 | DSA Wycheproof | NSS `C_Verify` rejects valid DSA signatures: key import succeeds but `CKM_DSA_SHA224`/`CKM_DSA_SHA256` return `CKR_SIGNATURE_INVALID` for all valid vectors across all 4 parameter sets (2048/224, 2048/256, 3072/256). Root cause: NSS softoken DSA verify strictly validates additional internal state or parameter consistency that the Wycheproof-imported public key objects do not satisfy. Affects all NSS versions. |
+| 296 | DSA Wycheproof | Historical pkcs11-check loader issue, not an NSS finding. Follow-up found that DER DSA signatures were passed directly to `C_Verify` and then converted with the encoded length of `q`, including leading zero bytes. The loader now converts DER signatures to fixed-width PKCS#11/P1363 form; focused NSS validation passes this file. Full matrix counts still need rerun. |
 | ~16 | Session/access tests | NSS returns `CKR_USER_TYPE_INVALID` instead of `CKR_USER_ALREADY_LOGGED_IN` — PKCS#11 spec compliance deviation |
 | ~16 | KEM/PQC | ML-KEM not supported in NSS 3.120.1 (expected skips, showing as errors) |
 | ~2 | AES-XCBC-MAC | NSS returns CKR_KEY_TYPE_INCONSISTENT on verify despite CKA_VERIFY=True |
@@ -291,15 +291,14 @@ unless noted.
   `test_eddsa.py` are marked `xfail` (7 tests: all sign/verify tests in `TestEdDSASignVerify`
   and `TestEdDSACrossVerify`). This same deviation affects NSS 3.120.1 and NSS-PQC 3.121.0.
 
-- **DSA verify rejects all Wycheproof valid signatures (296 failures)**: `C_Verify` with
-  `CKM_DSA_SHA224` and `CKM_DSA_SHA256` returns `CKR_SIGNATURE_INVALID` for all valid
-  Wycheproof DSA signatures. Key import via `C_CreateObject` with `CKA_PRIME`, `CKA_SUBPRIME`,
-  `CKA_BASE`, `CKA_VALUE` succeeds, but verification always fails. Root cause: NSS softoken
-  DSA verification requires keys to have been generated through NSS's own key generation path
-  or imported in a specific internal format. Externally constructed `CKO_PUBLIC_KEY` objects
-  with raw domain parameters are not accepted for signature verification. This is a fundamental
-  NSS limitation affecting all 296 DSA Wycheproof vectors across all 4 parameter sets. These
-  remain as failures (not xfailed) because the module is genuinely rejecting valid signatures.
+- **Historical DSA Wycheproof note superseded**: the old 296-failure NSS DSA
+  entry was a pkcs11-check loader problem. Wycheproof's non-P1363 DSA vectors
+  use DER signatures, but PKCS#11 DSA verification expects fixed-width raw
+  `r || s`. The loader now converts valid DER signatures and strips leading
+  zero encoding from `q` when calculating the raw component width. A focused
+  NSS Docker run of `test_wycheproof_dsa.py` after the fix reported 1,055
+  passed and 901 skipped with no failures. Treat the old DSA row as invalid
+  article evidence until the full matrix is rerun.
 
 ### Token Write-Protection (Phase 1 findings)
 

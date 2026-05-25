@@ -119,6 +119,55 @@ BIT STRING EC point explicitly. A focused SoftHSM2 Docker check after the fix
 selected 1,733 Wycheproof ECDH shared-secret tests and all passed. The full
 provider matrix still needs to be rerun before updating provider result counts.
 
+### Follow-Up: NSS Wycheproof DSA 296 Bucket
+
+The repeated NSS-family `Wycheproof DSA 296` bucket was also a pkcs11-check
+loader issue, not provider evidence. The failures were only in the non-P1363
+Wycheproof DSA files; the P1363 files did not produce the same failure shape.
+
+Root cause was signature representation at the PKCS#11 boundary. Wycheproof's
+non-P1363 DSA files store signatures as DER `SEQUENCE { r, s }`, while
+`C_Verify` for DSA expects fixed-width raw `r || s`. The loader now converts
+valid DER signatures to PKCS#11/P1363 form. It also computes the raw component
+width from the integer value of `q`, not from the encoded byte string, because
+some vectors encode DSA integers with a leading zero byte. Without that second
+step, 224-bit signatures became 58 bytes instead of 56, and 256-bit signatures
+became 66 bytes instead of 64.
+
+A focused NSS Docker check after the fix selected 1,956 Wycheproof DSA tests:
+1,055 passed and 901 skipped. The skips are invalid DER signatures that cannot
+be represented as a PKCS#11 raw DSA signature input. The full provider matrix
+still needs to be rerun before updating provider result counts.
+
+### Other Large Buckets Checked In This Pass
+
+These buckets were sampled after the ECDH and DSA loader fixes. They do not
+currently show the same kind of obvious vector-loader bug, but they still need
+deeper follow-up before being presented as final provider conclusions.
+
+- **RSA-PSS mixed-parameter buckets**: SoftHSM2 and OpenCryptoki both show the
+  same 435-failure shape, concentrated in Wycheproof PSS files with mixed MGF
+  hash or unusual salt length. SoftHSM2 source explicitly rejects PSS params
+  where `mgf` does not match `hashAlg`. TPM2 source similarly documents that
+  the TPM fixes MGF to the hash algorithm and salt length to the hash length.
+  This looks like provider/back-end parameter support, not a DER/vector-loader
+  issue like ECDH or DSA.
+- **Kryoptic AES-CTS 405**: failures are mostly `CKR_DEVICE_ERROR` on encrypt
+  after `CKM_AES_CTS` is advertised and selected. Kryoptic source maps
+  `CKM_AES_CTS` to CTS mode CS1, and pkcs11-check's CTS test already detects
+  the module variant before selecting CS1 vectors. No loader mismatch was found
+  in this pass.
+- **OpenCryptoki AES-XTS 382**: failures are ciphertext/plaintext mismatches,
+  split across encrypt and decrypt, not parameter-import failures. OpenCryptoki
+  advertises `CKM_AES_XTS` for `CKK_AES_XTS` keys, so this remains a provider
+  behavior or provider/test-vector interpretation question rather than an
+  obvious skip/configuration issue.
+- **TPM2 AES-CFB128 2,144**: all simple encrypt/decrypt vectors plus the small
+  multiblock tail fail with `CKR_GENERAL_ERROR`. tpm2-pkcs11 advertises
+  `CKM_AES_CFB128` only when the TPM reports `TPM2_ALG_CFB`; the bucket looks
+  like an advertised-but-not-operational backend path, not a pkcs11-check
+  vector-shape issue.
+
 ## Provider-Specific Notes
 
 - SoftHSM2 release has no runner-level crashes, but the security probes still
@@ -130,8 +179,10 @@ provider matrix still needs to be rerun before updating provider result counts.
   branch target, not an official OpenSSL 4.0.0 result.
 - NSS stable and source-tip targets have similar crash shapes. Source-tip
   removes the stable ML-DSA failure cluster, but it does not remove the
-  NULL-pointer, sign-flag, ML-KEM, ECDH, DSA, HMAC/general, or security
-  boundary findings.
+  NULL-pointer, sign-flag, ML-KEM, HMAC/general, or security boundary
+  findings. The older ECDH and DSA buckets are superseded by the follow-up
+  loader findings above and should not be used as NSS provider evidence until
+  the matrix is rerun.
 - OpenCryptoki release and master currently resolve to the same commit, and
   their signal findings are the same boundary-probe class.
 - TPM2 source is the current upstream headline; the Fedora package row is kept
