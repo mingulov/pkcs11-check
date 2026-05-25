@@ -31,6 +31,7 @@ from pkcs11_check.testcases.wycheproof import (
     test_wycheproof_ecdh,
     test_wycheproof_ecdsa,
     test_wycheproof_hmac,
+    test_wycheproof_rsa_decrypt,
     test_wycheproof_rsa_oaep,
     test_wycheproof_rsa_pss,
 )
@@ -459,6 +460,17 @@ def test_wycheproof_rsa_oaep_valid_runtime_rejects_are_xfail(rv: int) -> None:
         test_wycheproof_rsa_oaep._xfail_if_rsa_oaep_runtime_reject(
             exc,
             "rsa_oaep_2048_sha1_mgf1sha1_test.json:tc1-valid",
+        )
+
+
+def test_wycheproof_rsa_pkcs1_decrypt_valid_runtime_rejects_are_xfail() -> None:
+    """Advertised RSA-PKCS decrypt valid-vector runtime rejects are findings."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(CKR_DEVICE_ERROR))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised RSA PKCS#1 decrypt"):
+        test_wycheproof_rsa_decrypt._xfail_if_rsa_pkcs1_decrypt_runtime_reject(
+            exc,
+            "rsa_pkcs1_2048_test.json:tc1-valid",
         )
 
 

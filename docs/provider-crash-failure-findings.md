@@ -485,6 +485,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   visible xfail findings for advertised-but-not-operational parameter support.
   Successful decrypts still have to match the Wycheproof plaintext, and
   accepted invalid ciphertext remains a hard failure.
+- **Wycheproof RSA PKCS#1 decrypt runtime rejects**: Kryoptic FIPS/PQC reached
+  advertised `CKM_RSA_PKCS` decrypt with valid Wycheproof ciphertexts and
+  returned `CKR_DEVICE_ERROR`. Valid-vector runtime rejects are now visible
+  xfail evidence, while wrong plaintext and accepted invalid ciphertexts remain
+  hard failures.
 - **Wycheproof HMAC operation rejects**: valid HMAC vectors in TPM2,
   SoftHSM2, and BouncyHSM artifacts reached advertised HMAC mechanisms but
   failed at key use with explicit CKRs such as `CKR_GENERAL_ERROR`,

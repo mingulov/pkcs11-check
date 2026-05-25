@@ -7,7 +7,7 @@ Imports RSA private key, decrypts ciphertext, compares against expected plaintex
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -19,12 +19,19 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKM_RSA_PKCS,
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 
@@ -40,6 +47,16 @@ _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_TEMPLATE_INCOMPLETE,
+)
+
+_RSA_PKCS1_DECRYPT_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 _DECRYPT_FILES = [
@@ -68,6 +85,16 @@ def _load_decrypt_vectors() -> list[tuple[str, dict[str, Any]]]:
 
 
 _ALL_DECRYPT_VECTORS = _load_decrypt_vectors()
+
+
+def _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised RSA PKCS#1 decrypt runtime rejects as findings."""
+    xfail_if_known_ckr(
+        exc,
+        _RSA_PKCS1_DECRYPT_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised RSA PKCS#1 decrypt is not operational",
+    )
+    raise exc
 
 
 @pytest.mark.parametrize(
@@ -126,6 +153,7 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
         plaintext = decrypt_single(rs.raw, rs.sh, priv_key, CKM_RSA_PKCS, ct)
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc, vec_id)
             pytest.fail(f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt: {exc}")
         # acceptable/invalid: reject is fine (padding oracle resistance)
         return
