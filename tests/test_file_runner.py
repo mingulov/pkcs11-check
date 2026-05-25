@@ -3666,6 +3666,54 @@ def test_file_skip_for_missing_mechanism(tmp_path: Path) -> None:
     assert missing == ["AES_CCM"]
 
 
+def test_file_skip_counts_collected_tests_as_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_example.py"
+    test_file.write_text(
+        'REQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_a(): pass\ndef test_b(): pass\n'
+    )
+    report_path = tmp_path / "results.json"
+
+    monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
+    monkeypatch.setattr(
+        file_runner_mod,
+        "collect_pytest_nodeids",
+        lambda targets, pytest_args, *, env=None: [
+            f"{test_file}::test_a",
+            f"{test_file}::test_b",
+        ],
+    )
+
+    def _unexpected_run(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
+        pytest.fail("file-skipped unit must not invoke pytest")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", _unexpected_run)
+
+    exit_code = run_isolated_pytest_units(
+        [str(test_file)],
+        ["--p11-manifest", str(tmp_path / "manifest.json")],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["skipped"] == 2
+    assert report["summary"]["total"] == 2
+    unit = report["units"][0]
+    assert unit["file_skip"] is True
+    assert unit["counts"]["skipped"] == 2
+    assert unit["skip_reasons"] == {"AES_CCM not supported by module": 2}
+
+
 def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:
     """File with REQUIRED_MECHANISMS present in manifest is NOT skipped."""
     from pkcs11_check.core.test_selection import extract_required_mechanisms

@@ -11,19 +11,21 @@ failures, crashes, timeouts, or marker filters.
 
 | Count | Meaning |
 | --- | ---: |
-| Raw generated pytest nodes | 109,608 |
-| Collection-time deselected AES-CTS variant nodes | 7,499 |
-| Active baseline collection without a CTS variant | 102,109 |
-| Single-provider maximum with AES-CTS CS1 | 104,744 |
-| Single-provider maximum with AES-CTS CS2 | 104,495 |
-| Single-provider maximum with AES-CTS CS3 | 104,587 |
+| Raw reportable pytest nodes, including all AES-CTS variants | 109,608 |
+| AES-CTS variant nodes in the raw collection | 7,499 |
+| Provider-executable baseline before adding one CTS variant | 102,109 |
+| Largest executable clean-pass target with AES-CTS CS1 | 104,744 |
+| Executable clean-pass target with AES-CTS CS2 | 104,495 |
+| Executable clean-pass target with AES-CTS CS3 | 104,587 |
 
 For an article or release report, the safest short phrasing is:
 
-> pkcs11-check currently has about 105k provider-facing product tests. The raw
-> generated collection is 109,608 pytest nodes, but a single provider can only
-> select one AES-CTS variant, so the exact fully capable provider maximum is
-> 104,744 tests with the largest CTS variant.
+> pkcs11-check currently has about 105k provider-executable product tests. The
+> raw reportable collection is 109,608 pytest nodes, including all AES-CTS
+> variants, but a single provider can only execute one CTS variant as a clean
+> pass target. The largest fully capable executable target is 104,744 tests with
+> CS1; the remaining CTS variants should be counted as not-applicable skips, not
+> as missing tests.
 
 ## Group Breakdown
 
@@ -48,13 +50,14 @@ AES-CTS variant.
 ## AES-CTS Variant Add-On
 
 PKCS#11 exposes `CKM_AES_CTS` without naming the CS1, CS2, or CS3 variant.
-pkcs11-check probes the provider at collection time and keeps only the matching
-variant vectors. The three variant families must not be summed into a
-single-provider pass target.
+pkcs11-check probes the provider at collection time and marks non-matching
+variant vectors as skipped. The three variant families remain visible in the
+reported test universe, but they must not be summed into a single-provider
+clean-pass target.
 
 | CTS variant selected by provider | Additional CTS tests | ACVP AES group total | Single-provider total |
 | --- | ---: | ---: | ---: |
 | CS1 | 2,635 | 28,234 | 104,744 |
 | CS2 | 2,386 | 27,985 | 104,495 |
 | CS3 | 2,478 | 28,077 | 104,587 |
-| Raw generated nodes before CTS deselection | 7,499 | 33,098 | 109,608 |
+| Raw reportable nodes before CTS skip marking | 7,499 | 33,098 | 109,608 |

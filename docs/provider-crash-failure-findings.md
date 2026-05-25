@@ -639,6 +639,14 @@ The following paths were tightened after inspecting the all-fail artifacts:
   wrong mechanism/key combinations, and CKR priority when setup succeeds, but
   advertised key-generation rejects are reported as setup xfail evidence rather
   than hiding the target negative condition behind a raw setup assertion.
+- **Skip accounting for provider-dependent pruning**: AES-CTS CS1/CS2/CS3
+  variant selection now keeps non-matching variant nodes in the collected test
+  universe as counted skips instead of deselecting them. Runner-level
+  `REQUIRED_MECHANISMS` file short-circuits now synthesize skipped counts from
+  the collected nodeids, so a missing mechanism does not silently shrink the
+  reported total. Dynamic mechanism-driven tests remain provider-selected for
+  now; the report does not synthesize skips for every unselected mechanism
+  parameter.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
 AES-CTS variant detection still fails when a provider advertises `CKM_AES_CTS`

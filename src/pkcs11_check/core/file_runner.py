@@ -41,6 +41,7 @@ _DETAIL_COUNT_KEYS = (
 )
 _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
 _MAX_TIMEOUT_RETRIES = 3
+_DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
 _FINGERPRINT_ENV_PREFIXES = (
@@ -439,7 +440,34 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
     copied: dict[str, Any] = {"counts": counts, "tests": tests}
     if skip_reasons:
         copied["skip_reasons"] = skip_reasons
+    if isinstance(detail, Mapping) and detail.get("file_skip"):
+        copied["file_skip"] = True
     return copied
+
+
+def _synthetic_file_skip_detail(
+    unit: str,
+    reason: str,
+    pytest_args: list[str],
+    env: Mapping[str, str],
+) -> dict[str, Any]:
+    """Build counted skip detail for a file skipped before pytest execution."""
+    collect_env = dict(env)
+    collect_env[_DISABLE_COLLECTION_PROBES_ENV] = "1"
+    try:
+        nodeids = collect_pytest_nodeids([unit], pytest_args, env=collect_env)
+    except ValueError:
+        nodeids = []
+
+    skipped = len(nodeids) if nodeids else 1
+    counts = {key: 0 for key in _DETAIL_COUNT_KEYS}
+    counts["skipped"] = skipped
+    return {
+        "counts": counts,
+        "tests": [],
+        "skip_reasons": {reason: skipped},
+        "file_skip": True,
+    }
 
 
 def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | None:
@@ -2123,21 +2151,12 @@ def run_isolated_pytest_units(
                             duration_s=0.0,
                         )
                         _record_result(state, result)
-                        per_unit_details[unit] = {
-                            "counts": {
-                                "passed": 0,
-                                "failed": 0,
-                                "skipped": 0,
-                                "xfailed": 0,
-                                "xpassed": 0,
-                                "error": 0,
-                                "crashed": 0,
-                                "timeout": 0,
-                            },
-                            "tests": [],
-                            "skip_reasons": {reason: 1},
-                            "file_skip": True,
-                        }
+                        per_unit_details[unit] = _synthetic_file_skip_detail(
+                            unit,
+                            reason,
+                            pytest_args,
+                            env,
+                        )
                         save_run_state(state_file, state)
                         index += 1
                         continue
