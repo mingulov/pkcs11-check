@@ -23,7 +23,7 @@ and release-readiness hardening needed for use across multiple projects.
 - **CLI** - `pkcs11-check test`, `info`, `state`, `compliance-report`,
   `fetch-data`, and related helper commands.
 - **Provider tooling** - local and Docker flows for SoftHSM2, Kryoptic, NSS,
-  OpenCryptoki, TPM2, BouncyHSM, pkcs11-mock, qryptotoken, and related targets.
+  OpenCryptoki, TPM2, BouncyHSM, pkcs11-mock, and related targets.
 
 ### Security and Compliance Coverage
 
@@ -68,7 +68,6 @@ and release-readiness hardening needed for use across multiple projects.
 - tpm2-pkcs11 1.9.0
 - BouncyHSM 2.0.1
 - pkcs11-mock 2.0.0
-- qryptotoken 0.4.1
 
 ### Test Results (2026-04-09)
 

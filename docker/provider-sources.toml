@@ -138,20 +138,6 @@ selector = "master"
 commit = "ac5f15adb92e15926825fa93e78a1995db1a32f8"
 commit_date = "2025-01-29T06:48:36Z"
 
-[sources.qryptotoken_release]
-kind = "git_tag"
-repo = "https://github.com/QUBIP/qryptotoken.git"
-selector = "v0.4.1"
-commit = "24fae88227d6d04331fb599327db83c24d5ae955"
-commit_date = "2026-01-28T13:02:59Z"
-
-[sources.qryptotoken_main]
-kind = "git_branch"
-repo = "https://github.com/QUBIP/qryptotoken.git"
-selector = "main"
-commit = "24fae88227d6d04331fb599327db83c24d5ae955"
-commit_date = "2026-01-28T13:02:59Z"
-
 [sources.libtpms_release]
 kind = "git_tag"
 repo = "https://github.com/stefanberger/libtpms.git"
@@ -291,11 +277,3 @@ release_source = "pkcs11_mock_release"
 branch_source = "pkcs11_mock_master"
 openssl = "not applicable to provider behavior"
 build_evidence = "2026-05-24 docker compose build test-pkcs11-mock"
-
-[targets.qryptotoken]
-service = "test-qryptotoken"
-provider = "qryptotoken"
-release_source = "qryptotoken_release"
-branch_source = "qryptotoken_main"
-openssl = "not applicable to source compatibility: Rust build uses Fedora OpenSSL development package"
-build_evidence = "2026-05-25 bash docker/test.sh qryptotoken; qryptotoken v0.4.1 cargo build failed with generated PKCS#11 binding layout errors, Docker image built with module unavailable, artifacts/qryptotoken/build.log and build-status.json recorded, runner exits nonzero for build-unavailable"

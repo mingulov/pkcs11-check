@@ -73,9 +73,7 @@ as ordinary failed tests.
 | `bouncyhsm-segmented` | 42 | CFB8/CFB128/OFB multiblock timeouts or segfaults; security arithmetic/length/parameter validation crashes | `C_Encrypt`, `C_Decrypt`, `C_GenerateKeyPair`, `C_CreateObject`, `C_SetAttributeValue`, `C_VerifyInit` |
 
 `pkcs11-mock` has no signal/timeout findings in the current artifact set, but
-it is a mock baseline rather than a provider conformance result. `qryptotoken`
-has no provider test findings because the Docker target fails before producing
-a PKCS#11 module.
+it is a mock baseline rather than a provider conformance result.
 
 ## Largest Failure Buckets
 
@@ -212,9 +210,6 @@ deeper follow-up before being presented as final provider conclusions.
   CFB128, and OFB multiblock provider calls, plus broad AES-CCM and ECDH
   failures. Runtime choice may be a hypothesis, but the evidence is mechanism
   and operation specific.
-- qryptotoken should be discussed as a build/configuration state, not as a
-  conformance result: the current Docker target fails before module creation.
-
 ## Article-Relevant Takeaways
 
 - A crash is a valid pkcs11-check finding. It should not be skipped just

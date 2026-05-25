@@ -65,7 +65,6 @@ Test categories:
 | pkcs11-mock | 2.0.0 | Stub testing |
 | tpm2-pkcs11 | 1.10.0 | Hardware TPM |
 | BouncyHSM | 2.1.0 | Docker only |
-| qryptotoken | 0.4.1 | Docker only |
 
 ## Known limitations in v0.1.0
 

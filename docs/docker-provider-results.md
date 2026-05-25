@@ -50,7 +50,6 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | libtpms | `v0.10.2` | `03ff2481e133540be3b3ffe3daa1483d2a73d967` | 2026-01-02T15:56:41Z | TPM support |
 | swtpm | `v0.10.1` | `53841482b0a9a1dfe63a120b00283acfe588ee72` | 2025-04-30T12:32:33Z | TPM support |
 | pkcs11-mock | `v2.0.0` | `ac5f15adb92e15926825fa93e78a1995db1a32f8` | 2025-01-29T06:48:36Z | release and master |
-| qryptotoken | `v0.4.1` | `24fae88227d6d04331fb599327db83c24d5ae955` | 2026-01-28T13:02:59Z | release and main |
 
 ## Docker Target Configuration
 
@@ -70,7 +69,6 @@ builds and runs against it, and OpenSSL 3.6.2 otherwise.
 | `test-bouncyhsm` | BouncyHSM v2.1.0 | .NET/BouncyCastle provider; not OpenSSL-based |
 | `test-tpm2` | source-built tpm2-pkcs11 1.10.0 | Fedora OpenSSL development package; TPM stack uses libtpms/swtpm |
 | `test-pkcs11-mock` | pkcs11-mock v2.0.0 | mock provider; not OpenSSL-based |
-| `test-qryptotoken` | qryptotoken v0.4.1 | Rust build currently fails before producing a module |
 
 ## Matrix Results
 
@@ -96,13 +94,6 @@ Archived comparison row, not the current TPM2 headline result:
 | Docker target | Source | Status | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `tpm2-fedora-package-20260525` | Fedora tpm2-pkcs11 1.9.1 package | archived full | 64,084 | 8,433 | 5,067 | 49,727 | 6 | 851 | 0 | 0 |
-
-`qryptotoken` is part of the Docker matrix but is excluded from the statistics
-table because no PKCS#11 module was built.
-
-| Docker target | Status | Artifact | Detail |
-| --- | --- | --- | --- |
-| `qryptotoken` | build failed before module creation | `artifacts/qryptotoken/build-status.json` | v0.4.1 failed with exit code 101; generated bindings produced opaque placeholder structs and layout/field errors |
 
 ## BouncyHSM Segmented Evidence
 
@@ -163,5 +154,3 @@ Important BouncyHSM article points:
   The old Fedora package result is retained only as archived comparison data.
 - pkcs11-mock is useful as a mock/diagnostic baseline, not a provider
   conformance result.
-- qryptotoken v0.4.1/main currently cannot be counted in provider statistics
-  because the Docker build fails before producing a PKCS#11 module.

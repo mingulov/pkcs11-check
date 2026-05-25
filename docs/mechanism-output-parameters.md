@@ -58,9 +58,6 @@ after the call.
   encrypt/decrypt/wrap/unwrap flags for it and all v3 message functions return
   `CKR_FUNCTION_NOT_SUPPORTED`. Its GCM path consumes the supplied IV bytes; it
   does not generate and write an IV back to `CK_GCM_PARAMS.pIv`.
-- qryptotoken `main` supports classic `CKM_AES_GCM` with explicit IV input, but
-  does not implement the v3 message functions. Its message entry points are
-  present in the function list and return `CKR_FUNCTION_NOT_SUPPORTED`.
 - pkcs11-mock and empty-pkcs11 expose v3.1-shaped function lists for test
   scaffolding, but they are not positive providers for this surface:
   pkcs11-mock does not advertise `CKM_AES_GCM`, and both modules return
@@ -112,8 +109,6 @@ after the call.
   https://github.com/softhsm/SoftHSMv2
 - BouncyHSM upstream:
   https://github.com/harrison314/BouncyHsm
-- qryptotoken upstream:
-  https://github.com/QUBIP/qryptotoken
 - pkcs11-mock upstream:
   https://github.com/Pkcs11Interop/pkcs11-mock
 - tpm2-pkcs11 upstream:

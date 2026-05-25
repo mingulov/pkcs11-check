@@ -213,7 +213,7 @@ Use `none` when:
 
 ```bash
 P11TEST_ISOLATION=auto \
-bash local-builds/test.sh qryptotoken src/pkcs11_check/testcases/test_aead.py
+bash local-builds/test.sh nss-softokn src/pkcs11_check/testcases/test_aead.py
 ```
 
 ```bash
@@ -223,14 +223,13 @@ bash local-builds/test.sh bouncyhsm src/pkcs11_check/testcases/ckr/test_ckr_code
 
 ```bash
 P11TEST_ISOLATION=test \
-bash local-builds/test.sh qryptotoken src/pkcs11_check/testcases/test_aead.py
+bash local-builds/test.sh nss-softokn src/pkcs11_check/testcases/test_aead.py
 ```
 
 Some crash-prone providers now default to `auto` isolation automatically when the
 user does not override the mode:
 
 - `nss-softokn`
-- `qryptotoken`
 
 Those provider defaults use a stable state file under `/tmp`, for example:
 
@@ -249,8 +248,8 @@ You can still override the default explicitly:
 ```bash
 P11TEST_ISOLATION=none bash local-builds/test.sh nss-softokn -k ckr
 P11TEST_ISOLATION=auto bash local-builds/test.sh nss-softokn -k ckr
-P11TEST_ISOLATION=file bash local-builds/test.sh qryptotoken -x
-P11TEST_ISOLATION=test bash local-builds/test.sh qryptotoken src/pkcs11_check/testcases/test_aead.py
+P11TEST_ISOLATION=file bash local-builds/test.sh bouncyhsm -x
+P11TEST_ISOLATION=test bash local-builds/test.sh nss-softokn src/pkcs11_check/testcases/test_aead.py
 ```
 
 Useful companion variables:

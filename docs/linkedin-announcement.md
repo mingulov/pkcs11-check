@@ -27,7 +27,7 @@ Current scope:
 
 For the current validation snapshot I tested several software PKCS#11 providers
 and simulators: SoftHSM2, Kryoptic, NSS softoken, OpenCryptoki, tpm2-pkcs11,
-plus long-tail/mock targets such as BouncyHSM, pkcs11-mock, and qryptotoken.
+plus long-tail/mock targets such as BouncyHSM and pkcs11-mock.
 
 The useful part is not just pass/fail counts. pkcs11-check keeps crashes, wrong
 CKR return codes, unsupported mechanisms, timeouts, and build/configuration

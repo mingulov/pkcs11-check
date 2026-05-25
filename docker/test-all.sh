@@ -31,7 +31,6 @@ ALL_PROVIDERS=(
     bouncyhsm
     tpm2
     pkcs11-mock
-    qryptotoken
 )
 
 _is_provider() {

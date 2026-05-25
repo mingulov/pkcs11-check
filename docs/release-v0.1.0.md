@@ -15,8 +15,8 @@ PyPI.
 - Crash-aware execution model that can isolate provider crashes and preserve the
   finding instead of taking down the whole run.
 - Broad provider tooling for local and Docker-based validation across SoftHSM2,
-  Kryoptic, NSS, OpenCryptoki, TPM2, BouncyHSM, pkcs11-mock, qryptotoken, and
-  related targets.
+  Kryoptic, NSS, OpenCryptoki, TPM2, BouncyHSM, pkcs11-mock, and related
+  targets.
 - Security regression coverage for key wrapping, access control, Tookan-style
   attribute escalation, RSA/CBC oracle classes, API boundary misuse, and known
   CVE families.
@@ -73,7 +73,6 @@ Stable builds use the pinned tag or Fedora 44 system packages.
 | `test-opencryptoki` | OpenCryptoki | Fedora 44 RPM (`opencryptoki-3.26`) |
 | `test-kryoptic-fips` | Kryoptic | `main`, `--features "fips,pqc"` |
 | `test-pkcs11-mock` | pkcs11-mock | github.com/Pkcs11Interop/pkcs11-mock, `main` |
-| `test-qryptotoken` | qryptotoken | github.com/QUBIP/qryptotoken, `v0.4.1` (build-unavailable in this baseline) |
 
 ---
 
@@ -84,10 +83,6 @@ The refreshed Docker baseline produced pytest results for 14 targets:
 | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Total |
 |-------:|-------:|--------:|--------:|-------:|--------:|------:|
 | 677,557 | 58,334 | 342,697 | 773 | 851 | 17 | 1,080,229 |
-
-`qryptotoken` is tracked separately because upstream `v0.4.1` currently fails
-to build in the Docker image before a PKCS#11 module is produced. The target now
-records `artifacts/qryptotoken/build-status.json`.
 
 The current [Docker Provider Validation Snapshot](docker-provider-results.md)
 may differ from the historical v0.1.0 table below.
