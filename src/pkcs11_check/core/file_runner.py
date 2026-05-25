@@ -2646,13 +2646,10 @@ def run_isolated_pytest_units(
                                     )
                                     confirm_status = _status_from_returncode(confirm_rc)
                                     # Record culprit as a standalone result
-                                    culprit_outcome = (
-                                        "crashed"
-                                        if confirm_status == "crashed"
-                                        else "timeout"
-                                        if confirm_status == "timeout"
-                                        else "passed-in-isolation"
-                                    )
+                                    if confirm_status in {"crashed", "timeout"}:
+                                        culprit_outcome = confirm_status
+                                    else:
+                                        culprit_outcome = "crashed"
                                     culprit_entry: dict[str, Any] = {
                                         "nodeid": culprit,
                                         "outcome": culprit_outcome,
@@ -2660,6 +2657,20 @@ def run_isolated_pytest_units(
                                     if confirm_status in {"crashed", "timeout"}:
                                         culprit_entry["longrepr"] = (
                                             confirm_err.strip() or confirm_out.strip()
+                                        )
+                                    else:
+                                        crash_detail = (
+                                            captured_stderr.strip()
+                                            or captured_stdout.strip()
+                                            or f"file-level pytest run crashed with rc={returncode}"
+                                        )
+                                        culprit_entry["longrepr"] = (
+                                            "File-level pytest run crashed while this test was "
+                                            "active; the test passed in isolation. "
+                                            f"Original crash detail: {crash_detail}"
+                                        )
+                                        culprit_entry["isolation_outcome"] = (
+                                            "passed-in-isolation"
                                         )
                                     if confirm_out.strip():
                                         culprit_entry["stdout"] = confirm_out
@@ -2779,7 +2790,17 @@ def run_isolated_pytest_units(
                                                 final_detail["tests"]
                                             )
 
-                                    keep = retry_status != "passed" or (
+                                    final_status = retry_status
+                                    final_returncode = retry_rc
+                                    if retry_status == "passed" and accumulated_detail is not None:
+                                        if accumulated_detail["counts"].get("crashed", 0) > 0:
+                                            final_status = "crashed"
+                                            final_returncode = returncode
+                                        elif accumulated_detail["counts"].get("timeout", 0) > 0:
+                                            final_status = "timeout"
+                                            final_returncode = 124
+
+                                    keep = final_status != "passed" or (
                                         accumulated_detail is not None
                                         and any(
                                             accumulated_detail["counts"].get(k, 0) > 0
@@ -2788,13 +2809,15 @@ def run_isolated_pytest_units(
                                                 "xfailed",
                                                 "xpassed",
                                                 "error",
+                                                "crashed",
+                                                "timeout",
                                             )
                                         )
                                     )
                                     result = FileRunResult(
                                         target=unit,
-                                        status=retry_status,
-                                        returncode=retry_rc,
+                                        status=final_status,
+                                        returncode=final_returncode,
                                         duration_s=(duration_s + total_retry_dur),
                                         stdout=(retry_out if keep else ""),
                                         stderr=(retry_err if keep else ""),
@@ -2808,7 +2831,7 @@ def run_isolated_pytest_units(
                                         f"({total_retry_dur:.1f}s, "
                                         f"{len(deselect_set)} deselected)"
                                     )
-                                    if retry_status == "failed":
+                                    if final_status in {"failed", "crashed", "timeout"}:
                                         exit_code = 1
                                     index += 1
                                     break  # exit deselect loop, continue
