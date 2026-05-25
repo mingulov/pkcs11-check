@@ -18,15 +18,19 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     sign_single,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_BYTE_PTR,
     CKM_RSA_PKCS,
-    CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_HANDLE_INVALID,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
     CKR_SIGNATURE_INVALID,
+)
+from pkcs11_check.testcases._signature_policy import (
+    NON_CLEAN_SIGNATURE_REJECT_RVS,
+    SIGNATURE_REJECT_RVS,
 )
 from pkcs11_check.testcases.conftest import is_known_error
 
@@ -115,9 +119,12 @@ class TestVerifySignatureRoundtrip:
                 return
             data_ptr, data_len = _data_buf(data)
             rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
-            assert rv in (CKR_SIGNATURE_INVALID, CKR_DEVICE_ERROR), (
-                f"Expected CKR_SIGNATURE_INVALID, got 0x{rv:08x}"
-            )
+            if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
+                pytest.xfail(
+                    "C_VerifySignature rejected wrong signature with non-clean CKR: "
+                    f"{ckr_name(rv)}"
+                )
+            assert rv in SIGNATURE_REJECT_RVS, f"Expected signature reject CKR, got 0x{rv:08x}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

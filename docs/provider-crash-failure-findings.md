@@ -277,8 +277,9 @@ returned CKR named in the reason; missing mechanisms still skip normally.
 Mechanism-driven PBKDF2 coverage also builds concrete
 `CK_PKCS5_PBKD2_PARAMS2` test parameters instead of treating PBKDF2 as an
 unavailable generic runtime-data recipe. If an advertised PBKDF2 path rejects
-that spec-shaped keygen call with `CKR_ARGUMENTS_BAD`, the result is visible
-xfail evidence rather than a hard setup assertion or a skipped mechanism.
+that spec-shaped keygen call with explicit runtime CKRs such as
+`CKR_ARGUMENTS_BAD` or `CKR_DEVICE_ERROR`, the result is visible xfail evidence
+rather than a hard setup assertion or a skipped mechanism.
 
 ### Follow-Up: HKDF Key-Generation Runtime Rejections
 
@@ -515,6 +516,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   during valid-vector key derivation. PBES2 setup and decrypt CKRs are now
   visible xfail findings, while successful decrypts still have to match the
   expected plaintext.
+- **Wycheproof PBKDF2 runtime rejects**: standalone PBKDF2 Wycheproof vectors
+  now use the same visible-finding path for advertised valid-vector
+  `C_GenerateKey` rejects such as `CKR_DEVICE_ERROR`. Successful derivations
+  still have to match the expected derived key bytes.
 - **Wycheproof ECDSA/DSA valid verify rejects**: Kryoptic P-521/SHAKE ECDSA
   and NSS source DSA vectors reached advertised verify mechanisms but returned
   runtime CKRs such as `CKR_DEVICE_ERROR` or `CKR_ARGUMENTS_BAD` for valid
@@ -585,6 +590,14 @@ The following paths were tightened after inspecting the all-fail artifacts:
   longer depends on multipart RSA-PKCS signing just to create setup data. It
   now creates the valid signature with single-shot `C_Sign` and exercises only
   the `C_VerifySignatureInit`/`Update`/`Final` path under test.
+- **VerifySignature wrong-signature result**: `C_VerifySignature` no longer
+  treats `CKR_DEVICE_ERROR` as a clean wrong-signature result. Clean signature
+  rejects still pass, while generic/non-clean CKRs are reported as xfail
+  evidence under the shared signature-result policy.
+- **VerifyMessage wrong-signature result**: `C_VerifyMessage` now uses the same
+  negative-signature split. `CKR_SIGNATURE_INVALID`/length-range are clean
+  rejects, generic runtime CKRs are xfail evidence, and unexpected CKRs still
+  fail the test instead of being collapsed into `False`.
 - **Miscellaneous KDF derive rejects**: `CKM_EXTRACT_KEY_FROM_KEY` now treats
   `CKR_ATTRIBUTE_VALUE_INVALID` at `C_DeriveKey` as an advertised mechanism
   rejected at runtime. Providers that return `CKR_OK` but derive the wrong

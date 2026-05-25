@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pkcs11_check.raw.types_std import CKR_OK
+from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR, CKR_OK
 from pkcs11_check.testcases import test_verify_signature
 
 
@@ -40,6 +40,11 @@ class _VerifySignatureRaw:
         return int(CKR_OK)
 
 
+class _WrongSignatureRaw(_VerifySignatureRaw):
+    def C_VerifySignature(self, _session: int, _data: object, _data_len: int) -> int:  # noqa: N802
+        return int(CKR_DEVICE_ERROR)
+
+
 def test_verify_signature_multipart_uses_single_shot_signature_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -62,3 +67,19 @@ def test_verify_signature_multipart_uses_single_shot_signature_setup(
     test_verify_signature.TestVerifySignatureRoundtrip().test_verify_signature_multipart(rs)
 
     assert raw.updated_lengths == [10, 10, 11]
+
+
+def test_verify_signature_wrong_sig_device_error_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _WrongSignatureRaw()
+    rs = SimpleNamespace(
+        raw=raw,
+        sh=1,
+        has_mechanism=lambda name: name == "RSA_PKCS",
+    )
+    monkeypatch.setattr(test_verify_signature, "gen_rsa_keypair", lambda *_args: (10, 11))
+    monkeypatch.setattr(test_verify_signature, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(pytest.xfail.Exception, match="CKR_DEVICE_ERROR"):
+        test_verify_signature.TestVerifySignatureRoundtrip().test_verify_signature_wrong_sig(rs)

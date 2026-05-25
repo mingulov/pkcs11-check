@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases import test_pbe
 from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
@@ -291,6 +292,12 @@ def test_acvp_mlkem_capability_skips_stay_narrow() -> None:
         )
 
     assert offenders == []
+
+
+def test_pbe_pbkdf2_device_error_is_xfail() -> None:
+    """Advertised PBKDF2 returning CKR_DEVICE_ERROR is a visible runtime finding."""
+    with pytest.raises(pytest.xfail.Exception, match="CKM_PKCS5_PBKD2 advertised"):
+        test_pbe._expect_pbe_gen_key_rv(CKR_DEVICE_ERROR, test_pbe.CKM_PKCS5_PBKD2)
 
 
 @pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR])

@@ -43,6 +43,7 @@ from pkcs11_check.raw.types_std import (
     CKP_PKCS5_PBKD2_HMAC_SHA256,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -62,10 +63,11 @@ _CKK_GENERIC_SECRET_INT = int(CKK_GENERIC_SECRET)
 
 pytestmark = pytest.mark.keymgmt
 
-# Acceptable CKR codes for PBE operations
+# Runtime rejects for advertised PBE operations. These are visible xfail findings, not passes.
 _PBE_ERROR_RVS = {
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_FUNCTION_FAILED,

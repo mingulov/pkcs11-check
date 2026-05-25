@@ -16,11 +16,16 @@ from pkcs11_check.raw.recipes import (
     to_ubyte_buf,
     verify_single,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKM_AES_CBC,
     CKM_SHA256_RSA_PKCS,
     CKR_OK,
+)
+from pkcs11_check.testcases._signature_policy import (
+    NON_CLEAN_SIGNATURE_REJECT_RVS,
+    SIGNATURE_REJECT_RVS,
 )
 
 MESSAGE_ENCRYPT_FUNCS = [
@@ -104,6 +109,8 @@ def _message_verify(
     mechanism: int,
     data: bytes,
     signature: bytes,
+    *,
+    expect_valid: bool = True,
 ) -> bool:
     from pkcs11_check.raw.pack import mech_simple
 
@@ -115,7 +122,16 @@ def _message_verify(
     in_buf = to_ubyte_buf(data)
     sig_buf = to_ubyte_buf(signature)
     rv = rs.raw.C_VerifyMessage(rs.sh, None, 0, in_buf, len(data), sig_buf, len(signature))
-    return bool(rv == CKR_OK)
+    if rv == CKR_OK:
+        return True
+    if not expect_valid:
+        if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
+            pytest.xfail(
+                "C_VerifyMessage rejected wrong signature with non-clean CKR: "
+                f"{ckr_name(rv)}"
+            )
+        return rv not in SIGNATURE_REJECT_RVS
+    return False
 
 
 def _message_sign_multipart(
@@ -382,7 +398,9 @@ class TestMessageSignVerify:
         data = b"correct data"
         bad_sig = b"\x00" * 256
         try:
-            result = _message_verify(rs, pub, CKM_SHA256_RSA_PKCS, data, bad_sig)
+            result = _message_verify(
+                rs, pub, CKM_SHA256_RSA_PKCS, data, bad_sig, expect_valid=False
+            )
             assert result is False
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
