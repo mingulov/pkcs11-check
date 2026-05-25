@@ -271,6 +271,14 @@ The remaining-gap OTP attribute probe now matches the main OTP tests:
 `CKM_HOTP_KEY_GEN` absence skips, but advertised HOTP key generation that
 rejects `C_GenerateKey` becomes xfail evidence for specific CKRs.
 
+### Follow-Up: ACVP HMAC Key Import Fallback
+
+ACVP HMAC now mirrors the Wycheproof HMAC key setup path: it first tries the
+typed HMAC key and then falls back to `CKK_GENERIC_SECRET`. Old skips for
+typed-key import failure and key-handle invalid use no longer hide advertised
+HMAC mechanisms; if both key forms are rejected, the test records an xfail
+finding with the specific setup or use CKR evidence.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

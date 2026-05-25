@@ -38,6 +38,10 @@ _RUNTIME_SKIP_PATTERNS = {
     ),
     Path("src/pkcs11_check/testcases/test_cctv_mldsa.py"): ("key generation failed -",),
     Path("src/pkcs11_check/testcases/test_remaining_gaps.py"): ("HOTP key generation failed",),
+    Path("src/pkcs11_check/testcases/acvp/test_acvp_hmac.py"): (
+        "Cannot import",
+        "Key not valid for HMAC mechanism",
+    ),
 }
 
 
