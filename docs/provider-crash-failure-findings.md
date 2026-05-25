@@ -540,6 +540,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   mechanism-driven keypair helpers now treat advertised keypair generation
   rejected at runtime as xfail setup evidence. Wrong crypto output, accepted
   invalid input, crashes, and timeouts still fail.
+- **AES-CBC-PAD padding-oracle setup**: AES padding-oracle and timing probes
+  now use the same operational AES setup policy as other non-key-size tests.
+  They use AES-128 fixture keys and report advertised `AES_KEY_GEN` runtime
+  rejects as setup xfail evidence, while keeping distinct decrypt outcomes,
+  accepted corrupted ciphertext, and timing gaps as hard security findings.
 - **Generic-secret HMAC smoke tests**: imported HMAC keys that reach
   `C_SignInit`/`C_Sign` and receive explicit runtime rejects are now xfailed,
   matching the ACVP HMAC classification.

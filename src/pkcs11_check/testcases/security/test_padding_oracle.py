@@ -22,7 +22,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
     generate_random,
     read_attributes,
 )
@@ -39,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA_1,
 )
 from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
 )
@@ -366,7 +366,7 @@ class TestAESPaddingOracle:
         if not rs.has_mechanism("AES_CBC_PAD"):
             pytest.skip("CKM_AES_CBC_PAD not supported")
         require_operational_aes_keygen(rs)
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, purpose="AES-CBC-PAD oracle setup")
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"padding oracle!!"  # 16 bytes
 
@@ -479,7 +479,7 @@ class TestAESPaddingOracle:
         try:
             trials = 20
             for trial in range(trials):
-                key = gen_aes_key(rs.raw, rs.sh, 256)
+                key = gen_aes_key_or_xfail(rs, purpose="AES-CBC-PAD oracle sweep setup")
                 keys.append(key)
                 iv = generate_random(rs.raw, rs.sh, 16)
                 ct = encrypt_single(
@@ -665,7 +665,7 @@ class TestTimingBasic:
             pytest.skip("CKM_AES_CBC_PAD not supported")
         require_operational_aes_keygen(rs)
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, purpose="AES-CBC-PAD timing setup")
         try:
             iv = generate_random(rs.raw, rs.sh, 16)
             plaintext = b"lucky13 timing probe " * 5  # 105 bytes (7 blocks of 16)

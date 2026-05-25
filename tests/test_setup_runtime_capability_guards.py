@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ENCRYPTED_DATA_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_PARAM_INVALID,
@@ -43,7 +44,7 @@ from pkcs11_check.testcases import (
 )
 from pkcs11_check.testcases.ckr import test_ckr_decrypt, test_ckr_encrypt
 from pkcs11_check.testcases.mechanism_registry import ParamRecipe
-from pkcs11_check.testcases.security import test_nonce_quality
+from pkcs11_check.testcases.security import test_nonce_quality, test_padding_oracle
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -374,6 +375,60 @@ def test_ckr_decrypt_xfails_when_advertised_aes_keygen_rejects_runtime(
             False,
             15,
         )
+
+
+def test_padding_oracle_xfails_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(
+        test_padding_oracle,
+        "gen_aes_key",
+        _raise_function_not_supported,
+        raising=False,
+    )
+    monkeypatch.setattr(test_padding_oracle, "require_operational_aes_keygen", lambda _rs: None)
+    rs = _session_with_mechanisms("AES_CBC_PAD", "AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_padding_oracle.TestAESPaddingOracle().test_cbc_pad_all_last_block_positions(rs)
+
+
+def test_padding_oracle_uses_operational_aes128_setup_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+    handles = iter(range(1, 25))
+
+    def _gen_aes_key(*_args: Any, bits: int = 256, **_kwargs: Any) -> int:
+        if len(_args) >= 3:
+            bits = int(_args[2])
+        calls.append(bits)
+        if bits != 128:
+            raise CkrAssertionError(
+                "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+                int(CKR_FUNCTION_NOT_SUPPORTED),
+            )
+        return next(handles)
+
+    def _decrypt_invalid_padding(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID",
+            int(CKR_ENCRYPTED_DATA_INVALID),
+        )
+
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _gen_aes_key)
+    monkeypatch.setattr(test_padding_oracle, "gen_aes_key", _gen_aes_key, raising=False)
+    monkeypatch.setattr(test_padding_oracle, "require_operational_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_padding_oracle, "generate_random", lambda *_args: b"\x00" * 16)
+    monkeypatch.setattr(test_padding_oracle, "encrypt_single", lambda *_args, **_kwargs: b"x" * 48)
+    monkeypatch.setattr(test_padding_oracle, "decrypt_single", _decrypt_invalid_padding)
+    monkeypatch.setattr(test_padding_oracle, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = _session_with_mechanisms("AES_CBC_PAD", "AES_KEY_GEN")
+
+    test_padding_oracle.TestAESPaddingOracle().test_cbc_pad_all_last_block_positions(rs)
+
+    assert calls == [128] * 20
 
 
 def test_access_levels_xfail_when_advertised_aes_keygen_rejects_runtime(
