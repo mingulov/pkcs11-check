@@ -549,8 +549,15 @@ The following paths were tightened after inspecting the all-fail artifacts:
 - **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
   `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
   runners now classify explicit generic runtime rejects as xfail while keeping
-  wrong ciphertext/plaintext as failures. BouncyHSM CFB128 multiblock timeouts
-  are unchanged: timeouts remain failures.
+  wrong ciphertext/plaintext as failures. BouncyHSM CFB128/CFB8/OFB
+  multiblock rows are ACVP MCT vectors, not ordinary short KATs: each selected
+  test performs 100 blocks times 1,000 PKCS#11 encrypt/decrypt calls. The
+  current BouncyHSM artifacts therefore prove that these tests exceed the
+  configured 5s or 20s per-test timeout budget, and CFB8 additionally produced
+  confirmed `C_Encrypt`/`C_Decrypt` segfaults in subprocess confirmation. Do
+  not describe the timeout-only CFB128/OFB rows as cryptographic mismatches
+  without a longer rerun; they remain visible timeout findings under the chosen
+  validation budget.
 - **SHA3/SHAKE key derivation**: the standalone SHA3/SHAKE KDF tests now match
   OASIS v3.2 sections 6.20.5 and 6.28-6.32. SHA3 derivation is SHA-1-style
   derivation over the base key value, and SHAKE derivation expands the input
@@ -887,10 +894,12 @@ configuration explanation is found.
   only as archived comparison evidence. Both show digest-boundary subprocess
   crashes and fork-after-initialize timeout behavior.
 - BouncyHSM slowness should not be attributed to ".NET on Linux" from the
-  current evidence. The artifacts prove a specific pathological tail in CFB8,
-  CFB128, and OFB multiblock provider calls, plus broad AES-CCM and ECDH
-  failures. Runtime choice may be a hypothesis, but the evidence is mechanism
-  and operation specific.
+  current evidence. The artifacts prove a specific pathological tail in ACVP
+  MCT-style CFB8, CFB128, and OFB multiblock provider calls, plus broad AES-CCM
+  and ECDH failures. Runtime choice may be a hypothesis, but the evidence is
+  mechanism and operation specific. If the goal is to distinguish "eventually
+  passes but slow" from "never completes", rerun these BouncyHSM MCT segments
+  with a much larger timeout budget and keep the timeout value in the report.
 ## Article-Relevant Takeaways
 
 - A crash is a valid pkcs11-check finding. It should not be skipped just
