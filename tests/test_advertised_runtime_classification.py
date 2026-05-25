@@ -417,6 +417,15 @@ def test_wycheproof_hkdf_invalid_size_success_is_reported() -> None:
     assert "result == \"invalid\"" in source
 
 
+def test_wycheproof_mlkem_malformed_decaps_success_is_reported() -> None:
+    """Malformed ML-KEM decapsulation vectors must fail if decapsulation succeeds."""
+    source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_mlkem.py").read_text()
+
+    assert "Invalid ML-KEM decapsulation vector" in source
+    assert "produced a shared key" in source
+    assert "result == \"invalid\"" in source
+
+
 def test_stateful_signature_guards_use_structured_ckr_checks() -> None:
     """Stateful signature guards should not parse CKR names from text."""
     path = Path("src/pkcs11_check/testcases/test_stateful_sigs.py")

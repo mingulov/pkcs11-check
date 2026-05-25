@@ -143,12 +143,14 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
                 CKA_KEY_TYPE: CKK_AES,
             },
         )
-        # ML-KEM implicit rejection: even invalid ciphertexts produce a key
-        # but the shared secret won't match
-        if result == "valid" and expected_ss:
-            # We can't directly compare since the key value is wrapped
-            pass  # Key was produced - that's the expected behavior
-        destroy_quietly(rs.raw, rs.sh, shared_key)
+        try:
+            if result == "invalid":
+                pytest.fail(f"Invalid ML-KEM decapsulation vector {vec_id} produced a shared key")
+            if result == "valid" and expected_ss:
+                # We can't directly compare since the key value is wrapped.
+                pass  # Key was produced - that's the expected behavior.
+        finally:
+            destroy_quietly(rs.raw, rs.sh, shared_key)
     except AssertionError as exc:
         if result == "valid":
             if is_semi_expanded:
