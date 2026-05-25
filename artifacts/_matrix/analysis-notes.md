@@ -21,6 +21,21 @@ are under `artifacts/<provider>/`.
 The configured Docker matrix covers released tags plus branch heads where a
 target exists.
 
+- Upstream refs were refreshed on `2026-05-25T07:44:11Z` using
+  `git ls-remote` for GitHub tag/branch/default-head refs and hg.mozilla.org
+  JSON tip for NSS/NSPR. All stored provider refs in
+  `docker/provider-sources.toml` still matched upstream. The latest release-tag
+  check filtered out RC/test tags; selected release tags remained current for
+  OpenSSL `openssl-4.0.0`, SoftHSM2 `2.7.0`, Kryoptic `v1.5.0`,
+  OpenCryptoki `v3.27.0`, BouncyHSM `v2.1.0`, tpm2-pkcs11 `1.10.0`,
+  pkcs11-mock `v2.0.0`, qryptotoken `v0.4.1`, libtpms `v0.10.2`, and swtpm
+  `v0.10.1`.
+- Data-source default heads were refreshed in the same pass: Wycheproof
+  `878e5366008753df2064d40c49f8e2f50f9c6af7`, CCTV
+  `67c1397af2a57f935cc96ee112b446c051cdb68a`, ACVP-Server
+  `15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0`, and x509-limbo
+  `feb7caccc1afaa9d7e63ee8d7f81e6ce8b199510` still match upstream default
+  heads.
 - SoftHSM2 release: tag `2.7.0`, commit
   `13e6e86b83748fef74046dbf0c91f664b7acc1c3`, commit date
   `2026-01-20T06:25:10Z`.

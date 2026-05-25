@@ -4,7 +4,7 @@
 # resolved with `git ls-remote`; dates are upstream commit dates from the GitHub
 # commits API. Mercurial entries were resolved from hg.mozilla.org json-log tip.
 
-observed_at = "2026-05-24T17:52:49Z"
+observed_at = "2026-05-25T07:44:11Z"
 openssl_policy = "Prefer OpenSSL 4.0.0 when the provider builds and runs against it; use OpenSSL 3.6.2 otherwise."
 
 [sources.openssl_4_0_0]
