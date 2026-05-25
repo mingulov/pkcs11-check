@@ -9,6 +9,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -38,8 +39,30 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS, xfail_if_known_ckr
 
 pytestmark = pytest.mark.security
+
+
+def _gen_aes_key_or_xfail(
+    rs: Any,
+    bits: int = 256,
+    *,
+    attrs: Mapping[Any, Any] | None = None,
+) -> int:
+    """Generate an AES setup key, xfail-ing explicit advertised-runtime rejects."""
+    has_mechanism = getattr(rs, "has_mechanism", None)
+    if callable(has_mechanism) and not has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+    try:
+        return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but key generation is not operational",
+        )
+    raise
 
 
 def _read_bool_attr_safe(
@@ -74,9 +97,8 @@ class TestNeverExtractable:
     ) -> None:
         """Key generated with EXTRACTABLE=False has NEVER_EXTRACTABLE=True."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = _gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_EXTRACTABLE: False},
         )
@@ -92,9 +114,8 @@ class TestNeverExtractable:
     ) -> None:
         """Key generated with EXTRACTABLE=True has NEVER_EXTRACTABLE=False."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = _gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
@@ -111,7 +132,7 @@ class TestNeverExtractable:
         """EXTRACTABLE=True implies NEVER_EXTRACTABLE=False (and vice versa for default)."""
         rs = p11_raw_session
         # Default key: non-extractable
-        key_default = gen_aes_key(rs.raw, rs.sh, 256)
+        key_default = _gen_aes_key_or_xfail(rs, 256)
         try:
             attrs_d = read_attributes(rs.raw, rs.sh, key_default, [CKA_EXTRACTABLE])
             if attrs_d[CKA_EXTRACTABLE] is not False:
@@ -152,9 +173,8 @@ class TestNeverExtractable:
             destroy_quietly(rs.raw, rs.sh, key_default)
 
         # Extractable key
-        key_ext = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key_ext = _gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
         )
@@ -189,7 +209,7 @@ class TestLocalFlag:
         Tracked in docs/module-issues.md under NSS.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = _gen_aes_key_or_xfail(rs, 256)
         try:
             local_val = _read_bool_attr_safe(rs, key, CKA_LOCAL)
             if local_val is None:
@@ -229,8 +249,24 @@ class TestLocalFlag:
             },
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
-            assert attrs[CKA_LOCAL] is False
+            local_val = _read_bool_attr_safe(rs, key, CKA_LOCAL)
+            if local_val is None:
+                pytest.xfail(
+                    "Module does not implement CKA_LOCAL attribute "
+                    "(PKCS#11 spec Table 18 requires it for imported keys)"
+                )
+            if local_val is not False:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "CKA_LOCAL=True on imported key (spec requires False for C_CreateObject)",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 spec Table 18",
+                )
+                pytest.xfail(
+                    "Module sets CKA_LOCAL=True on imported keys "
+                    "(PKCS#11 spec Table 18 requires CKA_LOCAL=False for C_CreateObject)"
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -285,9 +321,8 @@ class TestAlwaysSensitive:
     def test_sensitive_key_always_sensitive(self, p11_raw_session: Any) -> None:
         """Key generated sensitive has ALWAYS_SENSITIVE=True."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = _gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_SENSITIVE: True},
         )
@@ -306,9 +341,8 @@ class TestAlwaysSensitive:
     def test_non_sensitive_key_not_always_sensitive(self, p11_raw_session: Any) -> None:
         """Key generated non-sensitive has ALWAYS_SENSITIVE=False."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = _gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_SENSITIVE: False},
         )
@@ -336,9 +370,8 @@ class TestAutopadding:
     ) -> None:
         """AES-CBC-PAD roundtrip works for non-block-aligned plaintext lengths."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = _gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )

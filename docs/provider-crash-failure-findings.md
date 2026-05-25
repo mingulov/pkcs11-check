@@ -567,6 +567,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   unsupported `CKA_LOCAL` readback is not counted as a wrong-value assertion,
   non-clean readback CKRs become xfail evidence, and `CKA_LOCAL=True` remains
   the only clean pass for generated keys.
+- **Security key-flag coverage**: `CKA_NEVER_EXTRACTABLE`, `CKA_LOCAL`,
+  `CKA_ALWAYS_SENSITIVE`, and AES-CBC-PAD flag tests now xfail explicit
+  `AES_KEY_GEN` setup rejects instead of reporting an unrelated key-attribute
+  failure. Imported-key `CKA_LOCAL` readback uses the same missing-attribute
+  xfail rule as generated-key readback; actual wrong boolean values remain
+  compliance xfail evidence.
 - **Mechanism wrap/unwrap coverage**: mechanism-driven wrap tests now build
   registry-defined wrap parameters for RC2 and other parameterized mechanisms,
   use the existing NSS-safe output-size hint for `AES_KEY_WRAP_KWP`, and report
