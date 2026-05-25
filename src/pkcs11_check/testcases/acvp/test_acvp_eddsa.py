@@ -92,12 +92,27 @@ _EDDSA_PARAM_XFAIL_MSG = (
     "Module rejects explicit EdDSA mechanism params on an advertised EdDSA path"
 )
 
+_EDDSA_RUNTIME_REJECT_RVS = (
+    *NON_CLEAN_SIGNATURE_REJECT_RVS,
+    *_UNUSABLE_KEY_RVS,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
 
 def _handle_unsupported_curve(exc: AssertionError, curve: str) -> None:
     """Check if exception indicates unsupported curve and skip if so."""
     if is_known_error(exc, _CURVE_UNSUPPORTED_RVS):
         pytest.skip(f"Curve {curve} not supported: {exc}")
     raise
+
+
+def _xfail_if_eddsa_runtime_reject(exc: AssertionError, label: str) -> None:
+    xfail_if_known_ckr(
+        exc,
+        _EDDSA_RUNTIME_REJECT_RVS,
+        f"{label}: advertised EdDSA operation rejected",
+    )
 
 
 _KEYGEN_VECTORS = load_eddsa_keygen_vectors()
@@ -118,25 +133,30 @@ class TestEdDsaKeyGen:
 
         pub_key = priv_key = 0
         try:
-            pub_key, priv_key = gen_keypair(
-                rs.raw,
-                rs.sh,
-                mechanism=int(CKM_EC_EDWARDS_KEY_PAIR_GEN),
-                pub_base=[attr_bytes(CKA_EC_PARAMS, vec["ec_params"])],
-                priv_base=[],
-                public_attrs={CKA_VERIFY: True},
-                private_attrs={CKA_SIGN: True},
-                pub_skip={CKA_EC_PARAMS},
-            )
+            try:
+                pub_key, priv_key = gen_keypair(
+                    rs.raw,
+                    rs.sh,
+                    mechanism=int(CKM_EC_EDWARDS_KEY_PAIR_GEN),
+                    pub_base=[attr_bytes(CKA_EC_PARAMS, vec["ec_params"])],
+                    priv_base=[],
+                    public_attrs={CKA_VERIFY: True},
+                    private_attrs={CKA_SIGN: True},
+                    pub_skip={CKA_EC_PARAMS},
+                )
+            except AssertionError as exc:
+                _handle_unsupported_curve(exc, vec["curve"])
+
             assert pub_key != 0, f"{vec_id}: Public key handle is zero"
             assert priv_key != 0, f"{vec_id}: Private key handle is zero"
 
-            test_msg = b"EdDSA keygen test message"
-            sig = sign_single(rs.raw, rs.sh, priv_key, CKM_EDDSA, test_msg)
-            verified = verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, test_msg, sig)
+            try:
+                test_msg = b"EdDSA keygen test message"
+                sig = sign_single(rs.raw, rs.sh, priv_key, CKM_EDDSA, test_msg)
+                verified = verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, test_msg, sig)
+            except AssertionError as exc:
+                _xfail_if_eddsa_runtime_reject(exc, vec_id)
             assert verified, f"{vec_id}: Roundtrip sign/verify failed"
-        except AssertionError as exc:
-            _handle_unsupported_curve(exc, vec["curve"])
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -263,8 +283,8 @@ def test_acvp_eddsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
         try:
             sig = sign_single(rs.raw, rs.sh, priv_key, CKM_EDDSA, vec["msg"])
-        except AssertionError:
-            raise
+        except AssertionError as exc:
+            _xfail_if_eddsa_runtime_reject(exc, vec_id)
 
         if sig != vec["expected_sig"]:
             pytest.fail(f"{vec_id}: EdDSA signature mismatch")

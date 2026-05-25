@@ -559,6 +559,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   explicit CKR values is now xfail evidence for an advertised EDDSA path that
   cannot import usable ACVP public keys. Accepting an invalid EdDSA key remains
   a hard failure because that is the actual negative key-verification result.
+- **ACVP EdDSA sign runtime rejects**: keygen and SigGen vectors now distinguish
+  setup from use. Once a key is generated or imported, explicit EdDSA sign/use
+  CKRs such as `CKR_DEVICE_ERROR` are visible xfail evidence for an advertised
+  but non-operational path. Deterministic EdDSA signature mismatches remain
+  real failures.
 - **Mechanism-driven encryption**: roundtrip setup now skips when the required
   keygen mechanism is absent and xfails when advertised key generation rejects
   at runtime. KAT encrypt/decrypt paths now xfail explicit runtime CKRs but

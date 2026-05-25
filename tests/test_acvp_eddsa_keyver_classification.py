@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_TEMPLATE_INCONSISTENT
+from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR, CKR_TEMPLATE_INCONSISTENT
 from pkcs11_check.testcases.acvp import test_acvp_eddsa
 
 
@@ -38,6 +38,50 @@ def test_eddsa_keyver_valid_key_import_reject_is_xfail(
             _session(),
             SimpleNamespace(),
             "EDDSA-KeyVer-valid",
+            vec,
+        )
+
+
+def test_eddsa_keygen_sign_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _device_error(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    vec = {
+        "ec_params": b"params",
+        "curve": "ED-25519",
+    }
+    monkeypatch.setattr(test_acvp_eddsa, "gen_keypair", lambda *_args, **_kwargs: (1, 2))
+    monkeypatch.setattr(test_acvp_eddsa, "sign_single", _device_error)
+    monkeypatch.setattr(test_acvp_eddsa, "verify_single", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(test_acvp_eddsa, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(pytest.xfail.Exception, match="CKR_DEVICE_ERROR"):
+        test_acvp_eddsa.TestEdDsaKeyGen().test_eddsa_keygen(
+            _session(),
+            "EDDSA-KeyGen-ED-25519-tc1",
+            vec,
+        )
+
+
+def test_eddsa_siggen_sign_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _device_error(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    vec = {
+        "ec_params": b"params",
+        "curve": "ED-25519",
+        "d": b"private",
+        "msg": b"message",
+        "expected_sig": b"signature",
+    }
+    monkeypatch.setattr(test_acvp_eddsa, "import_ec_private_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_acvp_eddsa, "sign_single", _device_error)
+    monkeypatch.setattr(test_acvp_eddsa, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(pytest.xfail.Exception, match="CKR_DEVICE_ERROR"):
+        test_acvp_eddsa.test_acvp_eddsa_siggen(
+            _session(),
+            "EDDSA-SigGen-ED-25519-tc41",
             vec,
         )
 
