@@ -32,6 +32,8 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKK,
     CKM,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -54,6 +56,8 @@ from pkcs11_check.testcases.mechanism_helpers import (
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.encrypt]
 
 _ENCRYPT_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,

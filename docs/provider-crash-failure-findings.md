@@ -781,6 +781,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
   roundtrip encryption. The older NSS `AES_GCM`/`CHACHA20_POLY1305` KAT
   buffer-size rows are pkcs11-check sizing artifacts and should be refreshed
   before being used as provider evidence.
+- **Mechanism encryption RSA-OAEP smoke params and runtime rejects**:
+  mechanism-driven RSA-OAEP encryption now uses SHA-1/MGF1-SHA1 compatibility
+  parameters, matching the dedicated RSA-OAEP smoke tests, because PKCS#11 does
+  not expose OAEP hash sub-capability discovery. Targeted SHA-384/SHA-512 OAEP
+  tests remain separate. Valid advertised encrypt paths that still return
+  `CKR_ARGUMENTS_BAD` or `CKR_ATTRIBUTE_VALUE_INVALID` are now visible xfail
+  evidence rather than raw harness failures.
 - **Mechanism multipart AEAD reference sizing**: multipart decrypt roundtrip
   coverage now uses the same AEAD tag overhead and `CKR_BUFFER_TOO_SMALL` retry
   path when building the single-part ciphertext reference. Old multipart AEAD

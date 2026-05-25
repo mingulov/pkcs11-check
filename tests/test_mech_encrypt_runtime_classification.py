@@ -12,6 +12,8 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKM_AES_CBC,
     CKM_AES_GCM,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_GENERAL_ERROR,
     CKR_KEY_TYPE_INCONSISTENT,
 )
@@ -127,6 +129,31 @@ def test_mechanism_roundtrip_key_type_inconsistent_is_xfail(
     monkeypatch.setattr(mech_encrypt, "get_test_plaintext_bytes", lambda: b"0" * 32)
     monkeypatch.setattr(mech_encrypt, "make_mech_param_or_skip", lambda _entry: None)
     monkeypatch.setattr(mech_encrypt, "encrypt_single", _raise_key_type_inconsistent)
+    monkeypatch.setattr(mech_encrypt, "destroy_quietly", lambda *_args: None)
+
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised but encrypt is not operational",
+    ):
+        mech_encrypt.TestMechEncryptRoundtrip().test_roundtrip(rs, _entry())
+
+
+@pytest.mark.parametrize("rv", [CKR_ARGUMENTS_BAD, CKR_ATTRIBUTE_VALUE_INVALID])
+def test_mechanism_roundtrip_argument_or_attribute_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+    rv: int,
+) -> None:
+    """Provider rejects of advertised valid encrypt paths are visible xfail findings."""
+
+    def _raise_runtime_reject(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    monkeypatch.setattr(mech_encrypt, "generate_key_for_encrypt", lambda *_args: (1, None))
+    monkeypatch.setattr(mech_encrypt, "get_test_plaintext_bytes", lambda: b"0" * 32)
+    monkeypatch.setattr(mech_encrypt, "make_mech_param_or_skip", lambda _entry: None)
+    monkeypatch.setattr(mech_encrypt, "encrypt_single", _raise_runtime_reject)
     monkeypatch.setattr(mech_encrypt, "destroy_quietly", lambda *_args: None)
 
     rs = SimpleNamespace(raw=object(), sh=1)
