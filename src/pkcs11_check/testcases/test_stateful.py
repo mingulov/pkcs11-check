@@ -6,6 +6,7 @@ testing that any sequence of valid operations maintains consistency.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -28,9 +29,28 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA256,
 )
-from pkcs11_check.testcases.conftest import require_operational_aes_keygen
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    require_operational_aes_keygen,
+    xfail_if_known_ckr,
+)
 
 pytestmark = [pytest.mark.stateful, pytest.mark.fuzz]
+
+_STATEFUL_AES_KEY_BITS = 128
+
+
+def _gen_stateful_aes_key(rs: Any, attrs: Mapping[Any, Any]) -> int:
+    """Generate an AES setup key for lifecycle tests, preserving runtime rejects as xfails."""
+    try:
+        return gen_aes_key(rs.raw, rs.sh, bits=_STATEFUL_AES_KEY_BITS, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but stateful AES key generation is not operational",
+        )
+        raise
 
 
 def test_pkcs11_stateful(p11_raw_session: Any) -> None:
@@ -38,8 +58,8 @@ def test_pkcs11_stateful(p11_raw_session: Any) -> None:
     rs = p11_raw_session
     require_operational_aes_keygen(rs)
     # Stateful lifecycle: create, use, search, destroy, verify gone
-    key1 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "stateful-manual-1"})
-    key2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "stateful-manual-2"})
+    key1 = _gen_stateful_aes_key(rs, attrs={CKA_LABEL: "stateful-manual-1"})
+    key2 = _gen_stateful_aes_key(rs, attrs={CKA_LABEL: "stateful-manual-2"})
 
     try:
         # Both keys should work
@@ -75,12 +95,7 @@ def test_generate_use_destroy_cycle(p11_raw_session: Any) -> None:
         # Generate multiple keys
         for i in range(5):
             label = f"stateful-cycle-{i}"
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
-                256,
-                attrs={CKA_LABEL: label, CKA_TOKEN: False},
-            )
+            key = _gen_stateful_aes_key(rs, attrs={CKA_LABEL: label, CKA_TOKEN: False})
             keys.append(key)
             labels.append(label)
 
@@ -129,10 +144,8 @@ def test_object_count_consistency(p11_raw_session: Any) -> None:
     # Create 3 keys with unique labels
     created: list[int] = []
     for i in range(3):
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
+        key = _gen_stateful_aes_key(
+            rs,
             attrs={CKA_LABEL: f"{label_prefix}{i}", CKA_TOKEN: False},
         )
         created.append(key)

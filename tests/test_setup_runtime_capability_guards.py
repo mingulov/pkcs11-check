@@ -90,6 +90,44 @@ def test_stateful_xfail_when_advertised_aes_keygen_rejects_runtime(
         test_stateful.test_object_count_consistency(rs)
 
 
+def test_stateful_uses_operational_aes128_keygen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter([1, 2, 3])
+    find_results = iter([[1], [2], [3], [], [1], [3]])
+
+    def _gen_aes128_key(*_args: Any, bits: int = 256, **_kwargs: Any) -> int:
+        if bits != 128:
+            raise CkrAssertionError(
+                "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+                int(CKR_FUNCTION_NOT_SUPPORTED),
+            )
+        return next(handles)
+
+    monkeypatch.setattr(test_stateful, "require_operational_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_stateful, "gen_aes_key", _gen_aes128_key)
+    monkeypatch.setattr(
+        test_stateful,
+        "find_objects",
+        lambda *_args, **_kwargs: next(find_results),
+    )
+    monkeypatch.setattr(test_stateful, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    test_stateful.test_object_count_consistency(rs)
+
+
+def test_stateful_direct_keygen_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_stateful, "require_operational_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_stateful, "gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="stateful AES key generation"):
+        test_stateful.test_object_count_consistency(rs)
+
+
 def test_object_size_xfail_when_advertised_aes_keygen_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

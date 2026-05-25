@@ -457,12 +457,23 @@ The following paths were tightened after inspecting the all-fail artifacts:
   tampered-signature rejects use the shared signature policy. Known-answer tests
   skip only when their setup requires importing a private-key form that the
   provider rejects before any sign operation is reached.
+- **Mechanism-driven multipart coverage**: multipart encrypt/decrypt, digest,
+  sign, and verify now use the same advertised-but-not-operational split.
+  Explicit CKR runtime rejects from the PKCS#11 operation become xfail findings,
+  while ciphertext, plaintext, digest, signature, crash, and timeout mismatches
+  remain failures.
+- **Stateful AES lifecycle setup**: stateful lifecycle tests now use AES-128 for
+  setup keys, matching the operational AES keygen probe. These tests are about
+  session/object lifecycle, not AES-256 support. If advertised AES setup still
+  rejects during the lifecycle path, the specific CKR is reported as an xfail
+  setup finding instead of a raw setup failure.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
 the `CKA_PRIVATE=False` data-object visibility probe still fails during data
-object creation on TPM2, and the low-level raw CKR subprocess crash probes
-still report process-level failures. Those should remain findings unless a
-narrower provider configuration explanation is found.
+object creation on TPM2, AES-CTS variant detection still fails when a provider
+advertises `CKM_AES_CTS` but no CS variant can be probed, and the low-level raw
+CKR subprocess crash probes still report process-level failures. Those should
+remain findings unless a narrower provider configuration explanation is found.
 
 ## Provider-Specific Notes
 
