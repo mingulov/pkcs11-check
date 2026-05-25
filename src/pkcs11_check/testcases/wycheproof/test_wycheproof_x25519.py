@@ -193,3 +193,8 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
 
     if result == "valid" and shared is not None:
         assert shared == shared_expected
+    if result == "invalid" and shared is not None and len(public_bytes) != key_size:
+        pytest.fail(
+            f"Invalid X25519/X448 vector {vec_id} derived with "
+            f"{len(public_bytes)}-byte public key"
+        )
