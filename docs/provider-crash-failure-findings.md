@@ -776,6 +776,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   trying the next size. Old `CKR_OPERATION_ACTIVE` rows in that test can be
   harness contamination. The same test now fails if a non-zero
   non-block-aligned AES-ECB plaintext is accepted.
+- **Padding-oracle decrypt-state cleanup**: RSA and AES padding-oracle probes
+  now abort decrypt state after expected invalid-ciphertext rejects before
+  sending the next probe. Old `CKR_OPERATION_ACTIVE` rows in these tests can
+  be harness contamination. Distinct decrypt outcomes, accepted corrupted
+  ciphertext, timing gaps, provider crashes, and subprocess signals remain
+  hard security findings.
 - **Crash reporting policy**: provider subprocess crashes must fail with the
   signal preserved, not become `pytest.xfail`. Dual-function raw probes and
   `C_SessionCancel` crash branches now report hard failures, and a static
