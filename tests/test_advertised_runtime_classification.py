@@ -28,6 +28,10 @@ _RUNTIME_SKIP_PATTERNS = {
         "CKM_KIP_DERIVE rejected",
     ),
     Path("src/pkcs11_check/testcases/test_pbe.py"): ("not operational",),
+    Path("src/pkcs11_check/testcases/test_hkdf_extended.py"): (
+        "CKM_HKDF_KEY_GEN with key_type=",
+        "CKM_HKDF_KEY_GEN not operational with any key type",
+    ),
 }
 
 

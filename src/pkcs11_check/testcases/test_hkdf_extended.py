@@ -21,6 +21,7 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     read_attributes,
 )
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_CLASS,
@@ -39,14 +40,19 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -61,15 +67,22 @@ _DERIVE_ERROR_RVS = {
 
 # Keygen error RVs
 _KEYGEN_ERROR_RVS = {
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_TEMPLATE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 }
 
 
-def _gen_hkdf_key(rs: Any, key_type: int, bits: int = 256) -> int | None:
-    """Generate a key via CKM_HKDF_KEY_GEN. Returns handle or None on error."""
+def _gen_hkdf_key(rs: Any, key_type: int, bits: int = 256) -> int:
+    """Generate a key via CKM_HKDF_KEY_GEN."""
     from ctypes import byref
 
     from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
@@ -86,10 +99,7 @@ def _gen_hkdf_key(rs: Any, key_type: int, bits: int = 256) -> int | None:
     mech = mech_simple(CKM_HKDF_KEY_GEN)
     key_h = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
-    if rv != CKR_OK:
-        if rv in _KEYGEN_ERROR_RVS:
-            return None
-        return None
+    expect_rv(rv, CKR_OK, context="CKM_HKDF_KEY_GEN C_GenerateKey")
     return key_h.value
 
 
@@ -186,9 +196,15 @@ class TestHKDFKeyGen:
         if not rs.has_mechanism("HKDF_KEY_GEN"):
             pytest.skip("CKM_HKDF_KEY_GEN not supported")
 
-        handle = _gen_hkdf_key(rs, key_type, 256)
-        if handle is None:
-            pytest.skip(f"CKM_HKDF_KEY_GEN with key_type={key_type:#x} not supported")
+        handle = 0
+        try:
+            handle = _gen_hkdf_key(rs, key_type, 256)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _KEYGEN_ERROR_RVS,
+                f"CKM_HKDF_KEY_GEN advertised but key_type={key_type:#x} keygen rejected",
+            )
         try:
             assert handle != 0
             attrs = read_attributes(
@@ -213,13 +229,21 @@ class TestHKDFKeyGen:
             pytest.skip("CKM_HKDF_DERIVE not supported")
 
         # Try CKK_HKDF first, then CKK_GENERIC_SECRET
-        base_key = None
+        base_key: int | None = None
+        rejects: list[str] = []
         for kt in (CKK_HKDF, CKK_GENERIC_SECRET):
-            base_key = _gen_hkdf_key(rs, kt, 256)
-            if base_key is not None:
+            try:
+                base_key = _gen_hkdf_key(rs, kt, 256)
                 break
+            except AssertionError as exc:
+                if not is_known_error(exc, _KEYGEN_ERROR_RVS):
+                    raise
+                rejects.append(str(exc))
         if base_key is None:
-            pytest.skip("CKM_HKDF_KEY_GEN not operational with any key type")
+            pytest.xfail(
+                "CKM_HKDF_KEY_GEN advertised but no tested key type is operational: "
+                + "; ".join(rejects)
+            )
 
         derived = 0
         try:

@@ -242,6 +242,14 @@ rejections into `None` followed by a skip. After a provider advertises a PBE or
 PBKDF2 mechanism, specific CKR rejects now become xfail findings with the
 returned CKR named in the reason; missing mechanisms still skip normally.
 
+### Follow-Up: HKDF Key-Generation Runtime Rejections
+
+`CKM_HKDF_KEY_GEN` no longer returns `None` for every non-OK `C_GenerateKey`
+result. Basic key-generation rejects now xfail for specific CKRs, unexpected
+CKRs fail, and the derive-usability test can still try both `CKK_HKDF` and
+`CKK_GENERIC_SECRET` before xfail-reporting that no tested key type was
+operational.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
