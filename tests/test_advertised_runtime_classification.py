@@ -199,6 +199,22 @@ def test_acvp_capability_skips_do_not_accept_runtime_failure_ckrs() -> None:
     assert offenders == []
 
 
+def test_acvp_ecdh_uses_structured_ckr_checks() -> None:
+    """ACVP ECDH capability and runtime guards should match CKR constants."""
+    path = Path("src/pkcs11_check/testcases/acvp/test_acvp_ecdh.py")
+    tree = ast.parse(path.read_text())
+
+    offenders = [
+        f"{path}:{node.lineno}: {node.value}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("CKR_")
+    ]
+
+    assert offenders == []
+
+
 def test_wycheproof_ec_import_guards_use_structured_ckr_checks() -> None:
     """Large EC Wycheproof import probes should not parse CKR names from text."""
     paths = (

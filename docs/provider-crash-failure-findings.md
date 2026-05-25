@@ -35,6 +35,22 @@ These counts are artifact-derived evidence, not root-cause proof. One provider
 bug can produce many vector failures, and one broad vector family can dominate
 a provider's failed count.
 
+Result wording in the article should keep these categories separate:
+
+- **Clean pass**: the provider produced the expected cryptographic result and
+  the PKCS#11 return code matched the test's spec expectation.
+- **Known deviation / xfail**: the provider reached a meaningful security
+  outcome but used a non-conformant or non-specific CKR, or advertised a
+  mechanism that is rejected at runtime. For example, Kryoptic's documented
+  `CKR_DEVICE_ERROR` on invalid-signature verification is not a clean pass; it
+  is evidence that tampering was rejected with a non-spec return code.
+- **Skip**: the test could not apply because a mechanism was absent, optional
+  data was unavailable, or PKCS#11 has no discovery surface for a narrower
+  capability such as a curve or parameter set.
+- **Failure/crash/timeout**: unclassified wrong results, wrong CKRs, aborts,
+  signals, hangs, or isolation-runner crashes. These remain provider or harness
+  findings until root-caused.
+
 ## Runner-Level Crashes
 
 These are crashes counted by the provider summary itself.
