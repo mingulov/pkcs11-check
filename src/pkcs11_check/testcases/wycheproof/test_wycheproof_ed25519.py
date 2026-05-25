@@ -16,7 +16,16 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKK_EC_EDWARDS,
     CKM_EDDSA,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["EDDSA"]
@@ -26,6 +35,20 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 # Module-level cache of Edwards curve OIDs that failed C_CreateObject with a domain/curve error.
 # Keyed by OID bytes; avoids redundant probe calls for unsupported Edwards curves.
 _UNSUPPORTED_CURVE_OIDS: set[bytes] = set()
+
+_CURVE_UNSUPPORTED_CKRS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
+
+_EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
+    CKR_KEY_SIZE_RANGE,
+)
 
 
 def _load_ed25519_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -85,16 +108,12 @@ def test_ed25519_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, An
             attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        if any(
-            name in exc_msg
-            for name in (
-                "CKR_CURVE_NOT_SUPPORTED",
-                "CKR_DOMAIN_PARAMS_INVALID",
-            )
-        ):
+        if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             _UNSUPPORTED_CURVE_OIDS.add(ed25519_oid)
-        pytest.skip(f"Cannot import Ed25519 public key: {exc_msg}")
+            pytest.skip(f"Cannot import Ed25519 public key: {exc}")
+        if is_known_error(exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
+            pytest.skip(f"Cannot import Ed25519 public key: {exc}")
+        raise
 
     try:
         verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, msg, sig)
@@ -167,16 +186,12 @@ def test_ed448_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
             attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        if any(
-            name in exc_msg
-            for name in (
-                "CKR_CURVE_NOT_SUPPORTED",
-                "CKR_DOMAIN_PARAMS_INVALID",
-            )
-        ):
+        if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             _UNSUPPORTED_CURVE_OIDS.add(ed448_oid)
-        pytest.skip(f"Cannot import Ed448 public key: {exc_msg}")
+            pytest.skip(f"Cannot import Ed448 public key: {exc}")
+        if is_known_error(exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
+            pytest.skip(f"Cannot import Ed448 public key: {exc}")
+        raise
 
     try:
         verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, msg, sig)

@@ -306,6 +306,10 @@ The X25519/X448 guard received the same structured CKR treatment. Invalid JWK
 vectors whose public key cannot be decoded now count as accepted invalid-vector
 rejections instead of provider capability skips.
 
+Ed25519/Ed448 import guards now also use exact CKR constants for Edwards curve
+and public-key import rejects. Signature verification failures after a key was
+successfully imported remain failures, not skips.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
