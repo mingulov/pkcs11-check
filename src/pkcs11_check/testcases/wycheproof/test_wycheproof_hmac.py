@@ -210,6 +210,8 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
         truncated = mac[:tag_size]
         if result == "valid":
             assert truncated == tag_expected
+        elif result == "invalid" and truncated == tag_expected:
+            pytest.fail(f"Invalid HMAC tag {vec_id} accepted by module")
     except AssertionError as exc:
         if result == "valid":
             pytest.fail(f"HMAC failed for {vec_id}: {exc}")

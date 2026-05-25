@@ -354,6 +354,19 @@ def test_wycheproof_rsa_hmac_pqc_guards_use_structured_ckr_checks() -> None:
     assert offenders == []
 
 
+def test_wycheproof_hmac_invalid_tags_are_reported() -> None:
+    """Invalid HMAC vectors must fail if the module produces the supplied tag."""
+    paths = (
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_hmac.py"),
+    )
+
+    for path in paths:
+        source = path.read_text()
+        assert "Invalid HMAC tag" in source
+        assert "truncated == tag_expected" in source
+
+
 def test_stateful_signature_guards_use_structured_ckr_checks() -> None:
     """Stateful signature guards should not parse CKR names from text."""
     path = Path("src/pkcs11_check/testcases/test_stateful_sigs.py")

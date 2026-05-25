@@ -236,6 +236,8 @@ class TestHMACSHA256Wycheproof:
             truncated = mac[:tag_size]
             if result == "valid":
                 assert truncated == tag_expected
+            elif result == "invalid" and truncated == tag_expected:
+                pytest.fail(f"Invalid HMAC tag tc{vec['tcId']} accepted by module")
         except AssertionError as exc:
             if result == "valid":
                 exc_msg = str(exc)
