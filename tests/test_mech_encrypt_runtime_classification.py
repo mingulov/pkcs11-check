@@ -11,6 +11,7 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKM_AES_CBC,
+    CKM_AES_GCM,
     CKR_GENERAL_ERROR,
     CKR_KEY_TYPE_INCONSISTENT,
 )
@@ -20,10 +21,11 @@ from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig, ParamRecipe
 
 
-def _entry() -> MechEntry:
+def _entry(*, auth_tag_included: bool = False) -> MechEntry:
+    mech_id = int(CKM_AES_GCM) if auth_tag_included else int(CKM_AES_CBC)
     return MechEntry(
-        mech_id=int(CKM_AES_CBC),
-        mech_name="AES_CBC",
+        mech_id=mech_id,
+        mech_name="AES_GCM" if auth_tag_included else "AES_CBC",
         flags=0,
         min_key_size=16,
         max_key_size=32,
@@ -31,6 +33,7 @@ def _entry() -> MechEntry:
             key_type=int(CKK_AES),
             vector_file="dummy.json",
             param_recipe=ParamRecipe("iv"),
+            auth_tag_included=auth_tag_included,
         ),
     )
 
@@ -67,6 +70,46 @@ def test_mechanism_kat_encrypt_general_error_is_xfail(
         match="advertised but KAT encrypt is not operational",
     ):
         mech_encrypt.TestMechEncryptKAT().test_kat_vector(rs, _entry())
+
+
+def test_mechanism_kat_aead_encrypt_uses_tag_overhead_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AEAD KATs use the same NSS-safe output sizing as roundtrip tests."""
+    seen_kwargs: dict[str, Any] = {}
+    expected = b"\x22" * 16 + b"\x33" * 16
+
+    def _encrypt(*_args: Any, **kwargs: Any) -> bytes:
+        seen_kwargs.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(
+        mechanism_vectors,
+        "load_positive_vectors",
+        lambda _path: [
+            {
+                "id": "kat-1",
+                "key_hex": "00" * 16,
+                "plaintext_hex": "11" * 16,
+                "ciphertext_hex": "22" * 16,
+                "tag_hex": "33" * 16,
+            }
+        ],
+    )
+    monkeypatch.setattr(mech_encrypt, "build_params_from_vector", lambda *_args: None)
+    monkeypatch.setattr(mech_encrypt, "import_secret_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(mech_encrypt, "encrypt_single", _encrypt)
+    monkeypatch.setattr(mech_encrypt, "destroy_quietly", lambda *_args: None)
+
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    mech_encrypt.TestMechEncryptKAT().test_kat_vector(
+        rs,
+        _entry(auth_tag_included=True),
+    )
+
+    assert seen_kwargs["output_overhead"] == 16
+    assert seen_kwargs["retry_on_buffer_too_small"] is True
 
 
 def test_mechanism_roundtrip_key_type_inconsistent_is_xfail(

@@ -168,6 +168,7 @@ class TestMechEncryptKAT:
                 if params == "SKIP":
                     continue
                 try:
+                    overhead = 16 if config.auth_tag_included else 0
                     ct = encrypt_single(
                         rs.raw,
                         rs.sh,
@@ -175,6 +176,8 @@ class TestMechEncryptKAT:
                         CKM(entry.mech_id),
                         bytes.fromhex(vec["plaintext_hex"]),
                         mech_param=params,
+                        output_overhead=overhead,
+                        retry_on_buffer_too_small=config.auth_tag_included,
                     )
                 except AssertionError as exc:
                     xfail_if_known_ckr(
