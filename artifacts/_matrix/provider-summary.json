@@ -1,0 +1,346 @@
+{
+  "generated_at": "2026-05-25T03:23:51Z",
+  "generated_from": "current artifacts/results.json and artifacts/qryptotoken/build-status.json",
+  "records": [
+    {
+      "artifact": "artifacts/softhsm2/results.json",
+      "source": "SoftHSM2 2.7.0, OpenSSL 3.6.2",
+      "status": "full",
+      "summary": {
+        "crashed": 0,
+        "error": 0,
+        "failed": 2609,
+        "passed": 60181,
+        "skipped": 19316,
+        "timeout": 0,
+        "total": 82147,
+        "xfailed": 41,
+        "xpassed": 0
+      },
+      "target": "softhsm2"
+    },
+    {
+      "artifact": "artifacts/softhsm2-generated-iv/results.json",
+      "source": "SoftHSM2 2.7.0 + local generated-IV patch",
+      "status": "full",
+      "summary": {
+        "crashed": 0,
+        "error": 0,
+        "failed": 2607,
+        "passed": 60185,
+        "skipped": 19314,
+        "timeout": 0,
+        "total": 82147,
+        "xfailed": 41,
+        "xpassed": 0
+      },
+      "target": "softhsm2-generated-iv"
+    },
+    {
+      "artifact": "artifacts/softhsm2-main/results.json",
+      "source": "SoftHSM2 main, OpenSSL 4.0.0",
+      "status": "full",
+      "summary": {
+        "crashed": 0,
+        "error": 0,
+        "failed": 2702,
+        "passed": 61538,
+        "skipped": 18645,
+        "timeout": 0,
+        "total": 82926,
+        "xfailed": 41,
+        "xpassed": 0
+      },
+      "target": "softhsm2-main"
+    },
+    {
+      "artifact": "artifacts/kryoptic/results.json",
+      "source": "Kryoptic v1.5.0, OpenSSL 4.0.0",
+      "status": "full",
+      "summary": {
+        "crashed": 0,
+        "error": 0,
+        "failed": 2853,
+        "passed": 67487,
+        "skipped": 33378,
+        "timeout": 0,
+        "total": 103789,
+        "xfailed": 71,
+        "xpassed": 0
+      },
+      "target": "kryoptic"
+    },
+    {
+      "artifact": "artifacts/kryoptic-main/results.json",
+      "source": "Kryoptic main, OpenSSL 4.0.0",
+      "status": "full",
+      "summary": {
+        "crashed": 0,
+        "error": 0,
+        "failed": 2839,
+        "passed": 67503,
+        "skipped": 33376,
+        "timeout": 0,
+        "total": 103789,
+        "xfailed": 71,
+        "xpassed": 0
+      },
+      "target": "kryoptic-main"
+    },
+    {
+      "artifact": "artifacts/kryoptic-fips/results.json",
+      "source": "Kryoptic FIPS/PQC + custom OpenSSL branch",
+      "status": "full diagnostic",
+      "summary": {
+        "crashed": 12,
+        "error": 0,
+        "failed": 4733,
+        "passed": 53404,
+        "skipped": 29490,
+        "timeout": 0,
+        "total": 87712,
+        "xfailed": 73,
+        "xpassed": 0
+      },
+      "target": "kryoptic-fips"
+    },
+    {
+      "artifact": "artifacts/nss/results.json",
+      "source": "Fedora NSS softoken packages",
+      "status": "full",
+      "summary": {
+        "crashed": 3,
+        "error": 0,
+        "failed": 2111,
+        "passed": 48928,
+        "skipped": 34372,
+        "timeout": 0,
+        "total": 85515,
+        "xfailed": 101,
+        "xpassed": 0
+      },
+      "target": "nss"
+    },
+    {
+      "artifact": "artifacts/nss-pqc/results.json",
+      "source": "NSS/NSPR source tips",
+      "status": "full",
+      "summary": {
+        "crashed": 4,
+        "error": 0,
+        "failed": 2019,
+        "passed": 47548,
+        "skipped": 35147,
+        "timeout": 0,
+        "total": 84819,
+        "xfailed": 101,
+        "xpassed": 0
+      },
+      "target": "nss-pqc"
+    },
+    {
+      "artifact": "artifacts/nss-main/results.json",
+      "source": "NSS/NSPR source tips",
+      "status": "full",
+      "summary": {
+        "crashed": 4,
+        "error": 0,
+        "failed": 2018,
+        "passed": 47549,
+        "skipped": 35147,
+        "timeout": 0,
+        "total": 84819,
+        "xfailed": 101,
+        "xpassed": 0
+      },
+      "target": "nss-main"
+    },
+    {
+      "artifact": "artifacts/opencryptoki/results.json",
+      "source": "OpenCryptoki v3.27.0, OpenSSL 4.0.0",
+      "status": "full",
+      "summary": {
+        "crashed": 0,
+        "error": 0,
+        "failed": 2593,
+        "passed": 78656,
+        "skipped": 8593,
+        "timeout": 0,
+        "total": 89899,
+        "xfailed": 57,
+        "xpassed": 0
+      },
+      "target": "opencryptoki"
+    },
+    {
+      "artifact": "artifacts/opencryptoki-master/results.json",
+      "source": "OpenCryptoki master, OpenSSL 4.0.0",
+      "status": "full",
+      "summary": {
+        "crashed": 0,
+        "error": 0,
+        "failed": 2589,
+        "passed": 78657,
+        "skipped": 8595,
+        "timeout": 0,
+        "total": 89899,
+        "xfailed": 58,
+        "xpassed": 0
+      },
+      "target": "opencryptoki-master"
+    },
+    {
+      "artifact": "artifacts/tpm2-source/results.json",
+      "source": "upstream tpm2-pkcs11 1.10.0",
+      "status": "full",
+      "summary": {
+        "crashed": 0,
+        "error": 0,
+        "failed": 6825,
+        "passed": 9847,
+        "skipped": 64696,
+        "timeout": 0,
+        "total": 81400,
+        "xfailed": 32,
+        "xpassed": 0
+      },
+      "target": "tpm2-source"
+    },
+    {
+      "artifact": "artifacts/tpm2-fedora-package-20260525/results.json",
+      "source": "Fedora tpm2-pkcs11 1.9.1 package",
+      "status": "archived full",
+      "summary": {
+        "crashed": 0,
+        "error": 851,
+        "failed": 5067,
+        "passed": 8433,
+        "skipped": 49727,
+        "timeout": 0,
+        "total": 64084,
+        "xfailed": 6,
+        "xpassed": 0
+      },
+      "target": "tpm2-fedora-package-20260525"
+    },
+    {
+      "artifact": "artifacts/pkcs11-mock/results.json",
+      "source": "pkcs11-mock v2.0.0",
+      "status": "full mock baseline",
+      "summary": {
+        "crashed": 0,
+        "error": 0,
+        "failed": 3546,
+        "passed": 2560,
+        "skipped": 26517,
+        "timeout": 0,
+        "total": 32633,
+        "xfailed": 10,
+        "xpassed": 0
+      },
+      "target": "pkcs11-mock"
+    },
+    {
+      "components": [
+        {
+          "artifact": "artifacts/_focused/bouncyhsm-ccm/results.json",
+          "name": "ccm",
+          "summary": {
+            "crashed": 0,
+            "error": 0,
+            "failed": 7370,
+            "passed": 1028,
+            "skipped": 0,
+            "timeout": 0,
+            "total": 8398,
+            "xfailed": 0,
+            "xpassed": 0
+          }
+        },
+        {
+          "artifact": "artifacts/_focused/bouncyhsm-cfb1/results.json",
+          "name": "cfb1",
+          "summary": {
+            "crashed": 0,
+            "error": 0,
+            "failed": 50,
+            "passed": 2088,
+            "skipped": 0,
+            "timeout": 0,
+            "total": 2138,
+            "xfailed": 0,
+            "xpassed": 0
+          }
+        },
+        {
+          "artifact": "artifacts/bouncyhsm-cfb128-nonmultiblock/results.json",
+          "name": "cfb128_nonmultiblock",
+          "summary": {
+            "crashed": 0,
+            "error": 0,
+            "failed": 0,
+            "passed": 2138,
+            "skipped": 0,
+            "timeout": 0,
+            "total": 2138,
+            "xfailed": 0,
+            "xpassed": 0
+          }
+        },
+        {
+          "artifact": "artifacts/bouncyhsm-cfb128-multiblock/results.json",
+          "name": "cfb128_multiblock",
+          "summary": {
+            "crashed": 0,
+            "error": 0,
+            "failed": 6,
+            "passed": 0,
+            "skipped": 0,
+            "timeout": 0,
+            "total": 6,
+            "xfailed": 0,
+            "xpassed": 0
+          }
+        },
+        {
+          "artifact": "artifacts/bouncyhsm-acvp-aes-rest/results.json",
+          "name": "acvp_aes_rest",
+          "summary": {
+            "crashed": 1,
+            "error": 0,
+            "failed": 10,
+            "passed": 4357,
+            "skipped": 7320,
+            "timeout": 0,
+            "total": 11718,
+            "xfailed": 30,
+            "xpassed": 0
+          }
+        }
+      ],
+      "notes": "CCM, CFB1, CFB128 split, and remaining ACVP AES reruns; CFB8 has one confirmed segfault plus pytest-timeout failures, CFB128/OFB multiblock failures are pytest-timeout failures inside provider calls, wrap/KWP/XTS are unsupported.",
+      "source": "BouncyHSM v2.1.0",
+      "status": "partial focused AES; not full-suite statistics",
+      "summary": {
+        "crashed": 1,
+        "error": 0,
+        "failed": 7436,
+        "passed": 9611,
+        "skipped": 7320,
+        "timeout": 0,
+        "total": 24398,
+        "xfailed": 30,
+        "xpassed": 0
+      },
+      "target": "bouncyhsm-focused-aes"
+    },
+    {
+      "artifact": "artifacts/qryptotoken/build-status.json",
+      "detail": "qryptotoken build failed with exit code 101",
+      "revision": "24fae88227d6d04331fb599327db83c24d5ae955",
+      "source": "qryptotoken v0.4.1",
+      "status": "build_failed",
+      "target": "qryptotoken"
+    }
+  ]
+}

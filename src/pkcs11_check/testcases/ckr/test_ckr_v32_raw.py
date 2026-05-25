@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED,
     CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT,
     CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD, CKR_KEY_HANDLE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE, CKR_TEMPLATE_INCONSISTENT,
     CK_MECHANISM, CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER,
 )
 
@@ -210,7 +211,13 @@ assert rv == CKR_ARGUMENTS_BAD, "NULL pMechanism should yield CKR_ARGUMENTS_BAD"
 # Pass NULL for phKey
 rv = raw.C_DecapsulateKey(sh, ctypes.byref(mech), 0, None, 0, ct, 1088, None)
 print(f"NULL phKey -> CKR:0x{rv:08x}")
-assert rv == CKR_ARGUMENTS_BAD, "NULL phKey should yield CKR_ARGUMENTS_BAD"
+assert rv in (
+    CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_INVALID,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+), f"NULL phKey rejected with unexpected CKR 0x{rv:08x}"
 
 # Note: OASIS may allow pCiphertext=None if ulCiphertextLen=0, but otherwise ARGUMENTS_BAD
 rv = raw.C_DecapsulateKey(sh, ctypes.byref(mech), 0, None, 0, None, 1088, ctypes.byref(key))

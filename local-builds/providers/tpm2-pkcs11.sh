@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # tpm2-pkcs11 — TPM 2.0 based PKCS#11 token
-# Latest release: 1.9.2 (system package: 1.9.0)
+# Latest release: 1.10.0
 # Requires: libtss2-dev, tpm2-tools
 # Hardware TPM at /dev/tpm0 preferred; swtpm as fallback.
 
 PROVIDER_NAME="tpm2-pkcs11"
-DEFAULT_BRANCH="1.9.2"
+DEFAULT_BRANCH="1.10.0"
 REPO="https://github.com/tpm2-software/tpm2-pkcs11.git"
 
 build() {

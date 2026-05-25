@@ -30,12 +30,15 @@ services:
   # Versioned releases — stable, reproducible
   # ==========================================================
 
-  # SoftHSM2 2.7.0 (v2.40, OpenSSL)
+  # SoftHSM2 2.7.0 (v2.40, OpenSSL 3.6.2)
   test-softhsm2:
     <<: *common
     build:
       context: ..
-      dockerfile: docker/softhsm2/Dockerfile
+      dockerfile: docker/softhsm2/Dockerfile.main
+      args:
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-3.6.2}"
+        SOFTHSM2_REF: "2.7.0"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2
       PKCS11_CHECK_PIN: "1234"
@@ -45,17 +48,24 @@ services:
     <<: *common
     build:
       context: ..
-      dockerfile: docker/softhsm2/Dockerfile.generated-iv
+      dockerfile: docker/softhsm2/Dockerfile.main
+      args:
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-3.6.2}"
+        SOFTHSM2_REF: "2.7.0"
+        SOFTHSM2_APPLY_GENERATED_IV_PATCH: "1"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-generated-iv
       PKCS11_CHECK_PIN: "1234"
 
-  # Kryoptic v1.5.0 (v3.2, Rust)
+  # Kryoptic v1.5.0 (v3.2, Rust, OpenSSL 4.0.0)
   test-kryoptic:
     <<: *common
     build:
       context: ..
-      dockerfile: docker/kryoptic/Dockerfile
+      dockerfile: docker/kryoptic/Dockerfile.main
+      args:
+        OPENSSL_TAG: "${OPENSSL_TAG:-openssl-4.0.0}"
+        KRYOPTIC_REF: "v1.5.0"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic
       PKCS11_CHECK_PIN: "1234"
@@ -81,12 +91,16 @@ services:
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-pqc
 
-  # OpenCryptoki 3.26 (IBM, v3.0)
+  # OpenCryptoki 3.27.0 (IBM, v3.0, OpenSSL 4.0.0)
   test-opencryptoki:
     <<: *common
     build:
       context: ..
-      dockerfile: docker/opencryptoki/Dockerfile
+      dockerfile: docker/opencryptoki/Dockerfile.master
+      args:
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-4.0.0}"
+        OPENCRYPTOKI_REPO: "https://github.com/opencryptoki/opencryptoki.git"
+        OPENCRYPTOKI_BRANCH: "v3.27.0"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki
       PKCS11_CHECK_PIN: "1234"
@@ -102,7 +116,7 @@ services:
       context: ..
       dockerfile: docker/opencryptoki/Dockerfile.master
       args:
-        OPENSSL_VERSION: "${OPENSSL_VERSION:-3.6.1}"
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-4.0.0}"
         OPENCRYPTOKI_REPO: "${OPENCRYPTOKI_REPO:-https://github.com/opencryptoki/opencryptoki.git}"
         OPENCRYPTOKI_BRANCH: "${OPENCRYPTOKI_BRANCH:-master}"
         OPENCRYPTOKI_PR: "${OPENCRYPTOKI_PR:-}"
@@ -126,20 +140,22 @@ services:
       context: ..
       dockerfile: docker/softhsm2/Dockerfile.main
       args:
-        OPENSSL_VERSION: "3.6.1"
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-4.0.0}"
+        SOFTHSM2_REF: "main"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-main
       PKCS11_CHECK_PIN: "1234"
 
   # Kryoptic main branch (latest dev, default features)
-  # Custom OpenSSL: OPENSSL_TAG=openssl-4.0.0-beta1 bash docker/test.sh kryoptic-main --rebuild
+  # Custom OpenSSL: OPENSSL_TAG=openssl-3.6.2 bash docker/test.sh kryoptic-main --rebuild
   test-kryoptic-main:
     <<: *common
     build:
       context: ..
       dockerfile: docker/kryoptic/Dockerfile.main
       args:
-        OPENSSL_TAG: "${OPENSSL_TAG:-openssl-3.6.1}"
+        OPENSSL_TAG: "${OPENSSL_TAG:-openssl-4.0.0}"
+        KRYOPTIC_REF: "main"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic-main
       PKCS11_CHECK_PIN: "1234"

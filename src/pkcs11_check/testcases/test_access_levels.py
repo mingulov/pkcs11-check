@@ -74,6 +74,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
+    CKR_WRAPPING_KEY_HANDLE_INVALID,
     CKU_CONTEXT_SPECIFIC,
     CKU_SO,
     CKU_USER,
@@ -786,6 +787,7 @@ class TestTrustedAttribute:
                         "CKR_ACTION_PROHIBITED",
                         "CKR_ATTRIBUTE_READ_ONLY",
                         "CKR_USER_NOT_LOGGED_IN",
+                        "CKR_ATTRIBUTE_TYPE_INVALID",
                         "CKR_ATTRIBUTE_VALUE_INVALID",
                     )
                 ):
@@ -883,6 +885,7 @@ class TestTrustedAttribute:
                 CKR_ACTION_PROHIBITED,
                 CKR_KEY_NOT_WRAPPABLE,
                 CKR_FUNCTION_FAILED,
+                CKR_WRAPPING_KEY_HANDLE_INVALID,
             ), f"Expected wrap rejection, got {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapper_h)

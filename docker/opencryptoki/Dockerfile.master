@@ -1,10 +1,10 @@
-# OpenCryptoki master - latest development branch (built from source)
+# OpenCryptoki git ref - built from source
 # IBM's PKCS#11 implementation with SWToken backend
 # Uses OpenSSL built from source (master requires legacy provider)
 
 FROM quay.io/fedora/fedora:44 AS builder
 
-ARG OPENSSL_VERSION=3.6.1
+ARG OPENSSL_VERSION=4.0.0
 
 RUN dnf -y install git gcc gcc-c++ make automake autoconf autoconf-archive libtool \
     sqlite-devel trousers-devel libcap-devel openldap-devel \
@@ -105,7 +105,7 @@ RUN chown -R root:pkcs11 /etc/opencryptoki && \
     chmod 640 /etc/opencryptoki/strength.conf /etc/opencryptoki/p11kmip.conf
 
 # Config: SW token at slot 0
-RUN OC_VER=$(cat /tmp/oc_version.txt 2>/dev/null || echo "opencryptoki-3.26") && \
+RUN OC_VER=$(cat /tmp/oc_version.txt 2>/dev/null || echo "opencryptoki-3.27") && \
     printf "version %s\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n" "$OC_VER" \
     > /etc/opencryptoki/opencryptoki.conf && \
     cat /etc/opencryptoki/opencryptoki.conf

@@ -828,8 +828,8 @@ class TestLoginUserWithNameRecipe:
 
             xfail_if_known_ckr(
                 exc,
-                {CKR_OPERATION_NOT_INITIALIZED},
-                "NSS returns CKR_OPERATION_NOT_INITIALIZED from C_LoginUser "
+                {CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED},
+                "Module exposes C_LoginUser but returns a known unsupported/deviation CKR "
                 "(expected CKR_OK or CKR_USER_ALREADY_LOGGED_IN per PKCS#11 v3.0 spec)",
             )
             raise

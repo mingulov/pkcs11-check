@@ -4,7 +4,8 @@
 
 FROM rust:latest AS builder
 
-ARG OPENSSL_TAG="openssl-4.0.0-beta1"
+ARG OPENSSL_TAG="openssl-4.0.0"
+ARG KRYOPTIC_REF="main"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git pkg-config libssl-dev clang make perl \
@@ -20,11 +21,11 @@ RUN if [ -n "$OPENSSL_TAG" ]; then \
         && echo "Built OpenSSL $OPENSSL_TAG"; \
     fi
 
-# Copy and apply patches from pkcs11-check patches directory
+# Copy and apply patches from pkcs11-check patches directory, if any.
 # Bust cache if patches change: 2026-03-30-05
-COPY patches/kryoptic/*.patch /tmp/patches/
+COPY docker/kryoptic/patches/ /tmp/patches/
 
-RUN git clone --depth 1 https://github.com/latchset/kryoptic.git /build/kryoptic
+RUN git clone --depth 1 --branch "$KRYOPTIC_REF" https://github.com/latchset/kryoptic.git /build/kryoptic
 WORKDIR /build/kryoptic
 RUN for p in /tmp/patches/*.patch; do \
         if [ -f "$p" ]; then \
@@ -36,14 +37,14 @@ RUN for p in /tmp/patches/*.patch; do \
 RUN if [ -n "$OPENSSL_TAG" ]; then \
         export PKG_CONFIG_PATH=/opt/openssl/lib/pkgconfig \
         && export OPENSSL_DIR=/opt/openssl \
-        && cargo build --release --features pqc 2>&1 | tail -3; \
+        && cargo build --release --features pqc; \
     else \
-        cargo build --release --features pqc 2>&1 | tail -3; \
+        cargo build --release --features pqc; \
     fi
 
 FROM python:3.14-slim
 
-ARG OPENSSL_TAG="openssl-3.6.1"
+ARG OPENSSL_TAG="openssl-4.0.0"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 git gcc python3-dev libssl-dev opensc \

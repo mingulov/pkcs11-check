@@ -18,7 +18,7 @@ RUN dnf install -y \
 
 # Build pkcs11-mock from source.
 # The project is a single C file compiled to a shared library.
-RUN git clone --depth 1 https://github.com/Pkcs11Interop/pkcs11-mock.git \
+RUN git clone --depth 1 --branch v2.0.0 https://github.com/Pkcs11Interop/pkcs11-mock.git \
         /build/pkcs11-mock && \
     gcc -shared -fPIC -o /usr/lib64/libpkcs11-mock.so \
         /build/pkcs11-mock/src/pkcs11-mock.c \

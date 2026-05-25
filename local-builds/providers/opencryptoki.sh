@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # OpenCryptoki — C PKCS#11 token (v3.0, IBM)
-# Latest release: v3.26.0
+# Latest release: v3.27.0
 # Requires: gcc, automake, autoconf, libtool, libssl-dev, libcap-dev, libldap2-dev
 # NOTE: Needs pkcsslotd daemon running for operation.
 
 PROVIDER_NAME="opencryptoki"
-DEFAULT_BRANCH="v3.26.0"
+DEFAULT_BRANCH="v3.27.0"
 REPO="https://github.com/opencryptoki/opencryptoki.git"
 
 build() {

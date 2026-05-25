@@ -810,7 +810,13 @@ class TestMLKEMNegative:
                 byref(ct_len),
                 byref(handle),
             )
-            # NSS-PQC returns CKR_TEMPLATE_INCOMPLETE for AES key with ML-KEM mechanism.
-            assert rv in (CKR_KEY_TYPE_INCONSISTENT, CKR_MECHANISM_INVALID, CKR_TEMPLATE_INCOMPLETE)
+            # Providers may validate the key's permitted operations before
+            # reporting that the key type is wrong for ML-KEM.
+            assert rv in (
+                CKR_KEY_TYPE_INCONSISTENT,
+                CKR_KEY_FUNCTION_NOT_PERMITTED,
+                CKR_MECHANISM_INVALID,
+                CKR_TEMPLATE_INCOMPLETE,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

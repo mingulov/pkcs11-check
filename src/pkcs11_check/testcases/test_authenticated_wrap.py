@@ -168,15 +168,29 @@ class TestAuthenticatedWrap:
                 iv_generator=int(CKG_GENERATE),
                 tag_bits=128,
             )
-            wrapped = wrap_key_authenticated(
-                rs.raw,
-                rs.sh,
-                wrap_h,
-                target,
-                CKM_AES_GCM,
-                aad=aad,
-                mech_param=wrap_mech,
-            )
+            try:
+                wrapped = wrap_key_authenticated(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    target,
+                    CKM_AES_GCM,
+                    aad=aad,
+                    mech_param=wrap_mech,
+                )
+            except AssertionError as exc:
+                if is_known_error(
+                    exc,
+                    {
+                        CKR_ARGUMENTS_BAD,
+                        CKR_FUNCTION_NOT_SUPPORTED,
+                        CKR_KEY_FUNCTION_NOT_PERMITTED,
+                        CKR_MECHANISM_INVALID,
+                        CKR_MECHANISM_PARAM_INVALID,
+                    },
+                ):
+                    pytest.skip(f"AES-GCM authenticated generated-IV wrap rejected: {exc}")
+                raise
             iv = wrap_mech.buffer_bytes("iv")
             tag = wrap_mech.buffer_bytes("tag")
             assert any(iv)

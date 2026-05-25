@@ -6,13 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git build-essen
     && rm -rf /var/lib/apt/lists/*
 
 COPY patches/bouncyhsm/0001-fix-getattributevalue-rvmethod.patch /tmp/bouncyhsm-patches/
-COPY docker/bouncyhsm/patches/0001-fix-tcp-partial-read-write.patch /tmp/bouncyhsm-patches/
-RUN git clone --depth 1 --branch v2.0.1 https://github.com/harrison314/BouncyHsm.git /build/bouncyhsm
+RUN git clone --depth 1 --branch v2.1.0 https://github.com/harrison314/BouncyHsm.git /build/bouncyhsm
 WORKDIR /build/bouncyhsm
 RUN git apply --ignore-space-change --ignore-whitespace \
         /tmp/bouncyhsm-patches/0001-fix-getattributevalue-rvmethod.patch && \
-    git apply --ignore-space-change --ignore-whitespace \
-        /tmp/bouncyhsm-patches/0001-fix-tcp-partial-read-write.patch && \
     dotnet publish src/Src/BouncyHsm/BouncyHsm.csproj -c Release -o /app/server \
         >/tmp/dotnet-publish.log && \
     tail -3 /tmp/dotnet-publish.log && \

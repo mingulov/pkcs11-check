@@ -9,6 +9,7 @@ if [[ -z "$module" || ! -f "$module" ]]; then
         mkdir -p "$artifact_dir"
         revision="$(cat /tmp/qryptotoken_revision 2>/dev/null || true)"
         build_error="$(cat /tmp/qryptotoken_build_failed 2>/dev/null || true)"
+        cp /tmp/qryptotoken_build.log "$artifact_dir/build.log" 2>/dev/null || true
         cat >"$artifact_dir/build-status.json" <<EOF
 {
   "target": "qryptotoken",
@@ -18,7 +19,7 @@ if [[ -z "$module" || ! -f "$module" ]]; then
 }
 EOF
     fi
-    exit 0
+    exit 1
 fi
 
 echo "qryptotoken module: $module"

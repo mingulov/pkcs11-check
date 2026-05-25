@@ -31,8 +31,10 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKM_AES_KEY_GEN,
     CKR_ARGUMENTS_BAD,
+    CKR_KEY_HANDLE_INVALID,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
 )
@@ -200,8 +202,15 @@ print("OK")
 out_len = ctypes.c_ulong(256)
 rv = raw.C_WrapKey(sh, null_pointer().pointer, 0, 0, None, ctypes.byref(out_len))
 print(f"CKR:0x{rv:08x}")
-# ARGUMENTS_BAD or KEY_HANDLE_INVALID - both acceptable for NULL mechanism
-assert rv in (CKR_ARGUMENTS_BAD, 0x60, 0x70), f"Got 0x{rv:08x}"
+# Providers may validate the NULL mechanism first, or the deliberately invalid
+# zero object handles first.
+assert rv in (
+    CKR_ARGUMENTS_BAD,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
+    CKR_MECHANISM_INVALID,
+), \
+    f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
@@ -217,8 +226,13 @@ print("OK")
 key = ctypes.c_ulong(0)
 rv = raw.C_DeriveKey(sh, null_pointer().pointer, 0, None, 0, ctypes.byref(key))
 print(f"CKR:0x{rv:08x}")
-# 0x60 = CKR_KEY_HANDLE_INVALID, 0x70 = CKR_MECHANISM_INVALID
-assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0x60, 0x70), \
+assert rv in (
+    CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
+), \
     f"Got 0x{rv:08x}"
 print("OK")
 """,

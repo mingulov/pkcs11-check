@@ -7,6 +7,7 @@
 # fails the CMD exits with a clear message rather than a hard error.
 
 FROM fedora:44
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Rust toolchain via rustup (Fedora rustc may be too old for this crate)
 RUN dnf install -y \
@@ -31,7 +32,7 @@ RUN git clone --depth 1 --branch "$QRYPTOTOKEN_REF" \
         https://github.com/QUBIP/qryptotoken.git /build/qryptotoken && \
     cd /build/qryptotoken && \
     git rev-parse HEAD > /tmp/qryptotoken_revision && \
-    if cargo build --release 2>&1; then \
+    if cargo build --release 2>&1 | tee /tmp/qryptotoken_build.log; then \
       find /build/qryptotoken/target/release -name "*.so" | head -5; \
     else \
       rc=$?; \

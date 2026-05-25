@@ -16,11 +16,14 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
+    get_mechanism_info,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_TOKEN,
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
     CKM_AES_CBC,
     CKM_AES_CTS,
     CKR_DEVICE_ERROR,
@@ -78,6 +81,16 @@ def load_cbc_cs_vectors(
 # ---------------------------------------------------------------------------
 # CS variant auto-detection
 # ---------------------------------------------------------------------------
+
+
+def skip_unless_cts_encrypt_decrypt(rs: Any) -> None:
+    """Skip CTS vector probes unless C_GetMechanismInfo advertises enc/dec."""
+    if not rs.has_mechanism("AES_CTS"):
+        pytest.skip("CKM_AES_CTS not supported by module")
+    info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_CTS)
+    required = int(CKF_ENCRYPT) | int(CKF_DECRYPT)
+    if int(info["flags"]) & required != required:
+        pytest.skip("CKM_AES_CTS does not advertise CKF_ENCRYPT|CKF_DECRYPT")
 
 
 def _detect_cts_variant(rs: Any) -> str | None:
@@ -229,8 +242,7 @@ def get_detected_variant(rs: Any) -> str | None:
 
 def skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
     """Skip test if module's CTS variant doesn't match expected_cs."""
-    if not rs.has_mechanism("AES_CTS"):
-        pytest.skip("CKM_AES_CTS not supported by module")
+    skip_unless_cts_encrypt_decrypt(rs)
     detected = get_detected_variant(rs)
     if detected is None:
         pytest.skip("CTS variant detection failed (module errors on CTS encrypt)")
