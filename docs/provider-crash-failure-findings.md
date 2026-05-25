@@ -457,6 +457,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   now use the digest size for the selected mechanism, so SHA3-224 no longer
   requests an invalid 32-byte output. Explicit `C_DeriveKey` CKR rejects are
   still reported as xfail advertised-but-not-operational evidence.
+- **ACVP EdDSA key verification**: valid EdDSA public-key import rejected with
+  explicit CKR values is now xfail evidence for an advertised EDDSA path that
+  cannot import usable ACVP public keys. Accepting an invalid EdDSA key remains
+  a hard failure because that is the actual negative key-verification result.
 - **Mechanism-driven encryption**: roundtrip setup now skips when the required
   keygen mechanism is absent and xfails when advertised key generation rejects
   at runtime. KAT encrypt/decrypt paths now xfail explicit runtime CKRs but

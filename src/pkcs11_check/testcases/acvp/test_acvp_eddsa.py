@@ -36,6 +36,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
     CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
@@ -55,7 +56,7 @@ from pkcs11_check.testcases.acvp._eddsa_helpers import (
     load_eddsa_sigver_vectors,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -79,6 +80,12 @@ _UNUSABLE_KEY_RVS = (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_KEY_SIZE_RANGE,
     CKR_ATTRIBUTE_VALUE_INVALID,
+)
+
+_KEYVER_IMPORT_REJECT_RVS = (
+    *_CURVE_UNSUPPORTED_RVS,
+    CKR_FUNCTION_FAILED,
+    CKR_KEY_TYPE_INCONSISTENT,
 )
 
 _EDDSA_PARAM_XFAIL_MSG = (
@@ -160,7 +167,11 @@ class TestEdDsaKeyVer:
                 )
             except AssertionError as e:
                 if vec["expected_pass"]:
-                    pytest.fail(f"{vec_id}: Module rejected valid key: {e}")
+                    xfail_if_known_ckr(
+                        e,
+                        _KEYVER_IMPORT_REJECT_RVS,
+                        f"{vec_id}: valid EdDSA key import rejected by advertised EDDSA path",
+                    )
                 return
 
             try:
@@ -189,9 +200,7 @@ class TestEdDsaKeyVer:
 
 
 @pytest.mark.parametrize("vec_id,vec", _SIGVER_VECTORS, ids=[v[0] for v in _SIGVER_VECTORS])
-def test_acvp_eddsa_sigver(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """EdDSA signature verification from NIST ACVP SigVer vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("EDDSA"):
