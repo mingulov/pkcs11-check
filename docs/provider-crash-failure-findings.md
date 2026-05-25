@@ -293,6 +293,15 @@ names out of assertion text. Key-size and template capability rejects still
 skip, while `CKR_MECHANISM_INVALID` after `CKM_RSA_PKCS_KEY_PAIR_GEN` was
 advertised becomes xfail evidence.
 
+### Follow-Up: Wycheproof EC Import Buckets
+
+The largest remaining skip buckets are curve/import capability probes in
+Wycheproof ECDSA, ECDH, and X25519/X448. The ECDSA and ECDH guards now match
+specific CKR constants instead of parsing CKR names from exception text, and
+ECDH no longer skips arbitrary `AssertionError`s from private-key import. These
+remain capability skips because PKCS#11 does not expose a complete per-curve
+support list through mechanism discovery.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

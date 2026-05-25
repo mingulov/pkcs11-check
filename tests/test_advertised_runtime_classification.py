@@ -106,3 +106,23 @@ def test_acvp_rsa_keygen_uses_structured_ckr_checks() -> None:
     ]
 
     assert offenders == []
+
+
+def test_wycheproof_ec_import_guards_use_structured_ckr_checks() -> None:
+    """Large EC Wycheproof import probes should not parse CKR names from text."""
+    paths = (
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdh.py"),
+    )
+    offenders: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        offenders.extend(
+            f"{path}:{node.lineno}: {node.value}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith("CKR_")
+        )
+
+    assert offenders == []

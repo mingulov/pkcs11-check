@@ -24,7 +24,15 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_ECDSA,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["ECDSA"]
@@ -34,6 +42,19 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 # Module-level cache of curves that failed C_CreateObject with a domain/curve error.
 # Avoids thousands of redundant probe calls when a module does not support a curve.
 _UNSUPPORTED_CURVES: set[str] = set()
+
+_CURVE_UNSUPPORTED_CKRS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
+
+_EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
+)
 
 
 class _ShakeHash:
@@ -215,27 +236,11 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
             attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        if any(
-            name in exc_msg
-            for name in (
-                "CKR_CURVE_NOT_SUPPORTED",
-                "CKR_DOMAIN_PARAMS_INVALID",
-            )
-        ):
+        if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             _UNSUPPORTED_CURVES.add(curve)
-            pytest.skip(f"Cannot import EC key for {curve}: {exc_msg}")
-        if any(
-            name in exc_msg
-            for name in (
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_TEMPLATE_INCONSISTENT",
-                "CKR_MECHANISM_INVALID",
-                "CKR_FUNCTION_FAILED",
-                "CKR_DEVICE_ERROR",
-            )
-        ):
-            pytest.skip(f"Cannot import EC key for {curve}: {exc_msg}")
+            pytest.skip(f"Cannot import EC key for {curve}: {exc}")
+        if is_known_error(exc, _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
+            pytest.skip(f"Cannot import EC key for {curve}: {exc}")
         raise
 
     if is_p1363:
