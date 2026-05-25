@@ -1038,8 +1038,8 @@ Run status:
   unit entered a pathological timeout tail. This preserved the remaining matrix
   run for TPM2, pkcs11-mock, and qryptotoken.
 - No final full-suite `artifacts/bouncyhsm/results.json` exists for this
-  target. Segmented ACVP, core Wycheproof, and security reruns below have their
-  own complete `results.json` files.
+  target. Segmented ACVP, core Wycheproof, security, and general reruns below
+  have their own complete `results.json` files.
 - `test_cfb128.py` was rerun in two bounded parts: all 2,138 non-multiblock
   vectors passed, while all 6 multiblock vectors timed out inside provider
   `C_Encrypt`/`C_Decrypt` calls.
@@ -1055,6 +1055,10 @@ Run status:
 - The security segment completed under the same 20-second per-test timeout:
   267 total, 169 passed, 35 failed, 57 skipped, 3 xfailed, 3 crashed, and no
   timeouts.
+- The general segment completed under the same 20-second per-test timeout with
+  marker filter `not (wycheproof or acvp or cctv or stress or fuzz or slow or
+  security)`: 5,580 total, 2,908 passed, 208 failed, 2,440 skipped, 24 xfailed,
+  no crashes, and no timeouts.
 - A broad Wycheproof segment was started but stopped before final result
   synthesis because the huge ECDSA file entered file-level timeout retries.
   Its partial `state.json` is useful for planning split reruns, but it has no
@@ -1078,6 +1082,8 @@ Focused artifacts:
   failed, 528 skipped, no crashes or timeouts.
 - `artifacts/bouncyhsm-security`: 267 total, 169 passed, 35 failed, 57
   skipped, 3 xfailed, 3 crashed, no timeouts.
+- `artifacts/bouncyhsm-general`: 5,580 total, 2,908 passed, 208 failed, 2,440
+  skipped, 24 xfailed, no crashes or timeouts.
 
 Failure classification for focused units:
 
@@ -1131,6 +1137,16 @@ Failure classification for focused units:
   v1.5/OAEP errors, AES-CBC-PAD oracle behavior, and RSA decrypt timing ratio
   7.0x. KWP error-path, RSA error-path, FFI NULL pointer, handle reuse, nonce
   quality, and Tookan slices were clean or skipped/xfailed in expected ways.
+- General: failures clustered in mechanism sign (33), mechanism digest (31),
+  mechanism attribute (16), mechanism multipart (12), hash ML-DSA (11),
+  mechanism wrap (11), mechanism keygen (8), session state machine (8), access
+  levels (7), and mechanism encrypt (6). Dominant CKR text in failures was
+  `CKR_TEMPLATE_INCONSISTENT`, `CKR_ARGUMENTS_BAD`, `CKR_GENERAL_ERROR`,
+  `CKR_MECHANISM_PARAM_INVALID`, and session/read-only/login CKRs. Clean or
+  mostly clean counterexamples included mechanism flags/probe/KEM/lifecycle,
+  init/interface/interop, object lifecycle/search/size, RSA extended/import/
+  wrapping/OAEP, X.509 import/search/identity/lifecycle, token flags, surface
+  audit, and clean skips for unsupported protocol families.
 
 Current classification:
 
@@ -1155,9 +1171,14 @@ Current classification:
   NULL-pointer handling, handle reuse, nonce quality, and Tookan slices, but
   key-attribute boundaries, padding/timing oracles, and boundary-input crash
   handling remain reportable findings.
+- General shows BouncyHSM is healthy enough across init/interface/interop,
+  objects, RSA, and X.509 import, while advertised mechanism details remain
+  uneven: BLAKE2 keygen/HMAC/digest, AES/Salsa/ChaCha KATs, ML-DSA hash and
+  multipart signing, EXTRACT_KEY_FROM_KEY, session-state semantics, and v3
+  certificate `CKA_PUBLIC_KEY_INFO` import all need follow-up.
 - Full-provider statistics should only include BouncyHSM after the remaining
-  Wycheproof ECDH/ECDSA tails and general test families are rerun in
-  split/bounded mode.
+  Wycheproof ECDH/ECDSA tails and any intentionally excluded
+  CCTV/stress/fuzz/slow families are rerun in split/bounded mode.
 
 ## TPM2
 
@@ -1464,6 +1485,13 @@ not overwrite full provider statistics.
   RSA/AES padding-oracle behavior, and RSA decrypt timing spread. RSA
   error-path, FFI NULL-pointer, nonce quality, handle reuse, and Tookan slices
   were clean or skipped/xfailed as expected.
+- `artifacts/bouncyhsm-general`: BouncyHSM completed the non-vector,
+  non-security, non-stress/fuzz/slow/CCTV general family with 2,908 passed,
+  208 failed, 2,440 skipped, and 24 xfailed. It had no crashes or timeouts.
+  Failures cluster in mechanism sign/digest/attribute/multipart/wrap/keygen,
+  hash ML-DSA, session-state semantics, access levels, AES/Salsa/ChaCha
+  behavior, and BLAKE2. Init/interface/interop/object/RSA/X.509 import slices
+  are useful clean counterexamples.
 - `artifacts/bouncyhsm-wycheproof`: broad run intentionally stopped after
   generic/AES/ChaCha/DSA/ECDH state and an ECDSA file-level timeout retry. No
   final `results.json` was produced, so this artifact is planning evidence for
@@ -1474,8 +1502,9 @@ not overwrite full provider statistics.
 - Parse completed provider artifacts into a compact machine-readable summary
   after each provider completes.
 - If BouncyHSM should become an official full-suite provider statistic, rerun
-  the remaining Wycheproof ECDH/ECDSA tails and general families in
-  split/bounded mode. Avoid one monolithic Wycheproof target because large
+  the remaining Wycheproof ECDH/ECDSA tails and any intentionally excluded
+  CCTV/stress/fuzz/slow families in split/bounded mode. Avoid one monolithic
+  Wycheproof target because large
   ECDH/ECDSA files dominate runtime and trigger file-level timeout retries.
 - For SoftHSM2 main ML-DSA, inspect exact failed vector groups and CKR/result
   messages before assigning blame to provider or test.
