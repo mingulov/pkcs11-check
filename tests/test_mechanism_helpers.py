@@ -15,7 +15,11 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_KEY_GEN,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import mechanism_helpers as helpers
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
@@ -165,6 +169,43 @@ def test_gen_symmetric_key_xfails_when_advertised_keygen_rejects_runtime() -> No
     )
 
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN keygen rejected"):
+        helpers.gen_symmetric_key(rs, entry, config)
+
+    assert len(fake_raw.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "rv_name,rv",
+    [
+        ("CKR_ATTRIBUTE_VALUE_INVALID", CKR_ATTRIBUTE_VALUE_INVALID),
+        ("CKR_KEY_SIZE_RANGE", CKR_KEY_SIZE_RANGE),
+        ("CKR_MECHANISM_PARAM_INVALID", CKR_MECHANISM_PARAM_INVALID),
+        ("CKR_TEMPLATE_INCOMPLETE", CKR_TEMPLATE_INCOMPLETE),
+        ("CKR_TEMPLATE_INCONSISTENT", CKR_TEMPLATE_INCONSISTENT),
+    ],
+)
+def test_gen_symmetric_key_xfails_when_advertised_keygen_rejects_template(
+    rv_name: str,
+    rv: int,
+) -> None:
+    fake_raw = _FakeRaw(rv=int(rv))
+    rs = SimpleNamespace(raw=fake_raw, sh=7, has_mechanism=lambda _name: True)
+    entry = MechEntry(
+        mech_id=int(CKM_AES_KEY_GEN),
+        mech_name="AES_KEY_GEN",
+        flags=0,
+        min_key_size=16,
+        max_key_size=32,
+        config=None,
+    )
+    config = MechConfig(
+        key_type=int(CKK_AES),
+        keygen_mech=int(CKM_AES_KEY_GEN),
+        key_sizes=(128,),
+        keygen_recipe=KeygenRecipe("symmetric"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match=f"AES_KEY_GEN keygen rejected.*{rv_name}"):
         helpers.gen_symmetric_key(rs, entry, config)
 
     assert len(fake_raw.calls) == 1
