@@ -782,6 +782,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
   be harness contamination. Distinct decrypt outcomes, accepted corrupted
   ciphertext, timing gaps, provider crashes, and subprocess signals remain
   hard security findings.
+- **Digest/HMAC single-part termination checks**: BouncyHSM fuzz artifacts
+  showed `CKR_OPERATION_ACTIVE` after repeated digest and HMAC single-part
+  operations. This is now covered by explicit state-machine tests: after the
+  real output call of a two-call `C_Digest` or HMAC `C_Sign`, pkcs11-check
+  immediately starts a new operation on the same session and expects `CKR_OK`.
+  Returning `CKR_OPERATION_ACTIVE` there remains a provider operation-state
+  finding; it is not skipped or hidden by changing the fuzz tests.
 - **Crash reporting policy**: provider subprocess crashes must fail with the
   signal preserved, not become `pytest.xfail`. Dual-function raw probes and
   `C_SessionCancel` crash branches now report hard failures, and a static
