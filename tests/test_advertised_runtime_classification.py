@@ -36,6 +36,7 @@ _RUNTIME_SKIP_PATTERNS = {
         "Cannot generate AES-256 key",
         "AES key generation not operational",
     ),
+    Path("src/pkcs11_check/testcases/test_cctv_mldsa.py"): ("key generation failed -",),
 }
 
 

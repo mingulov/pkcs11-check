@@ -257,6 +257,14 @@ AES key-generation mechanism that rejects AES-256 keygen now becomes xfail
 evidence. This preserves the TPM2 finding shape where `CKM_AES_KEY_GEN` was
 listed but `C_GenerateKey` returned `CKR_FUNCTION_NOT_SUPPORTED`.
 
+### Follow-Up: ML-DSA Benchmark Keygen Rejections
+
+The CCTV ML-DSA sign/verify benchmark now distinguishes missing
+`CKM_ML_DSA_KEY_PAIR_GEN` from an advertised keypair-generation path that
+rejects `C_GenerateKeyPair`. Missing keypair generation still skips; specific
+runtime CKRs now become xfail findings instead of disappearing as benchmark
+setup skips.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
