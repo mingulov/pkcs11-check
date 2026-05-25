@@ -185,9 +185,13 @@ classification issue. The P-384 ECDSA subset accounted for 504 failures where
 tpm2-pkcs11 rejected `secp384r1` public-key import with
 `CKR_ATTRIBUTE_VALUE_INVALID`. That is an unsupported-curve/import condition for
 this vector file, not a failed signature result. A focused TPM2 run now selects
-504 P-384 generic ECDSA tests and skips all 504. The remaining TPM2 generic
-Wycheproof failures still need follow-up: AES-GCM, AES-CBC-PAD, and
-HMAC-SHA256 are advertised, but provider operations return `CKR_GENERAL_ERROR`.
+504 P-384 generic ECDSA tests and skips all 504. The remaining old TPM2
+generic Wycheproof AES-GCM, AES-CBC-PAD, and HMAC-SHA256 rows reached
+advertised mechanisms and then returned `CKR_GENERAL_ERROR`. Current generic
+Wycheproof coverage reports those explicit operation rejects as visible xfail
+findings. Wrong plaintext/MAC, accepted invalid ciphertext/tag, and accepted
+invalid signatures remain hard failures. Provider counts still need a matrix
+refresh before using this bucket in release statistics.
 
 ### Follow-Up: ACVP Deterministic ECDSA Xfails
 
@@ -583,6 +587,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   keygen returning explicit setup errors is an xfail finding. This removes
   keygen setup capability from provider-failure buckets without suppressing the
   actual encryption, mode, or access-control checks.
+- **SO-login probes without an SO PIN**: tests that use the configured user PIN
+  as a best-effort SO PIN now treat `CKR_PIN_INCORRECT` as counted setup skip
+  evidence. This does not change probes where the SO login is actually
+  reached; it prevents BouncyHSM-style "SO PIN differs from user PIN" setups
+  from being reported as session-state or access-control failures.
 - **Authenticated-wrap v2.40 availability probe**: the negative v3.2 API
   availability test now uses the same operational AES setup guard and 128-bit
   setup key policy. Providers that cannot generate setup AES keys after
@@ -642,6 +651,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   digest mechanism rejects the operation with a specific runtime CKR such as
   `CKR_ARGUMENTS_BAD`, it is reported as xfail evidence. If the digest succeeds,
   output length and known-answer bytes remain hard checks.
+- **Standalone SHA KAT empty-message rejects**: the NIST SHA KAT file now uses
+  the same digest runtime split. Missing SHA digest mechanisms are counted
+  skips, and advertised SHA-1/SHA-2 KAT operations that reject valid vectors,
+  including the empty-message vectors seen in BouncyHSM artifacts with
+  `CKR_ARGUMENTS_BAD`, are visible xfail evidence. A successful digest still
+  has to match the KAT bytes exactly.
 - **GOST HMAC setup**: `CKM_GOSTR3411_HMAC` key import/template rejection is
   classified as an advertised-but-not-operational xfail. A successful setup
   still has to sign, verify, and reject wrong behavior normally.

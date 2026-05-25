@@ -127,6 +127,11 @@ def _logout_safe(raw: Any, sh: int) -> None:
     raw.C_Logout(sh)
 
 
+def _skip_if_so_pin_differs(rv: int) -> None:
+    if rv == CKR_PIN_INCORRECT:
+        pytest.skip("SO PIN differs from user PIN on this module")
+
+
 def _gen_access_aes_key(rs: Any, sh: int, *, attrs: dict[Any, Any] | None = None) -> int:
     """Generate a setup AES key for access-level tests, preserving provider findings."""
     require_operational_aes_keygen(rs)
@@ -437,6 +442,7 @@ class TestUserSessionCapabilities:
         rs = p11_raw_session
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
         rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(pin_bytes))
+        _skip_if_so_pin_differs(rv)
         assert rv in (
             CKR_USER_ALREADY_LOGGED_IN,
             CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
@@ -1327,6 +1333,7 @@ class TestSOOnROSession:
         try:
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
             rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
+            _skip_if_so_pin_differs(rv)
             assert rv in (
                 CKR_SESSION_READ_ONLY_EXISTS,
                 CKR_SESSION_READ_ONLY,

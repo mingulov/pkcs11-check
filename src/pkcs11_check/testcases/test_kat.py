@@ -16,16 +16,35 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.types_std import (
     CKK_AES,
+    CKM,
     CKM_AES_ECB,
     CKM_SHA224,
     CKM_SHA256,
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import KAT_DIR as VECTORS_DIR
 
 pytestmark = pytest.mark.kat
+
+_DIGEST_KAT_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 
 def load_vectors(filename: str) -> list[dict[str, str]]:
@@ -48,6 +67,21 @@ def _import_aes_key(rs: Any, key_bytes: bytes) -> int:
     )
 
 
+def _digest_kat_or_xfail(rs: Any, mechanism: CKM, mech_name: str, msg: bytes) -> bytes:
+    has_mechanism = getattr(rs, "has_mechanism", None)
+    if callable(has_mechanism) and not has_mechanism(mech_name):
+        pytest.skip(f"CKM_{mech_name} not supported")
+    try:
+        return digest_single(rs.raw, rs.sh, mechanism, msg)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _DIGEST_KAT_RUNTIME_REJECT_RVS,
+            f"{mech_name} KAT digest rejected at runtime",
+        )
+    raise
+
+
 class TestSHA256KAT:
     """SHA-256 known-answer tests from NIST SHAVS."""
 
@@ -60,7 +94,7 @@ class TestSHA256KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA256, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA256, "SHA256", msg)
         assert result == expected
 
 
@@ -76,7 +110,7 @@ class TestSHA512KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA512, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA512, "SHA512", msg)
         assert result == expected
 
 
@@ -92,7 +126,7 @@ class TestSHA1KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA_1, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA_1, "SHA_1", msg)
         assert result == expected
 
 
@@ -108,7 +142,7 @@ class TestSHA384KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA384, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA384, "SHA384", msg)
         assert result == expected
 
 
@@ -124,7 +158,7 @@ class TestSHA224KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA224, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA224, "SHA224", msg)
         assert result == expected
 
 
