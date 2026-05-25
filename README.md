@@ -104,6 +104,7 @@ docker/         — Docker test targets
 - `docs/architecture.md` — codebase structure and test writing guide
 - `docs/commands.md` — build, test, and Docker commands
 - `docs/module-issues.md` — per-module bugs and quirks
+- `docs/test-universe.md` — collected product-test counts by group
 - `docs/mechanism-output-parameters.md` — generated IV/nonce/tag output-parameter coverage
 - `docs/docker-provider-results.md` — release Docker provider source and result snapshot
 - `docs/todo.md` — public roadmap and known limitations

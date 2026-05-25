@@ -60,6 +60,9 @@ Interop: OpenSSL pkcs11-provider, p11-kit proxy
 Stress: 1000-cycle ops, threading, resource exhaustion, DB concurrent writes
 Fuzz: Hypothesis property tests, attribute template fuzzer
 
+See [test-universe.md](test-universe.md) for the current collected product-test
+counts by group and the AES-CTS single-provider maximum.
+
 ## Docker test matrix (12 targets)
 
 - `test-softhsm2` / `test-softhsm2-main` — SoftHSM2 2.7.0 / main
