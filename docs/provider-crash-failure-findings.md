@@ -623,6 +623,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `CKR_ATTRIBUTE_VALUE_INVALID` at `C_DeriveKey` as an advertised mechanism
   rejected at runtime. Providers that return `CKR_OK` but derive the wrong
   bytes remain hard failures.
+- **Mechanism-driven derive rejects**: the generic advertised-mechanism derive
+  sweep now uses the same split as the dedicated KDF tests. BouncyHSM
+  `CKM_EXTRACT_KEY_FROM_KEY` template rejects, NSS HKDF base-key generation
+  rejects, and SoftHSM DES/DES3 encrypt-data derive rejects are reported as
+  xfail evidence after the mechanism is advertised. Successful derives still
+  have to return a non-zero handle, and wrong derived key material remains a
+  hard failure in the dedicated value-checking tests.
 - **DES/Salsa20/BLAKE2 edge probes**: DES modes that return
   `CKR_KEY_TYPE_INCONSISTENT`, Salsa20 encryption that returns
   `CKR_GENERAL_ERROR`, and BLAKE2 empty-message digesting that returns
