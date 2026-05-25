@@ -5,6 +5,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+from pkcs11_check.testcases.ckr.test_ckr_null_params import _check_null_result
+
 ROOT = Path(__file__).resolve().parents[1]
 TESTCASE_ROOT = ROOT / "src/pkcs11_check/testcases"
 
@@ -66,3 +70,8 @@ def test_provider_crashes_are_not_skipped() -> None:
                 offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
 
     assert offenders == []
+
+
+def test_null_param_subprocess_signal_is_failure() -> None:
+    with pytest.raises(pytest.fail.Exception, match="C_GetInfo.*signal 11"):
+        _check_null_result("C_GetInfo", -11, "", "segfault")

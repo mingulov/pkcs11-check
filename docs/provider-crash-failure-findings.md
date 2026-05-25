@@ -835,9 +835,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   finding; it is not skipped or hidden by changing the fuzz tests.
 - **Crash reporting policy**: provider subprocess crashes must fail with the
   signal preserved, not become `pytest.xfail` or `pytest.skip`. Dual-function
-  raw probes, NULL-pointer raw CKR probes, and `C_SessionCancel` crash branches
-  now report hard failures. Static regression checks prevent future testcase
-  xfails or skips from being used for actual crash or signal findings.
+  raw probes, NULL-pointer raw CKR probes, NULL-parameter CKR probes, and
+  `C_SessionCancel` crash branches now report hard failures. Static regression
+  checks prevent future testcase xfails or skips from being used for actual
+  crash or signal findings.
 - **Mechanism encryption AEAD KAT sizing**: mechanism KAT encryption now uses
   the same AEAD tag overhead and `CKR_BUFFER_TOO_SMALL` retry path as mechanism
   roundtrip encryption. The older NSS `AES_GCM`/`CHACHA20_POLY1305` KAT
