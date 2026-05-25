@@ -764,6 +764,15 @@ The following paths were tightened after inspecting the all-fail artifacts:
   target key sizes. Explicit KEM operation or template rejects after `ML_KEM`
   advertisement are reported as xfail evidence; mismatched shared-secret bytes
   remain hard failures.
+- **ML-KEM operation and negative-test classification**: generic encapsulation,
+  decapsulation, ciphertext-size, and key-derivation smoke paths now share the
+  same advertised-operation xfail handling. OpenCryptoki-style
+  `CKR_TEMPLATE_INCONSISTENT` from `C_EncapsulateKey` setup is therefore a
+  visible partial-capability finding rather than a raw harness failure or a
+  skip. Negative ML-KEM probes still require a clean semantic reject: accepting
+  `CKA_VALUE` in a decapsulation template becomes xfail evidence, and
+  non-specific rejects such as `CKR_GENERAL_ERROR`, `CKR_DEVICE_ERROR`, or
+  `CKR_OBJECT_HANDLE_INVALID` are visible xfail findings rather than passes.
 - **EC public import/export roundtrip**: generated EC keys can still be a
   valid setup path even when a provider later rejects importing the exported
   public point as a new object. The EC import/export test now reports specific
