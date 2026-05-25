@@ -90,3 +90,19 @@ def test_advertised_runtime_rejections_are_not_skipped() -> None:
                 offenders.append(f"{path}:{node.lineno}")
 
     assert offenders == []
+
+
+def test_acvp_rsa_keygen_uses_structured_ckr_checks() -> None:
+    """ACVP RSA keygen should match CKR constants, not exception text."""
+    path = Path("src/pkcs11_check/testcases/acvp/test_acvp_rsa_keygen.py")
+    tree = ast.parse(path.read_text())
+
+    offenders = [
+        f"{path}:{node.lineno}: {node.value}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("CKR_")
+    ]
+
+    assert offenders == []

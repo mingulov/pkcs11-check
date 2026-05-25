@@ -286,6 +286,13 @@ RSA-PSS parameter rejection after an advertised PSS mechanism is now xfail
 evidence. This keeps mixed hash/MGF or salt-length limitations visible instead
 of treating them as missing test capability.
 
+### Follow-Up: ACVP RSA Keygen CKR Classification
+
+ACVP RSA key generation now uses exact CKR constants instead of parsing CKR
+names out of assertion text. Key-size and template capability rejects still
+skip, while `CKR_MECHANISM_INVALID` after `CKM_RSA_PKCS_KEY_PAIR_GEN` was
+advertised becomes xfail evidence.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

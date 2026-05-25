@@ -44,9 +44,14 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256_RSA_PKCS,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.acvp.rsa.base_loader import load_keygen_vectors
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -57,6 +62,12 @@ if not ACVP_AVAILABLE:
     )
 
 _RSA_KEYGEN_VECTORS = load_keygen_vectors()
+
+_RSA_KEYGEN_CAPABILITY_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+)
 
 
 class TestRsaKeyGen:
@@ -72,6 +83,8 @@ class TestRsaKeyGen:
 
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
+        if not rs.has_mechanism("SHA256_RSA_PKCS"):
+            pytest.skip("CKM_SHA256_RSA_PKCS not supported by module")
 
         pub_key = priv_key = 0
         try:
@@ -95,17 +108,10 @@ class TestRsaKeyGen:
             )
 
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_MECHANISM_INVALID",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
-                    "CKR_TEMPLATE_INCOMPLETE",
-                    "CKR_KEY_SIZE_RANGE",
-                )
-            ):
+            if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
                 pytest.skip(f"RSA {modulo}-bit key generation not supported: {exc}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+                pytest.xfail(f"CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -163,17 +169,10 @@ class TestRsaKeyGen:
                 assert actual_exp < (1 << 256), f"{vec_id}: Public exponent unreasonably large"
 
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_MECHANISM_INVALID",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
-                    "CKR_TEMPLATE_INCOMPLETE",
-                    "CKR_KEY_SIZE_RANGE",
-                )
-            ):
+            if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
                 pytest.skip(f"RSA {modulo}-bit key attribute query failed: {exc}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+                pytest.xfail(f"CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -190,6 +189,8 @@ class TestRsaKeyGenBySize:
 
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
+        if not rs.has_mechanism("SHA256_RSA_PKCS"):
+            pytest.skip("CKM_SHA256_RSA_PKCS not supported by module")
 
         # Check if mechanism supports this key size
         try:
@@ -222,14 +223,10 @@ class TestRsaKeyGenBySize:
             )
 
         except AssertionError as exc:
-            if any(
-                name in str(exc)
-                for name in (
-                    "CKR_MECHANISM_INVALID",
-                    "CKR_KEY_SIZE_RANGE",
-                )
-            ):
+            if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
                 pytest.skip(f"RSA {bits}-bit not supported by this module")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+                pytest.xfail(f"CKM_RSA_PKCS_KEY_PAIR_GEN advertised but keygen failed: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
