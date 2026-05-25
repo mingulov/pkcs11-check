@@ -511,6 +511,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   exact CKR values rather than CKR-name substrings, and the
   `CKA_WRAP_WITH_TRUSTED` fallback to `CKM_AES_CBC_PAD` now supplies the
   required IV parameter.
+- **Access-control attribute setup keys**: the separate CKA_PRIVATE,
+  CKA_MODIFIABLE, CKA_COPYABLE, and C_CopyObject tests now use AES-128 setup
+  keys for neutral fixture objects. Tests where the template attribute itself is
+  under test, such as `CKA_MODIFIABLE=False` or `CKA_COPYABLE=False`, still keep
+  their specific rejection handling. Copying a non-copyable key remains a hard
+  security failure.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
 AES-CTS variant detection still fails when a provider advertises `CKM_AES_CTS`

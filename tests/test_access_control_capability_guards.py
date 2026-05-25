@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -43,3 +44,33 @@ def test_secret_key_access_control_xfails_when_advertised_aes_keygen_rejects_run
 
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
         test_access_control.TestPrivateAttribute().test_private_key_default_is_private(rs)
+
+
+def test_secret_key_access_control_uses_operational_aes128_setup_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+
+    def _gen_aes_key(*args: Any, **_kwargs: Any) -> int:
+        bits = int(args[2])
+        calls.append(bits)
+        if bits != 128:
+            raise CkrAssertionError(
+                "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+                int(CKR_FUNCTION_NOT_SUPPORTED),
+            )
+        return 1
+
+    monkeypatch.setattr(test_access_control, "_require_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_access_control, "gen_aes_key", _gen_aes_key)
+    monkeypatch.setattr(
+        test_access_control,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_access_control.CKA_PRIVATE: True},
+    )
+    monkeypatch.setattr(test_access_control, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    test_access_control.TestPrivateAttribute().test_private_key_default_is_private(rs)
+
+    assert calls == [128]
