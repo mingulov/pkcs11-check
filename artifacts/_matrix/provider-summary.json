@@ -391,19 +391,49 @@
             "xfailed": 0,
             "xpassed": 0
           }
+        },
+        {
+          "artifact": "artifacts/bouncyhsm-wycheproof-ecdsa-brainpool/results.json",
+          "name": "wycheproof_ecdsa_brainpool",
+          "summary": {
+            "crashed": 0,
+            "error": 0,
+            "failed": 0,
+            "passed": 6398,
+            "skipped": 0,
+            "timeout": 0,
+            "total": 6398,
+            "xfailed": 0,
+            "xpassed": 0
+          }
+        },
+        {
+          "artifact": "artifacts/bouncyhsm-wycheproof-ecdsa-secp160-192/results.json",
+          "name": "wycheproof_ecdsa_secp160_192",
+          "summary": {
+            "crashed": 0,
+            "error": 0,
+            "failed": 0,
+            "passed": 3390,
+            "skipped": 0,
+            "timeout": 0,
+            "total": 3390,
+            "xfailed": 0,
+            "xpassed": 0
+          }
         }
       ],
-      "notes": "Segmented ACVP plus bounded core Wycheproof, Wycheproof ECDH, security, and general evidence. AES CCM/CFB/OFB issues remain; CFB8 has one confirmed segfault plus pytest-timeout failures. Non-AES ACVP is complete with ECDH, ML-DSA, EdDSA, hash, RSA-PSS/SHA3, and SLH-DSA failure clusters; ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean. Core Wycheproof completed without crashes/timeouts; failures cluster in AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing/verification. Standalone Wycheproof ECDH completed without crashes/timeouts and is a broad failure cluster dominated by mechanism-parameter rejection. Security segment found FFI arithmetic/length crashes, NULL mechanism crash, weak RSA exponent keygen segfaults, key-attribute boundary failures, padding/timing oracle findings, and clean KWP/RSA error-path/null-pointer/nonce/handle-reuse/Tookan slices. General slice completed without crashes/timeouts; clean areas include interface/init/interop/object/X.509 import/RSA extended and wrapping, while failures cluster in mechanism sign/digest/attribute/multipart/wrap, hash ML-DSA, session state, access levels, AES/Salsa/ChaCha, and BLAKE2.",
+      "notes": "Segmented ACVP plus bounded core Wycheproof, Wycheproof ECDH, partial Wycheproof ECDSA, security, and general evidence. AES CCM/CFB/OFB issues remain; CFB8 has one confirmed segfault plus pytest-timeout failures. Non-AES ACVP is complete with ECDH, ML-DSA, EdDSA, hash, RSA-PSS/SHA3, and SLH-DSA failure clusters; ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean. Core Wycheproof completed without crashes/timeouts; failures cluster in AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing/verification. Standalone Wycheproof ECDH completed without crashes/timeouts and is a broad failure cluster dominated by mechanism-parameter rejection. Wycheproof ECDSA brainpool and secp160/secp192 shards completed with 9,788/9,788 passed and no skips/crashes/timeouts; secp224, secp256, and secp384/secp521 shards remain. Security segment found FFI arithmetic/length crashes, NULL mechanism crash, weak RSA exponent keygen segfaults, key-attribute boundary failures, padding/timing oracle findings, and clean KWP/RSA error-path/null-pointer/nonce/handle-reuse/Tookan slices. General slice completed without crashes/timeouts; clean areas include interface/init/interop/object/X.509 import/RSA extended and wrapping, while failures cluster in mechanism sign/digest/attribute/multipart/wrap, hash ML-DSA, session state, access levels, AES/Salsa/ChaCha, and BLAKE2.",
       "source": "BouncyHSM v2.1.0",
-      "status": "partial segmented ACVP + Wycheproof core/ECDH + security + general; not full-suite statistics",
+      "status": "partial segmented ACVP + Wycheproof core/ECDH/partial ECDSA + security + general; not full-suite statistics",
       "summary": {
         "crashed": 4,
         "error": 0,
         "failed": 22303,
-        "passed": 36109,
+        "passed": 45897,
         "skipped": 10651,
         "timeout": 0,
-        "total": 69154,
+        "total": 78942,
         "xfailed": 87,
         "xpassed": 0
       },
