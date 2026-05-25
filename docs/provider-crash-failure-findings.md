@@ -358,6 +358,30 @@ runtime operation rejects after an advertised mechanism are xfail/failure
 evidence, not capability skips. Full provider counts still require a matrix
 rerun.
 
+### Follow-Up: Wycheproof Negative-Vector Success Paths
+
+Several Wycheproof negative-vector tests previously treated successful provider
+operations as pass-like flow when the vector result was `invalid`. That hid
+important provider findings: an invalid signature verifying, a forged tag
+matching, malformed ciphertext decrypting, or malformed derive input producing a
+key is a real test failure, not a clean rejection.
+
+The affected paths now fail accepted invalid outputs for signature verification,
+HMAC, RSA-PKCS#1/RSA-OAEP decrypt, AES-GCM/AES-CBC-PAD, AES-CMAC/GMAC,
+AES-KW/KWP, AES-CCM, ChaCha20-Poly1305, HKDF `SizeTooLarge`, and malformed
+ML-KEM semi-expanded decapsulation vectors. XDH now fails if an invalid vector
+with malformed public-key length still derives, and ECDH now fails when an
+invalid vector with no expected shared secret still derives.
+
+ECDH and XDH still need careful wording in reports. Many Wycheproof ECDH
+invalid cases are invalid because of ASN.1, JWK, curve, order, or cofactor
+metadata. pkcs11-check often decodes those containers and passes only the raw
+point/scalar and the locally selected PKCS#11 curve parameters into the module.
+When that metadata has been stripped, derivation success is not automatically a
+provider bug. The current rule is intentionally narrower: fail accepted invalid
+crypto results or malformed raw inputs that PKCS#11 actually sees, while leaving
+metadata-only cases for separate loader/coverage wording.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
