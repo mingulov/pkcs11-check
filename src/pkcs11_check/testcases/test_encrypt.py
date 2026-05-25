@@ -37,10 +37,16 @@ from pkcs11_check.raw.types_std import (
 pytestmark = pytest.mark.full
 
 
+def _require_aes_keygen(rs: Any) -> None:
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+
+
 class TestAESEncryption:
     def test_aes_generate_key(self, p11_raw_session: Any) -> None:
         """Generate an AES-256 session key."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             assert key is not None
@@ -50,6 +56,7 @@ class TestAESEncryption:
     def test_aes_cbc_roundtrip(self, p11_raw_session: Any) -> None:
         """Encrypt and decrypt with AES-CBC produces original plaintext."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         iv = generate_random(rs.raw, rs.sh, 16)
         # AES-CBC requires data aligned to block size (16 bytes)
@@ -82,6 +89,7 @@ class TestAESEncryption:
     def test_aes_different_keys_different_ciphertext(self, p11_raw_session: Any) -> None:
         """Same plaintext encrypted with different keys should differ."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key1 = gen_aes_key(rs.raw, rs.sh, 256)
         key2 = gen_aes_key(rs.raw, rs.sh, 256)
         iv = generate_random(rs.raw, rs.sh, 16)
@@ -112,6 +120,7 @@ class TestAESEncryption:
     def test_aes_ecb_roundtrip(self, p11_raw_session: Any) -> None:
         """AES-ECB encrypt/decrypt roundtrip."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         plaintext = b"sixteen bytes!!" + b"\x01"  # 16 bytes
 
@@ -127,6 +136,7 @@ class TestAESEncryption:
     def test_aes_key_sizes(self, p11_raw_session: Any, key_bits: int) -> None:
         """Generate AES keys of all standard sizes."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, key_bits)
         try:
             assert key is not None
@@ -138,6 +148,7 @@ class TestAESEncryption:
     def test_aes_ciphertext_length(self, p11_raw_session: Any) -> None:
         """AES-ECB ciphertext should be same length as plaintext (block-aligned)."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         plaintext = b"\x00" * 32  # 2 blocks
         try:
@@ -149,6 +160,7 @@ class TestAESEncryption:
     def test_aes_encrypt_not_deterministic_cbc(self, p11_raw_session: Any) -> None:
         """AES-CBC with different IVs produces different ciphertexts."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         plaintext = b"determinism test"  # 16 bytes
         iv1 = generate_random(rs.raw, rs.sh, 16)
@@ -178,6 +190,7 @@ class TestAESEncryption:
     def test_aes_wrong_key_decrypt_fails(self, p11_raw_session: Any) -> None:
         """Decrypting with wrong key should produce garbage (ECB)."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key1 = gen_aes_key(rs.raw, rs.sh, 256)
         key2 = gen_aes_key(rs.raw, rs.sh, 256)
         plaintext = b"wrong key test!!"  # 16 bytes
@@ -193,6 +206,7 @@ class TestAESEncryption:
     def test_aes_empty_block_encrypt(self, p11_raw_session: Any) -> None:
         """AES-ECB with exactly one block of zeros."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         plaintext = b"\x00" * 16
         try:

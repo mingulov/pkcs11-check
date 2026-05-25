@@ -65,12 +65,18 @@ _COPY_REJECT_RVS = (
 )
 
 
+def _require_aes_keygen(rs: Any) -> None:
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+
+
 class TestPrivateAttribute:
     """Test CKA_PRIVATE visibility semantics."""
 
     def test_private_key_default_is_private(self, p11_raw_session: Any) -> None:
         """Generated secret keys are CKA_PRIVATE=True by default."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key_h = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_PRIVATE])
@@ -143,6 +149,7 @@ class TestModifiableAttribute:
     def test_default_key_is_modifiable(self, p11_raw_session: Any) -> None:
         """Generated keys have CKA_MODIFIABLE=True by default."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "mod-test"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
@@ -153,6 +160,7 @@ class TestModifiableAttribute:
     def test_modifiable_key_label_changeable(self, p11_raw_session: Any) -> None:
         """Key with MODIFIABLE=True allows label change."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "mod-before"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
@@ -175,6 +183,7 @@ class TestModifiableAttribute:
         Closes Phase 4.5 GAP-T1 (HIGH).
         """
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         try:
             key_h = gen_aes_key(
                 rs.raw,
@@ -266,6 +275,7 @@ class TestCopyableAttribute:
     def test_default_key_copyable_flag(self, p11_raw_session: Any) -> None:
         """Check CKA_COPYABLE flag is readable on generated key."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key_h = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
@@ -279,6 +289,7 @@ class TestCopyableAttribute:
     def test_copyable_key_can_be_copied(self, p11_raw_session: Any) -> None:
         """Key with COPYABLE=True can be copied via C_CopyObject."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "copy-src"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
@@ -304,6 +315,7 @@ class TestCopyObject:
     def test_copy_with_modified_label(self, p11_raw_session: Any) -> None:
         """Copy a key with a new label - label changes, other attrs preserved."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "orig-label"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
@@ -338,6 +350,7 @@ class TestCopyObject:
     def test_copy_changes_extractable(self, p11_raw_session: Any) -> None:
         """Copy a key with CKA_EXTRACTABLE changed from True to False."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key_h = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -369,6 +382,7 @@ class TestCopyObject:
     def test_non_copyable_key_rejected(self, p11_raw_session: Any) -> None:
         """Key with CKA_COPYABLE=False cannot be copied - CKR_ACTION_PROHIBITED."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         try:
             key_h = gen_aes_key(
                 rs.raw,
@@ -422,6 +436,7 @@ class TestCopyObject:
     def test_copy_session_object_stays_session(self, p11_raw_session: Any) -> None:
         """Copy of a session object is also a session object (CKA_TOKEN=False)."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         key_h = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -449,6 +464,7 @@ class TestCopyObject:
     def test_copy_token_object_stays_token(self, p11_raw_session: Any) -> None:
         """Copy of a token object is also a token object (CKA_TOKEN=True)."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         skip_if_token_write_protected(rs.raw, rs.slot_id)
         key_h = gen_aes_key(
             rs.raw,

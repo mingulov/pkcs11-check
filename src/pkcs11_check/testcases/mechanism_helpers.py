@@ -10,6 +10,7 @@ import os
 from ctypes import byref
 from typing import Any
 
+from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 from pkcs11_check.raw.pack import attr_bytes, mech_bytes, mech_simple
 from pkcs11_check.raw.pack_mechanisms import (
     mech_ccm,
@@ -29,6 +30,7 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     pack_attrs,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_EC_PARAMS,
@@ -55,6 +57,11 @@ from pkcs11_check.raw.types_std import (
     CKM_EC_KEY_PAIR_GEN,
     CKM_GENERIC_SECRET_KEY_GEN,
     CKM_PKCS5_PBKD2,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
@@ -84,10 +91,56 @@ FIXED_LENGTH_KEY_TYPES: frozenset[int] = frozenset(
 # EC key types that need CKA_EC_PARAMS
 EC_KEY_TYPES: frozenset[int] = frozenset([int(CKK_EC), int(CKK_EC_EDWARDS), int(CKK_EC_MONTGOMERY)])
 
+_KEYGEN_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+)
+
 # Default curve OIDs
 _P256_OID: bytes | None = None
 _ED25519_OID: bytes | None = None
 _X25519_OID: bytes | None = None
+
+
+def _mechanism_name_variants(mechanism: int) -> tuple[str, ...]:
+    name = MECHANISM_NAMES.get(int(mechanism))
+    if not name:
+        return ()
+    if name.startswith("CKM_"):
+        return (name, name[4:])
+    return (name,)
+
+
+def _session_has_mechanism(rs: Any, mechanism: int) -> bool:
+    has_mechanism = getattr(rs, "has_mechanism", None)
+    if not callable(has_mechanism):
+        return True
+    variants = _mechanism_name_variants(mechanism)
+    if not variants:
+        return True
+    return any(bool(has_mechanism(name)) for name in variants)
+
+
+def _skip_if_keygen_mechanism_absent(rs: Any, keygen_mech: int, mech_name: str) -> None:
+    if _session_has_mechanism(rs, keygen_mech):
+        return
+    import pytest
+
+    display = MECHANISM_NAMES.get(int(keygen_mech), f"0x{int(keygen_mech):x}")
+    if display.startswith("CKM_"):
+        display = display[4:]
+    pytest.skip(f"{mech_name}: {display} not supported")
+
+
+def _xfail_if_keygen_runtime_reject(rv: int, mech_name: str) -> None:
+    if rv not in _KEYGEN_RUNTIME_REJECT_RVS:
+        return
+    import pytest
+
+    pytest.xfail(f"{mech_name} keygen rejected at runtime: {ckr_name(rv)}")
 
 
 def _get_curve_oids() -> tuple[bytes, bytes, bytes]:
@@ -330,8 +383,10 @@ def gen_symmetric_key(
         )
     else:
         mech = mech_simple(CKM(entry.mech_id))
+    _skip_if_keygen_mechanism_absent(rs, int(entry.mech_id), entry.mech_name)
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+    _xfail_if_keygen_runtime_reject(int(rv), entry.mech_name)
     assert rv == CKR_OK, f"C_GenerateKey failed: {rv} for {entry.mech_name}"
     return handle.value
 
@@ -574,8 +629,10 @@ def generate_key_from_recipe(
             )
         else:
             mech = mech_simple(CKM(keygen_mech))
+        _skip_if_keygen_mechanism_absent(rs, int(keygen_mech), entry.mech_name)
         handle = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+        _xfail_if_keygen_runtime_reject(int(rv), entry.mech_name)
         assert rv == CKR_OK, f"C_GenerateKey failed: {rv} for {entry.mech_name}"
         return handle.value, None
 
@@ -628,8 +685,10 @@ def generate_key_for_encrypt(
         packed.extend(pack_attrs(attrs, skip={CKA_VALUE_LEN}))
         tmpl = template(*packed)
         mech = mech_simple(CKM(keygen))
+        _skip_if_keygen_mechanism_absent(rs, int(keygen), entry.mech_name)
         handle = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
+        _xfail_if_keygen_runtime_reject(int(rv), entry.mech_name)
         assert rv == CKR_OK, f"AES-XTS keygen failed: {rv}"
         return handle.value, None
 

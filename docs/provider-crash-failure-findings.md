@@ -411,6 +411,43 @@ deeper follow-up before being presented as final provider conclusions.
   like an advertised-but-not-operational backend path, not a pkcs11-check
   vector-shape issue.
 
+### Follow-Up: All-Fail Runtime Classification Buckets
+
+Several "zero clean passes among executed tests" buckets were not vector-loader
+bugs, but they did expose inconsistent result classification in pkcs11-check.
+The current rule is:
+
+- absent setup capability is a skip;
+- advertised setup or operation rejected at runtime is an xfail finding;
+- wrong cryptographic output, accepted invalid input, crash, timeout, or
+  subprocess signal remains a failure.
+
+The following paths were tightened after inspecting the all-fail artifacts:
+
+- **ACVP HMAC on TPM2**: executed vectors reached advertised HMAC mechanisms
+  but signing returned `CKR_GENERAL_ERROR`. ACVP HMAC now treats explicit
+  generic runtime rejects like other HMAC key-use rejects: visible xfail, not a
+  clean pass and not a skip.
+- **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
+  `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
+  runners now classify explicit generic runtime rejects as xfail while keeping
+  wrong ciphertext/plaintext as failures. BouncyHSM CFB128 multiblock timeouts
+  are unchanged: timeouts remain failures.
+- **Mechanism-driven encryption**: roundtrip setup now skips when the required
+  keygen mechanism is absent and xfails when advertised key generation rejects
+  at runtime. KAT encrypt/decrypt paths now xfail explicit runtime CKRs but
+  still fail ciphertext mismatches.
+- **Older general AES/access-control tests**: AES secret-key tests now guard
+  `AES_KEY_GEN` before calling `C_GenerateKey`. This removes missing keygen
+  capability from provider-failure buckets without suppressing access-control
+  findings that do not depend on AES key generation.
+
+Other sampled all-fail rows still look provider-side rather than harness-side:
+TPM2 RSA setup rejects the requested templates with `CKR_ATTRIBUTE_VALUE_INVALID`,
+and the `CKA_PRIVATE=False` data-object visibility probe still fails during data
+object creation on TPM2. Those should remain findings unless a narrower provider
+configuration explanation is found.
+
 ## Provider-Specific Notes
 
 - SoftHSM2 release has no runner-level crashes, but the security probes still

@@ -25,10 +25,21 @@ from pkcs11_check.raw.types_std import (
     CKM,
     CKM_AES_CFB8,
     CKM_AES_OFB,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases.conftest import is_known_error
+
+_AES_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 
 def _cfb1_mask(data: bytes, payload_len_bits: int) -> bytes:
@@ -118,7 +129,7 @@ def run_simple_encrypt_test(
                 mech_param=mech,
             )
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+            if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
                 pytest.xfail(f"{mech_name} advertised but encrypt is not operational: {exc}")
             raise
 
@@ -175,7 +186,7 @@ def run_simple_decrypt_test(
                 mech_param=mech,
             )
         except AssertionError as exc:
-            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+            if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
                 pytest.xfail(f"{mech_name} advertised but decrypt is not operational: {exc}")
             raise
 
@@ -305,7 +316,7 @@ def run_multiblock_encrypt_test(
                         mech_param=mech,
                     )
                 except AssertionError as exc:
-                    if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+                    if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
                         pytest.xfail(
                             f"{mech_name} advertised but MCT encrypt is not operational: {exc}"
                         )
@@ -381,7 +392,7 @@ def run_multiblock_decrypt_test(
                         mech_param=mech,
                     )
                 except AssertionError as exc:
-                    if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+                    if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
                         pytest.xfail(
                             f"{mech_name} advertised but MCT decrypt is not operational: {exc}"
                         )
