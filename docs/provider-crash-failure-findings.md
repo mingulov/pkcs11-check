@@ -623,6 +623,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   target key sizes. Explicit KEM operation or template rejects after `ML_KEM`
   advertisement are reported as xfail evidence; mismatched shared-secret bytes
   remain hard failures.
+- **EC public import/export roundtrip**: generated EC keys can still be a
+  valid setup path even when a provider later rejects importing the exported
+  public point as a new object. The EC import/export test now reports specific
+  public-key import CKR rejects as xfail import-capability evidence, while a
+  successful import must still verify the signature with the imported key.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
 AES-CTS variant detection still fails when a provider advertises `CKM_AES_CTS`
