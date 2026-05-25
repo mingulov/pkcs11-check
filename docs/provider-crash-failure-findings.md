@@ -503,6 +503,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   unsupported `CKA_LOCAL` readback is not counted as a wrong-value assertion,
   non-clean readback CKRs become xfail evidence, and `CKA_LOCAL=True` remains
   the only clean pass for generated keys.
+- **Mechanism wrap/unwrap coverage**: mechanism-driven wrap tests now build
+  registry-defined wrap parameters for RC2 and other parameterized mechanisms,
+  use the existing NSS-safe output-size hint for `AES_KEY_WRAP_KWP`, and report
+  explicit setup/wrap/unwrap CKR rejects as xfail evidence. Wrong unwrapped key
+  material, such as the `RSA_X_509` leading-vs-trailing raw block bug, remains
+  a real failure.
 - **Stateful AES lifecycle setup**: stateful lifecycle tests now use AES-128 for
   setup keys, matching the operational AES keygen probe. These tests are about
   session/object lifecycle, not AES-256 support. If advertised AES setup still

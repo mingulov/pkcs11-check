@@ -10,12 +10,16 @@ import pytest
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKK_AES,
     CKM_AES_CBC_PAD,
+    CKM_AES_KEY_WRAP_KWP,
+    CKM_RC2_CBC,
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases import (
     test_access_levels,
@@ -26,12 +30,14 @@ from pkcs11_check.testcases import (
     test_key_usage_policy,
     test_mech_attribute,
     test_mech_keygen,
+    test_mech_wrap,
     test_object_size,
     test_rsa_oaep,
     test_sensitivity,
     test_sign_recover,
     test_stateful,
 )
+from pkcs11_check.testcases.mechanism_registry import ParamRecipe
 from pkcs11_check.testcases.security import test_nonce_quality
 
 
@@ -482,3 +488,101 @@ def test_mechanism_attribute_local_false_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="CKA_LOCAL=False"):
         test_mech_attribute.TestKeyAttributes().test_local_flag_on_generated_key(rs, entry)
+
+
+def test_mech_wrap_builds_rc2_cbc_params() -> None:
+    entry = SimpleNamespace(
+        mech_name="RC2_CBC",
+        mech_id=int(CKM_RC2_CBC),
+        config=SimpleNamespace(
+            param_required=True,
+            param_recipe=ParamRecipe("rc2_cbc", defaults={"effective_bits": 128}),
+        ),
+    )
+
+    assert test_mech_wrap._make_wrap_mech_param(entry) is not None
+
+
+def test_mech_wrap_kwp_uses_output_size_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = SimpleNamespace(
+        mech_name="AES_KEY_WRAP_KWP",
+        mech_id=int(CKM_AES_KEY_WRAP_KWP),
+        config=SimpleNamespace(
+            key_type=CKK_AES,
+            input_constraint="none",
+            param_required=False,
+            param_recipe=ParamRecipe("none"),
+        ),
+    )
+    rs = _session_with_mechanisms("AES_KEY_WRAP_KWP")
+    output_hints: list[int] = []
+
+    monkeypatch.setattr(test_mech_wrap, "_build_aes_wrap_key", lambda *_args: 10)
+    monkeypatch.setattr(test_mech_wrap, "_build_target_aes_key", lambda *_args: 20)
+    monkeypatch.setattr(
+        test_mech_wrap,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_mech_wrap.CKA_VALUE: b"\x5a" * 16},
+    )
+    monkeypatch.setattr(
+        test_mech_wrap,
+        "encrypt_single",
+        lambda *_args, **_kwargs: b"ciphertext",
+    )
+    monkeypatch.setattr(
+        test_mech_wrap,
+        "decrypt_single",
+        lambda *_args, **_kwargs: b"\x5a\xa5\x5a\xa5" * 4,
+    )
+    monkeypatch.setattr(test_mech_wrap, "unwrap_key", lambda *_args, **_kwargs: 30)
+    monkeypatch.setattr(test_mech_wrap, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    def _wrap_key(*_args: Any, output_size_hint: int = 0, **_kwargs: Any) -> bytes:
+        output_hints.append(output_size_hint)
+        return b"wrapped-key"
+
+    monkeypatch.setattr(test_mech_wrap, "wrap_key", _wrap_key)
+
+    test_mech_wrap.TestMechWrapRoundtrip().test_wrap_unwrap_aes_key(rs, entry)
+
+    assert output_hints == [64]
+
+
+def test_mech_wrap_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = SimpleNamespace(
+        mech_name="AES_CBC",
+        mech_id=1,
+        config=SimpleNamespace(
+            key_type=CKK_AES,
+            input_constraint="block_aligned",
+            param_required=False,
+            param_recipe=ParamRecipe("none"),
+        ),
+    )
+    rs = _session_with_mechanisms("1")
+
+    monkeypatch.setattr(test_mech_wrap, "ckm_name", lambda _mech_id: "CKM_1")
+    monkeypatch.setattr(test_mech_wrap, "_build_aes_wrap_key", lambda *_args: 10)
+    monkeypatch.setattr(test_mech_wrap, "_build_target_aes_key", lambda *_args: 20)
+    monkeypatch.setattr(
+        test_mech_wrap,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_mech_wrap.CKA_VALUE: b"\x5a" * 16},
+    )
+    monkeypatch.setattr(test_mech_wrap, "encrypt_single", lambda *_args, **_kwargs: b"cipher")
+    monkeypatch.setattr(test_mech_wrap, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    def _wrap_reject(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+            int(CKR_MECHANISM_PARAM_INVALID),
+        )
+
+    monkeypatch.setattr(test_mech_wrap, "wrap_key", _wrap_reject)
+
+    with pytest.raises(pytest.xfail.Exception, match="wrap rejected at runtime"):
+        test_mech_wrap.TestMechWrapRoundtrip().test_wrap_unwrap_aes_key(rs, entry)

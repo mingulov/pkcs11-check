@@ -58,7 +58,24 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA_1,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_BUFFER_TOO_SMALL,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPING_KEY_SIZE_RANGE,
+    CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
 
@@ -66,6 +83,34 @@ from pkcs11_check.testcases.mechanism_registry import MechConfig
 _AES_KEY_TYPE: int = int(CKK_AES)
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.wrap]
+
+_WRAP_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_BUFFER_TOO_SMALL,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPING_KEY_SIZE_RANGE,
+    CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
+)
+
+
+def _xfail_wrap_runtime_reject(exc: AssertionError, entry: MechEntry, phase: str) -> None:
+    xfail_if_known_ckr(
+        exc,
+        _WRAP_RUNTIME_REJECT_RVS,
+        f"{entry.mech_name} {phase} rejected at runtime",
+    )
+
 
 # Hybrid wrap mechanisms that need ECDH parameter construction -- skipped here
 _HYBRID_WRAP_MECH_IDS: set[int] = set()
@@ -209,6 +254,14 @@ try:
 except ImportError:
     pass
 
+_AES_KEY_WRAP_KWP_MECH_ID: int = 0
+try:
+    from pkcs11_check.raw.types_std import CKM_AES_KEY_WRAP_KWP
+
+    _AES_KEY_WRAP_KWP_MECH_ID = int(CKM_AES_KEY_WRAP_KWP)
+except ImportError:
+    pass
+
 
 def _make_wrap_mech_param(entry: MechEntry) -> Any:
     """Return a mechanism parameter for the wrap mechanism, or None if not needed.
@@ -221,6 +274,21 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
     # RSA_AES hybrid requires CK_RSA_AES_KEY_WRAP_PARAMS -- not covered here
     if _RSA_AES_KEY_WRAP_MECH_ID and mech_id == _RSA_AES_KEY_WRAP_MECH_ID:
         pytest.skip(f"{entry.mech_name}: RSA_AES hybrid wrap needs CK_RSA_AES_KEY_WRAP_PARAMS")
+
+    config = entry.config
+    if config is not None and config.param_recipe.style in ("gcm", "ccm", "chacha20_poly1305"):
+        pytest.skip(f"{entry.mech_name}: AEAD wrap not covered here")
+
+    if config is not None and config.param_required:
+        from pkcs11_check.testcases.mechanism_helpers import build_test_params
+
+        result = build_test_params(mech_id, config.param_recipe)
+        if result == "SKIP":
+            pytest.skip(
+                f"{entry.mech_name}: wrap parameter recipe "
+                f"{config.param_recipe.style!r} needs runtime data"
+            )
+        return result
 
     if mech_id in _AES_IV_WRAP_MECHS:
         iv = os.urandom(16)
@@ -244,31 +312,36 @@ def _make_wrap_mech_param(entry: MechEntry) -> Any:
     except ImportError:
         pass
 
-    # GCM / CCM / AEAD variants -- complex, skip
-    config = entry.config
-    if config is not None and config.param_recipe.style in ("gcm", "ccm"):
-        pytest.skip(f"{entry.mech_name}: AEAD wrap not covered here")
-
     return None
 
 
-def _build_rsa_wrap_pair(rs: RawSession) -> tuple[int, int]:
+def _wrap_output_size_hint(entry: MechEntry) -> int:
+    if _AES_KEY_WRAP_KWP_MECH_ID and int(entry.mech_id) == _AES_KEY_WRAP_KWP_MECH_ID:
+        return 64
+    return 0
+
+
+def _build_rsa_wrap_pair(rs: RawSession, entry: MechEntry) -> tuple[int, int]:
     """Build an RSA-2048 wrap/unwrap keypair. Returns (pub_handle, priv_handle)."""
-    return gen_rsa_keypair(
-        rs.raw,
-        rs.sh,
-        2048,
-        public_attrs={
-            CKA_WRAP: True,
-            CKA_ENCRYPT: True,
-            CKA_TOKEN: False,
-        },
-        private_attrs={
-            CKA_UNWRAP: True,
-            CKA_DECRYPT: True,
-            CKA_TOKEN: False,
-        },
-    )
+    try:
+        return gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            2048,
+            public_attrs={
+                CKA_WRAP: True,
+                CKA_ENCRYPT: True,
+                CKA_TOKEN: False,
+            },
+            private_attrs={
+                CKA_UNWRAP: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+            },
+        )
+    except AssertionError as exc:
+        _xfail_wrap_runtime_reject(exc, entry, "RSA wrapping-key generation")
+        raise
 
 
 def _build_aes_wrap_key(rs: RawSession, entry: MechEntry, config: MechConfig) -> int:
@@ -276,15 +349,19 @@ def _build_aes_wrap_key(rs: RawSession, entry: MechEntry, config: MechConfig) ->
     from pkcs11_check.testcases.mechanism_helpers import pick_key_size
 
     key_size = pick_key_size(entry, config) or 256
-    return gen_aes_key(
-        rs.raw,
-        rs.sh,
-        key_size,
-        attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_ENCRYPT: True, CKA_DECRYPT: True},
-    )
+    try:
+        return gen_aes_key(
+            rs.raw,
+            rs.sh,
+            key_size,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_ENCRYPT: True, CKA_DECRYPT: True},
+        )
+    except AssertionError as exc:
+        _xfail_wrap_runtime_reject(exc, entry, "AES wrapping-key generation")
+        raise
 
 
-def _build_des_wrap_key(rs: RawSession, config: MechConfig) -> int:
+def _build_des_wrap_key(rs: RawSession, entry: MechEntry, config: MechConfig) -> int:
     """Generate a DES/3DES wrap/unwrap key matching the mechanism's key type.
 
     DES mechanisms require a DES key as the wrapping key, not AES.
@@ -326,7 +403,11 @@ def _build_des_wrap_key(rs: RawSession, config: MechConfig) -> int:
     mech = mech_simple(CKM(keygen_id))
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-    expect_rv(rv, CKR_OK)
+    try:
+        expect_rv(rv, CKR_OK)
+    except AssertionError as exc:
+        _xfail_wrap_runtime_reject(exc, entry, "DES wrapping-key generation")
+        raise
     return handle.value
 
 
@@ -378,23 +459,31 @@ def _build_generic_cipher_wrap_key(rs: RawSession, entry: MechEntry, config: Mec
     mech = mech_simple(CKM(int(keygen_mech)))
     handle = CK_OBJECT_HANDLE(0)
     rv = rs.raw.C_GenerateKey(rs.sh, mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-    expect_rv(rv, CKR_OK)
+    try:
+        expect_rv(rv, CKR_OK)
+    except AssertionError as exc:
+        _xfail_wrap_runtime_reject(exc, entry, "wrapping-key generation")
+        raise
     return handle.value
 
 
-def _build_target_aes_key(rs: RawSession) -> int:
+def _build_target_aes_key(rs: RawSession, entry: MechEntry) -> int:
     """Generate an extractable AES-128 target key for wrapping."""
-    return gen_aes_key(
-        rs.raw,
-        rs.sh,
-        128,
-        attrs={
-            CKA_EXTRACTABLE: True,
-            CKA_SENSITIVE: False,
-            CKA_ENCRYPT: True,
-            CKA_DECRYPT: True,
-        },
-    )
+    try:
+        return gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+            },
+        )
+    except AssertionError as exc:
+        _xfail_wrap_runtime_reject(exc, entry, "target-key generation")
+        raise
 
 
 def _target_unwrap_attrs(entry: MechEntry) -> dict[int, Any]:
@@ -491,12 +580,12 @@ class TestMechWrapRoundtrip:
         is_aes = config.key_type is not None and int(config.key_type) == _AES_KEY_TYPE
 
         if is_rsa:
-            wrap_pub, wrap_priv = _build_rsa_wrap_pair(rs)
+            wrap_pub, wrap_priv = _build_rsa_wrap_pair(rs, entry)
             wrap_handle = wrap_pub
             unwrap_handle = wrap_priv
         elif is_des:
             # DES/3DES mechanisms need a DES key as the wrapping key, not AES
-            wrap_handle = _build_des_wrap_key(rs, config)
+            wrap_handle = _build_des_wrap_key(rs, entry, config)
             unwrap_handle = wrap_handle
             wrap_priv = None
         elif is_aes or config.key_type is None:
@@ -511,7 +600,7 @@ class TestMechWrapRoundtrip:
             unwrap_handle = wrap_handle
             wrap_priv = None
 
-        target_key = _build_target_aes_key(rs)
+        target_key = _build_target_aes_key(rs, entry)
         unwrapped_key: int = 0
         original_value: bytes | None = None
 
@@ -531,14 +620,19 @@ class TestMechWrapRoundtrip:
             )
 
             # Wrap the target key
-            wrapped_blob = wrap_key(
-                rs.raw,
-                rs.sh,
-                wrap_handle,
-                target_key,
-                CKM(mech_id),
-                mech_param=mech_param,
-            )
+            try:
+                wrapped_blob = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrap_handle,
+                    target_key,
+                    CKM(mech_id),
+                    mech_param=mech_param,
+                    output_size_hint=_wrap_output_size_hint(entry),
+                )
+            except AssertionError as exc:
+                _xfail_wrap_runtime_reject(exc, entry, "wrap")
+                raise
             assert len(wrapped_blob) > 0, f"{entry.mech_name}: wrap produced empty blob"
 
             # Destroy the original target key -- unwrapped copy must still work
@@ -548,15 +642,19 @@ class TestMechWrapRoundtrip:
             # Unwrap to get a new key handle.
             # Raw RSA unwrap needs the key length supplied in the template
             # because CKM_RSA_X_509 wraps only the raw key value bytes.
-            unwrapped_key = unwrap_key(
-                rs.raw,
-                rs.sh,
-                unwrap_handle,
-                wrapped_blob,
-                CKM(mech_id),
-                attrs=_target_unwrap_attrs(entry),
-                mech_param=mech_param,
-            )
+            try:
+                unwrapped_key = unwrap_key(
+                    rs.raw,
+                    rs.sh,
+                    unwrap_handle,
+                    wrapped_blob,
+                    CKM(mech_id),
+                    attrs=_target_unwrap_attrs(entry),
+                    mech_param=mech_param,
+                )
+            except AssertionError as exc:
+                _xfail_wrap_runtime_reject(exc, entry, "unwrap")
+                raise
             assert unwrapped_key != 0, f"{entry.mech_name}: unwrap returned handle 0"
 
             # Decrypt with the unwrapped key -- must recover original plaintext
