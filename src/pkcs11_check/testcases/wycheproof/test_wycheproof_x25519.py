@@ -32,7 +32,16 @@ from pkcs11_check.raw.types_std import (
     CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_xdh_private_bytes,
     decode_xdh_public_bytes,
@@ -46,6 +55,20 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 # Module-level cache of curve OIDs that failed C_CreateObject with a domain/curve error.
 # Keyed by OID bytes; avoids redundant probe calls for unsupported Montgomery curves.
 _UNSUPPORTED_CURVE_OIDS: set[bytes] = set()
+
+_CURVE_UNSUPPORTED_CKRS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
+
+_MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
+    CKR_KEY_SIZE_RANGE,
+)
 
 # OIDs for Montgomery curves
 X25519_OID = bytes([0x06, 0x03, 0x2B, 0x65, 0x6E])  # 1.3.101.110
@@ -107,6 +130,8 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     try:
         public_bytes = decode_xdh_public_bytes(vec["public"], encoding_name)
     except Exception as exc:
+        if result == "invalid":
+            return
         pytest.skip(f"Cannot decode {encoding_name} XDH public key: {type(exc).__name__}")
     shared_expected = bytes.fromhex(vec["shared"])
 
@@ -124,22 +149,16 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             attrs={CKA_DERIVE: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        if any(
-            name in exc_msg
-            for name in (
-                "CKR_CURVE_NOT_SUPPORTED",
-                "CKR_DOMAIN_PARAMS_INVALID",
-            )
-        ):
+        if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             _UNSUPPORTED_CURVE_OIDS.add(oid)
-        if result == "invalid":
+            if result == "invalid":
+                return
+            pytest.skip(f"Cannot import Montgomery private key: {exc}")
+        if result == "invalid" and is_known_error(exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
             return
-        pytest.skip(f"Cannot import Montgomery private key: {exc_msg}")
-    except AttributeError as exc:
-        if result == "invalid":
-            return
-        pytest.skip(f"Cannot import Montgomery private key: {exc}")
+        if is_known_error(exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
+            pytest.skip(f"Cannot import Montgomery private key: {exc}")
+        raise
 
     # Derive shared secret
     ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=public_bytes)

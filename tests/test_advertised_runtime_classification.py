@@ -113,6 +113,7 @@ def test_wycheproof_ec_import_guards_use_structured_ckr_checks() -> None:
     paths = (
         Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py"),
         Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdh.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_x25519.py"),
     )
     offenders: list[str] = []
     for path in paths:

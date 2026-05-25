@@ -302,6 +302,10 @@ ECDH no longer skips arbitrary `AssertionError`s from private-key import. These
 remain capability skips because PKCS#11 does not expose a complete per-curve
 support list through mechanism discovery.
 
+The X25519/X448 guard received the same structured CKR treatment. Invalid JWK
+vectors whose public key cannot be decoded now count as accepted invalid-vector
+rejections instead of provider capability skips.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
