@@ -8,7 +8,12 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKK_AES, CKM_AES_CBC, CKR_GENERAL_ERROR
+from pkcs11_check.raw.types_std import (
+    CKK_AES,
+    CKM_AES_CBC,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_TYPE_INCONSISTENT,
+)
 from pkcs11_check.testcases import mechanism_vectors
 from pkcs11_check.testcases import test_mech_encrypt as mech_encrypt
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
@@ -62,3 +67,29 @@ def test_mechanism_kat_encrypt_general_error_is_xfail(
         match="advertised but KAT encrypt is not operational",
     ):
         mech_encrypt.TestMechEncryptKAT().test_kat_vector(rs, _entry())
+
+
+def test_mechanism_roundtrip_key_type_inconsistent_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typed-key runtime reject is advertised mechanism capability evidence."""
+
+    def _raise_key_type_inconsistent(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_KEY_TYPE_INCONSISTENT",
+            int(CKR_KEY_TYPE_INCONSISTENT),
+        )
+
+    monkeypatch.setattr(mech_encrypt, "generate_key_for_encrypt", lambda *_args: (1, None))
+    monkeypatch.setattr(mech_encrypt, "get_test_plaintext_bytes", lambda: b"0" * 32)
+    monkeypatch.setattr(mech_encrypt, "make_mech_param_or_skip", lambda _entry: None)
+    monkeypatch.setattr(mech_encrypt, "encrypt_single", _raise_key_type_inconsistent)
+    monkeypatch.setattr(mech_encrypt, "destroy_quietly", lambda *_args: None)
+
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised but encrypt is not operational",
+    ):
+        mech_encrypt.TestMechEncryptRoundtrip().test_roundtrip(rs, _entry())

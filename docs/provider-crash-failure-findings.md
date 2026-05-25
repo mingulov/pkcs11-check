@@ -450,10 +450,20 @@ The following paths were tightened after inspecting the all-fail artifacts:
   runners now classify explicit generic runtime rejects as xfail while keeping
   wrong ciphertext/plaintext as failures. BouncyHSM CFB128 multiblock timeouts
   are unchanged: timeouts remain failures.
+- **SHA3/SHAKE key derivation**: the standalone SHA3/SHAKE KDF tests now match
+  OASIS v3.2 sections 6.20.5 and 6.28-6.32. SHA3 derivation is SHA-1-style
+  derivation over the base key value, and SHAKE derivation expands the input
+  key; neither path uses `CK_KEY_DERIVATION_STRING_DATA`. SHA3 output lengths
+  now use the digest size for the selected mechanism, so SHA3-224 no longer
+  requests an invalid 32-byte output. Explicit `C_DeriveKey` CKR rejects are
+  still reported as xfail advertised-but-not-operational evidence.
 - **Mechanism-driven encryption**: roundtrip setup now skips when the required
   keygen mechanism is absent and xfails when advertised key generation rejects
   at runtime. KAT encrypt/decrypt paths now xfail explicit runtime CKRs but
-  still fail ciphertext mismatches.
+  still fail ciphertext mismatches. `CKR_KEY_TYPE_INCONSISTENT` during
+  encrypt initialization with the registry-selected key type is treated the
+  same way: advertised-but-not-operational capability evidence, not a
+  ciphertext failure.
 - **Older general AES/access-control tests**: AES secret-key tests now probe
   `AES_KEY_GEN` before using it. General AES encryption and AES mode smoke
   tests use 128-bit setup keys unless they are explicitly checking AES key-size
