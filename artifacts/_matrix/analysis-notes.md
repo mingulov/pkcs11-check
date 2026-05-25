@@ -1060,8 +1060,10 @@ Run status:
 - Two split Wycheproof ECDSA segments completed under the same 20-second
   per-test timeout: brainpool 6,398 total/6,398 passed and secp160/secp192
   3,390 total/3,390 passed. Neither segment had skipped, failed, crashed, or
-  timeout results. Remaining ECDSA shards are secp224, secp256, and
-  secp384/secp521.
+  timeout results.
+- The secp224 Wycheproof ECDSA segment also completed cleanly: 5,810 total,
+  5,810 passed, no skipped, failed, crashed, or timeout results. Remaining
+  ECDSA shards are secp256 and secp384/secp521.
 - The security segment completed under the same 20-second per-test timeout:
   267 total, 169 passed, 35 failed, 57 skipped, 3 xfailed, 3 crashed, and no
   timeouts.
@@ -1095,6 +1097,8 @@ Focused artifacts:
 - `artifacts/bouncyhsm-wycheproof-ecdsa-brainpool`: 6,398 total, 6,398
   passed, no skipped/failed/error/crashed/timeout results.
 - `artifacts/bouncyhsm-wycheproof-ecdsa-secp160-192`: 3,390 total, 3,390
+  passed, no skipped/failed/error/crashed/timeout results.
+- `artifacts/bouncyhsm-wycheproof-ecdsa-secp224`: 5,810 total, 5,810
   passed, no skipped/failed/error/crashed/timeout results.
 - `artifacts/bouncyhsm-security`: 267 total, 169 passed, 35 failed, 57
   skipped, 3 xfailed, 3 crashed, no timeouts.
@@ -1144,9 +1148,9 @@ Failure classification for focused units:
   timeouts. Failure traces are dominated by `CKR_MECHANISM_PARAM_INVALID`, so
   this is a broad mechanism-parameter/correctness cluster rather than an
   isolated curve or vector issue.
-- Wycheproof ECDSA: brainpool and secp160/secp192 split shards passed
-  cleanly, 9,788/9,788 total, with no skips, failures, crashes, or timeouts.
-  This is now evidence-backed for those curve families; secp224, secp256, and
+- Wycheproof ECDSA: brainpool, secp160/secp192, and secp224 split shards
+  passed cleanly, 15,598/15,598 total, with no skips, failures, crashes, or
+  timeouts. This is now evidence-backed for those curve families; secp256 and
   secp384/secp521 remain to be run before treating ECDSA as complete.
 - Security: failures clustered in arithmetic overflow (16), padding oracle
   (7), FFI length boundary (5), API security (4), CVE regression (2), and API
@@ -1188,8 +1192,8 @@ Current classification:
   ECDSA are strong or mostly clean; ECDH is a broad failure cluster; ML-DSA,
   EdDSA, RSA-PSS/SHA3, hash/SHA3, and SLH-DSA have narrower correctness or
   validation failures.
-- Split Wycheproof ECDSA is clean so far across brainpool and secp160/secp192,
-  but the remaining secp224, secp256, and secp384/secp521 shards are still
+- Split Wycheproof ECDSA is clean so far across brainpool, secp160/secp192,
+  and secp224, but the remaining secp256 and secp384/secp521 shards are still
   needed before final ECDSA coverage can be called complete.
 - Core Wycheproof shows clean X25519, HKDF, ChaCha, ML-KEM, and RSA decrypt
   coverage in this bounded segment; AES, HMAC, RSA-OAEP/PSS/signature, and
@@ -1517,6 +1521,9 @@ not overwrite full provider statistics.
 - `artifacts/bouncyhsm-wycheproof-ecdsa-secp160-192`: BouncyHSM completed the
   secp160/secp192 Wycheproof ECDSA shard with 3,390 passed and no
   skipped/failed/error/crashed/timeout results.
+- `artifacts/bouncyhsm-wycheproof-ecdsa-secp224`: BouncyHSM completed the
+  secp224 Wycheproof ECDSA shard with 5,810 passed and no
+  skipped/failed/error/crashed/timeout results.
 - `artifacts/bouncyhsm-security`: BouncyHSM completed the security family with
   169 passed, 35 failed, 57 skipped, 3 xfailed, and 3 crashes. It had no
   timeouts. Findings include weak-RSA-exponent keygen segfaults, arithmetic and
@@ -1541,8 +1548,8 @@ not overwrite full provider statistics.
 - Parse completed provider artifacts into a compact machine-readable summary
   after each provider completes.
 - If BouncyHSM should become an official full-suite provider statistic, rerun
-  the remaining Wycheproof ECDSA shards (`secp224`, `secp256`, and
-  `secp384 or secp521`) and any intentionally excluded CCTV/stress/fuzz/slow
+  the remaining Wycheproof ECDSA shards (`secp256` and `secp384 or secp521`)
+  and any intentionally excluded CCTV/stress/fuzz/slow
   families in split/bounded mode. Avoid one monolithic Wycheproof target
   because large ECDH/ECDSA files dominate runtime and trigger file-level
   timeout retries.

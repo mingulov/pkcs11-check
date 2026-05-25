@@ -87,7 +87,7 @@ qryptotoken on `2026-05-25`.
 | nss-main | NSS/NSPR source tips | full | 84,819 | 47,549 | 2,018 | 35,147 | 0 | 4/0 |
 | opencryptoki | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 89,899 | 78,656 | 2,593 | 8,593 | 0 | 0/0 |
 | opencryptoki-master | OpenCryptoki master, OpenSSL 4.0.0 | full | 89,899 | 78,657 | 2,589 | 8,595 | 0 | 0/0 |
-| bouncyhsm | BouncyHSM v2.1.0 | partial + segmented ACVP + Wycheproof core/ECDH/partial ECDSA + security + general | 78,942 focused | 45,897 focused | 22,303 focused | 10,651 focused | 0 | 4/0, plus timeout failures |
+| bouncyhsm | BouncyHSM v2.1.0 | partial + segmented ACVP + Wycheproof core/ECDH/partial ECDSA + security + general | 84,752 focused | 51,707 focused | 22,303 focused | 10,651 focused | 0 | 4/0, plus timeout failures |
 | tpm2 source | upstream tpm2-pkcs11 1.10.0 | full | 81,400 | 9,847 | 6,825 | 64,696 | 0 | report has subprocess crashes |
 | tpm2 package | Fedora tpm2-pkcs11 1.9.1 package | archived full | 64,084 | 8,433 | 5,067 | 49,727 | 851 | report has subprocess crashes |
 | pkcs11-mock | pkcs11-mock v2.0.0 | full mock baseline | 32,633 | 2,560 | 3,546 | 26,517 | 0 | 0/0 |
@@ -271,8 +271,9 @@ non-vector/non-security general family under bounded targets:
   - Brainpool: 6,398 total, 6,398 passed, no skips/failures/crashes/timeouts.
   - secp160/secp192: 3,390 total, 3,390 passed, no skips/failures/crashes/
     timeouts.
-  - Remaining ECDSA shards are secp224 (5,810 vectors), secp256 (7,569
-    vectors), and secp384/secp521 (5,748 vectors).
+  - secp224: 5,810 total, 5,810 passed, no skips/failures/crashes/timeouts.
+  - Remaining ECDSA shards are secp256 (7,569 vectors) and secp384/secp521
+    (5,748 vectors).
 - Security segment: 267 total, 169 passed, 35 failed, 57 skipped, 3 xfailed,
   3 crashed, no timeouts.
   - Failed buckets: arithmetic overflow 16, padding oracle 7, FFI length
@@ -320,10 +321,10 @@ Failure classification in the focused units:
 - Wycheproof ECDH: broad standalone failure cluster, with 11,945 failures out
   of 13,128 vectors and no crash/timeout. This reinforces that BouncyHSM's ECDH
   problem is not an ACVP-only artifact.
-- Wycheproof ECDSA: the first two split shards passed cleanly, 9,788/9,788,
-  covering brainpool and secp160/secp192 vectors. This should be reported by
-  curve-family shard rather than inferred from the earlier stopped monolithic
-  Wycheproof run.
+- Wycheproof ECDSA: the first three split shards passed cleanly,
+  15,598/15,598, covering brainpool, secp160/secp192, and secp224 vectors.
+  This should be reported by curve-family shard rather than inferred from the
+  earlier stopped monolithic Wycheproof run.
 - Security: key material and attribute boundaries fail in several places
   (`CKA_PRIVATE_EXPONENT` readable, `CKA_EXTRACTABLE` escalation,
   `CKA_SENSITIVE` downgrade, copy-based sensitive downgrade), and RSA/AES
@@ -442,17 +443,17 @@ Focused reruns after those fixes are stored under `artifacts/_focused/`:
   1,931 failed, 306 skipped, and 30 xfailed with no crashes or timeouts; core
   Wycheproof added 19,196 passed, 748 failed, and 528 skipped with no crashes
   or timeouts; Wycheproof ECDH added 1,183 passed and 11,945 failed with no
-  crashes or timeouts; Wycheproof ECDSA brainpool added 6,398 passed and
-  Wycheproof ECDSA secp160/secp192 added 3,390 passed, both with no crashes or
-  timeouts; security added 169 passed, 35 failed, 57 skipped, 3 xfailed, and 3
-  crashes with no timeouts; general added 2,908 passed, 208 failed, 2,440
-  skipped, and 24 xfailed with no crashes or timeouts.
+  crashes or timeouts; Wycheproof ECDSA brainpool added 6,398 passed,
+  secp160/secp192 added 3,390 passed, and secp224 added 5,810 passed, all with
+  no crashes or timeouts; security added 169 passed, 35 failed, 57 skipped, 3
+  xfailed, and 3 crashes with no timeouts; general added 2,908 passed, 208
+  failed, 2,440 skipped, and 24 xfailed with no crashes or timeouts.
 
 ## Remaining Work Before Final Article
 
-- Run the remaining BouncyHSM Wycheproof ECDSA shards (`secp224`, `secp256`,
-  and `secp384 or secp521`) and any intentionally excluded CCTV/stress/fuzz/
-  slow families that should count in the final full-suite statistic. A broad
+- Run the remaining BouncyHSM Wycheproof ECDSA shards (`secp256` and
+  `secp384 or secp521`) and any intentionally excluded CCTV/stress/fuzz/slow
+  families that should count in the final full-suite statistic. A broad
   Wycheproof run was stopped after completed generic/AES/ChaCha/DSA/ECDH state
   and an ECDSA file-level timeout retry; it has no final `results.json` and is
   planning evidence only.
