@@ -248,7 +248,15 @@ class TestMlDsaSigGen:
 
             try:
                 try:
-                    verified = verify_single(rs.raw, rs.sh, pub_key, mech, vec["msg"], sig)
+                    verified = verify_single(
+                        rs.raw,
+                        rs.sh,
+                        pub_key,
+                        mech,
+                        vec["msg"],
+                        sig,
+                        mech_param=mech_param,
+                    )
                 except AssertionError as exc:
                     _xfail_if_mldsa_runtime_reject(
                         exc, f"{vec_id}: generated signature verification"
