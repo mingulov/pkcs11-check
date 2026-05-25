@@ -26,7 +26,9 @@ from pkcs11_check.testcases._signature_policy import (
 from pkcs11_check.testcases.acvp import test_acvp_ecdh, test_acvp_mldsa
 from pkcs11_check.testcases.wycheproof import (
     test_wycheproof_aes,
+    test_wycheproof_dsa,
     test_wycheproof_ecdh,
+    test_wycheproof_ecdsa,
     test_wycheproof_hmac,
     test_wycheproof_rsa_oaep,
     test_wycheproof_rsa_pss,
@@ -488,6 +490,30 @@ def test_wycheproof_ecdh_valid_runtime_rejects_are_xfail(rv: int) -> None:
         test_wycheproof_ecdh._xfail_if_ecdh_runtime_reject(
             exc,
             "ecdh_brainpoolP224r1_test.json:tc1-valid",
+        )
+
+
+@pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_GENERAL_ERROR])
+def test_wycheproof_ecdsa_valid_runtime_rejects_are_xfail(rv: int) -> None:
+    """Advertised Wycheproof ECDSA verify runtime rejects are findings."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised ECDSA verify"):
+        test_wycheproof_ecdsa._xfail_if_ecdsa_runtime_reject(
+            exc,
+            "ecdsa_secp521r1_shake256_test.json:tc1-valid",
+        )
+
+
+@pytest.mark.parametrize("rv", [CKR_ARGUMENTS_BAD, CKR_DEVICE_ERROR])
+def test_wycheproof_dsa_valid_runtime_rejects_are_xfail(rv: int) -> None:
+    """Advertised Wycheproof DSA verify runtime rejects are findings."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised DSA verify"):
+        test_wycheproof_dsa._xfail_if_dsa_runtime_reject(
+            exc,
+            "dsa_2048_224_sha224_test.json:tc2-valid",
         )
 
 

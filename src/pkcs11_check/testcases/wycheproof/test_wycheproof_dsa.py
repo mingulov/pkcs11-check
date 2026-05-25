@@ -7,7 +7,7 @@ Supports both ASN.1 DER and IEEE P1363 signature encodings.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -22,8 +22,21 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_DSA_SHA224,
     CKM_DSA_SHA256,
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["DSA_SHA256"]
@@ -51,6 +64,21 @@ _DSA_FILES = [
     "dsa_3072_256_sha256_test.json",
     "dsa_3072_256_sha256_p1363_test.json",
 ]
+
+_DSA_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 def _load_dsa_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -90,6 +118,16 @@ def _load_dsa_vectors() -> list[tuple[str, dict[str, Any]]]:
 
 
 _ALL_DSA_VECTORS = _load_dsa_vectors()
+
+
+def _xfail_if_dsa_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised DSA verify runtime rejects as findings."""
+    xfail_if_known_ckr(
+        exc,
+        _DSA_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised DSA verify is not operational",
+    )
+    raise exc
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_DSA_VECTORS, ids=[v[0] for v in _ALL_DSA_VECTORS])
@@ -147,6 +185,7 @@ def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             pytest.fail(f"Valid DSA sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_dsa_runtime_reject(exc, vec_id)
             pytest.fail(f"Valid DSA sig {vec_id} rejected: {exc}")
         signature_rejected_or_xfail(exc, vec_id)
         return

@@ -505,6 +505,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   during valid-vector key derivation. PBES2 setup and decrypt CKRs are now
   visible xfail findings, while successful decrypts still have to match the
   expected plaintext.
+- **Wycheproof ECDSA/DSA valid verify rejects**: Kryoptic P-521/SHAKE ECDSA
+  and NSS source DSA vectors reached advertised verify mechanisms but returned
+  runtime CKRs such as `CKR_DEVICE_ERROR` or `CKR_ARGUMENTS_BAD` for valid
+  signatures. These operation rejects are now visible xfail findings. A valid
+  signature that cleanly verifies as false, or returns a signature-invalid
+  result, remains a hard failure.
 - **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
   `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
   runners now classify explicit generic runtime rejects as xfail while keeping

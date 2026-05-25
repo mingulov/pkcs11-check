@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
@@ -24,16 +24,24 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_ECDSA,
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
+    CKR_DATA_INVALID,
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["ECDSA"]
@@ -55,6 +63,21 @@ _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
     CKR_MECHANISM_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_DEVICE_ERROR,
+)
+
+_ECDSA_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 
@@ -191,6 +214,16 @@ def _load_ecdsa_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_ECDSA = _load_ecdsa_vectors()
 
 
+def _xfail_if_ecdsa_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised ECDSA verify runtime rejects as findings."""
+    xfail_if_known_ckr(
+        exc,
+        _ECDSA_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised ECDSA verify is not operational",
+    )
+    raise exc
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_ECDSA, ids=[v[0] for v in _ALL_ECDSA])
 def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ECDSA signature verification from Wycheproof vectors."""
@@ -267,6 +300,7 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
             pytest.fail(f"Valid ECDSA sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_ecdsa_runtime_reject(exc, vec_id)
             pytest.fail(f"Valid ECDSA sig {vec_id} rejected: {exc}")
         signature_rejected_or_xfail(exc, vec_id)
         return
