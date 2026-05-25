@@ -436,19 +436,34 @@
             "xfailed": 0,
             "xpassed": 0
           }
+        },
+        {
+          "artifact": "artifacts/bouncyhsm-wycheproof-ecdsa-secp256/results.json",
+          "name": "wycheproof_ecdsa_secp256",
+          "summary": {
+            "crashed": 0,
+            "error": 0,
+            "failed": 0,
+            "passed": 7569,
+            "skipped": 0,
+            "timeout": 0,
+            "total": 7569,
+            "xfailed": 0,
+            "xpassed": 0
+          }
         }
       ],
-      "notes": "Segmented ACVP plus bounded core Wycheproof, Wycheproof ECDH, partial Wycheproof ECDSA, security, and general evidence. AES CCM/CFB/OFB issues remain; CFB8 has one confirmed segfault plus pytest-timeout failures. Non-AES ACVP is complete with ECDH, ML-DSA, EdDSA, hash, RSA-PSS/SHA3, and SLH-DSA failure clusters; ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean. Core Wycheproof completed without crashes/timeouts; failures cluster in AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing/verification. Standalone Wycheproof ECDH completed without crashes/timeouts and is a broad failure cluster dominated by mechanism-parameter rejection. Wycheproof ECDSA brainpool, secp160/secp192, and secp224 shards completed with 15,598/15,598 passed and no skips/crashes/timeouts; secp256 and secp384/secp521 shards remain. Security segment found FFI arithmetic/length crashes, NULL mechanism crash, weak RSA exponent keygen segfaults, key-attribute boundary failures, padding/timing oracle findings, and clean KWP/RSA error-path/null-pointer/nonce/handle-reuse/Tookan slices. General slice completed without crashes/timeouts; clean areas include interface/init/interop/object/X.509 import/RSA extended and wrapping, while failures cluster in mechanism sign/digest/attribute/multipart/wrap, hash ML-DSA, session state, access levels, AES/Salsa/ChaCha, and BLAKE2.",
+      "notes": "Segmented ACVP plus bounded core Wycheproof, Wycheproof ECDH, partial Wycheproof ECDSA, security, and general evidence. AES CCM/CFB/OFB issues remain; CFB8 has one confirmed segfault plus pytest-timeout failures. Non-AES ACVP is complete with ECDH, ML-DSA, EdDSA, hash, RSA-PSS/SHA3, and SLH-DSA failure clusters; ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean. Core Wycheproof completed without crashes/timeouts; failures cluster in AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing/verification. Standalone Wycheproof ECDH completed without crashes/timeouts and is a broad failure cluster dominated by mechanism-parameter rejection. Wycheproof ECDSA brainpool, secp160/secp192, secp224, and secp256 shards completed with 23,167/23,167 passed and no skips/crashes/timeouts; secp384/secp521 remains. Security segment found FFI arithmetic/length crashes, NULL mechanism crash, weak RSA exponent keygen segfaults, key-attribute boundary failures, padding/timing oracle findings, and clean KWP/RSA error-path/null-pointer/nonce/handle-reuse/Tookan slices. General slice completed without crashes/timeouts; clean areas include interface/init/interop/object/X.509 import/RSA extended and wrapping, while failures cluster in mechanism sign/digest/attribute/multipart/wrap, hash ML-DSA, session state, access levels, AES/Salsa/ChaCha, and BLAKE2.",
       "source": "BouncyHSM v2.1.0",
       "status": "partial segmented ACVP + Wycheproof core/ECDH/partial ECDSA + security + general; not full-suite statistics",
       "summary": {
         "crashed": 4,
         "error": 0,
         "failed": 22303,
-        "passed": 51707,
+        "passed": 59276,
         "skipped": 10651,
         "timeout": 0,
-        "total": 84752,
+        "total": 92321,
         "xfailed": 87,
         "xpassed": 0
       },
