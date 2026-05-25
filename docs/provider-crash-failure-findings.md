@@ -702,7 +702,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   sign, and verify now use the same advertised-but-not-operational split.
   Explicit CKR runtime rejects from the PKCS#11 operation become xfail findings,
   while ciphertext, plaintext, digest, signature, crash, and timeout mismatches
-  remain failures.
+  remain failures. The old OpenCryptoki multipart rows for DES CFB/OFB
+  `CKR_KEY_TYPE_INCONSISTENT`, AES-CTS/HASH-ML-DSA `CKR_FUNCTION_FAILED`,
+  EDDSA/HMAC `CKR_MECHANISM_INVALID`, and SSL3 MAC `CKR_KEY_SIZE_RANGE`
+  key-generation rejects are covered by the current runtime/setup
+  classification and should be treated as stale raw-failure artifacts until the
+  provider matrix is refreshed.
 - **Mechanism attribute readback**: mechanism-generated key attribute tests now
   distinguish attribute read support from attribute value correctness. A module
   that rejects `C_GetAttributeValue` with a non-clean CKR such as
