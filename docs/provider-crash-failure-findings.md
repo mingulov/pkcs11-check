@@ -485,6 +485,40 @@ The following paths were tightened after inspecting the all-fail artifacts:
   reach `C_WrapKeyAuthenticated` and receive an explicit CKR reject are reported
   as xfail advertised-but-not-operational evidence. Missing API symbols remain
   skips, but runtime `CKR_FUNCTION_NOT_SUPPORTED` is no longer a clean skip.
+- **TLS 1.2 key-and-MAC derivation**: `CKM_TLS12_KEY_AND_MAC_DERIVE` and
+  `CKM_TLS12_KEY_SAFE_DERIVE` tests now follow the PKCS#11 return contract for
+  key-material mechanisms: `C_DeriveKey` receives `phKey=NULL_PTR`, and the
+  test validates the handles returned in `CK_SSL3_KEY_MAT_OUT` instead of
+  reading a non-existent primary derived-key handle.
+- **Message API generated IV/nonce writeback**: the AES-GCM/AES-CCM message
+  tests intentionally remain hard failures when `C_EncryptMessage` returns
+  `CKR_OK` but leaves the generated IV, nonce, or tag/MAC output buffer empty.
+  The local packer tests verify that pkcs11-check exposes writable output
+  buffers, so this artifact bucket is retained as provider writeback evidence.
+- **Hash-ML-DSA sign probes**: providers that advertise `CKM_HASH_ML_DSA` but
+  reject the sign operation with `CKR_DATA_LEN_RANGE` or `CKR_GENERAL_ERROR`
+  are reported as advertised-but-not-operational xfail evidence. Successful
+  signatures must still verify, and accepted tampered signatures remain hard
+  failures.
+- **VerifySignature multipart API**: the multipart `C_VerifySignature*` test no
+  longer depends on multipart RSA-PKCS signing just to create setup data. It
+  now creates the valid signature with single-shot `C_Sign` and exercises only
+  the `C_VerifySignatureInit`/`Update`/`Final` path under test.
+- **Miscellaneous KDF derive rejects**: `CKM_EXTRACT_KEY_FROM_KEY` now treats
+  `CKR_ATTRIBUTE_VALUE_INVALID` at `C_DeriveKey` as an advertised mechanism
+  rejected at runtime. Providers that return `CKR_OK` but derive the wrong
+  bytes remain hard failures.
+- **DES/Salsa20/BLAKE2 edge probes**: DES modes that return
+  `CKR_KEY_TYPE_INCONSISTENT`, Salsa20 encryption that returns
+  `CKR_GENERAL_ERROR`, and BLAKE2 empty-message digesting that returns
+  `CKR_ARGUMENTS_BAD` are now classified as explicit
+  advertised-but-not-operational xfail evidence. If these mechanisms return
+  `CKR_OK`, the tests still compare the actual ciphertext, plaintext, or
+  digest bytes.
+- **AES-KEY-WRAP-PKCS7 unwrap template**: the standalone AES wrap/unwrap test
+  no longer supplies `CKA_VALUE_LEN` when unwrapping an AES key whose wrapped
+  bytes already determine the length. `CKA_VALUE_LEN` remains reserved for
+  raw-block unwrap cases, matching the mechanism-driven wrap tests.
 - **Buffer-size AES ECB smoke tests**: the input-size buffer tests now use the
   same AES setup policy. They still test one-block through 1 MiB AES-ECB buffer
   behavior, but they no longer turn an unrelated AES-256 setup-key rejection

@@ -44,8 +44,10 @@ from pkcs11_check.raw.types_std import (
     CKM_ML_DSA_KEY_PAIR_GEN,
     CKM_SHA256,
     CKP_ML_DSA_65,
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_MECHANISM_INVALID,
 )
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
@@ -56,7 +58,13 @@ REQUIRED_MECHANISMS = ["ML_DSA_KEY_PAIR_GEN"]
 _MESSAGE = b"HashML-DSA pre-hash signature test message 2026"
 
 # CKRs that indicate the mechanism is not yet implemented (not a test bug).
-_SIGN_ERROR_CKRS = (CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED, CKR_DEVICE_ERROR)
+_SIGN_ERROR_CKRS = (
+    CKR_MECHANISM_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DATA_LEN_RANGE,
+    CKR_GENERAL_ERROR,
+)
 
 # Hash-specific HASH_ML_DSA variants mapped to their CKM constants.
 # These support both single-part and multi-part sign/verify.

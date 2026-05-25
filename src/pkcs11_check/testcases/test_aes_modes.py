@@ -38,7 +38,6 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
-    CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
@@ -804,7 +803,6 @@ class TestAESKeyWrapPKCS7:
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
-                    CKA_VALUE_LEN: 24,
                     CKA_EXTRACTABLE: True,
                     CKA_SENSITIVE: False,
                 },

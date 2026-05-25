@@ -16,7 +16,6 @@ from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
-    sign_multipart,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -80,7 +79,7 @@ class TestVerifySignatureRoundtrip:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             chunks = [b"chunk one ", b"chunk two ", b"chunk three"]
-            sig = sign_multipart(rs.raw, rs.sh, priv, CKM_RSA_PKCS, chunks)
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, b"".join(chunks))
             sig_ptr, sig_len = _sig_buf(sig)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_VerifySignatureInit(rs.sh, mech.byref(), pub, sig_ptr, sig_len)

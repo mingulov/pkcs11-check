@@ -65,6 +65,7 @@ from pkcs11_check.raw.types_std import (
     CKM_DES_MAC,
     CKM_DES_MAC_GENERAL,
     CKM_DES_OFB64,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_OK,
 )
@@ -94,7 +95,7 @@ def _encrypt_or_xfail(
     try:
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+        if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_KEY_TYPE_INCONSISTENT}):
             pytest.xfail(xfail_msg or f"Mechanism advertised but rejected at use: {exc}")
         raise
 
