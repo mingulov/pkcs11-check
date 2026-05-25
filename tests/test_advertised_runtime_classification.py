@@ -380,6 +380,34 @@ def test_wycheproof_rsa_decrypt_invalid_ciphertexts_are_reported() -> None:
         assert "result == \"invalid\"" in source
 
 
+def test_wycheproof_symmetric_invalid_outputs_are_reported() -> None:
+    """Invalid symmetric vectors must fail on accepted invalid outputs."""
+    expected = {
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof.py"): (
+            "Invalid AES-GCM vector",
+            "Invalid AES-CBC vector",
+        ),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py"): (
+            "AES-CMAC",
+            "AES-KW wrap",
+            "AES-KWP wrap",
+            "AES-CCM encrypt",
+            "AES-GMAC",
+            "produced invalid",
+        ),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_chacha.py"): (
+            "ChaCha20-Poly1305",
+            "produced invalid",
+        ),
+    }
+
+    for path, snippets in expected.items():
+        source = path.read_text()
+        for snippet in snippets:
+            assert snippet in source
+        assert "result == \"invalid\"" in source
+
+
 def test_stateful_signature_guards_use_structured_ckr_checks() -> None:
     """Stateful signature guards should not parse CKR names from text."""
     path = Path("src/pkcs11_check/testcases/test_stateful_sigs.py")

@@ -107,6 +107,8 @@ def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
 
     if result == "valid" and mac is not None:
         assert mac[:tag_size] == tag_expected
+    if result == "invalid" and mac is not None and mac[:tag_size] == tag_expected:
+        pytest.fail(f"AES-CMAC {vec_id} produced invalid tag")
 
     generate_random(rs.raw, rs.sh, 64)
 
@@ -183,6 +185,8 @@ def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
 
     if result == "valid" and wrapped is not None:
         assert wrapped == ct_expected
+    if result == "invalid" and wrapped is not None and wrapped == ct_expected:
+        pytest.fail(f"AES-KW wrap {vec_id} produced invalid ciphertext")
 
 
 # --- AES Key Wrap with Padding (RFC 5649) ---
@@ -265,6 +269,8 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             f"AES-KWP wrap output differs for {vec_id} "
             f"(got {len(wrapped)}B, expected {len(ct_expected)}B)"
         )
+    if result == "invalid" and wrapped is not None and wrapped == ct_expected:
+        pytest.fail(f"AES-KWP wrap {vec_id} produced invalid ciphertext")
 
 
 # --- AES-CCM ---
@@ -337,6 +343,8 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     # AES-CCM output is ct||tag
     if result == "valid" and ciphertext is not None:
         assert ciphertext == ct_expected + tag_expected
+    if result == "invalid" and ciphertext is not None and ciphertext == ct_expected + tag_expected:
+        pytest.fail(f"AES-CCM encrypt {vec_id} produced invalid ciphertext/tag")
 
 
 # --- AES-GMAC ---
@@ -398,6 +406,8 @@ def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
 
     if result == "valid" and mac is not None:
         assert mac == tag_expected
+    if result == "invalid" and mac is not None and mac == tag_expected:
+        pytest.fail(f"AES-GMAC {vec_id} produced invalid tag")
 
 
 # --- AES-XTS ---

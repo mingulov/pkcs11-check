@@ -112,3 +112,5 @@ def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
     if result == "valid" and ciphertext is not None:
         assert ciphertext == ct_expected + tag_expected
+    if result == "invalid" and ciphertext is not None and ciphertext == ct_expected + tag_expected:
+        pytest.fail(f"ChaCha20-Poly1305 {vec_id} produced invalid ciphertext/tag")

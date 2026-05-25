@@ -142,9 +142,7 @@ class TestAESGCMWycheproof:
             if result == "valid" or result == "acceptable":
                 assert pt == msg
             elif result == "invalid":
-                # Invalid vector decrypted - module didn't check tag properly
-                # This is a finding but not necessarily a hard failure
-                pass
+                pytest.fail(f"Invalid AES-GCM vector tc{vec['tcId']} decrypted successfully")
         except AssertionError as exc:
             exc_msg = str(exc)
             if result == "valid":
@@ -382,6 +380,8 @@ class TestAESCBCPKCS5Wycheproof:
             )
             if result == "valid" or result == "acceptable":
                 assert pt == msg
+            elif result == "invalid":
+                pytest.fail(f"Invalid AES-CBC vector tc{vec['tcId']} decrypted successfully")
         except AssertionError:
             if result == "valid":
                 pytest.fail(f"Valid AES-CBC vector tc{vec['tcId']} failed")
