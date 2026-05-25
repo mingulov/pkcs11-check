@@ -38,6 +38,47 @@ target exists.
   `v3.27.0` and `master`, BouncyHSM `v2.1.0`, tpm2-pkcs11 `1.10.0`,
   pkcs11-mock `v2.0.0`, qryptotoken `v0.4.1`.
 
+## Collected Test Universe
+
+Collection command:
+
+```bash
+uv run pytest --collect-only -q src/pkcs11_check/testcases
+```
+
+The command was inspected through pytest's collection API so parametrized
+vector tests are counted as individual product-test items. Current collection
+maximum: 102,109 items. This is a collect-time maximum before runtime provider
+capability skips, xfails, crashes, timeouts, or focused target selection.
+
+Grouped by suite/function:
+
+- 28,915: Wycheproof ECDSA vectors.
+- 25,599: ACVP AES vectors.
+- 23,986: Wycheproof other vectors.
+- 13,128: Wycheproof ECDH vectors.
+- 5,309: ACVP non-AES vectors.
+- 2,266: General conformance / interop tests.
+- 1,365: CCTV vectors.
+- 1,046: Stress tests.
+- 274: Security regression tests.
+- 178: Raw CKR/API negative tests.
+- 43: Fuzz tests.
+
+Top-level collection buckets:
+
+- 66,029: `wycheproof/`.
+- 30,908: `acvp/`.
+- 1,687: `x509/`.
+- 1,363: root CCTV files.
+- 274: `security/`.
+- 178: `ckr/`.
+
+Overlapping marker counts are useful for article framing but should not be
+summed: `wycheproof` 66,029, `kat` 31,383, `acvp` 30,908, `security` 2,368,
+`cctv` 1,365, `stress` 1,046, `access` 349, `subprocess` 241,
+`destructive` 46, `fuzz` 14.
+
 ## SoftHSM2 2.7.0
 
 Artifacts: `artifacts/softhsm2/`.

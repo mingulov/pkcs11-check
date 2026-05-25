@@ -37,6 +37,32 @@ Data sources recorded in
 - x509-limbo: `feb7caccc1afaa9d7e63ee8d7f81e6ce8b199510`,
   `2026-05-22T00:33:27Z`.
 
+## Collected Test Universe
+
+As of this report, `uv run pytest --collect-only` over
+`src/pkcs11_check/testcases` collects 102,109 product-test items. This is the
+maximum collect-time universe shipped with the current suite and data packages,
+before provider-specific runtime skips, unsupported-mechanism gating, xfails,
+crashes, or marker-based selection. A provider that exposed every relevant
+capability would be evaluated against this collection universe, but the
+per-provider totals below are lower or segmented when a run used capability
+skips, focused targets, or partial execution.
+
+| Group | Collected tests |
+| --- | ---: |
+| Wycheproof ECDSA vectors | 28,915 |
+| ACVP AES vectors | 25,599 |
+| Wycheproof other vectors | 23,986 |
+| Wycheproof ECDH vectors | 13,128 |
+| ACVP non-AES vectors | 5,309 |
+| General conformance / interop tests | 2,266 |
+| CCTV vectors | 1,365 |
+| Stress tests | 1,046 |
+| Security regression tests | 274 |
+| Raw CKR/API negative tests | 178 |
+| Fuzz tests | 43 |
+| **Total** | **102,109** |
+
 Provider source manifest: `docker/provider-sources.toml`, observed
 `2026-05-24T17:52:49Z`, with later build-evidence updates for TPM2 and
 qryptotoken on `2026-05-25`.
