@@ -219,6 +219,14 @@ The SHAKE XOF checks still skip when the raw XOF functions are unavailable, but
 has advertised `CKM_SHAKE_128` or `CKM_SHAKE_256`. The draft mechanism ids are
 also named locally instead of being passed as unexplained inline constants.
 
+### Follow-Up: Extended ECDH And Montgomery Runtime Rejections
+
+Extended ECDH coverage now keeps X25519/Montgomery keygen and cofactor-ECDH
+AES-target derive rejections visible as xfail findings after the relevant
+mechanism is advertised. X448 remains a clean skip when the provider rejects
+that specific curve with a known unsupported-curve/template CKR, because a
+provider can reasonably support X25519 without supporting X448.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

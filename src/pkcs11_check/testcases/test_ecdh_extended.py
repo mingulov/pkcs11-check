@@ -55,7 +55,17 @@ from pkcs11_check.raw.types_std import (
     CKM_ECMQV_DERIVE,
     CKM_XEDDSA,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -89,13 +99,17 @@ _AES_DERIVE_ATTRS: dict[int, Any] = {
 }
 
 
-# CKR codes for mechanism/function errors that indicate "not operational"
-_MECH_SKIP_CKRS = {
-    0x00000070,  # CKR_MECHANISM_INVALID
-    0x00000071,  # CKR_MECHANISM_PARAM_INVALID
-    0x00000006,  # CKR_FUNCTION_FAILED
-    0x00000054,  # CKR_FUNCTION_NOT_SUPPORTED
-}
+_OPERATIONAL_ERROR_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 def _ec_point(rs: Any, handle: int) -> bytes:
@@ -284,8 +298,12 @@ class TestECDH1CofactorDerive:
                     CKM_ECDH1_COFACTOR_DERIVE,
                     attrs=_AES_DERIVE_ATTRS,
                 )
-            except AssertionError:
-                pytest.skip("Cofactor ECDH cannot derive AES key")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _OPERATIONAL_ERROR_CKRS,
+                    "CKM_ECDH1_COFACTOR_DERIVE advertised but cannot derive AES key",
+                )
                 raise  # unreachable
 
             attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
@@ -378,8 +396,12 @@ class TestXEdDSA:
 
         try:
             pub, priv = _gen_montgomery(rs, _X25519_OID, sign=True, derive=False)
-        except AssertionError:
-            pytest.skip("EC_MONTGOMERY_KEY_PAIR_GEN not operational")
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _OPERATIONAL_ERROR_CKRS,
+                "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but XEdDSA keygen is not operational",
+            )
             raise  # unreachable
 
         try:
@@ -429,8 +451,12 @@ class TestXEdDSA:
 
         try:
             pub, priv = _gen_montgomery(rs, _X25519_OID, sign=True, derive=False)
-        except AssertionError:
-            pytest.skip("EC_MONTGOMERY_KEY_PAIR_GEN not operational")
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _OPERATIONAL_ERROR_CKRS,
+                "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but XEdDSA keygen is not operational",
+            )
             raise  # unreachable
 
         try:
@@ -484,8 +510,12 @@ class TestECMontgomeryKeyPairGen:
 
         try:
             pub, priv = _gen_montgomery(rs, _X25519_OID)
-        except AssertionError:
-            pytest.skip("EC_MONTGOMERY_KEY_PAIR_GEN not operational")
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _OPERATIONAL_ERROR_CKRS,
+                "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but X25519 keygen is not operational",
+            )
             raise  # unreachable
 
         try:
@@ -506,9 +536,10 @@ class TestECMontgomeryKeyPairGen:
 
         try:
             pub, priv = _gen_montgomery(rs, _X448_OID)
-        except AssertionError:
-            pytest.skip("X448 keygen not supported")
-            raise  # unreachable
+        except AssertionError as exc:
+            if is_known_error(exc, _OPERATIONAL_ERROR_CKRS):
+                pytest.skip(f"X448 keygen not supported: {exc}")
+            raise
 
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE, CKA_EC_POINT])
@@ -529,8 +560,12 @@ class TestECMontgomeryKeyPairGen:
         try:
             pub_a, priv_a = _gen_montgomery(rs, _X25519_OID)
             pub_b, priv_b = _gen_montgomery(rs, _X25519_OID)
-        except AssertionError:
-            pytest.skip("EC_MONTGOMERY_KEY_PAIR_GEN not operational")
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _OPERATIONAL_ERROR_CKRS,
+                "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but X25519 keygen is not operational",
+            )
             raise  # unreachable
 
         try:
@@ -554,8 +589,12 @@ class TestECMontgomeryKeyPairGen:
         try:
             pub_a, priv_a = _gen_montgomery(rs, _X25519_OID)
             pub_b, priv_b = _gen_montgomery(rs, _X25519_OID)
-        except AssertionError:
-            pytest.skip("EC_MONTGOMERY_KEY_PAIR_GEN not operational")
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _OPERATIONAL_ERROR_CKRS,
+                "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but X25519 keygen is not operational",
+            )
             raise  # unreachable
 
         shared_ab = 0

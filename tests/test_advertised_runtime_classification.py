@@ -13,6 +13,10 @@ _LEGACY_CIPHER_FILES = (
 )
 
 _RUNTIME_SKIP_PATTERNS = {
+    Path("src/pkcs11_check/testcases/test_ecdh_extended.py"): (
+        "Cofactor ECDH cannot derive AES key",
+        "EC_MONTGOMERY_KEY_PAIR_GEN not operational",
+    ),
     Path("src/pkcs11_check/testcases/test_extended_mechanisms.py"): (
         "mechanism rejected by module",
     ),
