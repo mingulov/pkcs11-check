@@ -761,6 +761,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   wrong mechanism/key combinations, and CKR priority when setup succeeds, but
   advertised key-generation rejects are reported as setup xfail evidence rather
   than hiding the target negative condition behind a raw setup assertion.
+- **Mechanism-negative setup**: the explicit wrong-key and missing-permission
+  mechanism tests now use the same AES/RSA/EC setup guards. TPM-style
+  `CKR_FUNCTION_NOT_SUPPORTED` during AES setup is reported as setup xfail
+  evidence, while accepting an operation with the wrong key type remains a hard
+  failure.
 - **ACVP ECDH runtime rejects**: valid shared-secret vectors still require a
   matching derived value for a clean pass. When a provider advertises
   `CKM_ECDH1_DERIVE` but rejects the derive operation with generic runtime

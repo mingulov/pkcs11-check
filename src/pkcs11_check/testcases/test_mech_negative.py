@@ -22,9 +22,6 @@ from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_aes_key,
-    gen_ec_keypair,
-    gen_rsa_keypair,
     pack_attrs,
 )
 from pkcs11_check.raw.types_std import (
@@ -50,6 +47,11 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_HMAC,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_ec_keypair_or_xfail,
+    gen_rsa_keypair_or_xfail,
+)
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.negative]
 
@@ -67,7 +69,7 @@ class TestWrongKeyType:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             mech = mech_simple(CKM_AES_ECB)
             # Use the RSA private key handle with an AES mechanism
@@ -87,7 +89,7 @@ class TestWrongKeyType:
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES keygen not supported")
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="wrong-key negative test setup")
         try:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -105,7 +107,7 @@ class TestWrongKeyType:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             mech = mech_simple(CKM_ECDSA)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
@@ -122,7 +124,7 @@ class TestWrongKeyType:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             mech = mech_simple(CKM_SHA256_HMAC)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
@@ -141,7 +143,7 @@ class TestWrongKeyType:
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC keygen not supported")
 
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, _P256_OID)
+        pub, priv = gen_ec_keypair_or_xfail(rs, _P256_OID)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), priv)
@@ -162,11 +164,11 @@ class TestMissingPermission:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_ENCRYPT: False, CKA_DECRYPT: True, CKA_TOKEN: False},
+            purpose="encrypt-permission negative test setup",
         )
         try:
             mech = mech_simple(CKM_AES_ECB)
@@ -183,11 +185,11 @@ class TestMissingPermission:
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_DECRYPT: False, CKA_ENCRYPT: True, CKA_TOKEN: False},
+            purpose="decrypt-permission negative test setup",
         )
         try:
             mech = mech_simple(CKM_AES_ECB)
@@ -272,17 +274,17 @@ class TestMissingPermission:
         except ImportError:
             pytest.skip("CKM_AES_KEY_WRAP not in types_std")
 
-        wrapping_key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        wrapping_key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_WRAP: False, CKA_UNWRAP: True, CKA_ENCRYPT: True, CKA_TOKEN: False},
+            purpose="wrap-permission negative test setup",
         )
-        target_key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        target_key = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False, CKA_TOKEN: False},
+            purpose="wrap target negative test setup",
         )
         try:
             wrap_mech = mech_simple(CKM_AES_KEY_WRAP)
