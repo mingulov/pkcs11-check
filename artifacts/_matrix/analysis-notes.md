@@ -1038,8 +1038,8 @@ Run status:
   unit entered a pathological timeout tail. This preserved the remaining matrix
   run for TPM2, pkcs11-mock, and qryptotoken.
 - No final full-suite `artifacts/bouncyhsm/results.json` exists for this
-  target. Segmented ACVP and core Wycheproof reruns below have their own
-  complete `results.json` files.
+  target. Segmented ACVP, core Wycheproof, and security reruns below have their
+  own complete `results.json` files.
 - `test_cfb128.py` was rerun in two bounded parts: all 2,138 non-multiblock
   vectors passed, while all 6 multiblock vectors timed out inside provider
   `C_Encrypt`/`C_Decrypt` calls.
@@ -1052,6 +1052,9 @@ Run status:
 - The bounded core Wycheproof segment completed under the same 20-second
   per-test timeout: 20,472 total, 19,196 passed, 748 failed, 528 skipped, and
   no crashes or timeouts. It excludes the known large ECDH/ECDSA tails.
+- The security segment completed under the same 20-second per-test timeout:
+  267 total, 169 passed, 35 failed, 57 skipped, 3 xfailed, 3 crashed, and no
+  timeouts.
 - A broad Wycheproof segment was started but stopped before final result
   synthesis because the huge ECDSA file entered file-level timeout retries.
   Its partial `state.json` is useful for planning split reruns, but it has no
@@ -1073,6 +1076,8 @@ Focused artifacts:
   306 skipped, 30 xfailed, no crashes or timeouts.
 - `artifacts/bouncyhsm-wycheproof-core`: 20,472 total, 19,196 passed, 748
   failed, 528 skipped, no crashes or timeouts.
+- `artifacts/bouncyhsm-security`: 267 total, 169 passed, 35 failed, 57
+  skipped, 3 xfailed, 3 crashed, no timeouts.
 
 Failure classification for focused units:
 
@@ -1113,6 +1118,19 @@ Failure classification for focused units:
   generic HMAC/RSA tests (7). ChaCha, DSA file skip, Ed25519 skips, HKDF,
   ML-KEM, PBES2/PBKDF2 file skips, RSA decrypt, and X25519 completed without
   failed records.
+- Security: failures clustered in arithmetic overflow (16), padding oracle
+  (7), FFI length boundary (5), API security (4), CVE regression (2), and API
+  boundary (1). The segment recorded 3 crashes for
+  `test_parameter_validation.py` after adaptive isolation repeatedly reproduced
+  a `C_GenerateKeyPair` segfault in weak RSA public exponent validation. Other
+  crash findings included signal 7 arithmetic/length-boundary crashes, signal
+  11 template-count crashes, and `C_VerifyInit(mechanism=NULL)` signal 11.
+  API-security failures showed readable `CKA_PRIVATE_EXPONENT`,
+  `CKA_EXTRACTABLE` escalation, `CKA_SENSITIVE` downgrade, and copy-based
+  sensitive downgrade. Padding-oracle tests reported non-uniform RSA PKCS#1
+  v1.5/OAEP errors, AES-CBC-PAD oracle behavior, and RSA decrypt timing ratio
+  7.0x. KWP error-path, RSA error-path, FFI NULL pointer, handle reuse, nonce
+  quality, and Tookan slices were clean or skipped/xfailed in expected ways.
 
 Current classification:
 
@@ -1133,8 +1151,12 @@ Current classification:
 - Core Wycheproof shows clean X25519, HKDF, ChaCha, ML-KEM, and RSA decrypt
   coverage in this bounded segment; AES, HMAC, RSA-OAEP/PSS/signature, and
   ML-DSA signing or verification remain important failure clusters.
+- Security shows useful clean counterexamples in RSA error-path, FFI
+  NULL-pointer handling, handle reuse, nonce quality, and Tookan slices, but
+  key-attribute boundaries, padding/timing oracles, and boundary-input crash
+  handling remain reportable findings.
 - Full-provider statistics should only include BouncyHSM after the remaining
-  Wycheproof ECDH/ECDSA tails, security, and general test families are rerun in
+  Wycheproof ECDH/ECDSA tails and general test families are rerun in
   split/bounded mode.
 
 ## TPM2
@@ -1435,6 +1457,13 @@ not overwrite full provider statistics.
   no crashes or timeouts. Failures cluster in AES, HMAC, RSA-OAEP/PSS/signature,
   and ML-DSA signing/verification; X25519, HKDF, ChaCha, ML-KEM, and RSA
   decrypt were clean in this segment.
+- `artifacts/bouncyhsm-security`: BouncyHSM completed the security family with
+  169 passed, 35 failed, 57 skipped, 3 xfailed, and 3 crashes. It had no
+  timeouts. Findings include weak-RSA-exponent keygen segfaults, arithmetic and
+  FFI length-boundary crashes, readable/downgradable private key attributes,
+  RSA/AES padding-oracle behavior, and RSA decrypt timing spread. RSA
+  error-path, FFI NULL-pointer, nonce quality, handle reuse, and Tookan slices
+  were clean or skipped/xfailed as expected.
 - `artifacts/bouncyhsm-wycheproof`: broad run intentionally stopped after
   generic/AES/ChaCha/DSA/ECDH state and an ECDSA file-level timeout retry. No
   final `results.json` was produced, so this artifact is planning evidence for
@@ -1445,7 +1474,7 @@ not overwrite full provider statistics.
 - Parse completed provider artifacts into a compact machine-readable summary
   after each provider completes.
 - If BouncyHSM should become an official full-suite provider statistic, rerun
-  the remaining Wycheproof ECDH/ECDSA tails, security, and general families in
+  the remaining Wycheproof ECDH/ECDSA tails and general families in
   split/bounded mode. Avoid one monolithic Wycheproof target because large
   ECDH/ECDSA files dominate runtime and trigger file-level timeout retries.
 - For SoftHSM2 main ML-DSA, inspect exact failed vector groups and CKR/result

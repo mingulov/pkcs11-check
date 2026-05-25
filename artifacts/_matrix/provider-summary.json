@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-25T05:29:37Z",
+  "generated_at": "2026-05-25T05:36:12Z",
   "generated_from": "current artifacts/results.json and artifacts/qryptotoken/build-status.json",
   "records": [
     {
@@ -346,20 +346,35 @@
             "xfailed": 0,
             "xpassed": 0
           }
+        },
+        {
+          "artifact": "artifacts/bouncyhsm-security/results.json",
+          "name": "security",
+          "summary": {
+            "crashed": 3,
+            "error": 0,
+            "failed": 35,
+            "passed": 169,
+            "skipped": 57,
+            "timeout": 0,
+            "total": 267,
+            "xfailed": 3,
+            "xpassed": 0
+          }
         }
       ],
-      "notes": "Segmented ACVP plus bounded core Wycheproof evidence. AES CCM/CFB/OFB issues remain; CFB8 has one confirmed segfault plus pytest-timeout failures. Non-AES ACVP is complete with ECDH, ML-DSA, EdDSA, hash, RSA-PSS/SHA3, and SLH-DSA failure clusters; ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean. Core Wycheproof completed without crashes/timeouts; failures cluster in AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing/verification.",
+      "notes": "Segmented ACVP plus bounded core Wycheproof and security evidence. AES CCM/CFB/OFB issues remain; CFB8 has one confirmed segfault plus pytest-timeout failures. Non-AES ACVP is complete with ECDH, ML-DSA, EdDSA, hash, RSA-PSS/SHA3, and SLH-DSA failure clusters; ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean. Core Wycheproof completed without crashes/timeouts; failures cluster in AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing/verification. Security segment found FFI arithmetic/length crashes, NULL mechanism crash, weak RSA exponent keygen segfaults, key-attribute boundary failures, padding/timing oracle findings, and clean KWP/RSA error-path/null-pointer/nonce/handle-reuse/Tookan slices.",
       "source": "BouncyHSM v2.1.0",
-      "status": "partial segmented ACVP + core Wycheproof; not full-suite statistics",
+      "status": "partial segmented ACVP + core Wycheproof + security; not full-suite statistics",
       "summary": {
-        "crashed": 1,
+        "crashed": 4,
         "error": 0,
-        "failed": 10115,
-        "passed": 31849,
-        "skipped": 8154,
+        "failed": 10150,
+        "passed": 32018,
+        "skipped": 8211,
         "timeout": 0,
-        "total": 50179,
-        "xfailed": 60,
+        "total": 50446,
+        "xfailed": 63,
         "xpassed": 0
       },
       "target": "bouncyhsm-segmented"

@@ -68,9 +68,9 @@ qryptotoken on `2026-05-25`.
   returns nonzero for build-unavailable.
 - BouncyHSM was configured and reachable, but the full provider run was
   intentionally stopped after AES ACVP tests entered a pathological timeout
-  tail. Segmented ACVP reruns and a bounded core Wycheproof run now provide
-  useful partial evidence; the row below is not a full-suite provider
-  statistic.
+  tail. Segmented ACVP reruns, a bounded core Wycheproof run, and a bounded
+  security run now provide useful partial evidence; the row below is not a
+  full-suite provider statistic.
 
 ## Result Snapshot
 
@@ -87,7 +87,7 @@ qryptotoken on `2026-05-25`.
 | nss-main | NSS/NSPR source tips | full | 84,819 | 47,549 | 2,018 | 35,147 | 0 | 4/0 |
 | opencryptoki | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 89,899 | 78,656 | 2,593 | 8,593 | 0 | 0/0 |
 | opencryptoki-master | OpenCryptoki master, OpenSSL 4.0.0 | full | 89,899 | 78,657 | 2,589 | 8,595 | 0 | 0/0 |
-| bouncyhsm | BouncyHSM v2.1.0 | partial + segmented ACVP + core Wycheproof | 50,179 focused | 31,849 focused | 10,115 focused | 8,154 focused | 0 | 1/0, plus timeout failures |
+| bouncyhsm | BouncyHSM v2.1.0 | partial + segmented ACVP + core Wycheproof + security | 50,446 focused | 32,018 focused | 10,150 focused | 8,211 focused | 0 | 4/0, plus timeout failures |
 | tpm2 source | upstream tpm2-pkcs11 1.10.0 | full | 81,400 | 9,847 | 6,825 | 64,696 | 0 | report has subprocess crashes |
 | tpm2 package | Fedora tpm2-pkcs11 1.9.1 package | archived full | 64,084 | 8,433 | 5,067 | 49,727 | 851 | report has subprocess crashes |
 | pkcs11-mock | pkcs11-mock v2.0.0 | full mock baseline | 32,633 | 2,560 | 3,546 | 26,517 | 0 | 0/0 |
@@ -96,7 +96,7 @@ qryptotoken on `2026-05-25`.
 `kryoptic-fips` uses a custom OpenSSL branch in the full diagnostic artifact.
 The older TPM2 Fedora-package artifact is archived separately from the
 source-built upstream result. `bouncyhsm` is segmented ACVP plus core
-Wycheproof evidence, not a full-suite statistic.
+Wycheproof and security evidence, not a full-suite statistic.
 
 ## SoftHSM2
 
@@ -219,8 +219,8 @@ present in v2.1.0.
 The provider configured and initialized, so this is not a module-load failure.
 The full run was intentionally stopped because ACVP AES reached a pathological
 timeout tail. Segmented reruns then completed the worst affected AES files,
-the remaining ACVP AES targets, all non-AES ACVP targets, and a core
-Wycheproof segment under bounded targets:
+the remaining ACVP AES targets, all non-AES ACVP targets, a core Wycheproof
+segment, and the security family under bounded targets:
 
 - ACVP AES-CCM: 8,398 total, 1,028 passed, 7,370 failed.
 - ACVP AES-CFB1: 2,138 total, 2,088 passed, 50 failed.
@@ -261,6 +261,16 @@ Wycheproof segment under bounded targets:
   - Main failure buckets: AES 414, HMAC 180, RSA-OAEP 54, plain RSA signature
     verification 30, ML-DSA signing 27, RSA-PSS 17, RSA PKCS#1 signature
     generation 10, ML-DSA verification 9, and generic HMAC/RSA 7.
+- Security segment: 267 total, 169 passed, 35 failed, 57 skipped, 3 xfailed,
+  3 crashed, no timeouts.
+  - Failed buckets: arithmetic overflow 16, padding oracle 7, FFI length
+    boundary 5, API security 4, CVE regression 2, API boundary 1.
+  - Crash buckets: repeated `C_GenerateKeyPair` segfaults for weak RSA public
+    exponent validation, signal 7 length/arithmetic boundary crashes, signal
+    11 template-count crashes, and one `C_VerifyInit(mechanism=NULL)` crash.
+  - Clean or mostly clean slices: KWP error-path skipped as unsupported, RSA
+    error-path passed, FFI NULL pointer passed, handle reuse passed, nonce
+    quality passed, and Tookan finished with 3 passed, 2 skipped, 1 xfailed.
 
 Failure classification in the focused units:
 
@@ -284,14 +294,20 @@ Failure classification in the focused units:
 - Core Wycheproof: X25519, HKDF, ChaCha, ML-KEM, and RSA decrypt are clean in
   this bounded segment; AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing
   or verification remain the important failure clusters.
+- Security: key material and attribute boundaries fail in several places
+  (`CKA_PRIVATE_EXPONENT` readable, `CKA_EXTRACTABLE` escalation,
+  `CKA_SENSITIVE` downgrade, copy-based sensitive downgrade), and RSA/AES
+  padding or timing oracle findings remain. Several boundary probes crash
+  instead of returning a CKR, which is a provider finding rather than a skipped
+  capability.
 
 Current classification: reachable provider with broad AES-CCM incompatibility,
 mostly working CFB1 with short bit-length mismatches, and apparent CFB8,
 CFB128, and OFB multiblock crash/timeout tail behavior. Beyond AES, BouncyHSM
-has strong ML-KEM, HMAC, RSA keygen, ECDSA, and many RSA/hash results, but
-broad ECDH, ML-DSA, HMAC, AES, and RSA-OAEP/PSS/signature clusters remain.
-Official full-suite statistics still need the large Wycheproof ECDH/ECDSA
-tails plus security/general runs.
+has strong ML-KEM, HMAC, RSA keygen, ECDSA, X25519, HKDF, ChaCha, and RSA
+decrypt results, but broad ECDH, ML-DSA, HMAC, AES, RSA-OAEP/PSS/signature,
+and security-boundary clusters remain. Official full-suite statistics still
+need the large Wycheproof ECDH/ECDSA tails plus general tests.
 
 ## TPM2
 
@@ -386,12 +402,13 @@ Focused reruns after those fixes are stored under `artifacts/_focused/`:
   xfailed, and 1 confirmed CFB8 segfault; non-AES ACVP added 3,042 passed,
   1,931 failed, 306 skipped, and 30 xfailed with no crashes or timeouts; core
   Wycheproof added 19,196 passed, 748 failed, and 528 skipped with no crashes
-  or timeouts.
+  or timeouts; security added 169 passed, 35 failed, 57 skipped, 3 xfailed, and
+  3 crashes with no timeouts.
 
 ## Remaining Work Before Final Article
 
-- Run the remaining BouncyHSM Wycheproof ECDH/ECDSA tails, security, and
-  general tests in split/bounded segments before treating BouncyHSM as an
-  official full-suite statistic. A broad Wycheproof run was stopped after
-  completed generic/AES/ChaCha/DSA/ECDH state and an ECDSA file-level timeout
-  retry; it has no final `results.json` and is planning evidence only.
+- Run the remaining BouncyHSM Wycheproof ECDH/ECDSA tails and general tests in
+  split/bounded segments before treating BouncyHSM as an official full-suite
+  statistic. A broad Wycheproof run was stopped after completed
+  generic/AES/ChaCha/DSA/ECDH state and an ECDSA file-level timeout retry; it
+  has no final `results.json` and is planning evidence only.
