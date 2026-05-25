@@ -212,6 +212,13 @@ basic HKDF derive test also no longer uses a catch-all skip for operational
 failure: only specific CKR values become xfail evidence, while unexpected Python
 errors or wrong derived outputs remain real failures.
 
+### Follow-Up: SHAKE XOF Advertised-But-Rejected Paths
+
+The SHAKE XOF checks still skip when the raw XOF functions are unavailable, but
+`CKR_MECHANISM_INVALID` from `C_DigestXofInit` is now an xfail after the module
+has advertised `CKM_SHAKE_128` or `CKM_SHAKE_256`. The draft mechanism ids are
+also named locally instead of being passed as unexplained inline constants.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

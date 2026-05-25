@@ -13,6 +13,9 @@ _LEGACY_CIPHER_FILES = (
 )
 
 _RUNTIME_SKIP_PATTERNS = {
+    Path("src/pkcs11_check/testcases/test_extended_mechanisms.py"): (
+        "mechanism rejected by module",
+    ),
     Path("src/pkcs11_check/testcases/test_mech_message.py"): ("CKR_MECHANISM_INVALID for CKM_",),
     Path("src/pkcs11_check/testcases/test_kdf.py"): ("HKDF derivation not operational",),
 }

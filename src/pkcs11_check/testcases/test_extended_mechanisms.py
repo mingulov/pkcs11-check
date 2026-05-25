@@ -35,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKA_UNWRAP,
     CKA_WRAP,
     CKK_AES,
+    CKM,
     CKM_AES_KEY_WRAP_KWP,
     CKM_SHA512_224,
     CKM_SHA512_256,
@@ -44,6 +45,9 @@ from pkcs11_check.raw.types_std import (
 )
 
 pytestmark = pytest.mark.full
+
+_CKM_SHAKE_128 = CKM(0x00000418, "CKM_SHAKE_128")
+_CKM_SHAKE_256 = CKM(0x00000419, "CKM_SHAKE_256")
 
 
 class TestSHAKEDigest:
@@ -72,14 +76,14 @@ class TestSHAKEDigest:
         if not hasattr(rs.raw, "C_DigestXofInit"):
             pytest.skip("C_DigestXofInit not available in this raw binding")
         try:
-            mech = mech_simple(0x00000418)
+            mech = mech_simple(_CKM_SHAKE_128)
             rv = rs.raw.C_DigestXofInit(rs.sh, mech.byref())
             expect_rv(rv, CKR_OK, CKR_MECHANISM_INVALID)
         except (AttributeError, TypeError):
             pytest.skip("C_DigestXofInit call failed")
             return
         if rv == CKR_MECHANISM_INVALID:
-            pytest.skip("CKM_SHAKE_128 mechanism rejected by module")
+            pytest.xfail("CKM_SHAKE_128 mechanism rejected by module")
             return
 
     def test_shake_256_availability(self, p11_raw_session: Any) -> None:
@@ -97,14 +101,14 @@ class TestSHAKEDigest:
         if not hasattr(rs.raw, "C_DigestXofInit"):
             pytest.skip("C_DigestXofInit not available in this raw binding")
         try:
-            mech = mech_simple(0x00000419)
+            mech = mech_simple(_CKM_SHAKE_256)
             rv = rs.raw.C_DigestXofInit(rs.sh, mech.byref())
             expect_rv(rv, CKR_OK, CKR_MECHANISM_INVALID)
         except (AttributeError, TypeError):
             pytest.skip("C_DigestXofInit call failed")
             return
         if rv == CKR_MECHANISM_INVALID:
-            pytest.skip("CKM_SHAKE_256 mechanism rejected by module")
+            pytest.xfail("CKM_SHAKE_256 mechanism rejected by module")
             return
 
 
