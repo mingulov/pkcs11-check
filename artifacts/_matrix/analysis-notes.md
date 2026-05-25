@@ -1038,8 +1038,8 @@ Run status:
   unit entered a pathological timeout tail. This preserved the remaining matrix
   run for TPM2, pkcs11-mock, and qryptotoken.
 - No final full-suite `artifacts/bouncyhsm/results.json` exists for this
-  target. Segmented ACVP, core Wycheproof, security, and general reruns below
-  have their own complete `results.json` files.
+  target. Segmented ACVP, core/ECDH Wycheproof, security, and general reruns
+  below have their own complete `results.json` files.
 - `test_cfb128.py` was rerun in two bounded parts: all 2,138 non-multiblock
   vectors passed, while all 6 multiblock vectors timed out inside provider
   `C_Encrypt`/`C_Decrypt` calls.
@@ -1051,7 +1051,12 @@ Run status:
   crashes or timeouts.
 - The bounded core Wycheproof segment completed under the same 20-second
   per-test timeout: 20,472 total, 19,196 passed, 748 failed, 528 skipped, and
-  no crashes or timeouts. It excludes the known large ECDH/ECDSA tails.
+  no crashes or timeouts. It excludes the known large ECDH/ECDSA tails; ECDH
+  is covered by the standalone segment below.
+- The standalone Wycheproof ECDH segment completed under the same 20-second
+  per-test timeout: 13,128 total, 1,183 passed, 11,945 failed, and no crashes
+  or timeouts. It needed adaptive timeout retry but produced a final
+  `results.json`.
 - The security segment completed under the same 20-second per-test timeout:
   267 total, 169 passed, 35 failed, 57 skipped, 3 xfailed, 3 crashed, and no
   timeouts.
@@ -1080,6 +1085,8 @@ Focused artifacts:
   306 skipped, 30 xfailed, no crashes or timeouts.
 - `artifacts/bouncyhsm-wycheproof-core`: 20,472 total, 19,196 passed, 748
   failed, 528 skipped, no crashes or timeouts.
+- `artifacts/bouncyhsm-wycheproof-ecdh`: 13,128 total, 1,183 passed, 11,945
+  failed, no skipped/error/crashed/timeout results.
 - `artifacts/bouncyhsm-security`: 267 total, 169 passed, 35 failed, 57
   skipped, 3 xfailed, 3 crashed, no timeouts.
 - `artifacts/bouncyhsm-general`: 5,580 total, 2,908 passed, 208 failed, 2,440
@@ -1124,6 +1131,10 @@ Failure classification for focused units:
   generic HMAC/RSA tests (7). ChaCha, DSA file skip, Ed25519 skips, HKDF,
   ML-KEM, PBES2/PBKDF2 file skips, RSA decrypt, and X25519 completed without
   failed records.
+- Wycheproof ECDH: 11,945 failed and 1,183 passed, with no crashes or
+  timeouts. Failure traces are dominated by `CKR_MECHANISM_PARAM_INVALID`, so
+  this is a broad mechanism-parameter/correctness cluster rather than an
+  isolated curve or vector issue.
 - Security: failures clustered in arithmetic overflow (16), padding oracle
   (7), FFI length boundary (5), API security (4), CVE regression (2), and API
   boundary (1). The segment recorded 3 crashes for
@@ -1167,6 +1178,8 @@ Current classification:
 - Core Wycheproof shows clean X25519, HKDF, ChaCha, ML-KEM, and RSA decrypt
   coverage in this bounded segment; AES, HMAC, RSA-OAEP/PSS/signature, and
   ML-DSA signing or verification remain important failure clusters.
+- Wycheproof ECDH independently confirms the broad ECDH weakness already seen
+  in ACVP.
 - Security shows useful clean counterexamples in RSA error-path, FFI
   NULL-pointer handling, handle reuse, nonce quality, and Tookan slices, but
   key-attribute boundaries, padding/timing oracles, and boundary-input crash
@@ -1177,8 +1190,8 @@ Current classification:
   multipart signing, EXTRACT_KEY_FROM_KEY, session-state semantics, and v3
   certificate `CKA_PUBLIC_KEY_INFO` import all need follow-up.
 - Full-provider statistics should only include BouncyHSM after the remaining
-  Wycheproof ECDH/ECDSA tails and any intentionally excluded
-  CCTV/stress/fuzz/slow families are rerun in split/bounded mode.
+  Wycheproof ECDSA tail and any intentionally excluded CCTV/stress/fuzz/slow
+  families are rerun in split/bounded mode.
 
 ## TPM2
 
@@ -1478,6 +1491,10 @@ not overwrite full provider statistics.
   no crashes or timeouts. Failures cluster in AES, HMAC, RSA-OAEP/PSS/signature,
   and ML-DSA signing/verification; X25519, HKDF, ChaCha, ML-KEM, and RSA
   decrypt were clean in this segment.
+- `artifacts/bouncyhsm-wycheproof-ecdh`: BouncyHSM completed the standalone
+  Wycheproof ECDH segment with 1,183 passed and 11,945 failed. It had no
+  crashes or timeouts. Failure traces are dominated by
+  `CKR_MECHANISM_PARAM_INVALID`.
 - `artifacts/bouncyhsm-security`: BouncyHSM completed the security family with
   169 passed, 35 failed, 57 skipped, 3 xfailed, and 3 crashes. It had no
   timeouts. Findings include weak-RSA-exponent keygen segfaults, arithmetic and
@@ -1502,7 +1519,7 @@ not overwrite full provider statistics.
 - Parse completed provider artifacts into a compact machine-readable summary
   after each provider completes.
 - If BouncyHSM should become an official full-suite provider statistic, rerun
-  the remaining Wycheproof ECDH/ECDSA tails and any intentionally excluded
+  the remaining Wycheproof ECDSA tail and any intentionally excluded
   CCTV/stress/fuzz/slow families in split/bounded mode. Avoid one monolithic
   Wycheproof target because large
   ECDH/ECDSA files dominate runtime and trigger file-level timeout retries.

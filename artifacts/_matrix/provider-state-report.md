@@ -68,9 +68,9 @@ qryptotoken on `2026-05-25`.
   returns nonzero for build-unavailable.
 - BouncyHSM was configured and reachable, but the full provider run was
   intentionally stopped after AES ACVP tests entered a pathological timeout
-  tail. Segmented ACVP reruns, a bounded core Wycheproof run, a bounded
-  security run, and a bounded general run now provide useful partial evidence;
-  the row below is not a full-suite provider statistic.
+  tail. Segmented ACVP reruns, bounded core and ECDH Wycheproof runs, a
+  bounded security run, and a bounded general run now provide useful partial
+  evidence; the row below is not a full-suite provider statistic.
 
 ## Result Snapshot
 
@@ -87,7 +87,7 @@ qryptotoken on `2026-05-25`.
 | nss-main | NSS/NSPR source tips | full | 84,819 | 47,549 | 2,018 | 35,147 | 0 | 4/0 |
 | opencryptoki | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 89,899 | 78,656 | 2,593 | 8,593 | 0 | 0/0 |
 | opencryptoki-master | OpenCryptoki master, OpenSSL 4.0.0 | full | 89,899 | 78,657 | 2,589 | 8,595 | 0 | 0/0 |
-| bouncyhsm | BouncyHSM v2.1.0 | partial + segmented ACVP + core Wycheproof + security + general | 56,026 focused | 34,926 focused | 10,358 focused | 10,651 focused | 0 | 4/0, plus timeout failures |
+| bouncyhsm | BouncyHSM v2.1.0 | partial + segmented ACVP + Wycheproof core/ECDH + security + general | 69,154 focused | 36,109 focused | 22,303 focused | 10,651 focused | 0 | 4/0, plus timeout failures |
 | tpm2 source | upstream tpm2-pkcs11 1.10.0 | full | 81,400 | 9,847 | 6,825 | 64,696 | 0 | report has subprocess crashes |
 | tpm2 package | Fedora tpm2-pkcs11 1.9.1 package | archived full | 64,084 | 8,433 | 5,067 | 49,727 | 851 | report has subprocess crashes |
 | pkcs11-mock | pkcs11-mock v2.0.0 | full mock baseline | 32,633 | 2,560 | 3,546 | 26,517 | 0 | 0/0 |
@@ -95,7 +95,7 @@ qryptotoken on `2026-05-25`.
 
 `kryoptic-fips` uses a custom OpenSSL branch in the full diagnostic artifact.
 The older TPM2 Fedora-package artifact is archived separately from the
-source-built upstream result. `bouncyhsm` is segmented ACVP plus core
+source-built upstream result. `bouncyhsm` is segmented ACVP plus core/ECDH
 Wycheproof, security, and general evidence, not a full-suite statistic.
 
 ## SoftHSM2
@@ -219,9 +219,9 @@ present in v2.1.0.
 The provider configured and initialized, so this is not a module-load failure.
 The full run was intentionally stopped because ACVP AES reached a pathological
 timeout tail. Segmented reruns then completed the worst affected AES files,
-the remaining ACVP AES targets, all non-AES ACVP targets, a core Wycheproof
-segment, the security family, and the non-vector/non-security general family
-under bounded targets:
+the remaining ACVP AES targets, all non-AES ACVP targets, core and ECDH
+Wycheproof segments, the security family, and the non-vector/non-security
+general family under bounded targets:
 
 - ACVP AES-CCM: 8,398 total, 1,028 passed, 7,370 failed.
 - ACVP AES-CFB1: 2,138 total, 2,088 passed, 50 failed.
@@ -256,12 +256,16 @@ under bounded targets:
   - RSA key generation: 63 passed.
   - SLH-DSA: 78 passed, 6 failed; failures are valid signature rejections.
 - Core Wycheproof segment, excluding the known large ECDH/ECDSA tails: 20,472
-  total, 19,196 passed, 748 failed, 528 skipped, no crashes or timeouts.
+  total, 19,196 passed, 748 failed, 528 skipped, no crashes or timeouts. ECDH
+  is covered by the standalone segment below.
   - Clean or skipped/pass-only areas: ChaCha, DSA file skip, Ed25519 skips,
     HKDF, ML-KEM, PBES2/PBKDF2 file skips, RSA decrypt, and X25519.
   - Main failure buckets: AES 414, HMAC 180, RSA-OAEP 54, plain RSA signature
     verification 30, ML-DSA signing 27, RSA-PSS 17, RSA PKCS#1 signature
     generation 10, ML-DSA verification 9, and generic HMAC/RSA 7.
+- Wycheproof ECDH standalone segment: 13,128 total, 1,183 passed, 11,945
+  failed, no skips/crashes/timeouts. The failure traces are dominated by
+  `CKR_MECHANISM_PARAM_INVALID`, matching the ACVP ECDH shape.
 - Security segment: 267 total, 169 passed, 35 failed, 57 skipped, 3 xfailed,
   3 crashed, no timeouts.
   - Failed buckets: arithmetic overflow 16, padding oracle 7, FFI length
@@ -306,6 +310,9 @@ Failure classification in the focused units:
 - Core Wycheproof: X25519, HKDF, ChaCha, ML-KEM, and RSA decrypt are clean in
   this bounded segment; AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing
   or verification remain the important failure clusters.
+- Wycheproof ECDH: broad standalone failure cluster, with 11,945 failures out
+  of 13,128 vectors and no crash/timeout. This reinforces that BouncyHSM's ECDH
+  problem is not an ACVP-only artifact.
 - Security: key material and attribute boundaries fail in several places
   (`CKA_PRIVATE_EXPONENT` readable, `CKA_EXTRACTABLE` escalation,
   `CKA_SENSITIVE` downgrade, copy-based sensitive downgrade), and RSA/AES
@@ -326,7 +333,7 @@ has strong ML-KEM, HMAC, RSA keygen, ECDSA, X25519, HKDF, ChaCha, and RSA
 decrypt results, plus solid init/interface/interop/object/RSA/X.509 import
 general coverage. Broad ECDH, ML-DSA, HMAC/BLAKE2, AES, RSA-OAEP/PSS/
 signature, session-state, and security-boundary clusters remain. Official
-full-suite statistics still need the large Wycheproof ECDH/ECDSA tails plus
+full-suite statistics still need the large Wycheproof ECDSA tail plus
 intentionally excluded CCTV/stress/fuzz/slow families if they are in scope for
 the final number.
 
@@ -423,13 +430,14 @@ Focused reruns after those fixes are stored under `artifacts/_focused/`:
   xfailed, and 1 confirmed CFB8 segfault; non-AES ACVP added 3,042 passed,
   1,931 failed, 306 skipped, and 30 xfailed with no crashes or timeouts; core
   Wycheproof added 19,196 passed, 748 failed, and 528 skipped with no crashes
-  or timeouts; security added 169 passed, 35 failed, 57 skipped, 3 xfailed, and
-  3 crashes with no timeouts; general added 2,908 passed, 208 failed, 2,440
-  skipped, and 24 xfailed with no crashes or timeouts.
+  or timeouts; Wycheproof ECDH added 1,183 passed and 11,945 failed with no
+  crashes or timeouts; security added 169 passed, 35 failed, 57 skipped, 3
+  xfailed, and 3 crashes with no timeouts; general added 2,908 passed, 208
+  failed, 2,440 skipped, and 24 xfailed with no crashes or timeouts.
 
 ## Remaining Work Before Final Article
 
-- Run the remaining BouncyHSM Wycheproof ECDH/ECDSA tails and any intentionally
+- Run the remaining BouncyHSM Wycheproof ECDSA tail and any intentionally
   excluded CCTV/stress/fuzz/slow families that should count in the final
   full-suite statistic. A broad Wycheproof run was stopped after completed
   generic/AES/ChaCha/DSA/ECDH state and an ECDSA file-level timeout retry; it
