@@ -851,6 +851,14 @@ The following paths were tightened after inspecting the all-fail artifacts:
   tests remain separate. Valid advertised encrypt paths that still return
   `CKR_ARGUMENTS_BAD` or `CKR_ATTRIBUTE_VALUE_INVALID` are now visible xfail
   evidence rather than raw harness failures.
+- **CKR RSA-OAEP garbage decrypt params**: `test_rsa_oaep_garbage` previously
+  reached `C_DecryptInit(CKM_RSA_PKCS_OAEP)` with no
+  `CK_RSA_PKCS_OAEP_PARAMS`, so several artifact rows were pkcs11-check setup
+  artifacts rather than provider ciphertext-validation evidence. The test now
+  uses SHA-1/MGF1-SHA1 OAEP params. Providers that still reject the advertised
+  parameter set are reported as visible xfail runtime findings; providers that
+  initialize successfully must exercise `C_Decrypt` on the malformed
+  ciphertext.
 - **Mechanism multipart AEAD reference sizing**: multipart decrypt roundtrip
   coverage now uses the same AEAD tag overhead and `CKR_BUFFER_TOO_SMALL` retry
   path when building the single-part ciphertext reference. Old multipart AEAD

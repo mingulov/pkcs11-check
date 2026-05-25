@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.pack import mech_bytes, mech_oaep, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
@@ -24,18 +24,37 @@ from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_DECRYPT,
     CKA_ENCRYPT,
+    CKG_MGF1_SHA1,
     CKM_AES_CBC,
     CKM_AES_CBC_PAD,
     CKM_AES_ECB,
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
+    CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_DECRYPT, assert_ckr
 from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.access
+
+_RSA_OAEP_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 
 class TestDecryptInitErrors:
@@ -191,10 +210,15 @@ class TestDecryptDataErrors:
             pytest.skip("RSA_PKCS_OAEP not supported")
         _pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
-            mech = mech_simple(CKM_RSA_PKCS_OAEP)
+            mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), priv)
             if rv != CKR_OK:
-                pytest.skip(f"C_DecryptInit failed: {ckr_name(rv)}")
+                if rv in _RSA_OAEP_RUNTIME_REJECT_RVS:
+                    pytest.xfail(
+                        "RSA_PKCS_OAEP advertised but SHA-1 OAEP params are not "
+                        f"operational: {ckr_name(rv)}"
+                    )
+                pytest.fail(f"C_DecryptInit(RSA_OAEP) failed unexpectedly: {ckr_name(rv)}")
             data = (ctypes.c_ubyte * 256)(*([0xEE] * 256))
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()

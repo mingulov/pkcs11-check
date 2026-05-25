@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CBC_PAD,
     CKM_AES_KEY_WRAP_KWP,
     CKM_RC2_CBC,
+    CKM_RSA_PKCS_OAEP,
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -23,6 +24,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
 )
 from pkcs11_check.testcases import (
     test_access_levels,
@@ -375,6 +377,45 @@ def test_ckr_decrypt_xfails_when_advertised_aes_keygen_rejects_runtime(
             False,
             15,
         )
+
+
+class _OAEPParamRequiredRaw:
+    def __init__(self) -> None:
+        self.decrypt_init_param_len = 0
+        self.decrypt_called = False
+
+    def C_DecryptInit(self, _sh: int, mech_ptr: Any, _key: int) -> int:  # noqa: N802
+        mech = mech_ptr._obj
+        assert int(mech.mechanism) == int(CKM_RSA_PKCS_OAEP)
+        self.decrypt_init_param_len = int(mech.ulParameterLen)
+        if mech.pParameter is None or self.decrypt_init_param_len == 0:
+            return int(CKR_MECHANISM_PARAM_INVALID)
+        return int(CKR_OK)
+
+    def C_Decrypt(self, *_args: Any) -> int:  # noqa: N802
+        self.decrypt_called = True
+        return int(CKR_ENCRYPTED_DATA_INVALID)
+
+
+def test_ckr_rsa_oaep_garbage_uses_oaep_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _OAEPParamRequiredRaw()
+    monkeypatch.setattr(test_ckr_decrypt, "gen_rsa_keypair_or_xfail", lambda *_args: (1, 2))
+    monkeypatch.setattr(test_ckr_decrypt, "destroy_quietly", lambda *_args: None)
+    rs = SimpleNamespace(
+        raw=raw,
+        sh=1,
+        has_mechanism=lambda name: name == "RSA_PKCS_OAEP",
+    )
+
+    try:
+        test_ckr_decrypt.TestDecryptDataErrors().test_rsa_oaep_garbage(rs, False)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"RSA-OAEP garbage test skipped instead of exercising C_Decrypt: {exc}")
+
+    assert raw.decrypt_init_param_len > 0
+    assert raw.decrypt_called is True
 
 
 def test_padding_oracle_xfails_when_advertised_aes_keygen_rejects_runtime(
