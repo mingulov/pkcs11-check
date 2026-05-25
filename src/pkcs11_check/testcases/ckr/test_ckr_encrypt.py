@@ -19,8 +19,6 @@ import pytest
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_aes_key,
-    gen_rsa_keypair,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -35,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.access
 
@@ -45,7 +44,7 @@ class TestEncryptInitErrors:
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using digest mechanism for encrypt -> CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR encrypt-init setup")
         try:
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -58,11 +57,11 @@ class TestEncryptInitErrors:
     def test_key_function_not_permitted(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Key with CKA_ENCRYPT=False -> CKR_KEY_FUNCTION_NOT_PERMITTED."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_ENCRYPT: False, CKA_SIGN: True},
+            purpose="CKR encrypt key-usage setup",
         )
         try:
             exp = CKR_ENCRYPT["init_key_function_not_permitted"]
@@ -79,7 +78,7 @@ class TestEncryptInitErrors:
     def test_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """RSA public key with AES mechanism -> CKR_KEY_TYPE_INCONSISTENT."""
         rs = p11_raw_session
-        pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, _priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
@@ -95,7 +94,7 @@ class TestEncryptInitErrors:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-CBC parameter setup")
         try:
             # AES-CBC needs 16-byte IV, provide 8 bytes
             mech = mech_bytes(CKM_AES_CBC, b"\x00" * 8)
@@ -114,7 +113,7 @@ class TestEncryptDataErrors:
     def test_ecb_non_aligned(self, p11_raw_session: Any, ckr_strict: bool, size: int) -> None:
         """AES-ECB with non-block-aligned data -> CKR_DATA_LEN_RANGE."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-ECB data-length setup")
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -133,7 +132,7 @@ class TestEncryptDataErrors:
     def test_empty_data(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """AES-ECB with empty data - reject or return empty ciphertext."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-ECB empty-data setup")
         try:
             exp = CKR_ENCRYPT["data_empty"]
             mech = mech_simple(CKM_AES_ECB)
@@ -154,7 +153,7 @@ class TestEncryptDataErrors:
     def test_rsa_pkcs_too_long(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """RSA-PKCS data > k-11 bytes -> CKR_DATA_LEN_RANGE."""
         rs = p11_raw_session
-        pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, _priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
@@ -177,7 +176,7 @@ class TestEncryptDataErrors:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC_PAD"):
             pytest.skip("AES_CBC_PAD not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-CBC-PAD setup")
         try:
             exp = CKR_ENCRYPT["data_invalid_cbc_padding"]
             mech = mech_bytes(CKM_AES_CBC_PAD, b"\x00" * 16)

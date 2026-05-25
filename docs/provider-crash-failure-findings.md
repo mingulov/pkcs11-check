@@ -628,6 +628,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   public point as a new object. The EC import/export test now reports specific
   public-key import CKR rejects as xfail import-capability evidence, while a
   successful import must still verify the signature with the imported key.
+- **Security fuzz and CKR negative-test setup**: AES/RSA setup for mechanism
+  parameter fuzzing and encrypt/decrypt CKR negative tests now uses the shared
+  setup classification. These tests still exercise bad IVs, non-aligned input,
+  wrong mechanism/key combinations, and CKR priority when setup succeeds, but
+  advertised key-generation rejects are reported as setup xfail evidence rather
+  than hiding the target negative condition behind a raw setup assertion.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
 AES-CTS variant detection still fails when a provider advertises `CKM_AES_CTS`

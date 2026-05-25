@@ -34,12 +34,14 @@ from pkcs11_check.testcases import (
     test_mech_flags,
     test_mech_keygen,
     test_mech_wrap,
+    test_mechanism_fuzz,
     test_object_size,
     test_rsa_oaep,
     test_sensitivity,
     test_sign_recover,
     test_stateful,
 )
+from pkcs11_check.testcases.ckr import test_ckr_decrypt, test_ckr_encrypt
 from pkcs11_check.testcases.mechanism_registry import ParamRecipe
 from pkcs11_check.testcases.security import test_nonce_quality
 
@@ -320,6 +322,58 @@ def test_buffer_encrypt_uses_operational_aes128_setup_key(
     test_buffers.TestEncryptBufferSizes().test_single_block(rs)
 
     assert calls == [128]
+
+
+def test_mechanism_fuzz_xfails_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(
+        test_mechanism_fuzz,
+        "gen_aes_key",
+        _raise_function_not_supported,
+        raising=False,
+    )
+    rs = _session_with_mechanisms("AES_KEY_GEN", "AES_CBC")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_mechanism_fuzz.TestAESParameterFuzz().test_aes_cbc_bad_iv(rs, b"\x00" * 8)
+
+
+def test_ckr_encrypt_xfails_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(
+        test_ckr_encrypt,
+        "gen_aes_key",
+        _raise_function_not_supported,
+        raising=False,
+    )
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_ckr_encrypt.TestEncryptDataErrors().test_ecb_non_aligned(rs, False, 15)
+
+
+def test_ckr_decrypt_xfails_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(
+        test_ckr_decrypt,
+        "gen_aes_key",
+        _raise_function_not_supported,
+        raising=False,
+    )
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_ckr_decrypt.TestDecryptDataErrors().test_ecb_ciphertext_not_aligned(
+            rs,
+            False,
+            15,
+        )
 
 
 def test_access_levels_xfail_when_advertised_aes_keygen_rejects_runtime(

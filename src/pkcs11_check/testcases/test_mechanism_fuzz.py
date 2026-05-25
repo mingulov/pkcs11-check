@@ -17,8 +17,6 @@ import pytest
 from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_aes_key,
-    gen_rsa_keypair,
     read_attributes,
 )
 from pkcs11_check.raw.rv import ckr_name
@@ -31,6 +29,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.security
 
@@ -54,7 +53,7 @@ class TestAESParameterFuzz:
     def test_aes_cbc_bad_iv(self, p11_raw_session: Any, bad_param: bytes) -> None:
         """AES-CBC with wrong-sized IV must fail, not crash."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256)
+        key_h = gen_aes_key_or_xfail(rs, 256, purpose="AES-CBC parameter-fuzz setup")
         data_buf = (ctypes.c_ubyte * 16)(*b"\x00" * 16)
 
         try:
@@ -70,7 +69,7 @@ class TestAESParameterFuzz:
     def test_aes_ecb_with_param_should_fail_or_ignore(self, p11_raw_session: Any) -> None:
         """AES-ECB doesn't take a parameter - passing one should fail or be ignored."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256)
+        key_h = gen_aes_key_or_xfail(rs, 256, purpose="AES-ECB parameter-fuzz setup")
         data_buf = (ctypes.c_ubyte * 16)(*b"\x00" * 16)
 
         try:
@@ -117,7 +116,7 @@ class TestSignParameterFuzz:
     def test_rsa_pkcs_sign_with_random_param(self, p11_raw_session: Any) -> None:
         """RSA-PKCS sign with random mechanism_param should fail or be ignored."""
         rs = p11_raw_session
-        pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub_h, priv_h = gen_rsa_keypair_or_xfail(rs, 2048)
         data_buf = (ctypes.c_ubyte * 14)(*b"fuzz test data")
 
         try:
@@ -171,7 +170,7 @@ class TestEncryptDataFuzz:
     def test_encrypt_empty_data(self, p11_raw_session: Any) -> None:
         """Encrypting empty data - module must handle gracefully."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256)
+        key_h = gen_aes_key_or_xfail(rs, 256, purpose="empty-encrypt fuzz setup")
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h)
@@ -187,7 +186,7 @@ class TestEncryptDataFuzz:
     def test_encrypt_non_block_aligned(self, p11_raw_session: Any) -> None:
         """AES-ECB with non-block-aligned data must fail (no padding)."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256)
+        key_h = gen_aes_key_or_xfail(rs, 256, purpose="non-aligned encrypt fuzz setup")
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key_h)
