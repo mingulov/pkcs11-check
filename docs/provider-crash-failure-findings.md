@@ -766,6 +766,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `CKR_FUNCTION_NOT_SUPPORTED` during AES setup is reported as setup xfail
   evidence, while accepting an operation with the wrong key type remains a hard
   failure.
+- **Security parameter-validation crash probes**: the parameter-validation
+  file now carries `subprocess_per_test` for pkcs11-check isolated runs. The
+  current BouncyHSM weak-RSA-exponent crashes are real provider crash findings;
+  the marker keeps future runs on per-test units so one segfault does not hide
+  the remaining parameter probes in that file.
 - **ACVP ECDH runtime rejects**: valid shared-secret vectors still require a
   matching derived value for a clean pass. When a provider advertises
   `CKM_ECDH1_DERIVE` but rejects the derive operation with generic runtime

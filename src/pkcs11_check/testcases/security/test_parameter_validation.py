@@ -71,7 +71,7 @@ from pkcs11_check.testcases._subprocess_preamble import (
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
-pytestmark = pytest.mark.security
+pytestmark = [pytest.mark.security, pytest.mark.subprocess_per_test]
 
 # ---------------------------------------------------------------------------
 # GCM tag size validation
@@ -455,8 +455,10 @@ class TestXtsKeyValidation:
 # ---------------------------------------------------------------------------
 
 _WEAK_RSA_EXPONENTS = [
+    pytest.param(0, id="e=0"),
     pytest.param(1, id="e=1"),
     pytest.param(2, id="e=2"),
+    pytest.param(3, id="e=3-low"),
     pytest.param(4, id="e=4"),
 ]
 
@@ -464,8 +466,9 @@ _WEAK_RSA_EXPONENTS = [
 class TestRsaExponent:
     """Probe whether the module rejects weak RSA public exponents.
 
-    e=1 produces identity encryption (m^1 mod n = m), e=2 is even (insecure),
-    e=4 is even and small. All should be rejected.
+    e=0 is invalid, e=1 produces identity encryption (m^1 mod n = m), e=2/e=4
+    are even, and e=3 is a historically common but weak low public exponent.
+    All should be rejected.
     """
 
     @pytest.mark.parametrize("exponent", _WEAK_RSA_EXPONENTS)
