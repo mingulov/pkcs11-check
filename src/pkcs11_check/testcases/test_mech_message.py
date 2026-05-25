@@ -76,7 +76,7 @@ class TestMessageEncrypt:
             init_mech = mech_gcm_message(CKM_AES_GCM, init_iv, tag_bits=128)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
             if rv == CKR_MECHANISM_INVALID:
-                pytest.skip("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
+                pytest.xfail("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
 
             # Build per-message CK_GCM_MESSAGE_PARAMS for C_EncryptMessage.
@@ -264,7 +264,7 @@ class TestMessageEncrypt:
             init_mech = mech_gcm_message(CKM_AES_GCM, b"\x00" * 12, tag_bits=128)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
             if rv == CKR_MECHANISM_INVALID:
-                pytest.skip("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
+                pytest.xfail("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
 
             msg_mech = mech_gcm_message_generated_iv(
@@ -361,7 +361,7 @@ class TestMessageEncrypt:
             init_mech = mech_ccm(CKM_AES_CCM, b"\x00" * 12, data_len=len(plaintext), mac_len=16)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
             if rv == CKR_MECHANISM_INVALID:
-                pytest.skip("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_CCM")
+                pytest.xfail("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_CCM")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
 
             msg_mech = mech_ccm_message_generated_nonce(
@@ -528,7 +528,7 @@ class TestMessageEncrypt:
             mech = mech_gcm_message(CKM_AES_GMAC, iv, tag_bits=128)
             rv = rs.raw.C_MessageSignInit(rs.sh, mech.byref(), key)
             if rv == CKR_MECHANISM_INVALID:
-                pytest.skip("C_MessageSignInit: CKR_MECHANISM_INVALID for CKM_AES_GMAC")
+                pytest.xfail("C_MessageSignInit: CKR_MECHANISM_INVALID for CKM_AES_GMAC")
             assert rv == CKR_OK, f"C_MessageSignInit failed: 0x{rv:08x}"
 
             if hasattr(rs.raw, "C_MessageSignFinal"):

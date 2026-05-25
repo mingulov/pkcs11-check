@@ -12,6 +12,11 @@ _LEGACY_CIPHER_FILES = (
     Path("src/pkcs11_check/testcases/test_twofish.py"),
 )
 
+_RUNTIME_SKIP_PATTERNS = {
+    Path("src/pkcs11_check/testcases/test_mech_message.py"): ("CKR_MECHANISM_INVALID for CKM_",),
+    Path("src/pkcs11_check/testcases/test_kdf.py"): ("HKDF derivation not operational",),
+}
+
 
 def _call_name(node: ast.Call) -> str:
     func = node.func
@@ -38,6 +43,22 @@ def test_advertised_legacy_cipher_runtime_rejections_are_not_skips() -> None:
             if not isinstance(node, ast.Call) or _call_name(node) != "pytest.skip":
                 continue
             if any("Mechanism advertised but rejected at use" in s for s in _literal_strings(node)):
+                offenders.append(f"{path}:{node.lineno}")
+
+    assert offenders == []
+
+
+def test_advertised_runtime_rejections_are_not_skipped() -> None:
+    """Runtime rejection after capability checks should be xfail/fail evidence."""
+    offenders: list[str] = []
+    for path, skip_patterns in _RUNTIME_SKIP_PATTERNS.items():
+        source = path.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or _call_name(node) != "pytest.skip":
+                continue
+            strings = _literal_strings(node)
+            if any(pattern in value for pattern in skip_patterns for value in strings):
                 offenders.append(f"{path}:{node.lineno}")
 
     assert offenders == []

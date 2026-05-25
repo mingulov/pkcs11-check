@@ -203,6 +203,15 @@ Blowfish, Camellia, and Twofish. Missing key-generation or cipher mechanisms
 still skip as absent capability, but `CKR_MECHANISM_INVALID` after the
 mechanism was advertised is now an xfail provider finding instead of a skip.
 
+### Follow-Up: Message API And HKDF Runtime Rejections
+
+The v3 message-based API tests now treat `CKR_MECHANISM_INVALID` from
+`C_MessageEncryptInit` or `C_MessageSignInit` as an xfail when the provider has
+already advertised the mechanism and the relevant message-operation flag. The
+basic HKDF derive test also no longer uses a catch-all skip for operational
+failure: only specific CKR values become xfail evidence, while unexpected Python
+errors or wrong derived outputs remain real failures.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

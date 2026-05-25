@@ -53,9 +53,23 @@ from pkcs11_check.raw.types_std import (
     CKM_SHAKE_128_KEY_DERIVE,
     CKM_SHAKE_256_KEY_DERIVE,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
+
+_HKDF_DERIVE_ERROR_RVS = {
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+}
 
 
 def _import_generic_secret(rs: Any, value: bytes, derive: bool = True) -> int:
@@ -179,8 +193,8 @@ class TestHKDF:
             )
             okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(okm) == 32
-        except (AssertionError, Exception):
-            pytest.skip("HKDF derivation not operational")
+        except Exception as exc:
+            xfail_if_known_ckr(exc, _HKDF_DERIVE_ERROR_RVS, "HKDF derivation not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
