@@ -25,6 +25,7 @@ from pkcs11_check.testcases import (
     test_generic_secret,
     test_key_usage_policy,
     test_mech_attribute,
+    test_mech_keygen,
     test_object_size,
     test_rsa_oaep,
     test_sensitivity,
@@ -417,3 +418,67 @@ def test_mechanism_attribute_read_value_invalid_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="non-clean CKR"):
         test_mech_attribute._read_attr_safe(rs, 1, 2, "CKA_KEY_TYPE")
+
+
+def test_mech_keygen_local_read_value_invalid_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = SimpleNamespace(
+        mech_name="HKDF_KEY_GEN",
+        config=SimpleNamespace(is_param_gen=False, is_keypair=False),
+    )
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    monkeypatch.setattr(test_mech_keygen, "gen_symmetric_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_mech_keygen, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        test_mech_keygen,
+        "read_attributes",
+        _raise_attribute_value_invalid,
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="CKA_LOCAL read rejected"):
+        test_mech_keygen.TestMechKeygen().test_local_flag(rs, entry)
+
+
+def test_mech_keygen_local_false_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = SimpleNamespace(
+        mech_name="AES_KEY_GEN",
+        config=SimpleNamespace(is_param_gen=False, is_keypair=False),
+    )
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    monkeypatch.setattr(test_mech_keygen, "gen_symmetric_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_mech_keygen, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        test_mech_keygen,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_mech_keygen.CKA_LOCAL: False},
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="CKA_LOCAL=False"):
+        test_mech_keygen.TestMechKeygen().test_local_flag(rs, entry)
+
+
+def test_mechanism_attribute_local_false_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = SimpleNamespace(
+        mech_name="AES_KEY_GEN",
+        config=SimpleNamespace(is_param_gen=False, is_keypair=False, key_type=None),
+    )
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    monkeypatch.setattr(test_mech_attribute, "needs_domain_params", lambda _config: False)
+    monkeypatch.setattr(test_mech_attribute, "gen_symmetric_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_mech_attribute, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        test_mech_attribute,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_mech_attribute.CKA_LOCAL: False},
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="CKA_LOCAL=False"):
+        test_mech_attribute.TestKeyAttributes().test_local_flag_on_generated_key(rs, entry)

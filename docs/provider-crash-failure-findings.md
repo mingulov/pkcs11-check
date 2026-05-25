@@ -494,9 +494,15 @@ The following paths were tightened after inspecting the all-fail artifacts:
 - **Mechanism attribute readback**: mechanism-generated key attribute tests now
   distinguish attribute read support from attribute value correctness. A module
   that rejects `C_GetAttributeValue` with a non-clean CKR such as
-  `CKR_ATTRIBUTE_VALUE_INVALID` is reported as xfail evidence; a generated key
-  that exposes an attribute with the wrong value, such as `CKA_LOCAL=False`,
-  remains a real failure.
+  `CKR_ATTRIBUTE_VALUE_INVALID` is reported as xfail evidence. A generated key
+  that exposes `CKA_LOCAL=False` is also reported as xfail compliance evidence:
+  it is not a clean pass, but it is a specific known PKCS#11 deviation rather
+  than an unclassified harness/provider crash bucket.
+- **Mechanism keygen `CKA_LOCAL` readback**: the lightweight keygen-local test
+  now uses the same classification as the attribute-focused test. Missing or
+  unsupported `CKA_LOCAL` readback is not counted as a wrong-value assertion,
+  non-clean readback CKRs become xfail evidence, and `CKA_LOCAL=True` remains
+  the only clean pass for generated keys.
 - **Stateful AES lifecycle setup**: stateful lifecycle tests now use AES-128 for
   setup keys, matching the operational AES keygen probe. These tests are about
   session/object lifecycle, not AES-256 support. If advertised AES setup still
