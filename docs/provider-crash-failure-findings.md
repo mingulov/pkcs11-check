@@ -183,6 +183,19 @@ does not suppress the findings; it prevents the report and article from
 attributing a behavior to NSS when another provider shows the same class of
 behavior.
 
+### Follow-Up: ACVP AES Advertised-But-Rejected Paths
+
+Some ACVP AES runners skipped vectors after `has_mechanism()` had already
+confirmed that the provider advertised the mechanism, but the actual
+`C_Encrypt` or `C_Decrypt` operation rejected it with mechanism or parameter
+errors. Those cases are now xfailed as advertised-but-not-operational provider
+findings instead of skipped as missing capability.
+
+This affects AES-CFB/OFB simple and MCT runners, AES-GCM/CCM parameterized
+operations, AES-KW/KWP raw wrapping, AES-XTS, and AES-CTS variant/error paths.
+Missing mechanisms still skip normally; only runtime rejection after an
+advertised mechanism is reclassified.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

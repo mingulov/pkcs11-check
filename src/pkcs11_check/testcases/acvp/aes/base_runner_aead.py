@@ -109,7 +109,10 @@ def run_gcm_encrypt_test(
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip(f"GCM iv={len(iv)}B tag={tag_bytes}B not supported: {exc}")
+                pytest.xfail(
+                    f"AES_GCM advertised but encrypt iv={len(iv)}B tag={tag_bytes}B "
+                    f"is not operational: {exc}"
+                )
             raise
 
         if len(result) < tag_bytes:
@@ -176,7 +179,10 @@ def run_gcm_decrypt_test(
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID, CKR_ARGUMENTS_BAD}):
-                pytest.skip(f"GCM iv={len(iv)}B tag={tag_bytes}B not supported: {exc}")
+                pytest.xfail(
+                    f"AES_GCM advertised but decrypt iv={len(iv)}B tag={tag_bytes}B "
+                    f"is not operational: {exc}"
+                )
             if is_known_error(
                 exc,
                 {
@@ -248,7 +254,7 @@ def run_ccm_encrypt_test(
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip(f"CCM not supported: {exc}")
+                pytest.xfail(f"AES_CCM advertised but encrypt is not operational: {exc}")
             raise
 
         tag_len = vec["tag_len"]
@@ -326,7 +332,7 @@ def run_ccm_decrypt_test(
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip(f"CCM decrypt not supported: {exc}")
+                pytest.xfail(f"AES_CCM advertised but decrypt is not operational: {exc}")
             if not test_passed and is_known_error(
                 exc,
                 {

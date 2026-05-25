@@ -132,7 +132,7 @@ def test_acvp_aes_kw_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
         )
     except AssertionError as exc:
         if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-            pytest.skip(f"AES-KW encrypt not supported: {exc}")
+            pytest.xfail(f"AES_KEY_WRAP advertised but C_Encrypt is not operational: {exc}")
         raise
     finally:
         if key:
@@ -162,7 +162,7 @@ def test_acvp_aes_kw_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, An
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip(f"AES-KW decrypt not supported: {exc}")
+                pytest.xfail(f"AES_KEY_WRAP advertised but C_Decrypt is not operational: {exc}")
             if is_known_error(exc, _UNWRAP_REJECT_RVS):
                 if not test_passed:
                     return  # module correctly rejected invalid ciphertext
@@ -248,7 +248,7 @@ def test_acvp_aes_kwp_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
         )
     except AssertionError as exc:
         if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-            pytest.skip(f"AES-KWP encrypt not supported: {exc}")
+            pytest.xfail(f"AES_KEY_WRAP_KWP advertised but C_Encrypt is not operational: {exc}")
         raise
     finally:
         if key:
@@ -280,7 +280,7 @@ def test_acvp_aes_kwp_unwrap(p11_raw_session: Any, vec_id: str, vec: dict[str, A
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip(f"AES-KWP decrypt not supported: {exc}")
+                pytest.xfail(f"AES_KEY_WRAP_KWP advertised but C_Decrypt is not operational: {exc}")
             if is_known_error(exc, _UNWRAP_REJECT_RVS):
                 if not test_passed:
                     return  # module correctly rejected invalid ciphertext

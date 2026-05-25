@@ -104,7 +104,7 @@ def test_acvp_aes_xts_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip(f"XTS encrypt not supported: {exc}")
+                pytest.xfail(f"AES_XTS advertised but encrypt is not operational: {exc}")
             raise
 
         assert ct == vec["ct_expected"], (
@@ -151,7 +151,7 @@ def test_acvp_aes_xts_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
             )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
-                pytest.skip(f"XTS decrypt not supported: {exc}")
+                pytest.xfail(f"AES_XTS advertised but decrypt is not operational: {exc}")
             raise
 
         assert pt == vec["pt_expected"], (
