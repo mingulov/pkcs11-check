@@ -142,6 +142,14 @@ BIT STRING EC point explicitly. A focused SoftHSM2 Docker check after the fix
 selected 1,733 Wycheproof ECDH shared-secret tests and all passed. The full
 provider matrix still needs to be rerun before updating provider result counts.
 
+A later artifact scan showed the same bucket shape also mixed in
+advertised-but-not-operational ECDH derive results such as
+`CKR_DEVICE_ERROR` and `CKR_GENERAL_ERROR`. Those are not clean passes and are
+not missing-capability skips. ACVP ECDH now classifies those generic runtime
+rejects as visible xfail findings, matching the existing treatment for
+`CKR_MECHANISM_PARAM_INVALID`, `CKR_FUNCTION_FAILED`, and related derive-time
+rejects.
+
 ### Follow-Up: NSS Wycheproof DSA 296 Bucket
 
 The repeated NSS-family `Wycheproof DSA 296` bucket was also a pkcs11-check
@@ -445,6 +453,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   but signing returned `CKR_GENERAL_ERROR`. ACVP HMAC now treats explicit
   generic runtime rejects like other HMAC key-use rejects: visible xfail, not a
   clean pass and not a skip.
+- **ACVP ML-DSA on Kryoptic**: SigGen vectors reached advertised ML-DSA
+  mechanisms but `C_Sign` returned `CKR_DEVICE_ERROR` across the bucket. The
+  ML-DSA tests now keep import and parameter-set capability skips narrow, while
+  sign/verify runtime rejects such as `CKR_DEVICE_ERROR`, `CKR_FUNCTION_FAILED`,
+  and `CKR_GENERAL_ERROR` become visible xfail findings.
 - **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
   `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
   runners now classify explicit generic runtime rejects as xfail while keeping
@@ -639,6 +652,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   wrong mechanism/key combinations, and CKR priority when setup succeeds, but
   advertised key-generation rejects are reported as setup xfail evidence rather
   than hiding the target negative condition behind a raw setup assertion.
+- **ACVP ECDH runtime rejects**: valid shared-secret vectors still require a
+  matching derived value for a clean pass. When a provider advertises
+  `CKM_ECDH1_DERIVE` but rejects the derive operation with generic runtime
+  errors such as `CKR_DEVICE_ERROR` or `CKR_GENERAL_ERROR`, pkcs11-check now
+  reports visible xfail evidence instead of a raw harness failure.
 - **Skip accounting for provider-dependent pruning**: AES-CTS CS1/CS2/CS3
   variant selection now keeps non-matching variant nodes in the collected test
   universe as counted skips instead of deselecting them. Runner-level

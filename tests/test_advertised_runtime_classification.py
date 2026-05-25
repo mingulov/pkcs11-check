@@ -19,7 +19,7 @@ from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
-from pkcs11_check.testcases.acvp import test_acvp_ecdh
+from pkcs11_check.testcases.acvp import test_acvp_ecdh, test_acvp_mldsa
 
 _LEGACY_CIPHER_FILES = (
     Path("src/pkcs11_check/testcases/test_aria.py"),
@@ -226,6 +226,15 @@ def test_acvp_ecdh_mechanism_param_reject_is_xfail() -> None:
         test_acvp_ecdh._xfail_if_ecdh_runtime_reject(exc, "Curve P-256")
 
 
+@pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_GENERAL_ERROR])
+def test_acvp_ecdh_generic_runtime_rejects_are_xfail(rv: int) -> None:
+    """Advertised ECDH derive returning generic runtime errors is a finding."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised but ECDH derive"):
+        test_acvp_ecdh._xfail_if_ecdh_runtime_reject(exc, "Curve P-384")
+
+
 def test_acvp_mlkem_uses_structured_ckr_checks() -> None:
     """ACVP ML-KEM capability/runtime guards should match CKR constants."""
     path = Path("src/pkcs11_check/testcases/acvp/test_acvp_mlkem.py")
@@ -269,6 +278,15 @@ def test_acvp_mlkem_capability_skips_stay_narrow() -> None:
         )
 
     assert offenders == []
+
+
+@pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR])
+def test_acvp_mldsa_runtime_rejects_are_xfail(rv: int) -> None:
+    """Advertised ML-DSA sign/verify runtime rejects are findings, not skips."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised ML-DSA operation"):
+        test_acvp_mldsa._xfail_if_mldsa_runtime_reject(exc, "ML-DSA-sigGen")
 
 
 def test_wycheproof_ec_import_guards_use_structured_ckr_checks() -> None:
@@ -393,7 +411,7 @@ def test_wycheproof_rsa_decrypt_invalid_ciphertexts_are_reported() -> None:
     for path in paths:
         source = path.read_text()
         assert "accepted invalid ciphertext" in source
-        assert "result == \"invalid\"" in source
+        assert 'result == "invalid"' in source
 
 
 def test_wycheproof_symmetric_invalid_outputs_are_reported() -> None:
@@ -421,7 +439,7 @@ def test_wycheproof_symmetric_invalid_outputs_are_reported() -> None:
         source = path.read_text()
         for snippet in snippets:
             assert snippet in source
-        assert "result == \"invalid\"" in source
+        assert 'result == "invalid"' in source
 
 
 def test_wycheproof_hkdf_invalid_size_success_is_reported() -> None:
@@ -430,7 +448,7 @@ def test_wycheproof_hkdf_invalid_size_success_is_reported() -> None:
 
     assert "Invalid HKDF vector" in source
     assert "derived successfully" in source
-    assert "result == \"invalid\"" in source
+    assert 'result == "invalid"' in source
 
 
 def test_wycheproof_mlkem_malformed_decaps_success_is_reported() -> None:
@@ -439,7 +457,7 @@ def test_wycheproof_mlkem_malformed_decaps_success_is_reported() -> None:
 
     assert "Invalid ML-KEM decapsulation vector" in source
     assert "produced a shared key" in source
-    assert "result == \"invalid\"" in source
+    assert 'result == "invalid"' in source
 
 
 def test_stateful_signature_guards_use_structured_ckr_checks() -> None:
