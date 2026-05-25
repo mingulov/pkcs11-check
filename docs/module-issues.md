@@ -3,6 +3,11 @@
 Known issues, quirks, and compliance deviations per PKCS#11 module.
 Updated as Docker targets are analyzed.
 
+Current May 2026 provider matrix results, source revisions, and article-facing
+statistics are in [docker-provider-results.md](docker-provider-results.md).
+Older sections below preserve issue detail from earlier runs and may name older
+provider package versions where the finding was first recorded.
+
 ---
 
 ## SoftHSM2 2.7.0 (v2.40)

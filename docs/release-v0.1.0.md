@@ -42,9 +42,9 @@ These are baseline results from a deliberate full provider validation run on
 2026-05-04 to 2026-05-05. They should only be refreshed after another deliberate
 full validation run.
 
-See [Docker Provider Validation Snapshot](docker-provider-results.md) for the
-published provider source URLs, resolved revisions, artifact timestamps, and
-full-matrix result tables.
+The current [Docker Provider Validation Snapshot](docker-provider-results.md)
+is refreshed separately for the next release/article work. The v0.1.0 baseline
+below preserves the May 2026 historical release evidence inline.
 
 ---
 
@@ -89,8 +89,9 @@ The refreshed Docker baseline produced pytest results for 14 targets:
 to build in the Docker image before a PKCS#11 module is produced. The target now
 records `artifacts/qryptotoken/build-status.json`.
 
-See [Docker Provider Validation Snapshot](docker-provider-results.md) for the
-per-provider result table.
+The current [Docker Provider Validation Snapshot](docker-provider-results.md)
+may differ from the historical v0.1.0 table below.
+
 | **Total** | **322,453** | **37,261** | **148,798** | **329** | **10** | **509,884** |
 
 ---
