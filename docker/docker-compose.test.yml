@@ -70,7 +70,7 @@ services:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic
       PKCS11_CHECK_PIN: "1234"
 
-  # NSS stable (Fedora 43, v3.0)
+  # NSS stable (Fedora 44, v3.0)
   test-nss:
     <<: *common
     build:

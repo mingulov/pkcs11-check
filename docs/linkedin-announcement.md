@@ -12,8 +12,8 @@ It is an open source PKCS#11 test suite for checking real modules: software
 tokens, HSMs, smart cards, vendor modules, and internal or proprietary
 providers.
 
-The goal is simple: make PKCS#11 behavior easier to test, reproduce, and
-discuss.
+The goal is simple: make PKCS#11 behavior easier to test, reproduce, compare,
+and discuss.
 
 Current scope:
 
@@ -25,26 +25,40 @@ Current scope:
 - file-level subprocess isolation so one provider crash does not stop the whole
   run
 
-The current Docker validation snapshot covers SoftHSM2, Kryoptic, NSS,
-OpenCryptoki, TPM2, BouncyHSM, pkcs11-mock, and qryptotoken. Results vary, and
-that is the point: pkcs11-check is intended to expose actual provider behavior,
-including crashes, wrong CKR return codes, unsupported mechanisms, timeouts, and
-build or configuration gaps.
+For the current validation snapshot I tested several software PKCS#11 providers
+and simulators: SoftHSM2, Kryoptic, NSS softoken, OpenCryptoki, tpm2-pkcs11,
+BouncyHSM, pkcs11-mock, and qryptotoken.
+
+The useful part is not just pass/fail counts. pkcs11-check keeps crashes, wrong
+CKR return codes, unsupported mechanisms, timeouts, and build/configuration
+problems visible instead of hiding them. That makes the results useful for
+maintainers and for users comparing provider behavior.
 
 If you maintain a PKCS#11 provider, including one that is not open source, you
 can run pkcs11-check locally against your own module and keep the results
-private. If you publish results, they become useful interoperability evidence
-for the wider PKCS#11 ecosystem.
+private. If you publish results, they become useful interoperability evidence.
 
 Project:
 https://github.com/mingulov/pkcs11-check
 
-Documentation:
-https://github.com/mingulov/pkcs11-check/tree/main/docs
+Current provider snapshot:
+https://github.com/mingulov/pkcs11-check/blob/main/docs/docker-provider-results.md
 
-The tool is still young, but it is already useful for finding real
-implementation bugs and comparing behavior across providers. Feedback and
-additional provider results are welcome.
+The tool is still young, but it is already useful for finding implementation
+bugs and comparing behavior across providers. Feedback and additional provider
+results are welcome.
+
+## Optional First Comment
+
+The provider snapshot includes exact source refs, build policy, OpenSSL version
+selection, total/pass/fail/skip/crash counts, and notes for providers that are
+build-only or segmented.
+
+Crash and timeout classification:
+https://github.com/mingulov/pkcs11-check/blob/main/docs/provider-crash-failure-findings.md
+
+Test-suite size and group breakdown:
+https://github.com/mingulov/pkcs11-check/blob/main/docs/test-universe.md
 
 ## Compact Numbers
 
@@ -73,3 +87,5 @@ matrix results, use [docker-provider-results.md](docker-provider-results.md).
   clean pass rate is the only useful result.
 - Mention proprietary/internal modules explicitly: users can run the tool
   locally without publishing their provider or results.
+- If the provider result pages are not on `main` yet, use a branch or commit
+  URL for the LinkedIn post and replace it with the `main` URL after merge.
