@@ -461,6 +461,16 @@ The following paths were tightened after inspecting the all-fail artifacts:
   ML-DSA tests now keep import and parameter-set capability skips narrow, while
   sign/verify runtime rejects such as `CKR_DEVICE_ERROR`, `CKR_FUNCTION_FAILED`,
   and `CKR_GENERAL_ERROR` become visible xfail findings.
+- **ACVP ML-DSA non-empty context on OpenCryptoki**: the OpenCryptoki artifact
+  has a different ML-DSA SigGen shape from Kryoptic. `C_Sign` returns a
+  signature, but the signature does not verify with the ACVP public key when the
+  vector uses a non-empty ML-DSA context. Zero-context SigGen vectors do not
+  show this shape in the same artifact. pkcs11-check passes the context through
+  `CK_SIGN_ADDITIONAL_CONTEXT`, matching the PKCS#11 ML-DSA mechanism shape;
+  OASIS also defines ML-DSA private-key `CKA_VALUE` as the FIPS 204 `sk`, which
+  is the ACVP value imported by the test. This remains a hard provider finding:
+  successful signatures must verify, while only explicit runtime CKRs are
+  converted into xfail evidence.
 - **Wycheproof AES operation rejects**: BouncyHSM CMAC, Kryoptic CCM,
   OpenCryptoki XTS, and NSS KWP vectors reached advertised AES mechanisms but
   returned runtime CKRs such as `CKR_GENERAL_ERROR`,
