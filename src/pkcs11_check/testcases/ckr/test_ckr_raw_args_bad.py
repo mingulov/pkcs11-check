@@ -35,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OBJECT_HANDLE_INVALID,
+    CKR_OK,
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
 )
@@ -42,8 +43,13 @@ from pkcs11_check.raw.types_std import (
 # CKR_ARGUMENTS_BAD -- NULL pointer is bad argument
 # CKR_MECHANISM_INVALID -- NULL interpreted as invalid mechanism (NSS)
 # CKR_MECHANISM_PARAM_INVALID -- NULL mechanism params interpreted as invalid
-# CKR_OK (0) -- v3.0+ spec allows NULL mech to cancel an in-progress operation
-_NULL_MECH_OK = (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0)
+# CKR_OK -- v3.0+ spec allows NULL mech to cancel an in-progress operation
+_NULL_MECH_OK = (
+    CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
+)
 from pkcs11_check.raw.faults import null_pointer
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 
@@ -100,8 +106,7 @@ assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
 # PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_EncryptInit(sh, null_pointer().pointer, key.value)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0), \
-    f"Got 0x{rv:08x}"
+assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
@@ -125,8 +130,7 @@ assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
 # PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_DecryptInit(sh, null_pointer().pointer, key.value)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0), \
-    f"Got 0x{rv:08x}"
+assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
@@ -141,8 +145,7 @@ print("OK")
 # PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_SignInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0), \
-    f"Got 0x{rv:08x}"
+assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
@@ -157,8 +160,7 @@ print("OK")
 # PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
 rv = raw.C_VerifyInit(sh, null_pointer().pointer, 0)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID, 0), \
-    f"Got 0x{rv:08x}"
+assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
@@ -172,7 +174,7 @@ print("OK")
             """\
 rv = raw.C_DigestInit(sh, null_pointer().pointer)
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
+assert rv in (CKR_ARGUMENTS_BAD, CKR_OK), f"Got 0x{rv:08x}"  # NULL mech cancel
 print("OK")
 """,
         )
@@ -187,7 +189,7 @@ print("OK")
 key = ctypes.c_ulong(0)
 rv = raw.C_GenerateKey(sh, null_pointer().pointer, None, 0, ctypes.byref(key))
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, 0), f"Got 0x{rv:08x}"  # v3.0: NULL mech cancels operation -> OK
+assert rv in (CKR_ARGUMENTS_BAD, CKR_OK), f"Got 0x{rv:08x}"  # NULL mech cancel
 print("OK")
 """,
         )
