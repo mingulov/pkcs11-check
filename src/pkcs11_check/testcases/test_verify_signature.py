@@ -92,9 +92,7 @@ class TestVerifySignatureRoundtrip:
             rv = rs.raw.C_VerifySignatureFinal(rs.sh)
             assert rv == CKR_OK, f"C_VerifySignatureFinal failed with 0x{rv:08x}"
         except AssertionError as e:
-            if is_known_error(
-                e, {CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED}
-            ):
+            if is_known_error(e, {CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED}):
                 pytest.skip("Module does not support multipart C_VerifySignatureUpdate")
             raise
         finally:
@@ -160,7 +158,7 @@ class TestVerifySignatureRoundtrip:
                     reference="PKCS#11 spec C_VerifySignatureInit",
                 )
                 pytest.xfail(
-                    "SECURITY: NSS C_VerifySignatureInit returned CKR_OK when verifying "
+                    "SECURITY: C_VerifySignatureInit returned CKR_OK when verifying "
                     "with a mismatched public key -- silent acceptance of forged signatures "
                     "(expected CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID)"
                 )

@@ -102,18 +102,18 @@ print("OK")
         )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
-        # CKR_OK means NSS allowed using the key despite CKA_ENCRYPT=False -- security violation
+        # CKR_OK means the module allowed using the key despite CKA_ENCRYPT=False.
         if "CKR:0x00000000" in out:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                "NSS allows C_EncryptInit with CKA_ENCRYPT=False key (CKR_OK instead of "
+                "Module allows C_EncryptInit with CKA_ENCRYPT=False key (CKR_OK instead of "
                 "CKR_KEY_FUNCTION_NOT_PERMITTED). Key permission flags are not enforced.",
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.4.4.1",
             )
             pytest.xfail(
-                "SECURITY: NSS returns CKR_OK for C_EncryptInit with CKA_ENCRYPT=False key "
+                "SECURITY: module returns CKR_OK for C_EncryptInit with CKA_ENCRYPT=False key "
                 "(expected CKR_KEY_FUNCTION_NOT_PERMITTED)"
             )
 
@@ -184,17 +184,17 @@ print("OK")
         )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
-        # CKR_OK means NSS allowed using the key despite CKA_DECRYPT=False -- security violation
+        # CKR_OK means the module allowed using the key despite CKA_DECRYPT=False.
         if "CKR:0x00000000" in out:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                "NSS allows C_DecryptInit with CKA_DECRYPT=False key (CKR_OK instead of "
+                "Module allows C_DecryptInit with CKA_DECRYPT=False key (CKR_OK instead of "
                 "CKR_KEY_FUNCTION_NOT_PERMITTED). Key permission flags are not enforced.",
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.4.4.1",
             )
             pytest.xfail(
-                "SECURITY: NSS returns CKR_OK for C_DecryptInit with CKA_DECRYPT=False key "
+                "SECURITY: module returns CKR_OK for C_DecryptInit with CKA_DECRYPT=False key "
                 "(expected CKR_KEY_FUNCTION_NOT_PERMITTED)"
             )

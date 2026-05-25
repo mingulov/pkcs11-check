@@ -425,13 +425,14 @@ class TestMLKEMKeyDerivation:
 
                 note(
                     f"ML-KEM encapsulate with CKA_VALUE_LEN=16 produced {len(value)}-byte key "
-                    "instead of 16-byte AES-128. NSS ignores CKA_VALUE_LEN for KEM-derived keys "
+                    "instead of 16-byte AES-128. Module ignores CKA_VALUE_LEN for "
+                    "KEM-derived keys "
                     "-- the ML-KEM shared secret is always 32 bytes per FIPS 203.",
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 v3.2 Sec.5.14.8; FIPS 203",
                 )
                 pytest.xfail(
-                    f"NSS ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
+                    f"Module ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
                     f"requested 16 bytes, got {len(value)} bytes "
                     f"(ML-KEM shared secret is always 32 bytes per FIPS 203)"
                 )
@@ -746,7 +747,7 @@ class TestMLKEMNegative:
                     reference="PKCS#11 v3.2 Sec.5.14.8",
                 )
                 pytest.xfail(
-                    "NSS ignores CKA_DECAPSULATE=False permission flag on ML-KEM private key "
+                    "Module ignores CKA_DECAPSULATE=False permission flag on ML-KEM private key "
                     "(returns CKR_OK instead of CKR_KEY_FUNCTION_NOT_PERMITTED -- SECURITY finding)"
                 )
             assert rv in (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL), (

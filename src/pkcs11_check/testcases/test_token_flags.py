@@ -150,9 +150,9 @@ class TestTokenFlags:
                 reference="PKCS#11 spec CKF_USER_PIN_INITIALIZED",
             )
             pytest.xfail(
-                f"NSS does not set CKF_USER_PIN_INITIALIZED on this slot "
+                f"Module does not set CKF_USER_PIN_INITIALIZED on this slot "
                 f"(flags=0x{info.flags:08x}) -- "
-                f"NSS Certificate DB slot does not report user PIN as initialized"
+                f"token does not report user PIN as initialized"
             )
         assert info.flags & CKF_USER_PIN_INITIALIZED, (
             f"CKF_USER_PIN_INITIALIZED must be set; flags=0x{info.flags:08x}"

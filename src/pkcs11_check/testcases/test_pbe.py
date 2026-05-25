@@ -496,7 +496,7 @@ class TestPBASHA1:
                     reference="PKCS#11 spec CKM_PBA_SHA1_WITH_SHA1_HMAC, CKK_SHA_1_HMAC",
                 )
                 pytest.xfail(
-                    f"NSS returns CKK_GENERIC_SECRET (0x{actual_key_type:02x}) instead of "
+                    f"Module returns CKK_GENERIC_SECRET (0x{actual_key_type:02x}) instead of "
                     f"CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC key generation"
                 )
             assert attrs[CKA_KEY_TYPE] == CKK_SHA_1_HMAC, (

@@ -358,7 +358,8 @@ class TestWrappedKeyUsability:
                     reference="PKCS#11 spec C_WrapKey, CKA_EXTRACTABLE",
                 )
                 pytest.xfail(
-                    "SECURITY: NSS allowed C_WrapKey on a non-extractable (CKA_EXTRACTABLE=False) "
+                    "SECURITY: module allowed C_WrapKey on a non-extractable "
+                    "(CKA_EXTRACTABLE=False) "
                     "key -- key material exfiltration is possible in violation of the PKCS#11 "
                     "security model (expected CKR_KEY_NOT_WRAPPABLE or CKR_ACTION_PROHIBITED)"
                 )

@@ -517,10 +517,10 @@ class TestSignRecoverRecipes:
             assert valid is True
             if recovered != data:
                 pytest.xfail(
-                    f"NSS C_VerifyRecover returned wrong data: "
+                    f"Module C_VerifyRecover returned wrong data: "
                     f"recovered[0]={recovered[0] if recovered else 'empty'!r}, "
                     f"expected[0]={data[0]!r} -- "
-                    f"NSS bug in CKM_RSA_X_509 C_VerifyRecover implementation"
+                    f"CKM_RSA_X_509 C_VerifyRecover implementation bug"
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -541,9 +541,9 @@ class TestSignRecoverRecipes:
             valid, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, bad_sig)
             if valid is True or recovered != b"":
                 pytest.xfail(
-                    f"NSS C_VerifyRecover accepted invalid all-zero signature: "
+                    f"Module C_VerifyRecover accepted invalid all-zero signature: "
                     f"valid={valid}, recovered={recovered!r} -- "
-                    f"NSS does not validate the signature block in C_VerifyRecover"
+                    f"the signature block is not validated in C_VerifyRecover"
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

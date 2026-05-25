@@ -96,14 +96,14 @@ class TestWrapDecryptOracle:
                         from pkcs11_check.compliance import ComplianceLevel, note
 
                         note(
-                            "SECURITY: NSS allows key with both CKA_WRAP and CKA_DECRYPT, "
+                            "SECURITY: module allows key with both CKA_WRAP and CKA_DECRYPT, "
                             "enabling wrap-decrypt oracle attack to extract key material",
                             ComplianceLevel.CRITICAL,
                             reference="PKCS#11 v3.1 Sec.4.9.4: for secret keys, "
                             "CKA_WRAP and CKA_DECRYPT should not both be True",
                         )
                         pytest.xfail(
-                            "SECURITY: NSS wrap-decrypt oracle possible -- key has both "
+                            "SECURITY: wrap-decrypt oracle possible -- key has both "
                             "CKA_WRAP and CKA_DECRYPT, attacker can decrypt wrapped key blobs"
                         )
                 except AssertionError:
@@ -216,15 +216,15 @@ class TestAttributeLaunderingViaCopy:
                         from pkcs11_check.compliance import ComplianceLevel, note
 
                         note(
-                            "SECURITY: NSS allows C_CopyObject to escalate CKA_EXTRACTABLE "
+                            "SECURITY: module allows C_CopyObject to escalate CKA_EXTRACTABLE "
                             "from False to True, making non-extractable key material readable",
                             ComplianceLevel.CRITICAL,
                             reference="PKCS#11 v3.1 Sec.4.9.4: CKA_EXTRACTABLE may only be "
                             "changed TRUE->FALSE on copy, never FALSE->TRUE",
                         )
                         pytest.xfail(
-                            "SECURITY: NSS Copy escalated CKA_EXTRACTABLE (False->True) "
-                            "via C_CopyObject -- key material readable (Tookan vulnerability)"
+                            "SECURITY: CKA_EXTRACTABLE escalated False->True via C_CopyObject "
+                            "-- key material readable (Tookan vulnerability)"
                         )
                 finally:
                     destroy_quietly(rs.raw, rs.sh, copy_h)

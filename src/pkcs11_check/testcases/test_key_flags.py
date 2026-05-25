@@ -125,7 +125,7 @@ class TestNeverExtractable:
                     reference="PKCS#11 spec Table 18",
                 )
                 pytest.xfail(
-                    "NSS generates AES keys with CKA_EXTRACTABLE=True by default "
+                    "Module generates AES keys with CKA_EXTRACTABLE=True by default "
                     "(spec Table 18 requires CKA_EXTRACTABLE to default to False)"
                 )
             assert attrs_d[CKA_EXTRACTABLE] is False
@@ -145,7 +145,7 @@ class TestNeverExtractable:
                     reference="PKCS#11 spec Table 18",
                 )
                 pytest.xfail(
-                    "NSS does not set CKA_NEVER_EXTRACTABLE=True on non-extractable "
+                    "Module does not set CKA_NEVER_EXTRACTABLE=True on non-extractable "
                     "generated keys (PKCS#11 spec Table 18 invariant violation)"
                 )
         finally:
@@ -206,7 +206,7 @@ class TestLocalFlag:
                     reference="PKCS#11 spec Table 18",
                 )
                 pytest.xfail(
-                    "NSS does not set CKA_LOCAL=True on generated keys "
+                    "Module does not set CKA_LOCAL=True on generated keys "
                     "(PKCS#11 spec Table 18 requires CKA_LOCAL=True for C_GenerateKey)"
                 )
         finally:
@@ -270,7 +270,7 @@ class TestLocalFlag:
                     reference="PKCS#11 spec Table 18",
                 )
                 pytest.xfail(
-                    f"NSS does not set CKA_LOCAL=True on generated RSA keypair: "
+                    f"Module does not set CKA_LOCAL=True on generated RSA keypair: "
                     f"pub={pub_local}, priv={priv_local} "
                     f"(PKCS#11 spec Table 18 requires CKA_LOCAL=True for C_GenerateKeyPair)"
                 )

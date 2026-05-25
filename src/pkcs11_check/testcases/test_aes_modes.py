@@ -558,8 +558,8 @@ class TestAESMACGeneral:
 
 _XCBC_VERIFY_XFAIL_MSG = (
     "Module returns CKR_KEY_TYPE_INCONSISTENT for CKM_AES_XCBC_MAC C_VerifyInit; "
-    "NSS softoken rejects CKK_AES keys for XCBC-MAC verify even when CKA_VERIFY=True "
-    "(NSS softoken bug -- sign works but verify is broken)"
+    "the advertised XCBC-MAC verify path rejects CKK_AES keys even when CKA_VERIFY=True "
+    "(sign works but verify is broken)"
 )
 
 

@@ -34,8 +34,8 @@ from pkcs11_check.testcases.conftest import is_known_error
 
 _EDDSA_PARAM_XFAIL_MSG = (
     "Module returns CKR_MECHANISM_PARAM_INVALID for CK_EDDSA_PARAMS; "
-    "NSS softoken rejects explicit CK_EDDSA_PARAMS even though PKCS#11 v3.0 "
-    "mandates them for pure-mode EdDSA (NSS bug)"
+    "the advertised EdDSA path rejects explicit CK_EDDSA_PARAMS even though "
+    "PKCS#11 v3.0 mandates them for pure-mode EdDSA"
 )
 
 

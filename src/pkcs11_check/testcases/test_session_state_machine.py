@@ -940,7 +940,7 @@ class TestSessionContextManager:
                 reference="PKCS#11 spec session_mgmt_functions.md",
             )
             pytest.xfail(
-                "NSS returns CKR_OK on C_GenerateRandom with a stale (closed) session handle "
+                "Module returns CKR_OK on C_GenerateRandom with a stale (closed) session handle "
                 "(spec requires CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED)"
             )
         assert rv2 in (

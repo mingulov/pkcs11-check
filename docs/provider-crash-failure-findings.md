@@ -169,6 +169,20 @@ to standard PKCS#11 ECDSA and skips them after the advertised-mechanism check.
 A focused SoftHSM2-main Docker run selected 30 deterministic ECDSA SigGen cases
 and skipped all 30.
 
+### Follow-Up: Provider-Neutral Finding Messages
+
+Several xfail and failure messages in the current artifact set correctly
+recorded security or interoperability findings, but still used legacy
+NSS-specific wording. The same behavior appeared in non-NSS targets including
+BouncyHSM, Kryoptic, OpenCryptoki, SoftHSM2, and TPM2, so the wording was
+misleading even when the underlying test classification was useful.
+
+Runtime finding messages are now provider-neutral for `pytest.xfail`,
+`pytest.fail`, compliance `note()`, and xfail/failure-message constants. This
+does not suppress the findings; it prevents the report and article from
+attributing a behavior to NSS when another provider shows the same class of
+behavior.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

@@ -120,13 +120,13 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
 
             note(
                 "Module rejected import of ML-KEM private key in 'semi_expanded' format "
-                "(dk = (z || d) expansion seed). NSS-PQC only accepts the fully-expanded "
-                "decapsulation key format.",
+                "(dk = (z || d) expansion seed). Some PKCS#11 modules only accept the "
+                "fully-expanded decapsulation key format.",
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="FIPS 203 Section 6.4; PKCS#11 v3.2",
             )
             pytest.fail(
-                f"NSS does not support ML-KEM 'semi_expanded' (seed-format) private key "
+                f"Module does not support ML-KEM 'semi_expanded' (seed-format) private key "
                 f"import: {exc}"
             )
         raise
@@ -156,12 +156,14 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) ->
 
                 note(
                     "Module failed ML-KEM decapsulation for 'semi_expanded' key format. "
-                    "NSS-PQC does not support the seed-format (z || d) decapsulation key.",
+                    "The provider may require a fully-expanded decapsulation key rather "
+                    "than the seed-format (z || d) key.",
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="FIPS 203 Section 6.4; PKCS#11 v3.2",
                 )
                 pytest.fail(
-                    f"NSS does not support ML-KEM 'semi_expanded' key format decapsulation: {exc}"
+                    "Module does not support ML-KEM 'semi_expanded' key format "
+                    f"decapsulation: {exc}"
                 )
             pytest.fail(f"Valid ML-KEM decaps failed: {vec_id}: {exc}")
         # acceptable/invalid: reject is fine
