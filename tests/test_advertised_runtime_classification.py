@@ -15,6 +15,8 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases._signature_policy import (
@@ -22,7 +24,13 @@ from pkcs11_check.testcases._signature_policy import (
     SIGNATURE_REJECT_RVS,
 )
 from pkcs11_check.testcases.acvp import test_acvp_ecdh, test_acvp_mldsa
-from pkcs11_check.testcases.wycheproof import test_wycheproof_aes, test_wycheproof_rsa_pss
+from pkcs11_check.testcases.wycheproof import (
+    test_wycheproof_aes,
+    test_wycheproof_ecdh,
+    test_wycheproof_hmac,
+    test_wycheproof_rsa_oaep,
+    test_wycheproof_rsa_pss,
+)
 
 _LEGACY_CIPHER_FILES = (
     Path("src/pkcs11_check/testcases/test_aria.py"),
@@ -424,6 +432,63 @@ def test_wycheproof_aes_valid_runtime_rejects_are_xfail(rv: int) -> None:
 
     with pytest.raises(pytest.xfail.Exception, match="advertised AES operation"):
         test_wycheproof_aes._xfail_if_aes_runtime_reject(exc, "AES-KWP tc11-valid")
+
+
+@pytest.mark.parametrize(
+    "rv",
+    [
+        CKR_ARGUMENTS_BAD,
+        CKR_GENERAL_ERROR,
+        CKR_MECHANISM_PARAM_INVALID,
+    ],
+)
+def test_wycheproof_rsa_oaep_valid_runtime_rejects_are_xfail(rv: int) -> None:
+    """Advertised RSA-OAEP valid-vector runtime rejects are findings."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised RSA-OAEP parameters"):
+        test_wycheproof_rsa_oaep._xfail_if_rsa_oaep_runtime_reject(
+            exc,
+            "rsa_oaep_2048_sha1_mgf1sha1_test.json:tc1-valid",
+        )
+
+
+@pytest.mark.parametrize(
+    "rv",
+    [
+        CKR_GENERAL_ERROR,
+        CKR_KEY_HANDLE_INVALID,
+        CKR_KEY_SIZE_RANGE,
+    ],
+)
+def test_wycheproof_hmac_valid_runtime_rejects_are_xfail(rv: int) -> None:
+    """Advertised Wycheproof HMAC operation rejects are findings."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised HMAC operation"):
+        test_wycheproof_hmac._xfail_if_hmac_runtime_reject(
+            exc,
+            "hmac_sha512_test.json:tc1-valid",
+        )
+
+
+@pytest.mark.parametrize(
+    "rv",
+    [
+        CKR_FUNCTION_FAILED,
+        CKR_GENERAL_ERROR,
+        CKR_MECHANISM_PARAM_INVALID,
+    ],
+)
+def test_wycheproof_ecdh_valid_runtime_rejects_are_xfail(rv: int) -> None:
+    """Advertised Wycheproof ECDH derive rejects are findings."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised ECDH derive"):
+        test_wycheproof_ecdh._xfail_if_ecdh_runtime_reject(
+            exc,
+            "ecdh_brainpoolP224r1_test.json:tc1-valid",
+        )
 
 
 def test_wycheproof_hmac_invalid_tags_are_reported() -> None:

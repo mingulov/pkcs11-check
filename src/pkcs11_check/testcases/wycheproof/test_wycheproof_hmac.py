@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -38,11 +38,19 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_HMAC,
     CKM_SHA_1_HMAC,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 
@@ -57,6 +65,18 @@ _HMAC_KEY_IMPORT_UNSUPPORTED_CKRS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_TEMPLATE_INCOMPLETE,
+)
+
+_HMAC_RUNTIME_REJECT_CKRS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
 )
 
 # Map mechanisms to their name for availability checking
@@ -153,6 +173,16 @@ def _load_hmac_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_HMAC_VECTORS = _load_hmac_vectors()
 
 
+def _xfail_if_hmac_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised HMAC operation rejects as non-clean findings."""
+    xfail_if_known_ckr(
+        exc,
+        _HMAC_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised HMAC operation is not operational",
+    )
+    raise exc
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_HMAC_VECTORS, ids=[v[0] for v in _ALL_HMAC_VECTORS])
 def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """HMAC verification from Wycheproof vectors."""
@@ -214,6 +244,7 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
             pytest.fail(f"Invalid HMAC tag {vec_id} accepted by module")
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_hmac_runtime_reject(exc, vec_id)
             pytest.fail(f"HMAC failed for {vec_id}: {exc}")
         # acceptable: module rejected invalid vector
         return

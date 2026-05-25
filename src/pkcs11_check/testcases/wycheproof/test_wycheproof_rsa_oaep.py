@@ -8,7 +8,7 @@ compares against expected plaintext.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -31,12 +31,19 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 
@@ -52,6 +59,16 @@ _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_TEMPLATE_INCOMPLETE,
+)
+
+_RSA_OAEP_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 # Map Wycheproof sha names to PKCS#11 hash mechanisms and MGFs for OAEP params
@@ -123,6 +140,16 @@ def _load_oaep_vectors() -> list[tuple[str, dict[str, Any]]]:
 
 
 _ALL_OAEP_VECTORS = _load_oaep_vectors()
+
+
+def _xfail_if_rsa_oaep_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised RSA-OAEP parameter/runtime rejects as findings."""
+    xfail_if_known_ckr(
+        exc,
+        _RSA_OAEP_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised RSA-OAEP parameters are not operational",
+    )
+    raise exc
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_OAEP_VECTORS, ids=[v[0] for v in _ALL_OAEP_VECTORS])
@@ -206,6 +233,7 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
         )
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_rsa_oaep_runtime_reject(exc, vec_id)
             sha = vec.get("_sha", "unknown")
             mgf_sha = vec.get("_mgfSha", "unknown")
             pytest.fail(

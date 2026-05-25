@@ -7,7 +7,7 @@ curve families that can be fed into the existing PKCS#11 derive path.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -36,11 +36,16 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_ec_private_scalar,
     decode_ec_public_point,
@@ -69,6 +74,20 @@ _EC_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
     CKR_FUNCTION_FAILED,
     CKR_DEVICE_ERROR,
     CKR_KEY_SIZE_RANGE,
+)
+
+_ECDH_RUNTIME_REJECT_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 _ECDH_FILES = [
@@ -133,6 +152,16 @@ def _load_ecdh_vectors() -> list[tuple[str, dict[str, Any]]]:
 
 
 _ALL_ECDH_VECTORS = _load_ecdh_vectors()
+
+
+def _xfail_if_ecdh_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised ECDH derive rejects as non-clean findings."""
+    xfail_if_known_ckr(
+        exc,
+        _ECDH_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised ECDH derive is not operational",
+    )
+    raise exc
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_ECDH_VECTORS, ids=[v[0] for v in _ALL_ECDH_VECTORS])
@@ -218,6 +247,7 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         if "mismatch" in exc_msg:
             raise
         if result == "valid":
+            _xfail_if_ecdh_runtime_reject(exc, vec_id)
             pytest.fail(f"Valid ECDH derive failed for {vec_id}: {exc_msg}")
         # acceptable: reject is fine
         return

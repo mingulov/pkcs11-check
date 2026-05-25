@@ -467,6 +467,26 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `CKR_MECHANISM_PARAM_INVALID`, or `CKR_DATA_LEN_RANGE`. These are now visible
   xfail findings for valid vectors. Successful AES-KWP calls that return the
   wrong wrapped bytes or wrong length remain hard failures.
+- **Wycheproof RSA-OAEP parameter/runtime rejects**: valid RSA-OAEP
+  ciphertexts in SoftHSM2 and BouncyHSM artifacts reached an advertised
+  `CKM_RSA_PKCS_OAEP` path, then rejected the decrypt operation with explicit
+  CKRs such as `CKR_ARGUMENTS_BAD` or `CKR_GENERAL_ERROR`. These are now
+  visible xfail findings for advertised-but-not-operational parameter support.
+  Successful decrypts still have to match the Wycheproof plaintext, and
+  accepted invalid ciphertext remains a hard failure.
+- **Wycheproof HMAC operation rejects**: valid HMAC vectors in TPM2,
+  SoftHSM2, and BouncyHSM artifacts reached advertised HMAC mechanisms but
+  failed at key use with explicit CKRs such as `CKR_GENERAL_ERROR`,
+  `CKR_KEY_HANDLE_INVALID`, or `CKR_KEY_SIZE_RANGE`. These are now visible
+  xfail findings. If an invalid HMAC vector produces the supplied tag, the test
+  still fails.
+- **Wycheproof ECDH derive rejects**: BouncyHSM's large Wycheproof ECDH bucket
+  is dominated by `CKR_MECHANISM_PARAM_INVALID` after `CKM_ECDH1_DERIVE` is
+  advertised; SoftHSM2 artifacts also show generic derive-time rejects on valid
+  vectors. pkcs11-check still sends raw uncompressed EC points in
+  `CK_ECDH1_DERIVE_PARAMS.pPublicData`, so these rejects are reported as
+  advertised derive-path xfail findings rather than capability skips. A derived
+  but wrong shared secret remains a hard failure.
 - **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
   `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
   runners now classify explicit generic runtime rejects as xfail while keeping
@@ -674,6 +694,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   reported total. Dynamic mechanism-driven tests remain provider-selected for
   now; the report does not synthesize skips for every unselected mechanism
   parameter.
+
+The sampled abort, signal, and timeout clusters in BouncyHSM, Kryoptic, NSS,
+OpenCryptoki, SoftHSM2, and TPM2 were not reclassified in this pass. They are
+subprocess-isolated boundary or operation probes and remain failure/crash
+evidence unless a later root-cause pass proves that a specific test input is
+invalid for PKCS#11.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
 AES-CTS variant detection still fails when a provider advertises `CKM_AES_CTS`
