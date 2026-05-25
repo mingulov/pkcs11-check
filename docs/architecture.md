@@ -67,7 +67,7 @@ counts by group and the AES-CTS single-provider maximum.
 
 - `test-softhsm2` / `test-softhsm2-generated-iv` / `test-softhsm2-main` — SoftHSM2 2.7.0 / generated-IV simulator / main
 - `test-kryoptic` / `test-kryoptic-main` / `test-kryoptic-fips` — Kryoptic v1.5.0 / main / FIPS
-- `test-nss` / `test-nss-pqc` / `test-nss-main` — Fedora NSS packages / NSS source-tip PQC / NSS source tip
+- `test-nss` / `test-nss-pqc` / `test-nss-main` — Fedora NSS packages / NSS official source tags / NSS source tip
 - `test-opencryptoki` / `test-opencryptoki-master` — OpenCryptoki 3.27.0 / master
 - `test-tpm2` — source-built tpm2-pkcs11 1.10.0 + swtpm
 - `test-bouncyhsm` — BouncyHSM 2.1.0

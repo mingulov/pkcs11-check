@@ -78,15 +78,15 @@ services:
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss
 
-  # NSS PQC (Fedora Rawhide, v3.2 PQC)
-  # NSS PQC (source build, configurable tag, default: tip)
+  # NSS PQC/source release (official NSS/NSPR RTM tags)
   test-nss-pqc:
     <<: *common
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile.rawhide
       args:
-        NSS_TAG: "tip"
+        NSS_TAG: "${NSS_TAG:-NSS_3_124_RTM}"
+        NSPR_TAG: "${NSPR_TAG:-NSPR_4_39_RTM}"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-pqc
 
@@ -123,7 +123,7 @@ services:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki-master
       PKCS11_CHECK_PIN: "1234"
 
-  # NSS main branch (built from source, full PQC)
+  # NSS main branch (source tip, full PQC)
   test-nss-main:
     <<: *common
     build:
