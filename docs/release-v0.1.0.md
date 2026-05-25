@@ -69,7 +69,7 @@ Stable builds use the pinned tag or Fedora 44 system packages.
 | `test-softhsm2` | SoftHSM2 | tag `2.7.0` |
 | `test-kryoptic` | Kryoptic | tag `v1.5.0`, `--features pqc` |
 | `test-nss` | NSS | Fedora 44 RPM (nss-softokn) |
-| `test-nss-pqc` | NSS | hg tip (configurable via `NSS_TAG`) |
+| `test-nss-pqc` | NSS | official RTM tags (`NSS_3_124_RTM`, `NSPR_4_39_RTM`; configurable via build args) |
 | `test-opencryptoki` | OpenCryptoki | Fedora 44 RPM (`opencryptoki-3.26`) |
 | `test-kryoptic-fips` | Kryoptic | `main`, `--features "fips,pqc"` |
 | `test-pkcs11-mock` | pkcs11-mock | github.com/Pkcs11Interop/pkcs11-mock, `main` |

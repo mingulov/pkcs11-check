@@ -80,6 +80,26 @@ selector = "master"
 commit = "583d0128bb5ebfac263496bc8fe32d4aef440178"
 commit_date = "2026-05-13T11:19:05Z"
 
+[sources.nss_fedora_44]
+kind = "fedora_package"
+repo = "quay.io/fedora/fedora:44"
+selector = "nss-3.123.1-1.fc44.x86_64"
+role = "stable_nss_softoken_package"
+
+[sources.nss_3_124_rtm]
+kind = "hg_tag"
+repo = "https://hg.mozilla.org/projects/nss"
+selector = "NSS_3_124_RTM"
+commit = "089afe88dd219cf4b1516fd04f3b1c1fda3b7b61"
+commit_date = "2026-05-15T14:57:13Z"
+
+[sources.nspr_4_39_rtm]
+kind = "hg_tag"
+repo = "https://hg.mozilla.org/projects/nspr"
+selector = "NSPR_4_39_RTM"
+commit = "54e7c1b0803d151e142e30dc0d05f12e1ec67a13"
+commit_date = "2026-05-05T12:48:55Z"
+
 [sources.nss_tip]
 kind = "hg_tip"
 repo = "https://hg.mozilla.org/projects/nss"
@@ -217,18 +237,17 @@ build_evidence = "2026-05-25 docker compose build --build-arg OPENSSL_REPO=https
 [targets.nss]
 service = "test-nss"
 provider = "NSS softoken"
-branch_source = "nss_tip"
-supporting_source = "nspr_tip"
+package_source = "nss_fedora_44"
 openssl = "not applicable: NSS does not build against OpenSSL"
 build_evidence = "2026-05-24/25 matrix artifacts: stable Dockerfile used Fedora 44 nss/nss-softokn packages with PKCS11_CHECK_SLOT=1; full result in artifacts/nss. Source tips are tracked separately for source-built NSS targets."
 
 [targets.nss_pqc]
 service = "test-nss-pqc"
-provider = "NSS softoken source tip with PQC"
-branch_source = "nss_tip"
-supporting_source = "nspr_tip"
+provider = "NSS softoken official source tags with PQC"
+release_source = "nss_3_124_rtm"
+supporting_source = "nspr_4_39_rtm"
 openssl = "not applicable: NSS does not build against OpenSSL"
-build_evidence = "2026-05-24/25 matrix artifacts: source build used observed NSS tip 1a02ab2a26b719d5a2ba23aed6e7b06b5d3e9370 and NSPR tip 764a204fce9a069633c2eb75890f8194f0c54853; full result in artifacts/nss-pqc"
+build_evidence = "Current Dockerfile defaults build from official NSS_3_124_RTM and NSPR_4_39_RTM Mercurial tags; rerun full matrix before publishing refreshed result counts."
 
 [targets.nss_main]
 service = "test-nss-main"

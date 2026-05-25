@@ -749,12 +749,14 @@ configuration explanation is found.
   clusters are concentrated in boundary and NULL-parameter probes. Kryoptic
   FIPS/PQC has materially more crash evidence and is still a custom OpenSSL
   branch target, not an official OpenSSL 4.0.0 result.
-- NSS stable and source-tip targets have similar crash shapes. Source-tip
-  removes the stable ML-DSA failure cluster, but it does not remove the
-  NULL-pointer, sign-flag, ML-KEM, HMAC/general, or security boundary
-  findings. The older ECDH and DSA buckets are superseded by the follow-up
-  loader findings above and should not be used as NSS provider evidence until
-  the matrix is rerun.
+- NSS stable and the earlier source-tip artifacts have similar crash shapes.
+  Current `test-nss-pqc` now builds from official NSS/NSPR RTM tags, so its
+  crash/failure evidence must be refreshed before being described as tagged
+  NSS evidence. Existing source-built artifacts remove the stable ML-DSA failure
+  cluster, but they do not remove the NULL-pointer, sign-flag, ML-KEM,
+  HMAC/general, or security boundary findings. The older ECDH and DSA buckets
+  are superseded by the follow-up loader findings above and should not be used
+  as NSS provider evidence until the matrix is rerun.
 - OpenCryptoki release and master currently resolve to the same commit, and
   their signal findings are the same boundary-probe class.
 - TPM2 source is the current upstream headline; the Fedora package row is kept
