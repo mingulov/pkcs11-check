@@ -519,6 +519,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   no longer supplies `CKA_VALUE_LEN` when unwrapping an AES key whose wrapped
   bytes already determine the length. `CKA_VALUE_LEN` remains reserved for
   raw-block unwrap cases, matching the mechanism-driven wrap tests.
+- **SSL3 pre-master generation**: legacy `CKM_SSL3_PRE_MASTER_KEY_GEN`
+  returning `CKR_ATTRIBUTE_VALUE_INVALID` is classified as an advertised
+  mechanism rejected at runtime. Successful generation still checks the
+  48-byte value and embedded SSL version.
 - **Buffer-size AES ECB smoke tests**: the input-size buffer tests now use the
   same AES setup policy. They still test one-block through 1 MiB AES-ECB buffer
   behavior, but they no longer turn an unrelated AES-256 setup-key rejection
