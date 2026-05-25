@@ -13,6 +13,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA1_RSA_PKCS_PSS,
     CKM_SHA_1,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
 )
 from pkcs11_check.testcases.acvp import test_acvp_rsa
 
@@ -25,6 +26,7 @@ def _pkcs15_vec(*, expected_pass: bool = True) -> dict[str, Any]:
     return {
         "mech_name": "SHA1_RSA_PKCS",
         "mech_int": int(CKM_SHA1_RSA_PKCS),
+        "modulo": 2048,
         "expected_pass": expected_pass,
         "n": b"\x01",
         "e": b"\x01",
@@ -40,6 +42,7 @@ def _pss_vec(*, expected_pass: bool = True) -> dict[str, Any]:
         "hash_mech": int(CKM_SHA_1),
         "mgf": 1,
         "salt_len": 20,
+        "modulo": 2048,
         "expected_pass": expected_pass,
         "n": b"\x01",
         "e": b"\x01",
@@ -53,6 +56,43 @@ def _attribute_value_invalid(*_args: Any, **_kwargs: Any) -> int:
         "Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID",
         int(CKR_ATTRIBUTE_VALUE_INVALID),
     )
+
+
+def _device_error(*_args: Any, **_kwargs: Any) -> int:
+    raise CkrAssertionError(
+        "Unexpected CK_RV CKR_DEVICE_ERROR",
+        int(CKR_DEVICE_ERROR),
+    )
+
+
+def test_acvp_rsa_pkcs15_siggen_keygen_reject_is_setup_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_acvp_rsa, "gen_rsa_keypair", _attribute_value_invalid)
+    monkeypatch.setattr(test_acvp_rsa, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(pytest.skip.Exception, match="RSA 2048-bit key generation failed"):
+        test_acvp_rsa.TestRsaPkcs15().test_rsa_pkcs15_sign_verify(
+            _session(),
+            "SigGen-pkcs15-SHA2-256-tc31",
+            _pkcs15_vec(),
+        )
+
+
+def test_acvp_rsa_pss_siggen_sign_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_acvp_rsa, "gen_rsa_keypair", lambda *_args, **_kwargs: (1, 2))
+    monkeypatch.setattr(test_acvp_rsa, "sign_single", _device_error)
+    monkeypatch.setattr(test_acvp_rsa, "verify_single", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(test_acvp_rsa, "destroy_quietly", lambda *_args: None)
+
+    with pytest.raises(pytest.xfail.Exception, match="CKR_DEVICE_ERROR"):
+        test_acvp_rsa.TestRsaPss().test_rsa_pss_sign_verify(
+            _session(),
+            "SigGen-pss-SHA2-256-tc31",
+            _pss_vec(),
+        )
 
 
 def test_acvp_rsa_pkcs15_public_import_reject_is_setup_skip(

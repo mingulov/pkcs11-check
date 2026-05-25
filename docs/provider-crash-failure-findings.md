@@ -332,6 +332,13 @@ names out of assertion text. Key-size and template capability rejects still
 skip, while `CKR_MECHANISM_INVALID` after `CKM_RSA_PKCS_KEY_PAIR_GEN` was
 advertised becomes xfail evidence.
 
+The ACVP RSA SigGen sign/verify roundtrip tests now use the same setup/result
+split. Rejection while generating the temporary RSA key is a setup capability
+skip when the CKR is a key-size/template/attribute capability reject. Rejection
+from the advertised RSA signing or verification operation is visible xfail
+evidence instead. A generated signature that verifies as false, or returns a
+clean signature-invalid result, remains a real failure.
+
 ### Follow-Up: Wycheproof EC Import Buckets
 
 The largest remaining skip buckets are curve/import capability probes in
