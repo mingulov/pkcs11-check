@@ -35,12 +35,10 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._module_quirks import quirk_extras
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
@@ -79,11 +77,6 @@ _EC_CAPABILITY_REJECT_RVS = (
 _EC_RUNTIME_FAILURE_RVS = (
     CKR_FUNCTION_FAILED,
     CKR_DEVICE_ERROR,
-)
-
-_SIGNATURE_REJECT_RVS = (
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
 )
 
 _DETERMINISTIC_ECDSA_SKIP = (
@@ -125,17 +118,6 @@ def _handle_unsupported_curve(exc: AssertionError, curve: str) -> None:
     if is_known_error(exc, _EC_CAPABILITY_REJECT_RVS):
         pytest.skip(f"Curve {curve} not supported: {exc}")
     xfail_if_known_ckr(exc, _EC_RUNTIME_FAILURE_RVS, f"Curve {curve} rejected by runtime failure")
-    raise
-
-
-def _signature_rejected_or_xfail(exc: AssertionError, p11_config: Any, label: str) -> bool:
-    if is_known_error(exc, _SIGNATURE_REJECT_RVS):
-        return False
-    xfail_if_known_ckr(
-        exc,
-        quirk_extras(p11_config, "verify_or_integrity_failure"),
-        f"{label}: module returns non-spec CKR for verify failure",
-    )
     raise
 
 
@@ -254,7 +236,7 @@ _DET_ECDSA_VECTORS = _load_ecdsa_siggen_vectors(det=True)
     "vec_id,vec", _ECDSA_SIGVER_VECTORS, ids=[v[0] for v in _ECDSA_SIGVER_VECTORS]
 )
 def test_acvp_ecdsa_sigver(
-    p11_raw_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 ) -> None:
     """ECDSA signature verification from NIST ACVP FIPS 186-5 vectors."""
     rs = p11_raw_session
@@ -279,7 +261,7 @@ def test_acvp_ecdsa_sigver(
         try:
             verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], vec["sig"])
         except AssertionError as exc:
-            verified = _signature_rejected_or_xfail(exc, p11_config, vec_id)
+            verified = signature_rejected_or_xfail(exc, vec_id)
         if not vec["expected_pass"] and verified:
             pytest.fail(f"{vec_id}: Module accepted invalid signature")
         if vec["expected_pass"] and not verified:

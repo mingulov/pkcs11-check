@@ -42,11 +42,9 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._module_quirks import quirk_extras
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
@@ -85,12 +83,6 @@ _PQC_IMPORT_UNSUPPORTED_RVS = (
 
 _PQC_IMPORT_RUNTIME_FAILURE_RVS = (CKR_FUNCTION_FAILED,)
 
-_SIGNATURE_REJECT_RVS = (
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
-)
-
-
 def _skip_if_import_unsupported(exc: AssertionError, label: str) -> None:
     if is_known_error(exc, _PQC_IMPORT_UNSUPPORTED_RVS):
         pytest.skip(f"Cannot import SLH-DSA {label}: {exc}")
@@ -98,17 +90,6 @@ def _skip_if_import_unsupported(exc: AssertionError, label: str) -> None:
         exc,
         _PQC_IMPORT_RUNTIME_FAILURE_RVS,
         f"SLH-DSA {label} import failed with non-specific CKR",
-    )
-    raise exc
-
-
-def _signature_rejected_or_xfail(exc: AssertionError, p11_config: Any, label: str) -> bool:
-    if is_known_error(exc, _SIGNATURE_REJECT_RVS):
-        return False
-    xfail_if_known_ckr(
-        exc,
-        quirk_extras(p11_config, "verify_or_integrity_failure"),
-        f"{label}: module returns non-spec CKR for verify failure",
     )
     raise exc
 
@@ -293,9 +274,7 @@ def test_slhdsa_keygen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
 
 
 @pytest.mark.parametrize("vec_id,vec", _SIGVER_VECTORS, ids=[v[0] for v in _SIGVER_VECTORS])
-def test_slhdsa_sigver(
-    p11_raw_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SLH-DSA signature verification from NIST ACVP vectors."""
     rs = p11_raw_session
     if not rs.has_mechanism("SLH_DSA"):
@@ -320,7 +299,7 @@ def test_slhdsa_sigver(
         try:
             verified = verify_single(rs.raw, rs.sh, pub_key, CKM_SLH_DSA, vec["msg"], vec["sig"])
         except AssertionError as exc:
-            verified = _signature_rejected_or_xfail(exc, p11_config, vec_id)
+            verified = signature_rejected_or_xfail(exc, vec_id)
 
         expected = vec["expected_pass"]
         if not expected and verified:

@@ -37,7 +37,12 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_256_HMAC,
     CKM_SHA512_HMAC,
     CKM_SHA_1_HMAC,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.wycheproof
 
@@ -46,6 +51,13 @@ pytestmark = pytest.mark.wycheproof
 # first total failure; subsequent tests with the same pair skip immediately
 # without attempting C_CreateObject probes.
 _UNSUPPORTED_HMAC_KEYS: set[tuple[int, int]] = set()
+
+_HMAC_KEY_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_KEY_SIZE_RANGE,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_TEMPLATE_INCOMPLETE,
+)
 
 # Map mechanisms to their name for availability checking
 _MECH_NAMES: dict[int, str] = {
@@ -163,12 +175,6 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
 
     # Try typed key, fall back to GENERIC_SECRET
     key = None
-    _permanent_ckr = (
-        "CKR_KEY_SIZE_RANGE",
-        "CKR_ATTRIBUTE_VALUE_INVALID",
-        "CKR_TEMPLATE_INCONSISTENT",
-        "CKR_TEMPLATE_INCOMPLETE",
-    )
     saw_permanent_rejection = False
     last_exc_msg = ""
     for kt in (vec["_key_type"], vec["_fallback_type"]):
@@ -187,7 +193,7 @@ def test_hmac_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any])
             break
         except AssertionError as exc:
             last_exc_msg = str(exc)
-            if any(code in last_exc_msg for code in _permanent_ckr):
+            if is_known_error(exc, _HMAC_KEY_IMPORT_UNSUPPORTED_CKRS):
                 saw_permanent_rejection = True
             continue
 

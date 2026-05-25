@@ -32,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.wycheproof
@@ -257,13 +258,17 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
     digest = hash_fn(msg).digest()
 
     try:
-        verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
+        verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
         if result == "invalid":
-            pass
+            if verified:
+                pytest.fail(f"Invalid ECDSA sig {vec_id} accepted by module")
+            return
+        if result == "valid" and not verified:
+            pytest.fail(f"Valid ECDSA sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
             pytest.fail(f"Valid ECDSA sig {vec_id} rejected: {exc}")
-        # acceptable: module rejected invalid vector
+        signature_rejected_or_xfail(exc, vec_id)
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)

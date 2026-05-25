@@ -42,10 +42,9 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp._mldsa_helpers import (
     get_mldsa_mechanism,
     load_mldsa_keygen_vectors,
@@ -78,12 +77,6 @@ _UNSUPPORTED_RVS = (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
 )
-
-_SIGNATURE_REJECT_RVS = (
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
-)
-
 
 def _get_mech_name(pre_hash: str) -> str:
     """Get mechanism name from pre-hash type."""
@@ -284,14 +277,11 @@ class TestMlDsaSigVer:
                     vec["msg"],
                     vec["sig"],
                     mech_param=mech_param,
-                )
+            )
             except AssertionError as exc:
-                if is_known_error(exc, _SIGNATURE_REJECT_RVS):
-                    verified = False
-                elif is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
+                if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
                     pytest.xfail(f"{vec_id}: advertised Hash-ML-DSA params are not operational")
-                else:
-                    raise
+                verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not vec["expected_pass"] and verified:
                 pytest.fail(f"{vec_id}: module ACCEPTED an INVALID ML-DSA signature")

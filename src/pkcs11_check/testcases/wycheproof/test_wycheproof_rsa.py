@@ -27,7 +27,13 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKM_SHA384_RSA_PKCS,
     CKM_SHA512_RSA_PKCS,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.wycheproof
 
@@ -37,6 +43,13 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 # Populated on first failure; subsequent tests with the same key size skip
 # immediately without attempting another C_CreateObject probe.
 _UNSUPPORTED_RSA_KEY_SIZES: set[int] = set()
+
+_RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_KEY_SIZE_RANGE,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_TEMPLATE_INCOMPLETE,
+)
 
 # Mechanism display names for availability checking
 _MECH_DISPLAY: dict[int, str] = {
@@ -163,26 +176,22 @@ def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) 
     except AssertionError as exc:
         exc_msg = str(exc)
         # Only cache permanent key-size rejections, not transient errors.
-        if any(
-            code in exc_msg
-            for code in (
-                "CKR_KEY_SIZE_RANGE",
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_TEMPLATE_INCONSISTENT",
-                "CKR_TEMPLATE_INCOMPLETE",
-            )
-        ):
+        if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
         pytest.skip(f"Cannot import RSA {key_bits}-bit public key: {exc_msg}")
 
     try:
-        verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
+        verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
         if result == "invalid":
-            pass  # Some modules accept edge-case sigs
+            if verified:
+                pytest.fail(f"Invalid RSA sig {vec_id} accepted by module")
+            return
+        if result == "valid" and not verified:
+            pytest.fail(f"Valid RSA sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
             pytest.fail(f"Valid RSA sig {vec_id} rejected: {exc}")
-        # acceptable: module rejected invalid vector
+        signature_rejected_or_xfail(exc, vec_id)
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)

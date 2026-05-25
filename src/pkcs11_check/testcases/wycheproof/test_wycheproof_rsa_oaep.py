@@ -31,7 +31,12 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.wycheproof
 
@@ -41,6 +46,13 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 # Populated on first failure; subsequent tests with the same key size skip
 # immediately without attempting another C_CreateObject probe.
 _UNSUPPORTED_RSA_KEY_SIZES: set[int] = set()
+
+_RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_KEY_SIZE_RANGE,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_TEMPLATE_INCOMPLETE,
+)
 
 # Map Wycheproof sha names to PKCS#11 hash mechanisms and MGFs for OAEP params
 _SHA_HASH_MECHS: dict[str, int] = {
@@ -178,15 +190,7 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
     except AssertionError as exc:
         exc_msg = str(exc)
         # Only cache permanent key-size rejections, not transient errors.
-        if any(
-            code in exc_msg
-            for code in (
-                "CKR_KEY_SIZE_RANGE",
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_TEMPLATE_INCONSISTENT",
-                "CKR_TEMPLATE_INCOMPLETE",
-            )
-        ):
+        if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
         pytest.skip(f"Cannot import RSA {key_bits}-bit private key for OAEP: {exc_msg}")
 

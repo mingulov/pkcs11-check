@@ -31,14 +31,12 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
-    CKR_DEVICE_ERROR,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.acvp.rsa.base_loader import (
     load_siggen_pkcs15_vectors,
@@ -180,19 +178,9 @@ class TestRsaSigVer:
         except AssertionError as exc:
             if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_TEMPLATE_INCONSISTENT}):
                 pytest.skip(f"RSA key import failed: {exc}")
-            if not expected_pass and is_known_error(
-                exc,
-                {
-                    CKR_SIGNATURE_INVALID,
-                    CKR_SIGNATURE_LEN_RANGE,
-                    CKR_DEVICE_ERROR,
-                },
-            ):
-                pass  # Expected
-            elif expected_pass:
+            if expected_pass:
                 raise
-            else:
-                raise  # Unexpected error for invalid-sig vector
+            signature_rejected_or_xfail(exc, vec_id)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
 
@@ -235,18 +223,8 @@ class TestRsaSigVer:
                 pytest.skip(f"RSA key import failed: {exc}")
             if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
                 pytest.xfail(f"{mech_name} advertised but PSS params are not operational: {exc}")
-            if not expected_pass and is_known_error(
-                exc,
-                {
-                    CKR_SIGNATURE_INVALID,
-                    CKR_SIGNATURE_LEN_RANGE,
-                    CKR_DEVICE_ERROR,
-                },
-            ):
-                pass  # Expected
-            elif expected_pass:
+            if expected_pass:
                 raise
-            else:
-                raise  # Unexpected error for invalid-sig vector
+            signature_rejected_or_xfail(exc, vec_id)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)

@@ -5,6 +5,17 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from pkcs11_check.raw.types_std import (
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+)
+from pkcs11_check.testcases._signature_policy import (
+    NON_CLEAN_SIGNATURE_REJECT_RVS,
+    SIGNATURE_REJECT_RVS,
+)
+
 _LEGACY_CIPHER_FILES = (
     Path("src/pkcs11_check/testcases/test_aria.py"),
     Path("src/pkcs11_check/testcases/test_blowfish.py"),
@@ -132,31 +143,15 @@ def test_acvp_asymmetric_vectors_use_structured_ckr_checks() -> None:
 
 def test_acvp_signature_rejects_stay_spec_specific() -> None:
     """Invalid-signature ACVP paths should not pass on generic runtime errors."""
-    paths = (
-        Path("src/pkcs11_check/testcases/acvp/test_acvp_ecdsa.py"),
-        Path("src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py"),
-        Path("src/pkcs11_check/testcases/acvp/test_acvp_mldsa.py"),
-        Path("src/pkcs11_check/testcases/acvp/test_acvp_slhdsa.py"),
+    non_clean_rejects = (
+        CKR_DATA_INVALID,
+        CKR_DEVICE_ERROR,
+        CKR_FUNCTION_FAILED,
+        CKR_GENERAL_ERROR,
     )
-    disallowed = {"CKR_DEVICE_ERROR", "CKR_FUNCTION_FAILED", "CKR_DATA_INVALID"}
-    offenders: list[str] = []
-    for path in paths:
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
-                continue
-            if not any(
-                isinstance(target, ast.Name) and target.id == "_SIGNATURE_REJECT_RVS"
-                for target in node.targets
-            ):
-                continue
-            offenders.extend(
-                f"{path}:{name.lineno}: {name.id}"
-                for name in ast.walk(node.value)
-                if isinstance(name, ast.Name) and name.id in disallowed
-            )
 
-    assert offenders == []
+    assert not set(non_clean_rejects).intersection(SIGNATURE_REJECT_RVS)
+    assert set(non_clean_rejects).issubset(NON_CLEAN_SIGNATURE_REJECT_RVS)
 
 
 def test_acvp_capability_skips_do_not_accept_runtime_failure_ckrs() -> None:
@@ -267,6 +262,83 @@ def test_wycheproof_ec_import_guards_use_structured_ckr_checks() -> None:
         Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdh.py"),
         Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ed25519.py"),
         Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_x25519.py"),
+    )
+    offenders: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        offenders.extend(
+            f"{path}:{node.lineno}: {node.value}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith("CKR_")
+        )
+
+    assert offenders == []
+
+
+def test_wycheproof_signature_vectors_use_verify_result() -> None:
+    """Signature-vector tests must distinguish rejected from accepted signatures."""
+    paths = (
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_dsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ed25519.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_mldsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_pss.py"),
+    )
+    offenders: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        offenders.extend(
+            f"{path}:{node.lineno}: verify_single() result ignored"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "verify_single"
+        )
+
+    assert offenders == []
+
+
+def test_wycheproof_invalid_signature_acceptance_is_reported() -> None:
+    """Accepted invalid Wycheproof signatures are findings, not pass-like flow."""
+    paths = (
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_dsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ecdsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_ed25519.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_mldsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_pss.py"),
+    )
+    offenders: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.If):
+                continue
+            strings = _literal_strings(node.test)
+            if "invalid" not in strings:
+                continue
+            for body_node in ast.walk(ast.Module(body=node.body, type_ignores=[])):
+                if isinstance(body_node, ast.Pass):
+                    offenders.append(f"{path}:{body_node.lineno}: pass under invalid vector")
+
+    assert offenders == []
+
+
+def test_wycheproof_rsa_hmac_pqc_guards_use_structured_ckr_checks() -> None:
+    """Wycheproof import guards should match CKR constants, not text."""
+    paths = (
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_hmac.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_mldsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_mldsa_sign.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_decrypt.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_oaep.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_pss.py"),
     )
     offenders: list[str] = []
     for path in paths:

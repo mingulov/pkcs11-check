@@ -41,6 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_HMAC,
     CKM_SHA256_RSA_PKCS,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: F401
 from pkcs11_check.testcases.wycheproof.wycheproof_loader import load_vectors as load_wycheproof
 
@@ -309,13 +310,17 @@ class TestECDSAP256Wycheproof:
         digest = hashlib.sha256(msg).digest()
 
         try:
-            verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
-            # Verification succeeded
+            verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
             if result == "invalid":
-                pass  # Some modules accept non-canonical - security finding
-        except AssertionError:
+                if verified:
+                    pytest.fail(f"Invalid ECDSA sig tc{vec['tcId']} accepted by module")
+                return
+            if result == "valid" and not verified:
+                pytest.fail(f"Valid ECDSA sig tc{vec['tcId']} rejected by module")
+        except AssertionError as exc:
             if result == "valid":
                 pytest.fail(f"Valid ECDSA sig tc{vec['tcId']} rejected by module")
+            signature_rejected_or_xfail(exc, f"tc{vec['tcId']}")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
 
@@ -446,12 +451,17 @@ class TestECDSAP384Wycheproof:
         digest = hashlib.sha384(msg).digest()
 
         try:
-            verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
+            verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
             if result == "invalid":
-                pass  # Some modules accept non-canonical
-        except AssertionError:
+                if verified:
+                    pytest.fail(f"Invalid ECDSA P-384 sig tc{vec['tcId']} accepted")
+                return
+            if result == "valid" and not verified:
+                pytest.fail(f"Valid ECDSA P-384 sig tc{vec['tcId']} rejected")
+        except AssertionError as exc:
             if result == "valid":
                 pytest.fail(f"Valid ECDSA P-384 sig tc{vec['tcId']} rejected")
+            signature_rejected_or_xfail(exc, f"tc{vec['tcId']}")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
 
@@ -500,12 +510,17 @@ class TestRSASigWycheproof:
             pytest.skip("Cannot import RSA public key on this module")
 
         try:
-            verify_single(rs.raw, rs.sh, pub_key, CKM_SHA256_RSA_PKCS, msg, sig)
+            verified = verify_single(rs.raw, rs.sh, pub_key, CKM_SHA256_RSA_PKCS, msg, sig)
             if result == "invalid":
-                pass  # Some modules accept edge-case sigs
-        except AssertionError:
+                if verified:
+                    pytest.fail(f"Invalid RSA sig tc{vec['tcId']} accepted")
+                return
+            if result == "valid" and not verified:
+                pytest.fail(f"Valid RSA sig tc{vec['tcId']} rejected")
+        except AssertionError as exc:
             if result == "valid":
                 pytest.fail(f"Valid RSA sig tc{vec['tcId']} rejected")
+            signature_rejected_or_xfail(exc, f"tc{vec['tcId']}")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
 

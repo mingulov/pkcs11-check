@@ -23,7 +23,11 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_44,
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
@@ -62,6 +66,23 @@ _MLDSA_SIGN_FILES = [
     ("mldsa_65_sign_noseed_test.json", CKP_ML_DSA_65),
     ("mldsa_87_sign_noseed_test.json", CKP_ML_DSA_87),
 ]
+
+_MLDSA_PRIVATE_IMPORT_REJECT_CKRS = (
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
+
+_MLDSA_INVALID_PRIVATE_KEY_FLAGS = frozenset(
+    {
+        "IncorrectPrivateKeyLength",
+        "InvalidPrivateKey",
+    }
+)
+
+
+def _has_flag(vec: dict[str, Any], flags: frozenset[str]) -> bool:
+    return bool(flags.intersection(vec.get("flags", [])))
 
 
 def _load_sign_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -106,19 +127,10 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) -> N
         )
     except AssertionError as exc:
         exc_msg = str(exc)
-        if any(
-            name in exc_msg
-            for name in (
-                "CKR_TEMPLATE_INCOMPLETE",
-                "CKR_TEMPLATE_INCONSISTENT",
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_FUNCTION_FAILED",
-                "CKR_DEVICE_ERROR",
-            )
-        ):
-            if result == "invalid":
+        if is_known_error(exc, _MLDSA_PRIVATE_IMPORT_REJECT_CKRS):
+            if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PRIVATE_KEY_FLAGS):
                 return
-            pytest.fail(f"Cannot import ML-DSA private key: {exc_msg}")
+            pytest.xfail(f"ML_DSA advertised but private-key import is not operational: {exc_msg}")
         raise
 
     try:
@@ -127,6 +139,8 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_raw_session: Any) -> N
             assert len(sig) > 0, "Empty signature"
             # Note: ML-DSA signatures are non-deterministic, so length/non-empty
             # is the meaningful invariant for this path.
+        else:
+            pytest.fail(f"Invalid ML-DSA sign vector {vec_id} accepted by module")
     except AssertionError as exc:
         if result == "valid":
             pytest.fail(f"Valid ML-DSA sign failed {vec_id}: {exc}")
