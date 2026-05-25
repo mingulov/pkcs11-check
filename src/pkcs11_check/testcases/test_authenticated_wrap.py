@@ -189,7 +189,7 @@ class TestAuthenticatedWrap:
                         CKR_MECHANISM_PARAM_INVALID,
                     },
                 ):
-                    pytest.skip(f"AES-GCM authenticated generated-IV wrap rejected: {exc}")
+                    pytest.xfail(f"AES-GCM authenticated generated-IV wrap rejected: {exc}")
                 raise
             iv = wrap_mech.buffer_bytes("iv")
             tag = wrap_mech.buffer_bytes("tag")

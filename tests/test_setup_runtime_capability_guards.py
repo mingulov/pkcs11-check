@@ -250,6 +250,37 @@ def test_authenticated_wrap_v240_probe_xfails_when_aes_keygen_rejects_runtime(
         )
 
 
+def test_authenticated_wrap_generated_iv_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_GCM")
+    monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_authenticated_wrap.CKA_VALUE: b"\x5a" * 16},
+    )
+    monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_authenticated_wrap.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+
+    def _wrap_reject(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+            int(CKR_FUNCTION_NOT_SUPPORTED),
+        )
+
+    monkeypatch.setattr(test_authenticated_wrap, "wrap_key_authenticated", _wrap_reject)
+
+    with pytest.raises(pytest.xfail.Exception, match="authenticated generated-IV wrap rejected"):
+        test_authenticated_wrap.TestAuthenticatedWrap().test_aes_gcm_authenticated_wrap_generated_iv_and_tag(
+            rs, "3.2"
+        )
+
+
 def test_buffer_encrypt_xfails_when_advertised_aes_keygen_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -481,6 +481,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   setup key policy. Providers that cannot generate setup AES keys after
   advertising `AES_KEY_GEN` are reported as setup xfail evidence instead of
   failing before the authenticated-wrap API behavior is reached.
+- **Authenticated-wrap generated-IV path**: v3.2 authenticated wrap calls that
+  reach `C_WrapKeyAuthenticated` and receive an explicit CKR reject are reported
+  as xfail advertised-but-not-operational evidence. Missing API symbols remain
+  skips, but runtime `CKR_FUNCTION_NOT_SUPPORTED` is no longer a clean skip.
 - **Buffer-size AES ECB smoke tests**: the input-size buffer tests now use the
   same AES setup policy. They still test one-block through 1 MiB AES-ECB buffer
   behavior, but they no longer turn an unrelated AES-256 setup-key rejection
