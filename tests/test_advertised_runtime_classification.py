@@ -9,7 +9,9 @@ import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKR_ARGUMENTS_BAD,
     CKR_DATA_INVALID,
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
@@ -20,6 +22,7 @@ from pkcs11_check.testcases._signature_policy import (
     SIGNATURE_REJECT_RVS,
 )
 from pkcs11_check.testcases.acvp import test_acvp_ecdh, test_acvp_mldsa
+from pkcs11_check.testcases.wycheproof import test_wycheproof_aes, test_wycheproof_rsa_pss
 
 _LEGACY_CIPHER_FILES = (
     Path("src/pkcs11_check/testcases/test_aria.py"),
@@ -386,6 +389,41 @@ def test_wycheproof_rsa_hmac_pqc_guards_use_structured_ckr_checks() -> None:
         )
 
     assert offenders == []
+
+
+@pytest.mark.parametrize(
+    "rv",
+    [
+        CKR_ARGUMENTS_BAD,
+        CKR_DEVICE_ERROR,
+        CKR_MECHANISM_PARAM_INVALID,
+    ],
+)
+def test_wycheproof_rsa_pss_valid_parameter_rejects_are_xfail(rv: int) -> None:
+    """Advertised RSA-PSS valid-vector parameter rejects are findings, not failures."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised RSA-PSS parameters"):
+        test_wycheproof_rsa_pss._xfail_if_rsa_pss_runtime_reject(
+            exc,
+            "rsa_pss_2048_sha256_mgf1sha1_20_test.json:tc1-valid",
+        )
+
+
+@pytest.mark.parametrize(
+    "rv",
+    [
+        CKR_DATA_LEN_RANGE,
+        CKR_GENERAL_ERROR,
+        CKR_MECHANISM_PARAM_INVALID,
+    ],
+)
+def test_wycheproof_aes_valid_runtime_rejects_are_xfail(rv: int) -> None:
+    """Advertised Wycheproof AES operation rejects are findings, not failures."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised AES operation"):
+        test_wycheproof_aes._xfail_if_aes_runtime_reject(exc, "AES-KWP tc11-valid")
 
 
 def test_wycheproof_hmac_invalid_tags_are_reported() -> None:

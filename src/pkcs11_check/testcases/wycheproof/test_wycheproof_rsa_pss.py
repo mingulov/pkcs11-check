@@ -7,7 +7,7 @@ SHA-1/SHA-224/SHA-256/SHA-384/SHA-512 and varying salt lengths.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -47,13 +47,20 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512,
     CKM_SHA512_RSA_PKCS_PSS,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 
@@ -69,6 +76,16 @@ _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_TEMPLATE_INCOMPLETE,
+)
+
+_RSA_PSS_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 # Map hash names to PKCS#11 mechanisms and hash mechanisms for PSS params
@@ -165,6 +182,16 @@ def _load_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_PSS_VECTORS = _load_pss_vectors()
 
 
+def _xfail_if_rsa_pss_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised RSA-PSS parameter/runtime rejects as findings."""
+    xfail_if_known_ckr(
+        exc,
+        _RSA_PSS_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised RSA-PSS parameters are not operational",
+    )
+    raise exc
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_PSS_VECTORS, ids=[v[0] for v in _ALL_PSS_VECTORS])
 def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-PSS signature verification from Wycheproof vectors."""
@@ -224,6 +251,7 @@ def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             pytest.fail(f"Valid RSA-PSS sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_rsa_pss_runtime_reject(exc, vec_id)
             sha = vec.get("_sha", "unknown")
             mgf_sha = vec.get("_mgf_sha", "unknown")
             flags = vec.get("flags", [])

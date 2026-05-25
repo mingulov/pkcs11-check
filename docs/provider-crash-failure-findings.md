@@ -407,7 +407,10 @@ deeper follow-up before being presented as final provider conclusions.
   where `mgf` does not match `hashAlg`. TPM2 source similarly documents that
   the TPM fixes MGF to the hash algorithm and salt length to the hash length.
   This looks like provider/back-end parameter support, not a DER/vector-loader
-  issue like ECDH or DSA.
+  issue like ECDH or DSA. Wycheproof RSA-PSS now reports advertised valid-vector
+  parameter rejects such as `CKR_ARGUMENTS_BAD`, `CKR_DEVICE_ERROR`, and
+  `CKR_MECHANISM_PARAM_INVALID` as visible xfail findings. A successful
+  verification result must still match the Wycheproof expectation.
 - **Kryoptic AES-CTS 405**: failures are mostly `CKR_DEVICE_ERROR` on encrypt
   after `CKM_AES_CTS` is advertised and selected. Kryoptic source maps
   `CKM_AES_CTS` to CTS mode CS1, and pkcs11-check's CTS test already detects
@@ -458,6 +461,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   ML-DSA tests now keep import and parameter-set capability skips narrow, while
   sign/verify runtime rejects such as `CKR_DEVICE_ERROR`, `CKR_FUNCTION_FAILED`,
   and `CKR_GENERAL_ERROR` become visible xfail findings.
+- **Wycheproof AES operation rejects**: BouncyHSM CMAC, Kryoptic CCM,
+  OpenCryptoki XTS, and NSS KWP vectors reached advertised AES mechanisms but
+  returned runtime CKRs such as `CKR_GENERAL_ERROR`,
+  `CKR_MECHANISM_PARAM_INVALID`, or `CKR_DATA_LEN_RANGE`. These are now visible
+  xfail findings for valid vectors. Successful AES-KWP calls that return the
+  wrong wrapped bytes or wrong length remain hard failures.
 - **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
   `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
   runners now classify explicit generic runtime rejects as xfail while keeping
