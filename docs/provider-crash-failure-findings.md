@@ -315,6 +315,14 @@ converted away from CKR-name substring checks. These tests still xfail known
 provider substitutes such as `CKR_DEVICE_ERROR` for signature-invalid, but
 unexpected CKRs remain visible.
 
+ACVP ECDSA, EdDSA, ML-DSA, and SLH-DSA vector guards now follow the same
+structured-CKR rule. Import and parameter-set capability rejects remain skips
+where PKCS#11 lacks per-parameter-set discovery. Generic runtime failures such
+as `CKR_DEVICE_ERROR`/`CKR_FUNCTION_FAILED` no longer make those vectors look
+unsupported; they either become documented provider quirks or real failures.
+Advertised mechanism parameter rejects in EdDSA and Hash-ML-DSA verification are
+xfail evidence rather than silent skips.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not

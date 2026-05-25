@@ -108,6 +108,97 @@ def test_acvp_rsa_keygen_uses_structured_ckr_checks() -> None:
     assert offenders == []
 
 
+def test_acvp_asymmetric_vectors_use_structured_ckr_checks() -> None:
+    """ACVP asymmetric vector tests should match CKR constants, not text."""
+    paths = (
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_ecdsa.py"),
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py"),
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_mldsa.py"),
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_slhdsa.py"),
+    )
+    offenders: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        offenders.extend(
+            f"{path}:{node.lineno}: {node.value}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith("CKR_")
+        )
+
+    assert offenders == []
+
+
+def test_acvp_signature_rejects_stay_spec_specific() -> None:
+    """Invalid-signature ACVP paths should not pass on generic runtime errors."""
+    paths = (
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_ecdsa.py"),
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py"),
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_mldsa.py"),
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_slhdsa.py"),
+    )
+    disallowed = {"CKR_DEVICE_ERROR", "CKR_FUNCTION_FAILED", "CKR_DATA_INVALID"}
+    offenders: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not any(
+                isinstance(target, ast.Name) and target.id == "_SIGNATURE_REJECT_RVS"
+                for target in node.targets
+            ):
+                continue
+            offenders.extend(
+                f"{path}:{name.lineno}: {name.id}"
+                for name in ast.walk(node.value)
+                if isinstance(name, ast.Name) and name.id in disallowed
+            )
+
+    assert offenders == []
+
+
+def test_acvp_capability_skips_do_not_accept_runtime_failure_ckrs() -> None:
+    """Capability skips should not swallow provider runtime failures."""
+    paths = (
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_ecdsa.py"),
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_eddsa.py"),
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_mldsa.py"),
+        Path("src/pkcs11_check/testcases/acvp/test_acvp_slhdsa.py"),
+    )
+    capability_tuple_names = {
+        "_CURVE_UNSUPPORTED_RVS",
+        "_EC_CAPABILITY_REJECT_RVS",
+        "_PQC_IMPORT_UNSUPPORTED_RVS",
+        "_UNSUPPORTED_RVS",
+    }
+    disallowed = {"CKR_DEVICE_ERROR", "CKR_FUNCTION_FAILED", "CKR_GENERAL_ERROR"}
+    offenders: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            tuple_name = next(
+                (
+                    target.id
+                    for target in node.targets
+                    if isinstance(target, ast.Name) and target.id in capability_tuple_names
+                ),
+                None,
+            )
+            if tuple_name is None:
+                continue
+            offenders.extend(
+                f"{path}:{name.lineno}: {tuple_name} contains {name.id}"
+                for name in ast.walk(node.value)
+                if isinstance(name, ast.Name) and name.id in disallowed
+            )
+
+    assert offenders == []
+
+
 def test_wycheproof_ec_import_guards_use_structured_ckr_checks() -> None:
     """Large EC Wycheproof import probes should not parse CKR names from text."""
     paths = (

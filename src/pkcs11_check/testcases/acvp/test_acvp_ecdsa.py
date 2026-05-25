@@ -28,8 +28,21 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDSA_SHA256,
     CKM_ECDSA_SHA384,
     CKM_ECDSA_SHA512,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._module_quirks import quirk_extras
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -53,12 +66,24 @@ _CURVE_MAP: dict[str, tuple[str, int]] = {
     "P-521": ("secp521r1", 66),
 }
 
-_UNSUPPORTED_ERRORS = (
-    "CKR_MECHANISM_INVALID",
-    "CKR_ATTRIBUTE_VALUE_INVALID",
-    "CKR_TEMPLATE_INCOMPLETE",
-    "CKR_CURVE_NOT_SUPPORTED",
-    "CKR_KEY_SIZE_RANGE",
+_EC_CAPABILITY_REJECT_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_KEY_SIZE_RANGE,
+)
+
+_EC_RUNTIME_FAILURE_RVS = (
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
+)
+
+_SIGNATURE_REJECT_RVS = (
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
 )
 
 _DETERMINISTIC_ECDSA_SKIP = (
@@ -97,8 +122,20 @@ def _build_ec_point(qx_hex: str, qy_hex: str, coord_len: int) -> bytes:
 
 def _handle_unsupported_curve(exc: AssertionError, curve: str) -> None:
     """Check if exception indicates unsupported curve and skip if so."""
-    if any(name in str(exc) for name in _UNSUPPORTED_ERRORS):
+    if is_known_error(exc, _EC_CAPABILITY_REJECT_RVS):
         pytest.skip(f"Curve {curve} not supported: {exc}")
+    xfail_if_known_ckr(exc, _EC_RUNTIME_FAILURE_RVS, f"Curve {curve} rejected by runtime failure")
+    raise
+
+
+def _signature_rejected_or_xfail(exc: AssertionError, p11_config: Any, label: str) -> bool:
+    if is_known_error(exc, _SIGNATURE_REJECT_RVS):
+        return False
+    xfail_if_known_ckr(
+        exc,
+        quirk_extras(p11_config, "verify_or_integrity_failure"),
+        f"{label}: module returns non-spec CKR for verify failure",
+    )
     raise
 
 
@@ -216,7 +253,9 @@ _DET_ECDSA_VECTORS = _load_ecdsa_siggen_vectors(det=True)
 @pytest.mark.parametrize(
     "vec_id,vec", _ECDSA_SIGVER_VECTORS, ids=[v[0] for v in _ECDSA_SIGVER_VECTORS]
 )
-def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_ecdsa_sigver(
+    p11_raw_session: Any, p11_config: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """ECDSA signature verification from NIST ACVP FIPS 186-5 vectors."""
     rs = p11_raw_session
     mech_int: CKM = cast(CKM, vec["mech_int"])
@@ -233,23 +272,14 @@ def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
                 ec_point=vec["ec_point_der"],
                 attrs={CKA_VERIFY: True},
             )
-        except AssertionError as e:
-            pytest.skip(f"Cannot import EC public key for {vec['curve']}: {e}")
+        except AssertionError as exc:
+            if is_known_error(exc, _EC_CAPABILITY_REJECT_RVS):
+                pytest.skip(f"Cannot import EC public key for {vec['curve']}: {exc}")
+            raise
         try:
             verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], vec["sig"])
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_SIGNATURE_INVALID",
-                    "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DEVICE_ERROR",
-                )
-            ):
-                verified = False
-            else:
-                raise
+            verified = _signature_rejected_or_xfail(exc, p11_config, vec_id)
         if not vec["expected_pass"] and verified:
             pytest.fail(f"{vec_id}: Module accepted invalid signature")
         if vec["expected_pass"] and not verified:

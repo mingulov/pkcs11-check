@@ -37,6 +37,14 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_44,
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.acvp._mldsa_helpers import (
     get_mldsa_mechanism,
@@ -45,6 +53,7 @@ from pkcs11_check.testcases.acvp._mldsa_helpers import (
     load_mldsa_sigver_vectors,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp, pytest.mark.pqc]
 
@@ -61,13 +70,18 @@ _PARAM_SET_NAMES: dict[int, str] = {
     int(CKP_ML_DSA_87): "ML-DSA-87",
 }
 
-_UNSUPPORTED_ERRORS = (
-    "CKR_MECHANISM_INVALID",
-    "CKR_ATTRIBUTE_VALUE_INVALID",
-    "CKR_ATTRIBUTE_READ_ONLY",
-    "CKR_TEMPLATE_INCONSISTENT",
-    "CKR_KEY_SIZE_RANGE",
-    "CKR_MECHANISM_PARAM_INVALID",
+_UNSUPPORTED_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+_SIGNATURE_REJECT_RVS = (
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
 )
 
 
@@ -96,7 +110,7 @@ def _get_mech_name(pre_hash: str) -> str:
 
 def _handle_unsupported(exc: AssertionError, param_set: str) -> None:
     """Check if exception indicates unsupported parameter set and skip if so."""
-    if any(name in str(exc) for name in _UNSUPPORTED_ERRORS):
+    if is_known_error(exc, _UNSUPPORTED_RVS):
         pytest.skip(f"ML-DSA parameter set {param_set} not supported: {exc}")
     raise
 
@@ -272,17 +286,10 @@ class TestMlDsaSigVer:
                     mech_param=mech_param,
                 )
             except AssertionError as exc:
-                exc_msg = str(exc)
-                if any(
-                    name in exc_msg
-                    for name in (
-                        "CKR_SIGNATURE_INVALID",
-                        "CKR_SIGNATURE_LEN_RANGE",
-                    )
-                ):
+                if is_known_error(exc, _SIGNATURE_REJECT_RVS):
                     verified = False
-                elif "CKR_MECHANISM_PARAM_INVALID" in exc_msg:
-                    pytest.skip(f"{vec_id}: module requires mechanism params for Hash-ML-DSA")
+                elif is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
+                    pytest.xfail(f"{vec_id}: advertised Hash-ML-DSA params are not operational")
                 else:
                     raise
 
