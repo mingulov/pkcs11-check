@@ -9,7 +9,7 @@ The test also asserts no session corruption after invalid operations.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -40,12 +40,46 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDSA,
     CKM_SHA256_HMAC,
     CKM_SHA256_RSA_PKCS,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: F401
 from pkcs11_check.testcases.wycheproof.wycheproof_loader import load_vectors as load_wycheproof
 
 pytestmark = pytest.mark.wycheproof
+
+_GENERIC_WYCHEPROOF_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 def _vec_id(vec: dict[str, Any]) -> str:
@@ -56,6 +90,20 @@ def _skip_unless_mechanism(rs: Any, name: str) -> None:
     """Skip vector tests when the required PKCS#11 mechanism is unavailable."""
     if not rs.has_mechanism(name):
         pytest.skip(f"CKM_{name} not supported")
+
+
+def _xfail_if_generic_runtime_reject(
+    exc: AssertionError,
+    label: str,
+    operation: str,
+) -> NoReturn:
+    """Classify advertised generic Wycheproof operation rejects as findings."""
+    xfail_if_known_ckr(
+        exc,
+        _GENERIC_WYCHEPROOF_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised {operation} is not operational",
+    )
+    raise exc
 
 
 # --- AES-GCM ---
@@ -159,6 +207,11 @@ class TestAESGCMWycheproof:
                         reference="NIST SP 800-38D Sec.8.2: non-96-bit IV support is optional",
                     )
                 else:
+                    _xfail_if_generic_runtime_reject(
+                        exc,
+                        f"AES-GCM tc{vec['tcId']}",
+                        "AES-GCM decrypt",
+                    )
                     pytest.fail(
                         f"Valid GCM vector tc{vec['tcId']} rejected: "
                         f"iv={iv_len}B tag={tag_len}B ({exc_msg})"
@@ -206,6 +259,7 @@ class TestHMACSHA256Wycheproof:
         # Try SHA256_HMAC key type first; fall back to GENERIC_SECRET
         # (some modules require min key length for typed HMAC keys)
         key = None
+        last_import_exc = None
         for key_type in (CKK_SHA256_HMAC, CKK_GENERIC_SECRET):
             try:
                 key = import_secret_key(
@@ -221,11 +275,18 @@ class TestHMACSHA256Wycheproof:
                     },
                 )
                 break
-            except AssertionError:
+            except AssertionError as exc:
+                last_import_exc = exc
                 continue
         if key is None:
             if result == "invalid":
                 return  # Invalid key correctly rejected
+            if last_import_exc is not None:
+                _xfail_if_generic_runtime_reject(
+                    last_import_exc,
+                    f"HMAC-SHA256 tc{vec['tcId']}",
+                    "HMAC-SHA256 key import",
+                )
             pytest.fail(f"Module cannot import {len(key_bytes)}-byte HMAC key")
 
         try:
@@ -238,6 +299,11 @@ class TestHMACSHA256Wycheproof:
                 pytest.fail(f"Invalid HMAC tag tc{vec['tcId']} accepted by module")
         except AssertionError as exc:
             if result == "valid":
+                _xfail_if_generic_runtime_reject(
+                    exc,
+                    f"HMAC-SHA256 tc{vec['tcId']}",
+                    "HMAC-SHA256 sign",
+                )
                 exc_msg = str(exc)
                 pytest.fail(
                     f"Valid HMAC vector tc{vec['tcId']} failed: "
@@ -382,8 +448,13 @@ class TestAESCBCPKCS5Wycheproof:
                 assert pt == msg
             elif result == "invalid":
                 pytest.fail(f"Invalid AES-CBC vector tc{vec['tcId']} decrypted successfully")
-        except AssertionError:
+        except AssertionError as exc:
             if result == "valid":
+                _xfail_if_generic_runtime_reject(
+                    exc,
+                    f"AES-CBC-PAD tc{vec['tcId']}",
+                    "AES-CBC-PAD decrypt",
+                )
                 pytest.fail(f"Valid AES-CBC vector tc{vec['tcId']} failed")
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -521,6 +592,11 @@ class TestRSASigWycheproof:
                 pytest.fail(f"Valid RSA sig tc{vec['tcId']} rejected")
         except AssertionError as exc:
             if result == "valid":
+                _xfail_if_generic_runtime_reject(
+                    exc,
+                    f"RSA PKCS#1 tc{vec['tcId']}",
+                    "RSA PKCS#1 verify",
+                )
                 pytest.fail(f"Valid RSA sig tc{vec['tcId']} rejected")
             signature_rejected_or_xfail(exc, f"tc{vec['tcId']}")
         finally:

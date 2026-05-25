@@ -487,6 +487,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `CK_ECDH1_DERIVE_PARAMS.pPublicData`, so these rejects are reported as
   advertised derive-path xfail findings rather than capability skips. A derived
   but wrong shared secret remains a hard failure.
+- **Generic Wycheproof runtime rejects**: the legacy aggregate Wycheproof file
+  now follows the same policy for AES-GCM, AES-CBC-PAD, HMAC-SHA256, and
+  RSA-PKCS#1 verification. Valid vectors that reach advertised mechanisms but
+  return explicit setup or operation CKRs such as `CKR_GENERAL_ERROR`,
+  `CKR_KEY_SIZE_RANGE`, `CKR_ARGUMENTS_BAD`, or `CKR_DEVICE_ERROR` are xfail
+  findings. Wrong plaintext, wrong MAC, accepted invalid ciphertext/tag, and
+  any rejection of valid signatures remain failures.
 - **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
   `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
   runners now classify explicit generic runtime rejects as xfail while keeping

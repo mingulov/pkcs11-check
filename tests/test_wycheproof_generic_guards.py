@@ -7,6 +7,13 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+)
 from pkcs11_check.testcases.wycheproof import test_wycheproof as wy
 
 
@@ -105,3 +112,32 @@ def test_generic_ecdsa_p384_skips_unsupported_curve_import(
         wy.TestECDSAP384Wycheproof().test_ecdsa_p384_sha384_verify(session, vec)
 
     assert session.checked == ["ECDSA"]
+
+
+@pytest.mark.parametrize(
+    ("rv", "operation"),
+    [
+        (CKR_GENERAL_ERROR, "AES-GCM decrypt"),
+        (CKR_GENERAL_ERROR, "AES-CBC-PAD decrypt"),
+        (CKR_GENERAL_ERROR, "HMAC-SHA256 sign"),
+        (CKR_ARGUMENTS_BAD, "RSA PKCS#1 verify"),
+        (CKR_DEVICE_ERROR, "RSA PKCS#1 verify"),
+    ],
+)
+def test_generic_wycheproof_valid_runtime_rejects_are_xfail(
+    rv: int,
+    operation: str,
+) -> None:
+    """Advertised generic Wycheproof operation rejects are findings."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(rv))
+
+    with pytest.raises(pytest.xfail.Exception, match=operation):
+        wy._xfail_if_generic_runtime_reject(exc, "tc1-valid", operation)
+
+
+def test_generic_hmac_key_import_reject_is_xfail() -> None:
+    """Advertised HMAC key import rejection is setup evidence, not a raw failure."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(CKR_KEY_SIZE_RANGE))
+
+    with pytest.raises(pytest.xfail.Exception, match="HMAC-SHA256 key import"):
+        wy._xfail_if_generic_runtime_reject(exc, "tc163-valid", "HMAC-SHA256 key import")
