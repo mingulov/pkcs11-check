@@ -37,6 +37,7 @@ _RUNTIME_SKIP_PATTERNS = {
         "AES key generation not operational",
     ),
     Path("src/pkcs11_check/testcases/test_cctv_mldsa.py"): ("key generation failed -",),
+    Path("src/pkcs11_check/testcases/test_remaining_gaps.py"): ("HOTP key generation failed",),
 }
 
 

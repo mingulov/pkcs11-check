@@ -46,6 +46,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     sign_single,
 )
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_DERIVE,
@@ -62,14 +63,39 @@ from pkcs11_check.raw.types_std import (
     CKA_WRAP_TEMPLATE,
     CKM_AES_CMAC_GENERAL,
     CKM_HOTP_KEY_GEN,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_NO_EVENT,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
 from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = [pytest.mark.compliance]
+
+_HOTP_KEYGEN_ERROR_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 _EXTRA_IMPORTS = """\
 import ctypes
@@ -247,8 +273,14 @@ class TestOtpKeyAttributes:
             tmpl.count,
             byref(key),
         )
-        if rv != CKR_OK:
-            pytest.skip(f"HOTP key generation failed: CKR 0x{rv:08x}")
+        try:
+            expect_rv(rv, CKR_OK, context="CKM_HOTP_KEY_GEN C_GenerateKey")
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _HOTP_KEYGEN_ERROR_CKRS,
+                "CKM_HOTP_KEY_GEN advertised but key generation failed",
+            )
         key_h = key.value
         try:
             for attr_int in (CKA_OTP_FORMAT, CKA_OTP_LENGTH):

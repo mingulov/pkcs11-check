@@ -265,6 +265,12 @@ rejects `C_GenerateKeyPair`. Missing keypair generation still skips; specific
 runtime CKRs now become xfail findings instead of disappearing as benchmark
 setup skips.
 
+### Follow-Up: Remaining HOTP Attribute Probe
+
+The remaining-gap OTP attribute probe now matches the main OTP tests:
+`CKM_HOTP_KEY_GEN` absence skips, but advertised HOTP key generation that
+rejects `C_GenerateKey` becomes xfail evidence for specific CKRs.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
