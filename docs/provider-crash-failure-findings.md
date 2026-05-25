@@ -564,6 +564,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   CKRs such as `CKR_DEVICE_ERROR` are visible xfail evidence for an advertised
   but non-operational path. Deterministic EdDSA signature mismatches remain
   real failures.
+- **ACVP SLH-DSA runtime rejects**: valid SigVer vectors now get a valid-signature
+  runtime-reject xfail reason instead of being described as invalid-signature
+  rejects. Keygen roundtrip and SigGen sign operation CKRs are also visible
+  xfail evidence for advertised but non-operational SLH-DSA paths.
 - **Mechanism-driven encryption**: roundtrip setup now skips when the required
   keygen mechanism is absent and xfails when advertised key generation rejects
   at runtime. KAT encrypt/decrypt paths now xfail explicit runtime CKRs but
