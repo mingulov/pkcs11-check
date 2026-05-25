@@ -228,15 +228,13 @@ class TestCLoginUser:
             pass  # Module accepted the multi-byte username.
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail(
-                "Module exposes v3.0 interface but C_LoginUser returns "
-                "CKR_FUNCTION_NOT_SUPPORTED"
+                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
             )
         elif rv in _LOGIN_REJECT:
             pass  # Reject is OK; named-users not implemented.
         else:
             pytest.fail(
-                f"Unexpected CKR from C_LoginUser with UTF-8 multi-byte "
-                f"username: {ckr_name(rv)}"
+                f"Unexpected CKR from C_LoginUser with UTF-8 multi-byte username: {ckr_name(rv)}"
             )
 
     def test_c_login_user_long_username(
@@ -265,16 +263,12 @@ class TestCLoginUser:
             pass
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail(
-                "Module exposes v3.0 interface but C_LoginUser returns "
-                "CKR_FUNCTION_NOT_SUPPORTED"
+                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
             )
         elif rv in _LOGIN_REJECT or rv == CKR_ARGUMENTS_BAD:
             pass
         else:
-            pytest.fail(
-                f"Unexpected CKR from C_LoginUser with 1024-byte username: "
-                f"{ckr_name(rv)}"
-            )
+            pytest.fail(f"Unexpected CKR from C_LoginUser with 1024-byte username: {ckr_name(rv)}")
 
     def test_c_login_user_username_with_embedded_nul(
         self,
@@ -301,15 +295,13 @@ class TestCLoginUser:
             pass
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.xfail(
-                "Module exposes v3.0 interface but C_LoginUser returns "
-                "CKR_FUNCTION_NOT_SUPPORTED"
+                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
             )
         elif rv in _LOGIN_REJECT or rv == CKR_ARGUMENTS_BAD:
             pass
         else:
             pytest.fail(
-                f"Unexpected CKR from C_LoginUser with embedded-NUL "
-                f"username: {ckr_name(rv)}"
+                f"Unexpected CKR from C_LoginUser with embedded-NUL username: {ckr_name(rv)}"
             )
 
 
@@ -661,7 +653,7 @@ class TestSessionCancel:
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.types_std import (
                 CK_MECHANISM, CK_NOTIFY, CKR_CRYPTOKI_ALREADY_INITIALIZED,
-                CKR_OK, CKR_FUNCTION_NOT_SUPPORTED,
+                CKR_OK, CKR_FUNCTION_NOT_SUPPORTED, CKR_USER_ALREADY_LOGGED_IN,
                 CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER, CKM_SHA256,
             )
 
@@ -703,7 +695,7 @@ class TestSessionCancel:
             if pin:
                 pin_buf = (c_ubyte * len(pin))(*pin)
                 rv = raw.C_Login(hSession, CKU_USER, pin_buf, len(pin))
-                assert rv in (CKR_OK, 0x00000100), f"C_Login: 0x{{rv:08x}}"
+                assert rv in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN), f"C_Login: 0x{{rv:08x}}"
 
             mech = CK_MECHANISM(CKM_SHA256, None, 0)
             rv = raw.C_DigestInit(hSession, pointer(mech))

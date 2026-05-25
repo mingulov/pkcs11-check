@@ -38,6 +38,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_CANT_LOCK, CKR_OK
+
 pytestmark = [pytest.mark.destructive, pytest.mark.access]
 
 
@@ -62,7 +64,7 @@ def _run_init_args_script(p11_config: Any, args_setup: str) -> tuple[int, str, s
             CK_CREATEMUTEX, CK_DESTROYMUTEX, CK_LOCKMUTEX, CK_UNLOCKMUTEX,
             CK_RV,
             CKF_OS_LOCKING_OK,
-            CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK,
+            CKR_CANT_LOCK, CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK,
         )
 
         lib = ctypes.CDLL({module_path!r})
@@ -115,11 +117,9 @@ class TestInitArgsMatrix:
             "init_args_ptr = None",
         )
         if rc < 0:
-            pytest.fail(
-                f"C_Initialize(NULL) segfaulted (signal {-rc}). Stderr: {stderr}"
-            )
+            pytest.fail(f"C_Initialize(NULL) segfaulted (signal {-rc}). Stderr: {stderr}")
         rv = _parse_rv(stdout)
-        assert rv == 0, (
+        assert rv == CKR_OK, (
             f"C_Initialize(NULL) returned 0x{rv:08x}; expected CKR_OK.  "
             f"Stdout: {stdout!r} Stderr: {stderr!r}"
         )
@@ -137,17 +137,13 @@ class TestInitArgsMatrix:
             """,
         )
         if rc < 0:
-            pytest.fail(
-                f"C_Initialize(empty struct) segfaulted (signal {-rc}). "
-                f"Stderr: {stderr}"
-            )
+            pytest.fail(f"C_Initialize(empty struct) segfaulted (signal {-rc}). Stderr: {stderr}")
         rv = _parse_rv(stdout)
         # Acceptable: CKR_OK (no-lock mode honored) or CKR_CANT_LOCK
         # (module insists on locking).  Not acceptable: segfault.
         assert rv is not None, f"No RV produced. Stdout: {stdout!r} Stderr: {stderr!r}"
-        assert rv in (0x00, 0x0A), (  # CKR_OK or CKR_CANT_LOCK
-            f"C_Initialize(empty struct) returned 0x{rv:08x}; expected "
-            f"CKR_OK or CKR_CANT_LOCK"
+        assert rv in (CKR_OK, CKR_CANT_LOCK), (
+            f"C_Initialize(empty struct) returned 0x{rv:08x}; expected CKR_OK or CKR_CANT_LOCK"
         )
 
     def test_init_os_locking_only(self, p11_config: Any) -> None:
@@ -165,12 +161,9 @@ class TestInitArgsMatrix:
             """,
         )
         if rc < 0:
-            pytest.fail(
-                f"C_Initialize(OS_LOCKING_OK) segfaulted (signal {-rc}). "
-                f"Stderr: {stderr}"
-            )
+            pytest.fail(f"C_Initialize(OS_LOCKING_OK) segfaulted (signal {-rc}). Stderr: {stderr}")
         rv = _parse_rv(stdout)
-        assert rv == 0, (
+        assert rv == CKR_OK, (
             f"C_Initialize(OS_LOCKING_OK) returned 0x{rv:08x}; "
             f"expected CKR_OK on any multi-threaded-capable module"
         )
@@ -187,13 +180,13 @@ class TestInitArgsMatrix:
             p11_config,
             """
             def _create(pp):
-                return 0  # CKR_OK
+                return int(CKR_OK)
             def _destroy(p):
-                return 0
+                return int(CKR_OK)
             def _lock(p):
-                return 0
+                return int(CKR_OK)
             def _unlock(p):
-                return 0
+                return int(CKR_OK)
 
             create_fn = CK_CREATEMUTEX(_create)
             destroy_fn = CK_DESTROYMUTEX(_destroy)
@@ -218,9 +211,8 @@ class TestInitArgsMatrix:
         # Spec permits CKR_OK (callbacks accepted) or CKR_CANT_LOCK
         # (module unable to honor caller-supplied locking).
         assert rv is not None
-        assert rv in (0x00, 0x0A), (
-            f"C_Initialize(app callbacks) returned 0x{rv:08x}; "
-            f"expected CKR_OK or CKR_CANT_LOCK"
+        assert rv in (CKR_OK, CKR_CANT_LOCK), (
+            f"C_Initialize(app callbacks) returned 0x{rv:08x}; expected CKR_OK or CKR_CANT_LOCK"
         )
 
     def test_init_both_callbacks_and_os_locking_ok(self, p11_config: Any) -> None:
@@ -234,13 +226,13 @@ class TestInitArgsMatrix:
             p11_config,
             """
             def _create(pp):
-                return 0
+                return int(CKR_OK)
             def _destroy(p):
-                return 0
+                return int(CKR_OK)
             def _lock(p):
-                return 0
+                return int(CKR_OK)
             def _unlock(p):
-                return 0
+                return int(CKR_OK)
 
             create_fn = CK_CREATEMUTEX(_create)
             destroy_fn = CK_DESTROYMUTEX(_destroy)
@@ -263,7 +255,7 @@ class TestInitArgsMatrix:
             )
         rv = _parse_rv(stdout)
         assert rv is not None
-        assert rv in (0x00, 0x0A), (
+        assert rv in (CKR_OK, CKR_CANT_LOCK), (
             f"C_Initialize(callbacks + OS_LOCKING_OK) returned 0x{rv:08x}; "
             f"expected CKR_OK or CKR_CANT_LOCK"
         )
@@ -290,17 +282,17 @@ class TestInitArgsMatrix:
                 f"Stderr: {stderr}"
             )
         rv = _parse_rv(stdout)
-        # CKR_ARGUMENTS_BAD = 0x07 is the spec-mandated return.  Some
+        # CKR_ARGUMENTS_BAD is the spec-mandated return.  Some
         # modules return CKR_OK ignoring the field; record but don't fail.
-        if rv == 0x00:
+        if rv == CKR_OK:
             pytest.xfail(
                 "Module accepts non-NULL pReserved (returns CKR_OK); spec "
                 "§5.4 requires CKR_ARGUMENTS_BAD.  Non-compliant but not "
                 "security-impacting."
             )
-        assert rv == 0x07, (
+        assert rv == CKR_ARGUMENTS_BAD, (
             f"C_Initialize with non-NULL pReserved returned 0x{rv:08x}; "
-            f"expected CKR_ARGUMENTS_BAD (0x07)"
+            f"expected CKR_ARGUMENTS_BAD (0x{int(CKR_ARGUMENTS_BAD):02x})"
         )
 
     def test_init_partial_callbacks_rejected(self, p11_config: Any) -> None:
@@ -313,11 +305,11 @@ class TestInitArgsMatrix:
             p11_config,
             """
             def _create(pp):
-                return 0
+                return int(CKR_OK)
             def _destroy(p):
-                return 0
+                return int(CKR_OK)
             def _lock(p):
-                return 0
+                return int(CKR_OK)
 
             create_fn = CK_CREATEMUTEX(_create)
             destroy_fn = CK_DESTROYMUTEX(_destroy)
@@ -333,11 +325,10 @@ class TestInitArgsMatrix:
         )
         if rc < 0:
             pytest.fail(
-                f"C_Initialize with partial callbacks segfaulted "
-                f"(signal {-rc}).  Stderr: {stderr}"
+                f"C_Initialize with partial callbacks segfaulted (signal {-rc}).  Stderr: {stderr}"
             )
         rv = _parse_rv(stdout)
-        assert rv == 0x07, (
+        assert rv == CKR_ARGUMENTS_BAD, (
             f"C_Initialize with 3-of-4 callbacks returned 0x{rv:08x}; "
-            f"expected CKR_ARGUMENTS_BAD (0x07) per spec §5.4"
+            f"expected CKR_ARGUMENTS_BAD (0x{int(CKR_ARGUMENTS_BAD):02x}) per spec §5.4"
         )

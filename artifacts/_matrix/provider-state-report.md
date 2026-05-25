@@ -68,9 +68,8 @@ qryptotoken on `2026-05-25`.
   returns nonzero for build-unavailable.
 - BouncyHSM was configured and reachable, but the full provider run was
   intentionally stopped after AES ACVP tests entered a pathological timeout
-  tail. Segmented AES reruns now provide bounded CCM, CFB1, CFB8, CFB128,
-  GCM, OFB, wrap/KWP, and XTS evidence; the row below is not a full-suite
-  provider statistic.
+  tail. Segmented ACVP reruns now provide bounded AES and non-AES evidence; the
+  row below is not a full-suite provider statistic.
 
 ## Result Snapshot
 
@@ -87,7 +86,7 @@ qryptotoken on `2026-05-25`.
 | nss-main | NSS/NSPR source tips | full | 84,819 | 47,549 | 2,018 | 35,147 | 0 | 4/0 |
 | opencryptoki | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 89,899 | 78,656 | 2,593 | 8,593 | 0 | 0/0 |
 | opencryptoki-master | OpenCryptoki master, OpenSSL 4.0.0 | full | 89,899 | 78,657 | 2,589 | 8,595 | 0 | 0/0 |
-| bouncyhsm | BouncyHSM v2.1.0 | partial + segmented AES | 24,398 focused | 9,611 focused | 7,436 focused | 7,320 focused | 0 | 1/0, plus timeout failures |
+| bouncyhsm | BouncyHSM v2.1.0 | partial + segmented ACVP | 29,707 focused | 12,653 focused | 9,367 focused | 7,626 focused | 0 | 1/0, plus timeout failures |
 | tpm2 source | upstream tpm2-pkcs11 1.10.0 | full | 81,400 | 9,847 | 6,825 | 64,696 | 0 | report has subprocess crashes |
 | tpm2 package | Fedora tpm2-pkcs11 1.9.1 package | archived full | 64,084 | 8,433 | 5,067 | 49,727 | 851 | report has subprocess crashes |
 | pkcs11-mock | pkcs11-mock v2.0.0 | full mock baseline | 32,633 | 2,560 | 3,546 | 26,517 | 0 | 0/0 |
@@ -95,7 +94,7 @@ qryptotoken on `2026-05-25`.
 
 `kryoptic-fips` uses a custom OpenSSL branch in the full diagnostic artifact.
 The older TPM2 Fedora-package artifact is archived separately from the
-source-built upstream result. `bouncyhsm` is focused AES evidence, not a
+source-built upstream result. `bouncyhsm` is segmented ACVP evidence, not a
 full-suite statistic.
 
 ## SoftHSM2
@@ -218,8 +217,9 @@ present in v2.1.0.
 
 The provider configured and initialized, so this is not a module-load failure.
 The full run was intentionally stopped because ACVP AES reached a pathological
-timeout tail. Segmented reruns then completed the worst affected AES files and
-the remaining ACVP AES targets under bounded targets:
+timeout tail. Segmented reruns then completed the worst affected AES files,
+the remaining ACVP AES targets, and all non-AES ACVP targets under bounded
+targets:
 
 - ACVP AES-CCM: 8,398 total, 1,028 passed, 7,370 failed.
 - ACVP AES-CFB1: 2,138 total, 2,088 passed, 50 failed.
@@ -237,6 +237,22 @@ the remaining ACVP AES targets under bounded targets:
     `AES_KEY_WRAP` or `AES_KEY_WRAP_KWP`.
   - XTS: file-skipped because the module does not support `AES_XTS`; the file
     skip is recorded in console output but not counted in the summary totals.
+- ACVP non-AES segment: 5,309 total, 3,042 passed, 1,931 failed, 306 skipped,
+  30 xfailed, no crashes or timeouts.
+  - ECDH: 1,736 failed; 1,403 returned `CKR_GENERAL_ERROR` and 333 returned
+    `CKR_MECHANISM_PARAM_INVALID`.
+  - ECDSA: 70 passed, 30 xfailed.
+  - EdDSA: 10 passed, 10 skipped, 9 failed; failures split into 5 signature
+    mismatches and 4 valid-key import rejections with `CKR_ATTRIBUTE_VALUE_INVALID`.
+  - Hash/SHA3: 237 passed, 1 skipped, 3 failed with `CKR_ARGUMENTS_BAD`.
+  - HMAC: 1,183 passed, 295 skipped.
+  - ML-DSA: 289 passed, 171 failed; most failures are generated signatures
+    that fail verification, plus valid-signature rejection cases.
+  - ML-KEM: 180 passed.
+  - RSA: 932 passed, 6 failed; failures are valid RSA-PSS/SHA3-256 signature
+    rejections.
+  - RSA key generation: 63 passed.
+  - SLH-DSA: 78 passed, 6 failed; failures are valid signature rejections.
 
 Failure classification in the focused units:
 
@@ -254,12 +270,16 @@ Failure classification in the focused units:
 - GCM: ordinary coverage mostly passed; unsupported or known-disabled lanes
   were skipped/xfailed.
 - Wrap/KWP and XTS: unsupported by the module in this configuration.
+- Non-AES ACVP: ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean;
+  ECDH is a broad failure cluster, and ML-DSA/EdDSA/RSA-PSS/SHA3/SLH-DSA have
+  narrower signature or parameter-validation failures.
 
 Current classification: reachable provider with broad AES-CCM incompatibility,
 mostly working CFB1 with short bit-length mismatches, and apparent CFB8,
-CFB128, and OFB multiblock crash/timeout tail behavior. Official full-suite
-statistics still need a full BouncyHSM run segmented or bounded beyond the AES
-subset.
+CFB128, and OFB multiblock crash/timeout tail behavior. Beyond AES, BouncyHSM
+has strong ML-KEM, HMAC, RSA keygen, ECDSA, and many RSA/hash results, but
+broad ECDH and ML-DSA clusters remain. Official full-suite statistics still
+need split Wycheproof/security/general runs beyond ACVP.
 
 ## TPM2
 
@@ -348,13 +368,16 @@ Focused reruns after those fixes are stored under `artifacts/_focused/`:
 - SoftHSM DES/DES3 direct CBC-PAD round trips: 2 passed.
 - Kryoptic raw argument and trusted-wrap fixes: 8 passed, 1 skipped.
 - OpenCryptoki authenticated-wrap/KEM/v3.2 raw fixes: 14 passed, 7 skipped.
-- BouncyHSM segmented AES reruns: CCM 1,028 passed/7,370 failed; CFB1 2,088
+- BouncyHSM segmented ACVP reruns: CCM 1,028 passed/7,370 failed; CFB1 2,088
   passed/50 failed; CFB128 2,138 passed/6 timed out in multiblock calls; the
   remaining AES segment added 4,357 passed, 10 failed, 7,320 skipped, 30
-  xfailed, and 1 confirmed CFB8 segfault.
+  xfailed, and 1 confirmed CFB8 segfault; non-AES ACVP added 3,042 passed,
+  1,931 failed, 306 skipped, and 30 xfailed with no crashes or timeouts.
 
 ## Remaining Work Before Final Article
 
-- Decide whether the article treats BouncyHSM as focused AES evidence only, or
-  rerun the full target in segmented mode for official full-suite statistics
-  beyond AES.
+- Run BouncyHSM Wycheproof, security, and general tests in split/bounded
+  segments before treating BouncyHSM as an official full-suite statistic. A
+  broad Wycheproof run was stopped after completed generic/AES/ChaCha/DSA/ECDH
+  state and an ECDSA file-level timeout retry; it has no final `results.json`
+  and is not included in official totals.

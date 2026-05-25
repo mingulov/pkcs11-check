@@ -27,6 +27,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.types_std import CKR_OK
+
 pytestmark = [pytest.mark.destructive, pytest.mark.access]
 
 
@@ -67,9 +69,7 @@ def _run_callback_script(p11_config: Any, body: str, timeout: int = 15) -> tuple
 class TestMutexCallbackErrorHandling:
     """When application callbacks signal failure, the module must not crash."""
 
-    def test_create_mutex_callback_returning_general_error(
-        self, p11_config: Any
-    ) -> None:
+    def test_create_mutex_callback_returning_general_error(self, p11_config: Any) -> None:
         """CreateMutex returning CKR_GENERAL_ERROR — module should propagate cleanly.
 
         Per spec §5.4 the module sees the failed return and should fail
@@ -79,10 +79,10 @@ class TestMutexCallbackErrorHandling:
             p11_config,
             """
             def _create_fail(pp):
-                return 0x05  # CKR_GENERAL_ERROR
+                return int(CKR_GENERAL_ERROR)
 
             def _stub(p):
-                return 0
+                return int(CKR_OK)
 
             create_fn = CK_CREATEMUTEX(_create_fail)
             destroy_fn = CK_DESTROYMUTEX(_stub)
@@ -124,7 +124,7 @@ class TestMutexCallbackErrorHandling:
         if not rv_lines:
             pytest.fail(f"No RV produced — subprocess exited abnormally.  Stderr: {stderr!r}")
         rv = int(rv_lines[0][len("RV=") :], 16)
-        if rv == 0x00:
+        if rv == CKR_OK:
             pytest.xfail(
                 "Module returned CKR_OK despite CreateMutex callback "
                 "returning CKR_GENERAL_ERROR.  Module may be ignoring "
@@ -132,9 +132,7 @@ class TestMutexCallbackErrorHandling:
                 "use.  Non-compliant but not a crash."
             )
 
-    def test_lock_mutex_callback_returning_general_error_during_call(
-        self, p11_config: Any
-    ) -> None:
+    def test_lock_mutex_callback_returning_general_error_during_call(self, p11_config: Any) -> None:
         """LockMutex returning CKR_GENERAL_ERROR during a normal C_* call.
 
         After init, make some PKCS#11 call that internally locks; the
@@ -147,16 +145,16 @@ class TestMutexCallbackErrorHandling:
                 # Allocate a unique sentinel for each mutex.
                 # Module passes a void** — we write a non-NULL value.
                 pp[0] = 0x1
-                return 0
+                return int(CKR_OK)
 
             def _destroy(p):
-                return 0
+                return int(CKR_OK)
 
             def _lock_fail(p):
-                return 0x05  # CKR_GENERAL_ERROR
+                return int(CKR_GENERAL_ERROR)
 
             def _unlock(p):
-                return 0
+                return int(CKR_OK)
 
             create_fn = CK_CREATEMUTEX(_create)
             destroy_fn = CK_DESTROYMUTEX(_destroy)
@@ -202,7 +200,7 @@ class TestMutexCallbackErrorHandling:
         if not init_lines:
             pytest.fail(f"No INIT_RV produced. Stderr: {stderr!r}")
         init_rv = int(init_lines[0].split("=")[1], 16)
-        if init_rv != 0:
+        if init_rv != CKR_OK:
             pytest.skip(
                 f"Module did not accept app-supplied callbacks (init returned "
                 f"0x{init_rv:08x}); cannot exercise lock-failure path"
@@ -226,7 +224,7 @@ class TestMutexCallbackErrorHandling:
                 raise RuntimeError("callback failure")
 
             def _stub(p):
-                return 0
+                return int(CKR_OK)
 
             create_fn = CK_CREATEMUTEX(_create_raise)
             destroy_fn = CK_DESTROYMUTEX(_stub)

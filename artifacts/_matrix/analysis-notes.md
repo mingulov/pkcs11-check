@@ -1038,7 +1038,7 @@ Run status:
   unit entered a pathological timeout tail. This preserved the remaining matrix
   run for TPM2, pkcs11-mock, and qryptotoken.
 - No final full-suite `artifacts/bouncyhsm/results.json` exists for this
-  target. Segmented AES reruns below have their own complete `results.json`
+  target. Segmented ACVP reruns below have their own complete `results.json`
   files.
 - `test_cfb128.py` was rerun in two bounded parts: all 2,138 non-multiblock
   vectors passed, while all 6 multiblock vectors timed out inside provider
@@ -1046,6 +1046,13 @@ Run status:
 - The remaining ACVP AES segment completed under a 20-second per-test timeout:
   11,718 total, 4,357 passed, 10 failed, 7,320 skipped, 30 xfailed, and 1
   crashed.
+- The ACVP non-AES segment completed under the same 20-second per-test timeout:
+  5,309 total, 3,042 passed, 1,931 failed, 306 skipped, 30 xfailed, and no
+  crashes or timeouts.
+- A broad Wycheproof segment was started but stopped before final result
+  synthesis because the huge ECDSA file entered file-level timeout retries.
+  Its partial `state.json` is useful for planning split reruns, but it has no
+  final `results.json` and is not included in official totals.
 
 Focused artifacts:
 
@@ -1059,6 +1066,8 @@ Focused artifacts:
   pytest-timeout in multiblock provider calls.
 - `artifacts/bouncyhsm-acvp-aes-rest`: 11,718 total, 4,357 passed, 10 failed,
   7,320 skipped, 30 xfailed, and 1 crashed.
+- `artifacts/bouncyhsm-acvp-nonaes`: 5,309 total, 3,042 passed, 1,931 failed,
+  306 skipped, 30 xfailed, no crashes or timeouts.
 
 Failure classification for focused units:
 
@@ -1077,6 +1086,22 @@ Failure classification for focused units:
   supported by the module.
 - XTS: file-skipped because `AES_XTS` is not supported by the module; this is
   visible in console output but not counted in the `results.json` summary.
+- ACVP ECDH: all 1,736 vectors failed; 1,403 with `CKR_GENERAL_ERROR` and
+  333 with `CKR_MECHANISM_PARAM_INVALID`.
+- ACVP ECDSA: 70 passed and 30 xfailed.
+- ACVP EdDSA: 10 passed, 10 skipped, and 9 failed; the failures are 5
+  signature mismatches and 4 valid-key import rejections with
+  `CKR_ATTRIBUTE_VALUE_INVALID`.
+- ACVP hash/SHA3: 237 passed, 1 skipped, and 3 failed with
+  `CKR_ARGUMENTS_BAD`.
+- ACVP HMAC: 1,183 passed and 295 skipped.
+- ACVP ML-DSA: 289 passed and 171 failed; most failures are generated
+  signatures that fail verification, plus valid-signature rejection cases.
+- ACVP ML-KEM: 180 passed.
+- ACVP RSA: 932 passed and 6 failed; failures are valid RSA-PSS/SHA3-256
+  signature rejections.
+- ACVP RSA key generation: 63 passed.
+- ACVP SLH-DSA: 78 passed and 6 valid-signature rejection failures.
 
 Current classification:
 
@@ -1089,8 +1114,14 @@ Current classification:
   result mismatches, and invalid-tag accepts.
 - AES-CFB8, AES-CFB128, and AES-OFB have apparent multiblock
   crash/timeout/pathological-tail behavior, while ordinary CFB128/OFB vectors
-  pass. Full-provider statistics should only include BouncyHSM after the full
-  run is segmented or bounded beyond the AES subset.
+  pass.
+- Non-AES ACVP shows a mixed shape: ML-KEM, RSA key generation, HMAC, and ECDSA
+  are strong or mostly clean; ECDH is a broad failure cluster; ML-DSA, EdDSA,
+  RSA-PSS/SHA3, hash/SHA3, and SLH-DSA have narrower correctness or
+  validation failures.
+- Full-provider statistics should only include BouncyHSM after the remaining
+  Wycheproof, security, and general test families are rerun in split/bounded
+  mode.
 
 ## TPM2
 
@@ -1381,14 +1412,23 @@ not overwrite full provider statistics.
   confirmed CFB8 `C_Encrypt` segfault. CFB8 and OFB multiblock cases produced
   pytest-timeout failures; wrap/KWP and XTS were unsupported in this module
   configuration.
+- `artifacts/bouncyhsm-acvp-nonaes`: BouncyHSM completed all non-AES ACVP
+  files with 3,042 passed, 1,931 failed, 306 skipped, and 30 xfailed. It had
+  no crashes or timeouts. ECDH failed broadly; ML-KEM and RSA key generation
+  passed completely.
+- `artifacts/bouncyhsm-wycheproof`: broad run intentionally stopped after
+  generic/AES/ChaCha/DSA/ECDH state and an ECDSA file-level timeout retry. No
+  final `results.json` was produced, so this artifact is planning evidence for
+  split Wycheproof reruns, not an official provider statistic.
 
 ## Follow-Up Checks To Run
 
 - Parse completed provider artifacts into a compact machine-readable summary
   after each provider completes.
 - If BouncyHSM should become an official full-suite provider statistic, rerun
-  the full target in segmented mode or with a provider-level timeout beyond
-  the focused AES subset.
+  Wycheproof, security, and general families in split/bounded mode. Avoid one
+  monolithic Wycheproof target because large ECDH/ECDSA files dominate runtime
+  and trigger file-level timeout retries.
 - For SoftHSM2 main ML-DSA, inspect exact failed vector groups and CKR/result
   messages before assigning blame to provider or test.
 - Deep-dive TPM2 source-built failures into provider limitations versus

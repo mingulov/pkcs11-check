@@ -9,7 +9,8 @@ def test_softhsm_generated_iv_compose_service_is_separate_target() -> None:
     compose = (ROOT / "docker/docker-compose.test.yml").read_text()
 
     assert "test-softhsm2-generated-iv:" in compose
-    assert "dockerfile: docker/softhsm2/Dockerfile.generated-iv" in compose
+    assert "dockerfile: docker/softhsm2/Dockerfile.main" in compose
+    assert 'SOFTHSM2_APPLY_GENERATED_IV_PATCH: "1"' in compose
     assert "PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-generated-iv" in compose
     assert 'PKCS11_CHECK_PIN: "1234"' in compose
 
