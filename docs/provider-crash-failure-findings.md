@@ -511,6 +511,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   signatures. These operation rejects are now visible xfail findings. A valid
   signature that cleanly verifies as false, or returns a signature-invalid
   result, remains a hard failure.
+- **ACVP RSA SigVer setup/result split**: RSA PKCS#1/PSS verification vectors
+  now handle public-key import separately from the verification operation.
+  `CKR_ATTRIBUTE_VALUE_INVALID`, key-size, or template rejection while
+  importing the ACVP public key is a setup capability skip; the same class of
+  unexpected CKR from the actual verify call is not converted into a skip.
 - **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
   `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
   runners now classify explicit generic runtime rejects as xfail while keeping

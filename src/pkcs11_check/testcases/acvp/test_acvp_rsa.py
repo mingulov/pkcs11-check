@@ -31,6 +31,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
@@ -58,6 +59,19 @@ _PKCS15_SIGN = load_siggen_pkcs15_vectors()
 _PSS_SIGN = load_siggen_pss_vectors()
 _PKCS15_VER = load_sigver_pkcs15_vectors()
 _PSS_VER = load_sigver_pss_vectors()
+
+_RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+def _skip_rsa_public_import_reject(exc: AssertionError) -> None:
+    """Skip RSA SigVer vectors when the provider cannot import the public key."""
+    if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
+        pytest.skip(f"RSA public key import failed: {exc}")
+    raise exc
 
 
 class TestRsaPkcs15:
@@ -164,23 +178,23 @@ class TestRsaSigVer:
 
         pub_key = 0
         try:
-            pub_key = import_rsa_public_key(
-                rs.raw, rs.sh, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
-            )
-            verified = verify_single(
-                rs.raw, rs.sh, pub_key, mech_int, vec["message"], vec["signature"]
-            )
+            try:
+                pub_key = import_rsa_public_key(
+                    rs.raw, rs.sh, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
+                )
+            except AssertionError as exc:
+                _skip_rsa_public_import_reject(exc)
+            try:
+                verified = verify_single(
+                    rs.raw, rs.sh, pub_key, mech_int, vec["message"], vec["signature"]
+                )
+            except AssertionError as exc:
+                verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not expected_pass and verified:
                 pytest.fail(f"{vec_id}: ACCEPTED INVALID signature - security concern")
             if expected_pass and not verified:
                 pytest.fail(f"{vec_id}: rejected VALID signature")
-        except AssertionError as exc:
-            if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_TEMPLATE_INCONSISTENT}):
-                pytest.skip(f"RSA key import failed: {exc}")
-            if expected_pass:
-                raise
-            signature_rejected_or_xfail(exc, vec_id)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
 
@@ -200,31 +214,33 @@ class TestRsaSigVer:
 
         pub_key = 0
         try:
-            pub_key = import_rsa_public_key(
-                rs.raw, rs.sh, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
-            )
+            try:
+                pub_key = import_rsa_public_key(
+                    rs.raw, rs.sh, n=vec["n"], e=vec["e"], attrs={CKA_VERIFY: True}
+                )
+            except AssertionError as exc:
+                _skip_rsa_public_import_reject(exc)
             mech_param = mech_pss(mech_int, hash_mech=hash_mech, mgf=mgf, salt_len=salt_len)
-            verified = verify_single(
-                rs.raw,
-                rs.sh,
-                pub_key,
-                mech_int,
-                vec["message"],
-                vec["signature"],
-                mech_param=mech_param,
-            )
+            try:
+                verified = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub_key,
+                    mech_int,
+                    vec["message"],
+                    vec["signature"],
+                    mech_param=mech_param,
+                )
+            except AssertionError as exc:
+                if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
+                    pytest.xfail(
+                        f"{mech_name} advertised but PSS params are not operational: {exc}"
+                    )
+                verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not expected_pass and verified:
                 pytest.fail(f"{vec_id}: ACCEPTED INVALID PSS signature - security concern")
             if expected_pass and not verified:
                 pytest.fail(f"{vec_id}: rejected VALID PSS signature")
-        except AssertionError as exc:
-            if is_known_error(exc, {CKR_KEY_SIZE_RANGE, CKR_TEMPLATE_INCONSISTENT}):
-                pytest.skip(f"RSA key import failed: {exc}")
-            if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-                pytest.xfail(f"{mech_name} advertised but PSS params are not operational: {exc}")
-            if expected_pass:
-                raise
-            signature_rejected_or_xfail(exc, vec_id)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
