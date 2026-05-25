@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import (
     test_aes_modes,
+    test_authenticated_wrap,
     test_generic_secret,
     test_key_usage_policy,
     test_object_size,
@@ -217,3 +218,17 @@ def test_sign_recover_subprocess_keygen_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="keypair setup rejected"):
         test_sign_recover.TestSignRecover().test_sign_recover_produces_output(config, object())
+
+
+def test_authenticated_wrap_v240_probe_xfails_when_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_authenticated_wrap.TestAuthenticatedWrap().test_authenticated_wrap_requires_v32(
+            rs,
+            "2.40",
+        )

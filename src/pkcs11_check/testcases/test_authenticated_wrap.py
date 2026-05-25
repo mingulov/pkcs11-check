@@ -47,7 +47,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_INVALID,
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, require_operational_aes_keygen
 
 pytestmark = pytest.mark.keymgmt
 
@@ -290,7 +290,8 @@ class TestAuthenticatedWrap:
         if p11_interface_version not in ("2.40",):
             pytest.skip("Only relevant for v2.40 modules")
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        require_operational_aes_keygen(rs)
+        key = gen_aes_key(rs.raw, rs.sh, 128)
         target = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -372,8 +373,13 @@ class TestAuthenticatedWrapAAD:
             wrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
             try:
                 wrapped = wrap_key_authenticated(
-                    rs.raw, rs.sh, wrap_h, target, CKM_AES_GCM,
-                    aad=aad_x, mech_param=wrap_mech,
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    target,
+                    CKM_AES_GCM,
+                    aad=aad_x,
+                    mech_param=wrap_mech,
                 )
             except (NotImplementedError, AttributeError, TypeError) as exc:
                 # API not available on this module — skip cleanly.

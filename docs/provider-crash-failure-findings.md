@@ -462,6 +462,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   keygen returning explicit setup errors is an xfail finding. This removes
   keygen setup capability from provider-failure buckets without suppressing the
   actual encryption, mode, or access-control checks.
+- **Authenticated-wrap v2.40 availability probe**: the negative v3.2 API
+  availability test now uses the same operational AES setup guard and 128-bit
+  setup key policy. Providers that cannot generate setup AES keys after
+  advertising `AES_KEY_GEN` are reported as setup xfail evidence instead of
+  failing before the authenticated-wrap API behavior is reached.
 - **General RSA/EC setup paths**: RSA-OAEP, RSA wrapping, padding-oracle,
   key-lifecycle, tool-template, sign-recover, ECDSA nonce-quality, and
   mechanism-driven keypair helpers now treat advertised keypair generation
