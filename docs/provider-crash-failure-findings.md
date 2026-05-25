@@ -196,6 +196,13 @@ operations, AES-KW/KWP raw wrapping, AES-XTS, and AES-CTS variant/error paths.
 Missing mechanisms still skip normally; only runtime rejection after an
 advertised mechanism is reclassified.
 
+### Follow-Up: Legacy Cipher Advertised-But-Rejected Paths
+
+The same classification issue existed in legacy cipher coverage for ARIA,
+Blowfish, Camellia, and Twofish. Missing key-generation or cipher mechanisms
+still skip as absent capability, but `CKR_MECHANISM_INVALID` after the
+mechanism was advertised is now an xfail provider finding instead of a skip.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
