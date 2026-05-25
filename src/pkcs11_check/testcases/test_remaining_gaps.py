@@ -650,7 +650,10 @@ print(f"SEU:0x{rv:08x}")
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
         if returncode < 0:
-            pytest.xfail(f"C_SignEncryptUpdate crashed (signal {-returncode})")
+            pytest.fail(
+                f"C_SignEncryptUpdate crashed (signal {-returncode}). "
+                f"Stderr: {stderr[:200]}"
+            )
         if returncode != 0:
             pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
         seu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("SEU:")), None)
@@ -674,7 +677,10 @@ print(f"DVU:0x{rv:08x}")
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
         if returncode < 0:
-            pytest.xfail(f"C_DecryptVerifyUpdate crashed (signal {-returncode})")
+            pytest.fail(
+                f"C_DecryptVerifyUpdate crashed (signal {-returncode}). "
+                f"Stderr: {stderr[:200]}"
+            )
         if returncode != 0:
             pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
         dvu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("DVU:")), None)

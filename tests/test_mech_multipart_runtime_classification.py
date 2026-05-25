@@ -12,6 +12,7 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKM_AES_CBC,
     CKM_AES_CMAC,
+    CKM_AES_GCM,
     CKM_SHA256,
     CKR_DEVICE_ERROR,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
@@ -24,19 +25,23 @@ from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 
-def _encrypt_entry(*, deterministic: bool = True) -> MechEntry:
+def _encrypt_entry(*, deterministic: bool = True, auth_tag_included: bool = False) -> MechEntry:
+    mech_id = int(CKM_AES_GCM) if auth_tag_included else int(CKM_AES_CBC)
+    mech_name = "AES_GCM" if auth_tag_included else "AES_CBC"
+    param_style = "gcm" if auth_tag_included else "iv"
     return MechEntry(
-        mech_id=int(CKM_AES_CBC),
-        mech_name="AES_CBC",
+        mech_id=mech_id,
+        mech_name=mech_name,
         flags=0,
         min_key_size=16,
         max_key_size=32,
         config=MechConfig(
             key_type=int(CKK_AES),
             key_sizes=(128,),
-            param_recipe=ParamRecipe("iv"),
+            param_recipe=ParamRecipe(param_style),
             keygen_recipe=KeygenRecipe("symmetric"),
             deterministic=deterministic,
+            auth_tag_included=auth_tag_included,
         ),
     )
 
@@ -116,6 +121,31 @@ def test_multipart_decrypt_runtime_reject_is_xfail(
             _session(),
             _encrypt_entry(deterministic=False),
         )
+
+
+def test_multipart_encrypt_aead_reference_retries_buffer_too_small(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encrypt_calls: list[dict[str, Any]] = []
+
+    def _encrypt_single(*_args: Any, **kwargs: Any) -> bytes:
+        encrypt_calls.append(kwargs)
+        return b"1" * 48
+
+    monkeypatch.setattr(mech_multipart, "generate_key_for_encrypt", lambda *_args: (1, None))
+    monkeypatch.setattr(mech_multipart, "get_test_plaintext_bytes", lambda: b"0" * 32)
+    monkeypatch.setattr(mech_multipart, "make_mech_param", lambda _entry: b"gcm")
+    monkeypatch.setattr(mech_multipart, "encrypt_single", _encrypt_single)
+    monkeypatch.setattr(mech_multipart, "decrypt_multipart", lambda *_args, **_kwargs: b"0" * 32)
+    monkeypatch.setattr(mech_multipart, "destroy_quietly", lambda *_args: None)
+
+    mech_multipart.TestMultipartEncrypt().test_streaming_equals_single(
+        _session(),
+        _encrypt_entry(deterministic=False, auth_tag_included=True),
+    )
+
+    assert encrypt_calls[-1]["output_overhead"] == 16
+    assert encrypt_calls[-1]["retry_on_buffer_too_small"] is True
 
 
 def test_multipart_digest_runtime_reject_is_xfail(

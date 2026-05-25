@@ -156,6 +156,7 @@ class TestMultipartEncrypt:
                         plaintext,
                         mech_param=mech_param,
                         output_overhead=overhead,
+                        retry_on_buffer_too_small=config.auth_tag_included,
                     )
                 except AssertionError as exc:
                     _xfail_multipart_runtime_reject(exc, entry, "single-part encrypt reference")

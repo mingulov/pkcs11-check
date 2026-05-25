@@ -742,9 +742,10 @@ class TestSessionCancel:
         )
 
         if result.returncode < 0:
-            pytest.xfail(
+            pytest.fail(
                 f"Module crashed (signal {-result.returncode}) during "
-                f"C_DigestInit/C_SessionCancel - C_SessionCancel not safely callable"
+                f"C_DigestInit/C_SessionCancel - C_SessionCancel not safely callable. "
+                f"Stderr: {result.stderr.strip()[:200]}"
             )
 
         stdout = result.stdout.strip()

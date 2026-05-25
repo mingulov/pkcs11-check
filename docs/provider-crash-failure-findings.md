@@ -771,11 +771,21 @@ The following paths were tightened after inspecting the all-fail artifacts:
   current BouncyHSM weak-RSA-exponent crashes are real provider crash findings;
   the marker keeps future runs on per-test units so one segfault does not hide
   the remaining parameter probes in that file.
+- **Crash reporting policy**: provider subprocess crashes must fail with the
+  signal preserved, not become `pytest.xfail`. Dual-function raw probes and
+  `C_SessionCancel` crash branches now report hard failures, and a static
+  regression check prevents future testcase xfails from being used for actual
+  crash or signal findings.
 - **Mechanism encryption AEAD KAT sizing**: mechanism KAT encryption now uses
   the same AEAD tag overhead and `CKR_BUFFER_TOO_SMALL` retry path as mechanism
   roundtrip encryption. The older NSS `AES_GCM`/`CHACHA20_POLY1305` KAT
   buffer-size rows are pkcs11-check sizing artifacts and should be refreshed
   before being used as provider evidence.
+- **Mechanism multipart AEAD reference sizing**: multipart decrypt roundtrip
+  coverage now uses the same AEAD tag overhead and `CKR_BUFFER_TOO_SMALL` retry
+  path when building the single-part ciphertext reference. Old multipart AEAD
+  buffer-size rows should be treated as pkcs11-check sizing artifacts until the
+  provider matrix is refreshed.
 - **ACVP ECDH runtime rejects**: valid shared-secret vectors still require a
   matching derived value for a clean pass. When a provider advertises
   `CKM_ECDH1_DERIVE` but rejects the derive operation with generic runtime
