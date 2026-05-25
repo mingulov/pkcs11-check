@@ -266,6 +266,11 @@ PBE and PBKDF2 key-generation helpers no longer translate known `C_GenerateKey`
 rejections into `None` followed by a skip. After a provider advertises a PBE or
 PBKDF2 mechanism, specific CKR rejects now become xfail findings with the
 returned CKR named in the reason; missing mechanisms still skip normally.
+Mechanism-driven PBKDF2 coverage also builds concrete
+`CK_PKCS5_PBKD2_PARAMS2` test parameters instead of treating PBKDF2 as an
+unavailable generic runtime-data recipe. If an advertised PBKDF2 path rejects
+that spec-shaped keygen call with `CKR_ARGUMENTS_BAD`, the result is visible
+xfail evidence rather than a hard setup assertion or a skipped mechanism.
 
 ### Follow-Up: HKDF Key-Generation Runtime Rejections
 

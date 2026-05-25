@@ -100,6 +100,7 @@ FIXED_LENGTH_KEY_TYPES: frozenset[int] = frozenset(
 EC_KEY_TYPES: frozenset[int] = frozenset([int(CKK_EC), int(CKK_EC_EDWARDS), int(CKK_EC_MONTGOMERY)])
 
 _KEYGEN_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -168,6 +169,19 @@ def _xfail_if_keygen_runtime_reject(rv: int, mech_name: str) -> None:
     import pytest
 
     pytest.xfail(f"{mech_name} keygen rejected at runtime: {ckr_name(rv)}")
+
+
+def _pbkdf2_keygen_mechanism() -> Any:
+    from pkcs11_check.raw.pack_mechanisms import mech_pbkdf2
+    from pkcs11_check.raw.types_std import CKP_PKCS5_PBKD2_HMAC_SHA256
+
+    return mech_pbkdf2(
+        CKM_PKCS5_PBKD2,
+        salt=b"pkcs11-check-test-salt",
+        iterations=10000,
+        prf=CKP_PKCS5_PBKD2_HMAC_SHA256,
+        password=b"test-password",
+    )
 
 
 def _xfail_if_keypair_runtime_reject(exc: AssertionError, mech_name: str) -> None:
@@ -431,7 +445,9 @@ def gen_symmetric_key(
     from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
 
     tmpl = template(*packed)
-    if config.param_required:
+    if int(entry.mech_id) == int(CKM_PKCS5_PBKD2):
+        mech = _pbkdf2_keygen_mechanism()
+    elif config.param_required:
         mech_param_result = make_mech_param(entry)
         if mech_param_result == "SKIP":
             pytest.skip(f"{entry.mech_name} requires runtime parameters for keygen")
@@ -704,16 +720,7 @@ def generate_key_from_recipe(
 
         tmpl = template(*packed)
         if keygen_mech == CKM_PKCS5_PBKD2:
-            from pkcs11_check.raw.pack_mechanisms import mech_pbkdf2
-            from pkcs11_check.raw.types_std import CKP_PKCS5_PBKD2_HMAC_SHA256
-
-            mech = mech_pbkdf2(
-                CKM_PKCS5_PBKD2,
-                salt=b"pkcs11-check-test-salt",
-                iterations=10000,
-                prf=CKP_PKCS5_PBKD2_HMAC_SHA256,
-                password=b"test-password",
-            )
+            mech = _pbkdf2_keygen_mechanism()
         else:
             mech = mech_simple(CKM(keygen_mech))
         _skip_if_keygen_mechanism_absent(rs, int(keygen_mech), entry.mech_name)
