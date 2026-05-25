@@ -367,6 +367,19 @@ def test_wycheproof_hmac_invalid_tags_are_reported() -> None:
         assert "truncated == tag_expected" in source
 
 
+def test_wycheproof_rsa_decrypt_invalid_ciphertexts_are_reported() -> None:
+    """Invalid RSA decrypt vectors must fail if decrypt succeeds."""
+    paths = (
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_decrypt.py"),
+        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_oaep.py"),
+    )
+
+    for path in paths:
+        source = path.read_text()
+        assert "accepted invalid ciphertext" in source
+        assert "result == \"invalid\"" in source
+
+
 def test_stateful_signature_guards_use_structured_ckr_checks() -> None:
     """Stateful signature guards should not parse CKR names from text."""
     path = Path("src/pkcs11_check/testcases/test_stateful_sigs.py")

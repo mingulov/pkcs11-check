@@ -219,3 +219,5 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
 
     if result == "valid" and plaintext is not None:
         assert plaintext == msg_expected
+    if result == "invalid" and plaintext is not None:
+        pytest.fail(f"RSA-OAEP decrypt {vec_id} accepted invalid ciphertext")

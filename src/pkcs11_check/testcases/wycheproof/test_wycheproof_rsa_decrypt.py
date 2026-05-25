@@ -134,3 +134,5 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
     if result == "valid" and plaintext is not None:
         assert plaintext == msg_expected
+    if result == "invalid" and plaintext is not None:
+        pytest.fail(f"RSA PKCS#1 decrypt {vec_id} accepted invalid ciphertext")
