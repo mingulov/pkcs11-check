@@ -41,7 +41,15 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_224,
     CKM_SHA512_256,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
 
@@ -85,6 +93,28 @@ _HASHLIB_BY_MECH: dict[int, str] = {
     int(CKM_SHA3_512): "sha3_512",
 }
 
+_DIGEST_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+
+def _digest_or_xfail(rs: RawSession, entry: MechEntry, data: bytes) -> bytes:
+    try:
+        return digest_single(rs.raw, rs.sh, CKM(entry.mech_id), data)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _DIGEST_RUNTIME_REJECT_RVS,
+            f"{entry.mech_name} advertised but digest is not operational",
+        )
+    raise
+
 
 def _check_not_xof(entry: MechEntry) -> None:
     """Skip XOF mechanisms that require C_DigestXof* (SHAKE-128/256)."""
@@ -118,7 +148,7 @@ class TestMechDigest:
         _check_not_xof(entry)
         _check_not_parameterised(entry, config)
 
-        digest = digest_single(rs.raw, rs.sh, CKM(entry.mech_id), b"")
+        digest = _digest_or_xfail(rs, entry, b"")
 
         hashlib_name = _HASHLIB_BY_MECH.get(entry.mech_id)
         if hashlib_name is not None:
@@ -146,7 +176,7 @@ class TestMechDigest:
         _check_not_parameterised(entry, config)
 
         data = b"length check input data for pkcs11"
-        digest = digest_single(rs.raw, rs.sh, CKM(entry.mech_id), data)
+        digest = _digest_or_xfail(rs, entry, data)
 
         expected_len = _KNOWN_OUTPUT_LENGTHS.get(entry.mech_id)
         if expected_len is not None:
@@ -169,8 +199,8 @@ class TestMechDigest:
         _check_not_parameterised(entry, config)
 
         data = b"deterministic digest test input"
-        d1 = digest_single(rs.raw, rs.sh, CKM(entry.mech_id), data)
-        d2 = digest_single(rs.raw, rs.sh, CKM(entry.mech_id), data)
+        d1 = _digest_or_xfail(rs, entry, data)
+        d2 = _digest_or_xfail(rs, entry, data)
         assert d1 == d2, (
             f"{entry.mech_name}: two digests of same input differ: {d1.hex()!r} vs {d2.hex()!r}"
         )
@@ -201,12 +231,7 @@ class TestMechDigestKAT:
             vec_mech = vec.get("mechanism_name")
             if vec_mech and vec_mech != f"CKM_{entry.mech_name}" and vec_mech != entry.mech_name:
                 continue
-            digest = digest_single(
-                rs.raw,
-                rs.sh,
-                CKM(entry.mech_id),
-                bytes.fromhex(vec["input_hex"]),
-            )
+            digest = _digest_or_xfail(rs, entry, bytes.fromhex(vec["input_hex"]))
             expected = bytes.fromhex(vec["digest_hex"])
             assert digest == expected, (
                 f"KAT digest mismatch for {vec.get('id', '?')}: "

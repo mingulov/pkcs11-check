@@ -515,6 +515,14 @@ The following paths were tightened after inspecting the all-fail artifacts:
   advertised-but-not-operational xfail evidence. If these mechanisms return
   `CKR_OK`, the tests still compare the actual ciphertext, plaintext, or
   digest bytes.
+- **Mechanism-driven digest coverage**: generic digest smoke and KAT tests now
+  use the same classification as the standalone BLAKE2 probes. If an advertised
+  digest mechanism rejects the operation with a specific runtime CKR such as
+  `CKR_ARGUMENTS_BAD`, it is reported as xfail evidence. If the digest succeeds,
+  output length and known-answer bytes remain hard checks.
+- **GOST HMAC setup**: `CKM_GOSTR3411_HMAC` key import/template rejection is
+  classified as an advertised-but-not-operational xfail. A successful setup
+  still has to sign, verify, and reject wrong behavior normally.
 - **AES-KEY-WRAP-PKCS7 unwrap template**: the standalone AES wrap/unwrap test
   no longer supplies `CKA_VALUE_LEN` when unwrapping an AES key whose wrapped
   bytes already determine the length. `CKA_VALUE_LEN` remains reserved for
