@@ -156,6 +156,19 @@ this vector file, not a failed signature result. A focused TPM2 run now selects
 Wycheproof failures still need follow-up: AES-GCM, AES-CBC-PAD, and
 HMAC-SHA256 are advertised, but provider operations return `CKR_GENERAL_ERROR`.
 
+### Follow-Up: ACVP Deterministic ECDSA Xfails
+
+The ACVP deterministic ECDSA SigGen vectors should not be counted as provider
+non-conformance for ordinary PKCS#11 ECDSA mechanisms. Those vectors require
+RFC6979 deterministic nonce generation and exact signature matching, while
+standard `CKM_ECDSA_SHA*` signing exposes no nonce-control parameter and most
+PKCS#11 providers are allowed to use randomized nonces.
+
+The test now treats deterministic ACVP ECDSA SigGen vectors as not applicable
+to standard PKCS#11 ECDSA and skips them after the advertised-mechanism check.
+A focused SoftHSM2-main Docker run selected 30 deterministic ECDSA SigGen cases
+and skipped all 30.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
