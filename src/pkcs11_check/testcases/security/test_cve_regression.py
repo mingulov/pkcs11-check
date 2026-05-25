@@ -6,6 +6,7 @@ specific condition that was fixed.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 from ctypes import byref
 from typing import Any
@@ -36,6 +37,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CK_ULONG,
     CKA_CLASS,
     CKA_DERIVE,
     CKA_EC_PARAMS,
@@ -114,6 +116,16 @@ _MECHANISM_ERROR_RVS = {
     CKR_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
 }
+
+
+def _abort_encrypt_operation(raw: Any, session: int) -> None:
+    """Best-effort cleanup after an expected encrypt error leaves state active."""
+    try:
+        out_buf = (ctypes.c_ubyte * 64)()
+        out_len = CK_ULONG(64)
+        raw.C_EncryptFinal(session, out_buf, byref(out_len))
+    except (AttributeError, OSError, ctypes.ArgumentError):
+        pass
 
 
 class TestCKATrusted:
@@ -532,7 +544,13 @@ class TestBoundaryLengthCrypto:
                     try:
                         encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
                     except AssertionError:
+                        _abort_encrypt_operation(rs.raw, rs.sh)
                         pass  # Correct rejection via expect_rv
+                    else:
+                        if size > 0:
+                            pytest.fail(
+                                f"AES-ECB accepted non-block-aligned plaintext length {size}"
+                            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

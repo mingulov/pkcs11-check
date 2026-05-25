@@ -771,6 +771,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   current BouncyHSM weak-RSA-exponent crashes are real provider crash findings;
   the marker keeps future runs on per-test units so one segfault does not hide
   the remaining parameter probes in that file.
+- **CVE AES-ECB boundary-length cleanup**: the boundary-length regression now
+  aborts an encrypt operation after an expected invalid-length reject before
+  trying the next size. Old `CKR_OPERATION_ACTIVE` rows in that test can be
+  harness contamination. The same test now fails if a non-zero
+  non-block-aligned AES-ECB plaintext is accepted.
 - **Crash reporting policy**: provider subprocess crashes must fail with the
   signal preserved, not become `pytest.xfail`. Dual-function raw probes and
   `C_SessionCancel` crash branches now report hard failures, and a static
