@@ -410,6 +410,18 @@ deeper follow-up before being presented as final provider conclusions.
   `CKM_AES_CFB128` only when the TPM reports `TPM2_ALG_CFB`; the bucket looks
   like an advertised-but-not-operational backend path, not a pkcs11-check
   vector-shape issue.
+- **TPM2 HMAC runtime rejects**: tpm2-pkcs11 registers `CKM_SHA*_HMAC`
+  mechanisms when the TPM reports `TPM2_ALG_KEYEDHASH` plus the matching hash
+  algorithm. The ACVP HMAC failures reach that advertised mechanism path and
+  then return `CKR_GENERAL_ERROR`, so they should be visible xfail findings
+  rather than capability skips.
+- **BouncyHSM ECDH public-data encoding**: pkcs11-check sends raw uncompressed
+  EC points in `CK_ECDH1_DERIVE_PARAMS.pPublicData`, matching the portable
+  OASIS requirement. BouncyHSM 2.1.0 advertises `CKM_ECDH1_DERIVE`, but its
+  source parses `pPublicData` through its `CKA_EC_POINT` DER decoder and its
+  own integration tests pass DER-encoded points. The observed
+  `CKR_MECHANISM_PARAM_INVALID` bucket is therefore a provider encoding
+  limitation, not a reason for pkcs11-check to switch the default ECDH encoding.
 
 ### Follow-Up: All-Fail Runtime Classification Buckets
 

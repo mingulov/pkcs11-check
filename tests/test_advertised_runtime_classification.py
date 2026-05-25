@@ -5,16 +5,21 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_DATA_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
+from pkcs11_check.testcases.acvp import test_acvp_ecdh
 
 _LEGACY_CIPHER_FILES = (
     Path("src/pkcs11_check/testcases/test_aria.py"),
@@ -208,6 +213,17 @@ def test_acvp_ecdh_uses_structured_ckr_checks() -> None:
     ]
 
     assert offenders == []
+
+
+def test_acvp_ecdh_mechanism_param_reject_is_xfail() -> None:
+    """Advertised ECDH derive returning CKR_MECHANISM_PARAM_INVALID is a finding."""
+    exc = CkrAssertionError(
+        "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID",
+        int(CKR_MECHANISM_PARAM_INVALID),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised but ECDH derive"):
+        test_acvp_ecdh._xfail_if_ecdh_runtime_reject(exc, "Curve P-256")
 
 
 def test_acvp_mlkem_uses_structured_ckr_checks() -> None:
