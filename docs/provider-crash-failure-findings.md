@@ -51,6 +51,15 @@ Result wording in the article should keep these categories separate:
   signals, hangs, or isolation-runner crashes. These remain provider or harness
   findings until root-caused.
 
+`xfail` is therefore a report category, not a pass category. In this project it
+means "the test reached a known non-clean outcome that should stay visible
+without being merged into the clean-pass count." For negative vectors this
+distinction matters: accepting a bad signature is a security failure; rejecting
+it with `CKR_DATA_INVALID`, `CKR_DEVICE_ERROR`, or another non-specific CKR is
+still a PKCS#11 return-code deviation. CKR-focused tests may also attach
+`compliance.note()` entries for these deviations; `--ckr-strict` promotes such
+CKR deviations to hard failures.
+
 ## Runner-Level Crashes
 
 These are crashes counted by the provider summary itself.
@@ -338,6 +347,16 @@ as `CKR_DEVICE_ERROR`/`CKR_FUNCTION_FAILED` no longer make those vectors look
 unsupported; they either become documented provider quirks or real failures.
 Advertised mechanism parameter rejects in EdDSA and Hash-ML-DSA verification are
 xfail evidence rather than silent skips.
+
+ACVP ML-KEM now follows the same split. In the current NSS-main and NSS-PQC
+artifacts, the 50-call ML-KEM failure bucket divides into 25 ML-KEM-512
+public-key imports returning `CKR_PARAMETER_SET_NOT_SUPPORTED` and 25
+ML-KEM-512 key-generation attempts returning `CKR_HOST_MEMORY`. The import
+case is a narrower parameter-set capability result and now skips; the
+`CKR_HOST_MEMORY` key-generation result remains a real provider finding. ML-KEM
+runtime operation rejects after an advertised mechanism are xfail/failure
+evidence, not capability skips. Full provider counts still require a matrix
+rerun.
 
 ### Other Large Buckets Checked In This Pass
 

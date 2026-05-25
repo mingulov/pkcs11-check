@@ -40,6 +40,17 @@ from pkcs11_check.raw.types_std import (
     CKK_ML_KEM,
     CKM_ML_KEM_KEY_PAIR_GEN,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_PARAMETER_SET_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.acvp._mlkem_helpers import (
     get_mlkem_mechanism,
@@ -48,6 +59,7 @@ from pkcs11_check.testcases.acvp._mlkem_helpers import (
     load_mlkem_keygen_vectors,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp, pytest.mark.pqc]
 
@@ -66,14 +78,23 @@ _SECRET_KEY_ATTRS: dict[int, object] = {
     CKA_EXTRACTABLE: True,
 }
 
-_UNSUPPORTED_ERRORS = (
-    "CKR_MECHANISM_INVALID",
-    "CKR_ATTRIBUTE_VALUE_INVALID",
-    "CKR_ATTRIBUTE_READ_ONLY",
-    "CKR_TEMPLATE_INCONSISTENT",
-    "CKR_KEY_SIZE_RANGE",
-    "CKR_MECHANISM_PARAM_INVALID",
-    "CKR_FUNCTION_NOT_SUPPORTED",
+_MLKEM_CAPABILITY_REJECT_RVS = (
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_PARAMETER_SET_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+_MLKEM_RUNTIME_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 _KEYGEN_VECTORS = load_mlkem_keygen_vectors()
@@ -81,11 +102,20 @@ _ENCAP_VECTORS = load_mlkem_encap_vectors()
 _DECAP_VECTORS = load_mlkem_decap_vectors()
 
 
-def _handle_unsupported(exc: AssertionError, param_set: str) -> None:
-    """Check if exception indicates unsupported parameter set and skip if so."""
-    if any(name in str(exc) for name in _UNSUPPORTED_ERRORS):
-        pytest.skip(f"ML-KEM parameter set {param_set} not supported: {exc}")
+def _skip_if_mlkem_capability_reject(exc: AssertionError, param_set: str, action: str) -> None:
+    """Skip when PKCS#11 exposes no narrower discovery for this ML-KEM capability."""
+    if is_known_error(exc, _MLKEM_CAPABILITY_REJECT_RVS):
+        pytest.skip(f"ML-KEM {param_set} {action} not supported: {exc}")
     raise
+
+
+def _xfail_if_mlkem_runtime_reject(exc: AssertionError, label: str) -> None:
+    """xfail advertised ML-KEM operations that are rejected at runtime."""
+    xfail_if_known_ckr(
+        exc,
+        _MLKEM_RUNTIME_REJECT_RVS,
+        f"{label}: ML-KEM advertised but operation is not cleanly operational",
+    )
 
 
 class TestMlKemKeyGen:
@@ -100,9 +130,9 @@ class TestMlKemKeyGen:
 
         param_set_name = vec["param_set"]
 
-        pub_key = priv_key = 0
+        pub_key = priv_key = secret_handle = decap_handle = 0
+        # Generate keypair with specific parameter set.
         try:
-            # Generate keypair with specific parameter set
             pub_key, priv_key = gen_keypair(
                 rs.raw,
                 rs.sh,
@@ -118,10 +148,11 @@ class TestMlKemKeyGen:
                 },
                 pub_skip={CKA_PARAMETER_SET},
             )
+        except AssertionError as exc:
+            _skip_if_mlkem_capability_reject(exc, param_set_name, "key generation")
+        try:
             assert pub_key != 0, f"{vec_id}: Public key handle is zero"
             assert priv_key != 0, f"{vec_id}: Private key handle is zero"
-
-            # Test roundtrip encapsulate/decapsulate
             mech = get_mlkem_mechanism(param_set_name)
             secret_handle, ciphertext = encapsulate_key(
                 rs.raw, rs.sh, pub_key, mech, attrs=_SECRET_KEY_ATTRS
@@ -129,7 +160,6 @@ class TestMlKemKeyGen:
             assert secret_handle != 0, f"{vec_id}: Secret key handle is zero"
             assert ciphertext, f"{vec_id}: Ciphertext is empty"
 
-            # Decapsulate to recover shared secret
             decap_handle = decapsulate_key(
                 rs.raw,
                 rs.sh,
@@ -140,12 +170,11 @@ class TestMlKemKeyGen:
             )
             assert decap_handle != 0, f"{vec_id}: Decapsulated key handle is zero"
 
-            # Clean up the ephemeral keys
+        except AssertionError as exc:
+            _xfail_if_mlkem_runtime_reject(exc, vec_id)
+        finally:
             destroy_quietly(rs.raw, rs.sh, secret_handle)
             destroy_quietly(rs.raw, rs.sh, decap_handle)
-        except AssertionError as exc:
-            _handle_unsupported(exc, param_set_name)
-        finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
 
@@ -172,87 +201,98 @@ class TestMlKemEncapsulate:
 
         pub_key = priv_key = secret_handle = decap_handle = 0
         try:
-            # Import both keys from the vector
-            pub_key = import_pqc_public_key(
-                rs.raw,
-                rs.sh,
-                key_type=int(CKK_ML_KEM),
-                value=vec["ek"],
-                parameter_set=vec["parameter_set"],
-                attrs={CKA_ENCAPSULATE: True},
-            )
-
-            # We need the private key for decap verification.
-            # The encap vectors include dk via the matching decap group.
-            if "dk" not in vec:
-                # Encap-only vector: just verify encap succeeds and produces
-                # a ciphertext of the expected length.
-                mech = get_mlkem_mechanism(param_set)
-                secret_handle, ciphertext = encapsulate_key(
+            try:
+                pub_key = import_pqc_public_key(
                     rs.raw,
                     rs.sh,
-                    pub_key,
-                    mech,
-                    attrs=_SECRET_KEY_ATTRS,
+                    key_type=int(CKK_ML_KEM),
+                    value=vec["ek"],
+                    parameter_set=vec["parameter_set"],
+                    attrs={CKA_ENCAPSULATE: True},
                 )
-                assert secret_handle != 0, f"{vec_id}: Secret key handle is zero"
-                assert ciphertext, f"{vec_id}: Ciphertext is empty"
-                assert len(ciphertext) == len(vec["c"]), (
-                    f"{vec_id}: Ciphertext len mismatch: "
-                    f"expected {len(vec['c'])}, got {len(ciphertext)}"
-                )
-                return
+            except AssertionError as exc:
+                _skip_if_mlkem_capability_reject(exc, param_set, "public-key import")
 
-            priv_key = import_pqc_private_key(
-                rs.raw,
-                rs.sh,
-                key_type=int(CKK_ML_KEM),
-                value=vec["dk"],
-                parameter_set=vec["parameter_set"],
-                attrs={CKA_DECAPSULATE: True},
-            )
+            # The encap vectors may not include dk. In that case the operation
+            # is still a runtime check, not an import-capability check.
+            if "dk" not in vec:
+                try:
+                    mech = get_mlkem_mechanism(param_set)
+                    secret_handle, ciphertext = encapsulate_key(
+                        rs.raw,
+                        rs.sh,
+                        pub_key,
+                        mech,
+                        attrs=_SECRET_KEY_ATTRS,
+                    )
+                    assert secret_handle != 0, f"{vec_id}: Secret key handle is zero"
+                    assert ciphertext, f"{vec_id}: Ciphertext is empty"
+                    assert len(ciphertext) == len(vec["c"]), (
+                        f"{vec_id}: Ciphertext len mismatch: "
+                        f"expected {len(vec['c'])}, got {len(ciphertext)}"
+                    )
+                except AssertionError as exc:
+                    _xfail_if_mlkem_runtime_reject(exc, vec_id)
+            else:
+                try:
+                    priv_key = import_pqc_private_key(
+                        rs.raw,
+                        rs.sh,
+                        key_type=int(CKK_ML_KEM),
+                        value=vec["dk"],
+                        parameter_set=vec["parameter_set"],
+                        attrs={CKA_DECAPSULATE: True},
+                    )
+                except AssertionError as exc:
+                    _skip_if_mlkem_capability_reject(exc, param_set, "private-key import")
 
-            mech = get_mlkem_mechanism(param_set)
+                try:
+                    mech = get_mlkem_mechanism(param_set)
 
-            # Encapsulate: produces ciphertext + shared secret
-            secret_handle, ciphertext = encapsulate_key(
-                rs.raw,
-                rs.sh,
-                pub_key,
-                mech,
-                attrs=_SECRET_KEY_ATTRS,
-            )
-            assert secret_handle != 0, f"{vec_id}: Secret key handle is zero"
-            assert ciphertext, f"{vec_id}: Ciphertext is empty"
-            assert len(ciphertext) == len(vec["c"]), (
-                f"{vec_id}: Ciphertext len mismatch: "
-                f"expected {len(vec['c'])}, got {len(ciphertext)}"
-            )
+                    # Encapsulate: produces ciphertext + shared secret
+                    secret_handle, ciphertext = encapsulate_key(
+                        rs.raw,
+                        rs.sh,
+                        pub_key,
+                        mech,
+                        attrs=_SECRET_KEY_ATTRS,
+                    )
+                    assert secret_handle != 0, f"{vec_id}: Secret key handle is zero"
+                    assert ciphertext, f"{vec_id}: Ciphertext is empty"
+                    assert len(ciphertext) == len(vec["c"]), (
+                        f"{vec_id}: Ciphertext len mismatch: "
+                        f"expected {len(vec['c'])}, got {len(ciphertext)}"
+                    )
 
-            # Decapsulate with private key to recover shared secret
-            decap_handle = decapsulate_key(
-                rs.raw,
-                rs.sh,
-                priv_key,
-                mech,
-                ciphertext,
-                attrs=_SECRET_KEY_ATTRS,
-            )
-            assert decap_handle != 0, f"{vec_id}: Decapsulated key handle is zero"
+                    # Decapsulate with private key to recover shared secret
+                    decap_handle = decapsulate_key(
+                        rs.raw,
+                        rs.sh,
+                        priv_key,
+                        mech,
+                        ciphertext,
+                        attrs=_SECRET_KEY_ATTRS,
+                    )
+                    assert decap_handle != 0, f"{vec_id}: Decapsulated key handle is zero"
 
-            # Both sides must produce the same shared secret
-            encap_attrs = read_attributes(rs.raw, rs.sh, secret_handle, [CKA_VALUE])
-            decap_attrs = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])
-            encap_secret = encap_attrs.get(CKA_VALUE, b"")
-            decap_secret = decap_attrs.get(CKA_VALUE, b"")
-            assert encap_secret == decap_secret, (
-                f"{vec_id}: encap/decap shared secret mismatch: "
-                f"encap={encap_secret[:16].hex() if isinstance(encap_secret, bytes) else '?'}... "
-                f"decap={decap_secret[:16].hex() if isinstance(decap_secret, bytes) else '?'}..."
-            )
+                    # Both sides must produce the same shared secret
+                    encap_attrs = read_attributes(rs.raw, rs.sh, secret_handle, [CKA_VALUE])
+                    decap_attrs = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])
+                    encap_secret = encap_attrs.get(CKA_VALUE, b"")
+                    decap_secret = decap_attrs.get(CKA_VALUE, b"")
+                    encap_preview = (
+                        encap_secret[:16].hex() if isinstance(encap_secret, bytes) else "?"
+                    )
+                    decap_preview = (
+                        decap_secret[:16].hex() if isinstance(decap_secret, bytes) else "?"
+                    )
+                    assert encap_secret == decap_secret, (
+                        f"{vec_id}: encap/decap shared secret mismatch: "
+                        f"encap={encap_preview}... decap={decap_preview}..."
+                    )
 
-        except AssertionError as exc:
-            _handle_unsupported(exc, param_set)
+                except AssertionError as exc:
+                    _xfail_if_mlkem_runtime_reject(exc, vec_id)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_key)
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -281,7 +321,6 @@ class TestMlKemDecapsulate:
         priv_key = 0
         decap_handle = 0
         try:
-            # Import the private key from the vector
             priv_key = import_pqc_private_key(
                 rs.raw,
                 rs.sh,
@@ -290,7 +329,10 @@ class TestMlKemDecapsulate:
                 parameter_set=vec["parameter_set"],
                 attrs={CKA_DECAPSULATE: True},
             )
+        except AssertionError as exc:
+            _skip_if_mlkem_capability_reject(exc, param_set, "private-key import")
 
+        try:
             # Get the mechanism for decapsulation
             mech = get_mlkem_mechanism(param_set)
 
@@ -316,7 +358,7 @@ class TestMlKemDecapsulate:
                 )
 
         except AssertionError as exc:
-            _handle_unsupported(exc, param_set)
+            _xfail_if_mlkem_runtime_reject(exc, vec_id)
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_key)
             destroy_quietly(rs.raw, rs.sh, decap_handle)

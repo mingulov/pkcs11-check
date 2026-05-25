@@ -215,6 +215,51 @@ def test_acvp_ecdh_uses_structured_ckr_checks() -> None:
     assert offenders == []
 
 
+def test_acvp_mlkem_uses_structured_ckr_checks() -> None:
+    """ACVP ML-KEM capability/runtime guards should match CKR constants."""
+    path = Path("src/pkcs11_check/testcases/acvp/test_acvp_mlkem.py")
+    tree = ast.parse(path.read_text())
+
+    offenders = [
+        f"{path}:{node.lineno}: {node.value}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("CKR_")
+    ]
+
+    assert offenders == []
+
+
+def test_acvp_mlkem_capability_skips_stay_narrow() -> None:
+    """ML-KEM unsupported-parameter skips should not hide runtime failures."""
+    path = Path("src/pkcs11_check/testcases/acvp/test_acvp_mlkem.py")
+    tree = ast.parse(path.read_text())
+    disallowed = {
+        "CKR_DEVICE_ERROR",
+        "CKR_FUNCTION_FAILED",
+        "CKR_FUNCTION_NOT_SUPPORTED",
+        "CKR_HOST_MEMORY",
+        "CKR_MECHANISM_INVALID",
+    }
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "_MLKEM_CAPABILITY_REJECT_RVS"
+            for target in node.targets
+        ):
+            continue
+        offenders.extend(
+            f"{path}:{name.lineno}: {name.id}"
+            for name in ast.walk(node.value)
+            if isinstance(name, ast.Name) and name.id in disallowed
+        )
+
+    assert offenders == []
+
+
 def test_wycheproof_ec_import_guards_use_structured_ckr_checks() -> None:
     """Large EC Wycheproof import probes should not parse CKR names from text."""
     paths = (
