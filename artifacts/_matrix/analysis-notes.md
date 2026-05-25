@@ -47,14 +47,29 @@ uv run pytest --collect-only -q src/pkcs11_check/testcases
 ```
 
 The command was inspected through pytest's collection API so parametrized
-vector tests are counted as individual product-test items. Current collection
-maximum: 102,109 items. This is a collect-time maximum before runtime provider
-capability skips, xfails, crashes, timeouts, or focused target selection.
+vector tests are counted as individual product-test items. Current raw
+generated node count: 109,608. Current active baseline collection after
+collection-time AES-CTS deselection with no module available: 102,109 items.
+This is before runtime provider capability skips, xfails, crashes, timeouts,
+or focused target selection.
+
+The 7,499 collection-time deselected items are mutually exclusive AES-CTS
+CS-variant vectors:
+
+- 2,635: CS1 variant vectors.
+- 2,386: CS2 variant vectors.
+- 2,478: CS3 variant vectors.
+
+For a provider that supports AES-CTS, pkcs11-check probes the CTS variant and
+keeps one matching variant. The provider-facing maximum is therefore 104,744
+items for CS1, 104,495 for CS2, or 104,587 for CS3. The raw 109,608 node count
+should not be presented as a single-provider pass target because it includes
+mutually exclusive CTS variants.
 
 Grouped by suite/function:
 
 - 28,915: Wycheproof ECDSA vectors.
-- 25,599: ACVP AES vectors.
+- 25,599: ACVP AES vectors before CTS variant add-on.
 - 23,986: Wycheproof other vectors.
 - 13,128: Wycheproof ECDH vectors.
 - 5,309: ACVP non-AES vectors.
@@ -1078,9 +1093,10 @@ Run status:
 - The full provider run was intentionally stopped after the third AES ACVP
   unit entered a pathological timeout tail. This preserved the remaining matrix
   run for TPM2, pkcs11-mock, and qryptotoken.
-- No final full-suite `artifacts/bouncyhsm/results.json` exists for this
-  target. Segmented ACVP, core/ECDH/ECDSA Wycheproof, security, and general
-  reruns below have their own complete `results.json` files.
+- No final monolithic `artifacts/bouncyhsm/results.json` exists for this
+  target. Segmented ACVP, core/ECDH/ECDSA Wycheproof, security, general, and
+  CCTV/stress/fuzz/slow reruns below have their own complete `results.json`
+  files.
 - `test_cfb128.py` was rerun in two bounded parts: all 2,138 non-multiblock
   vectors passed, while all 6 multiblock vectors timed out inside provider
   `C_Encrypt`/`C_Decrypt` calls.
@@ -1113,6 +1129,10 @@ Run status:
   marker filter `not (wycheproof or acvp or cctv or stress or fuzz or slow or
   security)`: 5,580 total, 2,908 passed, 208 failed, 2,440 skipped, 24 xfailed,
   no crashes, and no timeouts.
+- The CCTV/stress/fuzz/slow marker segment completed under the same 20-second
+  per-test timeout with marker filter `cctv or stress or fuzz or slow`: 2,425
+  total, 2,413 passed, 5 failed, 6 skipped, 1 xfailed, no crashes, and no
+  timeouts.
 - A broad Wycheproof segment was started but stopped before final result
   synthesis because the huge ECDSA file entered file-level timeout retries.
   Its partial `state.json` is useful for planning split reruns, but it has no
@@ -1150,6 +1170,8 @@ Focused artifacts:
   skipped, 3 xfailed, 3 crashed, no timeouts.
 - `artifacts/bouncyhsm-general`: 5,580 total, 2,908 passed, 208 failed, 2,440
   skipped, 24 xfailed, no crashes or timeouts.
+- `artifacts/bouncyhsm-cctv-stress-fuzz-slow`: 2,425 total, 2,413 passed,
+  5 failed, 6 skipped, 1 xfailed, no crashes or timeouts.
 
 Failure classification for focused units:
 
@@ -1220,6 +1242,14 @@ Failure classification for focused units:
   init/interface/interop, object lifecycle/search/size, RSA extended/import/
   wrapping/OAEP, X.509 import/search/identity/lifecycle, token flags, surface
   audit, and clean skips for unsupported protocol families.
+- CCTV/stress/fuzz/slow: CCTV Ed25519 passed 914/914, CCTV ML-DSA passed
+  449/449, CCTV RFC6979 had 1 pass and 1 xfail, and X.509 limbo stress passed
+  1,009/1,009. Resource, OpenSSL interop, stateful, subprocess safety, stress,
+  and threading slices were clean or skipped where expected. The only failed
+  unit was `test_fuzz.py`: 5 failed, 6 passed. All failures returned
+  `CKR_OPERATION_ACTIVE` from repeated digest/HMAC single-part operations
+  (`sha256_deterministic`, `sha256_cross_verify`, `sha512_cross_verify`,
+  `hmac_sha256_cross_verify`, and `hmac_deterministic`).
 
 Current classification:
 
@@ -1253,9 +1283,14 @@ Current classification:
   uneven: BLAKE2 keygen/HMAC/digest, AES/Salsa/ChaCha KATs, ML-DSA hash and
   multipart signing, EXTRACT_KEY_FROM_KEY, session-state semantics, and v3
   certificate `CKA_PUBLIC_KEY_INFO` import all need follow-up.
-- Full-provider statistics should only include BouncyHSM after any
-  intentionally excluded CCTV/stress/fuzz/slow families are rerun in
-  split/bounded mode if they are in scope for the final number.
+- CCTV/stress/fuzz/slow coverage is now complete in bounded mode. The clean
+  CCTV and X.509 limbo stress results are useful counterexamples to the slower
+  ACVP/Wycheproof tails. The fuzz failures deserve focused follow-up because
+  they look like operation-state leakage after repeated single-part digest/HMAC
+  calls rather than module load or timeout failures.
+- BouncyHSM now has complete segmented evidence for the planned slices, but the
+  article should still label it as segmented evidence rather than one
+  monolithic full-suite run.
 
 ## TPM2
 
@@ -1588,6 +1623,13 @@ not overwrite full provider statistics.
   hash ML-DSA, session-state semantics, access levels, AES/Salsa/ChaCha
   behavior, and BLAKE2. Init/interface/interop/object/RSA/X.509 import slices
   are useful clean counterexamples.
+- `artifacts/bouncyhsm-cctv-stress-fuzz-slow`: BouncyHSM completed the
+  remaining marker family with 2,413 passed, 5 failed, 6 skipped, and 1 xfailed.
+  It had no crashes or timeouts. CCTV Ed25519, CCTV ML-DSA, X.509 limbo stress,
+  resource, OpenSSL interop, stateful, subprocess safety, stress, and threading
+  slices are clean or skipped as expected. The five failures are all
+  `CKR_OPERATION_ACTIVE` returns in fuzz digest/HMAC repeated single-part
+  operation tests.
 - `artifacts/bouncyhsm-wycheproof`: broad run intentionally stopped after
   generic/AES/ChaCha/DSA/ECDH state and an ECDSA file-level timeout retry. No
   final `results.json` was produced, so this artifact is planning evidence for
@@ -1597,10 +1639,10 @@ not overwrite full provider statistics.
 
 - Parse completed provider artifacts into a compact machine-readable summary
   after each provider completes.
-- If BouncyHSM should become an official full-suite provider statistic, rerun
-  any intentionally excluded CCTV/stress/fuzz/slow families in split/bounded
-  mode. Avoid one monolithic Wycheproof target because large ECDH/ECDSA files
-  dominate runtime and trigger file-level timeout retries.
+- If BouncyHSM should become an official monolithic full-suite provider
+  statistic, rerun the whole provider despite the runtime cost. Otherwise use
+  the complete segmented evidence and state that large ECDH/ECDSA files make a
+  monolithic target inefficient and prone to file-level timeout retry behavior.
 - For SoftHSM2 main ML-DSA, inspect exact failed vector groups and CKR/result
   messages before assigning blame to provider or test.
 - Deep-dive TPM2 source-built failures into provider limitations versus

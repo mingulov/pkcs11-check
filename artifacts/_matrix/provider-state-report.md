@@ -40,13 +40,18 @@ Data sources recorded in
 ## Collected Test Universe
 
 As of this report, `uv run pytest --collect-only` over
-`src/pkcs11_check/testcases` collects 102,109 product-test items. This is the
-maximum collect-time universe shipped with the current suite and data packages,
-before provider-specific runtime skips, unsupported-mechanism gating, xfails,
-crashes, or marker-based selection. A provider that exposed every relevant
-capability would be evaluated against this collection universe, but the
-per-provider totals below are lower or segmented when a run used capability
-skips, focused targets, or partial execution.
+`src/pkcs11_check/testcases` generates 109,608 pytest nodes. Of those, 7,499
+are mutually exclusive AES-CTS CS-variant vectors and are deselected at
+collection time when no provider module is available. The active baseline
+collection is therefore 102,109 product-test items.
+
+For a provider that supports AES-CTS, pkcs11-check probes the provider's CTS
+variant and keeps only the matching variant. The single-provider collect-time
+maximum is therefore provider-dependent: 104,744 items for CS1, 104,495 for
+CS2, or 104,587 for CS3. These numbers are still before provider-specific
+runtime skips, unsupported-mechanism gating, xfails, crashes, or marker-based
+selection. Per-provider totals below are lower or segmented when a run used
+capability skips, focused targets, or partial execution.
 
 | Group | Collected tests |
 | --- | ---: |
@@ -61,7 +66,16 @@ skips, focused targets, or partial execution.
 | Security regression tests | 274 |
 | Raw CKR/API negative tests | 178 |
 | Fuzz tests | 43 |
-| **Total** | **102,109** |
+| **Active baseline total, before CTS variant add-on** | **102,109** |
+
+CTS variant add-on counts:
+
+| CTS variant selected by provider | Additional tests | Single-provider total |
+| --- | ---: | ---: |
+| CS1 | 2,635 | 104,744 |
+| CS2 | 2,386 | 104,495 |
+| CS3 | 2,478 | 104,587 |
+| Raw generated nodes before CTS deselection | 7,499 | 109,608 |
 
 Provider source manifest: `docker/provider-sources.toml`, observed
 `2026-05-24T17:52:49Z`, with later build-evidence updates for TPM2 and
@@ -95,8 +109,9 @@ qryptotoken on `2026-05-25`.
 - BouncyHSM was configured and reachable, but the full provider run was
   intentionally stopped after AES ACVP tests entered a pathological timeout
   tail. Segmented ACVP reruns, bounded core/ECDH/ECDSA Wycheproof runs, a
-  bounded security run, and a bounded general run now provide useful partial
-  evidence; the row below is not a full-suite provider statistic.
+  bounded security run, a bounded general run, and a bounded CCTV/stress/fuzz/
+  slow run now provide complete segmented evidence for the planned BouncyHSM
+  slices; the row below is not a monolithic full-suite provider statistic.
 
 ## Result Snapshot
 
@@ -113,7 +128,7 @@ qryptotoken on `2026-05-25`.
 | nss-main | NSS/NSPR source tips | full | 84,819 | 47,549 | 2,018 | 35,147 | 0 | 4/0 |
 | opencryptoki | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 89,899 | 78,656 | 2,593 | 8,593 | 0 | 0/0 |
 | opencryptoki-master | OpenCryptoki master, OpenSSL 4.0.0 | full | 89,899 | 78,657 | 2,589 | 8,595 | 0 | 0/0 |
-| bouncyhsm | BouncyHSM v2.1.0 | partial + segmented ACVP + Wycheproof core/ECDH/ECDSA + security + general | 98,069 focused | 65,024 focused | 22,303 focused | 10,651 focused | 0 | 4/0, plus timeout failures |
+| bouncyhsm | BouncyHSM v2.1.0 | segmented ACVP + Wycheproof core/ECDH/ECDSA + security + general + CCTV/stress/fuzz/slow | 100,494 segmented | 67,437 segmented | 22,308 segmented | 10,657 segmented | 0 | 4/0, plus timeout failures |
 | tpm2 source | upstream tpm2-pkcs11 1.10.0 | full | 81,400 | 9,847 | 6,825 | 64,696 | 0 | report has subprocess crashes |
 | tpm2 package | Fedora tpm2-pkcs11 1.9.1 package | archived full | 64,084 | 8,433 | 5,067 | 49,727 | 851 | report has subprocess crashes |
 | pkcs11-mock | pkcs11-mock v2.0.0 | full mock baseline | 32,633 | 2,560 | 3,546 | 26,517 | 0 | 0/0 |
@@ -122,7 +137,8 @@ qryptotoken on `2026-05-25`.
 `kryoptic-fips` uses a custom OpenSSL branch in the full diagnostic artifact.
 The older TPM2 Fedora-package artifact is archived separately from the
 source-built upstream result. `bouncyhsm` is segmented ACVP plus core/ECDH/
-ECDSA Wycheproof, security, and general evidence, not a full-suite statistic.
+ECDSA Wycheproof, security, general, and CCTV/stress/fuzz/slow evidence, not a
+monolithic full-suite statistic.
 
 ## SoftHSM2
 
@@ -246,8 +262,8 @@ The provider configured and initialized, so this is not a module-load failure.
 The full run was intentionally stopped because ACVP AES reached a pathological
 timeout tail. Segmented reruns then completed the worst affected AES files,
 the remaining ACVP AES targets, all non-AES ACVP targets, core/ECDH/ECDSA
-Wycheproof segments, the security family, and the non-vector/non-security
-general family under bounded targets:
+Wycheproof segments, the security family, the non-vector/non-security general
+family, and the CCTV/stress/fuzz/slow marker family under bounded targets:
 
 - ACVP AES-CCM: 8,398 total, 1,028 passed, 7,370 failed.
 - ACVP AES-CFB1: 2,138 total, 2,088 passed, 50 failed.
@@ -322,6 +338,15 @@ general family under bounded targets:
     init/interface/interop, object lifecycle/search/size, RSA extended/import/
     wrapping/OAEP, X.509 import/search/identity/lifecycle, token flags, surface
     audit, and several unsupported protocol families that skipped cleanly.
+- CCTV/stress/fuzz/slow marker segment: 2,425 total, 2,413 passed, 5 failed,
+  6 skipped, 1 xfailed, no crashes or timeouts.
+  - CCTV Ed25519 passed 914/914, CCTV ML-DSA passed 449/449, and CCTV RFC6979
+    had 1 pass and 1 xfail.
+  - X.509 limbo stress passed 1,009/1,009.
+  - Resource, OpenSSL interop, stateful, subprocess safety, stress, and
+    threading slices were clean or skipped where the tests intentionally skip.
+  - The only failures were 5 fuzz tests where repeated digest/HMAC single-part
+    operations returned `CKR_OPERATION_ACTIVE`.
 
 Failure classification in the focused units:
 
@@ -364,6 +389,11 @@ Failure classification in the focused units:
   session login/logout visibility, read-only session semantics, and
   `CKA_PUBLIC_KEY_INFO` certificate import need follow-up if BouncyHSM should
   claim full v3.x coverage.
+- CCTV/stress/fuzz/slow: CCTV, X.509 limbo stress, resource, OpenSSL interop,
+  subprocess safety, and basic stress/threading/stateful slices are clean or
+  intentionally skipped. The fuzz failures point to operation-state handling:
+  after repeated generated digest/HMAC examples, the next single-part
+  digest/sign initialization can return `CKR_OPERATION_ACTIVE`.
 
 Current classification: reachable provider with broad AES-CCM incompatibility,
 mostly working CFB1 with short bit-length mismatches, and apparent CFB8,
@@ -372,9 +402,8 @@ has strong ML-KEM, HMAC, RSA keygen, ACVP ECDSA, split Wycheproof ECDSA,
 X25519, HKDF, ChaCha, and RSA decrypt results, plus solid
 init/interface/interop/object/RSA/X.509 import general coverage. Broad ECDH,
 ML-DSA, HMAC/BLAKE2, AES, RSA-OAEP/PSS/signature, session-state, and
-security-boundary clusters remain. Official full-suite statistics still need
-the intentionally excluded CCTV/stress/fuzz/slow families if they are in scope
-for the final number.
+security-boundary clusters remain. The remaining caveat is that this is a
+segmented evidence set rather than one monolithic full-suite run.
 
 ## TPM2
 
@@ -475,12 +504,14 @@ Focused reruns after those fixes are stored under `artifacts/_focused/`:
   added 7,569 passed, and secp384/secp521 added 5,748 passed, all with no
   crashes or timeouts; security added 169 passed, 35 failed, 57 skipped, 3
   xfailed, and 3 crashes with no timeouts; general added 2,908 passed, 208
-  failed, 2,440 skipped, and 24 xfailed with no crashes or timeouts.
+  failed, 2,440 skipped, and 24 xfailed with no crashes or timeouts; CCTV/
+  stress/fuzz/slow added 2,413 passed, 5 failed, 6 skipped, and 1 xfailed with
+  no crashes or timeouts.
 
 ## Remaining Work Before Final Article
 
-- Run any intentionally excluded BouncyHSM CCTV/stress/fuzz/slow families that
-  should count in the final full-suite statistic. A broad Wycheproof run was
-  stopped after completed generic/AES/ChaCha/DSA/ECDH state and an ECDSA
-  file-level timeout retry; it has no final `results.json` and is planning
-  evidence only.
+- Decide whether the BouncyHSM article row should be labeled as segmented
+  evidence only or whether a monolithic full-suite rerun is still worth the
+  runtime cost. A broad Wycheproof run was stopped after completed generic/AES/
+  ChaCha/DSA/ECDH state and an ECDSA file-level timeout retry; it has no final
+  `results.json` and is planning evidence only.
