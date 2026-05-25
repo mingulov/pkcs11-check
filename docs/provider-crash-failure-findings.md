@@ -100,6 +100,25 @@ wording because they show which areas dominate each provider's failure shape.
 | `pkcs11-mock` | X.509 limbo stress 1,009; generic Wycheproof 729; Wycheproof RSA-OAEP 700; X.509 limbo import 169; ACVP RSA 162 |
 | `bouncyhsm-segmented` | Wycheproof ECDH 11,945; ACVP AES-CCM 7,370; ACVP ECDH 1,736; Wycheproof AES 414; Wycheproof HMAC 180 |
 
+### Follow-Up: ACVP ECDH 1,403 Bucket
+
+The repeated `ACVP ECDH 1,403` bucket in the artifact table should not be used
+as a provider finding until the matrix is rerun. Follow-up investigation found
+that the count is exactly the P-384 and P-521 Wycheproof ECDH vector set
+(`771 + 632`), while P-256 passed for SoftHSM2, Kryoptic, NSS, and
+OpenCryptoki.
+
+Root cause was in pkcs11-check's vector loader: the SubjectPublicKeyInfo
+extractor searched for the first `0x04` byte and treated it as the uncompressed
+EC point. That happened to work for P-256, but P-384 and P-521 curve OIDs
+contain an earlier `0x04`, so the test passed malformed peer public data into
+imports or `C_DeriveKey`.
+
+The loader now parses the SubjectPublicKeyInfo DER structure and extracts the
+BIT STRING EC point explicitly. A focused SoftHSM2 Docker check after the fix
+selected 1,733 Wycheproof ECDH shared-secret tests and all passed. The full
+provider matrix still needs to be rerun before updating provider result counts.
+
 ## Provider-Specific Notes
 
 - SoftHSM2 release has no runner-level crashes, but the security probes still

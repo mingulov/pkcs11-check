@@ -1,9 +1,9 @@
-"""NIST ACVP/Wycheproof ECDH key agreement test vectors (SP 800-56A).
+"""Wycheproof ECDH key agreement test vectors (SP 800-56A).
 
-Tests ECDH shared secret derivation using official NIST ACVP and Wycheproof
-vectors for P-256, P-384, and P-521 curves.
+Tests ECDH shared secret derivation using Wycheproof vectors for P-256, P-384,
+and P-521 curves.
 
-Requires: ACVP vectors or Wycheproof test vectors
+Requires: Wycheproof test vectors
 Skips gracefully if test vectors not available or mechanism unavailable.
 """
 
@@ -74,6 +74,36 @@ def _build_ec_point(qx_hex: str, qy_hex: str, coord_len: int) -> bytes:
         bytes([0x04]) + _pad_coordinate(qx_hex, coord_len) + _pad_coordinate(qy_hex, coord_len)
     )
     return _der_octet_string(point_bytes)
+
+
+def _read_der_tlv(data: bytes, offset: int) -> tuple[int, int, int, int]:
+    """Read one DER TLV and return (tag, value_start, value_end, next_offset)."""
+    if offset >= len(data):
+        raise ValueError("truncated DER tag")
+
+    tag = data[offset]
+    offset += 1
+    if offset >= len(data):
+        raise ValueError("truncated DER length")
+
+    first_len = data[offset]
+    offset += 1
+    if first_len < 0x80:
+        length = first_len
+    else:
+        length_octets = first_len & 0x7F
+        if length_octets == 0:
+            raise ValueError("indefinite DER length is not allowed")
+        if offset + length_octets > len(data):
+            raise ValueError("truncated DER long-form length")
+        length = int.from_bytes(data[offset : offset + length_octets], "big")
+        offset += length_octets
+
+    value_start = offset
+    value_end = offset + length
+    if value_end > len(data):
+        raise ValueError("truncated DER value")
+    return tag, value_start, value_end, value_end
 
 
 def _load_wycheproof_ecdh_vectors(
@@ -150,14 +180,36 @@ def _extract_ec_point(public_key_bytes: bytes, coord_len: int) -> bytes | None:
     if n == expected_point_len and public_key_bytes[0] == 0x04:
         return _der_octet_string(public_key_bytes)
 
-    # Try to parse as DER SubjectPublicKeyInfo
-    if n > expected_point_len:
-        # Look for the uncompressed point marker (0x04) followed by coordinates
-        for i in range(n - expected_point_len + 1):
-            if public_key_bytes[i] == 0x04:
-                candidate = public_key_bytes[i : i + expected_point_len]
-                if len(candidate) == expected_point_len:
-                    return _der_octet_string(candidate)
+    # CKA_EC_POINT encoding: DER OCTET STRING wrapping the uncompressed point.
+    if n > expected_point_len and public_key_bytes[0] == 0x04:
+        try:
+            point = decode_ec_point(public_key_bytes)
+        except ValueError:
+            point = b""
+        if len(point) == expected_point_len and point[0] == 0x04:
+            return public_key_bytes
+
+    # SubjectPublicKeyInfo: SEQUENCE { AlgorithmIdentifier, BIT STRING ECPoint }.
+    # Do not scan for the first 0x04 byte: P-384/P-521 curve OIDs contain 0x04.
+    try:
+        tag, outer_start, outer_end, next_offset = _read_der_tlv(public_key_bytes, 0)
+        if tag != 0x30 or next_offset != n:
+            return None
+
+        tag, _, _, offset = _read_der_tlv(public_key_bytes, outer_start)
+        if tag != 0x30:
+            return None
+
+        tag, bit_start, bit_end, offset = _read_der_tlv(public_key_bytes, offset)
+        if tag != 0x03 or offset != outer_end or bit_start >= bit_end:
+            return None
+
+        unused_bits = public_key_bytes[bit_start]
+        point = public_key_bytes[bit_start + 1 : bit_end]
+        if unused_bits == 0 and len(point) == expected_point_len and point[0] == 0x04:
+            return _der_octet_string(point)
+    except ValueError:
+        return None
 
     return None
 
@@ -180,7 +232,7 @@ _ECDH_VECTORS = _load_all_ecdh_vectors()
 def test_acvp_ecdh_shared_secret(
     p11_raw_session: RawSession, vec_id: str, vec: dict[str, Any]
 ) -> None:
-    """ECDH shared secret derivation test using Wycheproof/ACVP vectors.
+    """ECDH shared secret derivation test using Wycheproof vectors.
 
     Imports a private key and peer public key, derives the shared secret using
     CKM_ECDH1_DERIVE, and verifies it matches the expected value.

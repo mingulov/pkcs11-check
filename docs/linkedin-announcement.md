@@ -27,7 +27,7 @@ Current scope:
 
 For the current validation snapshot I tested several software PKCS#11 providers
 and simulators: SoftHSM2, Kryoptic, NSS softoken, OpenCryptoki, tpm2-pkcs11,
-BouncyHSM, pkcs11-mock, and qryptotoken.
+plus long-tail/mock targets such as BouncyHSM, pkcs11-mock, and qryptotoken.
 
 The useful part is not just pass/fail counts. pkcs11-check keeps crashes, wrong
 CKR return codes, unsupported mechanisms, timeouts, and build/configuration
@@ -85,6 +85,8 @@ matrix results, use [docker-provider-results.md](docker-provider-results.md).
   evidence, not performance ranking.
 - Say that failures and crashes are retained as findings. Do not imply that a
   clean pass rate is the only useful result.
+- Do not foreground BouncyHSM. It is useful as a long-tail simulator example,
+  but the article should center the tool and the broader provider method.
 - Mention proprietary/internal modules explicitly: users can run the tool
   locally without publishing their provider or results.
 - If the provider result pages are not on `main` yet, use a branch or commit
