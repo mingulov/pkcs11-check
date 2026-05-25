@@ -1038,8 +1038,8 @@ Run status:
   unit entered a pathological timeout tail. This preserved the remaining matrix
   run for TPM2, pkcs11-mock, and qryptotoken.
 - No final full-suite `artifacts/bouncyhsm/results.json` exists for this
-  target. Segmented ACVP reruns below have their own complete `results.json`
-  files.
+  target. Segmented ACVP and core Wycheproof reruns below have their own
+  complete `results.json` files.
 - `test_cfb128.py` was rerun in two bounded parts: all 2,138 non-multiblock
   vectors passed, while all 6 multiblock vectors timed out inside provider
   `C_Encrypt`/`C_Decrypt` calls.
@@ -1049,6 +1049,9 @@ Run status:
 - The ACVP non-AES segment completed under the same 20-second per-test timeout:
   5,309 total, 3,042 passed, 1,931 failed, 306 skipped, 30 xfailed, and no
   crashes or timeouts.
+- The bounded core Wycheproof segment completed under the same 20-second
+  per-test timeout: 20,472 total, 19,196 passed, 748 failed, 528 skipped, and
+  no crashes or timeouts. It excludes the known large ECDH/ECDSA tails.
 - A broad Wycheproof segment was started but stopped before final result
   synthesis because the huge ECDSA file entered file-level timeout retries.
   Its partial `state.json` is useful for planning split reruns, but it has no
@@ -1068,6 +1071,8 @@ Focused artifacts:
   7,320 skipped, 30 xfailed, and 1 crashed.
 - `artifacts/bouncyhsm-acvp-nonaes`: 5,309 total, 3,042 passed, 1,931 failed,
   306 skipped, 30 xfailed, no crashes or timeouts.
+- `artifacts/bouncyhsm-wycheproof-core`: 20,472 total, 19,196 passed, 748
+  failed, 528 skipped, no crashes or timeouts.
 
 Failure classification for focused units:
 
@@ -1102,6 +1107,12 @@ Failure classification for focused units:
   signature rejections.
 - ACVP RSA key generation: 63 passed.
 - ACVP SLH-DSA: 78 passed and 6 valid-signature rejection failures.
+- Core Wycheproof: failures clustered in AES (414), HMAC (180), RSA-OAEP
+  (54), plain RSA signature verification (30), ML-DSA signing (27), RSA-PSS
+  (17), RSA PKCS#1 signature generation (10), ML-DSA verification (9), and
+  generic HMAC/RSA tests (7). ChaCha, DSA file skip, Ed25519 skips, HKDF,
+  ML-KEM, PBES2/PBKDF2 file skips, RSA decrypt, and X25519 completed without
+  failed records.
 
 Current classification:
 
@@ -1119,9 +1130,12 @@ Current classification:
   are strong or mostly clean; ECDH is a broad failure cluster; ML-DSA, EdDSA,
   RSA-PSS/SHA3, hash/SHA3, and SLH-DSA have narrower correctness or
   validation failures.
+- Core Wycheproof shows clean X25519, HKDF, ChaCha, ML-KEM, and RSA decrypt
+  coverage in this bounded segment; AES, HMAC, RSA-OAEP/PSS/signature, and
+  ML-DSA signing or verification remain important failure clusters.
 - Full-provider statistics should only include BouncyHSM after the remaining
-  Wycheproof, security, and general test families are rerun in split/bounded
-  mode.
+  Wycheproof ECDH/ECDSA tails, security, and general test families are rerun in
+  split/bounded mode.
 
 ## TPM2
 
@@ -1416,6 +1430,11 @@ not overwrite full provider statistics.
   files with 3,042 passed, 1,931 failed, 306 skipped, and 30 xfailed. It had
   no crashes or timeouts. ECDH failed broadly; ML-KEM and RSA key generation
   passed completely.
+- `artifacts/bouncyhsm-wycheproof-core`: BouncyHSM completed the bounded core
+  Wycheproof segment with 19,196 passed, 748 failed, and 528 skipped. It had
+  no crashes or timeouts. Failures cluster in AES, HMAC, RSA-OAEP/PSS/signature,
+  and ML-DSA signing/verification; X25519, HKDF, ChaCha, ML-KEM, and RSA
+  decrypt were clean in this segment.
 - `artifacts/bouncyhsm-wycheproof`: broad run intentionally stopped after
   generic/AES/ChaCha/DSA/ECDH state and an ECDSA file-level timeout retry. No
   final `results.json` was produced, so this artifact is planning evidence for
@@ -1426,9 +1445,9 @@ not overwrite full provider statistics.
 - Parse completed provider artifacts into a compact machine-readable summary
   after each provider completes.
 - If BouncyHSM should become an official full-suite provider statistic, rerun
-  Wycheproof, security, and general families in split/bounded mode. Avoid one
-  monolithic Wycheproof target because large ECDH/ECDSA files dominate runtime
-  and trigger file-level timeout retries.
+  the remaining Wycheproof ECDH/ECDSA tails, security, and general families in
+  split/bounded mode. Avoid one monolithic Wycheproof target because large
+  ECDH/ECDSA files dominate runtime and trigger file-level timeout retries.
 - For SoftHSM2 main ML-DSA, inspect exact failed vector groups and CKR/result
   messages before assigning blame to provider or test.
 - Deep-dive TPM2 source-built failures into provider limitations versus

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-25T04:39:45Z",
+  "generated_at": "2026-05-25T05:29:37Z",
   "generated_from": "current artifacts/results.json and artifacts/qryptotoken/build-status.json",
   "records": [
     {
@@ -331,23 +331,38 @@
             "xfailed": 30,
             "xpassed": 0
           }
+        },
+        {
+          "artifact": "artifacts/bouncyhsm-wycheproof-core/results.json",
+          "name": "wycheproof_core",
+          "summary": {
+            "crashed": 0,
+            "error": 0,
+            "failed": 748,
+            "passed": 19196,
+            "skipped": 528,
+            "timeout": 0,
+            "total": 20472,
+            "xfailed": 0,
+            "xpassed": 0
+          }
         }
       ],
-      "notes": "Segmented ACVP evidence. AES CCM/CFB/OFB issues remain; CFB8 has one confirmed segfault plus pytest-timeout failures. Non-AES ACVP is complete with ECDH, ML-DSA, EdDSA, hash, RSA-PSS/SHA3, and SLH-DSA failure clusters; ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean.",
+      "notes": "Segmented ACVP plus bounded core Wycheproof evidence. AES CCM/CFB/OFB issues remain; CFB8 has one confirmed segfault plus pytest-timeout failures. Non-AES ACVP is complete with ECDH, ML-DSA, EdDSA, hash, RSA-PSS/SHA3, and SLH-DSA failure clusters; ML-KEM, RSA keygen, HMAC, and ECDSA are clean or mostly clean. Core Wycheproof completed without crashes/timeouts; failures cluster in AES, HMAC, RSA-OAEP/PSS/signature, and ML-DSA signing/verification.",
       "source": "BouncyHSM v2.1.0",
-      "status": "partial segmented ACVP; not full-suite statistics",
+      "status": "partial segmented ACVP + core Wycheproof; not full-suite statistics",
       "summary": {
         "crashed": 1,
         "error": 0,
-        "failed": 9367,
-        "passed": 12653,
-        "skipped": 7626,
+        "failed": 10115,
+        "passed": 31849,
+        "skipped": 8154,
         "timeout": 0,
-        "total": 29707,
+        "total": 50179,
         "xfailed": 60,
         "xpassed": 0
       },
-      "target": "bouncyhsm-segmented-acvp"
+      "target": "bouncyhsm-segmented"
     },
     {
       "artifact": "artifacts/qryptotoken/build-status.json",
