@@ -121,14 +121,14 @@ def test_acvp_rsa_pss_public_import_reject_is_setup_skip(
         )
 
 
-def test_acvp_rsa_verify_attribute_value_invalid_is_not_setup_skip(
+def test_acvp_rsa_verify_attribute_value_invalid_is_runtime_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(test_acvp_rsa, "import_rsa_public_key", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(test_acvp_rsa, "verify_single", _attribute_value_invalid)
     monkeypatch.setattr(test_acvp_rsa, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(CkrAssertionError):
+    with pytest.raises(pytest.xfail.Exception, match="CKR_ATTRIBUTE_VALUE_INVALID"):
         test_acvp_rsa.TestRsaSigVer().test_rsa_pkcs15_verify(
             _session(),
             "SigVer-pkcs15-ver-SHA-1-tc181_0",

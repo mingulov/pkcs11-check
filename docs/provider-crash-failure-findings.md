@@ -634,6 +634,15 @@ The following paths were tightened after inspecting the all-fail artifacts:
   negative-signature split. `CKR_SIGNATURE_INVALID`/length-range are clean
   rejects, generic runtime CKRs are xfail evidence, and unexpected CKRs still
   fail the test instead of being collapsed into `False`.
+- **ACVP RSA SigVer runtime rejects**: RSA public-key import still skips only
+  when the key cannot be created. If import succeeds and `C_Verify` returns a
+  non-clean runtime CKR such as `CKR_ATTRIBUTE_VALUE_INVALID`, the vector is
+  reported as xfail evidence for an advertised verify path rather than as a
+  setup skip or an unclassified raw failure.
+- **Verify state CKR constants**: state-machine tests now use generated
+  `CKR_SIGNATURE_INVALID` and `CKR_SIGNATURE_LEN_RANGE` constants instead of
+  stale literal values when tolerating modules that prioritize signature checks
+  over operation-state checks.
 - **Miscellaneous KDF derive rejects**: `CKM_EXTRACT_KEY_FROM_KEY` now treats
   `CKR_ATTRIBUTE_VALUE_INVALID` at `C_DeriveKey` as an advertised mechanism
   rejected at runtime. Providers that return `CKR_OK` but derive the wrong
@@ -825,10 +834,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   Returning `CKR_OPERATION_ACTIVE` there remains a provider operation-state
   finding; it is not skipped or hidden by changing the fuzz tests.
 - **Crash reporting policy**: provider subprocess crashes must fail with the
-  signal preserved, not become `pytest.xfail`. Dual-function raw probes and
-  `C_SessionCancel` crash branches now report hard failures, and a static
-  regression check prevents future testcase xfails from being used for actual
-  crash or signal findings.
+  signal preserved, not become `pytest.xfail` or `pytest.skip`. Dual-function
+  raw probes, NULL-pointer raw CKR probes, and `C_SessionCancel` crash branches
+  now report hard failures. Static regression checks prevent future testcase
+  xfails or skips from being used for actual crash or signal findings.
 - **Mechanism encryption AEAD KAT sizing**: mechanism KAT encryption now uses
   the same AEAD tag overhead and `CKR_BUFFER_TOO_SMALL` retry path as mechanism
   roundtrip encryption. The older NSS `AES_GCM`/`CHACHA20_POLY1305` KAT

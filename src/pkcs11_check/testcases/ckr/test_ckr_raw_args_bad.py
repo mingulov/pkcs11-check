@@ -79,7 +79,9 @@ def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
 
 def _assert_ok(rc: int, out: str, err: str, name: str) -> None:
     if rc < 0:
-        pytest.skip(f"{name}: segfault (signal {-rc}) - module doesn't validate NULL")
+        pytest.fail(
+            f"{name}: subprocess crashed with signal {-rc}; module does not validate NULL"
+        )
     assert rc == 0, f"{name} subprocess error: {err[-200:]}"
     assert "OK" in out, f"{name}: {out}"
 

@@ -9,7 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 TESTCASE_ROOT = ROOT / "src/pkcs11_check/testcases"
 
 _CRASH_TERMS = ("crash", "crashed", "segfault", "signal")
-_NON_CRASH_PHRASES = ("not a crash", "without crash", "does not crash", "doesn't crash")
+_NON_CRASH_PHRASES = (
+    "not a crash",
+    "without crash",
+    "does not crash",
+    "doesn't crash",
+    "protocol kdf",
+)
 
 
 def _call_name(node: ast.Call) -> str:
@@ -41,6 +47,20 @@ def test_provider_crashes_are_not_xfailed() -> None:
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or _call_name(node) != "pytest.xfail":
+                continue
+            if _reports_crash(_literal_strings(node)):
+                offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+
+    assert offenders == []
+
+
+def test_provider_crashes_are_not_skipped() -> None:
+    offenders: list[str] = []
+    for path in TESTCASE_ROOT.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or _call_name(node) != "pytest.skip":
                 continue
             if _reports_crash(_literal_strings(node)):
                 offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")

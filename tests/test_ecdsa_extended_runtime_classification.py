@@ -32,7 +32,7 @@ def test_tampered_ecdsa_non_clean_reject_is_xfail(
     monkeypatch.setattr(test_ecdsa_extended, "verify_single", _verify_reject)
     monkeypatch.setattr(test_ecdsa_extended, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="invalid signature rejected"):
+    with pytest.raises(pytest.xfail.Exception, match="signature verification rejected"):
         test_ecdsa_extended.TestECDSAPrehash().test_tampered_data_fails(
             _session("ECDSA_SHA224"),
             "ECDSA_SHA224",

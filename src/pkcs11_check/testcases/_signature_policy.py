@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -18,6 +19,7 @@ SIGNATURE_REJECT_RVS = (
 )
 
 NON_CLEAN_SIGNATURE_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -37,6 +39,6 @@ def signature_rejected_or_xfail(exc: AssertionError, label: str) -> bool:
     xfail_if_known_ckr(
         exc,
         NON_CLEAN_SIGNATURE_REJECT_RVS,
-        f"{label}: invalid signature rejected with non-clean CKR",
+        f"{label}: signature verification rejected with non-clean CKR",
     )
     raise exc

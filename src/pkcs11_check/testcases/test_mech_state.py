@@ -50,6 +50,8 @@ from pkcs11_check.raw.types_std import (
     CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED,
     CKR_SESSION_HANDLE_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -310,8 +312,8 @@ class TestVerifyState:
 
         rv = rs.raw.C_Verify(rs.sh, in_buf, len(data), sig_buf, len(sig))
         assert rv in _NOT_INIT_RVCS | {
-            0x000000C4,  # CKR_SIGNATURE_INVALID
-            0x000000C5,  # CKR_SIGNATURE_LEN_RANGE
+            CKR_SIGNATURE_INVALID,
+            CKR_SIGNATURE_LEN_RANGE,
         }, f"C_Verify without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
 
     def test_verify_update_without_init(self, p11_raw_session: RawSession) -> None:
@@ -334,8 +336,8 @@ class TestVerifyState:
         sig_buf = (ctypes.c_ubyte * len(sig)).from_buffer_copy(sig)
         rv = rs.raw.C_VerifyFinal(rs.sh, sig_buf, len(sig))
         assert rv in _NOT_INIT_RVCS | {
-            0x000000C4,  # CKR_SIGNATURE_INVALID
-            0x000000C5,  # CKR_SIGNATURE_LEN_RANGE
+            CKR_SIGNATURE_INVALID,
+            CKR_SIGNATURE_LEN_RANGE,
         }, f"C_VerifyFinal without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
 
 

@@ -106,7 +106,7 @@ def test_tampered_verify_non_clean_reject_is_xfail(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(mech_sign, "verify_single", _verify_reject)
     monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="invalid signature rejected"):
+    with pytest.raises(pytest.xfail.Exception, match="signature verification rejected"):
         mech_sign.TestMechSignRoundtrip().test_tampered_data_fails_verify(
             _session(),
             _aes_entry(),
