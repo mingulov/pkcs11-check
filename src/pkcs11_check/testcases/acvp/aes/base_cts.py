@@ -266,7 +266,8 @@ def _handle_cts_error(exc: AssertionError, vec_id: str, direction: str) -> None:
             ComplianceLevel.CRITICAL,
             reference="PKCS#11 v3.1 CKM_AES_CTS",
         )
-    raise
+        pytest.xfail(f"CKM_AES_CTS advertised but CBC-CS {direction} failed: {exc}")
+    raise exc
 
 
 def run_cbc_cs_encrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:

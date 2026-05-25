@@ -494,6 +494,17 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `CKR_KEY_SIZE_RANGE`, `CKR_ARGUMENTS_BAD`, or `CKR_DEVICE_ERROR` are xfail
   findings. Wrong plaintext, wrong MAC, accepted invalid ciphertext/tag, and
   any rejection of valid signatures remain failures.
+- **ACVP AES-CTS `CKR_DEVICE_ERROR` rows**: Kryoptic release, main, and
+  FIPS/PQC artifacts all reached the advertised `CKM_AES_CTS` path and then
+  returned `CKR_DEVICE_ERROR` for valid CS1 vectors. pkcs11-check keeps the
+  compliance note, but now reports those rows as advertised-but-not-operational
+  xfail findings instead of raw harness failures. Ciphertext/plaintext
+  mismatches remain failures.
+- **Wycheproof PBES2 runtime rejects**: Kryoptic FIPS/PQC reached advertised
+  `CKM_PKCS5_PBKD2` plus `CKM_AES_CBC_PAD`, then returned `CKR_DEVICE_ERROR`
+  during valid-vector key derivation. PBES2 setup and decrypt CKRs are now
+  visible xfail findings, while successful decrypts still have to match the
+  expected plaintext.
 - **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
   `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
   runners now classify explicit generic runtime rejects as xfail while keeping

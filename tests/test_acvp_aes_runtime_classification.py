@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKM_AES_CFB128, CKR_GENERAL_ERROR
-from pkcs11_check.testcases.acvp.aes import base_runner_simple
+from pkcs11_check.raw.types_std import CKM_AES_CFB128, CKR_DEVICE_ERROR, CKR_GENERAL_ERROR
+from pkcs11_check.testcases.acvp.aes import base_cts, base_runner_simple
 
 _ACVP_AES_ROOT = Path("src/pkcs11_check/testcases/acvp/aes")
 
@@ -114,3 +114,11 @@ def test_advertised_acvp_aes_mct_general_error_is_xfail(
             "AES_CFB128",
             CKM_AES_CFB128,
         )
+
+
+def test_advertised_aes_cts_device_error_is_xfail() -> None:
+    """CKR_DEVICE_ERROR from advertised CTS is a provider finding, not a raw failure."""
+    exc = CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR))
+
+    with pytest.raises(pytest.xfail.Exception, match="CKM_AES_CTS advertised"):
+        base_cts._handle_cts_error(exc, "CBC-CS1-AES-enc-tc285", "encrypt")
