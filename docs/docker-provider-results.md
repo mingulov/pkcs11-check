@@ -146,11 +146,13 @@ Important BouncyHSM article points:
   4.0.0 produced a Kryoptic shared object without `.rodata1`, causing
   `hmacify` to fail.
 - NSS stable uses Fedora packages; the current PQC source target uses official
-  NSS and NSPR RTM tags, while `nss-main` uses Mercurial tips. The published
-  `nss-pqc` result row above is from the earlier source-tip artifact and must
-  be rerun before using it as RTM-tag result evidence. The existing source-built
-  artifacts remove the stable ML-DSA failure cluster but still show ML-KEM,
-  ECDH, DSA, HMAC/general, NULL pointer, and security-boundary findings.
+  NSS and NSPR RTM tags, while `nss-main` is an opt-in Mercurial tip
+  comparison target. Use `nss-pqc` for the source-built NSS article/release
+  row. The published `nss-pqc` result row above is from the earlier source-tip
+  artifact and must be rerun before using it as RTM-tag result evidence. The
+  existing source-built artifacts remove the stable ML-DSA failure cluster but
+  still show ML-KEM, ECDH, DSA, HMAC/general, NULL pointer, and
+  security-boundary findings.
 - OpenCryptoki release and master currently resolve to the same commit and
   both build with OpenSSL 4.0.0. Remaining large clusters look provider-side
   after pkcs11-check validation-order and optional-function fixes.

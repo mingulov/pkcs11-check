@@ -54,3 +54,12 @@ def test_qryptotoken_is_not_an_active_docker_provider() -> None:
     assert "qryptotoken" not in all_block
     assert "test-qryptotoken" not in compose
     assert not (ROOT / "docker/qryptotoken").exists()
+
+
+def test_default_docker_matrix_uses_tagged_nss_source_not_tip() -> None:
+    script = (ROOT / "docker/test-all.sh").read_text()
+
+    default_block = script.split("DEFAULT_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
+
+    assert "nss-pqc" in default_block
+    assert "nss-main" not in default_block

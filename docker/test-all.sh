@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_PROVIDERS=(
     kryoptic-main
     softhsm2-main
-    nss-main
+    nss-pqc
     opencryptoki-master
     tpm2
     bouncyhsm
