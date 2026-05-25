@@ -496,13 +496,25 @@ The following paths were tightened after inspecting the all-fail artifacts:
   session/object lifecycle, not AES-256 support. If advertised AES setup still
   rejects during the lifecycle path, the specific CKR is reported as an xfail
   setup finding instead of a raw setup failure.
+- **Access-level setup paths**: SO/USER/public visibility tests now use the
+  shared operational AES setup guard and AES-128 setup keys where the AES key is
+  only a fixture for access-control behavior. Data-object setup rejections such
+  as TPM2's `CKR_ATTRIBUTE_VALUE_INVALID` on `CKA_PRIVATE=False` are xfailed as
+  setup evidence for the visibility tests instead of being counted as failed
+  visibility assertions. The `CKA_TRUSTED` SetAttributeValue path now matches
+  exact CKR values rather than CKR-name substrings, and the
+  `CKA_WRAP_WITH_TRUSTED` fallback to `CKM_AES_CBC_PAD` now supplies the
+  required IV parameter.
 
 Other sampled all-fail rows still look provider-side rather than harness-side:
-the `CKA_PRIVATE=False` data-object visibility probe still fails during data
-object creation on TPM2, AES-CTS variant detection still fails when a provider
-advertises `CKM_AES_CTS` but no CS variant can be probed, and the low-level raw
-CKR subprocess crash probes still report process-level failures. Those should
-remain findings unless a narrower provider configuration explanation is found.
+AES-CTS variant detection still fails when a provider advertises `CKM_AES_CTS`
+but no CS variant can be probed, and the low-level raw CKR subprocess crash
+probes still report process-level failures. The access-level tests still leave
+real access-control findings visible, including private objects visible in a
+public session, USER creation of `CKA_TRUSTED=True` keys, USER escalation of
+`CKA_TRUSTED`, and wrapping a `CKA_WRAP_WITH_TRUSTED` target with an untrusted
+wrapping key. Those should remain findings unless a narrower provider
+configuration explanation is found.
 
 ## Provider-Specific Notes
 

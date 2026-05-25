@@ -10,11 +10,15 @@ import pytest
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKM_AES_CBC_PAD,
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
 )
 from pkcs11_check.testcases import (
+    test_access_levels,
     test_aes_modes,
     test_authenticated_wrap,
     test_buffers,
@@ -274,3 +278,125 @@ def test_buffer_encrypt_uses_operational_aes128_setup_key(
     test_buffers.TestEncryptBufferSizes().test_single_block(rs)
 
     assert calls == [128]
+
+
+def test_access_levels_xfail_when_advertised_aes_keygen_rejects_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(test_access_levels, "gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_access_levels.TestUserSessionCapabilities().test_user_can_create_and_destroy_objects(
+            rs
+        )
+
+
+def test_access_levels_use_operational_aes128_setup_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+
+    def _gen_aes_key(*_args: Any, bits: int = 256, **_kwargs: Any) -> int:
+        if len(_args) >= 3:
+            bits = int(_args[2])
+        calls.append(bits)
+        if bits != 128:
+            raise CkrAssertionError(
+                "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+                int(CKR_FUNCTION_NOT_SUPPORTED),
+            )
+        return 1
+
+    monkeypatch.setattr(test_access_levels, "require_operational_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_access_levels, "gen_aes_key", _gen_aes_key)
+    monkeypatch.setattr(test_access_levels, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    test_access_levels.TestUserSessionCapabilities().test_user_can_create_and_destroy_objects(rs)
+
+    assert calls == [128]
+
+
+def test_access_levels_data_object_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_access_levels, "create_object", _raise_attribute_value_invalid)
+    rs = _session_with_mechanisms()
+
+    with pytest.raises(pytest.xfail.Exception, match="data object setup rejected"):
+        test_access_levels._create_access_data_object(rs, 1, {})
+
+
+def test_access_levels_user_setattr_trusted_reject_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _set_attributes(*_args: Any, **_kwargs: Any) -> None:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ATTRIBUTE_TYPE_INVALID",
+            int(CKR_ATTRIBUTE_TYPE_INVALID),
+        )
+
+    monkeypatch.setattr(test_access_levels, "require_operational_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_access_levels, "gen_aes_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        test_access_levels,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_access_levels.CKA_TRUSTED: False},
+    )
+    monkeypatch.setattr(test_access_levels, "set_attributes", _set_attributes)
+    monkeypatch.setattr(test_access_levels, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    test_access_levels.TestTrustedAttribute().test_user_cannot_setattr_trusted(rs)
+
+
+def test_access_levels_wrap_with_trusted_uses_cbc_pad_iv_when_key_wrap_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeMech:
+        def byref(self) -> str:
+            return "mech"
+
+    class _Raw:
+        def C_WrapKey(  # noqa: N802 - mirrors the PKCS#11 function name.
+            self,
+            _sh: int,
+            _mech: str,
+            _wrapper: int,
+            _target: int,
+            _out: object,
+            _out_len: object,
+        ) -> int:
+            return int(CKR_ACTION_PROHIBITED)
+
+    mech_calls: list[tuple[int, bytes]] = []
+    handles = iter([10, 20])
+
+    def _mech_bytes(mechanism: int, parameter: bytes) -> _FakeMech:
+        mech_calls.append((int(mechanism), parameter))
+        return _FakeMech()
+
+    def _mech_simple(_mechanism: int) -> _FakeMech:
+        pytest.fail("AES_CBC_PAD fallback must use an IV parameter")
+
+    monkeypatch.setattr(test_access_levels, "require_operational_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_access_levels, "gen_aes_key", lambda *_args, **_kwargs: next(handles))
+    monkeypatch.setattr(
+        test_access_levels,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_access_levels.CKA_WRAP_WITH_TRUSTED: True},
+    )
+    monkeypatch.setattr(test_access_levels, "mech_bytes", _mech_bytes)
+    monkeypatch.setattr(test_access_levels, "mech_simple", _mech_simple)
+    monkeypatch.setattr(test_access_levels, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = SimpleNamespace(
+        raw=_Raw(),
+        sh=1,
+        has_mechanism=lambda name: name in {"AES_KEY_GEN", "AES_CBC_PAD"},
+    )
+
+    test_access_levels.TestTrustedAttribute().test_wrap_with_trusted_rejects_untrusted(rs)
+
+    assert mech_calls == [(int(CKM_AES_CBC_PAD), b"\x00" * 16)]
