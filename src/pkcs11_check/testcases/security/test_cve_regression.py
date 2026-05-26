@@ -81,7 +81,13 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    get_pin_bytes,
+    skip_unless_mechanism,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.security
 
@@ -116,6 +122,41 @@ _MECHANISM_ERROR_RVS = {
     CKR_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
 }
+
+
+def _gen_cve_aes_key_or_xfail(
+    rs: Any,
+    bits: int,
+    *,
+    attrs: dict[Any, Any] | None = None,
+    purpose: str,
+) -> int:
+    """Generate AES setup keys for CVE tests without hiding provider findings."""
+    skip_unless_mechanism(rs, "AES_KEY_GEN")
+    try:
+        return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but {purpose} key generation is not operational",
+        )
+    raise
+
+
+def _gen_cve_rsa_keypair_or_xfail(rs: Any, bits: int) -> tuple[int, int]:
+    """Generate RSA setup keys for CVE tests without hiding provider findings."""
+    skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
+    try:
+        return gen_rsa_keypair(rs.raw, rs.sh, bits)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "RSA_PKCS_KEY_PAIR_GEN advertised but CVE setup keypair generation "
+            "is not operational",
+        )
+    raise
 
 
 def _abort_encrypt_operation(raw: Any, session: int) -> None:
@@ -530,7 +571,12 @@ class TestBoundaryLengthCrypto:
     def test_aes_ecb_boundary_lengths(self, p11_raw_session: Any) -> None:
         """AES-ECB with 0, 1, 15, 16, 17, 31, 32 bytes."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        skip_unless_mechanism(rs, "AES_ECB")
+        key = _gen_cve_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-ECB boundary-length regression",
+        )
         try:
             for size in [0, 1, 15, 16, 17, 31, 32]:
                 data = b"\xaa" * size
@@ -749,7 +795,8 @@ class TestTPM2Issue44:
     def test_rapid_sign_no_deadlock(self, p11_raw_session: Any) -> None:
         """100 rapid RSA sign operations - must not deadlock."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+        pub, priv = _gen_cve_rsa_keypair_or_xfail(rs, 2048)
 
         try:
             for i in range(100):

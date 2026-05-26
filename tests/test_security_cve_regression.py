@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases.security import test_cve_regression
 
 
@@ -21,8 +23,21 @@ class _EncryptStateRaw:
         return 0
 
 
-def _session(raw: Any) -> SimpleNamespace:
-    return SimpleNamespace(raw=raw, sh=1)
+def _session(raw: Any, *mechanisms: str) -> SimpleNamespace:
+    supported = set(mechanisms) or {
+        "AES_ECB",
+        "AES_KEY_GEN",
+        "RSA_PKCS_KEY_PAIR_GEN",
+        "SHA256_RSA_PKCS",
+    }
+    return SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda name: name in supported)
+
+
+def _raise_function_not_supported(*_args: Any, **_kwargs: Any) -> int:
+    raise CkrAssertionError(
+        "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+        int(CKR_FUNCTION_NOT_SUPPORTED),
+    )
 
 
 def test_aes_ecb_boundary_lengths_aborts_after_rejected_invalid_length(
@@ -70,4 +85,56 @@ def test_aes_ecb_boundary_lengths_fails_when_nonaligned_input_is_accepted(
     with pytest.raises(pytest.fail.Exception, match="accepted non-block-aligned"):
         test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(
             _session(raw)
+        )
+
+
+def test_aes_ecb_boundary_lengths_skips_without_aes_ecb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _EncryptStateRaw()
+
+    def _unexpected_keygen(*_args: Any, **_kwargs: Any) -> int:
+        raise AssertionError("AES setup should not run without AES_ECB")
+
+    monkeypatch.setattr(test_cve_regression, "gen_aes_key", _unexpected_keygen)
+
+    with pytest.raises(pytest.skip.Exception, match="AES_ECB not supported"):
+        test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(
+            _session(raw, "AES_KEY_GEN")
+        )
+
+
+def test_aes_ecb_boundary_lengths_xfails_when_advertised_keygen_rejects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_cve_regression, "gen_aes_key", _raise_function_not_supported)
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(
+            _session(_EncryptStateRaw(), "AES_ECB", "AES_KEY_GEN")
+        )
+
+
+def test_rapid_sign_skips_without_sha256_rsa_pkcs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _unexpected_keypair(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
+        raise AssertionError("RSA setup should not run without SHA256_RSA_PKCS")
+
+    monkeypatch.setattr(test_cve_regression, "gen_rsa_keypair", _unexpected_keypair)
+
+    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
+        test_cve_regression.TestTPM2Issue44().test_rapid_sign_no_deadlock(
+            _session(_EncryptStateRaw(), "RSA_PKCS_KEY_PAIR_GEN")
+        )
+
+
+def test_rapid_sign_xfails_when_advertised_rsa_keygen_rejects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_cve_regression, "gen_rsa_keypair", _raise_function_not_supported)
+
+    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+        test_cve_regression.TestTPM2Issue44().test_rapid_sign_no_deadlock(
+            _session(_EncryptStateRaw(), "RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS")
         )
