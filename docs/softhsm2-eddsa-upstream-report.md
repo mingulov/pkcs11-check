@@ -2,6 +2,10 @@
 
 Date: 2026-05-26
 
+Status: report draft for SoftHSM2 upstream. This file is meant to be reviewed
+before filing; it deliberately separates the public-key encoding issue from
+broader ACVP EdDSA invalid-key findings.
+
 ## Suggested title
 
 SoftHSM2 accepts Ed25519 verification only with DER-wrapped `CKA_EC_POINT`,
@@ -20,7 +24,7 @@ DER-encoded ANSI X9.62 point.
 
 ## Environment used by pkcs11-check
 
-- Target: `test-softhsm2`
+- Docker target: `test-softhsm2`
 - Provider: SoftHSM2 2.7.0
 - Docker build config: `docker/docker-compose.test.yml`
 - OpenSSL build argument in this target: `OPENSSL_VERSION=3.6.2`
@@ -30,6 +34,12 @@ DER-encoded ANSI X9.62 point.
 This note does not yet claim that SoftHSM2 `main` has the same behavior. A
 separate `test-softhsm2-main` focused rerun should be used if the upstream issue
 needs current-branch confirmation.
+
+Focused local reproduction:
+
+```bash
+bash docker/test.sh softhsm2 -- src/pkcs11_check/testcases/test_eddsa_public_key_encoding.py
+```
 
 ## Expected behavior
 
@@ -43,8 +53,9 @@ For an Edwards public key object:
 Local spec source checked:
 
 - local OASIS PKCS#11 spec checkout:
-  `../other/pkcs11/working/doc/spec/elliptic_curves.md`
+  `/home/user/src/m/other/pkcs11/working/doc/spec/elliptic_curves.md`
 - Edwards public-key object table: lines 345-356
+- Edwards curve parameter forms and RFC 8032/RFC 8410 note: lines 360-377
 - EdDSA mechanism table: lines 758-789
 
 ## Observed behavior
@@ -71,6 +82,16 @@ src/pkcs11_check/testcases/test_eddsa_public_key_encoding.py x [100%]
 
 The probe called `C_CreateObject`, `C_VerifyInit`, `C_Verify`, and
 `C_DestroyObject` for the tested profiles.
+
+Artifact details:
+
+- result file:
+  `artifacts/_focused/softhsm2-eddsa-encoding-current-20260526/results.json`
+- node id:
+  `src/pkcs11_check/testcases/test_eddsa_public_key_encoding.py::test_eddsa_public_key_encoding_support`
+- result: `xfailed`
+- xfail reason:
+  `EdDSA verifies only with DER-wrapped CKA_EC_POINT; PKCS#11 requires raw RFC 8032 public-key bytes for CKK_EC_EDWARDS`
 
 ## Minimal test vector
 
@@ -130,6 +151,41 @@ produce a working verification profile.
 
 Compatibility suggestion: SoftHSM2 could continue accepting the DER-wrapped
 form for existing users, but it should also accept the raw PKCS#11 Edwards form.
+
+## Suggested issue body
+
+`pkcs11-check` found that SoftHSM2 2.7.0 verifies an RFC 8032 Ed25519 test
+vector only when the `CKK_EC_EDWARDS` public key object uses a DER OCTET STRING
+wrapper in `CKA_EC_POINT`.
+
+The PKCS#11 Edwards public-key object table says that `CKA_EC_POINT` is the
+public-key bytes in little-endian order as defined in RFC 8032. This differs
+from classic Weierstrass `CKK_EC` keys, where `CKA_EC_POINT` is an encoded
+ANSI X9.62 point.
+
+Minimal vector:
+
+```text
+CKA_EC_PARAMS = 06032b6570
+raw CKA_EC_POINT = d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+DER-wrapped CKA_EC_POINT = 0420d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+message = empty
+signature =
+  e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155
+  5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b
+```
+
+Observed result:
+
+- raw `CKA_EC_POINT`: does not produce a working verification profile
+- DER OCTET STRING-wrapped `CKA_EC_POINT`: verification succeeds
+
+Expected result:
+
+- raw RFC 8032 public-key bytes should be accepted for `CKK_EC_EDWARDS`
+  `CKA_EC_POINT`
+- accepting the DER-wrapped form as compatibility behavior is fine, but it
+  should not be the only working form
 
 ## Separate EdDSA finding, not part of this report
 
