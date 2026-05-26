@@ -516,6 +516,15 @@ Those size-only vectors are now skipped as PKCS#11-version-sensitive inputs
 rather than counted as providers accepting invalid signatures. Odd-length,
 empty, oversized, or mathematically invalid signatures remain negative tests.
 
+A later focused SoftHSM2 review found another ECDSA loader issue limited to
+`ecdsa_secp521r1_shake256_test.json`: pkcs11-check used the P-521 coordinate
+width as the SHAKE256 output length. The Wycheproof valid signatures verify
+with a 64-byte SHAKE256 output before raw `CKM_ECDSA`, not with 66 bytes. The
+loader now uses SHAKE256(64) for the P-521/SHAKE256 files. A focused SoftHSM2
+rerun of the ECDSA file no longer showed the P-521/SHAKE256 valid-vector
+rejections, so those old rows should be treated as harness evidence until the
+full matrix is refreshed.
+
 RSA signature vectors have a smaller version of the same duplication problem.
 After pkcs11-check maps a vector to a concrete PKCS#11 mechanism and parameter
 set, some Wycheproof RSA-PSS and RSA PKCS#1 cases are identical at the module

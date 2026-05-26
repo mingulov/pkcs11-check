@@ -102,6 +102,10 @@ Completed high-signal observations:
   sign-padding bytes; current source strips that padding before PKCS#11 import.
   A focused SoftHSM2 DSA rerun moved from 296 valid-signature failures to 0
   failures, with 613 passed and 1,343 skipped out of 1,956 collected vectors.
+  A later focused SoftHSM2 ECDSA rerun found that P-521/SHAKE256 valid vectors
+  need SHAKE256(64), not the 66-byte P-521 coordinate width, before raw
+  `CKM_ECDSA`; current source no longer shows that valid-vector rejection
+  pattern.
   These patches landed while the current batch was running or after it
   completed, so a later full rerun is needed before Docker statistics reflect
   them.
@@ -300,6 +304,11 @@ official full-matrix release statistics.
   failures after stripping third-party DSA `Big integer` sign padding before
   PKCS#11 import. Current focused result: 613 passed, 1,343 skipped, 1,956
   total.
+- `softhsm2` focused ECDSA artifacts:
+  `artifacts/_focused/softhsm2-ecdsa-current-after-shake`. Current source
+  removes the P-521/SHAKE256 valid-vector rejection pattern by using
+  SHAKE256(64) before raw `CKM_ECDSA`. Exact interim counts stay in the
+  artifact JSON rather than this working note.
 - `softhsm2` focused RSA artifacts:
   `artifacts/_focused/softhsm2-rsa-current-after-bigint`. Current-source
   normalized-RSA run removed the padded-import failures from RSA-PSS, RSA

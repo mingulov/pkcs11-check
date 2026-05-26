@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check.testcases.wycheproof import test_wycheproof_dsa as dsa
 from pkcs11_check.testcases.wycheproof import test_wycheproof_ecdsa as ecdsa
@@ -67,6 +70,23 @@ def test_ecdsa_short_p1363_signature_size_vector_is_skipped(
 
     with pytest.raises(pytest.skip.Exception, match="short ECDSA signature"):
         ecdsa.test_ecdsa_wycheproof(_SignatureSession(), vec_id, _find_ecdsa(vec_id))
+
+
+def test_ecdsa_p521_shake256_loader_hash_matches_valid_vector() -> None:
+    """The loader's SHAKE256 length must match Wycheproof P-521 signatures."""
+    vec_id = "ecdsa_secp521r1_shake256_test.json:tc1-valid"
+    vec = _find_ecdsa(vec_id)
+    group = vec["_group"]
+    public_key = serialization.load_der_public_key(bytes.fromhex(group["publicKeyDer"]))
+
+    try:
+        public_key.verify(
+            bytes.fromhex(vec["sig"]),
+            bytes.fromhex(vec["msg"]),
+            ec.ECDSA(hashes.SHAKE256(len(vec["_hash_fn"](b"").digest()))),
+        )
+    except InvalidSignature:
+        pytest.fail("loader SHAKE256 length does not verify the valid Wycheproof vector")
 
 
 def test_duplicate_dsa_p1363_vector_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:

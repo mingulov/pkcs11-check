@@ -185,8 +185,8 @@ _ECDSA_CONFIGS = [
     ("ecdsa_secp521r1_sha512_test.json", "secp521r1", 66, hashlib.sha512, False),
     ("ecdsa_secp521r1_sha512_p1363_test.json", "secp521r1", 66, hashlib.sha512, True),
     ("ecdsa_secp521r1_sha3_512_test.json", "secp521r1", 66, hashlib.sha3_512, False),
-    ("ecdsa_secp521r1_shake256_test.json", "secp521r1", 66, _shake256(66), False),
-    ("ecdsa_secp521r1_shake256_p1363_test.json", "secp521r1", 66, _shake256(66), True),
+    ("ecdsa_secp521r1_shake256_test.json", "secp521r1", 66, _shake256(64), False),
+    ("ecdsa_secp521r1_shake256_p1363_test.json", "secp521r1", 66, _shake256(64), True),
 ]
 
 
