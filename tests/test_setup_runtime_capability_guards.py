@@ -49,6 +49,7 @@ from pkcs11_check.testcases import (
     test_object_size,
     test_rsa_oaep,
     test_sensitivity,
+    test_session_state_machine,
     test_sign_recover,
     test_stateful,
 )
@@ -576,6 +577,100 @@ def test_access_levels_public_session_capacity_reject_is_skip(
         test_access_levels.TestPublicSessionVisibility().test_public_session_can_digest(
             rs,
             SimpleNamespace(),
+        )
+
+
+def test_session_state_machine_extra_session_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session"
+        if hasattr(test_session_state_machine, "_raw_open_session")
+        else "raw_open_session"
+    )
+    monkeypatch.setattr(test_session_state_machine, open_attr, _open_session_limit)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_session_state_machine.TestSessionFlags().test_rw_session_flag(
+            rs,
+            SimpleNamespace(),
+        )
+
+
+def test_session_state_machine_aes_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Pin:
+        def get_secret_value(self) -> str:
+            return "1234"
+
+    open_attr = (
+        "_raw_open_session"
+        if hasattr(test_session_state_machine, "_raw_open_session")
+        else "raw_open_session"
+    )
+    keygen_attr = (
+        "_raw_gen_aes_key"
+        if hasattr(test_session_state_machine, "_raw_gen_aes_key")
+        else "gen_aes_key"
+    )
+    monkeypatch.setattr(test_session_state_machine, open_attr, lambda *_a: 2)
+    monkeypatch.setattr(test_session_state_machine, "_login_user_raw", lambda *_a: None)
+    monkeypatch.setattr(test_session_state_machine, "_logout_safe", lambda *_a: None)
+    monkeypatch.setattr(test_session_state_machine, "close_session_quietly", lambda *_a: None)
+    monkeypatch.setattr(
+        test_session_state_machine,
+        "require_operational_aes_keygen",
+        lambda _rs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(test_session_state_machine, keygen_attr, _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+    rs.slot_id = 1
+
+    with pytest.raises(pytest.xfail.Exception, match="session-state setup key generation"):
+        test_session_state_machine.TestLoginStateTransitions().test_login_user_enables_private_access(
+            rs,
+            SimpleNamespace(pin=_Pin()),
+        )
+
+
+def test_session_state_machine_data_object_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Pin:
+        def get_secret_value(self) -> str:
+            return "1234"
+
+    raw = SimpleNamespace(C_Logout=lambda *_args: int(CKR_OK))
+    rs = SimpleNamespace(raw=raw, sh=1, slot_id=1, has_mechanism=lambda _name: True)
+    open_attr = (
+        "_raw_open_session"
+        if hasattr(test_session_state_machine, "_raw_open_session")
+        else "raw_open_session"
+    )
+    monkeypatch.setattr(test_session_state_machine, open_attr, lambda *_a: 2)
+    monkeypatch.setattr(test_session_state_machine, "_login_user_raw", lambda *_a: None)
+    monkeypatch.setattr(test_session_state_machine, "_logout_safe", lambda *_a: None)
+    monkeypatch.setattr(test_session_state_machine, "close_session_quietly", lambda *_a: None)
+    create_attr = (
+        "_raw_create_object"
+        if hasattr(test_session_state_machine, "_raw_create_object")
+        else "create_object"
+    )
+    monkeypatch.setattr(test_session_state_machine, create_attr, _raise_attribute_value_invalid)
+
+    with pytest.raises(pytest.xfail.Exception, match="data object setup rejected"):
+        test_session_state_machine.TestLogoutEffects().test_public_object_remains_after_logout(
+            rs,
+            SimpleNamespace(pin=_Pin()),
         )
 
 
