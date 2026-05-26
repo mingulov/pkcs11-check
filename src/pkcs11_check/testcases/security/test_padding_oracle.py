@@ -92,6 +92,40 @@ def _decrypt_result_or_error(
     return result, None
 
 
+def _read_rsa_public_numbers_or_xfail(
+    rs: Any,
+    pub: int,
+    *,
+    min_modulus_bytes: int = 11,
+) -> tuple[int, int, int]:
+    """Read usable RSA public numbers for structured-oracle construction.
+
+    A provider that successfully generates an RSA keypair but returns malformed
+    public attributes is an advertised-but-not-operational finding. Report that
+    as xfail evidence instead of allowing unrelated Python arithmetic errors.
+    """
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
+    except AssertionError as exc:
+        pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
+
+    n_bytes = attrs[CKA_MODULUS]
+    e_bytes = attrs[CKA_PUBLIC_EXPONENT]
+    if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
+        pytest.xfail("unusable RSA public modulus/exponent: attributes are not bytes")
+
+    n = int.from_bytes(n_bytes, "big")
+    e = int.from_bytes(e_bytes, "big")
+    k = (n.bit_length() + 7) // 8
+    if n < 3 or e < 3 or k < min_modulus_bytes:
+        pytest.xfail(
+            "unusable RSA public modulus/exponent: generated key attributes "
+            f"cannot support structured padding-oracle probes (n_bits={n.bit_length()}, e={e})"
+        )
+
+    return n, e, k
+
+
 class TestRSAPaddingOracle:
     """Check if RSA decryption leaks padding validity via error codes."""
 
@@ -207,20 +241,7 @@ class TestRSAPaddingOracle:
         )
 
         try:
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            except AssertionError as exc:
-                pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
-                return
-
-            n_bytes = attrs[CKA_MODULUS]
-            e_bytes = attrs[CKA_PUBLIC_EXPONENT]
-            if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
-                pytest.skip("Modulus / exponent not returned as bytes")
-                return
-            n = int.from_bytes(n_bytes, "big")
-            e = int.from_bytes(e_bytes, "big")
-            k = (n.bit_length() + 7) // 8
+            n, e, k = _read_rsa_public_numbers_or_xfail(rs, pub)
 
             cat1_errors: set[str] = set()  # 00 02 prefix, missing PS-separator
             cat2_errors: set[str] = set()  # arbitrary, no 00 02 prefix
@@ -312,20 +333,7 @@ class TestRSAPaddingOracle:
         )
 
         try:
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            except AssertionError as exc:
-                pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
-                return
-
-            n_bytes = attrs[CKA_MODULUS]
-            e_bytes = attrs[CKA_PUBLIC_EXPONENT]
-            if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
-                pytest.skip("Modulus / exponent not returned as bytes")
-                return
-            n = int.from_bytes(n_bytes, "big")
-            e = int.from_bytes(e_bytes, "big")
-            k = (n.bit_length() + 7) // 8
+            n, e, k = _read_rsa_public_numbers_or_xfail(rs, pub)
             boundary = 1 << (8 * (k - 1))
 
             oaep = mech_oaep(
