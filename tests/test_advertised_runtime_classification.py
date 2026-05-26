@@ -21,7 +21,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases import test_pbe
+from pkcs11_check.testcases import test_kdf, test_pbe
 from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
@@ -343,6 +343,35 @@ def test_pbe_pbkdf2_device_error_is_xfail() -> None:
     """Advertised PBKDF2 returning CKR_DEVICE_ERROR is a visible runtime finding."""
     with pytest.raises(pytest.xfail.Exception, match="CKM_PKCS5_PBKD2 advertised"):
         test_pbe._expect_pbe_gen_key_rv(CKR_DEVICE_ERROR, test_pbe.CKM_PKCS5_PBKD2)
+
+
+def test_hkdf_python_bug_with_ckr_text_stays_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only PKCS#11 AssertionError paths should become HKDF provider xfails."""
+
+    session = type(
+        "Session",
+        (),
+        {
+            "raw": object(),
+            "sh": 1,
+            "has_mechanism": lambda self, name: name == "HKDF_DERIVE",
+        },
+    )()
+
+    def _broken_derive(*_args: object, **_kwargs: object) -> int:
+        raise ValueError("decoder bug while handling CKR_FUNCTION_FAILED text")
+
+    monkeypatch.setattr(test_kdf, "_import_generic_secret", lambda *_args: 1)
+    monkeypatch.setattr(test_kdf, "derive_key", _broken_derive)
+    monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_args: None)
+
+    try:
+        test_kdf.TestHKDF().test_hkdf_derive_basic(session)
+    except BaseException as exc:
+        assert isinstance(exc, ValueError)
+        assert "decoder bug" in str(exc)
+    else:
+        pytest.fail("Expected HKDF Python bug to propagate")
 
 
 @pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR])

@@ -192,7 +192,7 @@ class TestHKDF:
             )
             okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(okm) == 32
-        except Exception as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF derivation not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
