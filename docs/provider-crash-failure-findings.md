@@ -523,7 +523,11 @@ with a 64-byte SHAKE256 output before raw `CKM_ECDSA`, not with 66 bytes. The
 loader now uses SHAKE256(64) for the P-521/SHAKE256 files. A focused SoftHSM2
 rerun of the ECDSA file no longer showed the P-521/SHAKE256 valid-vector
 rejections, so those old rows should be treated as harness evidence until the
-full matrix is refreshed.
+full matrix is refreshed. A focused NSS stable rerun of the same current-source
+ECDSA file selected 28,915 vectors and completed with 6,832 passed, 22,083
+skipped, and 0 failed. The old NSS-family ECDSA hard-failure bucket should
+therefore also be treated as pre-fix harness evidence until the matrix is
+refreshed.
 
 RSA signature vectors have a smaller version of the same duplication problem.
 After pkcs11-check maps a vector to a concrete PKCS#11 mechanism and parameter

@@ -105,7 +105,12 @@ Completed high-signal observations:
   A later focused SoftHSM2 ECDSA rerun found that P-521/SHAKE256 valid vectors
   need SHAKE256(64), not the 66-byte P-521 coordinate width, before raw
   `CKM_ECDSA`; current source no longer shows that valid-vector rejection
-  pattern.
+  pattern. A focused NSS stable ECDSA rerun on current source likewise removed
+  the old NSS-family ECDSA hard-failure bucket: 6,832 passed and 22,083 skipped
+  out of 28,915 collected vectors, with 0 failed. The skips were mostly exact
+  PKCS#11-visible duplicates, unsupported curves, and version-sensitive
+  short-P1363 signature-size rows. Evidence directory:
+  `artifacts/_focused/nss-ecdsa-current-after-shake`.
   These patches landed while the current batch was running or after it
   completed, so a later full rerun is needed before Docker statistics reflect
   them.
