@@ -9,6 +9,7 @@ import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKP_ML_KEM_512,
     CKR_ARGUMENTS_BAD,
     CKR_DATA_INVALID,
     CKR_DATA_LEN_RANGE,
@@ -25,7 +26,12 @@ from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
-from pkcs11_check.testcases.acvp import test_acvp_ecdh, test_acvp_ecdsa, test_acvp_mldsa
+from pkcs11_check.testcases.acvp import (
+    test_acvp_ecdh,
+    test_acvp_ecdsa,
+    test_acvp_mldsa,
+    test_acvp_mlkem,
+)
 from pkcs11_check.testcases.wycheproof import (
     test_wycheproof_aes,
     test_wycheproof_dsa,
@@ -302,6 +308,35 @@ def test_acvp_mlkem_capability_skips_stay_narrow() -> None:
         )
 
     assert offenders == []
+
+
+def test_acvp_mlkem_keygen_host_memory_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Advertised ML-KEM keygen returning CKR_HOST_MEMORY is visible xfail evidence."""
+
+    def _host_memory(*_args: object, **_kwargs: object) -> tuple[int, int]:
+        raise CkrAssertionError("Unexpected CK_RV", int(CKR_HOST_MEMORY))
+
+    session = type(
+        "Session",
+        (),
+        {
+            "raw": object(),
+            "sh": 1,
+            "has_mechanism": lambda self, name: name == "ML_KEM_KEY_PAIR_GEN",
+        },
+    )()
+    vec = {
+        "param_set": "ML-KEM-512",
+        "parameter_set": CKP_ML_KEM_512,
+    }
+    monkeypatch.setattr(test_acvp_mlkem, "gen_keypair", _host_memory)
+
+    with pytest.raises(pytest.xfail.Exception, match="ML-KEM.*not cleanly operational"):
+        test_acvp_mlkem.TestMlKemKeyGen().test_mlkem_keygen(
+            session,
+            "ML-KEM-keyGen-ML-KEM-512-tc1",
+            vec,
+        )
 
 
 def test_pbe_pbkdf2_device_error_is_xfail() -> None:

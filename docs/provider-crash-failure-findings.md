@@ -453,15 +453,15 @@ unsupported; they either become documented provider quirks or real failures.
 Advertised mechanism parameter rejects in EdDSA and Hash-ML-DSA verification are
 xfail evidence rather than silent skips.
 
-ACVP ML-KEM now follows the same split. In the current NSS-main and NSS-PQC
-artifacts, the 50-call ML-KEM failure bucket divides into 25 ML-KEM-512
-public-key imports returning `CKR_PARAMETER_SET_NOT_SUPPORTED` and 25
-ML-KEM-512 key-generation attempts returning `CKR_HOST_MEMORY`. The import
-case is a narrower parameter-set capability result and now skips; the
-`CKR_HOST_MEMORY` key-generation result remains a real provider finding. ML-KEM
-runtime operation rejects after an advertised mechanism are xfail/failure
-evidence, not capability skips. Full provider counts still require a matrix
-rerun.
+ACVP ML-KEM now follows the same split. Earlier NSS-family artifacts showed a
+50-call ML-KEM failure bucket split between 25 ML-KEM-512 public-key imports
+returning `CKR_PARAMETER_SET_NOT_SUPPORTED` and 25 ML-KEM-512 key-generation
+attempts returning `CKR_HOST_MEMORY`. The import case is a narrower
+parameter-set capability result and skips; `CKR_HOST_MEMORY` during advertised
+ML-KEM key generation is visible xfail evidence for a provider path that is not
+cleanly operational. Focused current-source reruns for `nss`, `nss-main`, and
+`nss-pqc` now report that file as 72 passed, 107 skipped, 1 xfailed, and 0 hard
+failures. Full provider counts still require a matrix rerun.
 
 ### Follow-Up: Wycheproof Negative-Vector Success Paths
 

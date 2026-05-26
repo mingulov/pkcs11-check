@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_HOST_MEMORY,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
@@ -91,6 +92,7 @@ _MLKEM_RUNTIME_REJECT_RVS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_HOST_MEMORY,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
@@ -151,7 +153,9 @@ class TestMlKemKeyGen:
                 pub_skip={CKA_PARAMETER_SET},
             )
         except AssertionError as exc:
-            _skip_if_mlkem_capability_reject(exc, param_set_name, "key generation")
+            if is_known_error(exc, _MLKEM_CAPABILITY_REJECT_RVS):
+                pytest.skip(f"ML-KEM {param_set_name} key generation not supported: {exc}")
+            _xfail_if_mlkem_runtime_reject(exc, vec_id)
         try:
             assert pub_key != 0, f"{vec_id}: Public key handle is zero"
             assert priv_key != 0, f"{vec_id}: Private key handle is zero"

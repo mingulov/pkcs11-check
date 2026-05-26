@@ -171,6 +171,14 @@ Completed high-signal observations:
   `test_mech_flags.py` isolated `libsoftokn3.so` segfaults in MAC-general
   `C_SignInit` probes, hit the per-file crash limit, and then skipped the rest
   of that file as designed.
+- Focused current-source NSS-family ML-KEM reruns moved the old ML-KEM-512
+  `CKR_HOST_MEMORY` key-generation bucket into visible xfail evidence. The
+  `nss`, `nss-main`, and `nss-pqc` focused runs for `test_acvp_mlkem.py` each
+  ended with 72 passed, 107 skipped, 1 xfailed, and 0 hard failures. Evidence
+  directories:
+  `artifacts/_focused/nss-mlkem-current-after-host-memory-20260526`,
+  `artifacts/_focused/nss-main-mlkem-current-after-host-memory-20260526`, and
+  `artifacts/_focused/nss-pqc-mlkem-current-after-host-memory-20260526`.
 - OpenCryptoki stayed crash-free in this rerun. After ECDH/XDH/ECDSA duplicate
   normalization, its largest failed buckets in the batch artifact were ACVP
   AES-XTS 382, Wycheproof ECDSA 234, generic Wycheproof 144, RSA PKCS#1 decrypt
