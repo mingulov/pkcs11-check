@@ -413,6 +413,12 @@ official full-matrix release statistics.
   `CKR_SESSION_COUNT` extra-session capacity are now setup skips. The remaining
   hard row is `test_rapid_random_1000`, where the mock returns the same
   32-byte value on every random-generation call.
+- `pkcs11-mock` handle-reuse focused artifact:
+  `artifacts/_focused/pkcs11-mock-handle-reuse-r2-20260527/`. The focused
+  `security/test_handle_reuse.py` run moved from 1 passed / 5 failed /
+  1 skipped to 7 skipped. The file also no longer swallows Python exceptions or
+  accepts arbitrary non-OK CKRs for destroyed-handle operations; when setup
+  succeeds, only explicit handle-related CKRs count as the expected result.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124

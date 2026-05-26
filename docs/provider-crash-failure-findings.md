@@ -1376,6 +1376,14 @@ The following paths were tightened after inspecting the all-fail artifacts:
   reports all 11 property-fuzz rows skipped because the needed mechanisms are
   not advertised; this replaces the old hard falsifying examples from missing
   AES, SHA-2, RSA-SHA256, and HMAC support.
+- **Destroyed-handle reuse checks**: `security/test_handle_reuse.py` no longer
+  catches arbitrary Python exceptions or accepts any non-OK CKR as a destroyed
+  handle result. Missing AES/RSA/wrap mechanisms skip before setup, setup keys
+  use the shared classifiers, and successful use of a destroyed handle is a hard
+  failure. Operation returns are now checked against explicit handle-related
+  CKRs. A focused pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-handle-reuse-r2-20260527/` moved the file
+  from 1 passed / 5 failed / 1 skipped to 7 skipped.
 - **Mechanism-negative setup**: the explicit wrong-key and missing-permission
   mechanism tests now use the same AES/RSA/EC setup guards. TPM-style
   `CKR_FUNCTION_NOT_SUPPORTED` during AES setup is reported as setup xfail
