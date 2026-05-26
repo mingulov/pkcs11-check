@@ -400,6 +400,12 @@ official full-matrix release statistics.
   `test_multipart.py` run moved from 9 failed to 9 skipped. The old rows were
   missing SHA-2/AES/RSA-SHA256 capability guards in the legacy smoke file, not
   provider cryptographic-output failures.
+- `pkcs11-mock` key-size focused artifact:
+  `artifacts/_focused/pkcs11-mock-key-sizes-r2-20260527/`. The focused
+  `test_key_sizes.py` run moved from 9 failed / 6 skipped to 6 failed /
+  9 skipped. RSA/SHA-256 sign rows now skip when `SHA256_RSA_PKCS` is absent.
+  The remaining hard rows are AES value readback placeholders and empty RSA
+  public modulus readback after setup succeeds.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124

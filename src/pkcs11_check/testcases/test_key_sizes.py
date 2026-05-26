@@ -39,10 +39,58 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256_RSA_PKCS,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
+
+_SIGN_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+
+def _require_mechanism(rs: Any, name: str) -> None:
+    if not rs.has_mechanism(name):
+        pytest.skip(f"{name} not supported")
+
+
+def _sign_or_xfail(rs: Any, private_key: int, data: bytes) -> bytes:
+    try:
+        return sign_single(rs.raw, rs.sh, private_key, CKM_SHA256_RSA_PKCS, data)
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _SIGN_RUNTIME_REJECT_RVS, "SHA256_RSA_PKCS sign rejected")
+    raise
+
+
+def _verify_or_xfail(rs: Any, public_key: int, data: bytes, signature: bytes) -> bool:
+    try:
+        return verify_single(rs.raw, rs.sh, public_key, CKM_SHA256_RSA_PKCS, data, signature)
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _SIGN_RUNTIME_REJECT_RVS, "SHA256_RSA_PKCS verify rejected")
+    raise
 
 
 class TestAESKeySizes:
@@ -120,6 +168,7 @@ class TestRSAKeySizes:
     def test_rsa_sign_verify(self, p11_raw_session: Any, key_bits: int) -> None:
         """RSA sign/verify at each key size."""
         rs = p11_raw_session
+        _require_mechanism(rs, "SHA256_RSA_PKCS")
         pub, priv = gen_rsa_keypair_or_xfail(
             rs,
             key_bits,
@@ -128,9 +177,9 @@ class TestRSAKeySizes:
         )
         try:
             data = f"RSA-{key_bits} sign test".encode()
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
+            sig = _sign_or_xfail(rs, priv, data)
             assert len(sig) == key_bits // 8
-            assert verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig)
+            assert _verify_or_xfail(rs, pub, data, sig)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

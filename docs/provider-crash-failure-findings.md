@@ -1321,10 +1321,14 @@ The following paths were tightened after inspecting the all-fail artifacts:
   behavior, not as an upstream OpenSSL-path fix.
 - **Key-size and metamorphic setup paths**: AES key-size checks and metamorphic
   invariants now use the shared advertised-keygen setup classification. Missing
-  `AES_KEY_GEN` or `RSA_PKCS_KEY_PAIR_GEN` stays a skip, while explicit
-  runtime rejection after advertisement is an xfail setup finding. Roundtrip,
-  determinism, copy-equivalence, and wrong-output assertions still fail when
-  the setup succeeds and the cryptographic invariant is wrong.
+  `AES_KEY_GEN`, `RSA_PKCS_KEY_PAIR_GEN`, or `SHA256_RSA_PKCS` stays a skip,
+  while explicit runtime rejection after advertisement is an xfail setup
+  finding. Roundtrip, determinism, copy-equivalence, and wrong-output
+  assertions still fail when the setup succeeds and the cryptographic invariant
+  is wrong. A focused pkcs11-mock key-size rerun in
+  `artifacts/_focused/pkcs11-mock-key-sizes-r2-20260527/` moves the old RSA
+  sign rows to skips and leaves six hard readback findings: AES key export
+  returns a placeholder value, and RSA public modulus reads back as empty bytes.
 - **ECDSA prehash negative verification**: tampered-data checks for
   `CKM_ECDSA_SHA*` now use the same invalid-signature policy as Wycheproof,
   ACVP, and mechanism-driven sign tests. Clean signature rejects pass the
