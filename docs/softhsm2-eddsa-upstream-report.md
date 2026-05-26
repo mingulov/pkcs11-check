@@ -42,7 +42,8 @@ For an Edwards public key object:
 
 Local spec source checked:
 
-- `/home/user/src/m/other/pkcs11/working/doc/spec/elliptic_curves.md`
+- local OASIS PKCS#11 spec checkout:
+  `../other/pkcs11/working/doc/spec/elliptic_curves.md`
 - Edwards public-key object table: lines 345-356
 - EdDSA mechanism table: lines 758-789
 

@@ -50,7 +50,12 @@ from pkcs11_check.testcases import (
     test_sign_recover,
     test_stateful,
 )
-from pkcs11_check.testcases.ckr import test_ckr_decrypt, test_ckr_encrypt, test_ckr_raw_state
+from pkcs11_check.testcases.ckr import (
+    test_ckr_decrypt,
+    test_ckr_encrypt,
+    test_ckr_raw_state,
+    test_ckr_wrap,
+)
 from pkcs11_check.testcases.mechanism_registry import ParamRecipe
 from pkcs11_check.testcases.security import test_nonce_quality, test_padding_oracle
 
@@ -739,6 +744,42 @@ def test_attribute_enforcement_aes_keygen_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
         test_attribute_enforcement.TestDestroyable().test_destroyable_readable(rs)
+
+
+def test_ckr_wrap_mechanism_invalid_skips_without_aes_key_wrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    def _unexpected_keygen(*_args: Any, **_kwargs: Any) -> int:
+        raise AssertionError("setup should not run without AES_KEY_WRAP")
+
+    monkeypatch.setattr(test_ckr_wrap, "gen_aes_key", _unexpected_keygen)
+
+    with pytest.raises(pytest.skip.Exception, match="AES_KEY_WRAP not supported"):
+        test_ckr_wrap.TestWrapKeyErrors().test_mechanism_invalid(rs, ckr_strict=False)
+
+
+def test_ckr_wrap_size_range_uses_documented_softhsm2_quirk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = SimpleNamespace(C_WrapKey=lambda *_args: int(CKR_GENERAL_ERROR))
+    rs = SimpleNamespace(
+        raw=raw,
+        sh=1,
+        has_mechanism=lambda name: name == "AES_KEY_WRAP",
+    )
+    p11_config = SimpleNamespace(module="/usr/lib/softhsm/libsofthsm2.so")
+
+    monkeypatch.setattr(test_ckr_wrap, "import_secret_key", lambda *_args, **_kwargs: 11)
+    monkeypatch.setattr(test_ckr_wrap, "gen_aes_key", lambda *_args, **_kwargs: 12)
+    monkeypatch.setattr(test_ckr_wrap, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    test_ckr_wrap.TestWrapKeyErrors().test_wrapping_key_size_range(
+        rs,
+        p11_config,
+        ckr_strict=False,
+    )
 
 
 def test_attribute_enforcement_date_setup_python_bug_propagates(
