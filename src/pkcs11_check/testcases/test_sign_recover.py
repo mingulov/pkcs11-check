@@ -476,12 +476,12 @@ class TestSignRecover:
 
 def _has_rsa_x509(p11_module: Any) -> bool:
     """Return True if the module's first token supports CKM_RSA_X_509."""
-    try:
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechs = {getattr(m, "name", str(m)) for m in slot.get_mechanisms()}
-        return "RSA_X_509" in mechs
-    except Exception:
+    slots = list(p11_module.get_slots(token_present=True))
+    if not slots:
         return False
+
+    mechs = {getattr(m, "name", str(m)) for m in slots[0].get_mechanisms()}
+    return "RSA_X_509" in mechs
 
 
 class TestSignRecoverRecipes:

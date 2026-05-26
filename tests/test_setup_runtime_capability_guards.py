@@ -265,6 +265,32 @@ def test_sign_recover_subprocess_keygen_reject_is_xfail(
         test_sign_recover.TestSignRecover().test_sign_recover_produces_output(config, object())
 
 
+def test_sign_recover_probe_returns_false_for_empty_token_slots() -> None:
+    module = SimpleNamespace(get_slots=lambda token_present=True: [])
+
+    assert test_sign_recover._has_rsa_x509(module) is False
+
+
+def test_sign_recover_probe_propagates_slot_enumeration_error() -> None:
+    def _raise_get_slots(*_args: Any, **_kwargs: Any) -> list[Any]:
+        raise RuntimeError("slot enumeration failed")
+
+    module = SimpleNamespace(get_slots=_raise_get_slots)
+
+    with pytest.raises(RuntimeError, match="slot enumeration failed"):
+        test_sign_recover._has_rsa_x509(module)
+
+
+def test_sign_recover_probe_propagates_mechanism_enumeration_error() -> None:
+    slot = SimpleNamespace(
+        get_mechanisms=lambda: (_ for _ in ()).throw(RuntimeError("mechanism probe failed"))
+    )
+    module = SimpleNamespace(get_slots=lambda token_present=True: [slot])
+
+    with pytest.raises(RuntimeError, match="mechanism probe failed"):
+        test_sign_recover._has_rsa_x509(module)
+
+
 def test_authenticated_wrap_v240_probe_xfails_when_aes_keygen_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

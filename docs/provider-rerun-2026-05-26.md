@@ -357,6 +357,11 @@ Completed high-signal observations:
   status, so a non-zero child exit or child signal is a hard result even if the
   parent process exits normally. Focused pkcs11-mock evidence:
   `artifacts/_focused/pkcs11-mock-fork-safety-current-20260527/`.
+- Sign-recover capability probing now distinguishes clean unsupported modules
+  from probe failures. An empty token slot list or missing `CKM_RSA_X_509`
+  remains a counted skip, while slot/mechanism enumeration errors propagate as
+  failures. Focused pkcs11-mock evidence:
+  `artifacts/_focused/pkcs11-mock-sign-recover-probe-current-20260527/`.
 
 ## Remaining Raw-Looking Buckets
 
