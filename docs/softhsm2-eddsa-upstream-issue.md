@@ -40,9 +40,42 @@ an encoded ANSI X9.62 EC point.
   `src/pkcs11_check/testcases/test_eddsa_public_key_encoding.py`
 
 Runtime evidence here is from SoftHSM2 2.7.0. Source inspection also found the
-same relevant EdDSA public-key storage pattern in the current SoftHSM2 branch
-checked locally, but a focused `test-softhsm2-main` runtime rerun should be used
-before claiming that `main` currently reproduces it.
+same relevant EdDSA public-key storage pattern in current SoftHSM2 `main`, but a
+focused `test-softhsm2-main` runtime rerun should be used before claiming that
+`main` currently reproduces it.
+
+## Verification snapshot
+
+Checked on 2026-05-26:
+
+- SoftHSM2 tag `2.7.0`: `13e6e86b83748fef74046dbf0c91f664b7acc1c3`
+- SoftHSM2 upstream `main`: `679f33d1b325cca8f5eb1a8febcc7630654a34de`
+- Local PKCS#11 spec checkout:
+  `oasis-tcs/pkcs11@48fa09240cc64ec1cd4c559b6af6642a2cdd13ae`
+- Focused encoding artifact:
+  `artifacts/_focused/softhsm2-eddsa-encoding-current-20260526/results.json`
+  reports `1 xfailed / 1 total`.
+- Broader focused EdDSA artifact:
+  `artifacts/_focused/softhsm2-eddsa-adaptive-profile-v3/results.json`
+  reports `21 passed, 4 failed, 4 skipped, 1 xfailed / 30 total`.
+
+The local PKCS#11 text checked for the expected `CKK_EC_EDWARDS` public-key
+encoding is `working/doc/spec/elliptic_curves.md:345-377` in the OASIS checkout.
+The key sentence is that `CKA_EC_POINT` is the public-key bytes in little-endian
+order as defined in RFC 8032.
+
+Source links for the likely SoftHSM2 implementation pattern:
+
+- Tag `2.7.0` OpenSSL backend:
+  <https://github.com/softhsm/SoftHSMv2/blob/13e6e86b83748fef74046dbf0c91f664b7acc1c3/src/lib/crypto/OSSLEDPublicKey.cpp#L160-L207>
+- Tag `2.7.0` Botan backend:
+  <https://github.com/softhsm/SoftHSMv2/blob/13e6e86b83748fef74046dbf0c91f664b7acc1c3/src/lib/crypto/BotanEDPublicKey.cpp#L106-L163>
+- Tag `2.7.0` `CKA_EC_POINT` import/export path:
+  <https://github.com/softhsm/SoftHSMv2/blob/13e6e86b83748fef74046dbf0c91f664b7acc1c3/src/lib/SoftHSM.cpp#L9802-L9808>
+  and
+  <https://github.com/softhsm/SoftHSMv2/blob/13e6e86b83748fef74046dbf0c91f664b7acc1c3/src/lib/SoftHSM.cpp#L12626-L12653>
+- Current upstream `main` has the same relevant pattern at the corresponding
+  paths, but the runtime result above is only from the `2.7.0` Docker target.
 
 ## Reproducer
 
