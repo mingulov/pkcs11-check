@@ -6,6 +6,11 @@ PKCS#11 modules, not only for the software providers used in the Docker matrix.
 
 ## Decision Rules
 
+- Spec checks should prefer the local OASIS TC checkout at
+  `/home/user/src/m/other/pkcs11/`. Use `published/3-02/` for released v3.2
+  headers and `working/doc/spec/` for searchable prose. The checkout's origin
+  is `https://github.com/oasis-tcs/pkcs11.git`; the current local HEAD observed
+  during this audit was `48fa092`.
 - Crashes, subprocess signal exits, hangs, accepted invalid cryptography, and
   failed valid cryptography remain findings. They must not be skipped or hidden.
 - Missing advertised capability is a skip only when the mechanism or interface
