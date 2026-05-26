@@ -771,6 +771,33 @@ The hard failures are all post-setup semantic findings:
 The old setup failures in the same selected area should not be used as final
 TPM2 counts; use the focused artifact above or a newer full matrix rerun.
 
+### Remaining-gap and subprocess-safety focused rerun
+
+Focused current-source evidence:
+`artifacts/_focused/tpm2-remaining-sign-safety-r2-20260527/`.
+
+The selected `test_remaining_gaps.py`, `test_sign_recover.py`, and
+`test_subprocess_safety.py` slice now reports 6 passed, 23 skipped, 8 xfailed,
+and 1 hard failure.
+
+The old hard rows for template-constraint attributes, legacy parallel
+functions, and sign-recover setup are stale on current source:
+
+- AES template and CMAC setup now use the shared advertised-keygen classifier.
+- `C_GetFunctionStatus` / `C_CancelFunction` still prefer
+  `CKR_FUNCTION_NOT_PARALLEL`, but `CKR_FUNCTION_NOT_SUPPORTED` is documented
+  as a non-clean compatibility note because the general function-list section
+  permits unsupported API stubs.
+- RSA sign-recover setup rejects are visible xfail evidence, not hard
+  sign-recover semantic failures.
+- Cross-process session-object isolation xfails parent `C_CreateObject` setup
+  rejection before the isolation condition can be tested.
+
+The remaining hard row is `test_fork_after_initialize`: the child
+re-initialize/finalize path times out after 15 seconds. Keep that as a TPM2
+subprocess-safety/daemon behavior finding unless a later focused run proves it
+is only an environment timeout.
+
 ### Raw CKR NULL-mechanism findings
 
 Focused current-source evidence:

@@ -1407,6 +1407,20 @@ The following paths were tightened after inspecting the all-fail artifacts:
   is recorded as a non-clean compliance note; state roundtrips, subprocess
   signals, positive child exits, and wrong digest/ciphertext output remain
   failures when the setup applies.
+- **TPM2 remaining-gap setup split**: `test_remaining_gaps.py` now uses the
+  shared AES setup classifier for template-constraint and AES-CMAC straggler
+  rows, and records `CKR_FUNCTION_NOT_SUPPORTED` from legacy
+  `C_GetFunctionStatus` / `C_CancelFunction` as a documented non-clean
+  compliance note rather than a hard failure. The general function-list
+  section permits unsupported API stubs, while the legacy parallel-function
+  section still prefers `CKR_FUNCTION_NOT_PARALLEL`.
+- **TPM2 subprocess-safety setup split**: cross-process session-object
+  isolation now xfails parent `C_CreateObject` setup rejection instead of
+  labelling it as a crash. A current focused TPM2 rerun in
+  `artifacts/_focused/tpm2-remaining-sign-safety-r2-20260527/` reports
+  6 passed, 23 skipped, 8 xfailed, and 1 failed across `test_remaining_gaps.py`,
+  `test_sign_recover.py`, and `test_subprocess_safety.py`. The remaining hard
+  row is still `test_fork_after_initialize` timing out after 15 seconds.
 
 The arithmetic-overflow clusters for TPM2, SoftHSM2, OpenCryptoki, and
 Kryoptic main were rechecked in the current pass. TPM2 is now reclassified to

@@ -326,6 +326,13 @@ Completed high-signal observations:
   rerun in `artifacts/_focused/pkcs11-mock-dual-operation-r2-20260527/`
   reports 3 passed, 5 skipped, and 0 failed for those two files, replacing old
   hard setup rows from missing AES/SHA support.
+- Remaining-gap and subprocess-safety focused TPM2 evidence:
+  `artifacts/_focused/tpm2-remaining-sign-safety-r2-20260527/`. Current source
+  reports 6 passed, 23 skipped, 8 xfailed, and 1 failed across
+  `test_remaining_gaps.py`, `test_sign_recover.py`, and
+  `test_subprocess_safety.py`. The former hard template/legacy/sign-recover
+  setup rows are now setup xfails or compliance notes; the remaining hard row
+  is the fork-after-initialize timeout.
 
 ## Remaining Raw-Looking Buckets
 

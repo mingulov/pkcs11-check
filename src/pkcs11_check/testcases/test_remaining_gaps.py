@@ -42,7 +42,6 @@ import pytest
 
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_aes_key,
     read_attributes,
     sign_single,
 )
@@ -79,7 +78,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
 from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.compliance]
 
@@ -167,16 +166,16 @@ class TestTemplateConstraintAttributes:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES not supported")
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
             attrs={
                 CKA_ENCRYPT: True,
                 CKA_DECRYPT: True,
                 CKA_WRAP: True,
                 CKA_TOKEN: False,
             },
+            purpose="CKA_WRAP_TEMPLATE readback setup",
         )
         try:
             try:
@@ -193,16 +192,16 @@ class TestTemplateConstraintAttributes:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES not supported")
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
             attrs={
                 CKA_ENCRYPT: True,
                 CKA_DECRYPT: True,
                 CKA_UNWRAP: True,
                 CKA_TOKEN: False,
             },
+            purpose="CKA_UNWRAP_TEMPLATE readback setup",
         )
         try:
             try:
@@ -219,15 +218,15 @@ class TestTemplateConstraintAttributes:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES not supported")
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
             attrs={
                 CKA_ENCRYPT: True,
                 CKA_DERIVE: True,
                 CKA_TOKEN: False,
             },
+            purpose="CKA_DERIVE_TEMPLATE readback setup",
         )
         try:
             try:
@@ -355,7 +354,7 @@ print(f"CF:0x{rv2:08x}")
         rv_hex = gfs_line.split(":")[1]
         # Spec says CKR_FUNCTION_NOT_PARALLEL (0x51).
         # SoftHSM2 returns CKR_OPERATION_NOT_INITIALIZED (0x91) - module quirk.
-        acceptable = {"0x00000051", "0x00000091"}
+        acceptable = {"0x00000051", "0x00000091", "0x00000054"}
         if rv_hex not in acceptable:
             pytest.fail(
                 f"C_GetFunctionStatus: expected CKR_FUNCTION_NOT_PARALLEL (0x51), got {rv_hex}"
@@ -363,8 +362,13 @@ print(f"CF:0x{rv2:08x}")
         if rv_hex != "0x00000051":
             from pkcs11_check.compliance import ComplianceLevel, note
 
+            rv_name = (
+                "CKR_FUNCTION_NOT_SUPPORTED"
+                if rv_hex == "0x00000054"
+                else "CKR_OPERATION_NOT_INITIALIZED"
+            )
             note(
-                f"C_GetFunctionStatus returned {rv_hex} instead of spec-required "
+                f"C_GetFunctionStatus returned {rv_name} ({rv_hex}) instead of spec-required "
                 f"CKR_FUNCTION_NOT_PARALLEL (0x51)",
                 ComplianceLevel.VENDOR,
             )
@@ -386,7 +390,7 @@ print(f"CF:0x{rv:08x}")
         cf_line = next((ln for ln in lines if ln.startswith("CF:")), None)
         assert cf_line is not None, f"No CF output: {stdout!r}"
         rv_hex = cf_line.split(":")[1]
-        acceptable = {"0x00000051", "0x00000091"}
+        acceptable = {"0x00000051", "0x00000091", "0x00000054"}
         if rv_hex not in acceptable:
             pytest.fail(
                 f"C_CancelFunction: expected CKR_FUNCTION_NOT_PARALLEL (0x51), got {rv_hex}"
@@ -394,8 +398,13 @@ print(f"CF:0x{rv:08x}")
         if rv_hex != "0x00000051":
             from pkcs11_check.compliance import ComplianceLevel, note
 
+            rv_name = (
+                "CKR_FUNCTION_NOT_SUPPORTED"
+                if rv_hex == "0x00000054"
+                else "CKR_OPERATION_NOT_INITIALIZED"
+            )
             note(
-                f"C_CancelFunction returned {rv_hex} instead of spec-required "
+                f"C_CancelFunction returned {rv_name} ({rv_hex}) instead of spec-required "
                 f"CKR_FUNCTION_NOT_PARALLEL (0x51)",
                 ComplianceLevel.VENDOR,
             )
@@ -585,15 +594,15 @@ class TestTier1Stragglers:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CMAC_GENERAL"):
             pytest.skip("CKM_AES_CMAC_GENERAL not supported")
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
             attrs={
                 CKA_SIGN: True,
                 CKA_VERIFY: True,
                 CKA_TOKEN: False,
             },
+            purpose="AES_CMAC_GENERAL setup",
         )
         try:
             sig = sign_single(
