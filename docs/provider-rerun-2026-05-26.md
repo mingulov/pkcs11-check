@@ -321,6 +321,11 @@ Completed high-signal observations:
 - Raw operation-state subprocess tests now distinguish setup failure from crash:
   if the subprocess cannot generate the AES setup key, the test xfails with the
   setup CKR; non-zero subprocess exit and signals still fail as crash evidence.
+- Dual-function and same-session operation-state raw subprocess tests now
+  preflight required AES/SHA mechanisms in the parent. A focused pkcs11-mock
+  rerun in `artifacts/_focused/pkcs11-mock-dual-operation-r2-20260527/`
+  reports 3 passed, 5 skipped, and 0 failed for those two files, replacing old
+  hard setup rows from missing AES/SHA support.
 
 ## Remaining Raw-Looking Buckets
 

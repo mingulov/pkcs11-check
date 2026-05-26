@@ -1396,6 +1396,17 @@ The following paths were tightened after inspecting the all-fail artifacts:
   reported total. Dynamic mechanism-driven tests remain provider-selected for
   now; the report does not synthesize skips for every unselected mechanism
   parameter.
+- **Dual-function and operation-state setup guards**: `test_dual_function.py`
+  and same-session `test_operation_state.py` rows now check AES/SHA setup
+  mechanisms before launching raw subprocess scripts. This keeps pkcs11-mock's
+  missing `AES_KEY_GEN`, `AES_CBC`, or `SHA256` support as counted skips rather
+  than unrelated child-process setup failures. A current focused pkcs11-mock
+  rerun in `artifacts/_focused/pkcs11-mock-dual-operation-r2-20260527/`
+  reports 3 passed, 5 skipped, and 0 failed for the selected dual/state files.
+  `C_SetOperationState` returning `CKR_ARGUMENTS_BAD` for a garbage state blob
+  is recorded as a non-clean compliance note; state roundtrips, subprocess
+  signals, positive child exits, and wrong digest/ciphertext output remain
+  failures when the setup applies.
 
 The arithmetic-overflow clusters for TPM2, SoftHSM2, OpenCryptoki, and
 Kryoptic main were rechecked in the current pass. TPM2 is now reclassified to

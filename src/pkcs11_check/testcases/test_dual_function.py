@@ -173,6 +173,12 @@ def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
     return module_path, slot_index, pin_bytes
 
 
+def _skip_missing_mechanisms(rs: Any, names: tuple[str, ...]) -> None:
+    for name in names:
+        if not rs.has_mechanism(name):
+            pytest.skip(f"{name} not supported by module")
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -190,7 +196,11 @@ class TestDigestEncryptUpdate:
     and encrypt operations separately over the same data.
     """
 
-    def test_digest_encrypt_update_round_trip(self, p11_config: Any) -> None:
+    def test_digest_encrypt_update_round_trip(
+        self,
+        p11_config: Any,
+        p11_raw_session: Any,
+    ) -> None:
         """DigestEncryptUpdate produces same ciphertext and digest as separate operations.
 
         Steps:
@@ -210,6 +220,7 @@ class TestDigestEncryptUpdate:
 
         Source: PKCS#11 v3.1 Sec.5.14.1.
         """
+        _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC", "SHA256"))
         module_path, slot_index, pin_bytes = _get_params(p11_config)
 
         script = (
@@ -373,7 +384,11 @@ class TestDecryptDigestUpdate:
     equal to SHA-256(original plaintext).
     """
 
-    def test_decrypt_digest_update_round_trip(self, p11_config: Any) -> None:
+    def test_decrypt_digest_update_round_trip(
+        self,
+        p11_config: Any,
+        p11_raw_session: Any,
+    ) -> None:
         """DecryptDigestUpdate recovers plaintext and produces correct SHA-256 digest.
 
         Steps:
@@ -391,6 +406,7 @@ class TestDecryptDigestUpdate:
 
         Source: PKCS#11 v3.1 Sec.5.14.2.
         """
+        _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC", "SHA256"))
         module_path, slot_index, pin_bytes = _get_params(p11_config)
 
         script = (
