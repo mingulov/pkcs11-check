@@ -75,6 +75,8 @@ def classify_skip_reason(reason: str | None) -> SkipReasonCategory:
             "no pin configured",
             "another user already logged in",
             "no token-present slots",
+            "cts variant detection failed",
+            "skipping cs",
         )
     ):
         return "framework_constraint"

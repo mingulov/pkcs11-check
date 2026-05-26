@@ -17,6 +17,19 @@ def test_classify_skip_reason_is_conservative_for_ambiguous_import_decode_failur
     assert classify_skip_reason("Cannot decode asn XDH vector: ValueError") == "unknown"
 
 
+def test_classify_skip_reason_treats_cts_variant_selection_as_framework_constraint() -> None:
+    assert (
+        classify_skip_reason(
+            "CKM_AES_CTS variant detection failed; test_cts_detect reports the provider finding"
+        )
+        == "framework_constraint"
+    )
+    assert (
+        classify_skip_reason("Module implements CS1, skipping CS3 vectors")
+        == "framework_constraint"
+    )
+
+
 def test_build_quality_audit_results_only_degrades_gracefully() -> None:
     results = {
         "tool": "pkcs11-check",
