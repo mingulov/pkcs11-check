@@ -949,6 +949,14 @@ The following paths were tightened after inspecting the all-fail artifacts:
   unsupported `CKA_LOCAL` readback is not counted as a wrong-value assertion,
   non-clean readback CKRs become xfail evidence, and `CKA_LOCAL=True` remains
   the only clean pass for generated keys.
+- **General object attribute/setup coverage**: `test_object.py` now uses the
+  shared AES/RSA/EC setup classifiers for object-label, object-search, keypair,
+  and RSA import-copy rows. Generated RSA public attributes are validated before
+  being reused as import input, so malformed readback becomes setup xfail
+  evidence for the import-copy row. Dedicated readback rows remain strict:
+  wrong or blank `CKA_CLASS`, `CKA_KEY_TYPE`, `CKA_MODULUS`,
+  `CKA_PUBLIC_EXPONENT`, or `CKA_VALUE` after successful setup are still hard
+  failures.
 - **Security key-flag coverage**: `CKA_NEVER_EXTRACTABLE`, `CKA_LOCAL`,
   `CKA_ALWAYS_SENSITIVE`, and AES-CBC-PAD flag tests now xfail explicit
   `AES_KEY_GEN` setup rejects instead of reporting an unrelated key-attribute
