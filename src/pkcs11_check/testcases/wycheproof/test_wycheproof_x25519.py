@@ -7,7 +7,7 @@ with EC_MONTGOMERY key type across raw, ASN.1, PEM, and JWK encodings.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -37,11 +37,16 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_xdh_private_bytes,
     decode_xdh_public_bytes,
@@ -68,6 +73,20 @@ _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
     CKR_FUNCTION_FAILED,
     CKR_DEVICE_ERROR,
     CKR_KEY_SIZE_RANGE,
+)
+
+_XDH_RUNTIME_REJECT_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 # OIDs for Montgomery curves
@@ -128,6 +147,16 @@ def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
 
 
 _ALL_XDH_VECTORS = _load_xdh_vectors()
+
+
+def _xfail_if_xdh_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised XDH derive rejects as non-clean findings."""
+    xfail_if_known_ckr(
+        exc,
+        _XDH_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised XDH derive is not operational",
+    )
+    raise exc
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_XDH_VECTORS, ids=[v[0] for v in _ALL_XDH_VECTORS])
@@ -208,6 +237,8 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         destroy_quietly(rs.raw, rs.sh, derived)
     except (AssertionError, TypeError) as exc:
         if result == "valid":
+            if isinstance(exc, AssertionError):
+                _xfail_if_xdh_runtime_reject(exc, vec_id)
             pytest.fail(f"X25519/X448 derive failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return

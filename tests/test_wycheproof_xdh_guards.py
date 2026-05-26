@@ -29,6 +29,10 @@ def _handle(*_args: Any, **_kwargs: Any) -> int:
     return 1
 
 
+def _raise_device_error(*_args: Any, **_kwargs: Any) -> int:
+    raise AssertionError("Unexpected CK_RV CKR_DEVICE_ERROR; expected one of: CKR_OK")
+
+
 def _read_zeros(_raw: Any, _session: int, _obj: int, attrs: list[int]) -> dict[int, bytes]:
     return {attr: b"\x00" * 56 for attr in attrs}
 
@@ -79,3 +83,18 @@ def test_invalid_xdh_public_length_success_is_reported(
 
     with pytest.raises(pytest.fail.Exception, match="Invalid X25519/X448 vector"):
         xdh.test_xdh(_XdhSession(), "x448_test.json:tc76-invalid", vec)
+
+
+def test_valid_xdh_derive_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Valid-vector derive CKRs are advertised-but-not-operational evidence."""
+    monkeypatch.setattr(xdh, "import_ec_private_key", _handle)
+    monkeypatch.setattr(xdh, "derive_key", _raise_device_error)
+    monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
+
+    vec_id = "x25519_test.json:tc1-valid"
+    vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised XDH derive is not operational"):
+        xdh.test_xdh(_XdhSession(), vec_id, vec)
