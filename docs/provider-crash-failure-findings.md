@@ -1337,6 +1337,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   wrong mechanism/key combinations, and CKR priority when setup succeeds, but
   advertised key-generation rejects are reported as setup xfail evidence rather
   than hiding the target negative condition behind a raw setup assertion.
+- **Property-fuzz setup classification**: Hypothesis-driven `test_fuzz.py`
+  now preflights AES/digest/RSA/HMAC/ECDSA mechanisms and reports advertised
+  setup or operation rejects as xfail evidence. The current pkcs11-mock rerun
+  reports all 11 property-fuzz rows skipped because the needed mechanisms are
+  not advertised; this replaces the old hard falsifying examples from missing
+  AES, SHA-2, RSA-SHA256, and HMAC support.
 - **Mechanism-negative setup**: the explicit wrong-key and missing-permission
   mechanism tests now use the same AES/RSA/EC setup guards. TPM-style
   `CKR_FUNCTION_NOT_SUPPORTED` during AES setup is reported as setup xfail

@@ -40,6 +40,7 @@ from pkcs11_check.testcases import (
     test_crossverify,
     test_crossverify_extended,
     test_data_objects,
+    test_fuzz,
     test_generic_secret,
     test_interop,
     test_key_usage_policy,
@@ -775,6 +776,74 @@ def test_data_objects_extra_session_capacity_reject_is_skip(
             rs,
             SimpleNamespace(pin=None),
         )
+
+
+def test_fuzz_aes_missing_mechanism_skips_before_keygen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _unexpected_keygen(*_args: Any, **_kwargs: Any) -> int:
+        raise AssertionError("AES fuzz setup should have been capability-guarded")
+
+    monkeypatch.setattr(test_fuzz, "gen_aes_key", _unexpected_keygen)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.skip.Exception, match="AES_ECB not supported"):
+        test_fuzz.TestAESFuzz().test_ecb_roundtrip(rs)
+
+
+def test_fuzz_digest_missing_mechanism_skips_before_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _unexpected_digest(*_args: Any, **_kwargs: Any) -> bytes:
+        raise AssertionError("digest fuzz operation should have been capability-guarded")
+
+    monkeypatch.setattr(test_fuzz, "digest_single", _unexpected_digest)
+    rs = _session_with_mechanisms()
+
+    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
+        test_fuzz.TestDigestFuzz().test_sha256_cross_verify(rs)
+
+
+def test_fuzz_rsa_missing_sign_mechanism_skips_before_keypair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _unexpected_keypair(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
+        raise AssertionError("RSA fuzz keypair should have been capability-guarded")
+
+    monkeypatch.setattr(test_fuzz, "gen_rsa_keypair", _unexpected_keypair)
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
+
+    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
+        test_fuzz.TestRSAFuzz().test_sign_verify_roundtrip(rs)
+
+
+def test_fuzz_hmac_missing_mechanism_skips_before_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _unexpected_import(*_args: Any, **_kwargs: Any) -> int:
+        raise AssertionError("HMAC fuzz key import should have been capability-guarded")
+
+    monkeypatch.setattr(test_fuzz, "import_secret_key", _unexpected_import)
+    rs = _session_with_mechanisms()
+
+    with pytest.raises(pytest.skip.Exception, match="SHA256_HMAC not supported"):
+        test_fuzz.TestHMACFuzz().test_hmac_deterministic(rs)
+
+
+def test_fuzz_advertised_digest_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _rejected_digest(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_INVALID",
+            int(CKR_MECHANISM_INVALID),
+        )
+
+    monkeypatch.setattr(test_fuzz, "digest_single", _rejected_digest)
+    rs = _session_with_mechanisms("SHA256")
+
+    with pytest.raises(pytest.xfail.Exception, match="fuzz digest"):
+        test_fuzz.TestDigestFuzz().test_sha256_deterministic(rs)
 
 
 def test_session_state_machine_extra_session_capacity_reject_is_skip(

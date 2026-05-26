@@ -342,6 +342,11 @@ Completed high-signal observations:
   `artifacts/_focused/pkcs11-mock-data-objects-r2-20260527/` reports
   3 passed, 1 skipped, and 9 failed; the failed rows are CKO_DATA storage and
   search behavior, not setup failures.
+- Property-fuzz tests now preflight required mechanisms before Hypothesis
+  operation loops. A focused pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-fuzz-r2-20260527/` reports 11 skipped and
+  0 failed, replacing old hard falsifying examples caused by absent AES-ECB,
+  SHA-2, RSA-SHA256, HMAC, and ECDSA mechanisms.
 - Remaining-gap and subprocess-safety focused TPM2 evidence:
   `artifacts/_focused/tpm2-remaining-sign-safety-r2-20260527/`. Current source
   reports 6 passed, 23 skipped, 8 xfailed, and 1 failed across
