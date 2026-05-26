@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
@@ -34,10 +35,12 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
     CKR_BUFFER_TOO_SMALL,
+    CKR_OK,
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
 )
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
+from pkcs11_check.raw.rv import ckr_name
 
 
 def _template_ptr(attrs):
@@ -81,30 +84,30 @@ class TestBufferTooSmall:
             """\
 mech = mech_simple(CKM_SHA256)
 rv = raw.C_DigestInit(sh, mech.byref())
-assert rv == CKR_OK, f"DigestInit: 0x{rv:08x}"
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:C_DigestInit(CKM_SHA256) failed: {ckr_name(rv)}")
+else:
+    GUARD = 0xAA
+    BUF_SIZE = 64
+    DECLARED = 1  # Tell C_Digest the buffer is only 1 byte
 
-GUARD = 0xAA
-BUF_SIZE = 64
-DECLARED = 1  # Tell C_Digest the buffer is only 1 byte
+    data = (ctypes.c_ubyte * 16)(*([0x42]*16))
+    buf = (ctypes.c_ubyte * BUF_SIZE)(*([GUARD]*BUF_SIZE))
+    out_len = ctypes.c_ulong(DECLARED)
+    rv = raw.C_Digest(sh, data, 16, buf, ctypes.byref(out_len))
+    print(f"CKR:0x{rv:08x}")
+    print(f"LEN:{out_len.value}")
 
-data = (ctypes.c_ubyte * 16)(*([0x42]*16))
-buf = (ctypes.c_ubyte * BUF_SIZE)(*([GUARD]*BUF_SIZE))
-out_len = ctypes.c_ulong(DECLARED)
-rv = raw.C_Digest(sh, data, 16, buf, ctypes.byref(out_len))
-print(f"CKR:0x{rv:08x}")
-print(f"LEN:{out_len.value}")
-
-# Count how many bytes were overwritten past the declared boundary
-overwritten = 0
-for i in range(DECLARED, BUF_SIZE):
-    if buf[i] != GUARD:
-        overwritten += 1
-print(f"OVERWRITTEN:{overwritten}")
-print("OK")
+    # Count how many bytes were overwritten past the declared boundary
+    overwritten = 0
+    for i in range(DECLARED, BUF_SIZE):
+        if buf[i] != GUARD:
+            overwritten += 1
+    print(f"OVERWRITTEN:{overwritten}")
+    print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_Digest undersized buffer")
         # Parse overflow evidence from subprocess output
         overwritten = 0
         for line in out.splitlines():
@@ -142,25 +145,26 @@ attrs = template(
 mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
-
-# EncryptInit
-mech = mech_simple(CKM_AES_ECB)
-rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
-assert rv == CKR_OK
-
-# Encrypt with 1-byte output buffer
-data = (ctypes.c_ubyte * 16)(*([0]*16))
-out = (ctypes.c_ubyte * 1)()
-out_len = ctypes.c_ulong(1)
-rv = raw.C_Encrypt(sh, data, 16, out, ctypes.byref(out_len))
-print(f"CKR:0x{rv:08x}")
-assert rv == CKR_BUFFER_TOO_SMALL, f"Expected BUFFER_TOO_SMALL, got 0x{rv:08x}"
-print("OK")
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:C_GenerateKey for AES encrypt failed: {ckr_name(rv)}")
+else:
+    # EncryptInit
+    mech = mech_simple(CKM_AES_ECB)
+    rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:C_EncryptInit(CKM_AES_ECB) failed: {ckr_name(rv)}")
+    else:
+        # Encrypt with 1-byte output buffer
+        data = (ctypes.c_ubyte * 16)(*([0]*16))
+        out = (ctypes.c_ubyte * 1)()
+        out_len = ctypes.c_ulong(1)
+        rv = raw.C_Encrypt(sh, data, 16, out, ctypes.byref(out_len))
+        print(f"CKR:0x{rv:08x}")
+        assert rv == CKR_BUFFER_TOO_SMALL, f"Expected BUFFER_TOO_SMALL, got 0x{rv:08x}"
+        print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_Encrypt undersized buffer")
 
     def test_sign_buffer_too_small(self, p11_config: Any) -> None:
         """C_Sign with 1-byte output -> CKR_BUFFER_TOO_SMALL."""
@@ -191,15 +195,13 @@ rv = raw.C_GenerateKeyPair(
     byref(priv),
 )
 if rv != CKR_OK:
-    print(f"CKR:0x{rv:08x}:keygen_failed")
-    print("OK")  # Skip if keygen fails
+    print(f"SETUP_XFAIL:C_GenerateKeyPair for RSA sign failed: {ckr_name(rv)}")
 else:
     # SignInit with SHA256_RSA_PKCS
     sign_mech = mech_simple(CKM_SHA256_RSA_PKCS)
     rv = raw.C_SignInit(sh, sign_mech.byref(), priv.value)
     if rv != CKR_OK:
-        print(f"CKR:0x{rv:08x}:signinit_failed")
-        print("OK")
+        print(f"SETUP_XFAIL:C_SignInit(CKM_SHA256_RSA_PKCS) failed: {ckr_name(rv)}")
     else:
         data = (ctypes.c_ubyte * 32)(*([0x42]*32))
         out = (ctypes.c_ubyte * 1)()  # Too small for RSA-2048 sig (256 bytes)
@@ -210,5 +212,4 @@ else:
         print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_Sign undersized buffer")

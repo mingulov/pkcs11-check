@@ -33,6 +33,7 @@ from pkcs11_check.testcases.ckr._ckr_spec import (
     _UNIVERSAL,
     full_compat,
 )
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 pytestmark = pytest.mark.access
 
@@ -131,7 +132,12 @@ class TestUniversalRealTriggers:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="C_GetSlotList after C_Finalize",
+        )
         assert "OK" in result.stdout
         # CKR_OK after C_Finalize means the module auto-re-initializes.
         if "CKR:0x00000000" in result.stdout:
@@ -193,5 +199,10 @@ class TestUniversalRealTriggers:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="fault-proxy C_GenerateRandom CKR_DEVICE_REMOVED injection",
+        )
         assert "OK:DEVICE_REMOVED" in result.stdout

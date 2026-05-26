@@ -15,6 +15,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 
@@ -44,7 +46,12 @@ class TestInitializeErrors:
             text=True,
             timeout=15,
         )
-        assert result.returncode == 0, f"Subprocess crashed: {result.stderr}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="C_Initialize double initialize",
+        )
         output = result.stdout.strip()
         # Both "already initialized" and "accepted" are valid
         assert output.startswith("CKR:"), f"Unexpected output: {output}"
@@ -73,7 +80,12 @@ class TestInitializeErrors:
             text=True,
             timeout=15,
         )
-        assert result.returncode == 0, f"Subprocess crashed: {result.stderr}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="C_Finalize after C_Finalize",
+        )
         output = result.stdout.strip()
         assert output.startswith("CKR:"), f"Unexpected output: {output}"
 
@@ -106,6 +118,11 @@ class TestInitializeErrors:
             text=True,
             timeout=15,
         )
-        assert result.returncode == 0, f"Subprocess crashed: {result.stderr}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="C_GetInterfaceList",
+        )
         output = result.stdout.strip()
         assert output.startswith("CKR:"), f"Unexpected output: {output}"

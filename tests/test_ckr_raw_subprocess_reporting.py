@@ -13,6 +13,7 @@ from pkcs11_check.testcases.ckr import (
     test_ckr_v30_raw,
     test_ckr_v32_raw,
 )
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 RawCheck = Callable[[int, str, str, str], None]
 
@@ -35,6 +36,31 @@ def test_raw_check_reports_positive_exit_as_subprocess_failure(check: RawCheck) 
     """Assertion failures inside the child process are not crash findings."""
     with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
         check(1, "CKR:0x00000007", "AssertionError: unexpected CKR", "C_Test")
+
+
+def test_ckr_subprocess_helper_reports_positive_exit_as_child_failure() -> None:
+    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+        assert_ckr_subprocess_ok(
+            1,
+            "",
+            "AssertionError: setup failed",
+            context="CKR setup probe",
+        )
+
+
+def test_ckr_subprocess_helper_converts_setup_marker_to_xfail() -> None:
+    with pytest.raises(pytest.xfail.Exception, match="AES key generation rejected"):
+        assert_ckr_subprocess_ok(
+            0,
+            "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+            "",
+            context="CKR setup probe",
+        )
+
+
+def test_ckr_subprocess_helper_requires_ok_marker() -> None:
+    with pytest.raises(pytest.fail.Exception, match="did not emit an OK marker"):
+        assert_ckr_subprocess_ok(0, "CKR:0x00000000\n", "", context="CKR setup probe")
 
 
 def test_ckr_dual_reports_positive_subprocess_exit_as_child_failure(

@@ -19,6 +19,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 _SCRIPT_PREAMBLE = """\
@@ -102,11 +104,7 @@ def _run(module: str, pin: str | None, test_code: str) -> tuple[int, str, str]:
 
 
 def _assert_probe_completed(rc: int, out: str, err: str) -> None:
-    assert rc == 0, f"Crash: {err[-300:]}"
-    for line in out.splitlines():
-        if line.startswith("SETUP_XFAIL:"):
-            pytest.xfail(line.removeprefix("SETUP_XFAIL:"))
-    assert "OK" in out
+    assert_ckr_subprocess_ok(rc, out, err, context="CKR operation-state raw probe")
 
 
 class TestOperationActive:

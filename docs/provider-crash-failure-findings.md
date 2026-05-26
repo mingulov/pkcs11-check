@@ -276,6 +276,32 @@ Existing artifacts that mention these `test_ckr_dual.py` subprocess crashes
 should be treated as pre-fix harness evidence. A focused provider rerun is
 needed before these rows are used in article wording.
 
+### Follow-Up: CKR Raw/Fault Setup Classification
+
+The compact artifact scan also showed `Crash:` wording in
+`test_ckr_raw_attrs.py`, `test_ckr_raw_buffer.py`, `test_ckr_raw_state.py`, and
+`test_ckr_fault_inject.py` for TPM2 and pkcs11-mock rows where the child process
+failed during setup, such as AES key generation, RSA key generation, digest
+initialization, or fault-proxy pass-through setup. Those rows were not signal
+crashes; they were positive Python exits from assertions inside the child.
+
+Current source uses a shared CKR subprocess classifier for those files. Negative
+return codes still fail as module crash findings. Positive child exits now
+report as child-script failures. Setup precondition rejects that prevent the
+intended CKR probe from running are emitted as `SETUP_XFAIL:` and become visible
+xfail evidence rather than a pass or a false crash. This keeps genuine CKR
+failures visible: wrong return codes, missing injected fault errors, accepted
+forbidden key usage, bad buffer handling, and subprocess signals still fail.
+
+The same classifier now covers `test_ckr_general.py`,
+`test_ckr_universal.py`, and `test_ckr_raw_multipart.py`. Those files were not
+the dominant retained artifact buckets, but they used the same direct
+`returncode == 0` pattern and now report positive child exits separately from
+signal crashes.
+
+Existing artifact rows from those files need a focused rerun before being used
+as provider crash evidence in public wording.
+
 ### Follow-Up: Legacy Cipher Advertised-But-Rejected Paths
 
 The same classification issue existed in legacy cipher coverage for ARIA,
