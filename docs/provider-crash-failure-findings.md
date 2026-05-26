@@ -608,6 +608,11 @@ deeper follow-up before being presented as final provider conclusions.
   algorithm. The ACVP HMAC failures reach that advertised mechanism path and
   then return `CKR_GENERAL_ERROR`, so they should be visible xfail findings
   rather than capability skips.
+- **TPM2 interop/crossverify runtime rejects**: the OpenSSL/Python
+  cross-verification files now use the same rule for advertised AES/HMAC
+  operation rejects. `CKR_GENERAL_ERROR` after a selected mechanism becomes
+  visible xfail evidence, while exact-output mismatches after `CKR_OK` remain
+  hard failures.
 - **pkcs11-mock X.509 limbo buckets**: the large mock X.509 buckets are
   `CKA_VALUE` round-trip mismatch findings, not crash evidence. They are useful
   harness stress rows because the module accepts certificate objects but returns

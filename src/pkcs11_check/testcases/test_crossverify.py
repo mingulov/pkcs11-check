@@ -55,6 +55,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail, is_known_error
 
@@ -102,7 +103,10 @@ class TestAESCrossVerify:
 
         p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_ECB)
         try:
-            p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
+            try:
+                p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_ECB encrypt")
 
             # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
             cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
@@ -122,7 +126,10 @@ class TestAESCrossVerify:
 
         p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_ECB)
         try:
-            p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
+            try:
+                p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_ECB encrypt")
 
             # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
             cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
@@ -147,7 +154,10 @@ class TestAESCrossVerify:
 
         p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_ECB)
         try:
-            p11_pt = decrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, ciphertext)
+            try:
+                p11_pt = decrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, ciphertext)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_ECB decrypt")
             assert p11_pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
@@ -161,7 +171,10 @@ class TestAESCrossVerify:
 
         p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_ECB)
         try:
-            p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
+            try:
+                p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_ECB encrypt")
 
             # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
             cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
@@ -396,7 +409,10 @@ class TestHMACCrossVerify:
             pytest.skip("Cannot create HMAC key")
 
         try:
-            p11_mac = sign_single(rs.raw, rs.sh, p11_key, CKM_SHA256_HMAC, data)
+            try:
+                p11_mac = sign_single(rs.raw, rs.sh, p11_key, CKM_SHA256_HMAC, data)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "SHA256_HMAC sign")
             py_mac = hmac_mod.new(key_bytes, data, "sha256").digest()
             assert p11_mac == py_mac
         finally:
@@ -429,7 +445,10 @@ class TestHMACCrossVerify:
 
         try:
             data = b"HMAC-SHA1 cross-verify"
-            p11_mac = sign_single(rs.raw, rs.sh, p11_key, CKM_SHA_1_HMAC, data)
+            try:
+                p11_mac = sign_single(rs.raw, rs.sh, p11_key, CKM_SHA_1_HMAC, data)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "SHA_1_HMAC sign")
             py_mac = hmac_mod.new(key_bytes, data, "sha1").digest()
             assert p11_mac == py_mac
         finally:

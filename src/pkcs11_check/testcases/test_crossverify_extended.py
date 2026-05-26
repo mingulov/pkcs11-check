@@ -41,6 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS_PSS,
     CKM_SHA_1,
 )
+from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import (
     read_rsa_private_key_or_xfail,
     read_rsa_public_key_or_xfail,
@@ -82,14 +83,17 @@ class TestAESCBCCrossVerify:
         # PKCS#11
         p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_CBC)
         try:
-            ct_p11 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                p11_key,
-                CKM_AES_CBC,
-                data,
-                mech_param=mech_bytes(CKM_AES_CBC, iv),
-            )
+            try:
+                ct_p11 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    p11_key,
+                    CKM_AES_CBC,
+                    data,
+                    mech_param=mech_bytes(CKM_AES_CBC, iv),
+                )
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_CBC encrypt")
 
             # cryptography
             cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv))
@@ -115,14 +119,17 @@ class TestAESCBCCrossVerify:
         # Decrypt with PKCS#11
         p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_CBC)
         try:
-            pt = decrypt_single(
-                rs.raw,
-                rs.sh,
-                p11_key,
-                CKM_AES_CBC,
-                ct,
-                mech_param=mech_bytes(CKM_AES_CBC, iv),
-            )
+            try:
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    p11_key,
+                    CKM_AES_CBC,
+                    ct,
+                    mech_param=mech_bytes(CKM_AES_CBC, iv),
+                )
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_CBC decrypt")
             assert pt == data
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)

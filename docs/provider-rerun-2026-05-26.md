@@ -368,12 +368,17 @@ official full-matrix release statistics.
   `CKR_MECHANISM_INVALID` is visible advertised-but-not-operational xfail
   evidence. Wycheproof X25519/X448 and HKDF vector rows already passed or
   skipped cleanly in this focused run.
-- The remaining TPM2 AES/HMAC interop and crossverify failures now reach the TPM
-  operation and return `CKR_GENERAL_ERROR` with TPM2-TSS errors such as
-  `Esys_EncryptDecrypt2` / `Esys_HMAC` handle value out of range. Those are
-  provider behavior findings, not missing-template setup failures. RSA-4096
-  crossverify moved to xfail setup evidence because the provider rejects that
-  key size with `CKR_ATTRIBUTE_VALUE_INVALID`.
+- `tpm2` interop/crossverify current-source artifact:
+  `artifacts/_focused/tpm2-interop-crossverify-current-20260526`. Current
+  source reports `test_interop.py`, `test_crossverify.py`, and
+  `test_crossverify_extended.py` with 23 passed, 4 skipped, 14 xfailed, 0
+  failed, and 0 crashed. AES/HMAC operations that reach the TPM operation and
+  return `CKR_GENERAL_ERROR` with TPM2-TSS errors such as
+  `Esys_EncryptDecrypt2` / `Esys_HMAC` handle value out of range are visible
+  provider behavior findings, not missing-template setup failures. Exact wrong
+  ciphertext, plaintext, digest, MAC, or signature outputs remain hard failures.
+  RSA-4096 crossverify remains xfail setup evidence because the provider rejects
+  that key size with `CKR_ATTRIBUTE_VALUE_INVALID`.
 - `softhsm2` focused DSA artifacts:
   `artifacts/_focused/softhsm2-dsa-current-after-bigint`. The same
   `test_wycheproof_dsa.py` focus moved from 296 valid-signature failures to 0

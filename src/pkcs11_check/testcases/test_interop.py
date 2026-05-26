@@ -52,6 +52,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS,
     CKM_SHA_1_HMAC,
 )
+from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases.conftest import extract_ec_point
 
@@ -275,7 +276,10 @@ class TestAESInterop:
             },
         )
         try:
-            ct = encrypt_single(rs.raw, rs.sh, key_h, CKM_AES_ECB, plaintext)
+            try:
+                ct = encrypt_single(rs.raw, rs.sh, key_h, CKM_AES_ECB, plaintext)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_ECB encrypt")
 
             # Intentional CKM_AES_ECB reference vector for PKCS#11 interoperability.
             cipher = Cipher(algorithms.AES(key_bytes), modes.ECB())  # nosec B305
@@ -312,7 +316,10 @@ class TestAESInterop:
             },
         )
         try:
-            pt = decrypt_single(rs.raw, rs.sh, key_h, CKM_AES_ECB, ct)
+            try:
+                pt = decrypt_single(rs.raw, rs.sh, key_h, CKM_AES_ECB, ct)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_ECB decrypt")
             assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
@@ -383,7 +390,10 @@ class TestHMACInterop:
             },
         )
         try:
-            p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA256_HMAC, data)
+            try:
+                p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA256_HMAC, data)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "SHA256_HMAC sign")
 
             # cryptography
             h = hmac.HMAC(key_bytes, hashes.SHA256())
@@ -414,7 +424,10 @@ class TestHMACInterop:
             },
         )
         try:
-            p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA_1_HMAC, data)
+            try:
+                p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA_1_HMAC, data)
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "SHA_1_HMAC sign")
 
             # Intentional CKM_SHA_1_HMAC compatibility coverage for legacy modules.
             h = hmac.HMAC(key_bytes, hashes.SHA1())  # nosec B303
