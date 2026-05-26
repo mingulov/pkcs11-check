@@ -395,6 +395,11 @@ official full-matrix release statistics.
   KAT `CKR_MECHANISM_INVALID` rows were missing-capability guard noise. The two
   remaining hard rows are SHA-1 digest mismatches after `CKR_OK`, which remain
   strict wrong-output findings.
+- `pkcs11-mock` legacy multipart smoke focused artifact:
+  `artifacts/_focused/pkcs11-mock-multipart-r2-20260527/`. The focused
+  `test_multipart.py` run moved from 9 failed to 9 skipped. The old rows were
+  missing SHA-2/AES/RSA-SHA256 capability guards in the legacy smoke file, not
+  provider cryptographic-output failures.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124

@@ -1141,6 +1141,15 @@ The following paths were tightened after inspecting the all-fail artifacts:
   old TPM2 `CKR_FUNCTION_NOT_SUPPORTED`/`CKR_GENERAL_ERROR` hard rows are stale;
   BouncyHSM zero-length SHA-256 rows still need current reruns before article
   wording uses them as hard failures.
+- **Legacy multipart smoke coverage**: the older `test_multipart.py` smoke file
+  now uses the same capability/setup split before digest, AES-ECB, and
+  RSA/SHA-256 sign checks. Missing mechanisms become counted skips; advertised
+  setup or operation CKRs become visible xfail evidence. The AES rows use
+  AES-128 setup keys because these rows test larger payload/block-count smoke
+  behavior, not AES-256 key-size support. A focused pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-multipart-r2-20260527/` reports all 9 rows
+  skipped and 0 failed, so the old pkcs11-mock `test_multipart.py`
+  `CKR_MECHANISM_INVALID` rows are stale missing-capability artifacts.
 - **General SHA digest coverage**: the general digest tests now skip missing
   SHA-family mechanisms before calling `C_Digest`, xfail explicit runtime
   rejects from advertised digest operations, and classify advertised-but-rejected
