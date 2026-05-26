@@ -473,7 +473,8 @@ def import_ec_public_key(
     """Import EC/Edwards/Montgomery public key from point.
 
     ``ec_params``: DER-encoded curve OID.
-    ``ec_point``: DER-wrapped public point (OCTET STRING wrapping).
+    ``ec_point``: for CKK_EC, DER-wrapped ANSI X9.62 point; for Edwards and
+        Montgomery keys, raw public key bytes as defined by their RFCs.
     ``key_type``: CKK_EC (default), CKK_EC_EDWARDS, or CKK_EC_MONTGOMERY.
     """
     base: dict[int, Any] = {

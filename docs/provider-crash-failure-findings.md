@@ -722,6 +722,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   now use the digest size for the selected mechanism, so SHA3-224 no longer
   requests an invalid 32-byte output. Explicit `C_DeriveKey` CKR rejects are
   still reported as xfail advertised-but-not-operational evidence.
+- **ACVP/Wycheproof EdDSA public-key encoding**: `CKK_EC_EDWARDS`
+  `CKA_EC_POINT` inputs now use the raw RFC 8032 public-key bytes required by
+  the local OASIS PKCS#11 spec tree, not a DER OCTET STRING wrapper. Focused
+  SoftHSM2 and Kryoptic reruns show that providers which only verify the old
+  DER-wrapped form now reject valid raw-point SigVer vectors; that is provider
+  compatibility/spec evidence, not a reason to keep the harness wrapping.
 - **ACVP EdDSA key verification**: valid EdDSA public-key import rejected with
   explicit CKR values is now xfail evidence for an advertised EDDSA path that
   cannot import usable ACVP public keys. Accepting an invalid EdDSA key remains
@@ -735,6 +741,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   CKRs such as `CKR_DEVICE_ERROR` are visible xfail evidence for an advertised
   but non-operational path. Deterministic EdDSA signature mismatches remain
   real failures.
+- **Signature-vector `CKR_FUNCTION_NOT_SUPPORTED` rejects**: advertised
+  signature mechanisms that reach `C_VerifyInit` and then return
+  `CKR_FUNCTION_NOT_SUPPORTED` are now classified with the same non-clean xfail
+  policy as `CKR_FUNCTION_FAILED` and `CKR_DEVICE_ERROR`. This preserves the
+  finding without treating a provider's runtime CKR as a harness exception.
 - **ACVP SLH-DSA runtime rejects**: valid SigVer vectors now get a valid-signature
   runtime-reject xfail reason instead of being described as invalid-signature
   rejects. Keygen roundtrip and SigGen sign operation CKRs are also visible

@@ -234,7 +234,16 @@ Completed high-signal observations:
   reject (`xfail` evidence), and accepted invalid signature (hard failure).
   The non-clean reject set now includes explicit runtime CKRs observed in this
   batch, including `CKR_ARGUMENTS_BAD`, `CKR_MECHANISM_INVALID`,
-  `CKR_MECHANISM_PARAM_INVALID`, and `CKR_KEY_TYPE_INCONSISTENT`.
+  `CKR_MECHANISM_PARAM_INVALID`, `CKR_KEY_TYPE_INCONSISTENT`, and
+  `CKR_FUNCTION_NOT_SUPPORTED`.
+- EdDSA vector loaders now use raw RFC 8032 public-key bytes for
+  `CKK_EC_EDWARDS` `CKA_EC_POINT`. The local PKCS#11 spec tree says Edwards
+  public-key objects store the public key bytes directly; DER OCTET STRING
+  wrapping applies to classic `CKK_EC` ANSI X9.62 points, not Edwards keys.
+  Focused SoftHSM2/Kryoptic reruns therefore expose DER-only compatibility as
+  provider behavior, while a focused NSS rerun confirmed
+  `CKR_FUNCTION_NOT_SUPPORTED` is now reported as xfail evidence rather than a
+  raw harness error.
 - Padding-oracle structured RSA tests now treat malformed generated RSA public
   modulus/exponent attributes as an xfail setup finding instead of crashing with
   Python `ValueError`.

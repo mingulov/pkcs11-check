@@ -24,18 +24,6 @@ CURVE_MAP: dict[str, tuple[bytes, int, int]] = {
 }
 
 
-def der_octet_string(data: bytes) -> bytes:
-    """Wrap raw bytes in a DER OCTET STRING (tag 0x04 + length + data).
-
-    For Edwards curves, CKA_EC_POINT is the raw public key wrapped in a
-    DER OCTET STRING (not the uncompressed 04||x||y point used for ECDSA).
-    """
-    n = len(data)
-    if n < 0x80:
-        return bytes([0x04, n]) + data
-    return bytes([0x04, 0x81, n]) + data
-
-
 def load_eddsa_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load EdDSA KeyGen ACVP vectors for Ed25519 and Ed448.
 
@@ -82,7 +70,7 @@ def load_eddsa_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
                 "ec_params": oid,
                 "d": d_bytes,
                 "q": q_bytes,
-                "ec_point": der_octet_string(q_bytes),
+                "ec_point": q_bytes,
                 "tc_id": tc_id,
             }
             vec_id = f"EDDSA-KeyGen-{curve_name}-tc{tc_id}"
@@ -133,7 +121,7 @@ def load_eddsa_keyver_vectors() -> list[tuple[str, dict[str, Any]]]:
             "curve": curve_name,
             "ec_params": oid,
             "q": q_bytes,
-            "ec_point": der_octet_string(q_bytes),
+            "ec_point": q_bytes,
             "expected_pass": expected_pass,
             "tc_id": tc_id,
         }
@@ -193,7 +181,8 @@ def load_eddsa_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
         merged: dict[str, Any] = {
             "curve": curve_name,
             "ec_params": oid,
-            "ec_point": der_octet_string(q_bytes),
+            "q": q_bytes,
+            "ec_point": q_bytes,
             "msg": msg_bytes,
             "sig": sig_bytes,
             "expected_pass": expected_pass,
@@ -278,7 +267,7 @@ def load_eddsa_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
                 "d": d_bytes,
                 "q": q_bytes,
                 "ec_params": _ED25519_OID,
-                "ec_point": der_octet_string(q_bytes),
+                "ec_point": q_bytes,
                 "msg": msg_bytes,
                 "expected_sig": expected_sig,
                 "tc_id": tc_id,

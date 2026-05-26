@@ -95,16 +95,12 @@ def test_ed25519_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, An
     if ed25519_oid in _UNSUPPORTED_CURVE_OIDS:
         pytest.skip("Ed25519 not supported (cached)")
 
-    # Import Ed25519 public key
-    # EC_POINT for Edwards curves needs the raw 32-byte key wrapped in OCTET STRING
-    ec_point = bytes([0x04, len(pk_bytes)]) + pk_bytes
-
     try:
         pub_key = import_ec_public_key(
             rs.raw,
             rs.sh,
             ec_params=ed25519_oid,
-            ec_point=ec_point,
+            ec_point=pk_bytes,
             key_type=int(CKK_EC_EDWARDS),
             attrs={CKA_VERIFY: True},
         )
@@ -178,15 +174,12 @@ def test_ed448_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
     if ed448_oid in _UNSUPPORTED_CURVE_OIDS:
         pytest.skip("Ed448 not supported (cached)")
 
-    # EC_POINT: DER OCTET STRING wrapper
-    ec_point = bytes([0x04, len(pk_bytes)]) + pk_bytes
-
     try:
         pub_key = import_ec_public_key(
             rs.raw,
             rs.sh,
             ec_params=ed448_oid,
-            ec_point=ec_point,
+            ec_point=pk_bytes,
             key_type=int(CKK_EC_EDWARDS),
             attrs={CKA_VERIFY: True},
         )

@@ -10,10 +10,21 @@ import pytest
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR, CKR_TEMPLATE_INCONSISTENT
 from pkcs11_check.testcases.acvp import test_acvp_eddsa
+from pkcs11_check.testcases.acvp._eddsa_helpers import (
+    load_eddsa_keyver_vectors,
+    load_eddsa_sigver_vectors,
+)
 
 
 def _session() -> SimpleNamespace:
     return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+
+
+def test_eddsa_acvp_public_keys_use_raw_rfc8032_encoding() -> None:
+    """CKK_EC_EDWARDS CKA_EC_POINT is raw public-key bytes, not DER wrapped."""
+    for _vec_id, vec in [*load_eddsa_keyver_vectors(), *load_eddsa_sigver_vectors()]:
+        assert vec["ec_point"] == vec["q"]
+        assert len(vec["ec_point"]) in (32, 57)
 
 
 def test_eddsa_keyver_valid_key_import_reject_is_xfail(
