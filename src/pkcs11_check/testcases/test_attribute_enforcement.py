@@ -715,7 +715,7 @@ class TestDateAttributes:
                 },
                 purpose="date attribute setup",
             )
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             pytest.skip(f"Module does not support CKA_START_DATE / CKA_END_DATE: {e}")
 
         try:
@@ -728,7 +728,7 @@ class TestDateAttributes:
                 )
                 sd = attrs[CKA_START_DATE]
                 ed = attrs[CKA_END_DATE]
-            except (AssertionError, Exception) as e:
+            except AssertionError as e:
                 pytest.skip(f"Module does not expose date attributes: {e}")
 
             assert sd == "20260101", f"Expected 20260101, got {sd}"
@@ -749,7 +749,7 @@ class TestDateAttributes:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_START_DATE])
                 sd = attrs[CKA_START_DATE]
-            except (AssertionError, Exception) as e:
+            except AssertionError as e:
                 pytest.skip(f"Module does not expose CKA_START_DATE: {e}")
 
             # Empty date: raw API returns "" or "00000000" or similar

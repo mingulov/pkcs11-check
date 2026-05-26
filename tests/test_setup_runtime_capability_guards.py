@@ -741,6 +741,54 @@ def test_attribute_enforcement_aes_keygen_reject_is_xfail(
         test_attribute_enforcement.TestDestroyable().test_destroyable_readable(rs)
 
 
+def test_attribute_enforcement_date_setup_python_bug_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    def _broken_keygen(*_args: Any, **_kwargs: Any) -> int:
+        raise ValueError("date setup bug with CKR_FUNCTION_FAILED text")
+
+    monkeypatch.setattr(test_attribute_enforcement, "gen_aes_key_or_xfail", _broken_keygen)
+
+    try:
+        test_attribute_enforcement.TestDateAttributes().test_start_end_date_on_generated_key(rs)
+    except BaseException as exc:
+        assert isinstance(exc, ValueError)
+        assert "date setup bug" in str(exc)
+    else:
+        pytest.fail("Expected date setup Python bug to propagate")
+
+
+def test_attribute_enforcement_date_read_python_bug_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+    destroyed: list[int] = []
+
+    monkeypatch.setattr(test_attribute_enforcement, "gen_aes_key_or_xfail", lambda *_a, **_k: 7)
+    monkeypatch.setattr(
+        test_attribute_enforcement,
+        "destroy_quietly",
+        lambda *_a: destroyed.append(7),
+    )
+
+    def _broken_read(*_args: Any, **_kwargs: Any) -> dict[int, Any]:
+        raise TypeError("date read bug with CKR_GENERAL_ERROR text")
+
+    monkeypatch.setattr(test_attribute_enforcement, "read_attributes", _broken_read)
+
+    try:
+        test_attribute_enforcement.TestDateAttributes().test_start_end_date_on_generated_key(rs)
+    except BaseException as exc:
+        assert isinstance(exc, TypeError)
+        assert "date read bug" in str(exc)
+    else:
+        pytest.fail("Expected date read Python bug to propagate")
+
+    assert destroyed == [7]
+
+
 def test_attribute_enforcement_always_auth_malformed_bool_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
