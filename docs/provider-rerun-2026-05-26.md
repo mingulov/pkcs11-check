@@ -360,6 +360,14 @@ official full-matrix release statistics.
   The raw `CKA_ALLOWED_MECHANISMS` setup complaint disappeared after imported
   AES/HMAC secret keys started carrying the operation mechanism in
   `CKA_ALLOWED_MECHANISMS`.
+- `nss` X448/HKDF focused artifact:
+  `artifacts/_focused/nss-x448-hkdf-current-v2-20260526`. Current source now
+  reports the focused X448/HKDF set with 909 passed, 3,646 skipped, 8 xfailed,
+  0 failed, and 0 crashed. X448 `CKR_DOMAIN_PARAMS_INVALID` is treated as an
+  unsupported-curve skip, while HKDF lifecycle `CKM_HKDF_KEY_GEN`
+  `CKR_MECHANISM_INVALID` is visible advertised-but-not-operational xfail
+  evidence. Wycheproof X25519/X448 and HKDF vector rows already passed or
+  skipped cleanly in this focused run.
 - The remaining TPM2 AES/HMAC interop and crossverify failures now reach the TPM
   operation and return `CKR_GENERAL_ERROR` with TPM2-TSS errors such as
   `Esys_EncryptDecrypt2` / `Esys_HMAC` handle value out of range. Those are
@@ -393,8 +401,6 @@ official full-matrix release statistics.
 - Separate TPM2 provider limitations from pkcs11-check setup assumptions:
   AES keygen vs import, `CKA_ALLOWED_MECHANISMS`, token/session object
   templates, and EC/RSA attribute readback need source-level review.
-- Re-check NSS X448 and HKDF lifecycle failures; they look like advertised but
-  non-operational paths and may need tighter xfail classification.
 - Keep BouncyHSM out of the default article table unless a separate long run is
   needed. It is useful as an example of an obscure software provider with slow
   and uneven behavior, but not central to the announcement.

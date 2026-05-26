@@ -338,8 +338,8 @@ also named locally instead of being passed as unexplained inline constants.
 Extended ECDH coverage now keeps X25519/Montgomery keygen and cofactor-ECDH
 AES-target derive rejections visible as xfail findings after the relevant
 mechanism is advertised. X448 remains a clean skip when the provider rejects
-that specific curve with a known unsupported-curve/template CKR, because a
-provider can reasonably support X25519 without supporting X448.
+that specific curve with a known unsupported-curve/domain-parameter/template
+CKR, because a provider can reasonably support X25519 without supporting X448.
 
 ### Follow-Up: OTP Runtime Rejections And CT-KIP Placeholder
 
@@ -368,7 +368,10 @@ rather than a hard setup assertion or a skipped mechanism.
 result. Basic key-generation rejects now xfail for specific CKRs, unexpected
 CKRs fail, and the derive-usability test can still try both `CKK_HKDF` and
 `CKK_GENERIC_SECRET` before xfail-reporting that no tested key type was
-operational.
+operational. The HKDF lifecycle test now follows the same policy: if the
+provider advertises both HKDF mechanisms but rejects base-key generation with a
+specific runtime CKR, the row is visible xfail evidence rather than a raw
+assertion failure.
 
 ### Follow-Up: Benchmark AES Keygen Rejections
 
