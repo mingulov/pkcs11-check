@@ -303,6 +303,18 @@ skips unsupported capabilities. The old NULL-pointer rows should therefore be
 removed from public provider-failure wording unless a refreshed run reproduces
 an actual signal exit or wrong result.
 
+A focused current-source rerun of `test_arithmetic_overflow.py` changes only
+part of the old crash-probe wording. Current TPM2 no longer has hard failures
+in this file: it reports 18 passed, 6 skipped, and 15 xfailed setup rows in
+`artifacts/_focused/tpm2-arithmetic-overflow-current-20260527/`. Those rows are
+advertised-but-not-operational AES/RSA setup evidence, not arithmetic-overflow
+crashes. The same focused slice still reproduces provider-side boundary
+findings elsewhere: stock SoftHSM2 2.7.0 reports 9 hard probe failures,
+OpenCryptoki reports 3 `C_FindObjectsInit` signal-7 crashes, and Kryoptic main
+reports 5 panic/abort/segfault findings. These rows must stay visible; they are
+not candidates for skip or xfail unless a later source-level review proves the
+PKCS#11 call shape itself is invalid.
+
 ### Follow-Up: CKR Operation-State Subprocess Probes
 
 The compact artifact scan after cleanup still contained old
@@ -1359,8 +1371,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   now; the report does not synthesize skips for every unselected mechanism
   parameter.
 
-The sampled abort, signal, and timeout clusters in BouncyHSM, Kryoptic, NSS,
-OpenCryptoki, SoftHSM2, and TPM2 were not reclassified in this pass. They are
+The arithmetic-overflow clusters for TPM2, SoftHSM2, OpenCryptoki, and
+Kryoptic main were rechecked in the current pass. TPM2 is now reclassified to
+setup xfail/skip evidence, while SoftHSM2, OpenCryptoki, and Kryoptic main
+still show crash/abort or abnormal child-exit findings. Other sampled abort,
+signal, and timeout clusters in BouncyHSM, Kryoptic, NSS, OpenCryptoki,
+SoftHSM2, and TPM2 were not reclassified in this pass. They are
 subprocess-isolated boundary or operation probes and remain failure/crash
 evidence unless a later root-cause pass proves that a specific test input is
 invalid for PKCS#11.

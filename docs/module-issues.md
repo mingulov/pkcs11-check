@@ -41,6 +41,13 @@ provider package versions where the finding was first recorded.
   `test_arithmetic_overflow.py::TestTemplateCountOverflow` and
   `TestGenerateKeyPairCountOverflow`. Likely missing length validation in
   `SoftHSM.cpp`'s template parser before allocating / iterating. Reportable upstream.
+  **Update 2026-05-27:** a focused current-source stock SoftHSM2 2.7.0 rerun
+  confirms the same eight signal-11 template/keypair count rows in
+  `artifacts/_focused/softhsm2-arithmetic-overflow-current-20260527/`. The same
+  file also reports one abnormal positive child exit for
+  `C_EncryptInit(CKM_AES_CBC, ulParameterLen=ULONG_MAX)`. That row is not a
+  signal crash, but it is still a failed malformed-boundary probe and should
+  remain visible.
 - **GCM null-IV SIGSEGV (UPDATED 2026-05-26)**:
   `test_ffi_length_boundary.py::TestMechanismNullInnerParams::test_gcm_null_iv`
   calls `C_EncryptInit(CKM_AES_GCM, pIv=NULL, ulIvLen=12)` in a crash-isolated
@@ -1036,6 +1043,17 @@ subprocess probe
 `TestMlDsaExplicitEmptyContext::test_mldsa_verify_empty_context_nonnull_pointer`
 keeps this abort discoverable.
 
+### Template-count C_FindObjectsInit signal 7 (NEW 2026-05-27)
+A focused current-source OpenCryptoki 3.27.0 build with OpenSSL 4.0.0 reports
+three signal-7 crashes in
+`artifacts/_focused/opencryptoki-arithmetic-overflow-current-20260527/`.
+All three rows call `C_FindObjectsInit` with extreme `ulCount` values:
+`0xffffffffffffffff`, `0xaaaaaaaaaaaaaab`, and `0x100000000`.
+
+This is current provider-side crash evidence, not a pkcs11-check setup
+classification issue. The malformed API call is reached after setup, and the
+module terminates instead of returning a CKR such as `CKR_ARGUMENTS_BAD`.
+
 ### RSA-PSS distinct hash and MGF rejected (NEW 2026-04-30)
 `test_wycheproof_rsa_pss.py` — **435 failures**. RSA-PSS signatures where
 the message hash (e.g. SHA-256) differs from the MGF1 hash (e.g. SHA-1) are
@@ -1164,6 +1182,19 @@ Documented in Kryoptic issue tracker.
 ### AES-CTS not operational
 CKM_AES_CTS is advertised in the mechanism list but returns CKR_DEVICE_ERROR
 when used. The mechanism is recognized but not implemented.
+
+### Arithmetic-overflow panics and segfaults (NEW 2026-05-27)
+A focused current-source Kryoptic main rerun reports five hard boundary
+findings in `artifacts/_focused/kryoptic-main-arithmetic-overflow-current-20260527/`:
+three `C_FindObjectsInit` extreme-template-count rows abort with Rust panic or
+allocation failure, `C_UnwrapKey(template_count=ULONG_MAX)` exits with signal
+11, and `C_GenerateKey(CKM_AES_KEY_GEN, CKA_VALUE_LEN=ULONG_MAX)` aborts with a
+capacity-overflow panic.
+
+These are provider process-survival findings from malformed boundary inputs.
+They are not skips and not setup xfails: the test reaches the intended
+malformed PKCS#11 entry point and the provider terminates instead of returning
+a CKR error.
 
 ### FIPS mode crashes (kryoptic-fips)
 15 crashes on CKM_EXTRACT_KEY_FROM_KEY and certain AES-CCM vectors.
