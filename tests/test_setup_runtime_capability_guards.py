@@ -47,6 +47,7 @@ from pkcs11_check.testcases import (
     test_mech_wrap,
     test_mechanism_fuzz,
     test_object_size,
+    test_ro_session_restrictions,
     test_rsa_oaep,
     test_sensitivity,
     test_session_state_machine,
@@ -669,6 +670,93 @@ def test_session_state_machine_data_object_setup_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="data object setup rejected"):
         test_session_state_machine.TestLogoutEffects().test_public_object_remains_after_logout(
+            rs,
+            SimpleNamespace(pin=_Pin()),
+        )
+
+
+def test_ro_session_extra_session_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session"
+        if hasattr(test_ro_session_restrictions, "_raw_open_session")
+        else "raw_open_session"
+    )
+    monkeypatch.setattr(test_ro_session_restrictions, open_attr, _open_session_limit)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional RO session"):
+        test_ro_session_restrictions.TestROCryptoOperations().test_digest_in_ro_session(
+            rs,
+            SimpleNamespace(pin=None),
+        )
+
+
+def test_ro_session_setup_aes_keygen_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_ro_session_restrictions,
+        "require_operational_aes_keygen",
+        lambda _rs: None,
+        raising=False,
+    )
+    keygen_attr = (
+        "_raw_gen_aes_key"
+        if hasattr(test_ro_session_restrictions, "_raw_gen_aes_key")
+        else "gen_aes_key"
+    )
+    monkeypatch.setattr(test_ro_session_restrictions, keygen_attr, _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+    rs.slot_id = 1
+    monkeypatch.setattr(
+        test_ro_session_restrictions,
+        "skip_if_token_write_protected",
+        lambda *_args: None,
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="RO-session token-object setup"):
+        test_ro_session_restrictions.TestROTokenObjectMutation().test_destroy_token_object_in_ro_fails(
+            rs,
+        )
+
+
+def test_ro_session_negative_aes_operation_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Pin:
+        def get_secret_value(self) -> str:
+            return "1234"
+
+    class _FakeRaw:
+        def C_Login(self, *_args: Any) -> int:  # noqa: N802 - PKCS#11 name.
+            return int(CKR_OK)
+
+        def C_GenerateKey(self, *_args: Any) -> int:  # noqa: N802 - PKCS#11 name.
+            return int(CKR_FUNCTION_NOT_SUPPORTED)
+
+    open_attr = (
+        "_raw_open_session"
+        if hasattr(test_ro_session_restrictions, "_raw_open_session")
+        else "raw_open_session"
+    )
+    monkeypatch.setattr(test_ro_session_restrictions, open_attr, lambda *_a: 2)
+    monkeypatch.setattr(test_ro_session_restrictions, "close_session_quietly", lambda *_a: None)
+    rs = SimpleNamespace(
+        raw=_FakeRaw(),
+        slot_id=1,
+        has_mechanism=lambda name: name == "AES_KEY_GEN",
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="RO restriction AES key generation"):
+        test_ro_session_restrictions.TestROTokenObjectCreation().test_generate_key_token_true_in_ro_fails(
             rs,
             SimpleNamespace(pin=_Pin()),
         )

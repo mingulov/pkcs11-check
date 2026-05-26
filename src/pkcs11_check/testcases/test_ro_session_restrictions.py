@@ -16,7 +16,7 @@ from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
 from pkcs11_check.raw.bootstrap import (
-    open_session as raw_open_session,
+    open_session as _raw_open_session,
 )
 from pkcs11_check.raw.pack import mech_bytes, mech_simple, template_from_dict
 from pkcs11_check.raw.recipes import (
@@ -25,14 +25,18 @@ from pkcs11_check.raw.recipes import (
     digest_single,
     encrypt_single,
     find_objects,
-    gen_aes_key,
-    gen_rsa_keypair,
     import_secret_key,
     set_attributes,
     sign_single,
     unwrap_key,
     verify_single,
     wrap_key,
+)
+from pkcs11_check.raw.recipes import (
+    gen_aes_key as _raw_gen_aes_key,
+)
+from pkcs11_check.raw.recipes import (
+    gen_rsa_keypair as _raw_gen_rsa_keypair,
 )
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
@@ -68,6 +72,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_MECHANISM_INVALID,
     CKR_OK,
+    CKR_SESSION_COUNT,
     CKR_SESSION_READ_ONLY,
     CKR_SESSION_READ_ONLY_EXISTS,
     CKR_TOKEN_WRITE_PROTECTED,
@@ -75,7 +80,15 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_TYPE_INVALID,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    get_pin_bytes,
+    is_known_error,
+    require_operational_aes_keygen,
+    skip_if_token_write_protected,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.access
 
@@ -96,6 +109,117 @@ _RO_OR_UNSUPPORTED_RVS = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_MECHANISM_INVALID,
 )
+
+_RO_MUTATION_REJECT_RVS = (
+    CKR_SESSION_READ_ONLY,
+    CKR_ACTION_PROHIBITED,
+    CKR_SESSION_READ_ONLY_EXISTS,
+    CKR_TOKEN_WRITE_PROTECTED,
+    CKR_ATTRIBUTE_READ_ONLY,
+)
+
+
+def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
+    """Open an extra RO/RW session needed by RO-session restriction tests."""
+    try:
+        return _raw_open_session(raw, slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional RO session required by RO-session test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
+
+
+def _skip_unless_mechanism(rs: Any, name: str) -> None:
+    if not rs.has_mechanism(name):
+        pytest.skip(f"{name} not supported by module")
+
+
+def _xfail_if_aes_keygen_rv(rv: int, context: str) -> None:
+    if rv in AES_KEYGEN_RUNTIME_REJECT_RVS:
+        pytest.xfail(f"{context}: {ckr_name(rv)}")
+
+
+def _gen_ro_setup_aes_key(
+    rs: Any,
+    sh: int,
+    bits: int = 128,
+    *,
+    attrs: dict[Any, Any] | None = None,
+    purpose: str = "RO-session setup",
+) -> int:
+    """Generate an AES setup key without hiding actual RO-session findings."""
+    _skip_unless_mechanism(rs, "AES_KEY_GEN")
+    require_operational_aes_keygen(rs)
+    try:
+        return _raw_gen_aes_key(rs.raw, sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but {purpose} key generation is not operational",
+        )
+    raise
+
+
+def _gen_ro_setup_generic_key(
+    rs: Any,
+    sh: int,
+    bits: int = 256,
+    *,
+    attrs: dict[Any, Any] | None = None,
+) -> int:
+    """Generate a generic-secret setup key for RO-session HMAC tests."""
+    from pkcs11_check.raw.types_std import CKM_GENERIC_SECRET_KEY_GEN
+
+    _skip_unless_mechanism(rs, "GENERIC_SECRET_KEY_GEN")
+    try:
+        return _raw_gen_aes_key(
+            rs.raw,
+            sh,
+            bits,
+            attrs=attrs,
+            mechanism=CKM_GENERIC_SECRET_KEY_GEN,
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "GENERIC_SECRET_KEY_GEN advertised but RO-session setup key generation "
+            "is not operational",
+        )
+    raise
+
+
+def _gen_ro_setup_rsa_keypair(
+    rs: Any,
+    sh: int,
+    bits: int = 2048,
+    *,
+    public_attrs: dict[Any, Any] | None = None,
+    private_attrs: dict[Any, Any] | None = None,
+    purpose: str = "RO-session setup",
+) -> tuple[int, int]:
+    """Generate an RSA setup keypair without hiding actual RO-session findings."""
+    _skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
+    try:
+        return _raw_gen_rsa_keypair(
+            rs.raw,
+            sh,
+            bits,
+            public_attrs=public_attrs,
+            private_attrs=private_attrs,
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            f"RSA_PKCS_KEY_PAIR_GEN advertised but {purpose} keypair generation "
+            "is not operational",
+        )
+    raise
 
 
 def _login_ro(raw: Any, sh: int, pin_bytes: bytes | None) -> None:
@@ -141,6 +265,7 @@ class TestROTokenObjectCreation:
     ) -> None:
         """generate_key with TOKEN=True in RO session must fail."""
         rs = p11_raw_session
+        _skip_unless_mechanism(rs, "AES_KEY_GEN")
         pin_bytes = get_pin_bytes(p11_config)
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
@@ -154,6 +279,11 @@ class TestROTokenObjectCreation:
             mech = mech_simple(CKM_AES_KEY_GEN)
             key_h = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_GenerateKey(ro_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
+            _xfail_if_aes_keygen_rv(
+                rv,
+                "AES_KEY_GEN advertised but RO restriction AES key generation "
+                "is not operational",
+            )
             assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, ro_sh)
@@ -253,7 +383,13 @@ class TestROSessionObjectsAllowed:
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
-            key_h = gen_aes_key(rs.raw, ro_sh, 128, attrs={CKA_LABEL: "ro-genkey-session"})
+            key_h = _gen_ro_setup_aes_key(
+                rs,
+                ro_sh,
+                128,
+                attrs={CKA_LABEL: "ro-genkey-session"},
+                purpose="RO-session TOKEN=False setup",
+            )
             assert key_h != 0
             destroy_quietly(rs.raw, ro_sh, key_h)
         finally:
@@ -268,7 +404,12 @@ class TestROSessionObjectsAllowed:
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
-            pub_h, priv_h = gen_rsa_keypair(rs.raw, ro_sh, 2048)
+            pub_h, priv_h = _gen_ro_setup_rsa_keypair(
+                rs,
+                ro_sh,
+                2048,
+                purpose="RO-session TOKEN=False setup",
+            )
             assert pub_h != 0
             assert priv_h != 0
             destroy_quietly(rs.raw, ro_sh, pub_h)
@@ -285,7 +426,13 @@ class TestROTokenObjectMutation:
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = "ro-destroy-test"
-        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_TOKEN: True, CKA_LABEL: label})
+        key_h = _gen_ro_setup_aes_key(
+            rs,
+            rs.sh,
+            128,
+            attrs={CKA_TOKEN: True, CKA_LABEL: label},
+            purpose="RO-session token-object setup",
+        )
         try:
             ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
@@ -304,8 +451,8 @@ class TestROTokenObjectMutation:
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = "ro-setattr-test"
-        key_h = gen_aes_key(
-            rs.raw,
+        key_h = _gen_ro_setup_aes_key(
+            rs,
             rs.sh,
             128,
             attrs={
@@ -328,7 +475,8 @@ class TestROTokenObjectMutation:
                 except AssertionError as e:
                     if "C_SetAttributeValue succeeded" in str(e):
                         raise
-                    pass  # Expected: recipes raises AssertionError from expect_rv
+                    if not is_known_error(e, _RO_MUTATION_REJECT_RVS):
+                        raise
             finally:
                 close_session_quietly(rs.raw, ro_sh)
         finally:
@@ -341,8 +489,8 @@ class TestROTokenObjectMutation:
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = "ro-copy-test"
-        key_h = gen_aes_key(
-            rs.raw,
+        key_h = _gen_ro_setup_aes_key(
+            rs,
             rs.sh,
             128,
             attrs={
@@ -369,7 +517,8 @@ class TestROTokenObjectMutation:
                 except AssertionError as e:
                     if "C_CopyObject succeeded" in str(e):
                         raise
-                    pass  # Expected
+                    if not is_known_error(e, _RO_MUTATION_REJECT_RVS):
+                        raise
             finally:
                 close_session_quietly(rs.raw, ro_sh)
         finally:
@@ -400,10 +549,10 @@ class TestROCryptoOperations:
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_ro_setup_aes_key(
+                rs,
                 ro_sh,
-                256,
+                128,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_ENCRYPT: True,
@@ -442,10 +591,8 @@ class TestROCryptoOperations:
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
         try:
-            from pkcs11_check.raw.types_std import CKM_GENERIC_SECRET_KEY_GEN
-
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_ro_setup_generic_key(
+                rs,
                 ro_sh,
                 256,
                 attrs={
@@ -453,7 +600,6 @@ class TestROCryptoOperations:
                     CKA_SIGN: True,
                     CKA_VERIFY: True,
                 },
-                mechanism=CKM_GENERIC_SECRET_KEY_GEN,
             )
             data = b"RO session HMAC test"
             sig = sign_single(rs.raw, ro_sh, key_h, CKM_SHA256_HMAC, data)
@@ -468,9 +614,11 @@ class TestROCryptoOperations:
         """Verification with a token key works in RO session."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
+        if not rs.has_mechanism("SHA256_RSA_PKCS"):
+            pytest.skip("CKM_SHA256_RSA_PKCS not supported")
         label = "ro-verify-rsa-test"
-        pub_h, priv_h = gen_rsa_keypair(
-            rs.raw,
+        pub_h, priv_h = _gen_ro_setup_rsa_keypair(
+            rs,
             rs.sh,
             2048,
             public_attrs={CKA_TOKEN: True, CKA_LABEL: label},
@@ -533,7 +681,13 @@ class TestROExactCKR:
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
         label = "ro-ckr-destroy-test"
-        key_h = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_TOKEN: True, CKA_LABEL: label})
+        key_h = _gen_ro_setup_aes_key(
+            rs,
+            rs.sh,
+            128,
+            attrs={CKA_TOKEN: True, CKA_LABEL: label},
+            purpose="RO-session exact-CKR token-object setup",
+        )
         try:
             ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
             try:
@@ -552,6 +706,7 @@ class TestROExactCKR:
     ) -> None:
         """Key generation with TOKEN=True in RO returns CKR_SESSION_READ_ONLY."""
         rs = p11_raw_session
+        _skip_unless_mechanism(rs, "AES_KEY_GEN")
         pin_bytes = get_pin_bytes(p11_config)
         ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
         _login_ro(rs.raw, ro_sh, pin_bytes)
@@ -565,6 +720,11 @@ class TestROExactCKR:
             mech = mech_simple(CKM_AES_KEY_GEN)
             key_h = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_GenerateKey(ro_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
+            _xfail_if_aes_keygen_rv(
+                rv,
+                "AES_KEY_GEN advertised but RO restriction exact-CKR key generation "
+                "is not operational",
+            )
             assert rv in _RO_ERROR_RVS, f"Unexpected CKR: {ckr_name(rv)}"
         finally:
             close_session_quietly(rs.raw, ro_sh)
@@ -582,10 +742,10 @@ class TestROWrapUnwrapRestrictions:
                 pytest.skip("No AES wrap mechanism supported")
 
         # Create wrapping key and target in RW session
-        wrapping_key_h = gen_aes_key(
-            rs.raw,
+        wrapping_key_h = _gen_ro_setup_aes_key(
+            rs,
             rs.sh,
-            256,
+            128,
             attrs={
                 CKA_TOKEN: True,
                 CKA_WRAP: True,
@@ -609,7 +769,9 @@ class TestROWrapUnwrapRestrictions:
         try:
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, wrapping_key_h, target_h, CKM_AES_KEY_WRAP)
-            except AssertionError:
+            except AssertionError as exc:
+                if not is_known_error(exc, _RO_OR_UNSUPPORTED_RVS):
+                    raise
                 pytest.skip("Module does not support wrap/unwrap")
             assert len(wrapped) > 0
 
@@ -636,7 +798,8 @@ class TestROWrapUnwrapRestrictions:
                 except AssertionError as e:
                     if "Unwrap to TOKEN=True succeeded" in str(e):
                         raise
-                    pass  # Expected
+                    if not is_known_error(e, _RO_OR_UNSUPPORTED_RVS):
+                        raise
             finally:
                 close_session_quietly(rs.raw, ro_sh)
         finally:
@@ -651,10 +814,10 @@ class TestROWrapUnwrapRestrictions:
             if not rs.has_mechanism("AES_CBC_PAD"):
                 pytest.skip("No AES wrap mechanism supported")
 
-        wrapping_key_h = gen_aes_key(
-            rs.raw,
+        wrapping_key_h = _gen_ro_setup_aes_key(
+            rs,
             rs.sh,
-            256,
+            128,
             attrs={
                 CKA_TOKEN: True,
                 CKA_WRAP: True,
@@ -679,7 +842,9 @@ class TestROWrapUnwrapRestrictions:
         try:
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, wrapping_key_h, target_h, CKM_AES_KEY_WRAP)
-            except AssertionError:
+            except AssertionError as exc:
+                if not is_known_error(exc, _RO_OR_UNSUPPORTED_RVS):
+                    raise
                 pytest.skip("Module does not support wrap/unwrap")
 
             ro_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
