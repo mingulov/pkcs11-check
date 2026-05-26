@@ -1170,6 +1170,15 @@ The following paths were tightened after inspecting the all-fail artifacts:
   focused pkcs11-mock rerun in
   `artifacts/_focused/pkcs11-mock-kat-r2-20260527/` reports 2 failed,
   18 skipped, and 1 xfailed; the two hard rows are SHA-1 digest mismatches.
+- **Legacy sign/key-management coverage**: `test_sign.py` now checks RSA sign
+  mechanisms before RSA setup and reports advertised RSA sign/verify rejects as
+  visible xfail evidence. `test_keymgmt.py` now uses shared AES/RSA/EC setup
+  classifiers and skips missing AES-ECB before AES import/copy roundtrips. A
+  focused pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-sign-keymgmt-r2-20260527/` moved the slice
+  from 2 passed / 14 failed / 12 skipped to 2 passed / 4 failed / 22 skipped.
+  The remaining hard rows are key-management readback findings: blank imported
+  AES key type, placeholder exported AES values, and blank RSA modulus.
 - **Resource/stress setup coverage**: the legacy resource and stress files now
   use the same setup boundary as the rest of the suite. Missing AES/SHA/RSA
   mechanisms skip before fixture setup, advertised setup/operation CKR rejects

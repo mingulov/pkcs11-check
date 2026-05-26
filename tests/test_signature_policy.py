@@ -37,9 +37,19 @@ def test_invalid_signature_non_clean_explicit_ckrs_are_xfail(rv: int, name: str)
 def test_basic_rsa_wrong_data_uses_signature_reject_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    rs = type("RawSession", (), {"raw": object(), "sh": 1})()
+    rs = type(
+        "RawSession",
+        (),
+        {
+            "raw": object(),
+            "sh": 1,
+            "has_mechanism": lambda _self, name: (
+                name in {"RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS"}
+            ),
+        },
+    )()
 
-    monkeypatch.setattr(test_sign, "gen_rsa_keypair", lambda *_args: (10, 11))
+    monkeypatch.setattr(test_sign, "gen_rsa_keypair_or_xfail", lambda *_args: (10, 11))
     monkeypatch.setattr(test_sign, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(test_sign, "sign_single", lambda *_args, **_kwargs: b"\x01" * 256)
 

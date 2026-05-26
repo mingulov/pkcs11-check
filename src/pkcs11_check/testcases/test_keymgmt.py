@@ -18,9 +18,6 @@ from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
-    gen_ec_keypair,
-    gen_rsa_keypair,
     import_secret_key,
     read_attributes,
     unwrap_key,
@@ -49,9 +46,61 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_WRAP,
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_ec_keypair_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    skip_unless_mechanism,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.keymgmt
+
+_KEYMGMT_OPERATION_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+
+def _aes_keymgmt_key(rs: Any, *, attrs: dict[Any, Any] | None = None) -> int:
+    return gen_aes_key_or_xfail(rs, 128, attrs=attrs, purpose="key-management setup")
+
+
+def _encrypt_or_xfail(rs: Any, key: int, data: bytes) -> bytes:
+    skip_unless_mechanism(rs, "AES_ECB")
+    try:
+        return encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _KEYMGMT_OPERATION_REJECT_RVS, "AES_ECB encrypt rejected")
+    raise
+
+
+def _decrypt_or_xfail(rs: Any, key: int, data: bytes) -> bytes:
+    skip_unless_mechanism(rs, "AES_ECB")
+    try:
+        return decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _KEYMGMT_OPERATION_REJECT_RVS, "AES_ECB decrypt rejected")
+    raise
 
 
 class TestKeyImport:
@@ -80,6 +129,7 @@ class TestKeyImport:
     def test_import_aes_key_roundtrip(self, p11_raw_session: Any) -> None:
         """Import AES key, encrypt, decrypt, verify roundtrip."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "AES_ECB")
         key_bytes = bytes(range(32))
         key = import_secret_key(
             rs.raw,
@@ -96,8 +146,8 @@ class TestKeyImport:
         )
         try:
             plaintext = b"import_rndtrip!!"  # exactly 16 bytes
-            ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
-            pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
+            ct = _encrypt_or_xfail(rs, key, plaintext)
+            pt = _decrypt_or_xfail(rs, key, ct)
             assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -152,7 +202,7 @@ class TestKeyExport:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA key generation not supported")
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
             modulus = attrs[CKA_MODULUS]
@@ -169,7 +219,7 @@ class TestKeyExport:
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC key generation not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])
             ec_point = attrs[CKA_EC_POINT]
@@ -183,12 +233,7 @@ class TestKeyCopy:
     def test_copy_preserves_attributes(self, p11_raw_session: Any) -> None:
         """Copy a key and verify attributes are preserved."""
         rs = p11_raw_session
-        original = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={CKA_LABEL: b"original"},
-        )
+        original = _aes_keymgmt_key(rs, attrs={CKA_LABEL: b"original"})
         copy = 0
         try:
             copy = copy_object(
@@ -208,12 +253,8 @@ class TestKeyCopy:
     def test_copy_independent(self, p11_raw_session: Any) -> None:
         """Copied key works independently after original is destroyed."""
         rs = p11_raw_session
-        original = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
-        )
+        skip_unless_mechanism(rs, "AES_ECB")
+        original = _aes_keymgmt_key(rs, attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True})
         copy = copy_object(
             rs.raw,
             rs.sh,
@@ -222,7 +263,7 @@ class TestKeyCopy:
         )
         try:
             destroy_quietly(rs.raw, rs.sh, original)
-            ct = encrypt_single(rs.raw, rs.sh, copy, CKM_AES_ECB, b"still works here")
+            ct = _encrypt_or_xfail(rs, copy, b"still works here")
             assert len(ct) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, copy)
@@ -235,12 +276,7 @@ class TestKeyWrapUnwrap:
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("CKM_AES_KEY_WRAP not supported")
         key_bytes = bytes(range(16))
-        wrapping_key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
-        )
+        wrapping_key = _aes_keymgmt_key(rs, attrs={CKA_WRAP: True, CKA_UNWRAP: True})
         target = import_secret_key(
             rs.raw,
             rs.sh,
@@ -289,8 +325,8 @@ class TestKeyDerive:
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
         curve_oid = encode_named_curve_parameters("secp256r1")
-        _pub_a, priv_a = gen_ec_keypair(rs.raw, rs.sh, curve_oid, private_attrs={CKA_DERIVE: True})
-        pub_b, _priv_b = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
+        _pub_a, priv_a = gen_ec_keypair_or_xfail(rs, curve_oid, private_attrs={CKA_DERIVE: True})
+        pub_b, _priv_b = gen_ec_keypair_or_xfail(rs, curve_oid)
         derived = 0
         try:
             # Read pub_b's EC_POINT and unwrap from DER

@@ -419,6 +419,13 @@ official full-matrix release statistics.
   1 skipped to 7 skipped. The file also no longer swallows Python exceptions or
   accepts arbitrary non-OK CKRs for destroyed-handle operations; when setup
   succeeds, only explicit handle-related CKRs count as the expected result.
+- `pkcs11-mock` sign/key-management focused artifact:
+  `artifacts/_focused/pkcs11-mock-sign-keymgmt-r2-20260527/`. The focused
+  `test_sign.py` and `test_keymgmt.py` run moved from 2 passed / 14 failed /
+  12 skipped to 2 passed / 4 failed / 22 skipped. The remaining hard rows are
+  key-management readback findings: imported AES `CKA_KEY_TYPE` is empty,
+  exported AES key material is the mock placeholder `Hello world!`, and the RSA
+  public modulus reads back empty.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124

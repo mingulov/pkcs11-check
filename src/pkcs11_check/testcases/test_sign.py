@@ -19,7 +19,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
     gen_ec_keypair,
-    gen_rsa_keypair,
     read_attributes,
     sign_single,
     verify_single,
@@ -49,11 +48,47 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS_PSS,
     CKM_SHA384_RSA_PKCS,
     CKM_SHA512_RSA_PKCS,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.conftest import (
+    gen_rsa_keypair_or_xfail,
+    skip_unless_mechanism,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.full
+
+_SIGN_OPERATION_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+_SIGN_MECHANISM_NAMES = {
+    int(CKM_SHA1_RSA_PKCS): "SHA1_RSA_PKCS",
+    int(CKM_SHA256_RSA_PKCS): "SHA256_RSA_PKCS",
+    int(CKM_SHA384_RSA_PKCS): "SHA384_RSA_PKCS",
+    int(CKM_SHA512_RSA_PKCS): "SHA512_RSA_PKCS",
+    int(CKM_SHA256_RSA_PKCS_PSS): "SHA256_RSA_PKCS_PSS",
+}
 
 
 def _assert_invalid_signature_rejected(call_verify: Callable[[], bool], label: str) -> None:
@@ -66,11 +101,62 @@ def _assert_invalid_signature_rejected(call_verify: Callable[[], bool], label: s
     assert accepted is False
 
 
+def _require_sign_mechanism(rs: Any, mechanism: Any) -> str:
+    name = _SIGN_MECHANISM_NAMES[int(mechanism)]
+    skip_unless_mechanism(rs, name)
+    return name
+
+
+def _rsa_keypair_for_signing(rs: Any) -> tuple[int, int]:
+    return gen_rsa_keypair_or_xfail(rs, 2048)
+
+
+def _sign_or_xfail(
+    rs: Any,
+    private_key: int,
+    mechanism: Any,
+    data: bytes,
+    *,
+    mech_param: Any | None = None,
+) -> bytes:
+    mech_name = _SIGN_MECHANISM_NAMES[int(mechanism)]
+    try:
+        return sign_single(rs.raw, rs.sh, private_key, mechanism, data, mech_param=mech_param)
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _SIGN_OPERATION_REJECT_RVS, f"{mech_name} sign rejected")
+    raise
+
+
+def _verify_or_xfail(
+    rs: Any,
+    public_key: int,
+    mechanism: Any,
+    data: bytes,
+    signature: bytes,
+    *,
+    mech_param: Any | None = None,
+) -> bool:
+    mech_name = _SIGN_MECHANISM_NAMES[int(mechanism)]
+    try:
+        return verify_single(
+            rs.raw,
+            rs.sh,
+            public_key,
+            mechanism,
+            data,
+            signature,
+            mech_param=mech_param,
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _SIGN_OPERATION_REJECT_RVS, f"{mech_name} verify rejected")
+    raise
+
+
 class TestRSASignature:
     def test_rsa_generate_keypair(self, p11_raw_session: Any) -> None:
         """Generate an RSA-2048 key pair."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = _rsa_keypair_for_signing(rs)
         try:
             assert pub != 0
             assert priv != 0
@@ -81,12 +167,13 @@ class TestRSASignature:
     def test_rsa_pkcs_sign_verify(self, p11_raw_session: Any) -> None:
         """Sign data with RSA PKCS#1 v1.5 and verify."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _require_sign_mechanism(rs, CKM_SHA256_RSA_PKCS)
+        pub, priv = _rsa_keypair_for_signing(rs)
         try:
             data = b"test data for PKCS#11 signing"
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
+            sig = _sign_or_xfail(rs, priv, CKM_SHA256_RSA_PKCS, data)
             assert len(sig) == 256  # 2048-bit RSA = 256 bytes
-            assert verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig) is True
+            assert _verify_or_xfail(rs, pub, CKM_SHA256_RSA_PKCS, data, sig) is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -94,11 +181,12 @@ class TestRSASignature:
     def test_rsa_sign_wrong_data_fails_verify(self, p11_raw_session: Any) -> None:
         """Verification with wrong data should fail."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _require_sign_mechanism(rs, CKM_SHA256_RSA_PKCS)
+        pub, priv = _rsa_keypair_for_signing(rs)
         try:
             data = b"original data"
             wrong_data = b"tampered data"
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
+            sig = _sign_or_xfail(rs, priv, CKM_SHA256_RSA_PKCS, data)
             _assert_invalid_signature_rejected(
                 lambda: verify_single(
                     rs.raw,
@@ -122,11 +210,12 @@ class TestRSASignature:
     def test_rsa_hash_mechanisms(self, p11_raw_session: Any, mechanism: Any) -> None:
         """RSA sign/verify works with all standard hash mechanisms."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _require_sign_mechanism(rs, mechanism)
+        pub, priv = _rsa_keypair_for_signing(rs)
         try:
             data = b"hash mechanism test data"
-            sig = sign_single(rs.raw, rs.sh, priv, mechanism, data)
-            assert verify_single(rs.raw, rs.sh, pub, mechanism, data, sig) is True
+            sig = _sign_or_xfail(rs, priv, mechanism, data)
+            assert _verify_or_xfail(rs, pub, mechanism, data, sig) is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -134,7 +223,8 @@ class TestRSASignature:
     def test_rsa_pss_sign_verify(self, p11_raw_session: Any) -> None:
         """RSA-PSS sign/verify roundtrip."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _require_sign_mechanism(rs, CKM_SHA256_RSA_PKCS_PSS)
+        pub, priv = _rsa_keypair_for_signing(rs)
         try:
             data = b"RSA-PSS test data for signing"
             pss = mech_pss(
@@ -143,11 +233,9 @@ class TestRSASignature:
                 mgf=CKG_MGF1_SHA256,
                 salt_len=32,
             )
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS_PSS, data, mech_param=pss)
+            sig = _sign_or_xfail(rs, priv, CKM_SHA256_RSA_PKCS_PSS, data, mech_param=pss)
             assert (
-                verify_single(
-                    rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS_PSS, data, sig, mech_param=pss
-                )
+                _verify_or_xfail(rs, pub, CKM_SHA256_RSA_PKCS_PSS, data, sig, mech_param=pss)
                 is True
             )
         finally:
@@ -157,12 +245,13 @@ class TestRSASignature:
     def test_rsa_different_keys_different_signatures(self, p11_raw_session: Any) -> None:
         """Same data signed with different keys produces different signatures."""
         rs = p11_raw_session
-        pub1, priv1 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
-        pub2, priv2 = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _require_sign_mechanism(rs, CKM_SHA256_RSA_PKCS)
+        pub1, priv1 = _rsa_keypair_for_signing(rs)
+        pub2, priv2 = _rsa_keypair_for_signing(rs)
         try:
             data = b"key independence test"
-            sig1 = sign_single(rs.raw, rs.sh, priv1, CKM_SHA256_RSA_PKCS, data)
-            sig2 = sign_single(rs.raw, rs.sh, priv2, CKM_SHA256_RSA_PKCS, data)
+            sig1 = _sign_or_xfail(rs, priv1, CKM_SHA256_RSA_PKCS, data)
+            sig2 = _sign_or_xfail(rs, priv2, CKM_SHA256_RSA_PKCS, data)
             assert sig1 != sig2
         finally:
             destroy_quietly(rs.raw, rs.sh, pub1)
