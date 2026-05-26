@@ -249,6 +249,64 @@ def test_arithmetic_aes_probe_xfails_setup_before_child(
         )
 
 
+def test_arithmetic_aes_child_script_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Arithmetic AES child scripts should classify setup rejects inside the child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "", ""
+
+    monkeypatch.setattr(test_arithmetic_overflow, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_arithmetic_overflow, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_arithmetic_overflow, "run_with_coverage", _capture)
+
+    test_arithmetic_overflow.TestDataLengthOverflow().test_data_length_overflow(
+        _RawSession(),
+        cfg,
+        0x80000000,
+        "C_Encrypt",
+        "C_EncryptInit",
+    )
+
+    assert len(scripts) == 1
+    assert "SETUP_XFAIL:" in scripts[0]
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
+
+
+def test_arithmetic_pss_child_script_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Arithmetic RSA-PSS child scripts should classify keypair setup rejects."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "", ""
+
+    monkeypatch.setattr(
+        test_arithmetic_overflow,
+        "gen_rsa_keypair_or_xfail",
+        lambda *_a, **_k: (1, 2),
+    )
+    monkeypatch.setattr(test_arithmetic_overflow, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_arithmetic_overflow, "run_with_coverage", _capture)
+
+    test_arithmetic_overflow.TestPssSaltLengthOverflow().test_pss_salt_length_overflow(
+        _RawSession(),
+        cfg,
+        0xFFFFFFFF,
+    )
+
+    assert len(scripts) == 1
+    assert "SETUP_XFAIL:" in scripts[0]
+    assert "KEYPAIR_RUNTIME_REJECT_RVS" in scripts[0]
+
+
 def test_ffi_length_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

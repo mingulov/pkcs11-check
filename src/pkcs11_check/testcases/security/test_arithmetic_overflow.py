@@ -55,6 +55,27 @@ def _preamble(p11_config: Any) -> str:
     )
 
 
+_CHILD_SETUP_REJECT_HELPERS = """
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    is_known_error,
+)
+
+
+def setup_xfail_if_known_ckr(exc, known_ckrs, purpose):
+    if is_known_error(exc, known_ckrs):
+        rv = getattr(exc, "rv", None)
+        detail = ckr_name(rv) if rv is not None else str(exc)
+        print(f"SETUP_XFAIL:{purpose}: {detail}")
+        cleanup()
+        raise SystemExit(0)
+    raise exc
+
+"""
+
+
 # ---------------------------------------------------------------------------
 # TestDataLengthOverflow -- 4 lengths x 2 ops = 8 cases
 # ---------------------------------------------------------------------------
@@ -102,6 +123,7 @@ class TestDataLengthOverflow:
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -109,7 +131,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     mech = CK_MECHANISM()
     mech.mechanism = int(CKM_AES_ECB)
@@ -178,12 +205,18 @@ class TestMechanismParamLengthOverflow:
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import CK_MECHANISM, {mech_name}
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     param_buf = (ctypes.c_ubyte * {real_size})(*range({real_size}))
     mech = CK_MECHANISM()
@@ -247,6 +280,7 @@ class TestGcmTagBitsOverflow:
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -254,7 +288,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     iv = (ctypes.c_ubyte * 12)(*range(12))
     params = CK_AES_GCM_PARAMS()
@@ -322,6 +361,7 @@ class TestPssSaltLengthOverflow:
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -330,10 +370,15 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_rsa_keypair, destroy_quietly
 
-pub, priv = gen_rsa_keypair(raw, sh, 2048,
-    private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
-    public_attrs={{CKA_VERIFY: True, CKA_TOKEN: False}},
-)
+try:
+    pub, priv = gen_rsa_keypair(raw, sh, 2048,
+        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
+        public_attrs={{CKA_VERIFY: True, CKA_TOKEN: False}},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
+    )
 try:
     params = CK_RSA_PKCS_PSS_PARAMS()
     params.hashAlg = int(CKM_SHA256)
@@ -478,6 +523,7 @@ cleanup()
 """
         elif op == "C_UnwrapKey":
             body = f"""
+{_CHILD_SETUP_REJECT_HELPERS}
 import ctypes
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE, CK_ULONG, CK_MECHANISM, CKM_AES_ECB,
@@ -485,7 +531,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-wrap_key = gen_aes_key(raw, sh, 256)
+try:
+    wrap_key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     attr = CK_ATTRIBUTE()
     attr.type = int(CKA_CLASS)
