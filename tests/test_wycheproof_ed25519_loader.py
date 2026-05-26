@@ -29,20 +29,28 @@ def test_wycheproof_ed25519_import_uses_raw_rfc8032_public_key(
     pk_bytes = bytes.fromhex(vec["_pk"]["pk"])
     captured: dict[str, bytes] = {}
 
-    def fake_import_ec_public_key(
+    def fake_import_eddsa_public_key(
         raw: object,
         session: int,
         *,
         ec_params: bytes,
-        ec_point: bytes,
-        key_type: int,
+        public_key: bytes,
         attrs: dict[int, Any],
     ) -> int:
-        captured["ec_point"] = ec_point
+        captured["ec_point"] = public_key
         return 1
 
-    monkeypatch.setattr(ed25519, "import_ec_public_key", fake_import_ec_public_key)
-    monkeypatch.setattr(ed25519, "verify_single", lambda *args, **kwargs: True)
+    monkeypatch.setattr(ed25519, "select_eddsa_public_key_encoding", lambda *args, **kwargs: "raw")
+    monkeypatch.setattr(
+        ed25519,
+        "import_eddsa_public_key_with_supported_encoding",
+        fake_import_eddsa_public_key,
+    )
+    monkeypatch.setattr(
+        ed25519,
+        "verify_eddsa_signature_with_supported_params",
+        lambda *args, **kwargs: True,
+    )
     monkeypatch.setattr(ed25519, "destroy_quietly", lambda *args: None)
 
     ed25519.test_ed25519_wycheproof(_EdDsaSession(), vec_id, vec)
@@ -63,20 +71,28 @@ def test_wycheproof_ed448_import_uses_raw_rfc8032_public_key(
     pk_bytes = bytes.fromhex(vec["_pk"]["pk"])
     captured: dict[str, bytes] = {}
 
-    def fake_import_ec_public_key(
+    def fake_import_eddsa_public_key(
         raw: object,
         session: int,
         *,
         ec_params: bytes,
-        ec_point: bytes,
-        key_type: int,
+        public_key: bytes,
         attrs: dict[int, Any],
     ) -> int:
-        captured["ec_point"] = ec_point
+        captured["ec_point"] = public_key
         return 1
 
-    monkeypatch.setattr(ed25519, "import_ec_public_key", fake_import_ec_public_key)
-    monkeypatch.setattr(ed25519, "verify_single", lambda *args, **kwargs: True)
+    monkeypatch.setattr(ed25519, "select_eddsa_public_key_encoding", lambda *args, **kwargs: "raw")
+    monkeypatch.setattr(
+        ed25519,
+        "import_eddsa_public_key_with_supported_encoding",
+        fake_import_eddsa_public_key,
+    )
+    monkeypatch.setattr(
+        ed25519,
+        "verify_eddsa_signature_with_supported_params",
+        lambda *args, **kwargs: True,
+    )
     monkeypatch.setattr(ed25519, "destroy_quietly", lambda *args: None)
 
     ed25519.test_ed448_wycheproof(_EdDsaSession(), vec_id, vec)

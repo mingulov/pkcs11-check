@@ -8,7 +8,11 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR, CKR_TEMPLATE_INCONSISTENT
+from pkcs11_check.raw.types_std import (
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 from pkcs11_check.testcases.acvp import test_acvp_eddsa
 from pkcs11_check.testcases.acvp._eddsa_helpers import (
     load_eddsa_keyver_vectors,
@@ -39,16 +43,57 @@ def test_eddsa_keyver_valid_key_import_reject_is_xfail(
     vec = {
         "ec_params": b"params",
         "ec_point": b"point",
-        "curve": "ED-25519",
+        "curve": "ED-test",
         "expected_pass": True,
     }
-    monkeypatch.setattr(test_acvp_eddsa, "import_ec_public_key", _reject_valid_key)
+    monkeypatch.setattr(
+        test_acvp_eddsa,
+        "import_eddsa_public_key_with_supported_encoding",
+        _reject_valid_key,
+    )
 
     with pytest.raises(pytest.xfail.Exception, match="valid EdDSA key import rejected"):
         test_acvp_eddsa.TestEdDsaKeyVer().test_eddsa_keyver(
             _session(),
             SimpleNamespace(),
             "EDDSA-KeyVer-valid",
+            vec,
+        )
+
+
+def test_eddsa_keyver_probe_curve_reject_is_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _reject_probe_curve(*_args: Any, **_kwargs: Any) -> str:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_DOMAIN_PARAMS_INVALID",
+            int(CKR_DOMAIN_PARAMS_INVALID),
+        )
+
+    vec = {
+        "ec_params": b"params",
+        "q": b"Q" * 57,
+        "ec_point": b"Q" * 57,
+        "curve": "ED-448",
+        "expected_pass": True,
+    }
+    monkeypatch.setitem(
+        test_acvp_eddsa._SIGVER_PROBES_BY_CURVE,
+        "ED-448",
+        {
+            "ec_params": b"params",
+            "q": b"Q" * 57,
+            "curve": "ED-448",
+            "msg": b"message",
+            "sig": b"S" * 114,
+            "expected_pass": True,
+        },
+    )
+    monkeypatch.setattr(test_acvp_eddsa, "select_eddsa_public_key_encoding", _reject_probe_curve)
+
+    with pytest.raises(pytest.skip.Exception, match="Cannot import EdDSA public key"):
+        test_acvp_eddsa.TestEdDsaKeyVer().test_eddsa_keyver(
+            _session(),
+            SimpleNamespace(),
+            "EDDSA-KeyVer-ED-448-tc1",
             vec,
         )
 
@@ -103,11 +148,19 @@ def test_eddsa_keyver_invalid_key_acceptance_stays_failure(
     vec = {
         "ec_params": b"params",
         "ec_point": b"point",
-        "curve": "ED-25519",
+        "curve": "ED-test",
         "expected_pass": False,
     }
-    monkeypatch.setattr(test_acvp_eddsa, "import_ec_public_key", lambda *_args, **_kwargs: 1)
-    monkeypatch.setattr(test_acvp_eddsa, "verify_single", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        test_acvp_eddsa,
+        "import_eddsa_public_key_with_supported_encoding",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        test_acvp_eddsa,
+        "verify_eddsa_signature_with_supported_params",
+        lambda *_args, **_kwargs: False,
+    )
     monkeypatch.setattr(test_acvp_eddsa, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.fail.Exception, match="ACCEPTED an INVALID EdDSA key"):

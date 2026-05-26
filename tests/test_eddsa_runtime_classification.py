@@ -55,7 +55,16 @@ def test_acvp_eddsa_sigver_import_runtime_failure_is_xfail(
         "sig": b"\x00" * 64,
         "expected_pass": True,
     }
-    monkeypatch.setattr(test_acvp_eddsa, "import_ec_public_key", _function_failed)
+    monkeypatch.setattr(
+        test_acvp_eddsa,
+        "_select_eddsa_public_key_encoding_for_vector",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        test_acvp_eddsa,
+        "import_eddsa_public_key_with_supported_encoding",
+        _function_failed,
+    )
 
     with pytest.raises(pytest.xfail.Exception, match="public-key import rejected"):
         test_acvp_eddsa.test_acvp_eddsa_sigver(rs, "EDDSA-SigVer-ED-25519-tc1", vec)

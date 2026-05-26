@@ -130,6 +130,21 @@ Completed high-signal observations:
   72/75 duplicate-to-skip. Future PKCS#11 revisions could standardize
   deterministic validation inputs for exact ACVP KeyGen checks, but there is no
   portable API for that today.
+- Focused EdDSA public-key encoding checks after the batch found provider
+  profile differences that should not be collapsed into generic vector
+  failures. PKCS#11 `CKK_EC_EDWARDS` uses raw RFC 8032 `CKA_EC_POINT`, but
+  SoftHSM2 verified the RFC 8032 Ed25519 vector only with a DER-wrapped point
+  and is now reported by the standalone encoding test as xfail. Kryoptic passed
+  the standalone encoding test with a raw point and NULL `CKM_EDDSA` params.
+  NSS passed with a raw point after falling back from NULL params
+  (`CKR_FUNCTION_NOT_SUPPORTED`) to explicit EdDSA params; Ed448
+  `CKR_DOMAIN_PARAMS_INVALID` is now treated as unsupported-curve skip during
+  the probe. With adaptive ACVP EdDSA probing, the remaining focused failures
+  are invalid-key acceptance findings: four for SoftHSM2, four for Kryoptic,
+  and two Ed25519 cases for NSS. Evidence directories:
+  `artifacts/_focused/softhsm2-eddsa-adaptive-profile-v3`,
+  `artifacts/_focused/kryoptic-eddsa-adaptive-profile-v3`, and
+  `artifacts/_focused/nss-eddsa-adaptive-profile-v3`.
 - `kryoptic-fips` was rerun after clearing stale adaptive per-test isolation
   policy. The clean run still discovered the AES-CCM and Wycheproof AES crash
   culprits and preserved the same 12-crash count instead of hiding them.

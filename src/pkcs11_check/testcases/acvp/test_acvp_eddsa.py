@@ -22,7 +22,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_keypair,
     import_ec_private_key,
-    import_ec_public_key,
     sign_single,
     verify_single,
 )
@@ -43,6 +42,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases._eddsa_public_key import (
+    import_eddsa_public_key_with_supported_encoding,
+    select_eddsa_public_key_encoding,
+    verify_eddsa_signature_with_supported_params,
 )
 from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
@@ -120,6 +124,38 @@ _KEYGEN_VECTORS = load_eddsa_keygen_vectors()
 _KEYVER_VECTORS = load_eddsa_keyver_vectors()
 _SIGVER_VECTORS = load_eddsa_sigver_vectors()
 _SIGGEN_VECTORS = load_eddsa_siggen_vectors()
+_SIGVER_PROBES_BY_CURVE: dict[str, dict[str, Any]] = {}
+for _probe_id, _probe_vec in _SIGVER_VECTORS:
+    if _probe_vec.get("expected_pass") and "q" in _probe_vec:
+        _SIGVER_PROBES_BY_CURVE.setdefault(_probe_vec["curve"], _probe_vec)
+
+
+def _select_eddsa_public_key_encoding_for_vector(rs: Any, vec: dict[str, Any]) -> None:
+    """Probe raw vs DER-wrapped Edwards public-key import for this module/curve."""
+    public_key = vec.get("q")
+    if not isinstance(public_key, bytes):
+        return
+    probe = vec if vec.get("expected_pass") and "msg" in vec and "sig" in vec else None
+    if probe is None:
+        probe = _SIGVER_PROBES_BY_CURVE.get(vec["curve"])
+    if probe is None:
+        return
+    try:
+        select_eddsa_public_key_encoding(
+            rs.raw,
+            rs.sh,
+            ec_params=probe["ec_params"],
+            public_key=probe["q"],
+            message=probe["msg"],
+            signature=probe["sig"],
+        )
+    except AssertionError as exc:
+        if is_known_error(exc, _CURVE_UNSUPPORTED_RVS):
+            pytest.skip(f"Cannot import EdDSA public key for {vec['curve']}: {exc}")
+        _xfail_if_eddsa_runtime_reject(
+            exc,
+            f"{vec['curve']} EdDSA public-key encoding probe",
+        )
 
 
 class TestEdDsaKeyGen:
@@ -178,13 +214,13 @@ class TestEdDsaKeyVer:
 
         pub_key = 0
         try:
+            _select_eddsa_public_key_encoding_for_vector(rs, vec)
             try:
-                pub_key = import_ec_public_key(
+                pub_key = import_eddsa_public_key_with_supported_encoding(
                     rs.raw,
                     rs.sh,
                     ec_params=vec["ec_params"],
-                    ec_point=vec["ec_point"],
-                    key_type=int(CKK_EC_EDWARDS),
+                    public_key=vec.get("q", vec["ec_point"]),
                     attrs={CKA_VERIFY: True},
                 )
             except AssertionError as e:
@@ -200,7 +236,14 @@ class TestEdDsaKeyVer:
                 dummy_msg = b"x" * 32
                 sig_len = 64 if "25519" in vec["curve"] else 114
                 dummy_sig = b"\x00" * sig_len
-                verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, dummy_msg, dummy_sig)
+                verify_eddsa_signature_with_supported_params(
+                    rs.raw,
+                    rs.sh,
+                    public_key_handle=pub_key,
+                    ec_params=vec["ec_params"],
+                    message=dummy_msg,
+                    signature=dummy_sig,
+                )
                 key_usable = True
             except AssertionError as exc:
                 if is_known_error(exc, SIGNATURE_REJECT_RVS):
@@ -230,13 +273,13 @@ def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
     pub_key = 0
     try:
+        _select_eddsa_public_key_encoding_for_vector(rs, vec)
         try:
-            pub_key = import_ec_public_key(
+            pub_key = import_eddsa_public_key_with_supported_encoding(
                 rs.raw,
                 rs.sh,
                 ec_params=vec["ec_params"],
-                ec_point=vec["ec_point"],
-                key_type=int(CKK_EC_EDWARDS),
+                public_key=vec.get("q", vec["ec_point"]),
                 attrs={CKA_VERIFY: True},
             )
         except AssertionError as exc:
@@ -250,7 +293,14 @@ def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
             raise
 
         try:
-            verified = verify_single(rs.raw, rs.sh, pub_key, CKM_EDDSA, vec["msg"], vec["sig"])
+            verified = verify_eddsa_signature_with_supported_params(
+                rs.raw,
+                rs.sh,
+                public_key_handle=pub_key,
+                ec_params=vec["ec_params"],
+                message=vec["msg"],
+                signature=vec["sig"],
+            )
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
                 pytest.xfail(f"{vec_id}: {_EDDSA_PARAM_XFAIL_MSG} for {vec['curve']}")
