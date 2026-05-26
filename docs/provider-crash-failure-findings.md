@@ -228,6 +228,11 @@ confirmed that the provider advertised the mechanism, but the actual
 errors. Those cases are now xfailed as advertised-but-not-operational provider
 findings instead of skipped as missing capability.
 
+This affects AES-CFB/OFB simple and MCT runners, AES-GCM/CCM parameterized
+operations, AES-KW/KWP raw wrapping, AES-XTS, and AES-CTS variant/error paths.
+Missing mechanisms still skip normally; only runtime rejection after an
+advertised mechanism is reclassified.
+
 ### Follow-Up: Security Subprocess Setup Preflights
 
 The current `tpm2` and `pkcs11-mock` artifacts exposed a separate harness
@@ -250,10 +255,26 @@ to pass valid PIN/label buffers as `CK_UTF8CHAR_PTR` instead of
 `ctypes.c_void_p`. The old artifacts' PIN/token failures were Python
 `ctypes` signature errors, not module behavior.
 
-This affects AES-CFB/OFB simple and MCT runners, AES-GCM/CCM parameterized
-operations, AES-KW/KWP raw wrapping, AES-XTS, and AES-CTS variant/error paths.
-Missing mechanisms still skip normally; only runtime rejection after an
-advertised mechanism is reclassified.
+### Follow-Up: CKR Operation-State Subprocess Probes
+
+The compact artifact scan after cleanup still contained old
+`test_ckr_dual.py::TestOperationStateSubprocess::test_encrypt_without_init`
+rows where TPM2 and pkcs11-mock child-process setup failures were reported as
+`Subprocess crashed`. Current source no longer treats a positive child exit as
+a crash for this file: signal exits remain crash findings, while assertion
+exits inside the child are reported as child-script failures.
+
+The operation-state probes were also tightened to test the named PKCS#11 state
+errors directly. `test_encrypt_without_init` now calls raw `C_Encrypt` without
+`C_EncryptInit` and expects `CKR_OPERATION_NOT_INITIALIZED`; it no longer
+generates an AES key or calls the helper wrapper that initializes encryption.
+The double-digest probe now calls `C_DigestInit` twice and expects
+`CKR_OPERATION_ACTIVE`; it no longer uses `digest_single` twice, which performs
+two independent one-shot digest operations.
+
+Existing artifacts that mention these `test_ckr_dual.py` subprocess crashes
+should be treated as pre-fix harness evidence. A focused provider rerun is
+needed before these rows are used in article wording.
 
 ### Follow-Up: Legacy Cipher Advertised-But-Rejected Paths
 
