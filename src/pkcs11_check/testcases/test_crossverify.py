@@ -29,8 +29,6 @@ from pkcs11_check.raw.types_std import (
     CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
-    CKA_MODULUS,
-    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
@@ -57,6 +55,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.crossverify
@@ -169,15 +168,7 @@ class TestRSACrossVerify:
 
     def _export_rsa_pubkey(self, rs: Any, pub_h: int) -> rsa.RSAPublicKey:
         """Export RSA public key from PKCS#11 and load into cryptography."""
-        attrs = read_attributes(
-            rs.raw,
-            rs.sh,
-            pub_h,
-            [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
-        )
-        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
-        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
-        return rsa.RSAPublicNumbers(exponent, modulus).public_key()
+        return read_rsa_public_key_or_xfail(rs, pub_h)
 
     def test_rsa_pkcs_sign(self, p11_raw_session: Any) -> None:
         """RSA PKCS#1 v1.5: sign with PKCS#11, verify with cryptography."""
@@ -424,15 +415,7 @@ class TestRSAKeySizeCrossVerify:
     """Cross-verify RSA across different key sizes and hash algorithms."""
 
     def _export_rsa_pubkey(self, rs: Any, pub_h: int) -> Any:
-        attrs = read_attributes(
-            rs.raw,
-            rs.sh,
-            pub_h,
-            [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
-        )
-        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
-        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
-        return rsa.RSAPublicNumbers(exponent, modulus).public_key()
+        return read_rsa_public_key_or_xfail(rs, pub_h)
 
     def test_rsa_3072_sha384(self, p11_raw_session: Any) -> None:
         """RSA-3072 with SHA-384."""

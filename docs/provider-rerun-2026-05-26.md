@@ -84,6 +84,32 @@ Excluded targets: `bouncyhsm` because it is too slow for this iteration, and
   Python `ValueError`.
 - ACVP ECDH generated-key probes now treat malformed `CKA_EC_POINT` readback as
   xfail evidence instead of a raw DER decoding exception.
+- Continued raw-error triage found the same malformed-attribute pattern in
+  pkcs11-mock: CK_ULONG and CK_BBOOL attributes can be returned as empty byte
+  strings. Attribute-default, mechanism-attribute, and key-generation-mechanism
+  tests now report those as xfail setup/readback findings instead of raw Python
+  conversion/assertion failures.
+- RSA cross-verification and interop tests now validate exported RSA attributes
+  before constructing `cryptography` keys. Missing private-key components and
+  malformed public modulus/exponent values are xfail export findings, covering
+  the TPM2 `CKA_PRIVATE_EXPONENT` gap and pkcs11-mock `n must be >= 3` cases.
+- Raw operation-state subprocess tests now distinguish setup failure from crash:
+  if the subprocess cannot generate the AES setup key, the test xfails with the
+  setup CKR; non-zero subprocess exit and signals still fail as crash evidence.
+
+## Remaining Raw-Looking Buckets
+
+- Kryoptic `test_generate_key_oom_value_len` timeouts remain real provider
+  hangs in the FFI length-boundary probe, not a pkcs11-check classification gap.
+- Message-crypto generated IV/nonce assertions remain provider behavior: the
+  provider completed the operation but did not write the generated IV/nonce back
+  through the PKCS#11 message API parameter.
+- AES-KWP ciphertext mismatches, buffer-size writeback mismatches, CTS detection
+  failures, and padding-oracle/security findings are semantic provider results,
+  not raw harness exceptions.
+- Broad catch-all exception handling still exists in older test files. That is a
+  separate cleanup track; this pass only changed paths tied to current provider
+  artifacts and concrete raw Python failure signatures.
 
 ## Follow-Up Queue
 

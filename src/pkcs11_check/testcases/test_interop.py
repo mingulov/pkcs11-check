@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from cryptography.hazmat.primitives import hashes, hmac, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
+from cryptography.hazmat.primitives.asymmetric import ec, padding, utils
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -32,8 +32,6 @@ from pkcs11_check.raw.types_std import (
     CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
-    CKA_MODULUS,
-    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
@@ -53,6 +51,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS,
     CKM_SHA_1_HMAC,
 )
+from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases.conftest import extract_ec_point
 
 pytestmark = pytest.mark.interop
@@ -71,10 +70,7 @@ class TestRSAInterop:
             sig = sign_single(rs.raw, rs.sh, priv_h, CKM_SHA256_RSA_PKCS, data)
 
             # Export and verify in cryptography
-            attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
-            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
-            pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
+            pub_crypto = read_rsa_public_key_or_xfail(rs, pub_h)
             pub_crypto.verify(sig, data, padding.PKCS1v15(), hashes.SHA256())
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_h)
@@ -86,10 +82,7 @@ class TestRSAInterop:
         pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
 
         try:
-            attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
-            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
-            pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
+            pub_crypto = read_rsa_public_key_or_xfail(rs, pub_h)
 
             pem = pub_crypto.public_bytes(
                 serialization.Encoding.PEM,
@@ -125,10 +118,7 @@ class TestRSAInterop:
                 mech_param=pss_param,
             )
 
-            attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
-            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
-            pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
+            pub_crypto = read_rsa_public_key_or_xfail(rs, pub_h)
 
             pub_crypto.verify(
                 sig,
@@ -162,10 +152,7 @@ class TestRSAInterop:
         try:
             sig = sign_single(rs.raw, rs.sh, priv_h, hash_mech, data)
 
-            attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
-            exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
-            pub_crypto = rsa.RSAPublicNumbers(exponent, modulus).public_key()
+            pub_crypto = read_rsa_public_key_or_xfail(rs, pub_h)
             pub_crypto.verify(sig, data, padding.PKCS1v15(), hash_class)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_h)

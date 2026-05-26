@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.attr_metadata import ATTR_VALUE_TYPES
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
@@ -38,6 +39,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKO_DATA,
 )
+from pkcs11_check.testcases._attribute_values import require_bool_attr
 
 pytestmark = [pytest.mark.object]
 
@@ -48,8 +50,11 @@ def _read_attr(raw: Any, sh: int, handle: int, attr: int) -> Any:
         attrs = read_attributes(raw, sh, handle, [attr])
         if attr not in attrs:
             pytest.skip(f"Module does not expose attribute 0x{attr:08X} (not in response)")
-        return attrs[attr]
-    except (AssertionError, Exception) as e:
+        value = attrs[attr]
+        if ATTR_VALUE_TYPES.get(attr) == "bool":
+            return require_bool_attr(value, f"attribute 0x{attr:08X}")
+        return value
+    except AssertionError as e:
         err_msg = str(e)
         if "CKR_ATTRIBUTE_TYPE_INVALID" in err_msg:
             pytest.skip(f"Module does not expose attribute 0x{attr:08X}: {e}")
@@ -71,7 +76,7 @@ class TestSecretKeyDefaults:
             pytest.skip("AES key generation not supported")
         try:
             key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             pytest.skip(f"Cannot generate AES key with minimal template: {e}")
         yield rs, key
         destroy_quietly(rs.raw, rs.sh, key)
@@ -80,14 +85,15 @@ class TestSecretKeyDefaults:
         """CKA_TOKEN is False (explicitly set)."""
         rs, key = aes_key
         attrs = read_attributes(rs.raw, rs.sh, key, [CKA_TOKEN])
-        assert attrs[CKA_TOKEN] is False
+        assert require_bool_attr(attrs[CKA_TOKEN], "CKA_TOKEN") is False
 
     def test_local_is_true(self, aes_key: Any) -> None:
         """CKA_LOCAL should be True for a generated key."""
         rs, key = aes_key
         attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
+        local = require_bool_attr(attrs[CKA_LOCAL], "CKA_LOCAL")
         try:
-            assert attrs[CKA_LOCAL] is True
+            assert local is True
         except AssertionError:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -178,7 +184,7 @@ class TestKeyPairDefaults:
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
         try:
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             pytest.skip(f"Cannot generate RSA-2048 keypair: {e}")
         yield rs, pub, priv
         destroy_quietly(rs.raw, rs.sh, pub)
@@ -188,8 +194,9 @@ class TestKeyPairDefaults:
         """Public key CKA_LOCAL should be True."""
         rs, pub, _priv = rsa_keypair
         attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_LOCAL])
+        local = require_bool_attr(attrs[CKA_LOCAL], "CKA_LOCAL")
         try:
-            assert attrs[CKA_LOCAL] is True
+            assert local is True
         except AssertionError:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -206,8 +213,9 @@ class TestKeyPairDefaults:
         """Private key CKA_LOCAL should be True."""
         rs, _pub, priv = rsa_keypair
         attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_LOCAL])
+        local = require_bool_attr(attrs[CKA_LOCAL], "CKA_LOCAL")
         try:
-            assert attrs[CKA_LOCAL] is True
+            assert local is True
         except AssertionError:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -313,7 +321,7 @@ class TestDataObjectDefaults:
         """CKA_TOKEN is False (explicitly set)."""
         rs, h = data_obj
         attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TOKEN])
-        assert attrs[CKA_TOKEN] is False
+        assert require_bool_attr(attrs[CKA_TOKEN], "CKA_TOKEN") is False
 
     def test_modifiable_default(self, data_obj: Any) -> None:
         """CKA_MODIFIABLE defaults to True."""

@@ -17,14 +17,11 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    read_attributes,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
-    CKA_MODULUS,
-    CKA_PUBLIC_EXPONENT,
     CKA_TOKEN,
     CKG_MGF1_SHA1,
     CKG_MGF1_SHA384,
@@ -35,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA_1,
     CKR_OK,
 )
+from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.crossverify
@@ -183,15 +181,7 @@ class TestRSAOAEPRoundtrip:
 
 class TestRSAOAEPCrossVerify:
     def _export_rsa_pubkey(self, rs: Any, pub_handle: int) -> rsa.RSAPublicKey:
-        attrs = read_attributes(
-            rs.raw,
-            rs.sh,
-            pub_handle,
-            [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
-        )
-        modulus = int.from_bytes(attrs[CKA_MODULUS], "big")
-        exponent = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
-        return rsa.RSAPublicNumbers(exponent, modulus).public_key()
+        return read_rsa_public_key_or_xfail(rs, pub_handle)
 
     def test_encrypt_crypto_decrypt_p11(self, p11_raw_session: Any) -> None:
         """Encrypt with cryptography, decrypt with PKCS#11."""

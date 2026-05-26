@@ -27,11 +27,16 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases import (
+    _rsa_export,
     test_access_levels,
     test_aes_modes,
+    test_attribute_defaults,
+    test_attribute_enforcement,
     test_authenticated_wrap,
     test_buffers,
+    test_crossverify_extended,
     test_generic_secret,
+    test_interop,
     test_key_usage_policy,
     test_mech_attribute,
     test_mech_flags,
@@ -44,7 +49,7 @@ from pkcs11_check.testcases import (
     test_sign_recover,
     test_stateful,
 )
-from pkcs11_check.testcases.ckr import test_ckr_decrypt, test_ckr_encrypt
+from pkcs11_check.testcases.ckr import test_ckr_decrypt, test_ckr_encrypt, test_ckr_raw_state
 from pkcs11_check.testcases.mechanism_registry import ParamRecipe
 from pkcs11_check.testcases.security import test_nonce_quality, test_padding_oracle
 
@@ -672,6 +677,161 @@ def test_mechanism_attribute_local_false_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="CKA_LOCAL=False"):
         test_mech_attribute.TestKeyAttributes().test_local_flag_on_generated_key(rs, entry)
+
+
+def test_mechanism_attribute_malformed_ulong_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = SimpleNamespace(
+        mech_name="DES3_KEY_GEN",
+        config=SimpleNamespace(
+            is_param_gen=False,
+            is_keypair=False,
+            key_type=CKK_AES,
+        ),
+    )
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    monkeypatch.setattr(test_mech_attribute, "needs_domain_params", lambda _config: False)
+    monkeypatch.setattr(test_mech_attribute, "gen_symmetric_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_mech_attribute, "destroy_quietly", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        test_mech_attribute,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_mech_attribute.CKA_KEY_TYPE: b""},
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="malformed CK_ULONG"):
+        test_mech_attribute.TestKeyAttributes().test_key_type_matches_template(rs, entry)
+
+
+def test_key_gen_mechanism_malformed_ulong_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    monkeypatch.setattr(
+        test_attribute_enforcement,
+        "import_secret_key",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        test_attribute_enforcement,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_attribute_enforcement.CKA_KEY_GEN_MECHANISM: b""},
+    )
+    monkeypatch.setattr(
+        test_attribute_enforcement,
+        "destroy_quietly",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="malformed CK_ULONG"):
+        test_attribute_enforcement.TestKeyGenMechanism().test_imported_key_has_unavailable(rs)
+
+
+def test_attribute_defaults_malformed_read_bool_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_attribute_defaults,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_attribute_defaults.CKA_PRIVATE: b""},
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="malformed CK_BBOOL"):
+        test_attribute_defaults._read_attr(object(), 1, 2, test_attribute_defaults.CKA_PRIVATE)
+
+
+def test_attribute_defaults_direct_malformed_bool_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = SimpleNamespace(raw=object(), sh=1)
+    monkeypatch.setattr(
+        test_attribute_defaults,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_attribute_defaults.CKA_TOKEN: b""},
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="malformed CK_BBOOL"):
+        test_attribute_defaults.TestDataObjectDefaults().test_token_is_false((rs, 1))
+
+
+def test_interop_malformed_rsa_public_attrs_are_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    monkeypatch.setattr(test_interop, "gen_rsa_keypair", lambda *_args, **_kwargs: (1, 2))
+    monkeypatch.setattr(
+        _rsa_export,
+        "read_attributes",
+        lambda *_args, **_kwargs: {
+            _rsa_export.CKA_MODULUS: b"",
+            _rsa_export.CKA_PUBLIC_EXPONENT: b"\x01\x00\x01",
+        },
+    )
+    monkeypatch.setattr(test_interop, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(pytest.xfail.Exception, match="malformed RSA public attributes"):
+        test_interop.TestRSAInterop().test_rsa_pubkey_pem_roundtrip(rs)
+
+
+def test_crossverify_missing_rsa_private_attrs_are_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name == "RSA_PKCS_OAEP",
+    )
+
+    monkeypatch.setattr(
+        test_crossverify_extended,
+        "gen_rsa_keypair",
+        lambda *_args, **_kwargs: (1, 2),
+    )
+    monkeypatch.setattr(
+        test_crossverify_extended,
+        "encrypt_single",
+        lambda *_args, **_kwargs: b"ct",
+    )
+    monkeypatch.setattr(
+        _rsa_export,
+        "read_attributes",
+        lambda *_args, **_kwargs: {
+            _rsa_export.CKA_MODULUS: (2**2048 - 159).to_bytes(256, "big"),
+            _rsa_export.CKA_PUBLIC_EXPONENT: b"\x01\x00\x01",
+        },
+    )
+    monkeypatch.setattr(
+        test_crossverify_extended,
+        "destroy_quietly",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="missing RSA private attribute"):
+        test_crossverify_extended.TestRSAOAEPCrossVerify().test_rsa_oaep_encrypt_p11_decrypt_crypto(
+            rs
+        )
+
+
+def test_raw_state_setup_keygen_failure_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_ckr_raw_state,
+        "_run",
+        lambda *_args, **_kwargs: (
+            0,
+            "SETUP_XFAIL:C_GenerateKey failed:CKR_MECHANISM_INVALID",
+            "",
+        ),
+    )
+    config = SimpleNamespace(module="/tmp/provider.so", pin=None)
+
+    with pytest.raises(pytest.xfail.Exception, match="C_GenerateKey failed"):
+        test_ckr_raw_state.TestOperationActive().test_double_encrypt_init(config)
 
 
 def test_mech_wrap_builds_rc2_cbc_params() -> None:

@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -23,21 +22,12 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_rsa_keypair,
     import_secret_key,
-    read_attributes,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_COEFFICIENT,
     CKA_DECRYPT,
     CKA_ENCRYPT,
-    CKA_EXPONENT_1,
-    CKA_EXPONENT_2,
     CKA_EXTRACTABLE,
-    CKA_MODULUS,
-    CKA_PRIME_1,
-    CKA_PRIME_2,
-    CKA_PRIVATE_EXPONENT,
-    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKG_MGF1_SHA1,
@@ -49,6 +39,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS_PSS,
     CKM_SHA_1,
+)
+from pkcs11_check.testcases._rsa_export import (
+    read_rsa_private_key_or_xfail,
+    read_rsa_public_key_or_xfail,
 )
 
 pytestmark = pytest.mark.crossverify
@@ -196,19 +190,8 @@ class TestRSAPSSCrossVerify:
             )
 
             # Export public key components
-            attrs = read_attributes(
-                rs.raw,
-                rs.sh,
-                pub,
-                [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
-            )
-            modulus = attrs[CKA_MODULUS]
-            exponent = attrs[CKA_PUBLIC_EXPONENT]
-
             # Reconstruct public key in cryptography
-            n = int.from_bytes(modulus, "big")
-            e = int.from_bytes(exponent, "big")
-            crypto_pub = rsa.RSAPublicNumbers(e, n).public_key()
+            crypto_pub = read_rsa_public_key_or_xfail(rs, pub)
 
             # Verify with cryptography (PSS with SHA-256)
             try:
@@ -263,40 +246,7 @@ class TestRSAOAEPCrossVerify:
             )
 
             # Export private key components for cryptography
-            priv_attrs = read_attributes(
-                rs.raw,
-                rs.sh,
-                priv,
-                [
-                    CKA_MODULUS,
-                    CKA_PUBLIC_EXPONENT,
-                    CKA_PRIVATE_EXPONENT,
-                    CKA_PRIME_1,
-                    CKA_PRIME_2,
-                    CKA_EXPONENT_1,
-                    CKA_EXPONENT_2,
-                    CKA_COEFFICIENT,
-                ],
-            )
-
-            n = int.from_bytes(priv_attrs[CKA_MODULUS], "big")
-            e = int.from_bytes(priv_attrs[CKA_PUBLIC_EXPONENT], "big")
-            d = int.from_bytes(priv_attrs[CKA_PRIVATE_EXPONENT], "big")
-            p_int = int.from_bytes(priv_attrs[CKA_PRIME_1], "big")
-            q_int = int.from_bytes(priv_attrs[CKA_PRIME_2], "big")
-            dp_int = int.from_bytes(priv_attrs[CKA_EXPONENT_1], "big")
-            dq_int = int.from_bytes(priv_attrs[CKA_EXPONENT_2], "big")
-            qi_int = int.from_bytes(priv_attrs[CKA_COEFFICIENT], "big")
-
-            crypto_priv = rsa.RSAPrivateNumbers(
-                p_int,
-                q_int,
-                d,
-                dp_int,
-                dq_int,
-                qi_int,
-                rsa.RSAPublicNumbers(e, n),
-            ).private_key()
+            crypto_priv = read_rsa_private_key_or_xfail(rs, priv)
 
             # Decrypt with cryptography (OAEP SHA-1, default for PKCS#11)
             pt = crypto_priv.decrypt(

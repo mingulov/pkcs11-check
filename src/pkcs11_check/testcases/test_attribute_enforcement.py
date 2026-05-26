@@ -48,6 +48,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import require_ulong_attr
 from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.security]
@@ -382,7 +383,8 @@ class TestKeyGenMechanism:
             if CKA_KEY_GEN_MECHANISM not in attrs:
                 pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
             mech = attrs[CKA_KEY_GEN_MECHANISM]
-            assert mech == CKM_AES_KEY_GEN, f"Expected CKM_AES_KEY_GEN, got {mech}"
+            mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
+            assert mech_val == CKM_AES_KEY_GEN, f"Expected CKM_AES_KEY_GEN, got {mech_val}"
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
@@ -403,8 +405,9 @@ class TestKeyGenMechanism:
                 if CKA_KEY_GEN_MECHANISM not in attrs:
                     pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
                 mech = attrs[CKA_KEY_GEN_MECHANISM]
-                assert mech == CKM_RSA_PKCS_KEY_PAIR_GEN, (
-                    f"Expected CKM_RSA_PKCS_KEY_PAIR_GEN, got {mech}"
+                mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
+                assert mech_val == CKM_RSA_PKCS_KEY_PAIR_GEN, (
+                    f"Expected CKM_RSA_PKCS_KEY_PAIR_GEN, got {mech_val}"
                 )
             except AssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
@@ -431,12 +434,12 @@ class TestKeyGenMechanism:
                 if CKA_KEY_GEN_MECHANISM not in attrs:
                     pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
                 mech = attrs[CKA_KEY_GEN_MECHANISM]
-            except (AssertionError, Exception) as e:
+            except AssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
                 raise
             # CK_UNAVAILABLE_INFORMATION is ~0 (all bits set).
-            mech_val = int(mech) if not isinstance(mech, int) else mech
+            mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
             unavailable_32 = 0xFFFFFFFF
             unavailable_64 = 0xFFFFFFFFFFFFFFFF
             assert mech_val in (unavailable_32, unavailable_64), (
