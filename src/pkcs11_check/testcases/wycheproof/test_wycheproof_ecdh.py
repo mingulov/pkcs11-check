@@ -7,6 +7,7 @@ curve families that can be fed into the existing PKCS#11 derive path.
 from __future__ import annotations
 
 import json
+from binascii import Error as BinasciiError
 from typing import Any, NoReturn
 
 import pytest
@@ -88,6 +89,13 @@ _ECDH_RUNTIME_REJECT_CKRS = (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
+)
+
+_ECDH_DECODE_ERRORS = (
+    BinasciiError,
+    KeyError,
+    TypeError,
+    ValueError,
 )
 
 _ECDH_FILES = [
@@ -198,7 +206,7 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     encoding_name = vec["_encoding"]
     try:
         oid = ec_params_for_curve(curve)
-    except Exception:
+    except _ECDH_DECODE_ERRORS:
         pytest.skip(f"No EC params mapping for curve {curve}")
 
     if curve in _UNSUPPORTED_CURVES:
@@ -207,7 +215,7 @@ def test_ecdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     try:
         public_point = decode_ec_public_point(vec["public"], encoding_name, curve)
         private_scalar = decode_ec_private_scalar(vec["private"], encoding_name, curve)
-    except Exception as exc:
+    except _ECDH_DECODE_ERRORS as exc:
         pytest.skip(f"Cannot decode {encoding_name} ECDH vector: {type(exc).__name__}")
     shared_expected = bytes.fromhex(vec["shared"])
     result = vec["result"]

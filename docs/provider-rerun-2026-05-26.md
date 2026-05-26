@@ -449,6 +449,12 @@ official full-matrix release statistics.
   instead of becoming valid-vector skips or invalid-vector passes. The mock
   target does not advertise `ECDH1_DERIVE`, so the focused run reports 4,176
   skipped and 0 failed as capability-skip evidence.
+- `pkcs11-mock` Wycheproof ECDH focused artifact:
+  `artifacts/_focused/pkcs11-mock-ecdh-decode-current-20260527/`. Current source
+  narrows ECDH curve-mapping and decoder exception handling so local bugs
+  propagate instead of becoming provider capability skips. The mock target does
+  not advertise `ECDH1_DERIVE`, so the focused run reports 13,128 skipped and
+  0 failed as capability-skip evidence.
 - `pkcs11-mock` SO PIN focused artifact:
   `artifacts/_focused/pkcs11-mock-so-pin-current-20260527/`. Current source no
   longer turns arbitrary `C_SetPIN` setup exceptions into skips; exact token

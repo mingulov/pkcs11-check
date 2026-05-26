@@ -569,9 +569,15 @@ clean signature-invalid result, remains a real failure.
 The largest remaining skip buckets are curve/import capability probes in
 Wycheproof ECDSA, ECDH, and X25519/X448. The ECDSA and ECDH guards now match
 specific CKR constants instead of parsing CKR names from exception text, and
-ECDH no longer skips arbitrary `AssertionError`s from private-key import. These
-remain capability skips because PKCS#11 does not expose a complete per-curve
-support list through mechanism discovery.
+ECDH no longer skips arbitrary `AssertionError`s from private-key import. ECDH
+decoder and curve-mapping handling now catches only expected vector
+decode/mapping errors; unexpected local bugs propagate instead of becoming
+provider capability skips. These remain capability skips because PKCS#11 does
+not expose a complete per-curve support list through mechanism discovery. The
+focused pkcs11-mock ECDH rerun in
+`artifacts/_focused/pkcs11-mock-ecdh-decode-current-20260527/` reports 13,128
+capability skips and 0 failures because the mock does not advertise
+`ECDH1_DERIVE`.
 
 The X25519/X448 guard received the same structured CKR treatment. Invalid JWK
 vectors whose public key cannot be decoded now count as accepted invalid-vector

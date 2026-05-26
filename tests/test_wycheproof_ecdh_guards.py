@@ -41,6 +41,73 @@ def test_duplicate_ecdh_container_vector_is_skipped(
         ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
 
 
+def test_ecdh_curve_mapping_bug_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unexpected curve-mapping bugs must not become capability skips."""
+    monkeypatch.setattr(
+        ecdh, "ec_params_for_curve", lambda *_args: (_ for _ in ()).throw(RuntimeError("curve bug"))
+    )
+    vec_id = "ecdh_secp256r1_ecpoint_test.json:tc1-valid"
+    vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
+
+    try:
+        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"ECDH curve-mapping bug was skipped: {exc}")
+    except RuntimeError as exc:
+        assert "curve bug" in str(exc)
+    else:
+        pytest.fail("ECDH curve-mapping bug did not propagate")
+
+
+def test_valid_ecdh_decoder_bug_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unexpected decoder bugs must not become valid-vector capability skips."""
+    monkeypatch.setattr(
+        ecdh,
+        "decode_ec_public_point",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("decoder bug")),
+    )
+    vec_id = "ecdh_secp256r1_ecpoint_test.json:tc1-valid"
+    vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
+
+    try:
+        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"valid ECDH decoder bug was skipped: {exc}")
+    except RuntimeError as exc:
+        assert "decoder bug" in str(exc)
+    else:
+        pytest.fail("valid ECDH decoder bug did not propagate")
+
+
+def test_invalid_ecdh_decoder_bug_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unexpected decoder bugs must not become invalid-vector skips."""
+    monkeypatch.setattr(
+        ecdh, "decode_ec_public_point", lambda *_args, **_kwargs: b"\x04" + b"\x01" * 64
+    )
+    monkeypatch.setattr(
+        ecdh,
+        "decode_ec_private_scalar",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("decoder bug")),
+    )
+    vec_id = "ecdh_secp256r1_ecpoint_test.json:tc332-invalid"
+    vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
+
+    try:
+        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"invalid ECDH decoder bug was skipped: {exc}")
+    except RuntimeError as exc:
+        assert "decoder bug" in str(exc)
+    else:
+        pytest.fail("invalid ECDH decoder bug did not propagate")
+
+
 def test_invalid_ecdh_without_shared_secret_success_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
