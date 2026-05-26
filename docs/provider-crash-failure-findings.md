@@ -666,9 +666,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   accepted invalid ciphertext remains a hard failure.
 - **Wycheproof RSA PKCS#1 decrypt runtime rejects**: Kryoptic FIPS/PQC reached
   advertised `CKM_RSA_PKCS` decrypt with valid Wycheproof ciphertexts and
-  returned `CKR_DEVICE_ERROR`. Valid-vector runtime rejects are now visible
-  xfail evidence, while wrong plaintext and accepted invalid ciphertexts remain
-  hard failures.
+  returned `CKR_DEVICE_ERROR`; pkcs11-mock reached the same valid-vector path
+  and returned `CKR_KEY_TYPE_INCONSISTENT`. Valid-vector runtime rejects are
+  now visible xfail evidence, while wrong plaintext and accepted invalid
+  ciphertexts remain hard failures.
 - **Wycheproof HMAC operation rejects**: valid HMAC vectors in TPM2,
   SoftHSM2, and BouncyHSM artifacts reached advertised HMAC mechanisms but
   failed at key use with explicit CKRs such as `CKR_GENERAL_ERROR`,
@@ -734,12 +735,14 @@ The following paths were tightened after inspecting the all-fail artifacts:
   now use the digest size for the selected mechanism, so SHA3-224 no longer
   requests an invalid 32-byte output. Explicit `C_DeriveKey` CKR rejects are
   still reported as xfail advertised-but-not-operational evidence.
-- **ACVP/Wycheproof EdDSA public-key encoding**: `CKK_EC_EDWARDS`
-  `CKA_EC_POINT` inputs now use the raw RFC 8032 public-key bytes required by
-  the local OASIS PKCS#11 spec tree, not a DER OCTET STRING wrapper. Focused
-  SoftHSM2 and Kryoptic reruns show that providers which only verify the old
-  DER-wrapped form now reject valid raw-point SigVer vectors; that is provider
-  compatibility/spec evidence, not a reason to keep the harness wrapping.
+- **ACVP/Wycheproof EdDSA public-key encoding**: the local OASIS PKCS#11 spec
+  tree requires raw RFC 8032 public-key bytes for `CKK_EC_EDWARDS`
+  `CKA_EC_POINT`, while several current providers differ in practice. The
+  vector tests now probe a known-good EdDSA signature first, trying raw and
+  DER-wrapped points plus both observed `CKM_EDDSA` parameter modes, then use
+  the working profile for cryptographic coverage. The standalone
+  `test_eddsa_public_key_encoding_support` test keeps the spec-facing result
+  visible: raw support is a clean pass, DER-only support is xfail evidence.
 - **ACVP EdDSA key verification**: valid EdDSA public-key import rejected with
   explicit CKR values is now xfail evidence for an advertised EDDSA path that
   cannot import usable ACVP public keys. Accepting an invalid EdDSA key remains

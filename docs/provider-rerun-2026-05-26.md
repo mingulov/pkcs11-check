@@ -285,14 +285,16 @@ Completed high-signal observations:
   batch, including `CKR_ARGUMENTS_BAD`, `CKR_MECHANISM_INVALID`,
   `CKR_MECHANISM_PARAM_INVALID`, `CKR_KEY_TYPE_INCONSISTENT`, and
   `CKR_FUNCTION_NOT_SUPPORTED`.
-- EdDSA vector loaders now use raw RFC 8032 public-key bytes for
-  `CKK_EC_EDWARDS` `CKA_EC_POINT`. The local PKCS#11 spec tree says Edwards
+- EdDSA vector loaders now start from the raw RFC 8032 public-key bytes
+  required for `CKK_EC_EDWARDS` `CKA_EC_POINT`, then probe raw versus
+  DER-wrapped point import and the two observed `CKM_EDDSA` parameter modes
+  with a known-good signature. The local PKCS#11 spec tree says Edwards
   public-key objects store the public key bytes directly; DER OCTET STRING
   wrapping applies to classic `CKK_EC` ANSI X9.62 points, not Edwards keys.
-  Focused SoftHSM2/Kryoptic reruns therefore expose DER-only compatibility as
-  provider behavior, while a focused NSS rerun confirmed
-  `CKR_FUNCTION_NOT_SUPPORTED` is now reported as xfail evidence rather than a
-  raw harness error.
+  The dedicated `test_eddsa_public_key_encoding_support` row remains the
+  spec-facing result: raw support passes cleanly, DER-only support is visible
+  xfail evidence, and the vector rows use the working profile so they still
+  measure signature behavior where possible.
 - Padding-oracle structured RSA tests now treat malformed generated RSA public
   modulus/exponent attributes as an xfail setup finding instead of crashing with
   Python `ValueError`.
@@ -344,6 +346,14 @@ official full-matrix release statistics.
   advertised `CKM_SHA_1` returns a digest mismatch. Remaining mock failures are
   therefore provider/mock behavior: SHA-1 digest mismatch, advertised AES-CBC
   returning `CKR_KEY_TYPE_INCONSISTENT`, and RSA-OAEP semantic failures.
+- `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
+  `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
+  The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124
+  xfailed, and 0 failed. The former hard failures were valid-vector
+  `CKR_KEY_TYPE_INCONSISTENT` runtime rejects from an advertised
+  `CKM_RSA_PKCS` decrypt path, so they are visible xfail evidence rather than
+  raw harness failures. Accepted invalid ciphertext would still be a hard
+  failure in this test.
 - `tpm2` focused artifacts:
   `artifacts/_focused/tpm2-post-38c12f8-r3`. The same 5-file focus list moved
   from 13 failures / 17 xfails in `r1` to 12 failures / 18 xfails in `r3`.
