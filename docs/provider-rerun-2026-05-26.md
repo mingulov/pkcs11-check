@@ -406,6 +406,12 @@ official full-matrix release statistics.
   9 skipped. RSA/SHA-256 sign rows now skip when `SHA256_RSA_PKCS` is absent.
   The remaining hard rows are AES value readback placeholders and empty RSA
   public modulus readback after setup succeeds.
+- `pkcs11-mock` metamorphic focused artifact:
+  `artifacts/_focused/pkcs11-mock-metamorphic-signature-current-r2-20260527/`.
+  The focused `test_metamorphic.py` run moved from 6 failed / 9 skipped to
+  15 skipped. Missing RSA/SHA mechanisms now skip before setup, and the RSA
+  wrong-data row no longer catches its own failure assertion; accepting a
+  tampered signature remains a hard failure when setup succeeds.
 - `pkcs11-mock` resource/stress focused artifact:
   `artifacts/_focused/pkcs11-mock-resource-stress-r2-20260527/`. The focused
   `test_resource.py` and `test_stress.py` run moved from 1 passed / 16 failed

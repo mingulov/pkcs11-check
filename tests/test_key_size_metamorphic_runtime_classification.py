@@ -122,3 +122,61 @@ def test_metamorphic_aes_setup_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) 
             _session("AES_KEY_GEN"),
             128,
         )
+
+
+def test_metamorphic_rsa_roundtrip_missing_sign_mechanism_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_metamorphic,
+        "gen_rsa_keypair_or_xfail",
+        lambda *_args, **_kwargs: pytest.fail("RSA keygen should not be called"),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
+        test_metamorphic.TestRoundTripInvariants().test_rsa_sign_verify_roundtrip(
+            _session("RSA_PKCS_KEY_PAIR_GEN"),
+        )
+
+
+def test_metamorphic_rsa_wrong_data_missing_sign_mechanism_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_metamorphic,
+        "gen_rsa_keypair_or_xfail",
+        lambda *_args, **_kwargs: pytest.fail("RSA keygen should not be called"),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
+        test_metamorphic.TestRoundTripInvariants().test_rsa_wrong_data_verify_fails(
+            _session("RSA_PKCS_KEY_PAIR_GEN"),
+        )
+
+
+def test_metamorphic_sha256_missing_mechanism_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_metamorphic,
+        "digest_single",
+        lambda *_args, **_kwargs: pytest.fail("digest should not be called"),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
+        test_metamorphic.TestDeterminismInvariants().test_digest_deterministic(_session())
+
+
+def test_metamorphic_sha_family_missing_mechanism_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_metamorphic,
+        "digest_single",
+        lambda *_args, **_kwargs: pytest.fail("digest should not be called"),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
+        test_metamorphic.TestDigestProperties().test_sha_family_different_outputs(
+            _session("SHA_1", "SHA512"),
+        )

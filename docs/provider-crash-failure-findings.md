@@ -1381,15 +1381,20 @@ The following paths were tightened after inspecting the all-fail artifacts:
   "the swtok crash disappeared" should be described as previous harness/build
   behavior, not as an upstream OpenSSL-path fix.
 - **Key-size and metamorphic setup paths**: AES key-size checks and metamorphic
-  invariants now use the shared advertised-keygen setup classification. Missing
-  `AES_KEY_GEN`, `RSA_PKCS_KEY_PAIR_GEN`, or `SHA256_RSA_PKCS` stays a skip,
-  while explicit runtime rejection after advertisement is an xfail setup
-  finding. Roundtrip, determinism, copy-equivalence, and wrong-output
-  assertions still fail when the setup succeeds and the cryptographic invariant
-  is wrong. A focused pkcs11-mock key-size rerun in
+  invariants now use the shared advertised-keygen/setup classification. Missing
+  `AES_KEY_GEN`, `RSA_PKCS_KEY_PAIR_GEN`, `SHA256_RSA_PKCS`, `SHA256`, `SHA_1`,
+  or `SHA512` stays a skip, while explicit runtime rejection after advertisement
+  is an xfail setup finding where classified. The RSA wrong-data metamorphic row
+  also no longer catches its own failure assertion, so accepting a tampered
+  signature is a hard failure. Roundtrip, determinism, copy-equivalence, digest,
+  and wrong-output assertions still fail when the setup succeeds and the
+  cryptographic invariant is wrong. A focused pkcs11-mock key-size rerun in
   `artifacts/_focused/pkcs11-mock-key-sizes-r2-20260527/` moves the old RSA
   sign rows to skips and leaves six hard readback findings: AES key export
   returns a placeholder value, and RSA public modulus reads back as empty bytes.
+  A focused pkcs11-mock metamorphic rerun in
+  `artifacts/_focused/pkcs11-mock-metamorphic-signature-current-r2-20260527/`
+  moves the old SHA/RSA setup failures to 15 counted skips and 0 failures.
 - **ECDSA prehash negative verification**: tampered-data checks for
   `CKM_ECDSA_SHA*` now use the same invalid-signature policy as Wycheproof,
   ACVP, and mechanism-driven sign tests. Clean signature rejects pass the

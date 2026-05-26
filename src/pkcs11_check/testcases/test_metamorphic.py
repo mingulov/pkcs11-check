@@ -51,10 +51,12 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_FUNCTION_NOT_SUPPORTED,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
     is_known_error,
+    skip_unless_mechanism,
 )
 
 pytestmark = pytest.mark.metamorphic
@@ -106,6 +108,7 @@ class TestRoundTripInvariants:
     def test_rsa_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
         """RSA: verify(sign(data)) == True."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"sign-verify roundtrip"
@@ -118,13 +121,23 @@ class TestRoundTripInvariants:
     def test_rsa_wrong_data_verify_fails(self, p11_raw_session: Any) -> None:
         """RSA: verify(sign(data), different_data) must fail."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
         pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"original data")
-            result = verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, b"tampered data", sig)
+            try:
+                result = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_SHA256_RSA_PKCS,
+                    b"tampered data",
+                    sig,
+                )
+            except AssertionError as exc:
+                signature_rejected_or_xfail(exc, "RSA wrong-data metamorphic verification")
+                return
             assert result is False
-        except AssertionError:
-            pass  # Expected - signature invalid
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -199,6 +212,7 @@ class TestDeterminismInvariants:
     def test_digest_deterministic(self, p11_raw_session: Any) -> None:
         """SHA-256 of same data must always be the same."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         data = b"hash determinism test"
         d1 = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
         d2 = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
@@ -283,6 +297,7 @@ class TestDigestProperties:
     def test_different_inputs_different_outputs(self, p11_raw_session: Any) -> None:
         """Different inputs must produce different digests (collision resistance)."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         digests = set()
         for i in range(100):
             d = digest_single(rs.raw, rs.sh, CKM_SHA256, f"input {i}".encode())
@@ -292,6 +307,7 @@ class TestDigestProperties:
     def test_output_length_consistent(self, p11_raw_session: Any) -> None:
         """SHA-256 always produces 32 bytes regardless of input size."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         for size in [0, 1, 16, 64, 1024, 10000]:
             d = digest_single(rs.raw, rs.sh, CKM_SHA256, b"X" * size)
             assert len(d) == 32
@@ -299,6 +315,9 @@ class TestDigestProperties:
     def test_sha_family_different_outputs(self, p11_raw_session: Any) -> None:
         """Different SHA variants produce different outputs for same input."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA_1")
+        skip_unless_mechanism(rs, "SHA256")
+        skip_unless_mechanism(rs, "SHA512")
         data = b"sha family test"
         sha1 = digest_single(rs.raw, rs.sh, CKM_SHA_1, data)
         sha256 = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
