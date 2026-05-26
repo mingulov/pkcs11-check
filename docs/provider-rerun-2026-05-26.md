@@ -426,6 +426,11 @@ official full-matrix release statistics.
   key-management readback findings: imported AES `CKA_KEY_TYPE` is empty,
   exported AES key material is the mock placeholder `Hello world!`, and the RSA
   public modulus reads back empty.
+- `pkcs11-mock` RNG focused artifact:
+  `artifacts/_focused/pkcs11-mock-rng-current-20260527/`. The focused
+  `test_rng.py` run reports 4 passed and 5 failed. This is not setup noise:
+  `C_GenerateRandom` succeeds, but every byte is `0x01`, causing duplicate,
+  bit-frequency, byte-distribution, entropy, and runs-test failures.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124

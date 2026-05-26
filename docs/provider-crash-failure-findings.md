@@ -1189,6 +1189,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   from 1 passed / 16 failed to 16 skipped / 1 failed. The remaining hard row is
   `test_rapid_random_1000`, where all generated 32-byte random values are
   identical `0x01` bytes.
+- **RNG sanity coverage**: a focused pkcs11-mock rerun of `test_rng.py` in
+  `artifacts/_focused/pkcs11-mock-rng-current-20260527/` confirms the same
+  random-output problem without setup noise. `C_GenerateRandom` succeeds, but
+  returns repeated `0x01` bytes, so duplicate-sample, bit-frequency,
+  byte-distribution, Shannon-entropy, and runs-test assertions fail. These rows
+  should stay hard provider/mock behavior findings.
 - **General error-path setup coverage**: `test_errors.py` now applies the same
   split to broad negative and edge-case rows. Missing AES/SHA/RSA mechanisms are
   capability skips before setup. Advertised AES/RSA setup rejects are xfail
