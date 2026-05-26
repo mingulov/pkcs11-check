@@ -372,7 +372,7 @@ class TestSP800108CounterKDF:
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 128, mp)
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16, f"Expected 16 bytes, got {len(val)}"
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
             )
@@ -394,7 +394,7 @@ class TestSP800108CounterKDF:
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 256, mp)
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32, f"Expected 32 bytes, got {len(val)}"
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc,
                 _DERIVE_ERROR_RVS,
@@ -432,7 +432,7 @@ class TestSP800108CounterKDF:
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "Deterministic KDF produced different outputs"
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
             )
@@ -473,7 +473,7 @@ class TestSP800108CounterKDF:
             va = read_attributes(rs.raw, rs.sh, da, [CKA_VALUE])[CKA_VALUE]
             vb = read_attributes(rs.raw, rs.sh, db, [CKA_VALUE])[CKA_VALUE]
             assert va != vb, "Different labels produced same derived key"
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
             )
@@ -546,7 +546,7 @@ class TestSP800108FeedbackKDF:
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -570,7 +570,7 @@ class TestSP800108FeedbackKDF:
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF with IV not operational"
             )
@@ -604,7 +604,7 @@ class TestSP800108FeedbackKDF:
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 != v2, "Different IVs produced same derived key"
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -638,7 +638,7 @@ class TestSP800108FeedbackKDF:
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "Deterministic KDF produced different outputs"
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_FEEDBACK_KDF not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -671,7 +671,7 @@ class TestSP800108DoublePipelineKDF:
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 16
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational"
             )
@@ -696,7 +696,7 @@ class TestSP800108DoublePipelineKDF:
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF 256 not operational"
             )
@@ -730,7 +730,7 @@ class TestSP800108DoublePipelineKDF:
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert v1 == v2, "Deterministic KDF produced different outputs"
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_DOUBLE_PIPELINE_KDF not operational"
             )

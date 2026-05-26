@@ -374,6 +374,39 @@ def test_hkdf_python_bug_with_ckr_text_stays_failure(monkeypatch: pytest.MonkeyP
         pytest.fail("Expected HKDF Python bug to propagate")
 
 
+def test_kdf_runtime_classifiers_do_not_catch_generic_exception() -> None:
+    """KDF CKR classifiers should not turn arbitrary Python exceptions into xfails."""
+    paths = (
+        Path("src/pkcs11_check/testcases/test_kdf.py"),
+        Path("src/pkcs11_check/testcases/test_hkdf_extended.py"),
+        Path("src/pkcs11_check/testcases/test_misc_kdf.py"),
+        Path("src/pkcs11_check/testcases/test_sp800_108_kdf.py"),
+    )
+    offenders: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if node.type is None:
+                continue
+            catches_exception = any(
+                isinstance(child, ast.Name) and child.id == "Exception"
+                for child in ast.walk(node.type)
+            )
+            if not catches_exception:
+                continue
+            if any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "xfail_if_known_ckr"
+                for child in ast.walk(node)
+            ):
+                offenders.append(f"{path}:{node.lineno}")
+
+    assert offenders == []
+
+
 @pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR])
 def test_acvp_mldsa_runtime_rejects_are_xfail(rv: int) -> None:
     """Advertised ML-DSA sign/verify runtime rejects are findings, not skips."""
