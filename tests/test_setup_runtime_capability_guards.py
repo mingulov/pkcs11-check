@@ -39,6 +39,7 @@ from pkcs11_check.testcases import (
     test_buffers,
     test_crossverify,
     test_crossverify_extended,
+    test_data_objects,
     test_generic_secret,
     test_interop,
     test_key_usage_policy,
@@ -749,6 +750,31 @@ def test_api_security_wrap_runtime_reject_is_xfail_not_pass(
 
     with pytest.raises(pytest.xfail.Exception, match="API security wrap-decrypt operation"):
         test_api_security.TestWrapDecryptOracle().test_wrap_decrypt_combination_prevented(rs)
+
+
+def test_data_objects_extra_session_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session"
+        if hasattr(test_data_objects, "_raw_open_session")
+        else "raw_open_session"
+    )
+    monkeypatch.setattr(test_data_objects, open_attr, _open_session_limit)
+    monkeypatch.setattr(test_data_objects, "skip_if_token_write_protected", lambda *_args: None)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_data_objects.TestDataObjectToken().test_token_data_object_survives_session(
+            rs,
+            SimpleNamespace(pin=None),
+        )
 
 
 def test_session_state_machine_extra_session_capacity_reject_is_skip(

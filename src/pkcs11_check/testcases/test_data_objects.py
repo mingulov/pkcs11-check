@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.bootstrap import close_session_quietly, login_user
-from pkcs11_check.raw.bootstrap import open_session as raw_open_session
+from pkcs11_check.raw.bootstrap import open_session as _raw_open_session
 from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import (
     create_object,
@@ -23,6 +23,7 @@ from pkcs11_check.raw.recipes import (
     find_objects,
     read_attributes,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_APPLICATION,
     CKA_CLASS,
@@ -33,10 +34,12 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKO_DATA,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_SESSION_COUNT,
     CKU_USER,
 )
 from pkcs11_check.testcases.conftest import (
     get_pin_bytes,
+    is_known_error,
     skip_if_token_write_protected,
     xfail_if_known_ckr,
 )
@@ -64,6 +67,19 @@ def _search_by_label(raw: Any, sh: int, label: str) -> list[int]:
         attr_bytes(CKA_LABEL, label.encode("utf-8")),
     )
     return find_objects(raw, sh, tmpl)
+
+
+def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
+    """Open an extra session needed by data-object persistence tests."""
+    try:
+        return _raw_open_session(raw, slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional session required by data-object test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
 
 
 class TestDataObjectCreate:

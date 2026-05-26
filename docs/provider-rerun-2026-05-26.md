@@ -336,6 +336,12 @@ Completed high-signal observations:
   `artifacts/_focused/pkcs11-mock-api-security-r2-20260527/` reports
   11 skipped and 1 failed; the remaining failed row is readable
   `CKA_PRIVATE_EXPONENT` after RSA setup succeeds.
+- Data-object tests now skip extra-session capacity limits for token-object
+  persistence while keeping storage/readback/search checks strict. A focused
+  pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-data-objects-r2-20260527/` reports
+  3 passed, 1 skipped, and 9 failed; the failed rows are CKO_DATA storage and
+  search behavior, not setup failures.
 - Remaining-gap and subprocess-safety focused TPM2 evidence:
   `artifacts/_focused/tpm2-remaining-sign-safety-r2-20260527/`. Current source
   reports 6 passed, 23 skipped, 8 xfailed, and 1 failed across

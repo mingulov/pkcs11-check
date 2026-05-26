@@ -1184,6 +1184,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `CKA_VALUE` returning the mock placeholder instead of the requested key bytes.
   A focused current TPM2 rerun reports 10 passed, 6 xfailed, and 0 failed for
   this file.
+- **Data-object storage behavior**: `test_data_objects.py` now treats
+  `CKR_SESSION_COUNT` while opening extra sessions for token persistence as a
+  setup skip. The current pkcs11-mock rerun still leaves nine hard CKO_DATA
+  findings: empty data-object values are rejected, readback returns placeholder
+  values such as `Hello world!` / `Pkcs11Interop`, searches ignore labels,
+  destroyed objects remain findable, and `CKA_CLASS` reads back as empty bytes.
 - **Security key-flag coverage**: `CKA_NEVER_EXTRACTABLE`, `CKA_LOCAL`,
   `CKA_ALWAYS_SENSITIVE`, and AES-CBC-PAD flag tests now xfail explicit
   `AES_KEY_GEN` setup rejects instead of reporting an unrelated key-attribute
