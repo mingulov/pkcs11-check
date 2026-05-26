@@ -25,6 +25,7 @@ from pkcs11_check.testcases.conftest import (
     destroy_returned_handles,
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
+    gen_edwards_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
@@ -1242,7 +1243,7 @@ class TestEddsaNullContext:
         if not rs.has_mechanism("EDDSA"):
             pytest.skip("CKM_EDDSA not supported")
         curve_oid = encode_named_curve_parameters("ed25519")
-        pub, priv = gen_ec_keypair_or_xfail(
+        pub, priv = gen_edwards_keypair_or_xfail(
             rs,
             curve_oid,
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
@@ -1255,20 +1256,28 @@ class TestEddsaNullContext:
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
-    CK_EDDSA_PARAMS, CK_MECHANISM, CKM_EDDSA,
-    CKA_SIGN, CKA_TOKEN,
+    CK_EDDSA_PARAMS, CK_MECHANISM, CKM_EDDSA, CKM_EC_EDWARDS_KEY_PAIR_GEN,
+    CKA_EC_PARAMS, CKA_SIGN, CKA_TOKEN, CKA_VERIFY,
 )
-from pkcs11_check.raw.recipes import gen_ec_keypair, destroy_quietly
+from pkcs11_check.raw.pack import attr_bytes
+from pkcs11_check.raw.recipes import gen_keypair, destroy_quietly
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 
 # Ed25519 OID
 curve_oid = encode_named_curve_parameters("ed25519")
 try:
-    pub, priv = gen_ec_keypair(raw, sh, curve_oid,
-        private_attrs={CKA_SIGN: True, CKA_TOKEN: False})
+    pub, priv = gen_keypair(
+        raw, sh, int(CKM_EC_EDWARDS_KEY_PAIR_GEN),
+        pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+        priv_base=[],
+        public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+        private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+        pub_skip={CKA_EC_PARAMS},
+    )
 except AssertionError as exc:
     setup_xfail_if_known_ckr(
-        exc, KEYPAIR_RUNTIME_REJECT_RVS, "EC keypair generation rejected",
+        exc, KEYPAIR_RUNTIME_REJECT_RVS,
+        "EC_EDWARDS keypair generation rejected",
     )
 try:
     params = CK_EDDSA_PARAMS()

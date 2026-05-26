@@ -1054,6 +1054,20 @@ This is current provider-side crash evidence, not a pkcs11-check setup
 classification issue. The malformed API call is reached after setup, and the
 module terminates instead of returning a CKR such as `CKR_ARGUMENTS_BAD`.
 
+### FFI length-boundary signal crashes (UPDATED 2026-05-27)
+A focused current-source OpenCryptoki 3.27.0 build with OpenSSL 4.0.0 reports
+five hard FFI boundary findings in
+`artifacts/_focused/opencryptoki-ffi-length-current-20260527-r2/`: four
+signal-7 rows for `C_Sign(HMAC_SHA256)` / `C_Digest(SHA256)` with
+`ulDataLen` at `isize::MAX` and `isize::MAX + 1`, plus the separate
+`C_Verify(ML-DSA, pContext non-NULL, ulContextLen=0)` signal-6 abort already
+described in the ML-DSA section.
+
+The pre-fix EdDSA null-context setup row from the first 2026-05-27 FFI rerun is
+not an OpenCryptoki finding. pkcs11-check was using generic
+`CKM_EC_KEY_PAIR_GEN` for Ed25519 setup; current source uses
+`CKM_EC_EDWARDS_KEY_PAIR_GEN`.
+
 ### RSA-PSS distinct hash and MGF rejected (NEW 2026-04-30)
 `test_wycheproof_rsa_pss.py` — **435 failures**. RSA-PSS signatures where
 the message hash (e.g. SHA-256) differs from the MGF1 hash (e.g. SHA-1) are
@@ -1196,6 +1210,18 @@ They are not skips and not setup xfails: the test reaches the intended
 malformed PKCS#11 entry point and the provider terminates instead of returning
 a CKR error.
 
+### FFI length-boundary crashes and timeout (UPDATED 2026-05-27)
+A focused current-source Kryoptic main rerun reports seven hard FFI boundary
+findings in `artifacts/_focused/kryoptic-main-ffi-length-current-20260527-r2/`:
+four signal-7 rows for `C_Sign(HMAC_SHA256)` / `C_Digest(SHA256)` with
+`ulDataLen` at `isize::MAX` and `isize::MAX + 1`, a timeout in
+`C_GenerateKey(CKM_AES_KEY_GEN, CKA_VALUE_LEN=0x7fffffff)`, and signal-11
+crashes in the TLS KDF NULL-label and SP800-108 NULL-data-params probes.
+
+The pre-fix EdDSA null-context setup row from the first 2026-05-27 FFI rerun is
+not a Kryoptic finding. pkcs11-check was using generic `CKM_EC_KEY_PAIR_GEN`
+for Ed25519 setup; current source uses `CKM_EC_EDWARDS_KEY_PAIR_GEN`.
+
 ### FIPS mode crashes (kryoptic-fips)
 15 crashes on CKM_EXTRACT_KEY_FROM_KEY and certain AES-CCM vectors.
 FIPS mode correctly rejects non-approved operations but aborts instead of
@@ -1307,6 +1333,17 @@ shared incorrect mental model of CKA_TRUSTED's authorisation rule
 in mainstream PKCS#11 implementations.
 **Root cause:** NSS softoken's create-object path does not
 authorise CKA_TRUSTED against the session's user type.
+
+### FFI length-boundary crashes (UPDATED 2026-05-27)
+A focused current-source NSS main rerun reports three hard FFI boundary
+findings in `artifacts/_focused/nss-main-ffi-length-current-20260527-r2/`:
+two signal-11 rows for `C_Sign(HMAC_SHA256)` with `ulDataLen` at `isize::MAX`
+and `isize::MAX + 1`, plus a signal-11 crash for
+`C_EncryptInit(CKM_AES_GCM, pIv=NULL, ulIvLen=12)`.
+
+The pre-fix EdDSA null-context setup row from the first 2026-05-27 FFI rerun is
+not an NSS finding. pkcs11-check was using generic `CKM_EC_KEY_PAIR_GEN` for
+Ed25519 setup; current source uses `CKM_EC_EDWARDS_KEY_PAIR_GEN`.
 
 ### RSA-OAEP padding oracle confirmed and surfaced (CONFIRMED iter-54 2026-04-30)
 `test_padding_oracle.py::TestRSAPaddingOracle::test_oaep_error_uniformity`

@@ -315,6 +315,18 @@ reports 5 panic/abort/segfault findings. These rows must stay visible; they are
 not candidates for skip or xfail unless a later source-level review proves the
 PKCS#11 call shape itself is invalid.
 
+A focused current-source rerun of `test_ffi_length_boundary.py` also narrows
+the old crash-boundary evidence. One pkcs11-check setup bug was fixed:
+the EdDSA null-context probe now generates Ed25519 keys with
+`CKM_EC_EDWARDS_KEY_PAIR_GEN` instead of generic `CKM_EC_KEY_PAIR_GEN`, so the
+pre-fix OpenCryptoki/NSS/Kryoptic EdDSA setup failures should not be described
+as provider findings. After that correction, TPM2 still has two digest
+length-boundary signal-11 rows, OpenCryptoki has four HMAC/SHA256 sign/digest
+signal-7 rows plus the ML-DSA explicit-empty-context abort, Kryoptic main has
+seven signal/timeout boundary rows, and NSS main has two HMAC sign signal-11
+rows plus the AES-GCM NULL-IV signal-11 row. pkcs11-mock has no hard FFI
+failures in the focused run.
+
 ### Follow-Up: CKR Operation-State Subprocess Probes
 
 The compact artifact scan after cleanup still contained old

@@ -16,10 +16,16 @@ import pytest
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
+    CKA_EC_PARAMS,
     CKA_KEY_TYPE,
+    CKA_SIGN,
+    CKA_VERIFY,
+    CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
     CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -51,6 +57,11 @@ KEYPAIR_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+)
+
+EC_CURVE_UNSUPPORTED_RVS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
 )
 
 
@@ -238,6 +249,50 @@ def gen_ec_keypair_or_xfail(
             exc,
             KEYPAIR_RUNTIME_REJECT_RVS,
             "EC_KEY_PAIR_GEN advertised but keypair generation is not operational",
+        )
+    raise
+
+
+def gen_edwards_keypair_or_xfail(
+    rs: Any,
+    curve_oid: bytes,
+    public_attrs: Mapping[Any, Any] | None = None,
+    private_attrs: Mapping[Any, Any] | None = None,
+) -> tuple[int, int]:
+    """Generate an Edwards-curve keypair, xfail-ing explicit setup rejects."""
+    if not rs.has_mechanism("EC_EDWARDS_KEY_PAIR_GEN"):
+        pytest.skip("EC_EDWARDS_KEY_PAIR_GEN not supported by module")
+
+    from pkcs11_check.raw.pack import attr_bytes
+    from pkcs11_check.raw.recipes import gen_keypair
+
+    pub_defaults: dict[Any, Any] = {CKA_VERIFY: True}
+    priv_defaults: dict[Any, Any] = {CKA_SIGN: True}
+    if public_attrs:
+        pub_defaults.update(public_attrs)
+    if private_attrs:
+        priv_defaults.update(private_attrs)
+
+    try:
+        return gen_keypair(
+            rs.raw,
+            rs.sh,
+            int(CKM_EC_EDWARDS_KEY_PAIR_GEN),
+            pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+            priv_base=[],
+            public_attrs=pub_defaults,
+            private_attrs=priv_defaults,
+            pub_skip={CKA_EC_PARAMS},
+        )
+    except AssertionError as exc:
+        if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            rv = getattr(exc, "rv", None)
+            detail = ckr_name(rv) if rv is not None else str(exc)
+            pytest.skip(f"Edwards curve not supported by module: {detail}")
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "EC_EDWARDS_KEY_PAIR_GEN advertised but keypair generation is not operational",
         )
     raise
 

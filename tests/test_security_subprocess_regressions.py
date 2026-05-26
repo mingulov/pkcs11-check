@@ -399,6 +399,42 @@ def test_ffi_length_keypair_child_scripts_mark_setup_reject(
     assert all("KEYPAIR_RUNTIME_REJECT_RVS" in script for script in scripts)
 
 
+def test_ffi_length_eddsa_child_script_uses_edwards_keygen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ed25519 crash probes must use CKM_EC_EDWARDS_KEY_PAIR_GEN setup."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "", ""
+
+    monkeypatch.setattr(
+        test_ffi_length_boundary,
+        "gen_ec_keypair_or_xfail",
+        lambda *_a, **_k: (1, 2),
+    )
+    monkeypatch.setattr(
+        test_ffi_length_boundary,
+        "gen_edwards_keypair_or_xfail",
+        lambda *_a, **_k: (1, 2),
+        raising=False,
+    )
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    test_ffi_length_boundary.TestEddsaNullContext().test_eddsa_null_context_data(
+        _RawSession(),
+        cfg,
+    )
+
+    assert len(scripts) == 1
+    assert "CKM_EC_EDWARDS_KEY_PAIR_GEN" in scripts[0]
+    assert "gen_keypair" in scripts[0]
+    assert "gen_ec_keypair" not in scripts[0]
+
+
 def test_ffi_null_update_aes_probe_xfails_setup_before_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
