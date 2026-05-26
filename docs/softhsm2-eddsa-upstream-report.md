@@ -93,6 +93,46 @@ Artifact details:
 - xfail reason:
   `EdDSA verifies only with DER-wrapped CKA_EC_POINT; PKCS#11 requires raw RFC 8032 public-key bytes for CKK_EC_EDWARDS`
 
+## Source-side notes
+
+I also checked the SoftHSM2 source for the tested release tag and current
+branch:
+
+- release tag `2.7.0`: commit `13e6e86b83748fef74046dbf0c91f664b7acc1c3`
+- current branch checked during this note: commit
+  `679f33d1b325cca8f5eb1a8febcc7630654a34de`
+
+The relevant EdDSA public-key path appears unchanged between those two source
+snapshots.
+
+Likely implementation cause:
+
+- `src/lib/crypto/OSSLEDPublicKey.cpp`
+  - `setFromOSSL()` extracts the raw Ed25519/Ed448 public key from a Subject
+    Public Key Info structure, then stores it with `DERUTIL::raw2Octet(raw)`.
+  - `createOSSLKey()` later reads the stored public-key field with
+    `DERUTIL::octet2Raw(a)` before building an OpenSSL `EVP_PKEY`.
+- `src/lib/crypto/BotanEDPublicKey.cpp` has the same pattern for the Botan
+  backend: generated/imported Botan public-key bytes are stored via
+  `DERUTIL::raw2Octet(inA)`, and later decoded with `DERUTIL::octet2Raw(a)`.
+- `src/lib/SoftHSM.cpp`
+  - generated EdDSA public keys store `pub->getA()` into `CKA_EC_POINT`;
+    because `getA()` already contains the DER OCTET STRING wrapper, generated
+    SoftHSM2 public keys expose the wrapped form.
+  - imported EdDSA public keys are loaded by `getEDPublicKey()`, which reads
+    `CKA_EC_POINT` and passes it directly to `publicKey->setA(value)`.
+
+That combination means the internal EdDSA public-key field is treated as
+DER-wrapped OCTET STRING data. If an application supplies the PKCS#11 Edwards
+form, i.e. raw RFC 8032 public-key bytes, the later OpenSSL/Botan conversion
+tries to unwrap it as DER and does not build the expected provider key. If the
+application supplies `04 20 <32-byte Ed25519 public key>`, it matches the
+current internal representation and verification succeeds.
+
+This source reading is consistent with the pkcs11-check focused result, but the
+upstream report should still present the runtime result as the primary
+reproducer.
+
 ## Minimal test vector
 
 The focused test uses RFC 8032 Section 7.1, Ed25519 test 1:
@@ -179,6 +219,10 @@ Observed result:
 
 - raw `CKA_EC_POINT`: does not produce a working verification profile
 - DER OCTET STRING-wrapped `CKA_EC_POINT`: verification succeeds
+
+Likely source-side reason: SoftHSM2's EdDSA public-key implementation stores
+the public-key component internally as a DER OCTET STRING and `C_CreateObject`
+imports `CKA_EC_POINT` directly into that field.
 
 Expected result:
 
