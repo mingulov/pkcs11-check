@@ -29,6 +29,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import (
     _rsa_export,
+    test_access,
     test_access_levels,
     test_aes_modes,
     test_attribute_defaults,
@@ -582,6 +583,74 @@ def test_access_levels_public_session_capacity_reject_is_skip(
         )
 
 
+def test_legacy_access_extra_session_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session" if hasattr(test_access, "_raw_open_session") else "raw_open_session"
+    )
+    monkeypatch.setattr(test_access, open_attr, _open_session_limit)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_access.TestSessionTypes().test_ro_session_can_read(
+            rs,
+            SimpleNamespace(pin=None),
+        )
+
+
+def test_legacy_access_missing_aes_keygen_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _unexpected_keygen(*_args: Any, **_kwargs: Any) -> int:
+        raise AssertionError("AES keygen should have been capability-guarded")
+
+    keygen_attr = "_raw_gen_aes_key" if hasattr(test_access, "_raw_gen_aes_key") else "gen_aes_key"
+    monkeypatch.setattr(test_access, keygen_attr, _unexpected_keygen)
+    rs = _session_with_mechanisms()
+
+    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
+        test_access.TestSessionTypes().test_rw_session_can_generate_key(rs)
+
+
+def test_legacy_access_aes_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_access,
+        "require_operational_aes_keygen",
+        lambda _rs: None,
+        raising=False,
+    )
+    keygen_attr = "_raw_gen_aes_key" if hasattr(test_access, "_raw_gen_aes_key") else "gen_aes_key"
+    monkeypatch.setattr(test_access, keygen_attr, _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="access setup key generation"):
+        test_access.TestSessionTypes().test_rw_session_can_generate_key(rs)
+
+
+def test_legacy_access_rsa_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keypair_attr = (
+        "_raw_gen_rsa_keypair"
+        if hasattr(test_access, "_raw_gen_rsa_keypair")
+        else "gen_rsa_keypair"
+    )
+    monkeypatch.setattr(test_access, keypair_attr, _raise_attribute_value_invalid)
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="access RSA keypair setup"):
+        test_access.TestLoginStates().test_user_session_can_see_private(rs)
+
+
 def test_session_state_machine_extra_session_capacity_reject_is_skip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -793,9 +862,7 @@ def test_object_visibility_aes_setup_reject_is_xfail(
         raising=False,
     )
     keygen_attr = (
-        "_raw_gen_aes_key"
-        if hasattr(test_object_visibility, "_raw_gen_aes_key")
-        else "gen_aes_key"
+        "_raw_gen_aes_key" if hasattr(test_object_visibility, "_raw_gen_aes_key") else "gen_aes_key"
     )
     monkeypatch.setattr(test_object_visibility, keygen_attr, _raise_function_not_supported)
     monkeypatch.setattr(test_object_visibility, "destroy_quietly", lambda *_args: None)

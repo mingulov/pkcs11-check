@@ -1216,7 +1216,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   visibility assertions. The `CKA_TRUSTED` SetAttributeValue path now matches
   exact CKR values rather than CKR-name substrings, and the
   `CKA_WRAP_WITH_TRUSTED` fallback to `CKM_AES_CBC_PAD` now supplies the
-  required IV parameter.
+  required IV parameter. The older `test_access.py` file now follows the same
+  boundary: missing AES key generation and `CKR_SESSION_COUNT` while opening an
+  extra fixture session are setup skips, while successful setup still leaves the
+  access-control assertions strict.
 - **TPM2 session/object semantics after setup cleanup**: a focused current TPM2
   setup-classifier rerun (`artifacts/_focused/tpm2-setup-classifiers-current-20260526-r3/`)
   reduces the selected setup-heavy files to five hard failures. These are not

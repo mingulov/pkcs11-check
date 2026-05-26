@@ -7,6 +7,7 @@ object visibility rules, and session lifecycle.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -16,27 +17,99 @@ from pkcs11_check.raw.bootstrap import (
     login_user,
 )
 from pkcs11_check.raw.bootstrap import (
-    open_session as raw_open_session,
+    open_session as _raw_open_session,
 )
 from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
-    gen_aes_key,
-    gen_rsa_keypair,
     generate_random,
 )
+from pkcs11_check.raw.recipes import gen_aes_key as _raw_gen_aes_key
+from pkcs11_check.raw.recipes import gen_rsa_keypair as _raw_gen_rsa_keypair
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_LABEL,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKO_PRIVATE_KEY,
+    CKR_SESSION_COUNT,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    get_pin_bytes,
+    is_known_error,
+    require_operational_aes_keygen,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.access
+
+
+def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
+    """Open an extra session required by legacy access tests."""
+    try:
+        return _raw_open_session(raw, slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional session required by access test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
+
+
+def _gen_access_aes_key(
+    rs: Any,
+    sh: int,
+    bits: int = 128,
+    *,
+    attrs: Mapping[Any, Any] | None = None,
+    purpose: str = "access setup key generation",
+) -> int:
+    """Generate an AES setup key without hiding actual access-control findings."""
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+    require_operational_aes_keygen(rs)
+    try:
+        return _raw_gen_aes_key(rs.raw, sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but {purpose} is not operational",
+        )
+    raise
+
+
+def _gen_access_rsa_keypair(
+    rs: Any,
+    bits: int = 2048,
+    *,
+    public_attrs: Mapping[Any, Any] | None = None,
+    private_attrs: Mapping[Any, Any] | None = None,
+) -> tuple[int, int]:
+    """Generate an RSA setup keypair for access tests."""
+    if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+        pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported by module")
+    try:
+        return _raw_gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            bits,
+            public_attrs=public_attrs,
+            private_attrs=private_attrs,
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "RSA_PKCS_KEY_PAIR_GEN advertised but access RSA keypair setup is not operational",
+        )
+    raise
 
 
 class TestSessionTypes:
@@ -45,7 +118,7 @@ class TestSessionTypes:
     def test_rw_session_can_generate_key(self, p11_raw_session: Any) -> None:
         """R/W session (our default fixture) can generate keys."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256)
+        key_h = _gen_access_aes_key(rs, rs.sh)
         try:
             assert key_h != 0
         finally:
@@ -63,7 +136,11 @@ class TestSessionTypes:
             login_user(rs.raw, ro_sh, CKU_USER, pin_bytes)
         try:
             # Session objects should be creatable in R/O sessions
-            key_h = gen_aes_key(rs.raw, ro_sh, 256)
+            key_h = _gen_access_aes_key(
+                rs,
+                ro_sh,
+                purpose="RO-session object setup key generation",
+            )
             assert key_h != 0
             destroy_quietly(rs.raw, ro_sh, key_h)
         finally:
@@ -104,7 +181,7 @@ class TestLoginStates:
         """Logged-in user session can create and find private objects."""
         rs = p11_raw_session
         # Create a keypair (private key is a private object)
-        pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub_h, priv_h = _gen_access_rsa_keypair(rs)
         try:
             assert priv_h != 0
 
@@ -126,20 +203,24 @@ class TestMultipleSessions:
         pin_bytes = get_pin_bytes(p11_config)
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
-        if pin_bytes is not None:
-            login_user(rs.raw, s1, CKU_USER, pin_bytes)
-        s2 = raw_open_session(rs.raw, rs.slot_id, flags)
+        s1 = 0
+        s2 = 0
         try:
-            key1 = gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: "sess1"})
-            key2 = gen_aes_key(rs.raw, s2, 128, attrs={CKA_LABEL: "sess2"})
+            s1 = raw_open_session(rs.raw, rs.slot_id, flags)
+            if pin_bytes is not None:
+                login_user(rs.raw, s1, CKU_USER, pin_bytes)
+            s2 = raw_open_session(rs.raw, rs.slot_id, flags)
+            key1 = _gen_access_aes_key(rs, s1, attrs={CKA_LABEL: "sess1"})
+            key2 = _gen_access_aes_key(rs, s2, attrs={CKA_LABEL: "sess2"})
             assert key1 != 0
             assert key2 != 0
             destroy_quietly(rs.raw, s1, key1)
             destroy_quietly(rs.raw, s2, key2)
         finally:
-            close_session_quietly(rs.raw, s2)
-            close_session_quietly(rs.raw, s1)
+            if s2:
+                close_session_quietly(rs.raw, s2)
+            if s1:
+                close_session_quietly(rs.raw, s1)
 
     def test_session_object_visible_in_other_session(
         self, p11_raw_session: Any, p11_config: Any
@@ -153,7 +234,7 @@ class TestMultipleSessions:
         if pin_bytes is not None:
             login_user(rs.raw, s1, CKU_USER, pin_bytes)
         try:
-            key_h = gen_aes_key(rs.raw, s1, 128, attrs={CKA_LABEL: "session-obj-test"})
+            key_h = _gen_access_aes_key(rs, s1, attrs={CKA_LABEL: "session-obj-test"})
             s2 = raw_open_session(rs.raw, rs.slot_id, flags)
             try:
                 tmpl = template_from_dict({CKA_LABEL: "session-obj-test"})
@@ -179,7 +260,7 @@ class TestSessionLifecycle:
         temp_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         if pin_bytes is not None:
             login_user(rs.raw, temp_sh, CKU_USER, pin_bytes)
-        gen_aes_key(rs.raw, temp_sh, 128, attrs={CKA_LABEL: "lifecycle-test"})
+        _gen_access_aes_key(rs, temp_sh, attrs={CKA_LABEL: "lifecycle-test"})
         close_session_quietly(rs.raw, temp_sh)
 
         # Object should be gone in a new session

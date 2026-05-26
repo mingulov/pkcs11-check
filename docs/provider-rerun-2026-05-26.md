@@ -326,6 +326,11 @@ Completed high-signal observations:
   rerun in `artifacts/_focused/pkcs11-mock-dual-operation-r2-20260527/`
   reports 3 passed, 5 skipped, and 0 failed for those two files, replacing old
   hard setup rows from missing AES/SHA support.
+- Legacy access/session tests now share the same setup boundary as the newer
+  access-level files. A focused pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-access-r2-20260527/` reports 1 passed,
+  7 skipped, and 0 failed; the skips are one missing `AES_KEY_GEN` precondition
+  and six `CKR_SESSION_COUNT` extra-session limits.
 - Remaining-gap and subprocess-safety focused TPM2 evidence:
   `artifacts/_focused/tpm2-remaining-sign-safety-r2-20260527/`. Current source
   reports 6 passed, 23 skipped, 8 xfailed, and 1 failed across
