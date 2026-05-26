@@ -431,6 +431,12 @@ official full-matrix release statistics.
   `test_rng.py` run reports 4 passed and 5 failed. This is not setup noise:
   `C_GenerateRandom` succeeds, but every byte is `0x01`, causing duplicate,
   bit-frequency, byte-distribution, entropy, and runs-test failures.
+- `pkcs11-mock` Double Ratchet focused artifact:
+  `artifacts/_focused/pkcs11-mock-double-ratchet-current-20260527/`. Current
+  source no longer uses a classic EC/P-256 fallback for X2RATCHET setup; it
+  requires Montgomery setup and tries X25519 then X448. The mock target has no
+  advertised X2RATCHET coverage, so this artifact is capability-skip evidence,
+  not provider Double Ratchet behavior evidence.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124

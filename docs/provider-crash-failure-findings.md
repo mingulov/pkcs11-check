@@ -425,6 +425,16 @@ mechanism is advertised. X448 remains a clean skip when the provider rejects
 that specific curve with a known unsupported-curve/domain-parameter/template
 CKR, because a provider can reasonably support X25519 without supporting X448.
 
+The Double Ratchet tests now follow the same Montgomery boundary. The local
+PKCS#11 text describes X2RATCHET curve selection as 255 or 448, so the setup
+helper no longer falls back to classic EC/P-256. It tries X25519 and then X448
+through `CKM_EC_MONTGOMERY_KEY_PAIR_GEN`, turns only explicit setup CKRs into
+skip/xfail evidence, and lets Python-side setup bugs fail the test. A focused
+pkcs11-mock rerun in
+`artifacts/_focused/pkcs11-mock-double-ratchet-current-20260527/` confirms the
+mock target simply has no X2RATCHET coverage; providers that advertise
+X2RATCHET still need refreshed focused evidence.
+
 ### Follow-Up: OTP Runtime Rejections And CT-KIP Placeholder
 
 OTP key-generation and sign-operation rejects now remain xfail findings after a
