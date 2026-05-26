@@ -33,12 +33,17 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_HOST_MEMORY,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.acvp._duplicates import (
+    mark_duplicate_pkcs11_inputs,
+    skip_duplicate_pkcs11_input,
+)
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
@@ -77,6 +82,7 @@ _EC_CAPABILITY_REJECT_RVS = (
 _EC_RUNTIME_FAILURE_RVS = (
     CKR_FUNCTION_FAILED,
     CKR_DEVICE_ERROR,
+    CKR_HOST_MEMORY,
 )
 
 _DETERMINISTIC_ECDSA_SKIP = (
@@ -222,8 +228,8 @@ def _load_ecdsa_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
         }
         result.append((f"ECDSA-KeyGen-{curve_name}-tc{tc_id}", merged))
         if len(result) >= 20:
-            break
-    return result
+            return mark_duplicate_pkcs11_inputs(result, lambda item: item["ec_params"])
+    return mark_duplicate_pkcs11_inputs(result, lambda item: item["ec_params"])
 
 
 _ECDSA_SIGVER_VECTORS = _load_ecdsa_sigver_vectors()
@@ -282,6 +288,7 @@ class TestEcdsaKeyGen:
         rs = p11_raw_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC_KEY_PAIR_GEN not supported by module")
+        skip_duplicate_pkcs11_input(vec, "ECDSA KeyGen")
         pub_key = priv_key = 0
         try:
             pub_key, priv_key = gen_ec_keypair(

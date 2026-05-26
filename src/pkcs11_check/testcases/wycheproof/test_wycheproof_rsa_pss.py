@@ -88,6 +88,51 @@ _RSA_PSS_RUNTIME_REJECT_CKRS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+_RsaPssFingerprint = tuple[int, int, int, int, bytes, bytes, bytes, bytes]
+
+
+def _pkcs11_rsa_pss_fingerprint(test: dict[str, Any]) -> _RsaPssFingerprint | None:
+    """Return PKCS#11-visible RSA-PSS verify inputs for duplicate detection."""
+    try:
+        public_key = test["_group"].get("publicKey", {})
+        return (
+            int(test["_mechanism"]),
+            int(test["_hash_mech"]),
+            int(test["_mgf"]),
+            int(test["_sLen"]),
+            bytes.fromhex(public_key.get("modulus", "")),
+            bytes.fromhex(public_key.get("publicExponent", "")),
+            bytes.fromhex(test["msg"]),
+            bytes.fromhex(test["sig"]),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _canonical_duplicate_id(entries: list[tuple[str, dict[str, Any]]]) -> str:
+    """Choose the most PKCS#11-meaningful representative for duplicate vectors."""
+    for preferred in ("valid", "acceptable"):
+        for vec_id, test in entries:
+            if test["result"] == preferred:
+                return vec_id
+    return entries[0][0]
+
+
+def _mark_pkcs11_duplicate_vectors(vectors: list[tuple[str, dict[str, Any]]]) -> None:
+    groups: dict[_RsaPssFingerprint, list[tuple[str, dict[str, Any]]]] = {}
+    for vec_id, test in vectors:
+        fingerprint = _pkcs11_rsa_pss_fingerprint(test)
+        if fingerprint is not None:
+            groups.setdefault(fingerprint, []).append((vec_id, test))
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        duplicate_of = _canonical_duplicate_id(entries)
+        for vec_id, test in entries:
+            if vec_id != duplicate_of:
+                test["_pkcs11_duplicate_of"] = duplicate_of
+
+
 # Map hash names to PKCS#11 mechanisms and hash mechanisms for PSS params
 _SHA_MECHANISMS: dict[str, int] = {
     "SHA-1": CKM_SHA1_RSA_PKCS_PSS,
@@ -176,6 +221,7 @@ def _load_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_file"] = filename
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
+    _mark_pkcs11_duplicate_vectors(vectors)
     return vectors
 
 
@@ -200,6 +246,9 @@ def test_rsa_pss(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     name = _MECH_DISPLAY.get(mechanism, "RSA_PKCS_PSS")
     if not rs.has_mechanism(name):
         pytest.skip(f"{name} not supported")
+
+    if duplicate_of := vec.get("_pkcs11_duplicate_of"):
+        pytest.skip(f"Duplicate PKCS#11 RSA-PSS operation input; covered by {duplicate_of}")
 
     msg = bytes.fromhex(vec["msg"])
     sig = bytes.fromhex(vec["sig"])

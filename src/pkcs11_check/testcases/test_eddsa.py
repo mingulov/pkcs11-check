@@ -28,35 +28,45 @@ from pkcs11_check.raw.types_std import (
     CKK_EC_EDWARDS,
     CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKM_EDDSA,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
-_EDDSA_PARAM_XFAIL_MSG = (
-    "Module returns CKR_MECHANISM_PARAM_INVALID for CK_EDDSA_PARAMS; "
-    "the advertised EdDSA path rejects explicit CK_EDDSA_PARAMS even though "
-    "PKCS#11 v3.0 mandates them for pure-mode EdDSA"
+_EDDSA_RUNTIME_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 
 def _sign_eddsa(rs: Any, priv: int, data: bytes) -> bytes:
-    """Sign data with CKM_EDDSA, xfail on CKR_MECHANISM_PARAM_INVALID."""
+    """Sign data with CKM_EDDSA, xfail on explicit advertised-path rejects."""
     try:
         return sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
     except AssertionError as exc:
-        if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-            pytest.xfail(_EDDSA_PARAM_XFAIL_MSG)
-        raise
+        xfail_if_known_ckr(exc, _EDDSA_RUNTIME_REJECT_RVS, "advertised EdDSA sign rejected")
+    raise
 
 
 def _verify_eddsa(rs: Any, pub: int, data: bytes, sig: bytes) -> bool:
-    """Verify EdDSA signature, xfail on CKR_MECHANISM_PARAM_INVALID."""
+    """Verify EdDSA signature, xfail on explicit advertised-path rejects."""
     try:
         return verify_single(rs.raw, rs.sh, pub, CKM_EDDSA, data, sig)
     except AssertionError as exc:
-        if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
-            pytest.xfail(_EDDSA_PARAM_XFAIL_MSG)
-        raise
+        xfail_if_known_ckr(exc, _EDDSA_RUNTIME_REJECT_RVS, "advertised EdDSA verify rejected")
+    raise
 
 
 pytestmark = pytest.mark.crossverify

@@ -190,6 +190,54 @@ _ECDSA_CONFIGS = [
 ]
 
 
+def _raw_ecdsa_signature(test: dict[str, Any]) -> bytes:
+    """Return the PKCS#11-visible raw ECDSA r||s signature."""
+    sig_bytes = bytes.fromhex(test["sig"])
+    coord_size = test["_coord_size"]
+    if test["_is_p1363"]:
+        return sig_bytes
+    r_int, s_int = decode_dss_signature(sig_bytes)
+    return r_int.to_bytes(coord_size, "big") + s_int.to_bytes(coord_size, "big")
+
+
+def _pkcs11_ecdsa_fingerprint(test: dict[str, Any]) -> tuple[bytes, bytes, bytes, bytes] | None:
+    """Return PKCS#11-visible ECDSA verify inputs for duplicate detection."""
+    try:
+        pub_key_info = test["_group"].get("publicKey", {})
+        return (
+            encode_named_curve_parameters(test["_curve"]),
+            bytes.fromhex(pub_key_info.get("uncompressed", "")),
+            test["_hash_fn"](bytes.fromhex(test["msg"])).digest(),
+            _raw_ecdsa_signature(test),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _canonical_duplicate_id(entries: list[tuple[str, dict[str, Any]]]) -> str:
+    """Choose the most PKCS#11-meaningful representative for duplicate vectors."""
+    for preferred in ("valid", "acceptable"):
+        for vec_id, test in entries:
+            if test["result"] == preferred:
+                return vec_id
+    return entries[0][0]
+
+
+def _mark_pkcs11_duplicate_vectors(vectors: list[tuple[str, dict[str, Any]]]) -> None:
+    groups: dict[tuple[bytes, bytes, bytes, bytes], list[tuple[str, dict[str, Any]]]] = {}
+    for vec_id, test in vectors:
+        fingerprint = _pkcs11_ecdsa_fingerprint(test)
+        if fingerprint is not None:
+            groups.setdefault(fingerprint, []).append((vec_id, test))
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        duplicate_of = _canonical_duplicate_id(entries)
+        for vec_id, test in entries:
+            if vec_id != duplicate_of:
+                test["_pkcs11_duplicate_of"] = duplicate_of
+
+
 def _load_ecdsa_vectors() -> list[tuple[str, dict[str, Any]]]:
     vectors = []
     for filename, curve, coord_size, hash_fn, is_p1363 in _ECDSA_CONFIGS:
@@ -208,6 +256,7 @@ def _load_ecdsa_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_is_p1363"] = is_p1363
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
+    _mark_pkcs11_duplicate_vectors(vectors)
     return vectors
 
 
@@ -231,14 +280,14 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
     if not rs.has_mechanism("ECDSA"):
         pytest.skip("ECDSA not supported")
 
+    if duplicate_of := vec.get("_pkcs11_duplicate_of"):
+        pytest.skip(f"Duplicate PKCS#11 ECDSA operation input; covered by {duplicate_of}")
+
     msg = bytes.fromhex(vec["msg"])
-    sig_der = bytes.fromhex(vec["sig"])
     result = vec["result"]
     group = vec["_group"]
     curve = vec["_curve"]
-    coord_size = vec["_coord_size"]
     hash_fn = vec["_hash_fn"]
-    is_p1363 = vec["_is_p1363"]
 
     pub_key_info = group.get("publicKey", {})
     uncompressed_hex = pub_key_info.get("uncompressed", "")
@@ -277,16 +326,12 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
             pytest.skip(f"Cannot import EC key for {curve}: {exc}")
         raise
 
-    if is_p1363:
-        raw_sig = sig_der
-    else:
-        try:
-            r_int, s_int = decode_dss_signature(sig_der)
-            raw_sig = r_int.to_bytes(coord_size, "big") + s_int.to_bytes(coord_size, "big")
-        except (ValueError, OverflowError) as exc:
-            if result == "invalid":
-                return
-            pytest.fail(f"Cannot decode valid DER sig for {vec_id}: {exc}")
+    try:
+        raw_sig = _raw_ecdsa_signature(vec)
+    except (ValueError, OverflowError) as exc:
+        if result == "invalid":
+            return
+        pytest.fail(f"Cannot decode valid DER sig for {vec_id}: {exc}")
 
     digest = hash_fn(msg).digest()
 

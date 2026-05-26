@@ -6,8 +6,6 @@ Subprocess wrapper for crash-safe test execution.
 
 from __future__ import annotations
 
-import pytest
-
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
@@ -27,6 +25,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_INVALID,
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
+from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
 # Clean rejection of boundary/invalid inputs (not crash, not OK)
 BOUNDARY_REJECT_CKRS = {
@@ -68,16 +67,13 @@ def assert_subprocess_no_crash(
     *,
     context: str,
 ) -> None:
-    """Assert a subprocess didn't crash (signal).
+    """Assert a subprocess completed without crashing or child-script failure.
 
     Args:
-        rc: subprocess returncode. Negative means killed by signal.
+        rc: subprocess returncode. Negative means killed by signal; positive
+            means the child script failed before completing the probe.
         stdout: subprocess stdout.
         stderr: subprocess stderr.
         context: Human-readable test description for failure message.
     """
-    if rc < 0:
-        pytest.fail(
-            f"{context}: module crashed with signal {-rc}\n"
-            f"stdout: {stdout[:500]}\nstderr: {stderr[:500]}"
-        )
+    assert_subprocess_completed(rc, stdout, stderr, context=context)

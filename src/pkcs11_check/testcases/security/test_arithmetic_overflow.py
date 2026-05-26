@@ -21,10 +21,15 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.types_std import _CK_ULONG_MAX
+from pkcs11_check.raw.types_std import _CK_ULONG_MAX, CKA_SIGN, CKA_TOKEN, CKA_VERIFY
 from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
+)
+from pkcs11_check.testcases.conftest import (
+    destroy_returned_handles,
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -88,6 +93,12 @@ class TestDataLengthOverflow:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose=f"{func} data-length overflow crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -158,6 +169,12 @@ class TestMechanismParamLengthOverflow:
         rs = p11_raw_session
         if not rs.has_mechanism(mech_check):
             pytest.skip(f"CKM_{mech_check} not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose=f"{mech_name} parameter-length overflow crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -221,6 +238,12 @@ class TestGcmTagBitsOverflow:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-GCM tag-bits overflow crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -289,6 +312,13 @@ class TestPssSaltLengthOverflow:
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
             pytest.skip("CKM_SHA256_RSA_PKCS_PSS not supported")
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -371,6 +401,13 @@ class TestTemplateCountOverflow:
             pytest.skip("CKM_AES_KEY_GEN not supported")
         if op == "C_UnwrapKey" and not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
+        if op == "C_UnwrapKey":
+            setup_key = gen_aes_key_or_xfail(
+                rs,
+                256,
+                purpose="C_UnwrapKey template-count overflow crash probe setup",
+            )
+            destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
 
         if op == "C_CreateObject":

@@ -51,6 +51,48 @@ _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
     CKR_TEMPLATE_INCOMPLETE,
 )
 
+_RsaFingerprint = tuple[int, bytes, bytes, bytes, bytes]
+
+
+def _pkcs11_rsa_fingerprint(test: dict[str, Any]) -> _RsaFingerprint | None:
+    """Return PKCS#11-visible RSA PKCS#1 verify inputs for duplicate detection."""
+    try:
+        public_key = test["_group"].get("publicKey", test["_group"].get("privateKey", {}))
+        return (
+            int(test["_mechanism"]),
+            bytes.fromhex(public_key.get("modulus", "")),
+            bytes.fromhex(public_key.get("publicExponent", "")),
+            bytes.fromhex(test["msg"]),
+            bytes.fromhex(test["sig"]),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _canonical_duplicate_id(entries: list[tuple[str, dict[str, Any]]]) -> str:
+    """Choose the most PKCS#11-meaningful representative for duplicate vectors."""
+    for preferred in ("valid", "acceptable"):
+        for vec_id, test in entries:
+            if test["result"] == preferred:
+                return vec_id
+    return entries[0][0]
+
+
+def _mark_pkcs11_duplicate_vectors(vectors: list[tuple[str, dict[str, Any]]]) -> None:
+    groups: dict[_RsaFingerprint, list[tuple[str, dict[str, Any]]]] = {}
+    for vec_id, test in vectors:
+        fingerprint = _pkcs11_rsa_fingerprint(test)
+        if fingerprint is not None:
+            groups.setdefault(fingerprint, []).append((vec_id, test))
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        duplicate_of = _canonical_duplicate_id(entries)
+        for vec_id, test in entries:
+            if vec_id != duplicate_of:
+                test["_pkcs11_duplicate_of"] = duplicate_of
+
+
 # Mechanism display names for availability checking
 _MECH_DISPLAY: dict[int, str] = {
     CKM_SHA224_RSA_PKCS: "SHA224_RSA_PKCS",
@@ -131,6 +173,7 @@ def _load_all_rsa_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_mechanism"] = mechanism
                 test["_file"] = filename
                 vectors.append((f"{filename}:tc{test['tcId']}-{test['result']}", test))
+    _mark_pkcs11_duplicate_vectors(vectors)
     return vectors
 
 
@@ -151,6 +194,9 @@ def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) 
     mech_display = _MECH_DISPLAY.get(mechanism, f"0x{mechanism:08x}")
     if not rs.has_mechanism(mech_display):
         pytest.skip(f"{mech_display} not supported by module")
+
+    if duplicate_of := vec.get("_pkcs11_duplicate_of"):
+        pytest.skip(f"Duplicate PKCS#11 RSA operation input; covered by {duplicate_of}")
 
     pk = group.get("publicKey", group.get("privateKey", {}))
     modulus_hex = pk.get("modulus", "")

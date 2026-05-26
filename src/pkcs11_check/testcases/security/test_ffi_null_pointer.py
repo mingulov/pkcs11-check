@@ -23,9 +23,14 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.types_std import CKA_UNWRAP
 from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
+)
+from pkcs11_check.testcases.conftest import (
+    destroy_returned_handles,
+    gen_aes_key_or_xfail,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -46,6 +51,17 @@ def _preamble_no_login(p11_config: Any) -> str:
         str(p11_config.module),
         pin=None,
     )
+
+
+def _preflight_aes_key(
+    rs: Any,
+    *,
+    purpose: str,
+    attrs: dict[Any, Any] | None = None,
+) -> None:
+    """Check setup key generation before entering a crash-isolated child."""
+    setup_key = gen_aes_key_or_xfail(rs, 256, attrs=attrs, purpose=purpose)
+    destroy_returned_handles(rs, setup_key)
 
 
 # ---------------------------------------------------------------------------
@@ -116,9 +132,13 @@ class TestNullDataUpdate:
         rs = p11_raw_session
         if not rs.has_mechanism(mech_check):
             pytest.skip(f"CKM_{mech_check} not supported")
-        preamble = _preamble(p11_config)
 
         if operation in ("encrypt", "decrypt"):
+            _preflight_aes_key(
+                rs,
+                purpose=f"{update_func} NULL-data crash probe setup",
+            )
+            preamble = _preamble(p11_config)
             body = f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -151,6 +171,7 @@ finally:
 cleanup()
 """
         elif operation == "sign":
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -179,6 +200,7 @@ finally:
 cleanup()
 """
         elif operation == "verify":
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -207,6 +229,7 @@ finally:
 cleanup()
 """
         elif operation == "digest":
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import CK_MECHANISM, CKM_SHA256, CKR_OK
@@ -293,9 +316,13 @@ class TestNullOutputFinal:
         rs = p11_raw_session
         if not rs.has_mechanism(mech_check):
             pytest.skip(f"CKM_{mech_check} not supported")
-        preamble = _preamble(p11_config)
 
         if operation == "encrypt":
+            _preflight_aes_key(
+                rs,
+                purpose="C_EncryptFinal NULL-output crash probe setup",
+            )
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -337,6 +364,11 @@ finally:
 cleanup()
 """
         elif operation == "decrypt":
+            _preflight_aes_key(
+                rs,
+                purpose="C_DecryptFinal NULL-output crash probe setup",
+            )
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -378,6 +410,7 @@ finally:
 cleanup()
 """
         elif operation == "sign":
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -415,6 +448,7 @@ finally:
 cleanup()
 """
         elif operation == "digest":
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -543,10 +577,11 @@ cleanup()
         preamble = _preamble_no_login(p11_config)
         body = """
 import ctypes
+from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
 pin_buf = (ctypes.c_ubyte * 4)(0x31, 0x32, 0x33, 0x34)
 rv = raw.C_SetPIN(
     sh, None, 8,
-    ctypes.cast(ctypes.pointer(pin_buf), ctypes.c_void_p), 4,
+    ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR), 4,
 )
 print(f"rv={rv}")
 cleanup()
@@ -564,10 +599,11 @@ cleanup()
         preamble = _preamble_no_login(p11_config)
         body = """
 import ctypes
+from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
 pin_buf = (ctypes.c_ubyte * 4)(0x31, 0x32, 0x33, 0x34)
 rv = raw.C_SetPIN(
     sh,
-    ctypes.cast(ctypes.pointer(pin_buf), ctypes.c_void_p), 4,
+    ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR), 4,
     None, 8,
 )
 print(f"rv={rv}")
@@ -635,6 +671,11 @@ class TestNullWrapUnwrap:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
+        _preflight_aes_key(
+            rs,
+            purpose="C_UnwrapKey NULL wrapped-data crash probe setup",
+            attrs={CKA_UNWRAP: True},
+        )
         preamble = _preamble(p11_config)
         body = """
 import ctypes
@@ -801,9 +842,13 @@ class TestNullDataOneShot:
         rs = p11_raw_session
         if not rs.has_mechanism(mech_check):
             pytest.skip(f"CKM_{mech_check} not supported")
-        preamble = _preamble(p11_config)
 
         if operation in ("encrypt", "decrypt"):
+            _preflight_aes_key(
+                rs,
+                purpose=f"{func_name} NULL-data crash probe setup",
+            )
+            preamble = _preamble(p11_config)
             init_func = "C_EncryptInit" if operation == "encrypt" else "C_DecryptInit"
             body = f"""
 import ctypes
@@ -834,6 +879,7 @@ finally:
 cleanup()
 """
         elif operation == "sign":
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -866,6 +912,7 @@ finally:
 cleanup()
 """
         elif operation == "verify":
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -895,6 +942,7 @@ finally:
 cleanup()
 """
         elif operation == "digest":
+            preamble = _preamble(p11_config)
             body = """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -956,6 +1004,10 @@ class TestNullMessageApi:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
+        _preflight_aes_key(
+            rs,
+            purpose="C_EncryptMessage NULL plaintext crash probe setup",
+        )
         preamble = _preamble(p11_config)
         body = """
 import ctypes
@@ -1028,6 +1080,10 @@ cleanup()
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
+        _preflight_aes_key(
+            rs,
+            purpose="C_DecryptMessage NULL ciphertext crash probe setup",
+        )
         preamble = _preamble(p11_config)
         body = """
 import ctypes
@@ -1116,6 +1172,10 @@ class TestNullKemApi:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported (needed for key gen)")
+        _preflight_aes_key(
+            rs,
+            purpose="C_DecapsulateKey NULL ciphertext crash probe setup",
+        )
         preamble = _preamble(p11_config)
         body = """
 import ctypes
@@ -1213,12 +1273,13 @@ class TestNullInitToken:
         preamble = _preamble_no_login(p11_config)
         body = """
 import ctypes
+from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
 
 label_bytes = b"test_label" + b" " * 22  # 32-byte padded label
 label_buf = (ctypes.c_ubyte * 32)(*label_bytes)
 rv = raw.C_InitToken(
     slot_id, None, 8,
-    ctypes.cast(ctypes.pointer(label_buf), ctypes.c_void_p),
+    ctypes.cast(ctypes.pointer(label_buf), CK_UTF8CHAR_PTR),
 )
 print(f"rv={rv}")
 cleanup()
@@ -1236,11 +1297,12 @@ cleanup()
         preamble = _preamble_no_login(p11_config)
         body = """
 import ctypes
+from pkcs11_check.raw.types_std import CK_UTF8CHAR_PTR
 
 pin_buf = (ctypes.c_ubyte * 4)(0x31, 0x32, 0x33, 0x34)
 rv = raw.C_InitToken(
     slot_id,
-    ctypes.cast(ctypes.pointer(pin_buf), ctypes.c_void_p),
+    ctypes.cast(ctypes.pointer(pin_buf), CK_UTF8CHAR_PTR),
     4,
     None,
 )

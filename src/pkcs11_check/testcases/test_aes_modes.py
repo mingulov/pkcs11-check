@@ -20,7 +20,6 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     read_attributes,
     sign_single,
-    unwrap_key,
     verify_single,
     wrap_key,
 )
@@ -61,6 +60,7 @@ from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     is_known_error,
     require_operational_aes_keygen,
+    unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
 
@@ -750,7 +750,7 @@ class TestAESXCBCMAC:
 class TestAESKeyWrapPKCS7:
     """AES-KEY-WRAP-PKCS7 wrap/unwrap tests."""
 
-    def test_aes_key_wrap_pkcs7_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_aes_key_wrap_pkcs7_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap and unwrap an AES key with AES-KEY-WRAP-PKCS7, verify material matches."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP_PKCS7"):
@@ -794,18 +794,19 @@ class TestAESKeyWrapPKCS7:
             )
             assert wrapped != key_bytes
 
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrap_key_h,
-                wrapped,
-                CKM_AES_KEY_WRAP_PKCS7,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrap_key_h,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP_PKCS7,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
                     CKA_EXTRACTABLE: True,
                     CKA_SENSITIVE: False,
                 },
+                purpose="AES-KEY-WRAP-PKCS7 roundtrip",
             )
             try:
                 okm = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]

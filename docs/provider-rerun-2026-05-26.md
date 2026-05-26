@@ -17,6 +17,142 @@ Artifacts:
 Excluded targets: `bouncyhsm` because it is too slow for this iteration, and
 `qryptotoken` because it no longer provides useful mechanism coverage.
 
+## Current Dev Rerun Completed
+
+This rerun was requested after commit `918a0bd` with targets:
+
+`softhsm2 softhsm2-generated-iv softhsm2-main kryoptic kryoptic-main
+kryoptic-fips nss nss-pqc nss-main opencryptoki opencryptoki-master tpm2
+pkcs11-mock`
+
+Baseline snapshot:
+`artifacts/_baseline-before-provider-rerun-918a0bd-20260526T025257Z`.
+
+Change-gap review:
+[`change-gap-analysis-2026-05-26.md`](change-gap-analysis-2026-05-26.md).
+
+Important caveat: the first completed targets were started before the local
+signature-classification and raw subprocess-reporting patches in this working
+tree. Stable `kryoptic` was rerun after those patches. The Wycheproof ECDH/XDH
+duplicate-skip patch landed while the NSS family was running: `nss` does not
+include it, while `nss-pqc` and later targets do.
+
+The Docker command completed with provider failures, not an infrastructure
+failure. The final batch passed only `tpm2` and `pkcs11-mock` as Docker targets;
+the other targets completed with ordinary pkcs11-check failed tests. Because
+source fixes landed during the long run, this section is a traceable engineering
+snapshot, not release statistics.
+
+Completed summary:
+
+| Target | Passed | Failed | Skipped | Xfailed | Total | Main delta vs baseline |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `softhsm2` | 59,499 | 1,138 | 16,521 | 4,993 | 82,151 | RSA-PSS invalid-vector rejects moved from fail to xfail: failed -91, xfailed +91. |
+| `softhsm2-generated-iv` | 59,501 | 1,138 | 16,519 | 4,993 | 82,151 | RSA-PSS failed -91/xfailed +91; ECDSA timing variance produced one new security failure. |
+| `softhsm2-main` | 60,931 | 1,155 | 15,781 | 5,063 | 82,930 | RSA-PSS failed -91/xfailed +91; ML-DSA setup rejects moved skipped -19/xfailed +19; one new padding-oracle result; total +1 from threading. |
+| `kryoptic` | 65,881 | 2,174 | 33,265 | 7,337 | 108,657 | Rerun with current patches: EdDSA runtime rejects failed -7/xfailed +7; wrong-signature rejects failed -2/xfailed +2; ML-DSA skipped -6/xfailed +6. |
+| `kryoptic-main` | 65,895 | 2,165 | 33,264 | 7,333 | 108,657 | EdDSA runtime rejects failed -7/xfailed +7; wrong-signature rejects in `test_sign.py` failed -2/xfailed +2; ML-DSA skipped -6/xfailed +6; one new padding-oracle result. |
+| `kryoptic-fips` | 52,187 | 1,867 | 33,067 | 5,447 | 92,580 | Clean-policy rerun preserved 12 crashes; EdDSA/RSA wrong-signature/ML-DSA setup rejects moved into xfail; failures -67, xfailed +74. |
+| `nss` | 49,012 | 787 | 42,774 | 442 | 93,018 | DSA valid-runtime rejects failed -126/xfailed +126; ML-DSA skipped -19/xfailed +19; `test_sign.py` failed -3/xfailed +3; crashes unchanged at 3. |
+| `nss-pqc` | 40,511 | 749 | 50,684 | 374 | 92,322 | Includes ECDH/XDH duplicate skip: ECDH passed -5,511/skipped +5,511; XDH passed -1,555/skipped +1,555; DSA failed -126/xfailed +126; crashes unchanged at 4. |
+| `nss-main` | 40,510 | 750 | 50,684 | 374 | 92,322 | Same ECDH/XDH duplicate-skip shape as `nss-pqc`; DSA failed -126/xfailed +126; `test_mech_sign.py` failed -3/xfailed +3; crashes unchanged at 4. |
+| `opencryptoki` | 63,905 | 918 | 30,904 | 1,675 | 97,402 | Includes ECDH/XDH and ECDSA duplicate skips: ECDH passed -7,023/skipped +7,023; XDH passed -3,087/skipped +3,087; ECDSA passed -5,145/failed -235/skipped +5,476/xfailed -96; RSA-PSS failed -91/xfailed +91. |
+| `opencryptoki-master` | 62,890 | 908 | 32,111 | 1,493 | 97,402 | Later target picked up ECDH/XDH, ECDSA/DSA, RSA/RSA-PSS, and ACVP KeyGen duplicate normalization: ECDH skipped +7,023; XDH skipped +3,087; ECDSA failed -235/skipped +5,476; RSA-PSS failed -91/skipped +913. |
+| `tpm2` | 8,306 | 422 | 68,568 | 4,108 | 81,404 | Later target includes most vector duplicate/projection skips: failures -330, skips +1,435. Remaining top buckets include RSA-PSS 82, ACVP RSA 27, and security crash-probe/provider-behavior files. |
+| `pkcs11-mock` | 1,326 | 2,431 | 28,666 | 214 | 32,637 | Synthetic harness-stress target: failures -249, skipped +66, xfailed +194 after ACVP RSA, keygen projection, attribute/export, and capability-guard classification. |
+
+Completed high-signal observations:
+
+- SoftHSM2 variants remain dominated by valid DSA/ECDSA signature rejections,
+  invalid RSA PKCS#1 decrypt acceptance, arithmetic-overflow subprocess
+  crashes, EdDSA/ML-DSA vector failures, wrong CKRs on wrap/OAEP paths, and
+  security checks such as Tookan sensitive unwrap and padding-oracle behavior.
+- `softhsm2-generated-iv` avoids the GCM null-IV crash path that plain SoftHSM2
+  still exposes, but otherwise has the same dominant result shape.
+- Kryoptic-main keeps the important provider findings visible: RSA-PSS,
+  Ed25519, RSA PKCS#1 decrypt, ML-DSA, FFI length-boundary crashes/timeouts,
+  Rust capacity panics, NULL-pointer crashes, generated IV/nonce writeback
+  gaps, AES-CBC-ENCRYPT-DATA IV-insensitivity, Tookan sensitive unwrap, and
+  trusted-attribute escalation.
+- The current pkcs11-check fixes do not hide crashes. They only improve
+  classification for non-clean invalid-signature rejects and wording for child
+  subprocess assertion exits versus actual signal crashes.
+- Wycheproof ECDH/XDH container variants need special handling. Some vectors
+  are distinct after decoding, for example `ecdh_secp256k1_test.json:tc70` and
+  `ecdh_secp256k1_webcrypto_test.json:tc70` have different public points and
+  shared secrets. Many ASN/PEM/ECPOINT/JWK/WebCrypto vectors collapse to the
+  same PKCS#11-visible inputs because the module receives only curve params,
+  the raw public point, and the private scalar. Current source now counts exact
+  decoded-operation duplicates as skips before provider calls: 7,023 of 13,128
+  ECDH vectors and 3,087 of 4,176 XDH vectors are duplicate encodings. The
+  `nss-pqc` and later Docker artifacts include this patch; earlier artifacts
+  still include the old duplication until those targets are rerun.
+- Wycheproof ECDSA/DSA DER-vs-P1363 signature variants have the same issue.
+  PKCS#11 receives raw `r || s`, so a DER vector and a P1363 vector that
+  normalize to the same public key, message/digest, signature, and mechanism
+  are not independent provider tests. Current source now skips 6,707 of 28,915
+  ECDSA vectors and 442 of 1,956 DSA vectors as exact PKCS#11-input
+  duplicates. This also prevents DER-only or Bitcoin low-S policy metadata from
+  being reported as a provider failure after pkcs11-check has normalized the
+  signature to raw ECDSA/DSA form. This patch landed while `nss-main` was
+  already running, so a later rerun is needed before Docker statistics reflect
+  it.
+- Wycheproof RSA signature vectors also contain exact PKCS#11-input
+  duplicates, though at a smaller scale: current source skips 913 of 2,502
+  RSA-PSS vectors and 75 of 5,313 RSA PKCS#1 signature vectors when the
+  mechanism, parameters, public key, message, and signature are identical.
+  This landed after the current Docker batch had already started, so the
+  affected artifacts still need a refresh before the table reflects it.
+- ACVP KeyGen internal-projection vectors contain seeds and expected keys that
+  current PKCS#11 key-generation APIs cannot consume. The suite now keeps those
+  vectors collected but skips duplicate provider-visible inputs after the first
+  representative: RSA 27/30, ECDSA 17/20, EdDSA 4/6, ML-DSA 72/75, and ML-KEM
+  72/75 duplicate-to-skip. Future PKCS#11 revisions could standardize
+  deterministic validation inputs for exact ACVP KeyGen checks, but there is no
+  portable API for that today.
+- `kryoptic-fips` was rerun after clearing stale adaptive per-test isolation
+  policy. The clean run still discovered the AES-CCM and Wycheproof AES crash
+  culprits and preserved the same 12-crash count instead of hiding them.
+- NSS-family crashes remain real provider findings. In the Fedora package run,
+  `test_mech_flags.py` isolated `libsoftokn3.so` segfaults in MAC-general
+  `C_SignInit` probes, hit the per-file crash limit, and then skipped the rest
+  of that file as designed.
+- OpenCryptoki stayed crash-free in this rerun. After ECDH/XDH/ECDSA duplicate
+  normalization, its largest current failed buckets are ACVP AES-XTS 382,
+  Wycheproof ECDSA 234, generic Wycheproof 144, RSA PKCS#1 decrypt 59, and
+  Wycheproof AES 27. The ECDSA failures are valid P-521/SHAKE256 signature
+  rejections after raw ECDSA conversion, so they remain provider findings. The
+  target artifact does not include every later source edit from this working
+  tree; it still needs a clean refresh before release statistics.
+- The current OpenCryptoki artifacts also predate the AES-KWP error-path
+  harness fix. A mounted-source rerun of
+  `security/test_error_path_kwp.py` and `security/test_error_path_rsa.py`
+  against OpenCryptoki master + OpenSSL 4.0.0 produced 42 passes and 8 KWP
+  decrypt guard-overwrite failures. The RSA error-path rows passed after the
+  generated-script fix. Do not use the older KWP 42/42 pass result as evidence
+  that the OpenSSL-side KWP issue is fixed.
+- The `opencryptoki-master` artifact picked up later vector deduplication than
+  `opencryptoki`, including RSA/RSA-PSS and ACVP KeyGen projection skips. It
+  still predates the corrected KWP/RSA subprocess harness, because the security
+  files ran before that local fix landed.
+- `tpm2` improved mostly from vector duplicate/projection skips and runtime
+  classification, but the remaining findings are mixed. Real provider findings
+  include RSA-PSS valid/invalid semantic failures, `C_Digest` length-boundary
+  SIGSEGV evidence, `fork_after_initialize` timeout, threaded-random TPM2-TSS
+  errors, and non-modifiable X.509 certificate labels being mutable. Some
+  security crash-probe failures in the artifact were harness setup noise from
+  child-side AES/RSA/EC key generation; current source now preflights those
+  setup operations before entering the crash child.
+- `pkcs11-mock` remains useful for shaking out harness assumptions rather than
+  for provider-compliance wording. Its large X.509, RSA-OAEP, object, multipart,
+  and digest buckets mostly reflect synthetic placeholder behavior, small
+  advertised mechanism surface, and session/object constraints. The latest
+  NULL-pointer subprocess preflight fix also postdates this artifact, so do not
+  use its old `security/test_ffi_null_pointer.py` failures as crash evidence.
+- A final current-source rerun is still needed before article numbers are
+  official. The useful article material from this pass is the shape of findings
+  and the test-suite hardening work, not exact percentages.
+
 ## Summary Table
 
 | Target | Passed | Failed | Skipped | Xfailed | Crashed | Timeout | Total |

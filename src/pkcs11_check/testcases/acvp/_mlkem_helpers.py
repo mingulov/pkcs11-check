@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_768,
     CKP_ML_KEM_1024,
 )
+from pkcs11_check.testcases.acvp._duplicates import mark_duplicate_pkcs11_inputs
 from pkcs11_check.testcases.data import ACVP_DIR
 
 # Parameter set mapping
@@ -97,9 +98,9 @@ def load_mlkem_keygen_vectors(limit: int | None = None) -> list[tuple[str, dict[
             result.append((vec_id, vec_data))
 
             if limit is not None and len(result) >= limit:
-                return result
+                return mark_duplicate_pkcs11_inputs(result, lambda item: item["parameter_set"])
 
-    return result
+    return mark_duplicate_pkcs11_inputs(result, lambda item: item["parameter_set"])
 
 
 def load_mlkem_encap_vectors(limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:

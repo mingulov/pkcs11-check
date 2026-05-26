@@ -15,6 +15,7 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
     CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
@@ -24,7 +25,7 @@ from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
-from pkcs11_check.testcases.acvp import test_acvp_ecdh, test_acvp_mldsa
+from pkcs11_check.testcases.acvp import test_acvp_ecdh, test_acvp_ecdsa, test_acvp_mldsa
 from pkcs11_check.testcases.wycheproof import (
     test_wycheproof_aes,
     test_wycheproof_dsa,
@@ -248,6 +249,14 @@ def test_acvp_ecdh_generic_runtime_rejects_are_xfail(rv: int) -> None:
 
     with pytest.raises(pytest.xfail.Exception, match="advertised but ECDH derive"):
         test_acvp_ecdh._xfail_if_ecdh_runtime_reject(exc, "Curve P-384")
+
+
+def test_acvp_ecdsa_host_memory_runtime_reject_is_xfail() -> None:
+    """Advertised EC keygen/use returning CKR_HOST_MEMORY is a visible finding."""
+    exc = CkrAssertionError("Unexpected CK_RV", int(CKR_HOST_MEMORY))
+
+    with pytest.raises(pytest.xfail.Exception, match="Curve P-521 rejected"):
+        test_acvp_ecdsa._handle_unsupported_curve(exc, "P-521")
 
 
 def test_acvp_mlkem_uses_structured_ckr_checks() -> None:

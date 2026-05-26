@@ -49,6 +49,7 @@ from pkcs11_check.testcases._signature_policy import (
     SIGNATURE_REJECT_RVS,
     signature_rejected_or_xfail,
 )
+from pkcs11_check.testcases.acvp._duplicates import skip_duplicate_pkcs11_input
 from pkcs11_check.testcases.acvp._eddsa_helpers import (
     load_eddsa_keygen_vectors,
     load_eddsa_keyver_vectors,
@@ -130,6 +131,7 @@ class TestEdDsaKeyGen:
         rs = p11_raw_session
         if not rs.has_mechanism("EC_EDWARDS_KEY_PAIR_GEN"):
             pytest.skip("EC_EDWARDS_KEY_PAIR_GEN not supported by module")
+        skip_duplicate_pkcs11_input(vec, "EdDSA KeyGen")
 
         pub_key = priv_key = 0
         try:
@@ -240,6 +242,11 @@ def test_acvp_eddsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
         except AssertionError as exc:
             if is_known_error(exc, _CURVE_UNSUPPORTED_RVS):
                 pytest.skip(f"Cannot import EdDSA public key for {vec['curve']}: {exc}")
+            xfail_if_known_ckr(
+                exc,
+                _KEYVER_IMPORT_REJECT_RVS,
+                f"{vec_id}: ACVP EdDSA public-key import rejected by advertised EDDSA path",
+            )
             raise
 
         try:

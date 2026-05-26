@@ -15,9 +15,17 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.types_std import CKA_DERIVE, CKA_ENCRYPT, CKA_SIGN, CKA_TOKEN
 from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
+)
+from pkcs11_check.testcases.conftest import (
+    destroy_returned_handles,
+    gen_aes_key_or_xfail,
+    gen_ec_keypair_or_xfail,
+    gen_rsa_keypair_or_xfail,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -78,6 +86,12 @@ class TestIsizeMaxDataLength:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Encrypt isize-boundary crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -128,6 +142,12 @@ cleanup()
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Decrypt isize-boundary crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -410,6 +430,12 @@ class TestMechanismNullInnerParams:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-GCM NULL-IV crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -461,6 +487,13 @@ cleanup()
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported")
+        curve_oid = encode_named_curve_parameters("secp256r1")
+        pub, priv = gen_ec_keypair_or_xfail(
+            rs,
+            curve_oid,
+            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -552,6 +585,13 @@ cleanup()
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -1150,6 +1190,13 @@ class TestEddsaNullContext:
         rs = p11_raw_session
         if not rs.has_mechanism("EDDSA"):
             pytest.skip("CKM_EDDSA not supported")
+        curve_oid = encode_named_curve_parameters("ed25519")
+        pub, priv = gen_ec_keypair_or_xfail(
+            rs,
+            curve_oid,
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
         preamble = _preamble(p11_config)
         script = (
             preamble
@@ -1215,6 +1262,12 @@ class TestAesCcmNullNonce:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CCM"):
             pytest.skip("CKM_AES_CCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-CCM NULL-nonce crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble

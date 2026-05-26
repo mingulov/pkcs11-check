@@ -21,9 +21,21 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.types_std import (
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+)
 from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
+)
+from pkcs11_check.testcases.conftest import (
+    destroy_returned_handles,
+    gen_aes_key_or_xfail,
+    gen_ec_keypair_or_xfail,
+    gen_rsa_keypair_or_xfail,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -395,17 +407,21 @@ class TestZeroLengthData:
             pytest.skip(f"CKM_{mech_check} not supported")
         preamble = _preamble(p11_config)
         if operation in ("encrypt", "decrypt") and "AES" in mech_name:
+            setup_key = gen_aes_key_or_xfail(
+                rs,
+                256,
+                purpose=f"{operation} zero-length {mech_name} crash probe setup",
+            )
+            destroy_returned_handles(rs, setup_key)
             c_func = "C_Encrypt" if operation == "encrypt" else "C_Decrypt"
             init_func = f"{c_func}Init"
             iv_setup = ""
             if "CBC" in mech_name:
-                iv_setup = (
-                    "iv = (ctypes.c_ubyte * 16)(*range(16))\n"
-                    "mech.pParameter = ctypes.cast(ctypes.pointer("
-                    "(ctypes.c_ubyte * 16)(*range(16))"
-                    "), ctypes.c_void_p)\n"
-                    "mech.ulParameterLen = 16\n"
-                )
+                iv_setup = """\
+    iv = (ctypes.c_ubyte * 16)(*range(16))
+    mech.pParameter = ctypes.cast(ctypes.pointer(iv), ctypes.c_void_p)
+    mech.ulParameterLen = 16
+"""
             body = f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -420,7 +436,7 @@ try:
     mech.mechanism = int({mech_name})
     mech.pParameter = None
     mech.ulParameterLen = 0
-    {iv_setup}
+{iv_setup}
     rv = raw.{init_func}(sh, ctypes.byref(mech), key)
     print(f"init_rv={{rv}}")
     if rv == CKR_OK:
@@ -435,6 +451,13 @@ finally:
 cleanup()
 """
         elif operation == "sign" and "RSA" in mech_name:
+            pub, priv = gen_rsa_keypair_or_xfail(
+                rs,
+                2048,
+                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            )
+            destroy_returned_handles(rs, pub, priv)
             body = f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -467,6 +490,13 @@ finally:
 cleanup()
 """
         elif operation == "sign" and "ECDSA" in mech_name:
+            curve_oid = encode_named_curve_parameters("secp256r1")
+            pub, priv = gen_ec_keypair_or_xfail(
+                rs,
+                curve_oid,
+                private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+            )
+            destroy_returned_handles(rs, pub, priv)
             body = f"""
 import ctypes
 from pkcs11_check.raw.types_std import (

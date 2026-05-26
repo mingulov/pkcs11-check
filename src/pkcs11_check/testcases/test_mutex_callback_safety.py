@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.types_std import CKR_OK
+from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
 pytestmark = [pytest.mark.destructive, pytest.mark.access]
 
@@ -108,13 +109,12 @@ class TestMutexCallbackErrorHandling:
             c_final(None)
             """,
         )
-        if rc < 0:
-            pytest.fail(
-                f"C_Initialize with failing CreateMutex callback segfaulted "
-                f"(signal {-rc}).  Module crashed when caller-side mutex "
-                f"creation reported failure — this is a real provider bug. "
-                f"Stderr: {stderr}"
-            )
+        assert_subprocess_completed(
+            rc,
+            stdout,
+            stderr,
+            context="C_Initialize with failing CreateMutex callback",
+        )
         # rv should be some defined CKR — most likely CKR_GENERAL_ERROR
         # propagated, CKR_CANT_LOCK, or a related error.  rv == CKR_OK
         # (0) would mean the module ignored the callback failure — also
@@ -190,11 +190,12 @@ class TestMutexCallbackErrorHandling:
                 c_final(None)
             """,
         )
-        if rc < 0:
-            pytest.fail(
-                f"Module crashed when LockMutex callback returned "
-                f"CKR_GENERAL_ERROR (signal {-rc}). Stderr: {stderr}"
-            )
+        assert_subprocess_completed(
+            rc,
+            stdout,
+            stderr,
+            context="LockMutex callback returning CKR_GENERAL_ERROR during C_GetInfo",
+        )
         # If init failed (module wouldn't use app callbacks), that's fine.
         init_lines = [ln for ln in stdout.splitlines() if ln.startswith("INIT_RV=")]
         if not init_lines:
@@ -252,13 +253,11 @@ class TestMutexCallbackErrorHandling:
                 pass
             """,
         )
-        if rc < 0:
-            pytest.fail(
-                f"Module crashed (signal {-rc}) when CreateMutex callback "
-                f"raised a Python exception.  ctypes propagated the "
-                f"exception via default return value, but the module "
-                f"did not handle the resulting state cleanly. "
-                f"Stderr: {stderr}"
-            )
+        assert_subprocess_completed(
+            rc,
+            _stdout,
+            stderr,
+            context="CreateMutex callback raising Python exception",
+        )
         # We don't assert on RV — the interesting property is "no crash".
         # stderr will contain the Python traceback; that's expected.

@@ -52,6 +52,7 @@ from pkcs11_check.raw.types_std import (
     CKR_PARAMETER_SET_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.acvp._duplicates import skip_duplicate_pkcs11_input
 from pkcs11_check.testcases.acvp._mlkem_helpers import (
     get_mlkem_mechanism,
     load_mlkem_decap_vectors,
@@ -129,6 +130,7 @@ class TestMlKemKeyGen:
             pytest.skip("ML_KEM_KEY_PAIR_GEN not supported by module")
 
         param_set_name = vec["param_set"]
+        skip_duplicate_pkcs11_input(vec, "ML-KEM KeyGen")
 
         pub_key = priv_key = secret_handle = decap_handle = 0
         # Generate keypair with specific parameter set.

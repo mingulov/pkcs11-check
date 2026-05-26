@@ -49,6 +49,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.acvp._duplicates import skip_duplicate_pkcs11_input
 from pkcs11_check.testcases.acvp._mldsa_helpers import (
     get_mldsa_mechanism,
     load_mldsa_keygen_vectors,
@@ -149,6 +150,7 @@ class TestMlDsaKeyGen:
             pytest.skip("ML_DSA_KEY_PAIR_GEN not supported by module")
 
         param_set_name = vec["param_set"]
+        skip_duplicate_pkcs11_input(vec, "ML-DSA KeyGen")
 
         pub_key = priv_key = 0
         try:

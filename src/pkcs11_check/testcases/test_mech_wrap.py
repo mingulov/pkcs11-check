@@ -33,7 +33,6 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     gen_rsa_keypair,
     read_attributes,
-    unwrap_key,
     wrap_key,
 )
 from pkcs11_check.raw.types_std import (
@@ -75,7 +74,10 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPING_KEY_SIZE_RANGE,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    unwrap_key_for_mechanism_roundtrip,
+    xfail_if_known_ckr,
+)
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
 
@@ -541,7 +543,7 @@ class TestMechWrapRoundtrip:
     """Wrap/unwrap roundtrip for every advertised wrap mechanism with a registry config."""
 
     def test_wrap_unwrap_aes_key(
-        self, p11_raw_session: RawSession, mech_wrap_entry: MechEntry
+        self, p11_raw_session: RawSession, p11_config: Any, mech_wrap_entry: MechEntry
     ) -> None:
         """Wrap an AES key, unwrap it, verify it works for encryption.
 
@@ -643,14 +645,15 @@ class TestMechWrapRoundtrip:
             # Raw RSA unwrap needs the key length supplied in the template
             # because CKM_RSA_X_509 wraps only the raw key value bytes.
             try:
-                unwrapped_key = unwrap_key(
-                    rs.raw,
-                    rs.sh,
-                    unwrap_handle,
-                    wrapped_blob,
-                    CKM(mech_id),
+                unwrapped_key = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=unwrap_handle,
+                    wrapped_key=wrapped_blob,
+                    mechanism=CKM(mech_id),
                     attrs=_target_unwrap_attrs(entry),
                     mech_param=mech_param,
+                    purpose=f"{entry.mech_name} wrap/unwrap roundtrip",
                 )
             except AssertionError as exc:
                 _xfail_wrap_runtime_reject(exc, entry, "unwrap")

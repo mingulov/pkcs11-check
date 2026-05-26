@@ -21,8 +21,24 @@ def _handle(*_args: Any, **_kwargs: Any) -> int:
     return 1
 
 
+def _fail_if_called(*_args: Any, **_kwargs: Any) -> int:
+    raise AssertionError("PKCS#11 import reached for duplicate ECDH vector")
+
+
 def _read_zeros(_raw: Any, _session: int, _obj: int, attrs: list[int]) -> dict[int, bytes]:
     return {attr: b"\x00" * 32 for attr in attrs}
+
+
+def test_duplicate_ecdh_container_vector_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PEM/ASN/ECPOINT duplicates should not rerun identical PKCS#11 inputs."""
+    monkeypatch.setattr(ecdh, "import_ec_private_key", _fail_if_called)
+    vec_id = "ecdh_secp256r1_pem_test.json:tc70-valid"
+    vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
+
+    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 ECDH operation input"):
+        ecdh.test_ecdh(_EcdhSession(), vec_id, vec)
 
 
 def test_invalid_ecdh_without_shared_secret_success_is_reported(

@@ -21,12 +21,28 @@ def _fail_if_called(*_args: Any, **_kwargs: Any) -> int:
     raise AssertionError("PKCS#11 import reached after invalid public-key decode")
 
 
+def _fail_if_duplicate_called(*_args: Any, **_kwargs: Any) -> int:
+    raise AssertionError("PKCS#11 import reached for duplicate XDH vector")
+
+
 def _handle(*_args: Any, **_kwargs: Any) -> int:
     return 1
 
 
 def _read_zeros(_raw: Any, _session: int, _obj: int, attrs: list[int]) -> dict[int, bytes]:
     return {attr: b"\x00" * 56 for attr in attrs}
+
+
+def test_duplicate_xdh_container_vector_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ASN/PEM/JWK duplicates should not rerun identical PKCS#11 inputs."""
+    monkeypatch.setattr(xdh, "import_ec_private_key", _fail_if_duplicate_called)
+    vec_id = "x25519_asn_test.json:tc1-valid"
+    vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
+
+    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 XDH operation input"):
+        xdh.test_xdh(_XdhSession(), vec_id, vec)
 
 
 def test_invalid_xdh_public_decode_is_accepted_rejection(

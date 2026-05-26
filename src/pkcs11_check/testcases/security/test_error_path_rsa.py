@@ -12,14 +12,24 @@ Covers:
 
 from __future__ import annotations
 
+from textwrap import indent
 from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+)
 from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
 )
+from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
@@ -112,6 +122,51 @@ else:
 """
 
 
+def _require_rsa_decrypt_setup(rs: Any) -> None:
+    """Ensure the provider can create the setup key before spawning a crash probe."""
+    pub = priv = 0
+    try:
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+        )
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        destroy_quietly(rs.raw, rs.sh, priv)
+
+
+def _require_rsa_verify_setup(rs: Any) -> None:
+    """Ensure the provider can create the setup key before spawning a crash probe."""
+    pub = priv = 0
+    try:
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+        )
+    finally:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        destroy_quietly(rs.raw, rs.sh, priv)
+
+
+def _build_decrypt_script(
+    p11_config: Any,
+    *,
+    bad_ct_code: str,
+    body: str,
+) -> str:
+    """Assemble RSA decrypt error-path child script."""
+    return (
+        _preamble(p11_config)
+        + _RSA_KEYGEN
+        + indent(bad_ct_code + body, "    ")
+        + _RSA_CLEANUP
+    )
+
+
 # ---------------------------------------------------------------------------
 # RSA PKCS#1 v1.5 decrypt error paths
 # ---------------------------------------------------------------------------
@@ -137,10 +192,12 @@ class TestRsaPkcsDecryptErrorPaths:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        _require_rsa_decrypt_setup(rs)
 
-        preamble = _preamble(p11_config)
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len)\n"
-        script = preamble + _RSA_KEYGEN + bad_ct_code + _PKCS_DECRYPT_BODY + _RSA_CLEANUP
+        script = _build_decrypt_script(
+            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: random ciphertext"
@@ -155,10 +212,12 @@ class TestRsaPkcsDecryptErrorPaths:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        _require_rsa_decrypt_setup(rs)
 
-        preamble = _preamble(p11_config)
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len // 2)\n"
-        script = preamble + _RSA_KEYGEN + bad_ct_code + _PKCS_DECRYPT_BODY + _RSA_CLEANUP
+        script = _build_decrypt_script(
+            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: truncated ciphertext (half modulus)"
@@ -173,10 +232,12 @@ class TestRsaPkcsDecryptErrorPaths:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        _require_rsa_decrypt_setup(rs)
 
-        preamble = _preamble(p11_config)
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len + 16)\n"
-        script = preamble + _RSA_KEYGEN + bad_ct_code + _PKCS_DECRYPT_BODY + _RSA_CLEANUP
+        script = _build_decrypt_script(
+            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: extended ciphertext (modulus + 16)"
@@ -191,10 +252,12 @@ class TestRsaPkcsDecryptErrorPaths:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        _require_rsa_decrypt_setup(rs)
 
-        preamble = _preamble(p11_config)
         bad_ct_code = "bad_ct = bytes(mod_len)\n"
-        script = preamble + _RSA_KEYGEN + bad_ct_code + _PKCS_DECRYPT_BODY + _RSA_CLEANUP
+        script = _build_decrypt_script(
+            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: all-zero ciphertext"
@@ -209,10 +272,12 @@ class TestRsaPkcsDecryptErrorPaths:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
+        _require_rsa_decrypt_setup(rs)
 
-        preamble = _preamble(p11_config)
         bad_ct_code = "bad_ct = b'\\xff' * mod_len\n"
-        script = preamble + _RSA_KEYGEN + bad_ct_code + _PKCS_DECRYPT_BODY + _RSA_CLEANUP
+        script = _build_decrypt_script(
+            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: all-0xFF ciphertext"
@@ -243,10 +308,12 @@ class TestRsaOaepDecryptErrorPaths:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
+        _require_rsa_decrypt_setup(rs)
 
-        preamble = _preamble(p11_config)
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len)\n"
-        script = preamble + _RSA_KEYGEN + bad_ct_code + _OAEP_DECRYPT_BODY + _RSA_CLEANUP
+        script = _build_decrypt_script(
+            p11_config, bad_ct_code=bad_ct_code, body=_OAEP_DECRYPT_BODY
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS_OAEP decrypt: random ciphertext"
@@ -261,10 +328,12 @@ class TestRsaOaepDecryptErrorPaths:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
+        _require_rsa_decrypt_setup(rs)
 
-        preamble = _preamble(p11_config)
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len // 2)\n"
-        script = preamble + _RSA_KEYGEN + bad_ct_code + _OAEP_DECRYPT_BODY + _RSA_CLEANUP
+        script = _build_decrypt_script(
+            p11_config, bad_ct_code=bad_ct_code, body=_OAEP_DECRYPT_BODY
+        )
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS_OAEP decrypt: truncated ciphertext (half modulus)"
@@ -296,6 +365,7 @@ class TestRsaVerifyCorruptedSignature:
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
             pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+        _require_rsa_verify_setup(rs)
 
         preamble = _preamble(p11_config)
         body = """\

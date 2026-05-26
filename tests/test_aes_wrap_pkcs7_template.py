@@ -37,6 +37,8 @@ def test_aes_key_wrap_pkcs7_unwrap_template_omits_value_len(
         assert CKA_VALUE_LEN not in attrs
         return 12
 
-    monkeypatch.setattr(test_aes_modes, "unwrap_key", _unwrap_check_attrs)
+    monkeypatch.setattr(test_aes_modes, "unwrap_key_for_mechanism_roundtrip", _unwrap_check_attrs)
 
-    test_aes_modes.TestAESKeyWrapPKCS7().test_aes_key_wrap_pkcs7_roundtrip(rs)
+    test_aes_modes.TestAESKeyWrapPKCS7().test_aes_key_wrap_pkcs7_roundtrip(
+        rs, SimpleNamespace(module="/tmp/vendor-pkcs11.so")
+    )

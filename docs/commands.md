@@ -4,6 +4,7 @@
 
 ```bash
 uv run pkcs11-check version              # check CLI works
+uv run python -m pytest tests/test_python_source_syntax.py tests/test_security_subprocess_regressions.py tests/test_subprocess_result_policy.py  # fast syntax/generated-subprocess gate
 uv run python -m pytest tests/           # run meta-tests
 uv run ruff check src/ tests/            # lint
 uv run ruff format src/ tests/           # format
@@ -11,6 +12,11 @@ uv run mypy src/                         # type check
 ```
 
 > **Never** run bare `ruff`, `mypy`, or `pytest` — they are inside the uv venv.
+
+The fast syntax/generated-subprocess gate covers ordinary Python syntax under
+`src/` and `tests/`, plus representative dynamically generated child scripts
+used by crash-survival tests. It does not replace provider runs; it prevents
+broken local test code from being counted as provider evidence.
 
 ## Local builds
 

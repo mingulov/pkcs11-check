@@ -52,6 +52,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS_PSS,
     CKM_SHA_1,
 )
+from pkcs11_check.testcases.acvp._duplicates import mark_duplicate_pkcs11_inputs
 from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 
 # ACVP hashAlg -> PKCS#1 v1.5 mechanism mapping
@@ -415,6 +416,6 @@ def load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
 
                 # Limit total vectors for speed
                 if len(result) >= 30:
-                    return result
+                    return mark_duplicate_pkcs11_inputs(result, lambda item: item["modulo"])
 
-    return result
+    return mark_duplicate_pkcs11_inputs(result, lambda item: item["modulo"])

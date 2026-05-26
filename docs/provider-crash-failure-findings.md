@@ -228,6 +228,28 @@ confirmed that the provider advertised the mechanism, but the actual
 errors. Those cases are now xfailed as advertised-but-not-operational provider
 findings instead of skipped as missing capability.
 
+### Follow-Up: Security Subprocess Setup Preflights
+
+The current `tpm2` and `pkcs11-mock` artifacts exposed a separate harness
+classification issue in security crash probes. Several child scripts generated
+setup AES/RSA/EC keys inside the crash-isolated subprocess. If a provider
+advertised the outer operation but setup key generation was not operational,
+the child exited with a Python assertion and the parent reported a failed crash
+probe. That was not crash evidence.
+
+Current source preflights setup key generation in the parent for the affected
+API-boundary, arithmetic-overflow, FFI length-boundary, RSA error-path, and
+NULL-pointer AES probes. A setup rejection now becomes the same visible
+setup xfail/skip classification used elsewhere, while the actual malformed API
+call still runs in the child when setup succeeds. The subprocess helper still
+treats negative return codes as crash findings and positive child exits as
+child-script failures, so this does not hide segfaults.
+
+The same review fixed `C_SetPIN` and `C_InitToken` NULL-pointer child scripts
+to pass valid PIN/label buffers as `CK_UTF8CHAR_PTR` instead of
+`ctypes.c_void_p`. The old artifacts' PIN/token failures were Python
+`ctypes` signature errors, not module behavior.
+
 This affects AES-CFB/OFB simple and MCT runners, AES-GCM/CCM parameterized
 operations, AES-KW/KWP raw wrapping, AES-XTS, and AES-CTS variant/error paths.
 Missing mechanisms still skip normally; only runtime rejection after an
@@ -407,6 +429,49 @@ provider bug. The current rule is intentionally narrower: fail accepted invalid
 crypto results or malformed raw inputs that PKCS#11 actually sees, while leaving
 metadata-only cases for separate loader/coverage wording.
 
+The same review found exact duplicate decoded-operation inputs across ECDH and
+XDH container encodings. Some WebCrypto vectors remain distinct after decoding
+(`ecdh_secp256k1_test.json:tc70` and
+`ecdh_secp256k1_webcrypto_test.json:tc70` have different public points and
+shared secrets), but many ASN/PEM/ECPOINT/JWK/WebCrypto variants collapse to
+the same PKCS#11-visible curve, public point, private scalar, expected shared
+secret, and result. The loaders now mark exact duplicates as skipped before any
+provider call: 7,023 of 13,128 loaded ECDH vectors and 3,087 of 4,176 loaded
+XDH vectors. This keeps the source vector inventory visible while avoiding
+inflated provider failure buckets for container formats that PKCS#11 never
+sees.
+
+ECDSA and DSA have the same post-decoding shape for signature encodings. The
+test harness must convert DER signatures to raw `r || s` before calling
+`C_Verify`, because PKCS#11 `CKM_ECDSA` and DSA mechanisms do not consume DER
+signature containers. Therefore DER and P1363 vectors that normalize to the
+same public key, message/digest, raw signature, mechanism, and expected result
+are duplicate PKCS#11 operation inputs. The loaders now skip 6,707 of 28,915
+loaded ECDSA vectors and 442 of 1,956 loaded DSA vectors as exact duplicates.
+This also avoids false provider failures for invalid vectors whose only
+invalidity is DER container metadata, or Bitcoin low-S policy metadata, after
+that metadata has been normalized away.
+
+RSA signature vectors have a smaller version of the same duplication problem.
+After pkcs11-check maps a vector to a concrete PKCS#11 mechanism and parameter
+set, some Wycheproof RSA-PSS and RSA PKCS#1 cases are identical at the module
+boundary. The loaders now skip 913 of 2,502 loaded RSA-PSS vectors and 75 of
+5,313 loaded RSA PKCS#1 signature vectors when the mechanism, mechanism
+parameters, public key, message, and signature are exact duplicates. This
+reduces inflated buckets while keeping distinct RSA-PSS parameter combinations
+as real provider tests.
+
+ACVP KeyGen internal-projection vectors are a different normalization case.
+They include seeds and expected private/public key material, but current
+PKCS#11 key-generation APIs do not accept deterministic external seed inputs.
+The only provider-visible input is the generated-key parameter choice, such as
+RSA modulus size, EC curve, or PQC parameter set. Current source therefore
+collects the vectors but skips duplicate provider-visible KeyGen inputs after
+the first representative: RSA 27 of 30, ECDSA 17 of 20, EdDSA 4 of 6, ML-DSA
+72 of 75, and ML-KEM 72 of 75. Future PKCS#11 revisions could make exact ACVP
+KeyGen validation possible by standardizing deterministic validation inputs,
+but there is no portable API for that today.
+
 ### Other Large Buckets Checked In This Pass
 
 These buckets were sampled after the ECDH and DSA loader fixes. They do not
@@ -569,6 +634,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   explicit CKR values is now xfail evidence for an advertised EDDSA path that
   cannot import usable ACVP public keys. Accepting an invalid EdDSA key remains
   a hard failure because that is the actual negative key-verification result.
+- **ACVP EdDSA SigVer public-key import**: SigVer now follows the same split as
+  KeyVer. Unsupported curves remain skips, but `CKR_FUNCTION_FAILED` and other
+  generic runtime rejects from ACVP public-key import become visible xfail
+  evidence instead of raw harness failures.
 - **ACVP EdDSA sign runtime rejects**: keygen and SigGen vectors now distinguish
   setup from use. Once a key is generated or imported, explicit EdDSA sign/use
   CKRs such as `CKR_DEVICE_ERROR` are visible xfail evidence for an advertised
@@ -768,6 +837,53 @@ The following paths were tightened after inspecting the all-fail artifacts:
   under test, such as `CKA_MODIFIABLE=False` or `CKA_COPYABLE=False`, still keep
   their specific rejection handling. Copying a non-copyable key remains a hard
   security failure.
+- **AES-KWP corrupted-data error path**: the old crash-regression harness for
+  OpenCryptoki PR #932 and OpenSSL PR #30663 had two masking problems. First,
+  generated child scripts could exit with a Python error and still be counted as
+  "no crash" because only negative signal return codes were rejected. Second,
+  the `C_Decrypt` branch over-allocated the output buffer, so it could not
+  expose OpenSSL's `CRYPTO_128_unwrap_pad()` error-path overwrite. The harness
+  now rejects positive child exits, keeps the generated script under its
+  `try/finally`, and uses a minimal output buffer with guard bytes for
+  corrupted AES-KWP decrypt attempts. A mounted-source rerun against
+  OpenCryptoki master built with OpenSSL 4.0.0 reports 8 AES-KWP decrypt
+  guard-overwrite failures and 34 clean no-crash rows in
+  `test_error_path_kwp.py`. This means the old OpenCryptoki artifacts that
+  showed 42/42 passes for this file were false negatives for the OpenSSL-side
+  KWP finding.
+- **RSA decrypt error-path child scripts**: the same generated-script
+  `try/finally` indentation problem existed in the RSA PKCS#1/OAEP decrypt
+  error-path tests. The scripts are now built through one helper that indents
+  the malformed-ciphertext setup and decrypt body under the key-generation
+  `try`, and meta-tests compile representative PKCS#1 and OAEP variants. Older
+  provider artifacts that show this file as fully passing should be treated as
+  suspect no-crash evidence until the file is rerun with current source. A
+  mounted-source rerun against OpenCryptoki master built with OpenSSL 4.0.0
+  reports all 8 RSA error-path rows passing, so the corrected OpenCryptoki
+  finding is AES-KWP-specific, not RSA.
+- **Subprocess result policy**: crash-survival helpers now share the same
+  result rule: negative return code is a crash finding, positive return code is
+  a child-script failure, and only return code 0 can be considered a completed
+  no-crash probe. This policy is now used by the security subprocess helpers,
+  mutex callback safety probes, and the OpenSSL interop wrapper. Most other raw
+  subprocess tests already require `rc == 0` or required stdout markers, so a
+  generated-script syntax/runtime error fails instead of becoming a no-crash
+  pass.
+- **Local syntax/generated-script gate**: meta-tests now parse every Python
+  source file under `src/` and `tests/`, compile representative AES-KWP and RSA
+  generated crash-regression child scripts, and check the shared subprocess
+  result policy. This gives a fast local guard against broken test code before a
+  long provider run turns it into misleading provider evidence.
+- **OpenCryptoki PR #932 source-path audit**: PR #932 fixed the OpenCryptoki
+  common `aeskw_unwrap_pad()` fallback by cleansing `*out_data_len` bytes on
+  error, not the input length. It did not fix the swtok path. Current
+  OpenCryptoki master still registers `token_specific_aes_key_wrap` for swtok,
+  that function still calls `openssl_specific_aes_key_wrap()`, and
+  `CKM_AES_KEY_WRAP_KWP` still maps to OpenSSL `EVP_aes_*_wrap_pad()`. OpenSSL
+  PR #30663 remains unmerged, and OpenSSL master still contains the corresponding
+  `OPENSSL_cleanse(out, inlen)` cleanup in `CRYPTO_128_unwrap_pad()`. Therefore
+  "the swtok crash disappeared" should be described as previous harness/build
+  behavior, not as an upstream OpenSSL-path fix.
 - **Key-size and metamorphic setup paths**: AES key-size checks and metamorphic
   invariants now use the shared advertised-keygen setup classification. Missing
   `AES_KEY_GEN` or `RSA_PKCS_KEY_PAIR_GEN` stays a skip, while explicit

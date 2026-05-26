@@ -15,6 +15,8 @@ import pytest
 
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_KEY_TYPE,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
@@ -117,6 +119,69 @@ def gen_aes_key_or_xfail(
             "is not operational",
         )
     raise
+
+
+def unwrap_key_for_mechanism_roundtrip(
+    rs: Any,
+    p11_config: Any,
+    *,
+    unwrapping_key: int,
+    wrapped_key: bytes,
+    mechanism: Any,
+    attrs: Mapping[Any, Any],
+    mech_param: Any | None = None,
+    purpose: str = "mechanism unwrap roundtrip",
+) -> int:
+    """Unwrap for mechanism-level crypto checks, retrying documented template quirks.
+
+    Some modules reject CKA_CLASS/CKA_KEY_TYPE in C_UnwrapKey templates even
+    though the mechanism can still unwrap a valid provider-generated blob when
+    those type identifiers are omitted. Mechanism-level tests care about the
+    cryptographic roundtrip; stricter attribute-template behavior belongs in
+    dedicated attribute/security tests.
+    """
+    from pkcs11_check.compliance import ComplianceLevel, note
+    from pkcs11_check.raw.recipes import unwrap_key
+    from pkcs11_check.testcases._module_quirks import quirk_extras
+
+    try:
+        return unwrap_key(
+            rs.raw,
+            rs.sh,
+            unwrapping_key,
+            wrapped_key,
+            mechanism,
+            attrs=attrs,
+            mech_param=mech_param,
+        )
+    except AssertionError as exc:
+        allowed_errors = quirk_extras(
+            p11_config, "unwrap_template_class_keytype_rejected"
+        )
+        if not is_known_error(exc, allowed_errors):
+            raise
+        relaxed_attrs = {
+            key: value
+            for key, value in attrs.items()
+            if key not in (CKA_CLASS, CKA_KEY_TYPE)
+        }
+        if relaxed_attrs == attrs:
+            raise
+        note(
+            f"{purpose}: provider rejected CKA_CLASS/CKA_KEY_TYPE in unwrap template; "
+            "retried without CKA_CLASS/CKA_KEY_TYPE for mechanism-level crypto check",
+            ComplianceLevel.VENDOR,
+            reference="docs/module-issues.md OpenCryptoki unwrap-template attribute rejection",
+        )
+        return unwrap_key(
+            rs.raw,
+            rs.sh,
+            unwrapping_key,
+            wrapped_key,
+            mechanism,
+            attrs=relaxed_attrs,
+            mech_param=mech_param,
+        )
 
 
 def gen_rsa_keypair_or_xfail(

@@ -1070,7 +1070,11 @@ def test_mech_wrap_kwp_uses_output_size_hint(
         "decrypt_single",
         lambda *_args, **_kwargs: b"\x5a\xa5\x5a\xa5" * 4,
     )
-    monkeypatch.setattr(test_mech_wrap, "unwrap_key", lambda *_args, **_kwargs: 30)
+    monkeypatch.setattr(
+        test_mech_wrap,
+        "unwrap_key_for_mechanism_roundtrip",
+        lambda *_args, **_kwargs: 30,
+    )
     monkeypatch.setattr(test_mech_wrap, "destroy_quietly", lambda *_args, **_kwargs: None)
 
     def _wrap_key(*_args: Any, output_size_hint: int = 0, **_kwargs: Any) -> bytes:
@@ -1079,7 +1083,9 @@ def test_mech_wrap_kwp_uses_output_size_hint(
 
     monkeypatch.setattr(test_mech_wrap, "wrap_key", _wrap_key)
 
-    test_mech_wrap.TestMechWrapRoundtrip().test_wrap_unwrap_aes_key(rs, entry)
+    test_mech_wrap.TestMechWrapRoundtrip().test_wrap_unwrap_aes_key(
+        rs, SimpleNamespace(module="/tmp/vendor-pkcs11.so"), entry
+    )
 
     assert output_hints == [64]
 
@@ -1119,7 +1125,9 @@ def test_mech_wrap_runtime_reject_is_xfail(
     monkeypatch.setattr(test_mech_wrap, "wrap_key", _wrap_reject)
 
     with pytest.raises(pytest.xfail.Exception, match="wrap rejected at runtime"):
-        test_mech_wrap.TestMechWrapRoundtrip().test_wrap_unwrap_aes_key(rs, entry)
+        test_mech_wrap.TestMechWrapRoundtrip().test_wrap_unwrap_aes_key(
+            rs, SimpleNamespace(module="/tmp/vendor-pkcs11.so"), entry
+        )
 
 
 def test_mech_flags_missing_expected_flags_are_xfail() -> None:

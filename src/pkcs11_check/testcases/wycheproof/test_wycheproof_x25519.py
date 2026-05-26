@@ -86,9 +86,24 @@ _X25519_X448_FILES = [
 ]
 
 
+def _pkcs11_xdh_fingerprint(test: dict[str, Any]) -> tuple[bytes, bytes, bytes, bytes, str] | None:
+    """Return the PKCS#11-visible XDH operation inputs for duplicate detection."""
+    try:
+        return (
+            test["_oid"],
+            decode_xdh_public_bytes(test["public"], test["_encoding"]),
+            decode_xdh_private_bytes(test["private"], test["_encoding"]),
+            bytes.fromhex(test["shared"]),
+            str(test["result"]),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
 def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load X25519/X448 key exchange vectors."""
     vectors = []
+    seen_pkcs11_inputs: dict[tuple[bytes, bytes, bytes, bytes, str], str] = {}
     for filename, oid, key_size, encoding_name in _X25519_X448_FILES:
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
@@ -103,6 +118,11 @@ def _load_xdh_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_encoding"] = encoding_name
                 test["_file"] = filename
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
+                fingerprint = _pkcs11_xdh_fingerprint(test)
+                if fingerprint is not None:
+                    duplicate_of = seen_pkcs11_inputs.setdefault(fingerprint, vec_id)
+                    if duplicate_of != vec_id:
+                        test["_pkcs11_duplicate_of"] = duplicate_of
                 vectors.append((vec_id, test))
     return vectors
 
@@ -116,6 +136,9 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     rs = p11_raw_session
     if not rs.has_mechanism("ECDH1_DERIVE"):
         pytest.skip("ECDH1_DERIVE not supported")
+
+    if duplicate_of := vec.get("_pkcs11_duplicate_of"):
+        pytest.skip(f"Duplicate PKCS#11 XDH operation input; covered by {duplicate_of}")
 
     oid = vec["_oid"]
     key_size = vec["_key_size"]

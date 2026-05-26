@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from pkcs11_check.testcases.acvp._duplicates import mark_duplicate_pkcs11_inputs
 from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 from pkcs11_check.testcases.data import ACVP_DIR
 
@@ -88,9 +89,9 @@ def load_eddsa_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
             result.append((vec_id, merged))
 
             if len(result) >= 10:
-                return result
+                return mark_duplicate_pkcs11_inputs(result, lambda item: item["ec_params"])
 
-    return result
+    return mark_duplicate_pkcs11_inputs(result, lambda item: item["ec_params"])
 
 
 def load_eddsa_keyver_vectors() -> list[tuple[str, dict[str, Any]]]:

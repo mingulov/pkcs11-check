@@ -81,6 +81,53 @@ _DSA_RUNTIME_REJECT_CKRS = (
 )
 
 
+_DsaFingerprint = tuple[int, bytes, bytes, bytes, bytes, bytes, bytes]
+
+
+def _pkcs11_dsa_fingerprint(test: dict[str, Any]) -> _DsaFingerprint | None:
+    """Return PKCS#11-visible DSA verify inputs for duplicate detection."""
+    try:
+        sig_hex = test.get("_pkcs11_sig")
+        if sig_hex is None:
+            return None
+        public_key = test["_group"]["publicKey"]
+        return (
+            int(test["_mechanism"]),
+            bytes.fromhex(public_key["p"]),
+            bytes.fromhex(public_key["q"]),
+            bytes.fromhex(public_key["g"]),
+            bytes.fromhex(public_key["y"]),
+            bytes.fromhex(test["msg"]),
+            bytes.fromhex(sig_hex),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _canonical_duplicate_id(entries: list[tuple[str, dict[str, Any]]]) -> str:
+    """Choose the most PKCS#11-meaningful representative for duplicate vectors."""
+    for preferred in ("valid", "acceptable"):
+        for vec_id, test in entries:
+            if test["result"] == preferred:
+                return vec_id
+    return entries[0][0]
+
+
+def _mark_pkcs11_duplicate_vectors(vectors: list[tuple[str, dict[str, Any]]]) -> None:
+    groups: dict[_DsaFingerprint, list[tuple[str, dict[str, Any]]]] = {}
+    for vec_id, test in vectors:
+        fingerprint = _pkcs11_dsa_fingerprint(test)
+        if fingerprint is not None:
+            groups.setdefault(fingerprint, []).append((vec_id, test))
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        duplicate_of = _canonical_duplicate_id(entries)
+        for vec_id, test in entries:
+            if vec_id != duplicate_of:
+                test["_pkcs11_duplicate_of"] = duplicate_of
+
+
 def _load_dsa_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load all DSA vectors."""
     vectors = []
@@ -114,6 +161,7 @@ def _load_dsa_vectors() -> list[tuple[str, dict[str, Any]]]:
                         test["_pkcs11_sig"] = sig.hex()
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
+    _mark_pkcs11_duplicate_vectors(vectors)
     return vectors
 
 
@@ -138,6 +186,9 @@ def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     name = _MECH_DISPLAY.get(mechanism, f"0x{mechanism:08x}")
     if not rs.has_mechanism(name):
         pytest.skip(f"{name} not supported")
+
+    if duplicate_of := vec.get("_pkcs11_duplicate_of"):
+        pytest.skip(f"Duplicate PKCS#11 DSA operation input; covered by {duplicate_of}")
 
     msg = bytes.fromhex(vec["msg"])
     result = vec["result"]

@@ -936,6 +936,23 @@ RFC-5649-conformant reader).
 **Root cause:** OpenCryptoki AES-KWP either implements the wrong RFC or
 applies extra blocks beyond the RFC 5649 padding. Reportable upstream.
 
+### AES-KWP corrupted decrypt writes past minimal output buffer (NEW 2026-05-26)
+`security/test_error_path_kwp.py::TestCorruptedUnwrap::test_corrupted_unwrap`
+— corrected guarded-output-buffer probes fail for the 8 corrupted
+`CKM_AES_KEY_WRAP_KWP` `C_Decrypt` cases when OpenCryptoki master is built with
+OpenSSL 4.0.0. `C_Decrypt` returns `CKR_GENERAL_ERROR`, but the guard bytes
+immediately after the minimal `len(input) - 8` output buffer are overwritten.
+
+This is not fixed by OpenCryptoki PR #932. That PR fixed OpenCryptoki's common
+fallback `aeskw_unwrap_pad()` cleanup length. The swtok path still registers
+`token_specific_aes_key_wrap`, calls `openssl_specific_aes_key_wrap()`, and
+maps `CKM_AES_KEY_WRAP_KWP` to OpenSSL `EVP_aes_*_wrap_pad()`. OpenSSL PR
+#30663 remains the relevant upstream fix for the OpenSSL path.
+
+**Severity:** HIGH (memory safety on corrupted AES-KWP input).
+**Root cause:** OpenSSL AES-KWP unwrap-pad error cleanup is still reachable
+through OpenCryptoki swtok.
+
 ### AES-CBC-PAD ciphertext malleability — no padding validation (NEW iter-58 2026-04-30 — CRITICAL)
 `test_padding_oracle.py::test_cbc_pad_all_last_block_positions` — across
 20 trials × 16 byte positions = 320 corruption probes, OpenCryptoki

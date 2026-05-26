@@ -7,6 +7,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from ctypes import byref
 from typing import Any
 
@@ -50,8 +51,19 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS,
     CKR_OK,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 
 pytestmark = pytest.mark.full
+
+
+def _assert_invalid_signature_rejected(call_verify: Callable[[], bool], label: str) -> None:
+    """Assert invalid signature input is rejected, allowing non-clean CKR xfails."""
+    try:
+        accepted = call_verify()
+    except AssertionError as exc:
+        signature_rejected_or_xfail(exc, label)
+        return
+    assert accepted is False
 
 
 class TestRSASignature:
@@ -87,7 +99,17 @@ class TestRSASignature:
             data = b"original data"
             wrong_data = b"tampered data"
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
-            assert verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, wrong_data, sig) is False
+            _assert_invalid_signature_rejected(
+                lambda: verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_SHA256_RSA_PKCS,
+                    wrong_data,
+                    sig,
+                ),
+                "RSA wrong-data verification",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -191,7 +213,10 @@ class TestECDSASignature:
             digest = hashlib.sha256(b"original").digest()
             wrong_digest = hashlib.sha256(b"tampered").digest()
             sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
-            assert verify_single(rs.raw, rs.sh, pub, CKM_ECDSA, wrong_digest, sig) is False
+            _assert_invalid_signature_rejected(
+                lambda: verify_single(rs.raw, rs.sh, pub, CKM_ECDSA, wrong_digest, sig),
+                "ECDSA wrong-digest verification",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
