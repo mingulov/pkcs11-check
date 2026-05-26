@@ -373,6 +373,13 @@ provider advertises both HKDF mechanisms but rejects base-key generation with a
 specific runtime CKR, the row is visible xfail evidence rather than a raw
 assertion failure.
 
+Kryoptic has a narrower HKDF finding: `CKM_HKDF_KEY_GEN` can create a
+`CKK_HKDF` key that remains usable for derive, but `C_GetAttributeValue` for
+`CKA_VALUE` returns `CKR_ATTRIBUTE_VALUE_INVALID` even when the test requested a
+non-sensitive, extractable key. pkcs11-check now reports that exact readback
+rejection as xfail evidence while keeping key type, value length, and derived
+output checks strict whenever readback succeeds.
+
 ### Follow-Up: Benchmark AES Keygen Rejections
 
 Benchmark tests still skip when `CKM_AES_KEY_GEN` is absent, but an advertised

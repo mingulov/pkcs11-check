@@ -80,6 +80,10 @@ _KEYGEN_ERROR_RVS = {
     CKR_TEMPLATE_INCONSISTENT,
 }
 
+_KEYGEN_VALUE_READ_ERROR_RVS = {
+    CKR_ATTRIBUTE_VALUE_INVALID,
+}
+
 
 def _gen_hkdf_key(rs: Any, key_type: int, bits: int = 256) -> int:
     """Generate a key via CKM_HKDF_KEY_GEN."""
@@ -207,12 +211,19 @@ class TestHKDFKeyGen:
             )
         try:
             assert handle != 0
-            attrs = read_attributes(
-                rs.raw,
-                rs.sh,
-                handle,
-                [CKA_KEY_TYPE, CKA_VALUE, CKA_DERIVE],
-            )
+            try:
+                attrs = read_attributes(
+                    rs.raw,
+                    rs.sh,
+                    handle,
+                    [CKA_KEY_TYPE, CKA_VALUE, CKA_DERIVE],
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _KEYGEN_VALUE_READ_ERROR_RVS,
+                    "CKM_HKDF_KEY_GEN generated key CKA_VALUE readback rejected",
+                )
             assert attrs[CKA_KEY_TYPE] == key_type
             value = attrs[CKA_VALUE]
             assert len(value) == 32  # 256 bits = 32 bytes
