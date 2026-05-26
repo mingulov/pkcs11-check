@@ -338,6 +338,32 @@ def test_buffer_encrypt_uses_operational_aes128_setup_key(
     assert calls == [128]
 
 
+def test_buffer_digest_skips_without_sha256(monkeypatch: pytest.MonkeyPatch) -> None:
+    rs = _session_with_mechanisms()
+
+    def _unexpected_digest(*_args: Any, **_kwargs: Any) -> bytes:
+        raise AssertionError("digest should not run without SHA256")
+
+    monkeypatch.setattr(test_buffers, "digest_single", _unexpected_digest)
+
+    with pytest.raises(pytest.skip.Exception, match="CKM_SHA256 not supported"):
+        test_buffers.TestDigestBufferSizes().test_empty_input(rs)
+
+
+def test_buffer_sign_skips_without_sha256_rsa_pkcs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
+
+    def _unexpected_keypair(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
+        raise AssertionError("RSA setup should not run without SHA256_RSA_PKCS")
+
+    monkeypatch.setattr(test_buffers, "gen_rsa_keypair_or_xfail", _unexpected_keypair)
+
+    with pytest.raises(pytest.skip.Exception, match="CKM_SHA256_RSA_PKCS not supported"):
+        test_buffers.TestSignBufferSizes().test_sign_empty(rs)
+
+
 def test_mechanism_fuzz_xfails_when_advertised_aes_keygen_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

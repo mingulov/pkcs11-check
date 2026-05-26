@@ -20,7 +20,6 @@ from pkcs11_check.raw.recipes import (
     digest_single,
     encrypt_single,
     gen_aes_key,
-    gen_rsa_keypair,
     generate_random,
     import_secret_key,
     read_attributes,
@@ -44,7 +43,7 @@ from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import require_operational_aes_keygen
+from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail, require_operational_aes_keygen
 
 pytestmark = pytest.mark.boundary
 
@@ -58,6 +57,24 @@ def _gen_aes_ecb_buffer_key(rs: Any) -> int:
         rs.sh,
         128,
         attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
+    )
+
+
+def _require_sha256(rs: Any) -> None:
+    if not rs.has_mechanism("SHA256"):
+        pytest.skip("CKM_SHA256 not supported")
+
+
+def _gen_rsa_sign_buffer_keypair(rs: Any) -> tuple[int, int]:
+    if not rs.has_mechanism("SHA256_RSA_PKCS"):
+        pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+    if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+        pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported")
+    return gen_rsa_keypair_or_xfail(
+        rs,
+        2048,
+        public_attrs={CKA_VERIFY: True},
+        private_attrs={CKA_SIGN: True},
     )
 
 
@@ -136,36 +153,42 @@ class TestDigestBufferSizes:
     def test_empty_input(self, p11_raw_session: Any) -> None:
         """SHA-256 of empty data."""
         rs = p11_raw_session
+        _require_sha256(rs)
         digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"")
         assert len(digest) == 32
 
     def test_single_byte(self, p11_raw_session: Any) -> None:
         """SHA-256 of single byte."""
         rs = p11_raw_session
+        _require_sha256(rs)
         digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"\x00")
         assert len(digest) == 32
 
     def test_exactly_block_size(self, p11_raw_session: Any) -> None:
         """SHA-256 of exactly one SHA-256 block (64 bytes)."""
         rs = p11_raw_session
+        _require_sha256(rs)
         digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"A" * 64)
         assert len(digest) == 32
 
     def test_block_boundary_minus_one(self, p11_raw_session: Any) -> None:
         """SHA-256 of 63 bytes (one less than block size)."""
         rs = p11_raw_session
+        _require_sha256(rs)
         digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"B" * 63)
         assert len(digest) == 32
 
     def test_block_boundary_plus_one(self, p11_raw_session: Any) -> None:
         """SHA-256 of 65 bytes (one more than block size)."""
         rs = p11_raw_session
+        _require_sha256(rs)
         digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"C" * 65)
         assert len(digest) == 32
 
     def test_large_input(self, p11_raw_session: Any) -> None:
         """SHA-256 of 1MB input."""
         rs = p11_raw_session
+        _require_sha256(rs)
         data = b"D" * (1024 * 1024)
         digest = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
         assert len(digest) == 32
@@ -177,13 +200,7 @@ class TestSignBufferSizes:
     def test_sign_empty(self, p11_raw_session: Any) -> None:
         """RSA sign of empty data."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
-            public_attrs={CKA_VERIFY: True},
-            private_attrs={CKA_SIGN: True},
-        )
+        pub, priv = _gen_rsa_sign_buffer_keypair(rs)
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"")
             assert len(sig) == 256
@@ -195,13 +212,7 @@ class TestSignBufferSizes:
     def test_sign_single_byte(self, p11_raw_session: Any) -> None:
         """RSA sign of single byte."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
-            public_attrs={CKA_VERIFY: True},
-            private_attrs={CKA_SIGN: True},
-        )
+        pub, priv = _gen_rsa_sign_buffer_keypair(rs)
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"X")
             verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, b"X", sig)
@@ -212,13 +223,7 @@ class TestSignBufferSizes:
     def test_sign_100kb(self, p11_raw_session: Any) -> None:
         """RSA sign of 100KB payload."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
-            public_attrs={CKA_VERIFY: True},
-            private_attrs={CKA_SIGN: True},
-        )
+        pub, priv = _gen_rsa_sign_buffer_keypair(rs)
         try:
             data = b"E" * 100_000
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
@@ -464,18 +469,7 @@ class TestOutputBufferEdgeCases:
         too-small case easy to set up.
         """
         rs = p11_raw_session
-        if not rs.has_mechanism("SHA256_RSA_PKCS"):
-            pytest.skip("CKM_SHA256_RSA_PKCS not supported")
-        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
-            pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported")
-
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            bits=2048,
-            public_attrs={CKA_VERIFY: True},
-            private_attrs={CKA_SIGN: True},
-        )
+        pub, priv = _gen_rsa_sign_buffer_keypair(rs)
         try:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv))
