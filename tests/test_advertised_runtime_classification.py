@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKR_HOST_MEMORY,
     CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases import test_kdf, test_pbe, test_trust_objects
@@ -605,6 +606,7 @@ def test_wycheproof_aes_valid_runtime_rejects_are_xfail(rv: int) -> None:
     [
         CKR_ARGUMENTS_BAD,
         CKR_GENERAL_ERROR,
+        CKR_KEY_TYPE_INCONSISTENT,
         CKR_MECHANISM_PARAM_INVALID,
     ],
 )

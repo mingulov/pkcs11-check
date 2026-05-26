@@ -23,6 +23,11 @@ class _EncryptStateRaw:
         return 0
 
 
+class _KeygenRejectRaw(_EncryptStateRaw):
+    def C_GenerateKey(self, *_args: Any) -> int:  # noqa: N802 - raw PKCS#11 API shape
+        return int(CKR_FUNCTION_NOT_SUPPORTED)
+
+
 def _session(raw: Any, *mechanisms: str) -> SimpleNamespace:
     supported = set(mechanisms) or {
         "AES_ECB",
@@ -137,4 +142,16 @@ def test_rapid_sign_xfails_when_advertised_rsa_keygen_rejects(
     with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
         test_cve_regression.TestTPM2Issue44().test_rapid_sign_no_deadlock(
             _session(_EncryptStateRaw(), "RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS")
+        )
+
+
+def test_session_objects_after_logout_xfails_when_advertised_aes_keygen_rejects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_cve_regression, "get_pin_bytes", lambda _config: b"1234")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_cve_regression.TestSessionObjectsAfterLogout().test_session_objects_after_logout(
+            _session(_KeygenRejectRaw(), "AES_KEY_GEN"),
+            SimpleNamespace(pin="1234"),
         )

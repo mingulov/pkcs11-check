@@ -41,11 +41,22 @@ provider package versions where the finding was first recorded.
   `test_arithmetic_overflow.py::TestTemplateCountOverflow` and
   `TestGenerateKeyPairCountOverflow`. Likely missing length validation in
   `SoftHSM.cpp`'s template parser before allocating / iterating. Reportable upstream.
-- **GCM null-IV crash potential (NEW 2026-04-29)**: `test_ffi_length_boundary.py
-  ::TestMechanismNullInnerParams::test_gcm_null_iv` failed (does not assert clean
-  CKR_ARGUMENTS_BAD on `pIv = NULL` for GCM). Needs deeper investigation — currently
-  marked as a SoftHSM-specific finding; may overlap with arithmetic-overflow theme.
-  Detected by: `test_ffi_length_boundary.py`.
+- **GCM null-IV SIGSEGV (UPDATED 2026-05-26)**:
+  `test_ffi_length_boundary.py::TestMechanismNullInnerParams::test_gcm_null_iv`
+  calls `C_EncryptInit(CKM_AES_GCM, pIv=NULL, ulIvLen=12)` in a crash-isolated
+  child. A focused current-source stock SoftHSM2 2.7.0 rerun confirms signal 11
+  in `artifacts/_focused/softhsm2-ffi-length-current-20260526/`. This is a
+  provider crash finding: a malformed inner mechanism pointer should produce a
+  CKR such as `CKR_ARGUMENTS_BAD` or `CKR_MECHANISM_PARAM_INVALID`, not terminate
+  the process. The local `softhsm2-generated-iv` Docker target avoids this path
+  with a simulator patch that returns `CKR_MECHANISM_PARAM_INVALID` when
+  `pIv == NULL_PTR`; that patch is not stock SoftHSM2 evidence.
+- **Malformed huge data-length child exits (NEW 2026-05-26)**: the same focused
+  `test_ffi_length_boundary.py` run reports positive child exit code 5, with no
+  stdout/stderr, for `C_Sign(HMAC_SHA256)` and `C_Digest(SHA256)` when
+  `ulDataLen` is `0x7fffffffffffffff` or `0x8000000000000000`. These are not
+  signal crashes, but they are still abnormal subprocess failures from the
+  malformed-boundary probes and should remain visible.
 
 ### Known quirks
 - `C_GetObjectSize` returns `CK_UNAVAILABLE_INFORMATION` (not implemented)
@@ -92,6 +103,21 @@ provider package versions where the finding was first recorded.
 | ~16 | KEM/PQC | ML-KEM not supported in NSS 3.120.1 (expected skips, showing as errors) |
 | ~2 | AES-XCBC-MAC | NSS returns CKR_KEY_TYPE_INCONSISTENT on verify despite CKA_VERIFY=True |
 | ~27 | Other | AEAD, key flags, mechanism fuzz, etc. — per-file analysis needed |
+
+### Known crash findings
+- **AES-MAC-GENERAL sign flag probe segfault**: focused current-source runs for
+  Fedora NSS, `nss-pqc` (`NSS_3_124_RTM`/`NSPR_4_39_RTM`), and `nss-main` all
+  crash in
+  `test_mech_flags.py::TestMechFlagBehavioralConformance::test_sign_flag_callable[AES_MAC_GENERAL]`.
+  pkcs11-check calls `C_SignInit(CKM_AES_MAC_GENERAL, key=0)` because NSS
+  advertises `CKF_SIGN`. The expected outcome is any suitable CKR rejecting the
+  dummy key or mechanism parameters, not a segfault.
+- **HMAC-SHA256 with RSA private key segfault**: focused current-source runs for
+  `nss-pqc` and `nss-main` crash in
+  `test_mech_negative.py::TestWrongKeyType::test_hmac_sha256_with_rsa_key_rejected`.
+  The test calls `C_SignInit(CKM_SHA256_HMAC, RSA private key)`. This is a valid
+  negative wrong-key-type probe; the provider should return a CKR such as a key
+  type/handle/mechanism error instead of crashing.
 
 ### Known quirks
 - **Read-only crypto services token**: NSS's default slot ("NSS Generic Crypto Services") is read-only. Cannot create objects, generate keys, or store tokens. Tests requiring RW access should skip.
@@ -330,8 +356,10 @@ Tests requiring token object creation skip with "Token is write-protected" on NS
 
 ### Xfail Triage (Phases 9-11) — 645 xfails categorized
 
-All 645 xfails were individually verified against NSS softoken behavior.
-**None are fixable test bugs.** Every xfail represents a genuine NSS limitation or spec deviation.
+This is a historical triage snapshot. Current follow-up found that the
+AES-KWP row below was a pkcs11-check mechanism-selection bug, not an NSS
+provider issue. The remaining non-stale xfails still represent NSS limitations
+or spec deviations unless a focused rerun says otherwise.
 
 #### xfail breakdown by root cause
 
@@ -339,7 +367,7 @@ All 645 xfails were individually verified against NSS softoken behavior.
 |------:|--:|----------|-----------|-------|
 | 256 | 40% | ChaCha20-Poly1305 param mismatch | NSS softoken | `test_wycheproof_chacha.py` |
 | 232 | 36% | HKDF output correctness | NSS softoken | `test_wycheproof_hkdf.py` |
-| 77 | 12% | AES-KWP output format | NSS softoken | `test_wycheproof_aes.py` |
+| 77 | 12% | AES-KWP output format | stale pkcs11-check mechanism-selection bug | `test_wycheproof_aes.py` |
 | 16 | 3% | IKE derive param invalid | NSS softoken | `test_ike.py` |
 | 13 | 2% | Security policy violations | NSS softoken | various |
 | 7 | 1% | EdDSA CK_EDDSA_PARAMS rejection | NSS spec deviation | `test_eddsa.py` |
@@ -397,26 +425,19 @@ all hash functions, suggesting a systematic issue in NSS's `CK_HKDF_PARAMS` proc
 
 **File:** `src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py`
 
-**Root cause:** NSS softoken's `CKM_AES_KEY_WRAP_PAD` (alias `CKM_AES_KEY_WRAP_KWP`) does not
-correctly implement RFC 5649 (AES Key Wrap with Padding). Three distinct failure patterns:
+**Update 2026-05-26:** this old NSS finding is stale for current source. The
+Wycheproof KWP test was using deprecated `CKM_AES_KEY_WRAP_PAD` with
+`C_WrapKey`, while `aes_kwp_test.json` is an RFC 5649 raw-data KWP vector set.
+The local OASIS spec tree says `CKM_AES_KEY_WRAP_KWP` is the RFC 5649 mechanism
+and `CKM_AES_KEY_WRAP_PAD` is deprecated. Current source now uses
+`CKM_AES_KEY_WRAP_KWP` with `C_Encrypt`; focused `nss` and `nss-pqc` reruns both
+report 724 passed, 1,095 skipped, and 0 failed for the Wycheproof AES file.
+Do not use the old 77-row KWP bucket as an NSS provider finding.
 
-1. **+8 bytes extra (33 cases):** For AES-standard-size plaintexts (16, 24, 32, 384 bytes),
-   NSS produces output 8 bytes larger than expected. The correct KWP output is
-   `msg_len + 8 bytes overhead`; NSS produces `msg_len + 16 bytes`, suggesting it applies an
-   extra AES block cipher step. Example: 16-byte plaintext → expected 24B, got 32B.
-
-2. **Wrong output, same size (22 cases):** For non-standard message sizes (tc18–tc25, same-size
-   vectors), NSS produces output of the correct length but with different ciphertext content,
-   indicating incorrect padding or header construction.
-
-3. **Operation failed (22 cases):** For very short plaintexts (1–8 bytes, tc11–tc17), NSS
-   returns an error rather than wrapping. RFC 5649 allows wrapping as few as 1 byte; NSS
-   appears to enforce a minimum size requirement inconsistent with the standard.
-
-**Verdict:** NSS softoken AES-KWP non-conformance (three distinct deviations from RFC 5649).
-Not a test bug.
-
-**Status of xfail:** Legitimate. `AssertionError` on size/content mismatch, or operation failure.
+**Historical interpretation:** these rows were previously attributed to NSS
+AES-KWP non-conformance because the output was longer, different, or rejected.
+That conclusion was based on the wrong PKCS#11 mechanism. The rows are now
+classified as stale harness evidence, not an NSS provider issue.
 
 ---
 
@@ -676,6 +697,75 @@ All skips are legitimate capability-based skips; none hide broken behavior.
 
 ---
 
+## tpm2-pkcs11 1.10.0 (source Docker target, swtpm)
+
+### Wycheproof RSA-PSS semantic failures
+
+Focused current-source evidence:
+`artifacts/_focused/tpm2-rsapss-current-20260526/`.
+
+`test_wycheproof_rsa_pss.py` reports 788 passed, 943 skipped, 689 xfailed,
+and 82 hard failures against the source-built tpm2-pkcs11 1.10.0 target
+(`a95465ce672c5fda92a2d34bc5cbeda4b0511c80`).
+
+The hard failures split into:
+
+- 43 valid RSA-PSS signatures rejected by advertised PSS mechanisms.
+- 39 invalid RSA-PSS signatures accepted after `CKR_OK`.
+
+The accepted-invalid rows are Wycheproof salt-length mutation cases such as
+`s_len changed to 0`. A local control check verifies those signatures fail when
+the vector's `CK_RSA_PKCS_PSS_PARAMS.sLen` is enforced, but pass when
+verification uses automatic PSS salt-length detection.
+
+Source review matches the finding: tpm2-pkcs11 validates PSS params in
+`src/lib/mech.c`, routes RSA public-key verification through software OpenSSL
+in `src/lib/sign.c`, and sets RSA-PSS padding plus signature digest in
+`src/lib/ssl_util.c`, but does not set the expected PSS salt length or MGF
+digest on the verification context. This is provider behavior, not a
+pkcs11-check vector-loader issue.
+
+### ACVP RSA SHA-1 PKCS#1 SigVer rejects valid signatures
+
+Focused current-source evidence:
+`artifacts/_focused/tpm2-acvp-rsa-current-20260526/`.
+
+`test_acvp_rsa.py` reports 279 passed, 390 skipped, 194 xfailed, and
+27 hard failures against the same source-built 1.10.0 Docker target. Every
+hard failure is a valid ACVP `CKM_SHA1_RSA_PKCS` signature-verification row
+rejected by the provider after setup succeeds.
+
+The representative failed vectors verify with `cryptography`. The failing set
+includes FIPS186-2 vectors with small public exponents (`e = 3` and `e = 17`),
+FIPS186-2/FIPS186-4 vectors with `e = 65537`, and FIPS186-4 vectors with larger
+public exponents. This currently looks like advertised SHA-1 PKCS#1
+verification behavior, not ACVP loader projection or RSA integer-padding noise.
+
+### Session and object lifecycle findings after setup cleanup
+
+Focused current-source evidence:
+`artifacts/_focused/tpm2-setup-classifiers-current-20260526-r3/`.
+
+After setup classifiers were applied to buffer, digest, generic error,
+access-level, CVE-regression, mechanism-sign, multipart-streaming, session,
+RO-session, object-visibility, and object-attribute files, the selected TPM2
+batch reports 112 passed, 39 skipped, 117 xfailed, and 5 hard failures.
+
+The hard failures are all post-setup semantic findings:
+
+- `test_session_state_machine.py::TestLoginStateTransitions::test_open_session_is_public`
+  finds private keys visible in a public session before login.
+- `test_ro_session_restrictions.py` has two RO-session object-creation rows
+  returning `CKR_SESSION_READ_ONLY`, even though PKCS#11 permits session-object
+  creation and session-key crypto in RO sessions.
+- `test_object_visibility.py` has two rows where session objects survive their
+  owning session close.
+
+The old setup failures in the same selected area should not be used as final
+TPM2 counts; use the focused artifact above or a newer full matrix rerun.
+
+---
+
 ## OpenCryptoki 3.26 (v3.0)
 
 **Status: 468 passed, 24 failed, 312 skipped, 1 xfailed, 28,762 errors**
@@ -878,39 +968,73 @@ error handling.
 
 **Root cause:** OpenCryptoki SW token bug. Not a pkcs11-check issue.
 
-### ECDH P-384 derivation broken (NEW 2026-04-30)
-`test_acvp_ecdh.py` — **1,403 failures** (Wycheproof-ECDH P-384 vectors). All
-return `CKR_FUNCTION_FAILED` on `C_DeriveKey` with `CKM_ECDH1_DERIVE`. P-256
-ECDH works; P-384 does not. The opencryptoki-master SW token does not support
-ECDH for curves wider than P-256, despite advertising the mechanism without
-curve filtering. Affects `test_acvp_ecdh.py`, `test_wycheproof_ecdh.py`.
+### ECDH P-384/P-521 ACVP bucket reclassified (UPDATED 2026-05-26)
+The earlier 2026-04-30 note for `test_acvp_ecdh.py` reported a 1,403-row
+OpenCryptoki P-384/P-521 ECDH failure bucket and attributed it to an
+OpenCryptoki SW-token curve-width limitation. Current evidence no longer
+supports that conclusion.
 
-**Severity:** HIGH (compliance — silently fails on standard NIST curve).
-**Root cause:** OpenCryptoki SW token ECDH limited to P-256.
+**Corrected root cause:** pkcs11-check was extracting the peer EC point from
+DER SubjectPublicKeyInfo by searching for the first `0x04` byte. That happened
+to work for P-256 vectors, but the P-384 and P-521 curve OIDs contain an
+earlier `0x04`, so pkcs11-check passed malformed peer public data into the
+provider.
 
-### AES-XTS produces wrong ciphertext (NEW 2026-04-30)
-`test_xts.py` — **382 failures** on ACVP AES-XTS encrypt/decrypt vectors. The
-SW token returns ciphertext that does not match the IEEE Std 1619-2007 / NIST
-SP 800-38E reference output, but `C_Encrypt` returns `CKR_OK`. Plaintext that
-round-trips through encrypt+decrypt is recoverable, but interop with any other
-XTS implementation is broken.
+The current ACVP ECDH loader parses the SubjectPublicKeyInfo structure and
+extracts the BIT STRING EC point explicitly. Current retained OpenCryptoki
+artifacts for `test_acvp_ecdh.py` no longer support a hard P-384/P-521
+OpenCryptoki derive-failure finding. Any future ECDH issue should be based on
+a refreshed provider run and should distinguish setup/import limitations from
+derive-time failures after a valid private key and peer public point were
+accepted.
 
-**Severity:** HIGH (data-at-rest correctness — encrypted volumes written by
-this token cannot be read by any conformant XTS reader).
-**Root cause:** OpenCryptoki AES-XTS implementation deviates from NIST/IEEE
-reference. Likely tweak-derivation or polynomial-multiplication bug.
+### AES-XTS ACVP bucket reclassified (UPDATED 2026-05-26)
+The older 2026-04-30 note for `test_xts.py` reported ACVP AES-XTS
+encrypt/decrypt failures and treated them as an OpenCryptoki ciphertext
+mismatch. A focused current-source rerun after fixing the ACVP loader no longer
+supports that conclusion.
 
-### ML-DSA signs but signatures fail to verify (NEW 2026-04-30)
-`test_acvp_mldsa.py::test_mldsa_siggen` — **164 failures**. `C_Sign` with
-`CKM_ML_DSA` returns `CKR_OK` and produces output of the expected size, but
-the signature does not verify against the corresponding public key (using
-either OpenCryptoki itself or any external ML-DSA verifier). The signature
-bytes appear unrelated to the message.
+**Corrected root cause:** pkcs11-check was not preserving the ACVP XTS vector
+shape. ACVP `tweakMode: number` rows use `sequenceNumber`, which must be
+converted to the little-endian 16-byte `CKM_AES_XTS` data-unit sequence number.
+The loader also lost group-level `payloadLen`, so bit-level ACVP vectors were
+sent through PKCS#11 as ordinary byte strings.
 
-**Severity:** HIGH (signing primitive broken — produced "signatures" carry
-no cryptographic guarantee).
-**Root cause:** OpenCryptoki ML-DSA implementation broken at sign time.
-Likely a key-binding / domain-separation bug.
+Current source keeps the parametrized XTS rows collected, converts
+`sequenceNumber`, chunks multi-data-unit inputs, and skips only ACVP bit-level
+vectors that PKCS#11 `CKM_AES_XTS` cannot express as byte-string input. The
+focused OpenCryptoki artifact
+`artifacts/_focused/opencryptoki-xts-after-loader-fix-20260526/` records the
+corrected classification. Older artifacts that list the `ACVP AES-XTS` bucket
+are stale.
+
+### ML-DSA ACVP/context findings (UPDATED 2026-05-26)
+The older 2026-04-30 note for `test_acvp_mldsa.py::test_mldsa_siggen`
+treated generated-signature verification failures as a broken OpenCryptoki
+signing primitive. Focused current-source reruns narrowed that conclusion.
+
+**Corrected pkcs11-check root cause:** non-empty-context SigGen and Wycheproof
+ML-DSA verification rows were missing `CK_SIGN_ADDITIONAL_CONTEXT` on the
+follow-up verify call. Current source passes the same context into verification,
+and the focused Wycheproof ML-DSA rerun records no hard failures for that
+context-propagation bug.
+
+**Remaining OpenCryptoki finding:** a small set of context-empty ACVP SigVer
+rows still reject valid pure `CKM_ML_DSA` signatures. The local OASIS text says
+`CKM_ML_DSA` receives the message `M`, and absent mechanism parameters mean
+`CKH_HEDGE_PREFERRED`, `ulContextLen=0`, and `pContext=NULL`; the current
+pkcs11-check call shape matches that rule. Focused evidence is in
+`artifacts/_focused/opencryptoki-acvp-mldsa-current-20260526/`.
+
+**Additional crash finding:** OpenCryptoki swtok aborts when verification uses
+an explicit `CK_SIGN_ADDITIONAL_CONTEXT` whose `pContext` is non-NULL and
+`ulContextLen=0`. Source review points to the mechanism-parameter copy/free
+path: `verify_mgr.c` first copies the caller's struct, `ml_dsa_dup_param()`
+returns early for zero-length context without clearing the copied pointer, and
+`ml_dsa_free_param()` later frees that caller pointer during cleanup. The
+subprocess probe
+`TestMlDsaExplicitEmptyContext::test_mldsa_verify_empty_context_nonnull_pointer`
+keeps this abort discoverable.
 
 ### RSA-PSS distinct hash and MGF rejected (NEW 2026-04-30)
 `test_wycheproof_rsa_pss.py` — **435 failures**. RSA-PSS signatures where
@@ -924,17 +1048,17 @@ hash/MGF impossible).
 **Root cause:** OpenCryptoki RSA-PSS limited to matched hash/MGF only.
 
 ### AES-KWP wraps to wrong length (NEW 2026-04-30)
-`test_wycheproof_aes.py::test_aes_kwp` — **107 failures**. Wycheproof AES-KWP
-(RFC 5649) test vectors produce ciphertext of length 40B where the reference
-expects 24B (and similarly for other plaintext sizes — the output is always
-larger than RFC 5649 specifies). The bytes themselves also do not match.
-The implementation appears to be wrapping under a different mode (possibly
-classic AES Key Wrap RFC 3394 with extra padding, or KWP with extra blocks).
+**Update 2026-05-26:** this old OpenCryptoki finding is stale for current
+source. The Wycheproof KWP test was using deprecated `CKM_AES_KEY_WRAP_PAD`
+with `C_WrapKey`, while `aes_kwp_test.json` is an RFC 5649 raw-data KWP vector
+set. Current source now uses `CKM_AES_KEY_WRAP_KWP` with `C_Encrypt`; a focused
+OpenCryptoki rerun reports 726 passed, 1,013 skipped, 80 xfailed, and 0 failed
+for the Wycheproof AES file. The remaining xfails are AES-XTS runtime rejects,
+not AES-KWP rows.
 
-**Severity:** HIGH (interop — wrapped keys cannot be unwrapped by any
-RFC-5649-conformant reader).
-**Root cause:** OpenCryptoki AES-KWP either implements the wrong RFC or
-applies extra blocks beyond the RFC 5649 padding. Reportable upstream.
+**Corrected root cause:** pkcs11-check selected the wrong PKCS#11 mechanism for
+the Wycheproof KWP vectors. Do not report the old 107-row KWP bucket upstream as
+an OpenCryptoki AES-KWP interop bug.
 
 ### AES-KWP corrupted decrypt writes past minimal output buffer (NEW 2026-05-26)
 `security/test_error_path_kwp.py::TestCorruptedUnwrap::test_corrupted_unwrap`

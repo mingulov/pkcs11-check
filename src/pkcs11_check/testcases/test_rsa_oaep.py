@@ -30,10 +30,17 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
-from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
+from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail, xfail_if_known_ckr
 
 pytestmark = pytest.mark.crossverify
 
@@ -43,6 +50,26 @@ _PRIV_ATTRS: dict[int, Any] = {CKA_DECRYPT: True, CKA_TOKEN: False}
 
 def _oaep_sha1() -> Any:
     return mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1)
+
+
+_RSA_OAEP_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+
+def _xfail_if_oaep_runtime_reject(exc: AssertionError, label: str) -> None:
+    xfail_if_known_ckr(
+        exc,
+        _RSA_OAEP_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised RSA-OAEP parameters are not operational",
+    )
+    raise exc
 
 
 class TestRSAOAEPRoundtrip:
@@ -294,15 +321,25 @@ class TestRSAOAEPHashCombos:
         try:
             plaintext = b"OAEP SHA-384 test"
             mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA384, mgf=CKG_MGF1_SHA384)
-            ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext, mech_param=mech)
-            pt = decrypt_single(
-                rs.raw,
-                rs.sh,
-                priv,
-                CKM_RSA_PKCS_OAEP,
-                ct,
-                mech_param=mech,
-            )
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=mech,
+                )
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_RSA_PKCS_OAEP,
+                    ct,
+                    mech_param=mech,
+                )
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-384/MGF1-SHA384")
             assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -321,15 +358,25 @@ class TestRSAOAEPHashCombos:
             # SHA-512 with RSA-2048: max plaintext = 256 - 2*64 - 2 = 126 bytes
             plaintext = b"OAEP SHA-512"
             mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA512, mgf=CKG_MGF1_SHA512)
-            ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS_OAEP, plaintext, mech_param=mech)
-            pt = decrypt_single(
-                rs.raw,
-                rs.sh,
-                priv,
-                CKM_RSA_PKCS_OAEP,
-                ct,
-                mech_param=mech,
-            )
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=mech,
+                )
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_RSA_PKCS_OAEP,
+                    ct,
+                    mech_param=mech,
+                )
+            except AssertionError as exc:
+                _xfail_if_oaep_runtime_reject(exc, "RSA-OAEP SHA-512/MGF1-SHA512")
             assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

@@ -43,6 +43,25 @@ def test_tpm2_background_daemon_does_not_hold_artifact_pipe() -> None:
     assert 'kill -0 "$tpm2_abrmd_pid"' in script
 
 
+def test_docker_provider_commands_do_not_mask_pkcs11_check_failures() -> None:
+    paths = sorted((ROOT / "docker").glob("**/Dockerfile*"))
+    paths += sorted((ROOT / "docker").glob("**/*.sh"))
+
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in paths
+        if any(
+            pattern in path.read_text()
+            for pattern in (
+                "run-pkcs11-check.sh || true",
+                "if ! bash /app/docker/run-pkcs11-check.sh",
+            )
+        )
+    ]
+
+    assert offenders == []
+
+
 def test_qryptotoken_is_not_an_active_docker_provider() -> None:
     script = (ROOT / "docker/test-all.sh").read_text()
     compose = (ROOT / "docker/docker-compose.test.yml").read_text()

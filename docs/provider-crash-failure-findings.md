@@ -78,6 +78,25 @@ pkcs11-mock. That does not mean those providers had no crash findings: several
 crash probes were contained inside subprocess-based tests and therefore appear
 as ordinary failed tests.
 
+Focused current-source NSS-family reruns confirmed that the retained NSS
+runner crashes are still real provider crashes, not stale harness artifacts.
+All three NSS rows crash in `test_mech_flags.py` on
+`test_sign_flag_callable[AES_MAC_GENERAL]`, where pkcs11-check calls
+`C_SignInit(CKM_AES_MAC_GENERAL, key=0)` to check whether an advertised
+`CKF_SIGN` mechanism is callable. The source-tag and main NSS rows also crash
+in `test_mech_negative.py::test_hmac_sha256_with_rsa_key_rejected`, where
+`C_SignInit(CKM_SHA256_HMAC, RSA private key)` should reject the wrong key type
+with a CKR. In both cases, a segfault is the provider finding: the input is a
+negative probe, but the provider must return an error code rather than aborting.
+
+Focused artifacts:
+
+- `artifacts/_focused/nss-mech-flags-current-20260526/`
+- `artifacts/_focused/nss-main-mech-flags-current-20260526/`
+- `artifacts/_focused/nss-pqc-mech-flags-current-20260526/`
+- `artifacts/_focused/nss-main-mech-negative-current-20260526/`
+- `artifacts/_focused/nss-pqc-mech-negative-current-20260526/`
+
 ## Subprocess Signal And Timeout Findings
 
 | Target | Signal/timeout findings | Main evidence clusters | Frequent PKCS#11 calls in traces |
@@ -104,6 +123,9 @@ it is a mock baseline rather than a provider conformance result.
 
 These are the largest failed test files per target. They are useful for article
 wording because they show which areas dominate each provider's failure shape.
+This table is a retained artifact snapshot; follow-up notes below identify
+buckets that have since been reclassified and need a fresh matrix rerun before
+being used as current article numbers.
 
 | Target | Largest failed buckets |
 | --- | --- |
@@ -150,6 +172,15 @@ rejects as visible xfail findings, matching the existing treatment for
 `CKR_MECHANISM_PARAM_INVALID`, `CKR_FUNCTION_FAILED`, and related derive-time
 rejects.
 
+TPM2 needs separate wording. A current focused tpm2-pkcs11 source rerun of the
+ACVP ECDH file no longer reproduces the old hard failure bucket. The vector rows
+stop at EC private-key import with `CKR_ATTRIBUTE_VALUE_INVALID`, which the
+source explains: `C_CreateObject` supports RSA public keys, data/certificate
+objects, and secret keys, but not imported EC private keys. That means these
+vectors cannot exercise `C_DeriveKey` on TPM2 through imported ACVP key
+material. The generated-key probe still keeps a separate P-521 malformed
+`CKA_EC_POINT` readback as visible xfail evidence.
+
 ### Follow-Up: NSS Wycheproof DSA 296 Bucket
 
 The repeated NSS-family `Wycheproof DSA 296` bucket was also a pkcs11-check
@@ -171,7 +202,8 @@ strings, while Wycheproof's JSON can carry ASN.1-style positive sign padding in
 `p`, `q`, and `y`. The loader now strips that sign padding before `C_CreateObject`
 and before duplicate grouping. A focused SoftHSM2 rerun of the DSA file then
 moved from 296 valid-signature failures to 0 failures: 613 passed and 1,343
-skipped out of 1,956 collected DSA vectors.
+skipped out of 1,956 collected DSA vectors. Current evidence is stored in
+`artifacts/_focused/softhsm2-dsa-current-20260526/`.
 
 A focused NSS Docker check after the fix selected 1,956 Wycheproof DSA tests:
 1,055 passed and 901 skipped. The skips are invalid DER signatures that cannot
@@ -409,12 +441,26 @@ typed-key import failure and key-handle invalid use no longer hide advertised
 HMAC mechanisms; if both key forms are rejected, the test records an xfail
 finding with the specific setup or use CKR evidence.
 
+A focused current-source TPM2 rerun in
+`artifacts/_focused/tpm2-hmac-current-20260526/` confirms that the old ACVP
+HMAC hard-failure bucket is stale: 1,034 rows skipped for unavailable HMAC
+variants, 444 rows xfailed as advertised-but-not-operational HMAC runtime
+rejects, and 0 rows failed.
+
 ### Follow-Up: ACVP RSA-PSS Parameter Rejections
 
 ACVP RSA still skips key sizes that a provider cannot generate or import, but
 RSA-PSS parameter rejection after an advertised PSS mechanism is now xfail
 evidence. This keeps mixed hash/MGF or salt-length limitations visible instead
 of treating them as missing test capability.
+
+ACVP FIPS186-5 RSA-PSS also contains SHAKE mask-function rows. These are a
+separate loader-expressiveness case, not a provider runtime finding: current
+PKCS#11 `CK_RSA_PKCS_MGF_TYPE` constants cover MGF1 with SHA/SHA3 hashes, but
+do not expose `shake-128` or `shake-256` mask functions. pkcs11-check now skips
+those ACVP rows before building PKCS#11 mechanism parameters instead of
+substituting `MGF1-SHA3-*`. A focused OpenCryptoki ACVP RSA rerun after this
+change reported 890 passed, 0 failed for the file.
 
 ### Follow-Up: ACVP RSA Keygen CKR Classification
 
@@ -535,10 +581,21 @@ rerun of the ECDSA file no longer showed the P-521/SHAKE256 valid-vector
 rejections, so those old rows should be treated as harness evidence until the
 full matrix is refreshed. A focused NSS stable rerun of the same current-source
 ECDSA file selected 28,915 vectors and completed with 6,832 passed, 22,083
-skipped, and 0 failed. Three representative OpenCryptoki rows from the same old
-P-521/SHAKE256 bucket also pass on current source. The old NSS-family and
-OpenCryptoki ECDSA hard-failure buckets should therefore be treated as pre-fix
-harness evidence until the matrix is refreshed.
+skipped, and 0 failed. A focused OpenCryptoki rerun of the full ECDSA file also
+selected 28,915 vectors and completed with 19,027 passed, 9,702 skipped,
+186 xfailed, and 0 failed. The old NSS-family and OpenCryptoki ECDSA
+hard-failure buckets should therefore be treated as pre-fix harness evidence
+until the matrix is refreshed. OpenCryptoki's remaining xfails in this file are
+valid signatures rejected with `CKR_FUNCTION_FAILED`, which is visible
+non-clean provider evidence rather than a hard vector mismatch.
+
+A focused Kryoptic rerun of the full Wycheproof ECDSA file on current source
+also no longer reproduces the old hard-failure bucket:
+`artifacts/_focused/kryoptic-ecdsa-current-20260526/` records 5,820 passed,
+22,083 skipped, 1,012 xfailed, and 0 failed. The xfailed rows are all invalid
+signatures rejected with Kryoptic's documented `CKR_DEVICE_ERROR` behavior.
+That is visible non-clean return-code evidence, not a clean pass, but it is not
+the old 467-row ECDSA hard-failure bucket.
 
 RSA signature vectors have a smaller version of the same duplication problem.
 After pkcs11-check maps a vector to a concrete PKCS#11 mechanism and parameter
@@ -560,6 +617,13 @@ focused SoftHSM2 run after the change no longer showed RSA-PSS, RSA signature
 verification, or RSA-OAEP failures from the padded imports. The same run still
 showed RSA PKCS#1 decrypt failures where invalid ciphertext was accepted; those
 remain provider/security findings, not loader-padding artifacts.
+
+A current focused SoftHSM2 rerun of
+`test_wycheproof_rsa_decrypt.py` confirms that split: 142 passed, 59 failed,
+0 skipped, and 0 xfailed in
+`artifacts/_focused/softhsm2-rsa-decrypt-current-20260526/`. The 59 failures
+are all invalid PKCS#1 v1.5 padding ciphertexts accepted after `CKR_OK`, across
+the 2048-, 3072-, and 4096-bit Wycheproof files.
 
 ACVP KeyGen internal-projection vectors are a different normalization case.
 They include seeds and expected private/public key material, but current
@@ -588,16 +652,62 @@ deeper follow-up before being presented as final provider conclusions.
   parameter rejects such as `CKR_ARGUMENTS_BAD`, `CKR_DEVICE_ERROR`, and
   `CKR_MECHANISM_PARAM_INVALID` as visible xfail findings. A successful
   verification result must still match the Wycheproof expectation.
-- **Kryoptic AES-CTS 405**: failures are mostly `CKR_DEVICE_ERROR` on encrypt
-  after `CKM_AES_CTS` is advertised and selected. Kryoptic source maps
-  `CKM_AES_CTS` to CTS mode CS1, and pkcs11-check's CTS test already detects
-  the module variant before selecting CS1 vectors. No loader mismatch was found
-  in this pass.
-- **OpenCryptoki AES-XTS 382**: failures are ciphertext/plaintext mismatches,
-  split across encrypt and decrypt, not parameter-import failures. OpenCryptoki
-  advertises `CKM_AES_XTS` for `CKK_AES_XTS` keys, so this remains a provider
-  behavior or provider/test-vector interpretation question rather than an
-  obvious skip/configuration issue.
+- **TPM2 Wycheproof RSA-PSS semantic failures**: a current focused rerun of
+  `test_wycheproof_rsa_pss.py` against the source-built tpm2-pkcs11 1.10.0
+  Docker target reproduced the remaining 82 hard failures:
+  788 passed, 943 skipped, 689 xfailed, and 82 failed in
+  `artifacts/_focused/tpm2-rsapss-current-20260526/`. The failures split into
+  43 valid signatures rejected by the advertised RSA-PSS mechanisms and
+  39 invalid signatures accepted after `CKR_OK`. The invalid accepted group is
+  concentrated in Wycheproof rows whose comment is `s_len changed to 0`; a
+  local control check verifies those signatures fail when the vector's
+  `CK_RSA_PKCS_PSS_PARAMS.sLen` is enforced but pass with OpenSSL-style
+  automatic salt-length verification. The tpm2-pkcs11 source path matches that
+  behavior: `src/lib/mech.c` validates PSS params, `src/lib/sign.c` routes RSA
+  public-key verification through software OpenSSL, and `src/lib/ssl_util.c`
+  sets RSA-PSS padding and signature digest but does not set the PSS salt
+  length or MGF digest on the verification context. These rows are provider
+  findings, not vector-loader or DER-shape failures. The SHA-1 valid-vector
+  rejects remain a separate advertised-mechanism behavior to report or
+  investigate upstream.
+- **TPM2 ACVP RSA SHA-1 PKCS#1 SigVer failures**: a current focused rerun of
+  `test_acvp_rsa.py` reports 279 passed, 390 skipped, 194 xfailed, and
+  27 failed in `artifacts/_focused/tpm2-acvp-rsa-current-20260526/`. The hard
+  failures are all valid ACVP `CKM_SHA1_RSA_PKCS` signature-verification rows
+  rejected by the provider. Representative rows verify with `cryptography`,
+  including both FIPS186-2 vectors with small public exponents and FIPS186-4
+  vectors with larger public exponents, so the current evidence points to
+  advertised SHA-1 PKCS#1 verification behavior rather than an ACVP loader
+  projection issue. The PSS parameter rejects in the same file are visible
+  xfail evidence, not hard failures.
+- **TPM2 ACVP ECDSA stale hard failure**: the retained full TPM2 artifact had
+  one hard `CKR_HOST_MEMORY` row in ACVP ECDSA P-521 KeyGen. A current focused
+  rerun of `test_acvp_ecdsa.py` reports 31 passed, 67 skipped, 2 xfailed, and
+  0 failed in `artifacts/_focused/tpm2-acvp-ecdsa-current-20260526/`. The old
+  row should be treated as stale classifier evidence, not a current hard
+  provider failure.
+- **TPM2 Docker exit propagation**: the focused RSA-PSS rerun also found that
+  `docker/tpm2-pkcs11/run-tpm2.sh` swallowed a failing pkcs11-check exit with
+  `if ! bash /app/docker/run-pkcs11-check.sh; then ... fi`. That made Docker
+  runs look successful even when the artifact had hard failures. Current source
+  now lets `run-pkcs11-check.sh` exit directly, matching the project rule that
+  Docker provider failures and crashes must stay visible.
+- **Kryoptic AES-CTS old bucket**: reclassified from hard failures to visible
+  xfail evidence after focused rerun. The remaining non-clean rows are mostly
+  `CKR_DEVICE_ERROR` on encrypt after `CKM_AES_CTS` is advertised and selected.
+  Kryoptic source maps `CKM_AES_CTS` to CTS mode CS1, and pkcs11-check's CTS
+  test detects the module variant before selecting vectors. Focused evidence is
+  stored in `artifacts/_focused/kryoptic-cts-current-20260526/`.
+- **OpenCryptoki AES-XTS old bucket**: reclassified as a pkcs11-check ACVP
+  loader issue after focused rerun. The old test ignored ACVP
+  `sequenceNumber` for `tweakMode: number` rows and lost group-level
+  `payloadLen`, so some bit-level vectors were sent through PKCS#11 as byte
+  strings. Current source converts `sequenceNumber` to the little-endian
+  16-byte `CKM_AES_XTS` data-unit sequence number, preserves
+  `payloadLen`/`dataUnitLen`, chunks multi-data-unit inputs, and skips
+  non-byte-aligned vectors. The focused current-source artifact
+  `artifacts/_focused/opencryptoki-xts-after-loader-fix-20260526/` records the
+  corrected classification.
 - **OpenCryptoki generic Wycheproof AES-CBC-PAD 144**: a current-source focused
   rerun still fails the same invalid-padding family. The failures are
   successful `CKM_AES_CBC_PAD` decrypt calls on invalid Wycheproof vectors:
@@ -605,16 +715,20 @@ deeper follow-up before being presented as final provider conclusions.
   padding longer than the message, no padding, and empty ciphertext, across
   128-, 192-, and 256-bit AES keys. That is provider behavior/security
   evidence, not a vector loader mismatch.
-- **TPM2 AES-CFB128 2,144**: all simple encrypt/decrypt vectors plus the small
-  multiblock tail fail with `CKR_GENERAL_ERROR`. tpm2-pkcs11 advertises
+- **TPM2 AES-CFB128 old large bucket**: all simple encrypt/decrypt vectors plus
+  the small multiblock tail fail with `CKR_GENERAL_ERROR`. tpm2-pkcs11 advertises
   `CKM_AES_CFB128` only when the TPM reports `TPM2_ALG_CFB`; the bucket looks
   like an advertised-but-not-operational backend path, not a pkcs11-check
-  vector-shape issue.
+  vector-shape issue. A focused current-source rerun in
+  `artifacts/_focused/tpm2-cfb128-current-20260526/` confirms these rows are
+  now visible xfail evidence rather than hard failures.
 - **TPM2 HMAC runtime rejects**: tpm2-pkcs11 registers `CKM_SHA*_HMAC`
   mechanisms when the TPM reports `TPM2_ALG_KEYEDHASH` plus the matching hash
   algorithm. The ACVP HMAC failures reach that advertised mechanism path and
   then return `CKR_GENERAL_ERROR`, so they should be visible xfail findings
-  rather than capability skips.
+  rather than capability skips. A focused current-source rerun in
+  `artifacts/_focused/tpm2-hmac-current-20260526/` confirms this current
+  classification.
 - **TPM2 interop/crossverify runtime rejects**: the OpenSSL/Python
   cross-verification files now use the same rule for advertised AES/HMAC
   operation rejects. `CKR_GENERAL_ERROR` after a selected mechanism becomes
@@ -626,7 +740,14 @@ deeper follow-up before being presented as final provider conclusions.
   placeholder bytes instead of the DER supplied to `C_CreateObject`. The stress
   tests now allow CKR-style import rejection only via `AssertionError`; arbitrary
   Python exceptions at import setup are no longer swallowed as acceptable
-  provider rejects.
+  provider rejects. A current focused rerun in
+  `artifacts/_focused/pkcs11-mock-x509-limbo-current-20260526/` reports
+  `test_limbo_stress.py`: 1,009 failed, and `test_limbo_import.py`: 476 passed
+  / 169 failed. All inspected failures are still `CKA_VALUE` placeholder
+  readback mismatches. That rerun also exposed a Docker harness issue:
+  pkcs11-mock had been masking `run-pkcs11-check.sh` failures with `|| true`,
+  so old pkcs11-mock Docker exit statuses should not be used as pass/fail
+  evidence.
 - **BouncyHSM ECDH public-data encoding**: pkcs11-check sends raw uncompressed
   EC points in `CK_ECDH1_DERIVE_PARAMS.pPublicData`, matching the portable
   OASIS requirement. BouncyHSM 2.1.0 advertises `CKM_ECDH1_DERIVE`, but its
@@ -666,31 +787,57 @@ The following paths were tightened after inspecting the all-fail artifacts:
   reuses the context for verification. The remaining SigVer rows that reject
   valid ACVP signatures are still provider findings unless they return an
   explicit runtime CKR covered by the xfail policy.
-- **Wycheproof AES operation rejects**: BouncyHSM CMAC, Kryoptic CCM,
-  OpenCryptoki XTS, and NSS KWP vectors reached advertised AES mechanisms but
-  returned runtime CKRs such as `CKR_GENERAL_ERROR`,
-  `CKR_MECHANISM_PARAM_INVALID`, or `CKR_DATA_LEN_RANGE`. These are now visible
-  xfail findings for valid vectors. Successful AES-KWP calls that return the
-  wrong wrapped bytes or wrong length remain hard failures.
+- **OpenCryptoki ML-DSA empty-context parameter abort**: a focused subprocess
+  probe now exercises `CKM_ML_DSA` verification with an explicit
+  `CK_SIGN_ADDITIONAL_CONTEXT` where `pContext` is non-NULL and
+  `ulContextLen=0`. OpenCryptoki swtok aborts with `free(): invalid size`.
+  Source review matches the crash shape: `verify_mgr.c` shallow-copies the
+  parameter struct, `ml_dsa_dup_param()` returns early for zero-length context
+  without clearing the copied `pContext`, and cleanup later frees the copied
+  caller pointer. The ordinary ACVP empty-context path still uses absent
+  mechanism parameters, which is the spec-normal default.
+- **Wycheproof AES operation rejects**: BouncyHSM CMAC, Kryoptic CCM, and
+  OpenCryptoki XTS vectors reached advertised AES mechanisms but returned
+  runtime CKRs such as `CKR_GENERAL_ERROR`, `CKR_MECHANISM_PARAM_INVALID`, or
+  `CKR_DATA_LEN_RANGE`. These are now visible xfail findings for valid vectors.
+  Successful AES-KWP calls that return the wrong wrapped bytes or wrong length
+  remain hard failures.
+- **NSS/OpenCryptoki Wycheproof AES-KWP stale bucket**: the old KWP rows were a
+  pkcs11-check mechanism-selection bug. Wycheproof `aes_kwp_test.json` is RFC
+  5649 KWP raw data, but the test used deprecated `CKM_AES_KEY_WRAP_PAD` and
+  `C_WrapKey`. The local OASIS spec tree says `CKM_AES_KEY_WRAP_KWP` is the
+  RFC 5649 mechanism and `CKM_AES_KEY_WRAP_PAD` is deprecated. Current source
+  uses `CKM_AES_KEY_WRAP_KWP` with `C_Encrypt`; focused `nss` and `nss-pqc`
+  reruns both report 724 passed, 1,095 skipped, and 0 failed for the
+  Wycheproof AES file. A focused OpenCryptoki rerun after the same fix reports
+  726 passed, 1,013 skipped, 80 xfailed, and 0 failed; those remaining xfails
+  are AES-XTS runtime rejects, not AES-KWP failures.
 - **Wycheproof RSA-OAEP parameter/runtime rejects**: valid RSA-OAEP
   ciphertexts in SoftHSM2 and BouncyHSM artifacts reached an advertised
   `CKM_RSA_PKCS_OAEP` path, then rejected the decrypt operation with explicit
-  CKRs such as `CKR_ARGUMENTS_BAD` or `CKR_GENERAL_ERROR`. These are now
-  visible xfail findings for advertised-but-not-operational parameter support.
-  Successful decrypts still have to match the Wycheproof plaintext, and
-  accepted invalid ciphertext remains a hard failure.
+  CKRs such as `CKR_ARGUMENTS_BAD`, `CKR_GENERAL_ERROR`, or
+  `CKR_KEY_TYPE_INCONSISTENT`. These are now visible xfail findings for
+  advertised-but-not-operational parameter support. A current focused
+  pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-rsa-oaep-current-20260526/` moved the old
+  700-row hard bucket to 373 passed, 700 xfailed, and 0 failed. Successful
+  decrypts still have to match the Wycheproof plaintext, and accepted invalid
+  ciphertext remains a hard failure.
 - **Wycheproof RSA PKCS#1 decrypt runtime rejects**: Kryoptic FIPS/PQC reached
   advertised `CKM_RSA_PKCS` decrypt with valid Wycheproof ciphertexts and
   returned `CKR_DEVICE_ERROR`; pkcs11-mock reached the same valid-vector path
   and returned `CKR_KEY_TYPE_INCONSISTENT`. Valid-vector runtime rejects are
   now visible xfail evidence, while wrong plaintext and accepted invalid
-  ciphertexts remain hard failures.
+  ciphertexts remain hard failures. Current focused SoftHSM2 evidence keeps the
+  accepted-invalid side visible: 59 invalid-padding ciphertexts decrypt
+  successfully and therefore fail.
 - **Wycheproof HMAC operation rejects**: valid HMAC vectors in TPM2,
   SoftHSM2, and BouncyHSM artifacts reached advertised HMAC mechanisms but
   failed at key use with explicit CKRs such as `CKR_GENERAL_ERROR`,
   `CKR_KEY_HANDLE_INVALID`, or `CKR_KEY_SIZE_RANGE`. These are now visible
-  xfail findings. If an invalid HMAC vector produces the supplied tag, the test
-  still fails.
+  xfail findings. A focused current-source TPM2 rerun reports 320 passed,
+  1,214 skipped, 198 xfailed, and 0 failed for `test_wycheproof_hmac.py`. If
+  an invalid HMAC vector produces the supplied tag, the test still fails.
 - **Wycheproof ECDH derive rejects**: BouncyHSM's large Wycheproof ECDH bucket
   is dominated by `CKR_MECHANISM_PARAM_INVALID` after `CKM_ECDH1_DERIVE` is
   advertised; SoftHSM2 artifacts also show generic derive-time rejects on valid
@@ -731,6 +878,9 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `CKR_ATTRIBUTE_VALUE_INVALID`, key-size, or template rejection while
   importing the ACVP public key is a setup capability skip; the same class of
   unexpected CKR from the actual verify call is not converted into a skip.
+  ACVP RSA-PSS SHAKE mask-function rows are handled earlier as
+  PKCS#11-unexpressible vectors, because current `CK_RSA_PKCS_MGF_TYPE`
+  constants cannot represent `shake-128` or `shake-256`.
 - **ACVP AES CFB/OFB simple-mode runners**: TPM2 CFB128 returned
   `CKR_GENERAL_ERROR` for valid encrypt/decrypt vectors. The simple and MCT
   runners now classify explicit generic runtime rejects as xfail while keeping
@@ -888,7 +1038,12 @@ The following paths were tightened after inspecting the all-fail artifacts:
 - **Buffer-size AES ECB smoke tests**: the input-size buffer tests now use the
   same AES setup policy. They still test one-block through 1 MiB AES-ECB buffer
   behavior, but they no longer turn an unrelated AES-256 setup-key rejection
-  into a buffer-management failure.
+  into a buffer-management failure. A focused pkcs11-mock setup-classifier
+  batch now confirms the old setup failures are gone; the remaining
+  `test_buffers.py` failures are AES imported-key readbacks returning the mock
+  placeholder `Hello world!` instead of the requested key bytes. A focused TPM2
+  setup-classifier batch reports 22 passed, 5 xfailed, and 0 failed for this
+  file.
 - **General RSA/EC setup paths**: RSA-OAEP, RSA wrapping, padding-oracle,
   key-lifecycle, tool-template, sign-recover, ECDSA nonce-quality, and
   mechanism-driven keypair helpers now treat advertised keypair generation
@@ -924,26 +1079,35 @@ The following paths were tightened after inspecting the all-fail artifacts:
   tests. Missing AES/SHA/RSA/HMAC mechanisms skip, advertised AES/RSA setup
   rejects xfail, imported AES/HMAC setup keys set `CKA_ALLOWED_MECHANISMS`, HMAC
   setup can fall back from typed HMAC keys to generic-secret keys, and valid
-  operation rejects become xfail evidence. Output mismatches and actual
-  crashes/timeouts remain failures. Old pkcs11-mock `CKR_MECHANISM_INVALID`,
-  TPM2 `CKR_FUNCTION_NOT_SUPPORTED`/`CKR_GENERAL_ERROR`, and BouncyHSM
-  zero-length SHA-256 rows from this file should be refreshed before article
+  operation rejects become xfail evidence. `CKR_BUFFER_TOO_SMALL` from an
+  advertised HMAC sign path is also treated as non-clean runtime evidence here;
+  dedicated buffer tests retain direct coverage for buffer-size semantics.
+  Output mismatches and actual crashes/timeouts remain failures. A focused
+  current pkcs11-mock rerun reports all 20 standalone multipart rows skipped and
+  0 failed, so the old pkcs11-mock `CKR_MECHANISM_INVALID` rows are stale. A
+  focused current TPM2 rerun reports 8 passed, 12 xfailed, and 0 failed. The
+  old TPM2 `CKR_FUNCTION_NOT_SUPPORTED`/`CKR_GENERAL_ERROR` hard rows are stale;
+  BouncyHSM zero-length SHA-256 rows still need current reruns before article
   wording uses them as hard failures.
 - **General SHA digest coverage**: the general digest tests now skip missing
   SHA-family mechanisms before calling `C_Digest`, xfail explicit runtime
   rejects from advertised digest operations, and classify advertised-but-rejected
   AES setup before `C_DigestKey`. `CKR_FUNCTION_NOT_SUPPORTED` from
   `C_DigestKey` itself remains a clean optional-function skip. Digest output
-  mismatches and wrong lengths after `CKR_OK` remain hard failures, including
-  the older pkcs11-mock SHA-1 mismatch row if it still reproduces on current
-  source.
+  mismatches and wrong lengths after `CKR_OK` remain hard failures. A focused
+  current pkcs11-mock rerun still reproduces the SHA-1 digest mismatch after
+  `CKR_OK`, so that row is a mock crypto-output finding rather than setup
+  noise. A focused current TPM2 rerun reports 15 passed, 2 skipped, 3 xfailed,
+  and 0 failed for this file.
 - **General error-path setup coverage**: `test_errors.py` now applies the same
   split to broad negative and edge-case rows. Missing AES/SHA/RSA mechanisms are
   capability skips before setup. Advertised AES/RSA setup rejects are xfail
   evidence, so TPM2-style key-generation failures no longer obscure the target
   invalid-parameter, empty-input, destroyed-key, or multi-operation check. The
   invalid AES key-size row still treats real key-size/template/argument CKRs as
-  the target negative result; only function-unavailable evidence is xfail.
+  the target negative result; only function-unavailable evidence is xfail. A
+  focused current TPM2 rerun reports 9 passed, 8 xfailed, and 0 failed for this
+  file.
 - **Mechanism attribute readback**: mechanism-generated key attribute tests now
   distinguish attribute read support from attribute value correctness. A module
   that rejects `C_GetAttributeValue` with a non-clean CKR such as
@@ -963,7 +1127,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   evidence for the import-copy row. Dedicated readback rows remain strict:
   wrong or blank `CKA_CLASS`, `CKA_KEY_TYPE`, `CKA_MODULUS`,
   `CKA_PUBLIC_EXPONENT`, or `CKA_VALUE` after successful setup are still hard
-  failures.
+  failures. A focused current pkcs11-mock rerun leaves five such strict
+  failures: empty RSA class/modulus/exponent attributes, empty AES key type, and
+  `CKA_VALUE` returning the mock placeholder instead of the requested key bytes.
+  A focused current TPM2 rerun reports 10 passed, 6 xfailed, and 0 failed for
+  this file.
 - **Security key-flag coverage**: `CKA_NEVER_EXTRACTABLE`, `CKA_LOCAL`,
   `CKA_ALWAYS_SENSITIVE`, and AES-CBC-PAD flag tests now xfail explicit
   `AES_KEY_GEN` setup rejects instead of reporting an unrelated key-attribute
@@ -997,6 +1165,19 @@ The following paths were tightened after inspecting the all-fail artifacts:
   exact CKR values rather than CKR-name substrings, and the
   `CKA_WRAP_WITH_TRUSTED` fallback to `CKM_AES_CBC_PAD` now supplies the
   required IV parameter.
+- **TPM2 session/object semantics after setup cleanup**: a focused current TPM2
+  setup-classifier rerun (`artifacts/_focused/tpm2-setup-classifiers-current-20260526-r3/`)
+  reduces the selected setup-heavy files to five hard failures. These are not
+  setup noise: private keys are visible in a public session before login,
+  session-object secret-key creation and session-keypair generation in RO
+  sessions return `CKR_SESSION_READ_ONLY`, and session objects survive their
+  owning session close in two object-visibility rows.
+- **CKR wrap setup guards**: old `test_ckr_wrap.py` failures for SoftHSM2, TPM2,
+  and pkcs11-mock were rerun on current source. SoftHSM2 reports 6 passed and
+  0 failed, while TPM2 and pkcs11-mock both report 6 capability skips and
+  0 failed because they do not advertise the AES key-wrap mechanism needed for
+  the CKR wrap rows. These old hard failures are stale setup/capability
+  artifacts, not current provider wrap findings.
 - **Access-control attribute setup keys**: the separate CKA_PRIVATE,
   CKA_MODIFIABLE, CKA_COPYABLE, and C_CopyObject tests now use AES-128 setup
   keys for neutral fixture objects. Tests where the template attribute itself is
@@ -1132,7 +1313,10 @@ The following paths were tightened after inspecting the all-fail artifacts:
   not expose OAEP hash sub-capability discovery. Targeted SHA-384/SHA-512 OAEP
   tests remain separate. Valid advertised encrypt paths that still return
   `CKR_ARGUMENTS_BAD` or `CKR_ATTRIBUTE_VALUE_INVALID` are now visible xfail
-  evidence rather than raw harness failures.
+  evidence rather than raw harness failures. The same classification now covers
+  the dedicated SHA-384/SHA-512 rows in `test_rsa_oaep.py`; a focused SoftHSM2
+  rerun passes the SHA-1 compatibility rows and leaves the broader hash/MGF
+  rows as xfail evidence.
 - **CKR RSA-OAEP garbage decrypt params**: `test_rsa_oaep_garbage` previously
   reached `C_DecryptInit(CKM_RSA_PKCS_OAEP)` with no
   `CK_RSA_PKCS_OAEP_PARAMS`, so several artifact rows were pkcs11-check setup
@@ -1179,8 +1363,13 @@ configuration explanation is found.
 ## Provider-Specific Notes
 
 - SoftHSM2 release has no runner-level crashes, but the security probes still
-  show signal 11 in extreme template-count handling. The generated-IV variant
-  removes the GCM null-IV crash observed in the release and main artifacts.
+  show process failures in malformed-boundary calls. A focused current-source
+  stock SoftHSM2 rerun of `test_ffi_length_boundary.py` reports five hard
+  failures: signal 11 for `C_EncryptInit(CKM_AES_GCM, pIv=NULL, ulIvLen=12)`
+  plus positive child exit code 5 for huge `ulDataLen` HMAC/SHA256
+  `C_Sign`/`C_Digest` probes. The generated-IV variant removes the GCM null-IV
+  crash in older artifacts through a local simulator patch, but that does not
+  change the stock SoftHSM2 finding.
 - Kryoptic release/main build against official OpenSSL 4.0.0. Their crash
   clusters are concentrated in boundary and NULL-parameter probes. Kryoptic
   FIPS/PQC has materially more crash evidence and is still a custom OpenSSL

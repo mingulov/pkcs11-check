@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
@@ -103,6 +104,7 @@ def test_mldsa_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
     group = vec["_group"]
     pk_hex = group.get("publicKey", "")
     msg = bytes.fromhex(vec["msg"])
+    ctx = bytes.fromhex(vec.get("ctx", ""))
     sig = bytes.fromhex(vec["sig"])
     result = vec["result"]
 
@@ -144,7 +146,16 @@ def test_mldsa_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
         raise
 
     try:
-        verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ML_DSA, msg, sig)
+        mech_param = mech_sign_context(CKM_ML_DSA, context=ctx) if ctx else None
+        verified = verify_single(
+            rs.raw,
+            rs.sh,
+            pub_key,
+            CKM_ML_DSA,
+            msg,
+            sig,
+            mech_param=mech_param,
+        )
         if result == "invalid":
             if verified:
                 pytest.fail(f"Invalid ML-DSA sig {vec_id} accepted by module")

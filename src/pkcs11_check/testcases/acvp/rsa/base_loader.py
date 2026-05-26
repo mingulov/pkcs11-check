@@ -107,8 +107,18 @@ _HASH_TO_MGF: dict[str, int] = {
     "SHA3-512": CKG_MGF1_SHA3_512,
 }
 
+_PKCS11_EXPRESSIBLE_PSS_MASK_FUNCTIONS = {"", "mgf1"}
+
 # Maximum vectors per algorithm for speed (None = no limit)
 _MAX_VECTORS_PER_SET: int | None = None
+
+
+def _pkcs11_pss_mgf(hash_alg: str, mask_function: str | None) -> int | None:
+    """Return the PKCS#11 MGF constant for ACVP PSS rows that can be expressed."""
+    normalized_mask = (mask_function or "").lower()
+    if normalized_mask not in _PKCS11_EXPRESSIBLE_PSS_MASK_FUNCTIONS:
+        return None
+    return _HASH_TO_MGF.get(hash_alg)
 
 
 def load_siggen_pkcs15_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -189,7 +199,8 @@ def load_siggen_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             mech_int, mech_name = _HASH_TO_PSS_MECH[hash_alg]
             hash_mech = _HASH_TO_HASH_MECH.get(hash_alg)
-            mgf = _HASH_TO_MGF.get(hash_alg)
+            mask_function = group.get("maskFunction")
+            mgf = _pkcs11_pss_mgf(hash_alg, mask_function)
 
             if hash_mech is None or mgf is None:
                 continue
@@ -213,6 +224,7 @@ def load_siggen_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
                 "mech_name": mech_name,
                 "hash_mech": hash_mech,
                 "mgf": mgf,
+                "mask_function": mask_function,
                 "salt_len": salt_len,
                 "message": message,
                 "signature": signature,
@@ -310,7 +322,8 @@ def load_sigver_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
 
             mech_int, mech_name = _HASH_TO_PSS_MECH[hash_alg]
             hash_mech = _HASH_TO_HASH_MECH.get(hash_alg)
-            mgf = _HASH_TO_MGF.get(hash_alg)
+            mask_function = group.get("maskFunction")
+            mgf = _pkcs11_pss_mgf(hash_alg, mask_function)
 
             if hash_mech is None or mgf is None:
                 continue
@@ -335,6 +348,7 @@ def load_sigver_pss_vectors() -> list[tuple[str, dict[str, Any]]]:
                 "mech_name": mech_name,
                 "hash_mech": hash_mech,
                 "mgf": mgf,
+                "mask_function": mask_function,
                 "salt_len": salt_len,
                 "message": message,
                 "signature": signature,

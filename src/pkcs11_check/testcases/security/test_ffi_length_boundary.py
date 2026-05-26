@@ -1299,6 +1299,92 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
+# TestMlDsaExplicitEmptyContext
+# ---------------------------------------------------------------------------
+
+
+class TestMlDsaExplicitEmptyContext:
+    """ML-DSA with CK_SIGN_ADDITIONAL_CONTEXT carrying a non-NULL empty context."""
+
+    def test_mldsa_verify_empty_context_nonnull_pointer(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """ML-DSA Verify with pContext non-NULL and ulContextLen=0."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_DSA"):
+            pytest.skip("CKM_ML_DSA not supported")
+        if not rs.has_mechanism("ML_DSA_KEY_PAIR_GEN"):
+            pytest.skip("CKM_ML_DSA_KEY_PAIR_GEN not supported")
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.pack import attr_ulong
+from pkcs11_check.raw.types_std import (
+    CKA_PARAMETER_SET, CKA_SIGN, CKA_TOKEN, CKA_VERIFY,
+    CK_MECHANISM, CK_SIGN_ADDITIONAL_CONTEXT,
+    CKH_HEDGE_PREFERRED, CKM_ML_DSA, CKM_ML_DSA_KEY_PAIR_GEN,
+    CKP_ML_DSA_65, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_keypair, sign_single
+
+message = b"ML-DSA empty context pointer crash probe"
+try:
+    pub, priv = gen_keypair(
+        raw,
+        sh,
+        CKM_ML_DSA_KEY_PAIR_GEN,
+        pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65)],
+        priv_base=[],
+        public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+        private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+        pub_skip={CKA_PARAMETER_SET},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "ML-DSA keypair generation rejected",
+    )
+try:
+    sig = sign_single(raw, sh, priv, CKM_ML_DSA, message)
+
+    context = (ctypes.c_ubyte * 0)()
+    params = CK_SIGN_ADDITIONAL_CONTEXT()
+    params.hedgeVariant = int(CKH_HEDGE_PREFERRED)
+    params.pContext = ctypes.cast(context, ctypes.c_void_p)
+    params.ulContextLen = 0
+
+    mech = CK_MECHANISM()
+    mech.mechanism = int(CKM_ML_DSA)
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+
+    rv = raw.C_VerifyInit(sh, ctypes.byref(mech), pub)
+    print(f"init_rv={rv}")
+    if rv == CKR_OK:
+        data_buf = (ctypes.c_ubyte * len(message)).from_buffer_copy(message)
+        sig_buf = (ctypes.c_ubyte * len(sig)).from_buffer_copy(sig)
+        rv = raw.C_Verify(sh, data_buf, len(message), sig_buf, len(sig))
+        print(f"verify_rv={rv}")
+finally:
+    destroy_quietly(raw, sh, pub)
+    destroy_quietly(raw, sh, priv)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=("C_Verify(ML-DSA, pContext non-NULL, ulContextLen=0)"),
+        )
+
+
+# ---------------------------------------------------------------------------
 # TestAesCcmNullNonce
 # ---------------------------------------------------------------------------
 

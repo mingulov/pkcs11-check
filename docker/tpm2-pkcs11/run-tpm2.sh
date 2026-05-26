@@ -66,6 +66,4 @@ module="$(cat /tmp/module_path)"
 echo "Module: $module"
 export PKCS11_CHECK_MODULE="$module"
 
-if ! bash /app/docker/run-pkcs11-check.sh; then
-    echo "Some tests may fail — TPM2 has limited mechanism support"
-fi
+bash /app/docker/run-pkcs11-check.sh

@@ -24,17 +24,15 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
     CKA_UNWRAP,
-    CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
     CKK_AES_XTS,
-    CKK_GENERIC_SECRET,
     CKM_AES_CCM,
     CKM_AES_CMAC,
     CKM_AES_GMAC,
     CKM_AES_KEY_WRAP,
-    CKM_AES_KEY_WRAP_PAD,
+    CKM_AES_KEY_WRAP_KWP,
     CKM_AES_XTS,
     CKR_ARGUMENTS_BAD,
     CKR_DATA_LEN_RANGE,
@@ -234,8 +232,8 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     unlike basic AES-KW which requires 8-byte aligned data.
     """
     rs = p11_raw_session
-    if not rs.has_mechanism("AES_KEY_WRAP_PAD"):
-        pytest.skip("AES_KEY_WRAP_PAD not supported")
+    if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
+        pytest.skip("AES_KEY_WRAP_KWP not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
     msg = bytes.fromhex(vec["msg"])
@@ -252,6 +250,7 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             attrs={
                 CKA_WRAP: True,
                 CKA_UNWRAP: True,
+                CKA_ENCRYPT: True,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
             },
@@ -259,34 +258,18 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     except AssertionError:
         pytest.skip("Cannot import AES wrapping key")
 
-    # KWP can wrap arbitrary-length data - import as generic secret
-    # For non-aligned sizes, we use GENERIC_SECRET instead of AES
-    key_type = CKK_AES if len(msg) in (16, 24, 32) else CKK_GENERIC_SECRET
-    extra_attrs: dict[int, Any] = {
-        CKA_EXTRACTABLE: True,
-        CKA_TOKEN: False,
-        CKA_SENSITIVE: False,
-    }
-    if key_type == CKK_GENERIC_SECRET:
-        extra_attrs[CKA_VALUE_LEN] = len(msg)
-    try:
-        target_key = import_secret_key(
-            rs.raw,
-            rs.sh,
-            key_type,
-            msg,
-            attrs=extra_attrs,
-        )
-    except AssertionError:
-        destroy_quietly(rs.raw, rs.sh, wrap_key_h)
-        if result == "invalid":
-            return
-        pytest.skip("Cannot import target key for KWP")
-
-    # Wrap with padding and compare
+    # Wycheproof KWP vectors are RFC 5649 raw data vectors.  PKCS#11 exposes
+    # that exact operation through CKM_AES_KEY_WRAP_KWP C_Encrypt.
     wrapped = None
     try:
-        wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP_PAD)
+        wrapped = encrypt_single(
+            rs.raw,
+            rs.sh,
+            wrap_key_h,
+            CKM_AES_KEY_WRAP_KWP,
+            msg,
+            output_overhead=16,
+        )
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-KWP {vec_id}")
@@ -294,7 +277,6 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         # acceptable: reject is fine
         return
     finally:
-        destroy_quietly(rs.raw, rs.sh, target_key)
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
     if result == "valid" and wrapped is not None:

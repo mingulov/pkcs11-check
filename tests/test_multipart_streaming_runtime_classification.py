@@ -18,6 +18,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA256_HMAC,
     CKR_ARGUMENTS_BAD,
+    CKR_BUFFER_TOO_SMALL,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -116,6 +117,26 @@ def test_streaming_hmac_key_sets_allowed_mechanism(
     streaming.TestMultipartSign().test_hmac_large_data_crossverify(rs)
 
     assert captured["attrs"][CKA_ALLOWED_MECHANISMS] == [CKM_SHA256_HMAC]
+
+
+def test_streaming_hmac_buffer_too_small_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid advertised HMAC path returning CKR_BUFFER_TOO_SMALL is non-clean evidence."""
+
+    def _buffer_too_small(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_BUFFER_TOO_SMALL",
+            int(CKR_BUFFER_TOO_SMALL),
+        )
+
+    monkeypatch.setattr(streaming, "create_object", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(streaming, "sign_single", _buffer_too_small)
+    monkeypatch.setattr(streaming, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = _session_with_mechanisms("SHA256_HMAC")
+
+    with pytest.raises(pytest.xfail.Exception, match="SHA256_HMAC advertised but sign"):
+        streaming.TestMultipartSign().test_hmac_large_data_crossverify(rs)
 
 
 def test_streaming_hmac_key_import_falls_back_to_generic_secret(

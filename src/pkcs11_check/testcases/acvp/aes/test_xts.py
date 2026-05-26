@@ -27,7 +27,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.acvp.aes.base import _load_vectors
+from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
@@ -38,30 +38,110 @@ def _load_xts_vectors(
     version: str,
 ) -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]]:
     """Load AES-XTS ACVP vectors for specified version (1.0 or 2.0)."""
-    encrypt_fields = {
-        "key": "key",
-        "pt": ("pt", lambda x: bytes.fromhex(x) if x else b""),
-        "tweak": ("tweakValue", lambda x: bytes.fromhex(x) if x else b""),
-        "ct_expected": ("ct", lambda x: bytes.fromhex(x) if x else b""),
-    }
-    decrypt_fields = {
-        "key": "key",
-        "ct": ("ct", lambda x: bytes.fromhex(x) if x else b""),
-        "tweak": ("tweakValue", lambda x: bytes.fromhex(x) if x else b""),
-        "pt_expected": ("pt", lambda x: bytes.fromhex(x) if x else b""),
-    }
+    encrypt_vecs: list[tuple[str, dict[str, Any]]] = []
+    decrypt_vecs: list[tuple[str, dict[str, Any]]] = []
 
-    encrypt_vecs, decrypt_vecs = _load_vectors(
-        f"ACVP-AES-XTS-{version}",
-        encrypt_fields,  # type: ignore[arg-type]
-        decrypt_fields,  # type: ignore[arg-type]
-    )
+    for raw_vec in load_acvp_vectors(f"ACVP-AES-XTS-{version}"):
+        group = raw_vec["group"]
+        inp = raw_vec["input"]
+        exp = raw_vec["expected"]
+        direction = group.get("direction", "")
+        tc_id = inp.get("tcId", 0)
+        payload_len_bits = inp.get("payloadLen", group.get("payloadLen"))
+        data_unit_len_bits = inp.get("dataUnitLen", payload_len_bits)
 
-    # Add version prefix to vec_id for clarity
-    encrypt_vecs = [(f"XTS-{version}-{vid}", v) for vid, v in encrypt_vecs]
-    decrypt_vecs = [(f"XTS-{version}-{vid}", v) for vid, v in decrypt_vecs]
+        common = {
+            "tc_id": tc_id,
+            "key": bytes.fromhex(inp["key"]) if inp.get("key") else b"",
+            "tweak": _xts_tweak_from_input(inp),
+            "sequence_number": inp.get("sequenceNumber"),
+            "payload_len_bits": payload_len_bits,
+            "data_unit_len_bits": data_unit_len_bits,
+            "tweak_mode": group.get("tweakMode"),
+        }
+
+        if direction == "encrypt":
+            encrypt_vecs.append(
+                (
+                    f"XTS-{version}-AES-enc-tc{tc_id}",
+                    {
+                        **common,
+                        "pt": bytes.fromhex(inp["pt"]) if inp.get("pt") else b"",
+                        "ct_expected": bytes.fromhex(exp["ct"]) if exp.get("ct") else b"",
+                    },
+                )
+            )
+        elif direction == "decrypt":
+            decrypt_vecs.append(
+                (
+                    f"XTS-{version}-AES-dec-tc{tc_id}",
+                    {
+                        **common,
+                        "ct": bytes.fromhex(inp["ct"]) if inp.get("ct") else b"",
+                        "pt_expected": bytes.fromhex(exp["pt"]) if exp.get("pt") else b"",
+                    },
+                )
+            )
 
     return encrypt_vecs, decrypt_vecs
+
+
+def _xts_tweak_from_input(inp: dict[str, Any]) -> bytes:
+    if "tweakValue" in inp:
+        return bytes.fromhex(inp["tweakValue"])
+    sequence_number = inp.get("sequenceNumber")
+    if sequence_number is None:
+        return b""
+    return int(sequence_number).to_bytes(16, "little")
+
+
+def _increment_xts_tweak(tweak: bytes, increment: int) -> bytes:
+    value = (int.from_bytes(tweak, "little") + increment) % (1 << 128)
+    return value.to_bytes(16, "little")
+
+
+def _require_byte_aligned_xts_vector(vec_id: str, vec: dict[str, Any]) -> None:
+    payload_len_bits = vec.get("payload_len_bits")
+    data_unit_len_bits = vec.get("data_unit_len_bits")
+    for label, bit_len in (
+        ("payloadLen", payload_len_bits),
+        ("dataUnitLen", data_unit_len_bits),
+    ):
+        if bit_len is not None and int(bit_len) % 8 != 0:
+            pytest.skip(
+                f"{vec_id}: ACVP AES-XTS {label}={bit_len} is not byte-aligned; "
+                "PKCS#11 CKM_AES_XTS accepts byte strings"
+            )
+
+
+def _xts_data_unit_chunks(data: bytes, vec: dict[str, Any]) -> list[tuple[bytes, bytes]]:
+    _require_byte_aligned_xts_vector(str(vec.get("tc_id", "unknown")), vec)
+    payload_len_bits = vec.get("payload_len_bits")
+    data_unit_len_bits = vec.get("data_unit_len_bits")
+    payload_len = len(data) if payload_len_bits is None else int(payload_len_bits) // 8
+    data_unit_len = payload_len if data_unit_len_bits is None else int(data_unit_len_bits) // 8
+    tweak = vec["tweak"]
+
+    if not tweak or len(tweak) != 16:
+        pytest.skip("ACVP AES-XTS vector does not provide a 16-byte data-unit sequence number")
+    if payload_len != len(data):
+        pytest.skip(
+            f"ACVP AES-XTS payloadLen={payload_len_bits} does not match "
+            f"{len(data)} input bytes"
+        )
+    if data_unit_len <= 0:
+        pytest.skip("ACVP AES-XTS dataUnitLen is empty")
+
+    chunks = []
+    for index, offset in enumerate(range(0, len(data), data_unit_len)):
+        chunk = data[offset : offset + data_unit_len]
+        if len(chunk) < 16:
+            pytest.skip(
+                "ACVP AES-XTS data unit shorter than the PKCS#11 CKM_AES_XTS "
+                "minimum input length"
+            )
+        chunks.append((chunk, _increment_xts_tweak(tweak, index)))
+    return chunks
 
 
 _XTS_1_0_ENCRYPT_VECTORS, _XTS_1_0_DECRYPT_VECTORS = _load_xts_vectors("1.0")
@@ -79,6 +159,7 @@ def test_acvp_aes_xts_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
     if not rs.has_mechanism("AES_XTS"):
         pytest.skip("AES_XTS not supported by module")
 
+    chunks = _xts_data_unit_chunks(vec["pt"], vec)
     key = 0
     try:
         key = import_secret_key(
@@ -93,15 +174,20 @@ def test_acvp_aes_xts_encrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
             },
         )
         try:
-            mech = mech_bytes(CKM_AES_XTS, vec["tweak"])
-            ct = encrypt_single(
-                rs.raw,
-                rs.sh,
-                key,
-                CKM_AES_XTS,
-                vec["pt"],
-                mech_param=mech,
-            )
+            ct_parts = []
+            for chunk, tweak in chunks:
+                mech = mech_bytes(CKM_AES_XTS, tweak)
+                ct_parts.append(
+                    encrypt_single(
+                        rs.raw,
+                        rs.sh,
+                        key,
+                        CKM_AES_XTS,
+                        chunk,
+                        mech_param=mech,
+                    )
+                )
+            ct = b"".join(ct_parts)
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
                 pytest.xfail(f"AES_XTS advertised but encrypt is not operational: {exc}")
@@ -126,6 +212,7 @@ def test_acvp_aes_xts_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
     if not rs.has_mechanism("AES_XTS"):
         pytest.skip("AES_XTS not supported by module")
 
+    chunks = _xts_data_unit_chunks(vec["ct"], vec)
     key = 0
     try:
         key = import_secret_key(
@@ -140,15 +227,20 @@ def test_acvp_aes_xts_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, 
             },
         )
         try:
-            mech = mech_bytes(CKM_AES_XTS, vec["tweak"])
-            pt = decrypt_single(
-                rs.raw,
-                rs.sh,
-                key,
-                CKM_AES_XTS,
-                vec["ct"],
-                mech_param=mech,
-            )
+            pt_parts = []
+            for chunk, tweak in chunks:
+                mech = mech_bytes(CKM_AES_XTS, tweak)
+                pt_parts.append(
+                    decrypt_single(
+                        rs.raw,
+                        rs.sh,
+                        key,
+                        CKM_AES_XTS,
+                        chunk,
+                        mech_param=mech,
+                    )
+                )
+            pt = b"".join(pt_parts)
         except AssertionError as exc:
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
                 pytest.xfail(f"AES_XTS advertised but decrypt is not operational: {exc}")

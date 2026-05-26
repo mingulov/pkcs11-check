@@ -84,6 +84,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    gen_aes_key_or_xfail,
     get_pin_bytes,
     skip_unless_mechanism,
     xfail_if_known_ckr,
@@ -424,11 +425,11 @@ class TestSessionObjectsAfterLogout:
         label = f"logout-test-{id(self)}".encode()
 
         # Generate a key with a unique label
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={CKA_LABEL: label},
+            purpose="session object after logout",
         )
 
         # Verify it exists
