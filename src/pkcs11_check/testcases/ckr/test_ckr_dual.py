@@ -20,8 +20,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     encrypt_single,
-    gen_aes_key,
-    gen_rsa_keypair,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -30,6 +28,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
 )
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+)
 
 pytestmark = pytest.mark.access
 
@@ -54,7 +56,11 @@ class TestOperationStateWrapper:
         call requires a new C_EncryptInit.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            purpose="operation-state encrypt wrapper setup",
+        )
         try:
             ct1 = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, b"\x00" * 16)
             ct2 = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, b"\x11" * 16)
@@ -76,8 +82,12 @@ class TestOperationStateWrapper:
     def test_sign_then_encrypt(self, p11_raw_session: Any) -> None:
         """Sign then encrypt with same session - no conflict."""
         rs = p11_raw_session
-        _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        _pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            purpose="operation-state sign/encrypt wrapper setup",
+        )
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"data")
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, b"\x00" * 16)

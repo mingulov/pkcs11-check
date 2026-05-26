@@ -5,9 +5,13 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
+from pkcs11_check.raw import recipes as raw_recipes
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases.ckr import (
     test_ckr_dual,
     test_ckr_v30_raw,
@@ -16,6 +20,22 @@ from pkcs11_check.testcases.ckr import (
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 RawCheck = Callable[[int, str, str, str], None]
+
+
+def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
+    names = set(mechanisms)
+    return SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name in names,
+    )
+
+
+def _raise_function_not_supported(*_args: Any, **_kwargs: Any) -> int:
+    raise CkrAssertionError(
+        "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+        int(CKR_FUNCTION_NOT_SUPPORTED),
+    )
 
 
 @pytest.mark.parametrize(
@@ -81,6 +101,47 @@ def test_ckr_dual_reports_positive_subprocess_exit_as_child_failure(
     test_case = test_ckr_dual.TestOperationStateSubprocess()
     with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
         test_case.test_encrypt_without_init(SimpleNamespace(module="/fake/p11.so", pin=None))
+
+
+def test_ckr_dual_encrypt_wrapper_xfails_advertised_aes_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_ckr_dual,
+        "gen_aes_key",
+        _raise_function_not_supported,
+        raising=False,
+    )
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES-128 key generation"):
+        test_ckr_dual.TestOperationStateWrapper().test_encrypt_twice_succeeds(rs)
+
+
+def test_ckr_dual_sign_then_encrypt_xfails_advertised_aes_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_ckr_dual,
+        "gen_aes_key",
+        _raise_function_not_supported,
+        raising=False,
+    )
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(
+        test_ckr_dual,
+        "gen_rsa_keypair",
+        lambda *_args, **_kwargs: (10, 11),
+        raising=False,
+    )
+    monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", lambda *_args, **_kwargs: (10, 11))
+    monkeypatch.setattr(test_ckr_dual, "sign_single", lambda *_args, **_kwargs: b"s" * 256)
+    monkeypatch.setattr(test_ckr_dual, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = _session_with_mechanisms("AES_KEY_GEN", "RSA_PKCS_KEY_PAIR_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="AES-128 key generation"):
+        test_ckr_dual.TestOperationStateWrapper().test_sign_then_encrypt(rs)
 
 
 def test_encrypt_without_init_child_does_not_require_aes_setup(

@@ -295,6 +295,14 @@ to pass valid PIN/label buffers as `CK_UTF8CHAR_PTR` instead of
 `ctypes.c_void_p`. The old artifacts' PIN/token failures were Python
 `ctypes` signature errors, not module behavior.
 
+A focused current-source rerun of `test_ffi_null_pointer.py` on TPM2,
+OpenCryptoki, and SoftHSM2 found no hard failures or crashes. TPM2 still
+reports visible setup xfails for rows that require advertised-but-not-operational
+AES key generation, while OpenCryptoki passes the full file and SoftHSM2 only
+skips unsupported capabilities. The old NULL-pointer rows should therefore be
+removed from public provider-failure wording unless a refreshed run reproduces
+an actual signal exit or wrong result.
+
 ### Follow-Up: CKR Operation-State Subprocess Probes
 
 The compact artifact scan after cleanup still contained old
@@ -315,6 +323,13 @@ two independent one-shot digest operations.
 Existing artifacts that mention these `test_ckr_dual.py` subprocess crashes
 should be treated as pre-fix harness evidence. A focused provider rerun is
 needed before these rows are used in article wording.
+
+A current focused rerun changes that wording for the sampled providers:
+OpenCryptoki and SoftHSM2 both pass all five `test_ckr_dual.py` rows. TPM2 now
+has three passed rows and two xfailed wrapper setup rows because AES key
+generation is advertised but not operational; those are setup evidence, not
+operation-state failures and not crashes. The subprocess rows themselves pass
+on TPM2 after the direct raw-operation correction.
 
 ### Follow-Up: CKR Raw/Fault Setup Classification
 
