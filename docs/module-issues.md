@@ -1117,6 +1117,10 @@ an OpenCryptoki AES-KWP interop bug.
 `CKM_AES_KEY_WRAP_KWP` `C_Decrypt` cases when OpenCryptoki master is built with
 OpenSSL 4.0.0. `C_Decrypt` returns `CKR_GENERAL_ERROR`, but the guard bytes
 immediately after the minimal `len(input) - 8` output buffer are overwritten.
+Current focused evidence is in
+`artifacts/_focused/opencryptoki-master-error-path-current-20260527/`: the
+selected KWP/RSA error-path slice reports 42 passed and 8 failed, with all 8
+failures in the KWP decrypt path and all RSA error-path rows passing.
 
 This is not fixed by OpenCryptoki PR #932. That PR fixed OpenCryptoki's common
 fallback `aeskw_unwrap_pad()` cleanup length. The swtok path still registers

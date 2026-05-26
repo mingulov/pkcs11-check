@@ -1244,12 +1244,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
   expose OpenSSL's `CRYPTO_128_unwrap_pad()` error-path overwrite. The harness
   now rejects positive child exits, keeps the generated script under its
   `try/finally`, and uses a minimal output buffer with guard bytes for
-  corrupted AES-KWP decrypt attempts. A mounted-source rerun against
+  corrupted AES-KWP decrypt attempts. A current Docker rerun against
   OpenCryptoki master built with OpenSSL 4.0.0 reports 8 AES-KWP decrypt
   guard-overwrite failures and 34 clean no-crash rows in
-  `test_error_path_kwp.py`. This means the old OpenCryptoki artifacts that
-  showed 42/42 passes for this file were false negatives for the OpenSSL-side
-  KWP finding.
+  `test_error_path_kwp.py`; evidence is retained in
+  `artifacts/_focused/opencryptoki-master-error-path-current-20260527/`. This
+  means the old OpenCryptoki artifacts that showed 42/42 passes for this file
+  were false negatives for the OpenSSL-side KWP finding.
 - **RSA decrypt error-path child scripts**: the same generated-script
   `try/finally` indentation problem existed in the RSA PKCS#1/OAEP decrypt
   error-path tests. The scripts are now built through one helper that indents
@@ -1257,7 +1258,7 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `try`, and meta-tests compile representative PKCS#1 and OAEP variants. Older
   provider artifacts that show this file as fully passing should be treated as
   suspect no-crash evidence until the file is rerun with current source. A
-  mounted-source rerun against OpenCryptoki master built with OpenSSL 4.0.0
+  current Docker rerun against OpenCryptoki master built with OpenSSL 4.0.0
   reports all 8 RSA error-path rows passing, so the corrected OpenCryptoki
   finding is AES-KWP-specific, not RSA.
 - **Subprocess result policy**: crash-survival helpers now share the same

@@ -202,12 +202,13 @@ Completed high-signal observations:
   issue. Evidence directory:
   `artifacts/_focused/opencryptoki-xts-current`.
 - The current OpenCryptoki artifacts also predate the AES-KWP error-path
-  harness fix. A mounted-source rerun of
-  `security/test_error_path_kwp.py` and `security/test_error_path_rsa.py`
-  against OpenCryptoki master + OpenSSL 4.0.0 produced 42 passes and 8 KWP
-  decrypt guard-overwrite failures. The RSA error-path rows passed after the
-  generated-script fix. Do not use the older KWP 42/42 pass result as evidence
-  that the OpenSSL-side KWP issue is fixed.
+  harness fix. A current Docker rerun of `security/test_error_path_kwp.py` and
+  `security/test_error_path_rsa.py` against OpenCryptoki master + OpenSSL 4.0.0
+  produced 42 passes and 8 KWP decrypt guard-overwrite failures in
+  `artifacts/_focused/opencryptoki-master-error-path-current-20260527/`. The
+  RSA error-path rows passed after the generated-script fix. Do not use the
+  older KWP 42/42 pass result as evidence that the OpenSSL-side KWP issue is
+  fixed.
 - The `opencryptoki-master` artifact picked up later vector deduplication than
   `opencryptoki`, including RSA/RSA-PSS and ACVP KeyGen projection skips. It
   still predates the corrected KWP/RSA subprocess harness, because the security
