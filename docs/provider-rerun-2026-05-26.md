@@ -137,6 +137,11 @@ Completed high-signal observations:
   non-clean provider evidence rather than clean passes. Evidence directories:
   `artifacts/_focused/kryoptic-rsapss-current` and
   `artifacts/_focused/kryoptic-rsa-signature-current`.
+  A focused current-source rerun of the older generic Wycheproof file for
+  Kryoptic now also completes with 1,555 passed, 398 xfailed, and 0 failed, so
+  the small old generic RSA-signature failure bucket is stale pre-fix evidence.
+  Evidence directory:
+  `artifacts/_focused/kryoptic-generic-wycheproof-current-20260526`.
 - ACVP KeyGen internal-projection vectors contain seeds and expected keys that
   current PKCS#11 key-generation APIs cannot consume. The suite now keeps those
   vectors collected but skips duplicate provider-visible inputs after the first
@@ -167,12 +172,16 @@ Completed high-signal observations:
   `C_SignInit` probes, hit the per-file crash limit, and then skipped the rest
   of that file as designed.
 - OpenCryptoki stayed crash-free in this rerun. After ECDH/XDH/ECDSA duplicate
-  normalization, its largest current failed buckets are ACVP AES-XTS 382,
-  Wycheproof ECDSA 234, generic Wycheproof 144, RSA PKCS#1 decrypt 59, and
-  Wycheproof AES 27. The ECDSA failures are valid P-521/SHAKE256 signature
-  rejections after raw ECDSA conversion, so they remain provider findings. The
-  target artifact does not include every later source edit from this working
-  tree; it still needs a clean refresh before release statistics.
+  normalization, its largest failed buckets in the batch artifact were ACVP
+  AES-XTS 382, Wycheproof ECDSA 234, generic Wycheproof 144, RSA PKCS#1 decrypt
+  59, and Wycheproof AES 27. Later current-source checks split those buckets:
+  three representative old P-521/SHAKE256 ECDSA failures now pass after the
+  SHAKE256(64) loader fix, so the ECDSA bucket must be treated as pre-fix
+  harness evidence until a full ECDSA refresh completes. The generic
+  Wycheproof bucket still reproduces on current source as 144 AES-CBC-PAD
+  invalid-padding acceptances across 128-, 192-, and 256-bit AES keys. Evidence
+  directories: `artifacts/_focused/opencryptoki-ecdsa-shake-representatives-20260526`
+  and `artifacts/_focused/opencryptoki-generic-wycheproof-current-20260526`.
 - A focused current-source OpenCryptoki AES-XTS rerun confirmed the old XTS
   bucket is still live: 218 passed, 382 failed with ciphertext/plaintext
   mismatches after `CKR_OK`, and 600 xfailed with

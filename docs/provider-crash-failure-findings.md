@@ -525,9 +525,10 @@ rerun of the ECDSA file no longer showed the P-521/SHAKE256 valid-vector
 rejections, so those old rows should be treated as harness evidence until the
 full matrix is refreshed. A focused NSS stable rerun of the same current-source
 ECDSA file selected 28,915 vectors and completed with 6,832 passed, 22,083
-skipped, and 0 failed. The old NSS-family ECDSA hard-failure bucket should
-therefore also be treated as pre-fix harness evidence until the matrix is
-refreshed.
+skipped, and 0 failed. Three representative OpenCryptoki rows from the same old
+P-521/SHAKE256 bucket also pass on current source. The old NSS-family and
+OpenCryptoki ECDSA hard-failure buckets should therefore be treated as pre-fix
+harness evidence until the matrix is refreshed.
 
 RSA signature vectors have a smaller version of the same duplication problem.
 After pkcs11-check maps a vector to a concrete PKCS#11 mechanism and parameter
@@ -587,6 +588,13 @@ deeper follow-up before being presented as final provider conclusions.
   advertises `CKM_AES_XTS` for `CKK_AES_XTS` keys, so this remains a provider
   behavior or provider/test-vector interpretation question rather than an
   obvious skip/configuration issue.
+- **OpenCryptoki generic Wycheproof AES-CBC-PAD 144**: a current-source focused
+  rerun still fails the same invalid-padding family. The failures are
+  successful `CKM_AES_CBC_PAD` decrypt calls on invalid Wycheproof vectors:
+  zero padding, ANSI X.923, ISO 10126, ISO/IEC 7816-4, too-long padding,
+  padding longer than the message, no padding, and empty ciphertext, across
+  128-, 192-, and 256-bit AES keys. That is provider behavior/security
+  evidence, not a vector loader mismatch.
 - **TPM2 AES-CFB128 2,144**: all simple encrypt/decrypt vectors plus the small
   multiblock tail fail with `CKR_GENERAL_ERROR`. tpm2-pkcs11 advertises
   `CKM_AES_CFB128` only when the TPM reports `TPM2_ALG_CFB`; the bucket looks
