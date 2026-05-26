@@ -437,6 +437,12 @@ official full-matrix release statistics.
   requires Montgomery setup and tries X25519 then X448. The mock target has no
   advertised X2RATCHET coverage, so this artifact is capability-skip evidence,
   not provider Double Ratchet behavior evidence.
+- `pkcs11-mock` SO PIN focused artifact:
+  `artifacts/_focused/pkcs11-mock-so-pin-current-20260527/`. Current source no
+  longer turns arbitrary `C_SetPIN` setup exceptions into skips; exact token
+  policy/permission CKRs still skip and generic runtime rejects are visible
+  xfail evidence. The normal Docker run is destructive-gated, so this artifact
+  confirms gating rather than mock PIN-change behavior.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124

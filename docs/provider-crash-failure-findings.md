@@ -303,6 +303,14 @@ skips unsupported capabilities. The old NULL-pointer rows should therefore be
 removed from public provider-failure wording unless a refreshed run reproduces
 an actual signal exit or wrong result.
 
+The destructive `test_so_pin.py` PIN-change row also had a catch boundary that
+was too broad: any Python-side exception or generic CKR became a skip. It now
+only skips exact token-policy/permission CKRs, xfails generic runtime rejects
+such as `CKR_FUNCTION_FAILED`, and lets local setup exceptions fail. A focused
+pkcs11-mock run in `artifacts/_focused/pkcs11-mock-so-pin-current-20260527/`
+is destructive-gated, so it is gating evidence rather than provider
+`C_SetPIN` behavior evidence.
+
 A focused current-source rerun of `test_arithmetic_overflow.py` changes only
 part of the old crash-probe wording. Current TPM2 no longer has hard failures
 in this file: it reports 18 passed, 6 skipped, and 15 xfailed setup rows in

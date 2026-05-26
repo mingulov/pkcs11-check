@@ -32,13 +32,22 @@ from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_PIN_INCORRECT,
+    CKR_PIN_INVALID,
+    CKR_PIN_LEN_RANGE,
     CKR_PIN_LOCKED,
+    CKR_SESSION_READ_ONLY,
+    CKR_TOKEN_WRITE_PROTECTED,
     CKR_USER_ALREADY_LOGGED_IN,
+    CKR_USER_NOT_LOGGED_IN,
     CKU_SO,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import get_pin_bytes, is_known_error, xfail_if_known_ckr
 
 # Acceptable CKR codes for wrong-PIN / credential errors.
 _PIN_ERROR_CKRS = (CKR_PIN_INCORRECT, CKR_PIN_LOCKED, CKR_ARGUMENTS_BAD)
@@ -48,6 +57,24 @@ _SO_CONFLICT_CKRS = (
     CKR_PIN_LOCKED,
     CKR_ARGUMENTS_BAD,
     CKR_USER_ALREADY_LOGGED_IN,
+)
+
+_SET_PIN_POLICY_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_PIN_INCORRECT,
+    CKR_PIN_INVALID,
+    CKR_PIN_LEN_RANGE,
+    CKR_PIN_LOCKED,
+    CKR_SESSION_READ_ONLY,
+    CKR_TOKEN_WRITE_PROTECTED,
+    CKR_USER_NOT_LOGGED_IN,
+)
+
+_SET_PIN_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
 )
 
 pytestmark = [pytest.mark.security, pytest.mark.destructive]
@@ -101,13 +128,20 @@ class TestSetPIN:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             login_user(rs.raw, s1, CKU_USER, pin_bytes)
-            set_pin(rs.raw, s1, pin_bytes, new_pin)
-        except (AssertionError, Exception):
+            try:
+                set_pin(rs.raw, s1, pin_bytes, new_pin)
+            except AssertionError as exc:
+                if is_known_error(exc, _SET_PIN_POLICY_REJECT_RVS):
+                    pytest.skip(f"C_SetPIN not usable with configured token policy: {exc}")
+                xfail_if_known_ckr(
+                    exc,
+                    _SET_PIN_RUNTIME_REJECT_RVS,
+                    "C_SetPIN rejected valid PIN-change setup",
+                )
+                raise  # unreachable
+            rs.raw.C_Logout(s1)
+        finally:
             close_session_quietly(rs.raw, s1)
-            pytest.skip("C_SetPIN not supported or requires different permissions")
-            return
-        rs.raw.C_Logout(s1)
-        close_session_quietly(rs.raw, s1)
 
         # Login with new PIN should work
         s2 = raw_open_session(rs.raw, rs.slot_id, flags)
