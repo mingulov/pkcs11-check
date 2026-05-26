@@ -930,6 +930,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
   mismatches and wrong lengths after `CKR_OK` remain hard failures, including
   the older pkcs11-mock SHA-1 mismatch row if it still reproduces on current
   source.
+- **General error-path setup coverage**: `test_errors.py` now applies the same
+  split to broad negative and edge-case rows. Missing AES/SHA/RSA mechanisms are
+  capability skips before setup. Advertised AES/RSA setup rejects are xfail
+  evidence, so TPM2-style key-generation failures no longer obscure the target
+  invalid-parameter, empty-input, destroyed-key, or multi-operation check. The
+  invalid AES key-size row still treats real key-size/template/argument CKRs as
+  the target negative result; only function-unavailable evidence is xfail.
 - **Mechanism attribute readback**: mechanism-generated key attribute tests now
   distinguish attribute read support from attribute value correctness. A module
   that rejects `C_GetAttributeValue` with a non-clean CKR such as
