@@ -376,10 +376,23 @@ The same classifier now covers `test_ckr_general.py`,
 `test_ckr_universal.py`, and `test_ckr_raw_multipart.py`. Those files were not
 the dominant retained artifact buckets, but they used the same direct
 `returncode == 0` pattern and now report positive child exits separately from
-signal crashes.
+signal crashes. The v2.40-style `C_GetInterfaceList` path without a
+`C_GetInterfaceList` symbol now emits an `OK` marker, so "no method" is a
+completed probe rather than a failed child script.
 
-Existing artifact rows from those files need a focused rerun before being used
-as provider crash evidence in public wording.
+Focused current-source reruns after this correction are in
+`artifacts/_focused/tpm2-ckr-raw-fault-r3-20260527/` and
+`artifacts/_focused/pkcs11-mock-ckr-raw-fault-r3-20260527/`.
+pkcs11-mock now reports 29 passed, 16 xfailed, and 0 failed across the selected
+45 CKR raw/fault/general rows; its old hard raw/fault rows were setup
+classification noise. TPM2 reports 28 passed, 14 xfailed, and 3 failed. The
+three remaining TPM2 failures are target raw-argument findings in
+`test_ckr_raw_args_bad.py`: `C_DigestInit(NULL)` exits with signal 11, while
+`C_GenerateKey(NULL)` and `C_WrapKey(NULL)` return
+`CKR_FUNCTION_NOT_SUPPORTED` (`0x54`). The `C_GenerateKey(NULL)` test now
+requires `CKR_ARGUMENTS_BAD`; unlike operation-init calls such as
+`C_EncryptInit`, key generation has no PKCS#11 NULL-mechanism cancellation
+success path.
 
 ### Follow-Up: Legacy Cipher Advertised-But-Rejected Paths
 

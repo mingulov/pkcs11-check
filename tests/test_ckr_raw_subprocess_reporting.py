@@ -14,6 +14,8 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases.ckr import (
     test_ckr_dual,
+    test_ckr_general,
+    test_ckr_raw_args_bad,
     test_ckr_v30_raw,
     test_ckr_v32_raw,
 )
@@ -81,6 +83,83 @@ def test_ckr_subprocess_helper_converts_setup_marker_to_xfail() -> None:
 def test_ckr_subprocess_helper_requires_ok_marker() -> None:
     with pytest.raises(pytest.fail.Exception, match="did not emit an OK marker"):
         assert_ckr_subprocess_ok(0, "CKR:0x00000000\n", "", context="CKR setup probe")
+
+
+def test_raw_args_bad_setup_marker_is_xfail() -> None:
+    """NULL-mechanism rows should classify failed setup key generation."""
+    with pytest.raises(pytest.xfail.Exception, match="AES setup unavailable"):
+        test_ckr_raw_args_bad._assert_ok(
+            0,
+            "SETUP_XFAIL:AES setup unavailable: CKR_FUNCTION_NOT_SUPPORTED\n",
+            "",
+            "C_EncryptInit(NULL mech)",
+        )
+
+
+def test_raw_args_bad_encrypt_null_mech_script_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The NULL-mechanism probe should not assert on setup keygen rejects."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(returncode=0, stdout="OK\n", stderr="")
+
+    monkeypatch.setattr(test_ckr_raw_args_bad.subprocess, "run", _run_subprocess)
+
+    test_ckr_raw_args_bad.TestArgsBadNullPointers().test_encrypt_init_null_mechanism(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(scripts) == 1
+    assert "SETUP_XFAIL:" in scripts[0]
+    assert "assert rv == CKR_OK" not in scripts[0]
+
+
+def test_raw_args_bad_generate_key_null_mech_does_not_accept_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C_GenerateKey has no NULL-mechanism cancellation success path."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(returncode=0, stdout="OK\n", stderr="")
+
+    monkeypatch.setattr(test_ckr_raw_args_bad.subprocess, "run", _run_subprocess)
+
+    test_ckr_raw_args_bad.TestArgsBadNullPointers().test_generate_key_null_mechanism(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(scripts) == 1
+    probe = scripts[0].split("raw.C_GenerateKey(sh, null_pointer().pointer", 1)[1]
+    probe = probe.split('print("OK")', 1)[0]
+    assert "CKR_ARGUMENTS_BAD" in probe
+    assert "CKR_OK" not in probe
+
+
+def test_ckr_general_no_interface_method_emits_ok_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A v2.40 module without C_GetInterfaceList is a completed probe."""
+    scripts: list[str] = []
+
+    def _run_subprocess(args: list[str], **_kwargs: Any) -> SimpleNamespace:
+        scripts.append(args[2])
+        return SimpleNamespace(returncode=0, stdout="CKR:OK:0_interfaces\n", stderr="")
+
+    monkeypatch.setattr(test_ckr_general.subprocess, "run", _run_subprocess)
+
+    test_ckr_general.TestInitializeErrors().test_get_interface_list(
+        SimpleNamespace(module="/tmp/provider.so", pin=None)
+    )
+
+    assert len(scripts) == 1
+    no_method_block = scripts[0].split("except AttributeError:", 1)[1]
+    assert 'print("CKR:NO_METHOD")' in no_method_block
+    assert 'print("OK")' in no_method_block
 
 
 def test_ckr_dual_reports_positive_subprocess_exit_as_child_failure(

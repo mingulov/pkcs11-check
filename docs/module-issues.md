@@ -771,6 +771,25 @@ The hard failures are all post-setup semantic findings:
 The old setup failures in the same selected area should not be used as final
 TPM2 counts; use the focused artifact above or a newer full matrix rerun.
 
+### Raw CKR NULL-mechanism findings
+
+Focused current-source evidence:
+`artifacts/_focused/tpm2-ckr-raw-fault-r3-20260527/`.
+
+After raw CKR subprocess setup classification was tightened, the selected
+raw/fault/general CKR slice reports 28 passed, 14 xfailed, and 3 hard failures.
+The retained false "Crash:" setup rows for raw attribute, buffer, state, fault,
+and `C_GetInterfaceList` probes are stale.
+
+The remaining hard rows are:
+
+- `C_DigestInit(NULL)` exits with signal 11 instead of returning a CKR.
+- `C_GenerateKey(NULL)` returns `CKR_FUNCTION_NOT_SUPPORTED` (`0x54`) instead
+  of `CKR_ARGUMENTS_BAD`. Unlike operation-init calls such as `C_EncryptInit`,
+  `C_GenerateKey` has no NULL-mechanism cancellation success path.
+- `C_WrapKey(NULL)` returns `CKR_FUNCTION_NOT_SUPPORTED` (`0x54`) instead of
+  a specific argument, mechanism, or handle error.
+
 ---
 
 ## OpenCryptoki 3.26 (v3.0)

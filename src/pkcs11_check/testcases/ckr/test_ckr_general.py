@@ -109,6 +109,7 @@ class TestInitializeErrors:
                     print(f"CKR:0x{{rv:08x}}")
             except AttributeError:
                 print("CKR:NO_METHOD")  # v2.40 module, C_GetInterfaceList not available
+                print("OK")
             finally:
                 raw.C_Finalize(None)
         """)

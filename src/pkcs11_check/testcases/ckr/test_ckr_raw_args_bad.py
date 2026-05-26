@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
@@ -24,6 +25,7 @@ _EXTRA_IMPORTS = """\
 import ctypes
 from ctypes import byref, cast
 
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -39,7 +41,8 @@ from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
 )
-# NULL mechanism pointer: acceptable CKR codes per OASIS PKCS#11 v3.1 Sec.5.2
+# NULL mechanism pointer: acceptable CKR codes for operation-init functions
+# with cancellation semantics per OASIS PKCS#11 v3.1 Sec.5.2.
 # CKR_ARGUMENTS_BAD -- NULL pointer is bad argument
 # CKR_MECHANISM_INVALID -- NULL interpreted as invalid mechanism (NSS)
 # CKR_MECHANISM_PARAM_INVALID -- NULL mechanism params interpreted as invalid
@@ -78,12 +81,7 @@ def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
 
 
 def _assert_ok(rc: int, out: str, err: str, name: str) -> None:
-    if rc < 0:
-        pytest.fail(
-            f"{name}: subprocess crashed with signal {-rc}; module does not validate NULL"
-        )
-    assert rc == 0, f"{name} subprocess error: {err[-200:]}"
-    assert "OK" in out, f"{name}: {out}"
+    assert_ckr_subprocess_ok(rc, out, err, context=name)
 
 
 class TestArgsBadNullPointers:
@@ -103,13 +101,15 @@ attrs = template(
 mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
-# EncryptInit with NULL mechanism
-# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
-rv = raw.C_EncryptInit(sh, null_pointer().pointer, key.value)
-print(f"CKR:0x{rv:08x}")
-assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
-print("OK")
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:C_GenerateKey for AES encrypt setup failed: {ckr_name(rv)}")
+else:
+    # EncryptInit with NULL mechanism
+    # PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
+    rv = raw.C_EncryptInit(sh, null_pointer().pointer, key.value)
+    print(f"CKR:0x{rv:08x}")
+    assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
+    print("OK")
 """,
         )
         _assert_ok(rc, out, err, "C_EncryptInit(NULL mech)")
@@ -128,12 +128,14 @@ attrs = template(
 mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-assert rv == CKR_OK, f"GenerateKey: 0x{rv:08x}"
-# PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
-rv = raw.C_DecryptInit(sh, null_pointer().pointer, key.value)
-print(f"CKR:0x{rv:08x}")
-assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
-print("OK")
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:C_GenerateKey for AES decrypt setup failed: {ckr_name(rv)}")
+else:
+    # PKCS#11 v3.1 Sec.5.2: NULL mech ptr => ARGUMENTS_BAD; NSS interprets as MECHANISM_INVALID
+    rv = raw.C_DecryptInit(sh, null_pointer().pointer, key.value)
+    print(f"CKR:0x{rv:08x}")
+    assert rv in _NULL_MECH_OK, f"Got 0x{rv:08x}"
+    print("OK")
 """,
         )
         _assert_ok(rc, out, err, "C_DecryptInit(NULL mech)")
@@ -191,7 +193,7 @@ print("OK")
 key = ctypes.c_ulong(0)
 rv = raw.C_GenerateKey(sh, null_pointer().pointer, None, 0, ctypes.byref(key))
 print(f"CKR:0x{rv:08x}")
-assert rv in (CKR_ARGUMENTS_BAD, CKR_OK), f"Got 0x{rv:08x}"  # NULL mech cancel
+assert rv == CKR_ARGUMENTS_BAD, f"Got 0x{rv:08x}"
 print("OK")
 """,
         )
