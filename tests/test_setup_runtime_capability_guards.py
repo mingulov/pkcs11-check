@@ -47,6 +47,7 @@ from pkcs11_check.testcases import (
     test_mech_wrap,
     test_mechanism_fuzz,
     test_object_size,
+    test_object_visibility,
     test_ro_session_restrictions,
     test_rsa_oaep,
     test_sensitivity,
@@ -759,6 +760,67 @@ def test_ro_session_negative_aes_operation_reject_is_xfail(
         test_ro_session_restrictions.TestROTokenObjectCreation().test_generate_key_token_true_in_ro_fails(
             rs,
             SimpleNamespace(pin=_Pin()),
+        )
+
+
+def test_object_visibility_extra_session_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session"
+        if hasattr(test_object_visibility, "_raw_open_session")
+        else "raw_open_session"
+    )
+    monkeypatch.setattr(test_object_visibility, open_attr, _open_session_limit)
+
+    with pytest.raises(pytest.skip.Exception, match="object-visibility session"):
+        test_object_visibility._open_rw_session(object(), 1, None)
+
+
+def test_object_visibility_aes_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_object_visibility,
+        "require_operational_aes_keygen",
+        lambda _rs: None,
+        raising=False,
+    )
+    keygen_attr = (
+        "_raw_gen_aes_key"
+        if hasattr(test_object_visibility, "_raw_gen_aes_key")
+        else "gen_aes_key"
+    )
+    monkeypatch.setattr(test_object_visibility, keygen_attr, _raise_function_not_supported)
+    monkeypatch.setattr(test_object_visibility, "destroy_quietly", lambda *_args: None)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="object-visibility setup key generation"):
+        test_object_visibility.TestSessionObjectLifecycle().test_session_object_exists_while_session_open(
+            rs
+        )
+
+
+def test_object_visibility_data_object_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create_attr = (
+        "_raw_create_object"
+        if hasattr(test_object_visibility, "_raw_create_object")
+        else "create_object"
+    )
+    monkeypatch.setattr(test_object_visibility, create_attr, _raise_attribute_value_invalid)
+    rs = _session_with_mechanisms()
+
+    with pytest.raises(pytest.xfail.Exception, match="data object setup rejected"):
+        test_object_visibility.TestTokenPrivateInteraction().test_public_session_obj_visible_same_session(
+            rs
         )
 
 
