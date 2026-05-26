@@ -443,6 +443,12 @@ official full-matrix release statistics.
   policy/permission CKRs still skip and generic runtime rejects are visible
   xfail evidence. The normal Docker run is destructive-gated, so this artifact
   confirms gating rather than mock PIN-change behavior.
+- `pkcs11-mock` access-level C_InitPIN focused artifact:
+  `artifacts/_focused/pkcs11-mock-access-levels-init-pin-current-20260527/`.
+  Current source validates the SO-login result before `C_InitPIN` and no longer
+  turns arbitrary setup exceptions or generic CKRs into unsupported skips. The
+  focused run reports 27 skipped and 0 failed; this is destructive/capability
+  gating evidence, not mock PIN-initialization behavior evidence.
 - `pkcs11-mock` object-size focused artifact:
   `artifacts/_focused/pkcs11-mock-object-size-current-20260527/`. Current
   source no longer treats arbitrary `C_GetObjectSize` exceptions or generic

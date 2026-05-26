@@ -311,6 +311,16 @@ pkcs11-mock run in `artifacts/_focused/pkcs11-mock-so-pin-current-20260527/`
 is destructive-gated, so it is gating evidence rather than provider
 `C_SetPIN` behavior evidence.
 
+The access-level `C_InitPIN` row had the same issue and one extra setup gap:
+after the explicit SO-PIN/conflict skips, `C_Login(CKU_SO)` was not validated
+before calling `C_InitPIN`. Current source now fails unexpected SO-login CKRs,
+only skips exact token-policy/environment rejects from `C_InitPIN`, xfails
+generic runtime rejects such as `CKR_FUNCTION_FAILED`, and lets Python-side
+setup bugs fail. A focused pkcs11-mock run in
+`artifacts/_focused/pkcs11-mock-access-levels-init-pin-current-20260527/`
+reports 27 skipped and 0 failed, again as destructive/capability gating
+evidence rather than provider PIN-initialization behavior.
+
 `test_object_size.py` had a similar catch boundary around `C_GetObjectSize`:
 arbitrary exceptions and generic CKRs were being reported as unsupported
 object-size capability. Current source only treats successful zero or

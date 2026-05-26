@@ -61,18 +61,27 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_NOT_WRAPPABLE,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_PIN_INVALID,
+    CKR_PIN_LEN_RANGE,
+    CKR_PIN_TOO_WEAK,
     CKR_SESSION_COUNT,
     CKR_SESSION_READ_ONLY,
     CKR_SESSION_READ_ONLY_EXISTS,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_TOKEN_NOT_INITIALIZED,
+    CKR_TOKEN_WRITE_PROTECTED,
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN,
@@ -104,6 +113,24 @@ _TRUSTED_SETATTR_REJECT_RVS = (
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
+)
+
+_INIT_PIN_POLICY_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_PIN_INVALID,
+    CKR_PIN_LEN_RANGE,
+    CKR_PIN_TOO_WEAK,
+    CKR_SESSION_READ_ONLY,
+    CKR_TOKEN_NOT_INITIALIZED,
+    CKR_TOKEN_WRITE_PROTECTED,
+)
+
+_INIT_PIN_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
     CKR_USER_NOT_LOGGED_IN,
 )
 
@@ -535,12 +562,20 @@ class TestSOSessionCapabilities:
         if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
             close_session_quietly(rs.raw, s1)
             pytest.skip("Another user already logged in on this token")
+        expect_rv(rv, CKR_OK)
 
         new_pin = pin_bytes + b"X"
         try:
             init_pin(rs.raw, s1, new_pin)
-        except (AssertionError, Exception) as e:
-            pytest.skip(f"C_InitPIN not supported: {e}")
+        except AssertionError as exc:
+            if is_known_error(exc, _INIT_PIN_POLICY_REJECT_RVS):
+                pytest.skip(f"C_InitPIN not usable with configured token policy: {exc}")
+            xfail_if_known_ckr(
+                exc,
+                _INIT_PIN_RUNTIME_REJECT_RVS,
+                "C_InitPIN rejected valid SO PIN setup",
+            )
+            raise  # unreachable
         finally:
             # Restore original PIN: logout SO, login USER with new PIN, set back
             _logout_safe(rs.raw, s1)
