@@ -123,6 +123,15 @@ Completed high-signal observations:
   remain provider/security findings. These changes landed after the current
   Docker batch had already started, so the affected artifacts still need a
   refresh before the table reflects them.
+  A later focused Kryoptic rerun on current source also removed the old hard
+  RSA signature buckets: RSA-PSS produced 1,146 passed, 913 duplicate skips,
+  and 443 xfailed invalid-vector rejects, with 0 failed; RSA PKCS#1 signature
+  verification produced 252 passed, 75 skipped, and 4,986 xfailed invalid or
+  acceptable-vector rejects, with 0 failed. Those xfails are mostly Kryoptic
+  returning `CKR_DEVICE_ERROR` for invalid signature verification, so they are
+  non-clean provider evidence rather than clean passes. Evidence directories:
+  `artifacts/_focused/kryoptic-rsapss-current` and
+  `artifacts/_focused/kryoptic-rsa-signature-current`.
 - ACVP KeyGen internal-projection vectors contain seeds and expected keys that
   current PKCS#11 key-generation APIs cannot consume. The suite now keeps those
   vectors collected but skips duplicate provider-visible inputs after the first
@@ -159,6 +168,17 @@ Completed high-signal observations:
   rejections after raw ECDSA conversion, so they remain provider findings. The
   target artifact does not include every later source edit from this working
   tree; it still needs a clean refresh before release statistics.
+- A focused current-source OpenCryptoki AES-XTS rerun confirmed the old XTS
+  bucket is still live: 218 passed, 382 failed with ciphertext/plaintext
+  mismatches after `CKR_OK`, and 600 xfailed with
+  `CKR_MECHANISM_PARAM_INVALID` after `CKM_AES_XTS` was advertised. The local
+  OASIS spec tree defines `CKM_AES_XTS` with a 16-byte data-unit sequence
+  number parameter and same-length output for inputs of at least one block; the
+  pkcs11-check test sends the ACVP `tweakValue` as that 16-byte parameter and
+  compares exact ACVP ciphertext/plaintext. This remains provider behavior or
+  provider/vector-interpretation evidence, not an obvious pkcs11-check loader
+  issue. Evidence directory:
+  `artifacts/_focused/opencryptoki-xts-current`.
 - The current OpenCryptoki artifacts also predate the AES-KWP error-path
   harness fix. A mounted-source rerun of
   `security/test_error_path_kwp.py` and `security/test_error_path_rsa.py`
