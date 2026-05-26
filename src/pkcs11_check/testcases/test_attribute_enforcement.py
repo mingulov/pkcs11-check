@@ -15,7 +15,6 @@ import pytest
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
     gen_rsa_keypair,
     import_secret_key,
     read_attributes,
@@ -48,8 +47,8 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import require_ulong_attr
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases._attribute_values import require_bool_attr, require_ulong_attr
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, is_known_error
 
 pytestmark = [pytest.mark.security]
 
@@ -83,11 +82,11 @@ class TestCopyableOneWay:
         """CKA_COPYABLE=False cannot be changed to True via C_SetAttributeValue."""
         rs = p11_raw_session
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={CKA_COPYABLE: False, CKA_TOKEN: False},
+                purpose="CKA_COPYABLE=False setup",
             )
         except AssertionError as e:
             if _is_template_error(e):
@@ -122,11 +121,11 @@ class TestCopyableOneWay:
     def test_copyable_true_can_be_set_false(self, p11_raw_session: Any) -> None:
         """CKA_COPYABLE=True can be changed to False (the allowed direction)."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_COPYABLE: True, CKA_TOKEN: False},
+            purpose="CKA_COPYABLE=True setup",
         )
         try:
             try:
@@ -157,7 +156,12 @@ class TestDestroyable:
     def test_destroyable_readable(self, p11_raw_session: Any) -> None:
         """CKA_DESTROYABLE should be readable on a generated key (default True)."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
+        key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            attrs={CKA_TOKEN: False},
+            purpose="CKA_DESTROYABLE readback setup",
+        )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_DESTROYABLE])
             if CKA_DESTROYABLE not in attrs:
@@ -175,11 +179,11 @@ class TestDestroyable:
         """C_DestroyObject must fail when CKA_DESTROYABLE=False."""
         rs = p11_raw_session
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={CKA_DESTROYABLE: False, CKA_TOKEN: False},
+                purpose="CKA_DESTROYABLE=False setup",
             )
         except AssertionError as e:
             if _is_template_error(e):
@@ -243,11 +247,11 @@ class TestDestroyable:
         """C_DestroyObject should succeed when CKA_DESTROYABLE=True."""
         rs = p11_raw_session
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={CKA_DESTROYABLE: True, CKA_TOKEN: False},
+                purpose="CKA_DESTROYABLE=True setup",
             )
         except AssertionError as e:
             if _is_template_error(e):
@@ -289,11 +293,11 @@ class TestTokenAttributePromotion:
         """
         rs = p11_raw_session
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={CKA_TOKEN: False, CKA_LABEL: "session-key-promote-test"},
+                purpose="CKA_TOKEN promotion setup",
             )
         except AssertionError as e:
             pytest.skip(f"Could not generate baseline session AES key: {e}")
@@ -377,7 +381,12 @@ class TestKeyGenMechanism:
     def test_generated_aes_key_has_aes_key_gen(self, p11_raw_session: Any) -> None:
         """Generated AES key should have CKA_KEY_GEN_MECHANISM = CKM_AES_KEY_GEN."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
+        key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            attrs={CKA_TOKEN: False},
+            purpose="CKA_KEY_GEN_MECHANISM readback setup",
+        )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_GEN_MECHANISM])
             if CKA_KEY_GEN_MECHANISM not in attrs:
@@ -451,7 +460,12 @@ class TestKeyGenMechanism:
     def test_key_gen_mechanism_read_only(self, p11_raw_session: Any) -> None:
         """CKA_KEY_GEN_MECHANISM must be read-only - reject C_SetAttributeValue."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
+        key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            attrs={CKA_TOKEN: False},
+            purpose="CKA_KEY_GEN_MECHANISM read-only setup",
+        )
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_GEN_MECHANISM])
@@ -482,11 +496,11 @@ class TestCheckValue:
     def test_generated_key_has_check_value(self, p11_raw_session: Any) -> None:
         """Generated AES key should have a 3-byte CKA_CHECK_VALUE."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_TOKEN: False, CKA_ENCRYPT: True},
+            purpose="CKA_CHECK_VALUE setup",
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE])
@@ -596,7 +610,10 @@ class TestAlwaysAuthenticate:
             attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
             if CKA_ALWAYS_AUTHENTICATE not in attrs:
                 pytest.skip("CKA_ALWAYS_AUTHENTICATE not supported by module")
-            val = attrs[CKA_ALWAYS_AUTHENTICATE]
+            val = require_bool_attr(
+                attrs[CKA_ALWAYS_AUTHENTICATE],
+                "CKA_ALWAYS_AUTHENTICATE",
+            )
             assert val is False, f"Default CKA_ALWAYS_AUTHENTICATE should be False, got {val}"
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
@@ -627,7 +644,10 @@ class TestAlwaysAuthenticate:
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
-                val = attrs[CKA_ALWAYS_AUTHENTICATE]
+                val = require_bool_attr(
+                    attrs[CKA_ALWAYS_AUTHENTICATE],
+                    "CKA_ALWAYS_AUTHENTICATE",
+                )
             except AssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
@@ -685,15 +705,15 @@ class TestDateAttributes:
         rs = p11_raw_session
 
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_START_DATE: "20260101",
                     CKA_END_DATE: "20271231",
                 },
+                purpose="date attribute setup",
             )
         except (AssertionError, Exception) as e:
             pytest.skip(f"Module does not support CKA_START_DATE / CKA_END_DATE: {e}")
@@ -719,7 +739,12 @@ class TestDateAttributes:
     def test_empty_dates_by_default(self, p11_raw_session: Any) -> None:
         """Generated key without explicit dates should have empty/default dates."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
+        key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            attrs={CKA_TOKEN: False},
+            purpose="default date attribute setup",
+        )
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_START_DATE])

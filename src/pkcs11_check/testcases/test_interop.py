@@ -28,6 +28,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_ALLOWED_MECHANISMS,
     CKA_DECRYPT,
     CKA_EC_POINT,
     CKA_ENCRYPT,
@@ -57,12 +58,19 @@ from pkcs11_check.testcases.conftest import extract_ec_point
 pytestmark = pytest.mark.interop
 
 
+def _require_mechanisms(rs: Any, *names: str) -> None:
+    for name in names:
+        if not rs.has_mechanism(name):
+            pytest.skip(f"{name} not supported")
+
+
 class TestRSAInterop:
     """RSA key interop between PKCS#11 and cryptography."""
 
     def test_sign_in_p11_verify_in_crypto(self, p11_raw_session: Any) -> None:
         """Sign with PKCS#11, export pubkey, verify with cryptography."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS")
         pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
 
         data = b"interop test data"
@@ -79,6 +87,7 @@ class TestRSAInterop:
     def test_rsa_pubkey_pem_roundtrip(self, p11_raw_session: Any) -> None:
         """Export RSA public key to PEM, parse back, verify key size."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN")
         pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
 
         try:
@@ -99,6 +108,7 @@ class TestRSAInterop:
     def test_rsa_pss_sign_p11_verify_crypto(self, p11_raw_session: Any) -> None:
         """RSA-PSS sign in PKCS#11, verify with cryptography."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS_PSS")
         pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         data = b"RSA-PSS interop data"
         pss_param = mech_pss(
@@ -146,6 +156,13 @@ class TestRSAInterop:
     ) -> None:
         """RSA signature interop across all standard hash algorithms."""
         rs = p11_raw_session
+        mech_names: dict[int, str] = {
+            int(CKM_SHA1_RSA_PKCS): "SHA1_RSA_PKCS",
+            int(CKM_SHA256_RSA_PKCS): "SHA256_RSA_PKCS",
+            int(CKM_SHA384_RSA_PKCS): "SHA384_RSA_PKCS",
+            int(CKM_SHA512_RSA_PKCS): "SHA512_RSA_PKCS",
+        }
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN", mech_names[int(hash_mech)])
         pub_h, priv_h = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         data = b"multi-hash interop test"
 
@@ -174,6 +191,7 @@ class TestECDSAInterop:
     def test_ecdsa_sign_p11_verify_crypto(self, p11_raw_session: Any) -> None:
         """Full ECDSA round-trip: sign in P11, verify in crypto."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "EC_KEY_PAIR_GEN", "ECDSA")
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub_h, priv_h = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
 
@@ -211,6 +229,7 @@ class TestECDSAInterop:
     ) -> None:
         """ECDSA sign/verify interop for P-256 and P-384."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "EC_KEY_PAIR_GEN", "ECDSA")
         curve_oid = encode_named_curve_parameters(curve_name)
         pub_h, priv_h = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
 
@@ -237,6 +256,7 @@ class TestAESInterop:
     def test_aes_ecb_encrypt_p11_decrypt_crypto(self, p11_raw_session: Any) -> None:
         """Import AES key, encrypt in P11, decrypt in crypto."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "AES_ECB")
         key_bytes = bytes(range(32))
         plaintext = b"AES interop test"  # 16 bytes
 
@@ -251,6 +271,7 @@ class TestAESInterop:
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
                 CKA_EXTRACTABLE: True,
+                CKA_ALLOWED_MECHANISMS: [CKM_AES_ECB],
             },
         )
         try:
@@ -267,6 +288,7 @@ class TestAESInterop:
     def test_aes_ecb_encrypt_crypto_decrypt_p11(self, p11_raw_session: Any) -> None:
         """Encrypt with cryptography, decrypt with PKCS#11."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "AES_ECB")
         key_bytes = bytes(range(32))
         plaintext = b"reverse interop!"  # 16 bytes
 
@@ -286,6 +308,7 @@ class TestAESInterop:
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
                 CKA_EXTRACTABLE: True,
+                CKA_ALLOWED_MECHANISMS: [CKM_AES_ECB],
             },
         )
         try:
@@ -297,6 +320,7 @@ class TestAESInterop:
     def test_aes_gcm_encrypt_p11_decrypt_crypto(self, p11_raw_session: Any) -> None:
         """AES-GCM: encrypt in PKCS#11, decrypt with cryptography."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "AES_GCM")
         key_bytes = bytes(range(32))
         plaintext = b"GCM interop test data!!"
         nonce = b"\x00" * 12
@@ -312,6 +336,7 @@ class TestAESInterop:
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
                 CKA_EXTRACTABLE: True,
+                CKA_ALLOWED_MECHANISMS: [CKM_AES_GCM],
             },
         )
         try:
@@ -339,6 +364,7 @@ class TestHMACInterop:
     def test_hmac_sha256_interop(self, p11_raw_session: Any) -> None:
         """Compute HMAC-SHA256 in both, compare."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA256_HMAC")
         key_bytes = bytes(range(32))
         data = b"HMAC interop test data"
 
@@ -353,6 +379,7 @@ class TestHMACInterop:
                 CKA_VERIFY: True,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
+                CKA_ALLOWED_MECHANISMS: [CKM_SHA256_HMAC],
             },
         )
         try:
@@ -370,6 +397,7 @@ class TestHMACInterop:
     def test_hmac_sha1_interop(self, p11_raw_session: Any) -> None:
         """HMAC-SHA1 cross-verification."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA_1_HMAC")
         key_bytes = b"secret key for hmac!!"  # >= 20 bytes for SHA-1 HMAC
         data = b"message to authenticate"
 
@@ -382,6 +410,7 @@ class TestHMACInterop:
                 CKA_SIGN: True,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
+                CKA_ALLOWED_MECHANISMS: [CKM_SHA_1_HMAC],
             },
         )
         try:

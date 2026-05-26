@@ -35,7 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import require_ulong_attr
+from pkcs11_check.testcases._attribute_values import require_bool_attr, require_ulong_attr
 from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
@@ -157,6 +157,7 @@ class TestKeyAttributes:
                     local = _read_attr_safe(rs, handle, CKA_LOCAL, f"CKA_LOCAL on {label}")
                     if local is None:
                         continue
+                    local = require_bool_attr(local, f"{entry.mech_name} {label} CKA_LOCAL")
                     if local is False:
                         _xfail_generated_local_false(entry.mech_name, f"{label} key")
                     assert local is True, (
@@ -170,6 +171,7 @@ class TestKeyAttributes:
             try:
                 local = _read_attr_safe(rs, key, CKA_LOCAL, "CKA_LOCAL")
                 if local is not None:
+                    local = require_bool_attr(local, f"{entry.mech_name} CKA_LOCAL")
                     if local is False:
                         _xfail_generated_local_false(entry.mech_name, "key")
                     assert local is True, (
@@ -203,6 +205,7 @@ class TestKeyAttributes:
                     token = _read_attr_safe(rs, handle, CKA_TOKEN, f"CKA_TOKEN on {label}")
                     if token is None:
                         continue
+                    token = require_bool_attr(token, f"{entry.mech_name} {label} CKA_TOKEN")
                     # Some HSMs may always return True for CKA_TOKEN -- that is allowed;
                     # what is NOT allowed is returning True when we requested False AND the
                     # module confirmed the key was created. We only check if it's False or True.
@@ -218,6 +221,7 @@ class TestKeyAttributes:
             try:
                 token = _read_attr_safe(rs, key, CKA_TOKEN, "CKA_TOKEN")
                 if token is not None:
+                    token = require_bool_attr(token, f"{entry.mech_name} CKA_TOKEN")
                     assert isinstance(token, bool), (
                         f"{entry.mech_name}: CKA_TOKEN is not bool: {token!r}"
                     )

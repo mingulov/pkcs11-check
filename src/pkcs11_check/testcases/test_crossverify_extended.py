@@ -25,6 +25,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_ALLOWED_MECHANISMS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
@@ -48,20 +49,23 @@ from pkcs11_check.testcases._rsa_export import (
 pytestmark = pytest.mark.crossverify
 
 
-def _import_aes_key_raw(rs: Any, key_bytes: bytes) -> int:
+def _import_aes_key_raw(rs: Any, key_bytes: bytes, *allowed_mechanisms: int) -> int:
     """Import raw AES key bytes via raw API."""
+    attrs: dict[Any, Any] = {
+        CKA_ENCRYPT: True,
+        CKA_DECRYPT: True,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+    }
+    if allowed_mechanisms:
+        attrs[CKA_ALLOWED_MECHANISMS] = [int(mech) for mech in allowed_mechanisms]
     return import_secret_key(
         rs.raw,
         rs.sh,
         CKK_AES,
         key_bytes,
-        attrs={
-            CKA_ENCRYPT: True,
-            CKA_DECRYPT: True,
-            CKA_TOKEN: False,
-            CKA_SENSITIVE: False,
-            CKA_EXTRACTABLE: True,
-        },
+        attrs=attrs,
     )
 
 
@@ -76,7 +80,7 @@ class TestAESCBCCrossVerify:
         data = b"\xaa" * 64  # 4 blocks
 
         # PKCS#11
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_CBC)
         try:
             ct_p11 = encrypt_single(
                 rs.raw,
@@ -109,7 +113,7 @@ class TestAESCBCCrossVerify:
         ct = enc.update(data) + enc.finalize()
 
         # Decrypt with PKCS#11
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_CBC)
         try:
             pt = decrypt_single(
                 rs.raw,
@@ -143,7 +147,7 @@ class TestAESGCMCrossVerify:
         # ct_tag = ciphertext || tag (16 bytes)
 
         # Decrypt with PKCS#11
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_GCM)
         try:
             gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             pt = decrypt_single(

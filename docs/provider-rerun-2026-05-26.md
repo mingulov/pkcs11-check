@@ -111,6 +111,37 @@ Excluded targets: `bouncyhsm` because it is too slow for this iteration, and
   separate cleanup track; this pass only changed paths tied to current provider
   artifacts and concrete raw Python failure signatures.
 
+## Focused Post-Fix Reruns
+
+These are targeted reruns used to validate classification fixes. They are not
+official full-matrix release statistics.
+
+- `pkcs11-mock` focused artifacts:
+  `artifacts/_focused/pkcs11-mock-post-38c12f8-r4`. The same 9-file focus list
+  moved from 37 failures in `r3` to 7 failures in `r4`. Attribute enforcement,
+  mechanism attribute readback, raw operation-state setup, and interop all moved
+  out of raw failure buckets.
+- `pkcs11-mock` mechanism probing showed the mock advertises only 9 mechanisms.
+  The interop and crossverify files were missing guards for absent mechanisms
+  such as `AES_ECB`, `SHA256_RSA_PKCS`, `SHA256`, HMAC, and ECDSA. After adding
+  those guards, `test_interop.py` moved from 13 failures to 13 skips plus 2
+  xfails. `test_crossverify.py` moved from 18 failures to one remaining failure:
+  advertised `CKM_SHA_1` returns a digest mismatch. Remaining mock failures are
+  therefore provider/mock behavior: SHA-1 digest mismatch, advertised AES-CBC
+  returning `CKR_KEY_TYPE_INCONSISTENT`, and RSA-OAEP semantic failures.
+- `tpm2` focused artifacts:
+  `artifacts/_focused/tpm2-post-38c12f8-r3`. The same 5-file focus list moved
+  from 13 failures / 17 xfails in `r1` to 12 failures / 18 xfails in `r3`.
+  The raw `CKA_ALLOWED_MECHANISMS` setup complaint disappeared after imported
+  AES/HMAC secret keys started carrying the operation mechanism in
+  `CKA_ALLOWED_MECHANISMS`.
+- The remaining TPM2 AES/HMAC interop and crossverify failures now reach the TPM
+  operation and return `CKR_GENERAL_ERROR` with TPM2-TSS errors such as
+  `Esys_EncryptDecrypt2` / `Esys_HMAC` handle value out of range. Those are
+  provider behavior findings, not missing-template setup failures. RSA-4096
+  crossverify moved to xfail setup evidence because the provider rejects that
+  key size with `CKR_ATTRIBUTE_VALUE_INVALID`.
+
 ## Follow-Up Queue
 
 - Re-run the affected files on TPM2/OpenCryptoki/NSS after the post-run fixes

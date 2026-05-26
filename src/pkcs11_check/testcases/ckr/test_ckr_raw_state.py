@@ -76,7 +76,7 @@ attrs = template(
 )
 rv = raw.C_GenerateKey(sh, mech_keygen.byref(), _template_ptr(attrs), attrs.count, byref(key))
 if rv != CKR_OK:
-    print(f"SETUP_XFAIL:C_GenerateKey failed:{ckr_name(rv)}")
+    print(f"SETUP_XFAIL:C_GenerateKey failed:{{ckr_name(rv)}}")
     raw.C_CloseSession(sh)
     raw.C_Finalize(None)
     sys.exit(0)

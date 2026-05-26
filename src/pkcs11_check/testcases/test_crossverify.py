@@ -19,12 +19,12 @@ from pkcs11_check.raw.recipes import (
     digest_single,
     encrypt_single,
     gen_ec_keypair,
-    gen_rsa_keypair,
     import_secret_key,
     read_attributes,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_ALLOWED_MECHANISMS,
     CKA_DECRYPT,
     CKA_EC_POINT,
     CKA_ENCRYPT,
@@ -56,25 +56,34 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail, is_known_error
 
 pytestmark = pytest.mark.crossverify
 
 
-def _import_aes_key_raw(rs: Any, key_bytes: bytes) -> int:
+def _require_mechanisms(rs: Any, *names: str) -> None:
+    for name in names:
+        if not rs.has_mechanism(name):
+            pytest.skip(f"{name} not supported")
+
+
+def _import_aes_key_raw(rs: Any, key_bytes: bytes, *allowed_mechanisms: int) -> int:
     """Import raw AES key bytes via raw API."""
+    attrs: dict[Any, Any] = {
+        CKA_ENCRYPT: True,
+        CKA_DECRYPT: True,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+    }
+    if allowed_mechanisms:
+        attrs[CKA_ALLOWED_MECHANISMS] = [int(mech) for mech in allowed_mechanisms]
     return import_secret_key(
         rs.raw,
         rs.sh,
         CKK_AES,
         key_bytes,
-        attrs={
-            CKA_ENCRYPT: True,
-            CKA_DECRYPT: True,
-            CKA_TOKEN: False,
-            CKA_SENSITIVE: False,
-            CKA_EXTRACTABLE: True,
-        },
+        attrs=attrs,
     )
 
 
@@ -87,10 +96,11 @@ class TestAESCrossVerify:
     def test_aes_256_ecb_encrypt(self, p11_raw_session: Any) -> None:
         """AES-256-ECB: PKCS#11 encrypt must match cryptography."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "AES_ECB")
         key_bytes = bytes(range(32))
         plaintext = b"cross-verify AES"  # exactly 16 bytes
 
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_ECB)
         try:
             p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
 
@@ -106,10 +116,11 @@ class TestAESCrossVerify:
     def test_aes_128_ecb_encrypt(self, p11_raw_session: Any) -> None:
         """AES-128-ECB cross-verification."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "AES_ECB")
         key_bytes = bytes(16)
         plaintext = b"128-bit AES key!"
 
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_ECB)
         try:
             p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
 
@@ -125,6 +136,7 @@ class TestAESCrossVerify:
     def test_aes_ecb_decrypt(self, p11_raw_session: Any) -> None:
         """Encrypt with cryptography, decrypt with PKCS#11."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "AES_ECB")
         key_bytes = bytes(range(32))
         plaintext = b"decrypt-xverify!"
 
@@ -133,7 +145,7 @@ class TestAESCrossVerify:
         enc = cipher.encryptor()
         ciphertext = enc.update(plaintext) + enc.finalize()
 
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_ECB)
         try:
             p11_pt = decrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, ciphertext)
             assert p11_pt == plaintext
@@ -143,10 +155,11 @@ class TestAESCrossVerify:
     def test_aes_ecb_multiblock(self, p11_raw_session: Any) -> None:
         """AES-ECB with multiple blocks cross-verification."""
         rs = p11_raw_session
+        _require_mechanisms(rs, "AES_ECB")
         key_bytes = bytes(range(32))
         plaintext = b"A" * 64  # 4 blocks
 
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_ECB)
         try:
             p11_ct = encrypt_single(rs.raw, rs.sh, p11_key, CKM_AES_ECB, plaintext)
 
@@ -173,7 +186,8 @@ class TestRSACrossVerify:
     def test_rsa_pkcs_sign(self, p11_raw_session: Any) -> None:
         """RSA PKCS#1 v1.5: sign with PKCS#11, verify with cryptography."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"RSA PKCS cross-verify test data"
             signature = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
@@ -187,7 +201,8 @@ class TestRSACrossVerify:
     def test_rsa_4096_sign(self, p11_raw_session: Any) -> None:
         """RSA-4096 PKCS#1 v1.5 cross-verification."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 4096)
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 4096)
         try:
             data = b"RSA-4096 cross-verify"
             signature = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
@@ -202,7 +217,8 @@ class TestRSACrossVerify:
     def test_rsa_sha512_sign(self, p11_raw_session: Any) -> None:
         """RSA with SHA-512 cross-verification."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN", "SHA512_RSA_PKCS")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"RSA SHA-512 cross-verify"
             signature = sign_single(rs.raw, rs.sh, priv, CKM_SHA512_RSA_PKCS, data)
@@ -242,8 +258,7 @@ class TestECDSACrossVerify:
     def test_ecdsa_p256(self, p11_raw_session: Any) -> None:
         """ECDSA P-256: sign with PKCS#11, verify with cryptography."""
         rs = p11_raw_session
-        if not rs.has_mechanism("ECDSA"):
-            pytest.skip("CKM_ECDSA not supported")
+        _require_mechanisms(rs, "EC_KEY_PAIR_GEN", "ECDSA")
 
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
@@ -266,8 +281,7 @@ class TestECDSACrossVerify:
     def test_ecdsa_p384(self, p11_raw_session: Any) -> None:
         """ECDSA P-384: sign with PKCS#11, verify with cryptography."""
         rs = p11_raw_session
-        if not rs.has_mechanism("ECDSA"):
-            pytest.skip("CKM_ECDSA not supported")
+        _require_mechanisms(rs, "EC_KEY_PAIR_GEN", "ECDSA")
 
         curve_oid = encode_named_curve_parameters("secp384r1")
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
@@ -294,21 +308,25 @@ class TestDigestCrossVerify:
 
     def test_sha256(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA256")
         data = b"digest cross-verification data"
         assert digest_single(rs.raw, rs.sh, CKM_SHA256, data) == hashlib.sha256(data).digest()
 
     def test_sha512(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA512")
         data = b"sha512 cross-verify"
         assert digest_single(rs.raw, rs.sh, CKM_SHA512, data) == hashlib.sha512(data).digest()
 
     def test_sha384(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA384")
         data = b"sha384 cross-verify"
         assert digest_single(rs.raw, rs.sh, CKM_SHA384, data) == hashlib.sha384(data).digest()
 
     def test_sha1(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA_1")
         data = b"sha1 cross-verify"
         assert (
             digest_single(rs.raw, rs.sh, CKM_SHA_1, data)
@@ -317,15 +335,18 @@ class TestDigestCrossVerify:
 
     def test_sha256_empty(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA256")
         assert digest_single(rs.raw, rs.sh, CKM_SHA256, b"") == hashlib.sha256(b"").digest()
 
     def test_sha256_large(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA256")
         data = b"X" * 100_000
         assert digest_single(rs.raw, rs.sh, CKM_SHA256, data) == hashlib.sha256(data).digest()
 
     def test_sha224(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA224")
         data = b"sha224 cross-verify"
         assert digest_single(rs.raw, rs.sh, CKM_SHA224, data) == hashlib.sha224(data).digest()
 
@@ -338,6 +359,7 @@ class TestHMACCrossVerify:
         import hmac as hmac_mod
 
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA256_HMAC")
         key_bytes = bytes(range(32))
         data = b"HMAC cross-verification data"
 
@@ -355,6 +377,7 @@ class TestHMACCrossVerify:
                         CKA_VERIFY: True,
                         CKA_TOKEN: False,
                         CKA_SENSITIVE: False,
+                        CKA_ALLOWED_MECHANISMS: [CKM_SHA256_HMAC],
                     },
                 )
                 break
@@ -384,6 +407,7 @@ class TestHMACCrossVerify:
         import hmac as hmac_mod
 
         rs = p11_raw_session
+        _require_mechanisms(rs, "SHA_1_HMAC")
         key_bytes = bytes(range(20))
 
         try:
@@ -396,6 +420,7 @@ class TestHMACCrossVerify:
                     CKA_SIGN: True,
                     CKA_TOKEN: False,
                     CKA_SENSITIVE: False,
+                    CKA_ALLOWED_MECHANISMS: [CKM_SHA_1_HMAC],
                 },
             )
         except (AssertionError, AttributeError):
@@ -420,7 +445,8 @@ class TestRSAKeySizeCrossVerify:
     def test_rsa_3072_sha384(self, p11_raw_session: Any) -> None:
         """RSA-3072 with SHA-384."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 3072)
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN", "SHA384_RSA_PKCS")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 3072)
         try:
             data = b"RSA-3072 SHA-384 cross-verify"
             signature = sign_single(rs.raw, rs.sh, priv, CKM_SHA384_RSA_PKCS, data)
@@ -435,12 +461,13 @@ class TestRSAKeySizeCrossVerify:
         from pkcs11_check.compliance import ComplianceLevel, note
 
         rs = p11_raw_session
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN", "SHA1_RSA_PKCS")
         note(
             "RSA with SHA-1 signatures",
             ComplianceLevel.DEPRECATED,
             reference="NIST SP 800-131A Rev. 2",
         )
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"RSA SHA-1 cross-verify"
             signature = sign_single(rs.raw, rs.sh, priv, CKM_SHA1_RSA_PKCS, data)
@@ -454,7 +481,8 @@ class TestRSAKeySizeCrossVerify:
     def test_rsa_2048_sha224(self, p11_raw_session: Any) -> None:
         """RSA-2048 with SHA-224."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _require_mechanisms(rs, "RSA_PKCS_KEY_PAIR_GEN", "SHA224_RSA_PKCS")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"RSA SHA-224 cross-verify"
             signature = sign_single(rs.raw, rs.sh, priv, CKM_SHA224_RSA_PKCS, data)
