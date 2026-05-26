@@ -1151,6 +1151,16 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `CKR_OK`, so that row is a mock crypto-output finding rather than setup
   noise. A focused current TPM2 rerun reports 15 passed, 2 skipped, 3 xfailed,
   and 0 failed for this file.
+- **Standalone KAT AES-ECB coverage**: the standalone NIST KAT file now guards
+  AES-ECB before importing AES test keys. pkcs11-mock does not advertise
+  `CKM_AES_ECB`, so the old standalone AES KAT `CKR_MECHANISM_INVALID` rows
+  are stale missing-capability artifacts, not cryptographic failures. If a
+  provider advertises AES-ECB but rejects valid KAT key import, encrypt, or
+  decrypt with an explicit CKR, the row is visible xfail evidence. Ciphertext,
+  plaintext, and digest mismatches after `CKR_OK` remain hard failures. A
+  focused pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-kat-r2-20260527/` reports 2 failed,
+  18 skipped, and 1 xfailed; the two hard rows are SHA-1 digest mismatches.
 - **General error-path setup coverage**: `test_errors.py` now applies the same
   split to broad negative and edge-case rows. Missing AES/SHA/RSA mechanisms are
   capability skips before setup. Advertised AES/RSA setup rejects are xfail

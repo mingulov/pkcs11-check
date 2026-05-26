@@ -388,6 +388,13 @@ official full-matrix release statistics.
   advertised `CKM_SHA_1` returns a digest mismatch. Remaining mock failures are
   therefore provider/mock behavior: SHA-1 digest mismatch, advertised AES-CBC
   returning `CKR_KEY_TYPE_INCONSISTENT`, and RSA-OAEP semantic failures.
+- `pkcs11-mock` standalone KAT focused artifact:
+  `artifacts/_focused/pkcs11-mock-kat-r2-20260527/`. The focused `test_kat.py`
+  run moved from 10 failed / 10 skipped / 1 xfailed to 2 failed / 18 skipped /
+  1 xfailed. pkcs11-mock does not advertise `CKM_AES_ECB`, so the old AES-ECB
+  KAT `CKR_MECHANISM_INVALID` rows were missing-capability guard noise. The two
+  remaining hard rows are SHA-1 digest mismatches after `CKR_OK`, which remain
+  strict wrong-output findings.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124
