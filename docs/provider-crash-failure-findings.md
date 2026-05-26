@@ -575,7 +575,13 @@ support list through mechanism discovery.
 
 The X25519/X448 guard received the same structured CKR treatment. Invalid JWK
 vectors whose public key cannot be decoded now count as accepted invalid-vector
-rejections instead of provider capability skips.
+rejections instead of provider capability skips. Current source also narrows the
+XDH decoder catch boundary: expected malformed-vector decode errors remain
+classified, but unexpected decoder bugs propagate instead of becoming
+valid-vector skips or invalid-vector passes. The focused pkcs11-mock XDH rerun
+in `artifacts/_focused/pkcs11-mock-xdh-decode-current-20260527/` reports 4,176
+capability skips and 0 failures because the mock does not advertise
+`ECDH1_DERIVE`.
 
 Ed25519/Ed448 import guards now also use exact CKR constants for Edwards curve
 and public-key import rejects. Signature verification failures after a key was

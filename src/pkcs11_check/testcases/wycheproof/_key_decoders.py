@@ -12,6 +12,7 @@ from asn1crypto.keys import (  # type: ignore[import-untyped]
     PrivateKeyInfo,
     PublicKeyInfo,
 )
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -189,7 +190,7 @@ def decode_xdh_public_bytes(value: Any, encoding_name: str) -> bytes:
         der = bytes.fromhex(value) if encoding_name == "asn" else _pem_to_der(value)
         try:
             return _decode_xdh_public_der(der)
-        except Exception:  # noqa: BLE001
+        except (UnsupportedAlgorithm, ValueError):
             raw = _extract_spki_bitstring_raw(der)
             if raw is not None:
                 return raw

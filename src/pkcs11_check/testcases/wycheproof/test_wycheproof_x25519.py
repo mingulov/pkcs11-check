@@ -7,9 +7,11 @@ with EC_MONTGOMERY key type across raw, ASN.1, PEM, and JWK encodings.
 from __future__ import annotations
 
 import json
+from binascii import Error as BinasciiError
 from typing import Any, NoReturn
 
 import pytest
+from cryptography.exceptions import UnsupportedAlgorithm
 
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
@@ -87,6 +89,14 @@ _XDH_RUNTIME_REJECT_CKRS = (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
+)
+
+_XDH_DECODE_ERRORS = (
+    BinasciiError,
+    KeyError,
+    TypeError,
+    UnsupportedAlgorithm,
+    ValueError,
 )
 
 # OIDs for Montgomery curves
@@ -175,13 +185,13 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     result = vec["result"]
     try:
         private_bytes = decode_xdh_private_bytes(vec["private"], encoding_name)
-    except Exception as exc:
+    except _XDH_DECODE_ERRORS as exc:
         if result == "invalid":
             return  # Can't import a private key on our side; invalid vector passes
         pytest.skip(f"Cannot decode {encoding_name} XDH private key: {type(exc).__name__}")
     try:
         public_bytes = decode_xdh_public_bytes(vec["public"], encoding_name)
-    except Exception as exc:
+    except _XDH_DECODE_ERRORS as exc:
         if result == "invalid":
             return
         pytest.skip(f"Cannot decode {encoding_name} XDH public key: {type(exc).__name__}")
@@ -249,6 +259,5 @@ def test_xdh(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         assert shared == shared_expected
     if result == "invalid" and shared is not None and len(public_bytes) != key_size:
         pytest.fail(
-            f"Invalid X25519/X448 vector {vec_id} derived with "
-            f"{len(public_bytes)}-byte public key"
+            f"Invalid X25519/X448 vector {vec_id} derived with {len(public_bytes)}-byte public key"
         )

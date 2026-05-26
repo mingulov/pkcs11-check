@@ -443,6 +443,12 @@ official full-matrix release statistics.
   requires Montgomery setup and tries X25519 then X448. The mock target has no
   advertised X2RATCHET coverage, so this artifact is capability-skip evidence,
   not provider Double Ratchet behavior evidence.
+- `pkcs11-mock` Wycheproof XDH focused artifact:
+  `artifacts/_focused/pkcs11-mock-xdh-decode-current-20260527/`. Current source
+  narrows X25519/X448 decoder exception handling so local decoder bugs propagate
+  instead of becoming valid-vector skips or invalid-vector passes. The mock
+  target does not advertise `ECDH1_DERIVE`, so the focused run reports 4,176
+  skipped and 0 failed as capability-skip evidence.
 - `pkcs11-mock` SO PIN focused artifact:
   `artifacts/_focused/pkcs11-mock-so-pin-current-20260527/`. Current source no
   longer turns arbitrary `C_SetPIN` setup exceptions into skips; exact token

@@ -66,6 +66,47 @@ def test_invalid_xdh_public_decode_is_accepted_rejection(
         pytest.fail(f"invalid XDH public-key decode was skipped: {exc}")
 
 
+def test_valid_xdh_private_decoder_bug_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unexpected decoder bugs must not become valid-vector capability skips."""
+    monkeypatch.setattr(
+        xdh,
+        "decode_xdh_private_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("decoder bug")),
+    )
+
+    vec_id = "x25519_test.json:tc1-valid"
+    vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
+
+    try:
+        xdh.test_xdh(_XdhSession(), vec_id, vec)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"valid XDH decoder bug was skipped: {exc}")
+    except RuntimeError as exc:
+        assert "decoder bug" in str(exc)
+    else:
+        pytest.fail("valid XDH decoder bug did not propagate")
+
+
+def test_invalid_xdh_public_decoder_bug_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unexpected decoder bugs must not become invalid-vector passes."""
+    monkeypatch.setattr(xdh, "decode_xdh_private_bytes", lambda *_args, **_kwargs: b"\x01" * 32)
+    monkeypatch.setattr(
+        xdh,
+        "decode_xdh_public_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("decoder bug")),
+    )
+
+    vec_id = "x25519_jwk_test.json:tc528-invalid"
+    vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
+
+    with pytest.raises(RuntimeError, match="decoder bug"):
+        xdh.test_xdh(_XdhSession(), vec_id, vec)
+
+
 def test_invalid_xdh_public_length_success_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -76,9 +117,7 @@ def test_invalid_xdh_public_length_success_is_reported(
     monkeypatch.setattr(xdh, "destroy_quietly", lambda *_args: None)
 
     vec = next(
-        vec
-        for vec_id, vec in xdh._ALL_XDH_VECTORS
-        if vec_id == "x448_test.json:tc76-invalid"
+        vec for vec_id, vec in xdh._ALL_XDH_VECTORS if vec_id == "x448_test.json:tc76-invalid"
     )
 
     with pytest.raises(pytest.fail.Exception, match="Invalid X25519/X448 vector"):
