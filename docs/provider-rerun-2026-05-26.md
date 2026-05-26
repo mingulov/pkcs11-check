@@ -406,6 +406,13 @@ official full-matrix release statistics.
   9 skipped. RSA/SHA-256 sign rows now skip when `SHA256_RSA_PKCS` is absent.
   The remaining hard rows are AES value readback placeholders and empty RSA
   public modulus readback after setup succeeds.
+- `pkcs11-mock` resource/stress focused artifact:
+  `artifacts/_focused/pkcs11-mock-resource-stress-r2-20260527/`. The focused
+  `test_resource.py` and `test_stress.py` run moved from 1 passed / 16 failed
+  to 16 skipped / 1 failed. Missing AES/SHA/RSA mechanisms and exact
+  `CKR_SESSION_COUNT` extra-session capacity are now setup skips. The remaining
+  hard row is `test_rapid_random_1000`, where the mock returns the same
+  32-byte value on every random-generation call.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124

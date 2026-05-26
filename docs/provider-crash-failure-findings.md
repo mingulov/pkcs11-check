@@ -1170,6 +1170,16 @@ The following paths were tightened after inspecting the all-fail artifacts:
   focused pkcs11-mock rerun in
   `artifacts/_focused/pkcs11-mock-kat-r2-20260527/` reports 2 failed,
   18 skipped, and 1 xfailed; the two hard rows are SHA-1 digest mismatches.
+- **Resource/stress setup coverage**: the legacy resource and stress files now
+  use the same setup boundary as the rest of the suite. Missing AES/SHA/RSA
+  mechanisms skip before fixture setup, advertised setup/operation CKR rejects
+  become visible xfail evidence, and only exact `CKR_SESSION_COUNT` while
+  opening an additional session is treated as a capacity skip. A focused
+  pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-resource-stress-r2-20260527/` moved the slice
+  from 1 passed / 16 failed to 16 skipped / 1 failed. The remaining hard row is
+  `test_rapid_random_1000`, where all generated 32-byte random values are
+  identical `0x01` bytes.
 - **General error-path setup coverage**: `test_errors.py` now applies the same
   split to broad negative and edge-case rows. Missing AES/SHA/RSA mechanisms are
   capability skips before setup. Advertised AES/RSA setup rejects are xfail
