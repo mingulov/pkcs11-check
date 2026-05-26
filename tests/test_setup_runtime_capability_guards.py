@@ -25,6 +25,7 @@ from pkcs11_check.raw.types_std import (
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_SESSION_COUNT,
 )
 from pkcs11_check.testcases import (
     _rsa_export,
@@ -556,6 +557,25 @@ def test_access_levels_data_object_setup_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="data object setup rejected"):
         test_access_levels._create_access_data_object(rs, 1, {})
+
+
+def test_access_levels_public_session_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    monkeypatch.setattr(test_access_levels, "raw_open_session", _open_session_limit)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_access_levels.TestPublicSessionVisibility().test_public_session_can_digest(
+            rs,
+            SimpleNamespace(),
+        )
 
 
 def test_access_levels_user_setattr_trusted_reject_is_accepted(

@@ -68,6 +68,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_NOT_WRAPPABLE,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_SESSION_COUNT,
     CKR_SESSION_READ_ONLY,
     CKR_SESSION_READ_ONLY_EXISTS,
     CKR_TEMPLATE_INCOMPLETE,
@@ -157,6 +158,19 @@ def _create_access_data_object(rs: Any, sh: int, attrs: dict[Any, Any]) -> int:
             "access-level data object setup rejected by the provider",
         )
     raise
+
+
+def _open_access_session_or_skip(rs: Any, flags: int) -> int:
+    """Open an extra session for access-level scenarios."""
+    try:
+        return raw_open_session(rs.raw, rs.slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional session required by access-level test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +299,7 @@ class TestPublicSessionVisibility:
     def test_public_session_can_digest(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Public session can perform digest operations (no login needed)."""
         rs = p11_raw_session
-        pub_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
+        pub_sh = _open_access_session_or_skip(rs, CKF_SERIAL_SESSION)
         try:
             digest = digest_single(rs.raw, pub_sh, CKM_SHA256, b"public digest")
             assert len(digest) == 32
@@ -297,7 +311,7 @@ class TestPublicSessionVisibility:
     ) -> None:
         """Public session can generate random (no login needed)."""
         rs = p11_raw_session
-        pub_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
+        pub_sh = _open_access_session_or_skip(rs, CKF_SERIAL_SESSION)
         try:
             rand = generate_random(rs.raw, pub_sh, 16)
             assert len(rand) == 16  # 128 bits = 16 bytes
@@ -1362,11 +1376,11 @@ class TestPublicSessionRestrictions:
         flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear login
-        pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+        pre_sh = _open_access_session_or_skip(rs, flags_rw)
         rs.raw.C_Logout(pre_sh)
         close_session_quietly(rs.raw, pre_sh)
 
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+        s1 = _open_access_session_or_skip(rs, flags_rw)
         try:
             try:
                 key_h = gen_aes_key(
@@ -1402,11 +1416,11 @@ class TestPublicSessionRestrictions:
         flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear login
-        pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+        pre_sh = _open_access_session_or_skip(rs, flags_rw)
         rs.raw.C_Logout(pre_sh)
         close_session_quietly(rs.raw, pre_sh)
 
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+        s1 = _open_access_session_or_skip(rs, flags_rw)
         label = f"pub-create-{id(self)}"
         try:
             try:
