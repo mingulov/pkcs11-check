@@ -55,6 +55,27 @@ def _preamble(p11_config: Any) -> str:
     )
 
 
+_CHILD_SETUP_REJECT_HELPERS = """
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    is_known_error,
+)
+
+
+def setup_xfail_if_known_ckr(exc, known_ckrs, purpose):
+    if is_known_error(exc, known_ckrs):
+        rv = getattr(exc, "rv", None)
+        detail = ckr_name(rv) if rv is not None else str(exc)
+        print(f"SETUP_XFAIL:{purpose}: {detail}")
+        cleanup()
+        raise SystemExit(0)
+    raise exc
+
+"""
+
+
 # ---------------------------------------------------------------------------
 # TestIsizeMaxDataLength
 # ---------------------------------------------------------------------------
@@ -95,6 +116,7 @@ class TestIsizeMaxDataLength:
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -102,7 +124,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     mech = CK_MECHANISM()
     mech.mechanism = int(CKM_AES_ECB)
@@ -151,6 +178,7 @@ cleanup()
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -158,7 +186,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     mech = CK_MECHANISM()
     mech.mechanism = int(CKM_AES_ECB)
@@ -439,6 +472,7 @@ class TestMechanismNullInnerParams:
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -446,7 +480,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     params = CK_AES_GCM_PARAMS()
     params.pIv = None            # NULL -- should be rejected
@@ -497,6 +536,7 @@ cleanup()
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -509,9 +549,14 @@ from pkcs11_check.raw.recipes import gen_ec_keypair, destroy_quietly
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 
 curve_oid = encode_named_curve_parameters("secp256r1")
-pub, priv = gen_ec_keypair(raw, sh, curve_oid,
-    private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
-)
+try:
+    pub, priv = gen_ec_keypair(raw, sh, curve_oid,
+        private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "EC keypair generation rejected",
+    )
 try:
     params = CK_ECDH1_DERIVE_PARAMS()
     params.kdf = int(CKD_NULL)
@@ -595,6 +640,7 @@ cleanup()
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -604,10 +650,15 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_rsa_keypair, destroy_quietly
 
-pub, priv = gen_rsa_keypair(raw, sh, 2048,
-    public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
-    private_attrs={CKA_TOKEN: False},
-)
+try:
+    pub, priv = gen_rsa_keypair(raw, sh, 2048,
+        public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+        private_attrs={CKA_TOKEN: False},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
+    )
 try:
     params = CK_RSA_PKCS_OAEP_PARAMS()
     params.hashAlg = int(CKM_SHA256)
@@ -1200,6 +1251,7 @@ class TestEddsaNullContext:
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -1211,8 +1263,13 @@ from pkcs11_check.raw.ec import encode_named_curve_parameters
 
 # Ed25519 OID
 curve_oid = encode_named_curve_parameters("ed25519")
-pub, priv = gen_ec_keypair(raw, sh, curve_oid,
-    private_attrs={CKA_SIGN: True, CKA_TOKEN: False})
+try:
+    pub, priv = gen_ec_keypair(raw, sh, curve_oid,
+        private_attrs={CKA_SIGN: True, CKA_TOKEN: False})
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "EC keypair generation rejected",
+    )
 try:
     params = CK_EDDSA_PARAMS()
     params.phFlag = 0
@@ -1271,6 +1328,7 @@ class TestAesCcmNullNonce:
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -1278,7 +1336,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     params = CK_AES_CCM_PARAMS()
     params.ulDataLen = 32

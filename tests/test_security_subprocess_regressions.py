@@ -47,6 +47,17 @@ def test_assert_subprocess_no_crash_rejects_positive_exit() -> None:
         )
 
 
+def test_assert_subprocess_no_crash_converts_setup_marker_to_xfail() -> None:
+    """A controlled child setup rejection is an xfail, not a silent pass."""
+    with pytest.raises(pytest.xfail.Exception, match="AES key generation rejected"):
+        assert_subprocess_no_crash(
+            0,
+            "SETUP_XFAIL:AES key generation rejected: CKR_FUNCTION_NOT_SUPPORTED",
+            "",
+            context="generated child script",
+        )
+
+
 @pytest.mark.parametrize("corruption", ["aiv", "padding", "length", "truncate"])
 @pytest.mark.parametrize(
     "api",
@@ -264,6 +275,70 @@ def test_ffi_length_aes_probe_xfails_setup_before_child(
             cfg,
             0x8000000000000000,
         )
+
+
+def test_ffi_length_aes_child_script_marks_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FFI length child scripts should classify setup rejects inside the child."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "", ""
+
+    monkeypatch.setattr(test_ffi_length_boundary, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    test_ffi_length_boundary.TestIsizeMaxDataLength().test_encrypt_isize_boundary(
+        _RawSession(),
+        cfg,
+        0x8000000000000000,
+    )
+
+    assert len(scripts) == 1
+    assert "SETUP_XFAIL:" in scripts[0]
+    assert "AES_KEYGEN_RUNTIME_REJECT_RVS" in scripts[0]
+
+
+def test_ffi_length_keypair_child_scripts_mark_setup_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EC/RSA FFI child scripts should not expose setup keygen as probe failures."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
+    scripts: list[str] = []
+
+    def _capture(script: str, *_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        scripts.append(script)
+        return 0, "", ""
+
+    monkeypatch.setattr(
+        test_ffi_length_boundary,
+        "gen_ec_keypair_or_xfail",
+        lambda *_a, **_k: (1, 2),
+    )
+    monkeypatch.setattr(
+        test_ffi_length_boundary,
+        "gen_rsa_keypair_or_xfail",
+        lambda *_a, **_k: (3, 4),
+    )
+    monkeypatch.setattr(test_ffi_length_boundary, "destroy_returned_handles", lambda *_a: None)
+    monkeypatch.setattr(test_ffi_length_boundary, "run_with_coverage", _capture)
+
+    test_ffi_length_boundary.TestMechanismNullInnerParams().test_ecdh_null_public_data(
+        _RawSession(),
+        cfg,
+    )
+    test_ffi_length_boundary.TestMechanismNullInnerParams().test_oaep_null_source_data(
+        _RawSession(),
+        cfg,
+    )
+
+    assert len(scripts) == 2
+    assert all("SETUP_XFAIL:" in script for script in scripts)
+    assert all("KEYPAIR_RUNTIME_REJECT_RVS" in script for script in scripts)
 
 
 def test_ffi_null_update_aes_probe_xfails_setup_before_child(

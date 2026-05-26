@@ -6,6 +6,8 @@ Subprocess wrapper for crash-safe test execution.
 
 from __future__ import annotations
 
+import pytest
+
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
@@ -58,6 +60,7 @@ DATA_REJECT_CKRS = {
 # CKR names for subprocess output parsing
 BOUNDARY_REJECT_NAMES = frozenset(ckr_name(int(c)) for c in BOUNDARY_REJECT_CKRS)
 DATA_REJECT_NAMES = frozenset(ckr_name(int(c)) for c in DATA_REJECT_CKRS)
+SETUP_XFAIL_PREFIX = "SETUP_XFAIL:"
 
 
 def assert_subprocess_no_crash(
@@ -77,3 +80,6 @@ def assert_subprocess_no_crash(
         context: Human-readable test description for failure message.
     """
     assert_subprocess_completed(rc, stdout, stderr, context=context)
+    for line in stdout.splitlines():
+        if line.startswith(SETUP_XFAIL_PREFIX):
+            pytest.xfail(line.removeprefix(SETUP_XFAIL_PREFIX).strip())
