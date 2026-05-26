@@ -90,7 +90,7 @@ def test_limbo_identity_closeness(
 
             try:
                 key_h = create_object(rs.raw, rs.sh, key_attrs)
-            except (AssertionError, Exception):
+            except AssertionError:
                 destroy_quietly(rs.raw, rs.sh, cert_h)
                 continue
 
@@ -101,13 +101,13 @@ def test_limbo_identity_closeness(
             try:
                 sig = sign_single(rs.raw, rs.sh, key_h, mech, data)
                 assert sig is not None
-            except (AssertionError, Exception) as e:
+            except AssertionError as e:
                 errors.append(f"TC {tc['id']} - Signing failed: {e}")
             finally:
                 destroy_quietly(rs.raw, rs.sh, key_h)
                 destroy_quietly(rs.raw, rs.sh, cert_h)
 
-        except (AssertionError, Exception):
+        except AssertionError:
             continue
 
     if errors:

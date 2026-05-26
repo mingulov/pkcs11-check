@@ -82,7 +82,7 @@ class TestCertificateAttributes:
                     CKA_TOKEN: False,
                 },
             )
-        except (AssertionError, Exception):
+        except AssertionError:
             if tc["expected_result"] == "SUCCESS":
                 pytest.fail(f"Module rejected certificate that Limbo considers valid: {tc['id']}")
             pytest.skip(f"Module rejected certificate {tc['id']} as expected")
@@ -99,7 +99,7 @@ class TestCertificateAttributes:
             try:
                 ct = read_attributes(rs.raw, rs.sh, h, [CKA_CERTIFICATE_TYPE])
                 assert ct[CKA_CERTIFICATE_TYPE] == CKC_X_509
-            except (AssertionError, Exception):
+            except AssertionError:
                 pass
 
             # Check extraction of other fields
@@ -120,7 +120,7 @@ class TestCertificateAttributes:
                             f"Module returned empty attr 0x{attr_id:X} for {tc['id']}",
                             ComplianceLevel.NOT_RECOMMENDED,
                         )
-                except (AssertionError, Exception):
+                except AssertionError:
                     pass
 
         finally:
@@ -169,9 +169,9 @@ class TestCertificateAttributes:
                         "Non-SO session successfully set CKA_TRUSTED=True",
                         ComplianceLevel.NOT_RECOMMENDED,
                     )
-            except (AssertionError, Exception):
+            except AssertionError:
                 pass
             finally:
                 destroy_quietly(rs.raw, rs.sh, h)
-        except (AssertionError, Exception):
+        except AssertionError:
             pass  # Expected for security-conscious modules

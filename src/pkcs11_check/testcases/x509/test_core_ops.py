@@ -136,7 +136,7 @@ class TestCertificateImport:
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_CERTIFICATE_TYPE])
             assert attrs[CKA_CERTIFICATE_TYPE] == CKC_X_509
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not support CKA_CERTIFICATE_TYPE")
             raise
@@ -167,7 +167,7 @@ class TestCertificateSearch:
             tmpl = template(attr_bytes(CKA_LABEL, label.encode("utf-8")))
             found = find_objects(rs.raw, rs.sh, tmpl)
             assert len(found) >= 1
-        except (AssertionError, Exception):
+        except AssertionError:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -204,7 +204,7 @@ class TestCertificateExtractFields:
             val = attrs[CKA_VALUE]
             if val != b"Hello world!":  # pkcs11-mock
                 assert val == ca_cert_der
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not support reading CKA_VALUE")
             raise
@@ -234,7 +234,7 @@ class TestCertificateExtractFields:
             subject = attrs[CKA_SUBJECT]
             assert isinstance(subject, bytes)
             assert len(subject) > 0
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract CKA_SUBJECT")
             raise
@@ -264,7 +264,7 @@ class TestCertificateExtractFields:
             issuer = attrs[CKA_ISSUER]
             assert isinstance(issuer, bytes)
             assert len(issuer) > 0
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract CKA_ISSUER")
             raise
@@ -294,7 +294,7 @@ class TestCertificateExtractFields:
             serial = attrs[CKA_SERIAL_NUMBER]
             assert isinstance(serial, bytes)
             assert len(serial) > 0
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract CKA_SERIAL_NUMBER")
             raise
@@ -327,7 +327,7 @@ class TestCertificateExtractFields:
                 [CKA_SUBJECT, CKA_ISSUER],
             )
             assert attrs[CKA_SUBJECT] == attrs[CKA_ISSUER]
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract Subject/Issuer")
             raise

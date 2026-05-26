@@ -79,7 +79,7 @@ class TestCertificateLifecycle:
                 assert attrs[CKA_TOKEN] is True
             finally:
                 destroy_quietly(rs.raw, rs.sh, h)
-        except (AssertionError, Exception):
+        except AssertionError:
             pytest.skip("Module does not support session-level token object creation for certs")
 
     def test_cert_modifiability(
@@ -105,7 +105,7 @@ class TestCertificateLifecycle:
                     CKA_TOKEN: False,
                 },
             )
-        except (AssertionError, Exception):
+        except AssertionError:
             pytest.skip("Module rejected CKA_MODIFIABLE=False on creation")
             return
 
@@ -148,5 +148,5 @@ class TestCertificateLifecycle:
                 assert attrs[CKA_ID] == cid
             finally:
                 destroy_quietly(rs.raw, rs.sh, h)
-        except (AssertionError, Exception):
+        except AssertionError:
             pytest.skip("Module does not support CKA_ID for certificates")
