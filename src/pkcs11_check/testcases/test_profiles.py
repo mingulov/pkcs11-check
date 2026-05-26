@@ -89,7 +89,7 @@ class TestProfileObjects:
                 )
                 pid = attrs[CKA_PROFILE_ID]
                 assert pid is not None
-            except (AssertionError, Exception) as exc:
+            except AssertionError as exc:
                 xfail_if_known_ckr(exc, _PROFILE_ATTR_ERROR_CKRS, "Cannot read CKA_PROFILE_ID")
 
     def test_known_profile_ids(self, p11_raw_session: Any) -> None:

@@ -21,7 +21,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases import test_kdf, test_pbe
+from pkcs11_check.testcases import test_kdf, test_pbe, test_trust_objects
 from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
@@ -402,6 +402,56 @@ def test_kdf_runtime_classifiers_do_not_catch_generic_exception() -> None:
                 and child.func.id == "xfail_if_known_ckr"
                 for child in ast.walk(node)
             ):
+                offenders.append(f"{path}:{node.lineno}")
+
+    assert offenders == []
+
+
+def test_object_metadata_classifiers_do_not_hide_python_bugs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Object metadata CKR classifiers should only handle PKCS#11 assertion paths."""
+
+    class Session:
+        raw = object()
+        sh = 1
+
+    def _broken_read_attributes(*_args: object, **_kwargs: object) -> dict[object, object]:
+        raise ValueError("decoder bug while handling CKR_FUNCTION_FAILED text")
+
+    monkeypatch.setattr(test_trust_objects, "_find_trust_objects", lambda *_args: [7])
+    monkeypatch.setattr(test_trust_objects, "read_attributes", _broken_read_attributes)
+
+    try:
+        test_trust_objects.TestTrustObjects().test_trust_objects_have_issuer(Session())
+    except BaseException as exc:
+        assert isinstance(exc, ValueError)
+        assert "decoder bug" in str(exc)
+    else:
+        pytest.fail("Expected trust-object Python bug to propagate")
+
+
+def test_object_metadata_classifiers_do_not_catch_generic_exception() -> None:
+    """Object metadata compatibility paths should not catch arbitrary Python exceptions."""
+    paths = (
+        Path("src/pkcs11_check/testcases/test_trust_objects.py"),
+        Path("src/pkcs11_check/testcases/test_validation_objects.py"),
+        Path("src/pkcs11_check/testcases/test_domain_params.py"),
+        Path("src/pkcs11_check/testcases/test_profiles.py"),
+    )
+    offenders: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if node.type is None:
+                continue
+            catches_exception = any(
+                isinstance(child, ast.Name) and child.id == "Exception"
+                for child in ast.walk(node.type)
+            )
+            if catches_exception:
                 offenders.append(f"{path}:{node.lineno}")
 
     assert offenders == []

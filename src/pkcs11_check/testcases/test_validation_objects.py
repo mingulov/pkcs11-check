@@ -55,7 +55,7 @@ def _find_validation_objects(raw: Any, sh: int) -> list[int]:
     try:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_VALIDATION))
         return find_objects(raw, sh, tmpl)
-    except (AssertionError, Exception) as e:
+    except AssertionError as e:
         pytest.skip(f"Module does not support CKO_VALIDATION enumeration: {e}")
     return []
 
@@ -80,7 +80,7 @@ class TestValidationObjects:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_TYPE])
                 vtype = attrs[CKA_VALIDATION_TYPE]
-            except (AssertionError, Exception) as e:
+            except AssertionError as e:
                 pytest.xfail(f"Cannot read CKA_VALIDATION_TYPE from validation object: {e}")
             if vtype < vendor_base:
                 assert vtype in _KNOWN_VALIDATION_TYPES, (
@@ -98,7 +98,7 @@ class TestValidationObjects:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_LEVEL])
                 level = attrs[CKA_VALIDATION_LEVEL]
                 assert isinstance(level, int), f"Expected int VALIDATION_LEVEL, got {type(level)}"
-            except (AssertionError, Exception) as e:
+            except AssertionError as e:
                 pytest.xfail(f"Cannot read CKA_VALIDATION_LEVEL from validation object: {e}")
 
     def test_validation_authority_type_is_known(self, p11_raw_session: Any) -> None:
@@ -112,7 +112,7 @@ class TestValidationObjects:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_AUTHORITY_TYPE])
                 auth = attrs[CKA_VALIDATION_AUTHORITY_TYPE]
-            except (AssertionError, Exception):
+            except AssertionError:
                 # Not all modules expose this optional attribute
                 continue
             if auth < vendor_base:
@@ -131,7 +131,7 @@ class TestValidationObjects:
                 assert isinstance(mod_id, (str, bytes)), (
                     f"Expected str/bytes MODULE_ID, got {type(mod_id)}"
                 )
-            except (AssertionError, Exception):
+            except AssertionError:
                 # Optional attribute - some modules may not expose it
                 continue
 

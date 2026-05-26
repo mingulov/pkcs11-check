@@ -59,7 +59,7 @@ def _find_trust_objects(raw: Any, sh: int) -> list[int]:
     try:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_TRUST))
         return find_objects(raw, sh, tmpl)
-    except (AssertionError, Exception) as e:
+    except AssertionError as e:
         pytest.skip(f"Module does not support CKO_TRUST enumeration: {e}")
     return []  # unreachable, but keeps type checker happy
 
@@ -84,7 +84,7 @@ class TestTrustObjects:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
                 issuer = attrs[CKA_ISSUER]
                 assert isinstance(issuer, bytes), f"Expected bytes ISSUER, got {type(issuer)}"
-            except (AssertionError, Exception) as exc:
+            except AssertionError as exc:
                 xfail_if_known_ckr(
                     exc, _TRUST_ATTR_ERROR_CKRS, "Cannot read CKA_ISSUER from trust object"
                 )
@@ -102,7 +102,7 @@ class TestTrustObjects:
                 assert isinstance(serial, bytes), (
                     f"Expected bytes SERIAL_NUMBER, got {type(serial)}"
                 )
-            except (AssertionError, Exception) as exc:
+            except AssertionError as exc:
                 xfail_if_known_ckr(
                     exc, _TRUST_ATTR_ERROR_CKRS, "Cannot read CKA_SERIAL_NUMBER from trust object"
                 )
@@ -118,7 +118,7 @@ class TestTrustObjects:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TRUST_SERVER_AUTH])
                 val = attrs[CKA_TRUST_SERVER_AUTH]
                 assert val in _KNOWN_TRUST_VALUES, f"Unknown TRUST_SERVER_AUTH value 0x{val:08X}"
-            except (AssertionError, Exception):
+            except AssertionError:
                 # Not all trust objects have SERVER_AUTH
                 continue
 
@@ -144,7 +144,7 @@ class TestTrustObjects:
                 assert val in _KNOWN_TRUST_VALUES, (
                     f"Unknown trust value 0x{val:08X} for attr 0x{attr_id:08X}"
                 )
-            except (AssertionError, Exception):
+            except AssertionError:
                 # Attribute may not be present on this object
                 continue
         if read_count == 0:

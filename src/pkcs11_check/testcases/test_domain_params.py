@@ -82,7 +82,7 @@ def _create_ec_domain_params(rs: Any, on_token: bool = False) -> int | None:
             },
         )
         return handle
-    except (AssertionError, Exception) as exc:
+    except AssertionError as exc:
         if is_known_error(exc, _DOMAIN_PARAM_ERROR_RVS):
             return None
         raise
@@ -163,7 +163,7 @@ class TestEcDomainParameters:
             assert local is False, (
                 f"Expected CKA_LOCAL=False for created domain params, got {local}"
             )
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DOMAIN_PARAM_ERROR_RVS, "Module does not expose CKA_LOCAL on domain params"
             )
@@ -180,7 +180,7 @@ class TestDomainParameterEnumeration:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_DOMAIN_PARAMETERS))
         try:
             params = find_objects(rs.raw, rs.sh, tmpl)
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             pytest.skip(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
         assert isinstance(params, list)
 
@@ -190,7 +190,7 @@ class TestDomainParameterEnumeration:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_DOMAIN_PARAMETERS))
         try:
             params = find_objects(rs.raw, rs.sh, tmpl)
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             pytest.skip(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
         if not params:
             pytest.skip("No CKO_DOMAIN_PARAMETERS objects present")
@@ -199,7 +199,7 @@ class TestDomainParameterEnumeration:
                 attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
                 key_type = attrs[CKA_KEY_TYPE]
                 assert isinstance(key_type, int), f"Expected int for KEY_TYPE, got {type(key_type)}"
-            except (AssertionError, Exception) as e:
+            except AssertionError as e:
                 pytest.xfail(f"Cannot read CKA_KEY_TYPE from domain parameter object: {e}")
 
 
@@ -233,7 +233,7 @@ class TestMultipleCurveDomainParams:
                     CKA_TOKEN: False,
                 },
             )
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             pytest.skip(f"Module does not support domain parameter creation for {curve}: {e}")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
