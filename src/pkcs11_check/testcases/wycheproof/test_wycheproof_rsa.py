@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
 
@@ -60,8 +61,8 @@ def _pkcs11_rsa_fingerprint(test: dict[str, Any]) -> _RsaFingerprint | None:
         public_key = test["_group"].get("publicKey", test["_group"].get("privateKey", {}))
         return (
             int(test["_mechanism"]),
-            bytes.fromhex(public_key.get("modulus", "")),
-            bytes.fromhex(public_key.get("publicExponent", "")),
+            pkcs11_bigint_from_hex(public_key.get("modulus", "")),
+            pkcs11_bigint_from_hex(public_key.get("publicExponent", "")),
             bytes.fromhex(test["msg"]),
             bytes.fromhex(test["sig"]),
         )
@@ -204,8 +205,8 @@ def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) 
     if not modulus_hex or not exp_hex:
         pytest.skip("No RSA public key in vector group")
 
-    modulus = bytes.fromhex(modulus_hex)
-    exponent = bytes.fromhex(exp_hex)
+    modulus = pkcs11_bigint_from_hex(modulus_hex)
+    exponent = pkcs11_bigint_from_hex(exp_hex)
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:

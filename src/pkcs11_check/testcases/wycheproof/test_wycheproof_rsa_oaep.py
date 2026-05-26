@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
 
@@ -187,14 +188,14 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
     if not modulus_hex or not priv_exp_hex:
         pytest.skip("No RSA private key in vector group")
 
-    modulus = bytes.fromhex(modulus_hex)
-    pub_exponent = bytes.fromhex(exp_hex)
-    priv_exponent = bytes.fromhex(priv_exp_hex)
-    prime1 = bytes.fromhex(pk.get("prime1", ""))
-    prime2 = bytes.fromhex(pk.get("prime2", ""))
-    exp1 = bytes.fromhex(pk.get("exponent1", ""))
-    exp2 = bytes.fromhex(pk.get("exponent2", ""))
-    coefficient = bytes.fromhex(pk.get("coefficient", ""))
+    modulus = pkcs11_bigint_from_hex(modulus_hex)
+    pub_exponent = pkcs11_bigint_from_hex(exp_hex)
+    priv_exponent = pkcs11_bigint_from_hex(priv_exp_hex)
+    prime1 = pkcs11_bigint_from_hex(pk.get("prime1", ""))
+    prime2 = pkcs11_bigint_from_hex(pk.get("prime2", ""))
+    exp1 = pkcs11_bigint_from_hex(pk.get("exponent1", ""))
+    exp2 = pkcs11_bigint_from_hex(pk.get("exponent2", ""))
+    coefficient = pkcs11_bigint_from_hex(pk.get("coefficient", ""))
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:

@@ -37,6 +37,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["DSA_SHA256"]
@@ -84,12 +85,6 @@ _DSA_RUNTIME_REJECT_CKRS = (
 _DsaFingerprint = tuple[int, bytes, bytes, bytes, bytes, bytes, bytes]
 
 
-def _pkcs11_bigint_from_hex(value: str) -> bytes:
-    """Convert third-party integer hex to Cryptoki unsigned big-endian bytes."""
-    raw = bytes.fromhex(value)
-    return raw.lstrip(b"\x00") or b"\x00"
-
-
 def _pkcs11_dsa_fingerprint(test: dict[str, Any]) -> _DsaFingerprint | None:
     """Return PKCS#11-visible DSA verify inputs for duplicate detection."""
     try:
@@ -99,10 +94,10 @@ def _pkcs11_dsa_fingerprint(test: dict[str, Any]) -> _DsaFingerprint | None:
         public_key = test["_group"]["publicKey"]
         return (
             int(test["_mechanism"]),
-            _pkcs11_bigint_from_hex(public_key["p"]),
-            _pkcs11_bigint_from_hex(public_key["q"]),
-            _pkcs11_bigint_from_hex(public_key["g"]),
-            _pkcs11_bigint_from_hex(public_key["y"]),
+            pkcs11_bigint_from_hex(public_key["p"]),
+            pkcs11_bigint_from_hex(public_key["q"]),
+            pkcs11_bigint_from_hex(public_key["g"]),
+            pkcs11_bigint_from_hex(public_key["y"]),
             bytes.fromhex(test["msg"]),
             bytes.fromhex(sig_hex),
         )
@@ -214,10 +209,10 @@ def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     if not all([p_hex, q_hex, g_hex, y_hex]):
         pytest.skip("Incomplete DSA public key")
 
-    prime = _pkcs11_bigint_from_hex(p_hex)
-    subprime = _pkcs11_bigint_from_hex(q_hex)
-    base = _pkcs11_bigint_from_hex(g_hex)
-    value = _pkcs11_bigint_from_hex(y_hex)
+    prime = pkcs11_bigint_from_hex(p_hex)
+    subprime = pkcs11_bigint_from_hex(q_hex)
+    base = pkcs11_bigint_from_hex(g_hex)
+    value = pkcs11_bigint_from_hex(y_hex)
 
     try:
         pub_key = import_dsa_public_key(

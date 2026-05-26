@@ -109,8 +109,16 @@ Completed high-signal observations:
   duplicates, though at a smaller scale: current source skips 913 of 2,502
   RSA-PSS vectors and 75 of 5,313 RSA PKCS#1 signature vectors when the
   mechanism, parameters, public key, message, and signature are identical.
-  This landed after the current Docker batch had already started, so the
-  affected artifacts still need a refresh before the table reflects it.
+  A later source review found the same third-party integer-padding issue as DSA:
+  Wycheproof RSA public/private key fields can carry ASN.1-style leading `00`
+  sign bytes, while PKCS#11 RSA attributes are unsigned `Big integer` values.
+  Current source strips that padding before RSA key import and duplicate
+  grouping. A focused SoftHSM2 RSA rerun no longer showed RSA-PSS, RSA
+  signature verification, or RSA-OAEP failures from the padded imports; RSA
+  PKCS#1 decrypt still showed accepted-invalid-ciphertext failures, which
+  remain provider/security findings. These changes landed after the current
+  Docker batch had already started, so the affected artifacts still need a
+  refresh before the table reflects them.
 - ACVP KeyGen internal-projection vectors contain seeds and expected keys that
   current PKCS#11 key-generation APIs cannot consume. The suite now keeps those
   vectors collected but skips duplicate provider-visible inputs after the first
@@ -292,6 +300,13 @@ official full-matrix release statistics.
   failures after stripping third-party DSA `Big integer` sign padding before
   PKCS#11 import. Current focused result: 613 passed, 1,343 skipped, 1,956
   total.
+- `softhsm2` focused RSA artifacts:
+  `artifacts/_focused/softhsm2-rsa-current-after-bigint`. Current-source
+  normalized-RSA run removed the padded-import failures from RSA-PSS, RSA
+  signature verification, and RSA-OAEP. The remaining RSA PKCS#1 decrypt
+  failures are accepted-invalid-ciphertext findings, not sign-padding import
+  artifacts. Exact interim counts stay in the artifact JSON rather than this
+  working note.
 
 ## Follow-Up Queue
 

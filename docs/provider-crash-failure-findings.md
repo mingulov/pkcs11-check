@@ -525,6 +525,18 @@ parameters, public key, message, and signature are exact duplicates. This
 reduces inflated buckets while keeping distinct RSA-PSS parameter combinations
 as real provider tests.
 
+The RSA Wycheproof loaders also now share the same `Big integer` normalization
+as DSA. A follow-up scan found ASN.1-style positive sign padding in all loaded
+RSA-PSS public-key groups, all RSA-OAEP and RSA-PKCS#1 decrypt private-key
+groups, and most RSA PKCS#1 signature public-key groups. PKCS#11 RSA key
+attributes such as `CKA_MODULUS`, `CKA_PUBLIC_EXPONENT`, `CKA_PRIVATE_EXPONENT`,
+and CRT components are unsigned big-endian `Big integer` values, so the loader
+strips this container padding before key import and duplicate grouping. A
+focused SoftHSM2 run after the change no longer showed RSA-PSS, RSA signature
+verification, or RSA-OAEP failures from the padded imports. The same run still
+showed RSA PKCS#1 decrypt failures where invalid ciphertext was accepted; those
+remain provider/security findings, not loader-padding artifacts.
+
 ACVP KeyGen internal-projection vectors are a different normalization case.
 They include seeds and expected private/public key material, but current
 PKCS#11 key-generation APIs do not accept deterministic external seed inputs.

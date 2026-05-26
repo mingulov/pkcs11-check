@@ -59,6 +59,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: F401
+from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 from pkcs11_check.testcases.wycheproof.wycheproof_loader import load_vectors as load_wycheproof
 
 pytestmark = pytest.mark.wycheproof
@@ -568,8 +569,8 @@ class TestRSASigWycheproof:
         if not modulus_hex or not exp_hex:
             pytest.skip("No RSA public key in vector group")
 
-        modulus = bytes.fromhex(modulus_hex)
-        exponent = bytes.fromhex(exp_hex)
+        modulus = pkcs11_bigint_from_hex(modulus_hex)
+        exponent = pkcs11_bigint_from_hex(exp_hex)
 
         try:
             pub_key = import_rsa_public_key(

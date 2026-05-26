@@ -56,6 +56,14 @@ def _pem_to_der(value: str) -> bytes:
     return bytes(der)
 
 
+def pkcs11_bigint_from_hex(value: str) -> bytes:
+    """Convert third-party integer hex to Cryptoki unsigned big-endian bytes."""
+    if value == "":
+        return b""
+    raw = bytes.fromhex(value)
+    return raw.lstrip(b"\x00") or b"\x00"
+
+
 def normalize_ec_curve(curve_name: str) -> tuple[str, int]:
     return _EC_CURVE_ALIASES.get(curve_name, (curve_name.lower(), 256))
 
