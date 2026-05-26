@@ -922,6 +922,14 @@ The following paths were tightened after inspecting the all-fail artifacts:
   TPM2 `CKR_FUNCTION_NOT_SUPPORTED`/`CKR_GENERAL_ERROR`, and BouncyHSM
   zero-length SHA-256 rows from this file should be refreshed before article
   wording uses them as hard failures.
+- **General SHA digest coverage**: the general digest tests now skip missing
+  SHA-family mechanisms before calling `C_Digest`, xfail explicit runtime
+  rejects from advertised digest operations, and classify advertised-but-rejected
+  AES setup before `C_DigestKey`. `CKR_FUNCTION_NOT_SUPPORTED` from
+  `C_DigestKey` itself remains a clean optional-function skip. Digest output
+  mismatches and wrong lengths after `CKR_OK` remain hard failures, including
+  the older pkcs11-mock SHA-1 mismatch row if it still reproduces on current
+  source.
 - **Mechanism attribute readback**: mechanism-generated key attribute tests now
   distinguish attribute read support from attribute value correctness. A module
   that rejects `C_GetAttributeValue` with a non-clean CKR such as
