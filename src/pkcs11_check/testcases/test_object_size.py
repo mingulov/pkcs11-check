@@ -23,15 +23,27 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE,
     CKO_DATA,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
 )
 from pkcs11_check.testcases.conftest import (
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.keymgmt
 
 CK_UNAVAILABLE = CK_UNAVAILABLE_INFORMATION
+
+_OBJECT_SIZE_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+)
 
 
 def _safe_get_size(raw: Any, sh: int, handle: int) -> int | None:
@@ -43,11 +55,16 @@ def _safe_get_size(raw: Any, sh: int, handle: int) -> int | None:
     """
     try:
         size = get_object_size(raw, sh, handle)
-        if size == CK_UNAVAILABLE or size == 0:
-            return None
-        return size
-    except Exception:
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _OBJECT_SIZE_RUNTIME_REJECT_RVS,
+            "C_GetObjectSize rejected a valid object handle",
+        )
+        raise  # unreachable
+    if size == CK_UNAVAILABLE or size == 0:
         return None
+    return size
 
 
 class TestObjectSize:

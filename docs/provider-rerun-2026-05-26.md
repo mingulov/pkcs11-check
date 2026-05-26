@@ -443,6 +443,12 @@ official full-matrix release statistics.
   policy/permission CKRs still skip and generic runtime rejects are visible
   xfail evidence. The normal Docker run is destructive-gated, so this artifact
   confirms gating rather than mock PIN-change behavior.
+- `pkcs11-mock` object-size focused artifact:
+  `artifacts/_focused/pkcs11-mock-object-size-current-20260527/`. Current
+  source no longer treats arbitrary `C_GetObjectSize` exceptions or generic
+  CKRs as unsupported size reporting. The focused run reports 2 skipped and
+  1 failed; the hard row is a wrong-result finding where both 100-byte and
+  10KB data objects report size 256.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124

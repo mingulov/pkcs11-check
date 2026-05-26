@@ -311,6 +311,14 @@ pkcs11-mock run in `artifacts/_focused/pkcs11-mock-so-pin-current-20260527/`
 is destructive-gated, so it is gating evidence rather than provider
 `C_SetPIN` behavior evidence.
 
+`test_object_size.py` had a similar catch boundary around `C_GetObjectSize`:
+arbitrary exceptions and generic CKRs were being reported as unsupported
+object-size capability. Current source only treats successful zero or
+`CK_UNAVAILABLE_INFORMATION` replies as the skip path, xfails generic runtime
+rejects, and lets Python bugs fail. A focused pkcs11-mock rerun in
+`artifacts/_focused/pkcs11-mock-object-size-current-20260527/` leaves one hard
+wrong-result row where 100-byte and 10KB data objects both report size 256.
+
 A focused current-source rerun of `test_arithmetic_overflow.py` changes only
 part of the old crash-probe wording. Current TPM2 no longer has hard failures
 in this file: it reports 18 passed, 6 skipped, and 15 xfailed setup rows in
