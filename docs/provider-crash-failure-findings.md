@@ -912,6 +912,16 @@ The following paths were tightened after inspecting the all-fail artifacts:
   key-generation rejects are covered by the current runtime/setup
   classification and should be treated as stale raw-failure artifacts until the
   provider matrix is refreshed.
+- **Standalone multipart streaming smoke coverage**: the older standalone
+  streaming file now follows the same split as the mechanism-driven multipart
+  tests. Missing AES/SHA/RSA/HMAC mechanisms skip, advertised AES/RSA setup
+  rejects xfail, imported AES/HMAC setup keys set `CKA_ALLOWED_MECHANISMS`, HMAC
+  setup can fall back from typed HMAC keys to generic-secret keys, and valid
+  operation rejects become xfail evidence. Output mismatches and actual
+  crashes/timeouts remain failures. Old pkcs11-mock `CKR_MECHANISM_INVALID`,
+  TPM2 `CKR_FUNCTION_NOT_SUPPORTED`/`CKR_GENERAL_ERROR`, and BouncyHSM
+  zero-length SHA-256 rows from this file should be refreshed before article
+  wording uses them as hard failures.
 - **Mechanism attribute readback**: mechanism-generated key attribute tests now
   distinguish attribute read support from attribute value correctness. A module
   that rejects `C_GetAttributeValue` with a non-clean CKR such as
