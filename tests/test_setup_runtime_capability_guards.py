@@ -43,6 +43,7 @@ from pkcs11_check.testcases import (
     test_mech_attribute,
     test_mech_flags,
     test_mech_keygen,
+    test_mech_lifecycle,
     test_mech_wrap,
     test_mechanism_fuzz,
     test_object_size,
@@ -649,6 +650,47 @@ def test_access_levels_wrap_with_trusted_uses_cbc_pad_iv_when_key_wrap_absent(
     test_access_levels.TestTrustedAttribute().test_wrap_with_trusted_rejects_untrusted(rs)
 
     assert mech_calls == [(int(CKM_AES_CBC_PAD), b"\x00" * 16)]
+
+
+def test_mech_lifecycle_digest_aes_keygen_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("SHA256", "AES_ECB", "AES_KEY_GEN")
+    monkeypatch.setattr(test_mech_lifecycle, "digest_single", lambda *_args: b"\x00" * 32)
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_mech_lifecycle.TestDigestThenEncrypt().test_sha256_digest_then_aes_ecb_encrypt(rs)
+
+
+def test_mech_lifecycle_batch_aes_keygen_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_ECB", "AES_KEY_GEN")
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        test_mech_lifecycle.TestBatchAESKeys().test_batch_keygen_encrypt_destroy(rs)
+
+
+def test_mech_lifecycle_rsa_oaep_keygen_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN", "RSA_PKCS_OAEP", "AES_ECB")
+    monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_attribute_value_invalid)
+
+    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+        test_mech_lifecycle.TestRSAOAEPWrapLifecycle().test_rsa_oaep_wrap_aes_roundtrip(rs)
+
+
+def test_mech_lifecycle_ecdh_keygen_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("EC_KEY_PAIR_GEN", "ECDH1_DERIVE", "AES_CBC")
+    monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_attribute_value_invalid)
+
+    with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
+        test_mech_lifecycle.TestECDHDerivedKeyUse().test_ecdh_derive_and_use(rs)
 
 
 def test_mechanism_attribute_read_value_invalid_is_xfail(
