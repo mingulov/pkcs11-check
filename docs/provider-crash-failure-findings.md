@@ -1239,6 +1239,13 @@ The following paths were tightened after inspecting the all-fail artifacts:
   under test, such as `CKA_MODIFIABLE=False` or `CKA_COPYABLE=False`, still keep
   their specific rejection handling. Copying a non-copyable key remains a hard
   security failure.
+- **API-security setup paths**: the broader `security/test_api_security.py`
+  file now separates setup capability from security outcomes. Missing
+  `AES_KEY_GEN`, non-operational AES/RSA setup, and `CKR_SESSION_COUNT` while
+  opening the public fixture session are no longer reported as security
+  failures or silent security passes. The current pkcs11-mock focused rerun
+  leaves one hard finding: `CKA_PRIVATE_EXPONENT` is readable after RSA setup
+  succeeds.
 - **AES-KWP corrupted-data error path**: the old crash-regression harness for
   OpenCryptoki PR #932 and OpenSSL PR #30663 had two masking problems. First,
   generated child scripts could exit with a Python error and still be counted as

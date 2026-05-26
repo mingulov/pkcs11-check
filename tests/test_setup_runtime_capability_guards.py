@@ -23,6 +23,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_SESSION_COUNT,
@@ -63,7 +64,11 @@ from pkcs11_check.testcases.ckr import (
     test_ckr_wrap,
 )
 from pkcs11_check.testcases.mechanism_registry import ParamRecipe
-from pkcs11_check.testcases.security import test_nonce_quality, test_padding_oracle
+from pkcs11_check.testcases.security import (
+    test_api_security,
+    test_nonce_quality,
+    test_padding_oracle,
+)
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -649,6 +654,101 @@ def test_legacy_access_rsa_setup_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="access RSA keypair setup"):
         test_access.TestLoginStates().test_user_session_can_see_private(rs)
+
+
+def test_api_security_missing_aes_keygen_is_skip_not_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _unexpected_keygen(*_args: Any, **_kwargs: Any) -> int:
+        raise AssertionError("AES keygen should have been capability-guarded")
+
+    keygen_attr = (
+        "_raw_gen_aes_key" if hasattr(test_api_security, "_raw_gen_aes_key") else "gen_aes_key"
+    )
+    monkeypatch.setattr(test_api_security, keygen_attr, _unexpected_keygen)
+    rs = _session_with_mechanisms("AES_ECB")
+
+    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
+        test_api_security.TestWrapDecryptOracle().test_wrap_decrypt_combination_prevented(rs)
+
+
+def test_api_security_aes_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_api_security,
+        "require_operational_aes_keygen",
+        lambda _rs: None,
+        raising=False,
+    )
+    keygen_attr = (
+        "_raw_gen_aes_key" if hasattr(test_api_security, "_raw_gen_aes_key") else "gen_aes_key"
+    )
+    monkeypatch.setattr(test_api_security, keygen_attr, _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="API security AES setup"):
+        test_api_security.TestSensitiveExtraction().test_sensitive_key_value_not_readable(rs)
+
+
+def test_api_security_rsa_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keypair_attr = (
+        "_raw_gen_rsa_keypair"
+        if hasattr(test_api_security, "_raw_gen_rsa_keypair")
+        else "gen_rsa_keypair"
+    )
+    monkeypatch.setattr(test_api_security, keypair_attr, _raise_attribute_value_invalid)
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="API security RSA setup"):
+        test_api_security.TestSensitiveExtraction().test_private_key_not_extractable(rs)
+
+
+def test_api_security_extra_session_capacity_reject_is_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session_limit(*_args: Any, **_kwargs: Any) -> int:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_SESSION_COUNT",
+            int(CKR_SESSION_COUNT),
+        )
+
+    open_attr = (
+        "_raw_open_session"
+        if hasattr(test_api_security, "_raw_open_session")
+        else "raw_open_session"
+    )
+    monkeypatch.setattr(test_api_security, open_attr, _open_session_limit)
+    rs = SimpleNamespace(raw=object(), slot_id=1)
+
+    with pytest.raises(pytest.skip.Exception, match="additional session"):
+        test_api_security.TestAccessControl().test_no_login_private_objects_invisible(rs)
+
+
+def test_api_security_wrap_runtime_reject_is_xfail_not_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter([1, 2])
+
+    def _next_key(*_args: Any, **_kwargs: Any) -> int:
+        return next(handles)
+
+    def _reject_wrap(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_INVALID",
+            int(CKR_MECHANISM_INVALID),
+        )
+
+    monkeypatch.setattr(test_api_security, "require_operational_aes_keygen", lambda _rs: None)
+    monkeypatch.setattr(test_api_security, "_raw_gen_aes_key", _next_key)
+    monkeypatch.setattr(test_api_security, "wrap_key", _reject_wrap)
+    monkeypatch.setattr(test_api_security, "destroy_quietly", lambda *_args: None)
+    rs = _session_with_mechanisms("AES_ECB", "AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="API security wrap-decrypt operation"):
+        test_api_security.TestWrapDecryptOracle().test_wrap_decrypt_combination_prevented(rs)
 
 
 def test_session_state_machine_extra_session_capacity_reject_is_skip(

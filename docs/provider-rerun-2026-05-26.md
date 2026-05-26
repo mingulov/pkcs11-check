@@ -331,6 +331,11 @@ Completed high-signal observations:
   `artifacts/_focused/pkcs11-mock-access-r2-20260527/` reports 1 passed,
   7 skipped, and 0 failed; the skips are one missing `AES_KEY_GEN` precondition
   and six `CKR_SESSION_COUNT` extra-session limits.
+- API-security tests now use explicit setup classification instead of treating
+  setup rejection as a security result. A focused pkcs11-mock rerun in
+  `artifacts/_focused/pkcs11-mock-api-security-r2-20260527/` reports
+  11 skipped and 1 failed; the remaining failed row is readable
+  `CKA_PRIVATE_EXPONENT` after RSA setup succeeds.
 - Remaining-gap and subprocess-safety focused TPM2 evidence:
   `artifacts/_focused/tpm2-remaining-sign-safety-r2-20260527/`. Current source
   reports 6 passed, 23 skipped, 8 xfailed, and 1 failed across
