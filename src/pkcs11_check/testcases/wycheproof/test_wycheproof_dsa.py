@@ -84,6 +84,12 @@ _DSA_RUNTIME_REJECT_CKRS = (
 _DsaFingerprint = tuple[int, bytes, bytes, bytes, bytes, bytes, bytes]
 
 
+def _pkcs11_bigint_from_hex(value: str) -> bytes:
+    """Convert third-party integer hex to Cryptoki unsigned big-endian bytes."""
+    raw = bytes.fromhex(value)
+    return raw.lstrip(b"\x00") or b"\x00"
+
+
 def _pkcs11_dsa_fingerprint(test: dict[str, Any]) -> _DsaFingerprint | None:
     """Return PKCS#11-visible DSA verify inputs for duplicate detection."""
     try:
@@ -93,10 +99,10 @@ def _pkcs11_dsa_fingerprint(test: dict[str, Any]) -> _DsaFingerprint | None:
         public_key = test["_group"]["publicKey"]
         return (
             int(test["_mechanism"]),
-            bytes.fromhex(public_key["p"]),
-            bytes.fromhex(public_key["q"]),
-            bytes.fromhex(public_key["g"]),
-            bytes.fromhex(public_key["y"]),
+            _pkcs11_bigint_from_hex(public_key["p"]),
+            _pkcs11_bigint_from_hex(public_key["q"]),
+            _pkcs11_bigint_from_hex(public_key["g"]),
+            _pkcs11_bigint_from_hex(public_key["y"]),
             bytes.fromhex(test["msg"]),
             bytes.fromhex(sig_hex),
         )
@@ -208,10 +214,10 @@ def test_dsa(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     if not all([p_hex, q_hex, g_hex, y_hex]):
         pytest.skip("Incomplete DSA public key")
 
-    prime = bytes.fromhex(p_hex)
-    subprime = bytes.fromhex(q_hex)
-    base = bytes.fromhex(g_hex)
-    value = bytes.fromhex(y_hex)
+    prime = _pkcs11_bigint_from_hex(p_hex)
+    subprime = _pkcs11_bigint_from_hex(q_hex)
+    base = _pkcs11_bigint_from_hex(g_hex)
+    value = _pkcs11_bigint_from_hex(y_hex)
 
     try:
         pub_key = import_dsa_public_key(

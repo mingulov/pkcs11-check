@@ -214,6 +214,22 @@ def _pkcs11_ecdsa_fingerprint(test: dict[str, Any]) -> tuple[bytes, bytes, bytes
         return None
 
 
+def _is_pkcs11_short_signature_size_vector(test: dict[str, Any]) -> bool:
+    """Return whether a fixed-width P1363 size reject is not PKCS#11-neutral."""
+    if not test.get("_is_p1363"):
+        return False
+    if test.get("result") != "invalid":
+        return False
+    if "SignatureSize" not in test.get("flags", ()):
+        return False
+    try:
+        sig_len = len(bytes.fromhex(test["sig"]))
+        coord_size = int(test["_coord_size"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return sig_len > 0 and sig_len % 2 == 0 and sig_len < 2 * coord_size
+
+
 def _canonical_duplicate_id(entries: list[tuple[str, dict[str, Any]]]) -> str:
     """Choose the most PKCS#11-meaningful representative for duplicate vectors."""
     for preferred in ("valid", "acceptable"):
@@ -282,6 +298,9 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
 
     if duplicate_of := vec.get("_pkcs11_duplicate_of"):
         pytest.skip(f"Duplicate PKCS#11 ECDSA operation input; covered by {duplicate_of}")
+
+    if _is_pkcs11_short_signature_size_vector(vec):
+        pytest.skip("Wycheproof short ECDSA signature-size vector is not PKCS#11-neutral")
 
     msg = bytes.fromhex(vec["msg"])
     result = vec["result"]

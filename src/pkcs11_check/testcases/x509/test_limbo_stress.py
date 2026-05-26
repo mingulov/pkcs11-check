@@ -73,7 +73,7 @@ def test_exhaustive_cert_import_no_crash(
                 CKA_VALUE: der_bytes,
             },
         )
-    except (AssertionError, Exception):
+    except AssertionError:
         return  # Rejection on import is fine
 
     try:
@@ -135,7 +135,7 @@ def test_exhaustive_crl_import_no_crash(
                 CKA_VALUE: der_bytes,
             },
         )
-    except (AssertionError, Exception):
+    except AssertionError:
         return  # Rejection or "not supported" is fine
 
     try:

@@ -94,9 +94,17 @@ Completed high-signal observations:
   ECDSA vectors and 442 of 1,956 DSA vectors as exact PKCS#11-input
   duplicates. This also prevents DER-only or Bitcoin low-S policy metadata from
   being reported as a provider failure after pkcs11-check has normalized the
-  signature to raw ECDSA/DSA form. This patch landed while `nss-main` was
-  already running, so a later rerun is needed before Docker statistics reflect
-  it.
+  signature to raw ECDSA/DSA form. A later source review also found
+  fixed-width P1363 `SignatureSize` negative vectors where the raw ECDSA
+  signature is a shorter even-length `r || s` value that current PKCS#11
+  verification permits; those are now treated as version-sensitive skips. The
+  same review found that Wycheproof DSA public-key integers can carry leading
+  sign-padding bytes; current source strips that padding before PKCS#11 import.
+  A focused SoftHSM2 DSA rerun moved from 296 valid-signature failures to 0
+  failures, with 613 passed and 1,343 skipped out of 1,956 collected vectors.
+  These patches landed while the current batch was running or after it
+  completed, so a later full rerun is needed before Docker statistics reflect
+  them.
 - Wycheproof RSA signature vectors also contain exact PKCS#11-input
   duplicates, though at a smaller scale: current source skips 913 of 2,502
   RSA-PSS vectors and 75 of 5,313 RSA PKCS#1 signature vectors when the
@@ -243,9 +251,10 @@ Completed high-signal observations:
 - AES-KWP ciphertext mismatches, buffer-size writeback mismatches, CTS detection
   failures, and padding-oracle/security findings are semantic provider results,
   not raw harness exceptions.
-- Broad catch-all exception handling still exists in older test files. That is a
-  separate cleanup track; this pass only changed paths tied to current provider
-  artifacts and concrete raw Python failure signatures.
+- Broad catch-all exception handling still exists in older test files. This pass
+  tightened the x509-limbo stress import boundary because it was tied to a large
+  current mock bucket; the remaining catches are a separate cleanup track and
+  should be narrowed only with focused evidence and regression coverage.
 
 ## Focused Post-Fix Reruns
 
@@ -277,6 +286,12 @@ official full-matrix release statistics.
   provider behavior findings, not missing-template setup failures. RSA-4096
   crossverify moved to xfail setup evidence because the provider rejects that
   key size with `CKR_ATTRIBUTE_VALUE_INVALID`.
+- `softhsm2` focused DSA artifacts:
+  `artifacts/_focused/softhsm2-dsa-current-after-bigint`. The same
+  `test_wycheproof_dsa.py` focus moved from 296 valid-signature failures to 0
+  failures after stripping third-party DSA `Big integer` sign padding before
+  PKCS#11 import. Current focused result: 613 passed, 1,343 skipped, 1,956
+  total.
 
 ## Follow-Up Queue
 

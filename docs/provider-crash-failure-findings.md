@@ -165,6 +165,14 @@ some vectors encode DSA integers with a leading zero byte. Without that second
 step, 224-bit signatures became 58 bytes instead of 56, and 256-bit signatures
 became 66 bytes instead of 64.
 
+A later focused review found the same leading-zero issue at DSA public-key
+import time. PKCS#11 `Big integer` attributes are unsigned big-endian byte
+strings, while Wycheproof's JSON can carry ASN.1-style positive sign padding in
+`p`, `q`, and `y`. The loader now strips that sign padding before `C_CreateObject`
+and before duplicate grouping. A focused SoftHSM2 rerun of the DSA file then
+moved from 296 valid-signature failures to 0 failures: 613 passed and 1,343
+skipped out of 1,956 collected DSA vectors.
+
 A focused NSS Docker check after the fix selected 1,956 Wycheproof DSA tests:
 1,055 passed and 901 skipped. The skips are invalid DER signatures that cannot
 be represented as a PKCS#11 raw DSA signature input. The full provider matrix
@@ -499,6 +507,15 @@ This also avoids false provider failures for invalid vectors whose only
 invalidity is DER container metadata, or Bitcoin low-S policy metadata, after
 that metadata has been normalized away.
 
+ECDSA has one additional size-encoding caveat. Some Wycheproof P1363 negative
+vectors are invalid only under a fixed-width P1363 convention: the `r || s`
+string is shorter than `2*nLen` but still has equal-width `r` and `s`
+components. The local OASIS PKCS#11 spec checkout says ECDSA signatures passed
+to a token for verification may be shorter than `2*nLen` when composed that way.
+Those size-only vectors are now skipped as PKCS#11-version-sensitive inputs
+rather than counted as providers accepting invalid signatures. Odd-length,
+empty, oversized, or mathematically invalid signatures remain negative tests.
+
 RSA signature vectors have a smaller version of the same duplication problem.
 After pkcs11-check maps a vector to a concrete PKCS#11 mechanism and parameter
 set, some Wycheproof RSA-PSS and RSA PKCS#1 cases are identical at the module
@@ -555,6 +572,13 @@ deeper follow-up before being presented as final provider conclusions.
   algorithm. The ACVP HMAC failures reach that advertised mechanism path and
   then return `CKR_GENERAL_ERROR`, so they should be visible xfail findings
   rather than capability skips.
+- **pkcs11-mock X.509 limbo buckets**: the large mock X.509 buckets are
+  `CKA_VALUE` round-trip mismatch findings, not crash evidence. They are useful
+  harness stress rows because the module accepts certificate objects but returns
+  placeholder bytes instead of the DER supplied to `C_CreateObject`. The stress
+  tests now allow CKR-style import rejection only via `AssertionError`; arbitrary
+  Python exceptions at import setup are no longer swallowed as acceptable
+  provider rejects.
 - **BouncyHSM ECDH public-data encoding**: pkcs11-check sends raw uncompressed
   EC points in `CK_ECDH1_DERIVE_PARAMS.pPublicData`, matching the portable
   OASIS requirement. BouncyHSM 2.1.0 advertises `CKM_ECDH1_DERIVE`, but its

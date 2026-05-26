@@ -58,6 +58,17 @@ def test_ecdsa_bitcoin_policy_duplicate_is_skipped(monkeypatch: pytest.MonkeyPat
         ecdsa.test_ecdsa_wycheproof(_SignatureSession(), vec_id, _find_ecdsa(vec_id))
 
 
+def test_ecdsa_short_p1363_signature_size_vector_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PKCS#11 v3.2 permits shorter ECDSA verify signatures than fixed P1363."""
+    monkeypatch.setattr(ecdsa, "import_ec_public_key", _fail_if_called)
+    vec_id = "ecdsa_secp256r1_sha512_p1363_test.json:tc191-invalid"
+
+    with pytest.raises(pytest.skip.Exception, match="short ECDSA signature"):
+        ecdsa.test_ecdsa_wycheproof(_SignatureSession(), vec_id, _find_ecdsa(vec_id))
+
+
 def test_duplicate_dsa_p1363_vector_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     """DER and P1363 DSA vectors that decode to the same raw sig run once."""
     monkeypatch.setattr(dsa, "import_dsa_public_key", _fail_if_called)
