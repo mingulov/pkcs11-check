@@ -353,7 +353,10 @@ Completed high-signal observations:
   `test_remaining_gaps.py`, `test_sign_recover.py`, and
   `test_subprocess_safety.py`. The former hard template/legacy/sign-recover
   setup rows are now setup xfails or compliance notes; the remaining hard row
-  is the fork-after-initialize timeout.
+  is the fork-after-initialize timeout. The fork test now parses explicit child
+  status, so a non-zero child exit or child signal is a hard result even if the
+  parent process exits normally. Focused pkcs11-mock evidence:
+  `artifacts/_focused/pkcs11-mock-fork-safety-current-20260527/`.
 
 ## Remaining Raw-Looking Buckets
 

@@ -1551,7 +1551,11 @@ The following paths were tightened after inspecting the all-fail artifacts:
   `artifacts/_focused/tpm2-remaining-sign-safety-r2-20260527/` reports
   6 passed, 23 skipped, 8 xfailed, and 1 failed across `test_remaining_gaps.py`,
   `test_sign_recover.py`, and `test_subprocess_safety.py`. The remaining hard
-  row is still `test_fork_after_initialize` timing out after 15 seconds.
+  row is still `test_fork_after_initialize` timing out after 15 seconds. The
+  fork harness now fails explicit non-zero child exits and child signals instead
+  of accepting the parent process's clean exit; focused pkcs11-mock evidence in
+  `artifacts/_focused/pkcs11-mock-fork-safety-current-20260527/` reports
+  1 passed and 0 failed for this stricter fork-status parser.
 
 The arithmetic-overflow clusters for TPM2, SoftHSM2, OpenCryptoki, and
 Kryoptic main were rechecked in the current pass. TPM2 is now reclassified to

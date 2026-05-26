@@ -99,17 +99,38 @@ class TestForkSafety:
                 get_slot_ids(raw)
                 raw.C_Finalize(None)
                 os._exit(0)
-            except Exception:
+            except Exception as exc:
+                print(f"CHILD_EXC:{{type(exc).__name__}}:{{exc}}", flush=True)
                 os._exit(1)
         else:
             _, status = os.waitpid(pid, 0)
             raw.C_Finalize(None)
-            exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
-            print(f"OK: child exit {{exit_code}}")
+            if os.WIFSIGNALED(status):
+                child_signal = os.WTERMSIG(status)
+                print(f"CHILD_SIGNAL:{{child_signal}}")
+                child_exit = -child_signal
+            else:
+                child_exit = os.WEXITSTATUS(status)
+            print(f"CHILD_EXIT:{{child_exit}}")
         """
         rc, output = _run_script(script, timeout=15)
-        assert rc == 0, f"Fork test crashed (rc={rc}): {output}"
-        assert "OK:" in output
+        if rc != 0:
+            pytest.fail(f"Fork test crashed (rc={rc}): {output}")
+        if "CHILD_SIGNAL:" in output:
+            pytest.fail(f"Fork child was killed by a signal: {output}")
+
+        child_exit: int | None = None
+        for line in output.splitlines():
+            if line.startswith("CHILD_EXIT:"):
+                try:
+                    child_exit = int(line.split(":", 1)[1])
+                except ValueError:
+                    pytest.fail(f"Fork child reported malformed exit status: {output}")
+                break
+        if child_exit is None:
+            pytest.fail(f"Fork child did not report exit status: {output}")
+        if child_exit != 0:
+            pytest.fail(f"Fork child failed (exit={child_exit}): {output}")
 
 
 class TestSessionObjectProcessIsolation:

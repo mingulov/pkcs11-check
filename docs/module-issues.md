@@ -798,6 +798,13 @@ re-initialize/finalize path times out after 15 seconds. Keep that as a TPM2
 subprocess-safety/daemon behavior finding unless a later focused run proves it
 is only an environment timeout.
 
+The fork harness now records explicit `CHILD_EXIT` / `CHILD_SIGNAL` status and
+fails the pytest row if the child exits non-zero or is killed by a signal. A
+focused pkcs11-mock check in
+`artifacts/_focused/pkcs11-mock-fork-safety-current-20260527/` reports 1 passed
+and 0 failed for the fork row, so this tighter status check does not change the
+clean provider path.
+
 ### Raw CKR NULL-mechanism findings
 
 Focused current-source evidence:
