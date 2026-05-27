@@ -32,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -384,6 +385,69 @@ def xfail_if_known_ckr(
     if matched is not None:
         pytest.xfail(f"{msg}: {matched}")
     raise  # Not a known CKR -- propagate as real failure
+
+
+def classify_negative_rv(
+    rv: int,
+    expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
+    *,
+    label: str,
+    allow_ok: bool = False,
+) -> None:
+    """Raw-rv negative classifier (provider-general 3-way).
+
+    For negative ops at sites NOT in the ckr/ table that carry the raw return
+    value directly:
+
+    - ``CKR_OK`` -> ``fail`` (the module accepted an invalid/forbidden op),
+      unless ``allow_ok`` is set for the rare case where success is tolerable.
+    - ``rv in expected_rvs`` -> ``pass`` (spec-correct rejection).
+    - any other clean reject code -> ``xfail`` (honest non-spec deviation,
+      noted for later investigation).
+
+    Per the classification model: only a crypto-correctness break or
+    self-contradiction warrants ``fail``; a different honest reject code is
+    ``xfail``. This helper decides direction by the model, never to silence a
+    finding.
+    """
+    if rv == CKR_OK:
+        if allow_ok:
+            return
+        pytest.fail(f"{label}: accepted invalid (CKR_OK) -- must reject")
+    if rv in expected_rvs:
+        return
+    pytest.xfail(
+        f"{label}: rejected with {ckr_name(rv)}, expected {[ckr_name(c) for c in expected_rvs]}"
+    )
+
+
+def reject_or_classify(
+    exc: BaseException | None,
+    expected_rvs: tuple[Any, ...] | set[Any] | frozenset[Any],
+    *,
+    label: str,
+) -> None:
+    """Recipe-site negative classifier (exception-shaped, provider-general 3-way).
+
+    For recipe call sites that *raise* a ``CkrAssertionError`` on reject and
+    *return* on success (so there is no raw ``rv`` to inspect):
+
+    - ``exc is None`` means the operation SUCCEEDED (accepted the invalid /
+      forbidden input) -> ``fail``.
+    - a caught error whose ``rv`` is in ``expected_rvs`` -> ``pass`` (spec-correct
+      rejection).
+    - any other clean reject code -> ``xfail`` (honest non-spec deviation).
+
+    Mirrors ``classify_negative_rv`` for the exception path, reusing
+    ``is_known_error`` for the match.
+    """
+    if exc is None:
+        pytest.fail(f"{label}: accepted invalid (CKR_OK) -- must reject")
+    if is_known_error(exc, expected_rvs):
+        return
+    rv = getattr(exc, "rv", None)
+    name = ckr_name(rv) if rv is not None else str(exc)
+    pytest.xfail(f"{label}: rejected with {name}, expected {[ckr_name(c) for c in expected_rvs]}")
 
 
 def destroy_returned_handles(rs: Any, *handles: int) -> None:

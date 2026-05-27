@@ -43,7 +43,7 @@
 
 ### Task 1 — Add `kind` to `CkrExpectation`
 
-- [ ] **Step 1 — Failing test** in `tests/test_classification_helpers.py`:
+- [x] **Step 1 — Failing test** in `tests/test_classification_helpers.py`:
 ```python
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation
 def test_ckr_expectation_kind_default_policy():
@@ -51,20 +51,20 @@ def test_ckr_expectation_kind_default_policy():
                        compat_tuple=(0x70,), spec_ref="r")
     assert e.kind == "policy"
 ```
-- [ ] **Step 2 — Run, verify fail.** `uv run pytest tests/test_classification_helpers.py -q` → FAIL (no `kind`).
-- [ ] **Step 3 — Add field** after `allow_success` in `_ckr_spec.py:177` (keep `frozen=True`):
+- [x] **Step 2 — Run, verify fail.** `uv run pytest tests/test_classification_helpers.py -q` → FAIL (no `kind`).
+- [x] **Step 3 — Add field** after `allow_success` in `_ckr_spec.py:177` (keep `frozen=True`):
 ```python
     kind: str = "policy"
     """'crypto' (correctness) | 'policy' (attribute/permission) | 'lifecycle' (state) | 'metadata'."""
 ```
-- [ ] **Step 4 — Run, verify pass.** → PASS.
-- [ ] **Step 5 — Commit.** `git add -A && git commit -m "Add kind field to CkrExpectation"`
+- [x] **Step 4 — Run, verify pass.** → PASS.
+- [x] **Step 5 — Commit.** `git add -A && git commit -m "Add kind field to CkrExpectation"`
 
 ### Task 2 — 3-way `assert_ckr` (the linchpin)
 
 Compat mode today: `==spec`→pass; `in full_compat but !=spec`→**note()+pass**; outside→fail; `CKR_OK` handled at call sites. New: middle band → **`xfail`**; `CKR_OK` → **`fail`** unless `allow_success`. Strict mode unchanged (exact-compliance).
 
-- [ ] **Step 1 — Failing meta-tests** (`from _pytest.outcomes import Failed`):
+- [x] **Step 1 — Failing meta-tests** (`from _pytest.outcomes import Failed`):
 ```python
 import pytest
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation, assert_ckr
@@ -88,8 +88,8 @@ def test_allow_success_ok():
 def test_strict_wrong_code_fails():
     with pytest.raises(Failed):              assert_ckr(_E, CKR_FUNCTION_FAILED, strict=True)
 ```
-- [ ] **Step 2 — Run, verify the xfail / CKR_OK / allow_success tests FAIL.**
-- [ ] **Step 3 — Replace the compat `else:` branch** in `_ckr_spec.py:229-246`:
+- [x] **Step 2 — Run, verify the xfail / CKR_OK / allow_success tests FAIL.**
+- [x] **Step 3 — Replace the compat `else:` branch** in `_ckr_spec.py:229-246`:
 ```python
     else:
         if actual == CKR_OK:
@@ -107,15 +107,15 @@ def test_strict_wrong_code_fails():
                          f"{ckr_name(actual)}, spec prefers {[ckr_name(c) for c in spec_codes]} "
                          f"[{expectation.spec_ref}]")
 ```
-- [ ] **Step 4 — Run, verify pass.** → PASS.
-- [ ] **Step 5 — Blast-radius check.** `uv run pytest tests/ -k ckr -q 2>&1 | tail -25` → previously-noted deviations now `xfail`; **no new `fail`**. Record the xfail delta in the commit.
-- [ ] **Step 6 — Commit.** `git commit -am "assert_ckr: 3-way classify (other-reject xfail, CKR_OK fail)"`
+- [x] **Step 4 — Run, verify pass.** → PASS.
+- [x] **Step 5 — Blast-radius check.** `uv run pytest tests/ -k ckr -q 2>&1 | tail -25` → previously-noted deviations now `xfail`; **no new `fail`**. Record the xfail delta in the commit.
+- [x] **Step 6 — Commit.** `git commit -am "assert_ckr: 3-way classify (other-reject xfail, CKR_OK fail)"`
 
 ### Task 3 — Negative helpers (rv-shaped + exception-shaped)
 
 Two thin helpers in `conftest.py` for sites NOT in the table. `classify_negative_rv` for raw-`rv` sites; `reject_or_classify` for recipe sites that raise on reject / return on success (no `rv`).
 
-- [ ] **Step 1 — Failing tests:**
+- [x] **Step 1 — Failing tests:**
 ```python
 from _pytest.outcomes import Failed
 from pkcs11_check.testcases.conftest import classify_negative_rv, reject_or_classify
@@ -133,8 +133,8 @@ def test_exc_expected_passes(): reject_or_classify(_exc(CKR_KEY_FUNCTION_NOT_PER
 def test_exc_other_xfails():
     with pytest.raises(pytest.xfail.Exception): reject_or_classify(_exc(CKR_FUNCTION_FAILED), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
 ```
-- [ ] **Step 2 — Run, verify fail** (helpers undefined).
-- [ ] **Step 3 — Implement** (reuse `is_known_error`, `ckr_name`):
+- [x] **Step 2 — Run, verify fail** (helpers undefined).
+- [x] **Step 3 — Implement** (reuse `is_known_error`, `ckr_name`):
 ```python
 def classify_negative_rv(rv, expected_rvs, *, label, allow_ok=False):
     """Raw-rv negative classifier: CKR_OK -> fail (unless allow_ok);
@@ -158,8 +158,8 @@ def reject_or_classify(exc, expected_rvs, *, label):
     name = ckr_name(rv) if rv is not None else str(exc)
     pytest.xfail(f"{label}: rejected with {name}, expected {[ckr_name(c) for c in expected_rvs]}")
 ```
-- [ ] **Step 4 — Run, verify pass.** → PASS.
-- [ ] **Step 5 — Commit.** `git commit -am "Add classify_negative_rv + reject_or_classify negative helpers"`
+- [x] **Step 4 — Run, verify pass.** → PASS.
+- [x] **Step 5 — Commit.** `git commit -am "Add classify_negative_rv + reject_or_classify negative helpers"`
 
 ### Task 4 — Type-B / Type-C self-contradiction classifiers
 

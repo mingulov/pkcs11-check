@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from _pytest.outcomes import Failed
 
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
@@ -17,6 +18,10 @@ from pkcs11_check.raw.types_std import (
     CKR_PIN_INCORRECT,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation, assert_ckr
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    reject_or_classify,
+)
 
 
 def test_ckr_expectation_kind_default_policy() -> None:
@@ -81,3 +86,46 @@ def test_allow_success_ok() -> None:
 def test_strict_wrong_code_fails() -> None:
     with pytest.raises(Failed):
         assert_ckr(_E, CKR_FUNCTION_FAILED, strict=True)
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — negative helpers (rv-shaped + exception-shaped)
+# ---------------------------------------------------------------------------
+
+
+def _exc(rv: int) -> CkrAssertionError:
+    # NOTE: CkrAssertionError.__init__ requires (message, rv); the plan snippet's
+    # single-arg form + attribute assignment would not construct. Adapted minimally.
+    return CkrAssertionError(f"rv={rv}", rv)
+
+
+def test_rv_ok_fails() -> None:
+    with pytest.raises(Failed):
+        classify_negative_rv(CKR_OK, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+def test_rv_expected_passes() -> None:
+    classify_negative_rv(
+        CKR_KEY_FUNCTION_NOT_PERMITTED, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x"
+    )
+
+
+def test_rv_other_xfails() -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        classify_negative_rv(CKR_FUNCTION_FAILED, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+def test_exc_none_is_fail() -> None:
+    with pytest.raises(Failed):
+        reject_or_classify(None, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+def test_exc_expected_passes() -> None:
+    reject_or_classify(
+        _exc(CKR_KEY_FUNCTION_NOT_PERMITTED), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x"
+    )
+
+
+def test_exc_other_xfails() -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        reject_or_classify(_exc(CKR_FUNCTION_FAILED), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
