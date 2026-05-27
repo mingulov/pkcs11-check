@@ -57,24 +57,21 @@ from pkcs11_check.raw.types_std import (
     CKR_SIGNATURE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
 )
-from pkcs11_check.testcases.conftest import classify_policy_enforcement
+from pkcs11_check.testcases.conftest import classify_negative_rv, classify_policy_enforcement
 
 pytestmark = pytest.mark.access
 
 
 def _check_ckr(operation: str, expected: int, actual: int) -> None:
-    """Check if the actual CKR matches the expected CKR.
+    """Classify a negative-op reject code against the spec-preferred code (3-way).
 
-    If not, report a compliance deviation but don't fail the test.
+    Every call site guards ``CKR_OK`` (with ``pytest.fail`` / documented ``pass``)
+    before invoking this, so only reject codes reach here:
+
+    - ``actual == expected`` -> ``pass`` (spec-correct reject),
+    - any other clean reject code -> ``xfail`` (honest non-spec deviation).
     """
-    if actual != expected:
-        from pkcs11_check.compliance import ComplianceLevel, note
-
-        note(
-            f"{operation}: expected {ckr_name(expected)}, got {ckr_name(actual)}",
-            ComplianceLevel.NOT_RECOMMENDED,
-            reference="PKCS#11 spec CKR return code",
-        )
+    classify_negative_rv(actual, (expected,), label=operation)
 
 
 class TestCKRTemplateCompliance:
