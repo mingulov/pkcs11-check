@@ -16,8 +16,6 @@ from pkcs11_check.raw.attr_metadata import ATTR_VALUE_TYPES
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
-    gen_aes_key,
-    gen_rsa_keypair,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -40,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
 )
 from pkcs11_check.testcases._attribute_values import require_bool_attr
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = [pytest.mark.object]
 
@@ -62,7 +61,7 @@ def _read_attr(raw: Any, sh: int, handle: int, attr: int) -> Any:
 
 
 class TestSecretKeyDefaults:
-    """Verify default attribute values on a newly generated AES-256 key.
+    """Verify default attribute values on a newly generated AES key.
 
     Only CKA_TOKEN=False is set explicitly; all other attributes
     should reflect the module's defaults.
@@ -70,14 +69,14 @@ class TestSecretKeyDefaults:
 
     @pytest.fixture()
     def aes_key(self, p11_raw_session: Any) -> Any:
-        """Generate an AES-256 key with minimal template."""
+        """Generate an AES setup key with minimal template."""
         rs = p11_raw_session
-        if not rs.has_mechanism("AES_KEY_GEN"):
-            pytest.skip("AES key generation not supported")
-        try:
-            key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
-        except AssertionError as e:
-            pytest.skip(f"Cannot generate AES key with minimal template: {e}")
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_TOKEN: False},
+            purpose="default attribute checks",
+        )
         yield rs, key
         destroy_quietly(rs.raw, rs.sh, key)
 
@@ -180,12 +179,7 @@ class TestKeyPairDefaults:
     def rsa_keypair(self, p11_raw_session: Any) -> Any:
         """Generate an RSA-2048 keypair with minimal template."""
         rs = p11_raw_session
-        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
-            pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
-        try:
-            pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
-        except AssertionError as e:
-            pytest.skip(f"Cannot generate RSA-2048 keypair: {e}")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         yield rs, pub, priv
         destroy_quietly(rs.raw, rs.sh, pub)
         destroy_quietly(rs.raw, rs.sh, priv)

@@ -562,6 +562,13 @@ official full-matrix release statistics.
   skip; advertised EC keygen CKR rejects are xfail evidence. The mock-focused
   run reports both selected rows skipped because the mock does not expose this
   mechanism surface.
+- `pkcs11-mock` attribute-defaults focused artifact:
+  `artifacts/_focused/pkcs11-mock-attribute-defaults-current-20260527/`.
+  Current source uses the shared AES/RSA setup classifiers for the default
+  attribute fixtures and uses AES-128 for secret-key default checks. The
+  focused run reports 10 skipped, 12 xfailed, and 0 failed; this is mostly
+  missing AES keygen plus existing default/malformed attribute xfail evidence,
+  not a full clean pass for the mock's default attributes.
 
 ## Follow-Up Queue
 

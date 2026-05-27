@@ -1666,6 +1666,38 @@ def test_attribute_defaults_direct_malformed_bool_is_xfail(
         test_attribute_defaults.TestDataObjectDefaults().test_token_is_false((rs, 1))
 
 
+def test_attribute_defaults_aes_keygen_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    monkeypatch.setattr(
+        test_attribute_defaults.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+
+    fixture = test_attribute_defaults.TestSecretKeyDefaults().aes_key.__wrapped__
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
+        next(fixture(test_attribute_defaults.TestSecretKeyDefaults(), rs))
+
+
+def test_attribute_defaults_rsa_keygen_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
+    monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_attribute_value_invalid)
+    monkeypatch.setattr(
+        test_attribute_defaults.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+
+    fixture = test_attribute_defaults.TestKeyPairDefaults().rsa_keypair.__wrapped__
+    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+        next(fixture(test_attribute_defaults.TestKeyPairDefaults(), rs))
+
+
 def test_mechanism_attribute_local_malformed_bool_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
