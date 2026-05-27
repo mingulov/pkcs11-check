@@ -14,8 +14,6 @@ from pkcs11_check.raw.pack import attr_bytes, template
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
-    gen_aes_key,
-    gen_rsa_keypair,
     read_attributes,
     set_attributes,
 )
@@ -29,6 +27,7 @@ from pkcs11_check.raw.types_std import (
     CKK_RSA,
     CKO_PUBLIC_KEY,
 )
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.keymgmt
 
@@ -39,7 +38,12 @@ class TestSetAttributePositive:
     def test_change_label(self, p11_raw_session: Any) -> None:
         """CKA_LABEL can be changed on an existing key."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "before"})
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_LABEL: "before"},
+            purpose="set-attribute label mutation",
+        )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LABEL])
             assert attrs[CKA_LABEL] == "before"
@@ -56,7 +60,12 @@ class TestSetAttributePositive:
     def test_change_id(self, p11_raw_session: Any) -> None:
         """CKA_ID can be changed on an existing key."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_ID: b"\x01\x02"})
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_ID: b"\x01\x02"},
+            purpose="set-attribute ID mutation",
+        )
         try:
             set_attributes(rs.raw, rs.sh, key, {CKA_ID: b"\xaa\xbb"})
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_ID])
@@ -67,9 +76,8 @@ class TestSetAttributePositive:
     def test_change_label_on_keypair(self, p11_raw_session: Any) -> None:
         """CKA_LABEL can be changed on RSA public and private keys."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_LABEL: "rsa-orig"},
             private_attrs={CKA_LABEL: "rsa-orig"},
@@ -95,7 +103,7 @@ class TestSetAttributeNegative:
         from pkcs11_check.compliance import ComplianceLevel, note
 
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 128, purpose="set-attribute class rejection")
         try:
             try:
                 set_attributes(rs.raw, rs.sh, key, {CKA_CLASS: CKO_PUBLIC_KEY})
@@ -115,7 +123,7 @@ class TestSetAttributeNegative:
         from pkcs11_check.compliance import ComplianceLevel, note
 
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 128, purpose="set-attribute key-type rejection")
         try:
             try:
                 set_attributes(rs.raw, rs.sh, key, {CKA_KEY_TYPE: CKK_RSA})
@@ -132,7 +140,7 @@ class TestSetAttributeNegative:
     def test_cannot_change_modulus(self, p11_raw_session: Any) -> None:
         """CKA_MODULUS on RSA key is read-only - must reject."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             try:
                 set_attributes(rs.raw, rs.sh, pub, {CKA_MODULUS: b"\x00" * 256})
@@ -147,7 +155,7 @@ class TestSetAttributeNegative:
         from pkcs11_check.compliance import ComplianceLevel, note
 
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 128, purpose="set-attribute sensitive value rejection")
         try:
             try:
                 set_attributes(rs.raw, rs.sh, key, {CKA_VALUE: b"\x00" * 32})

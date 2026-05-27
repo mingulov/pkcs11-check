@@ -534,6 +534,15 @@ official full-matrix release statistics.
   domain-parameter skips; exact unsupported template/class rejects still skip,
   while generic runtime rejects become xfail evidence. The focused run reports
   1 passed, 8 skipped, and 0 failed.
+- `pkcs11-mock` search/set-attribute focused artifact:
+  `artifacts/_focused/pkcs11-mock-search-setattr-current-20260527/`. Current
+  source no longer reports missing AES setup as hard failures in
+  `test_search.py`, `test_object_search_patterns.py`, or
+  `test_set_attribute.py`; absent AES setup is counted as skip before the
+  object-search or mutation assertion. The focused slice reports 6 passed,
+  15 skipped, and 3 failed. The remaining hard rows are post-setup object
+  semantics: RSA `CKA_ID` reads back empty or is not searchable, and a changed
+  RSA label is not findable by the new label.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124
@@ -548,6 +557,12 @@ official full-matrix release statistics.
   The raw `CKA_ALLOWED_MECHANISMS` setup complaint disappeared after imported
   AES/HMAC secret keys started carrying the operation mechanism in
   `CKA_ALLOWED_MECHANISMS`.
+- `tpm2` search/set-attribute focused artifact:
+  `artifacts/_focused/tpm2-search-setattr-current-20260527/`. Current source
+  classifies TPM2 `AES_KEY_GEN` setup rejects before C_FindObjects and
+  C_SetAttributeValue assertions. The focused `test_search.py`,
+  `test_object_search_patterns.py`, and `test_set_attribute.py` slice reports
+  9 passed, 15 xfailed, and 0 failed.
 - `nss` X448/HKDF focused artifact:
   `artifacts/_focused/nss-x448-hkdf-current-v2-20260526`. Current source now
   reports the focused X448/HKDF set with 909 passed, 3,646 skipped, 8 xfailed,

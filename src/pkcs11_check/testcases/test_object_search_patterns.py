@@ -16,8 +16,6 @@ from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
-    gen_aes_key,
-    gen_rsa_keypair,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
@@ -30,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.keymgmt
 
@@ -45,11 +44,11 @@ class TestSearchByID:
         """Find a key using CKA_ID search."""
         rs = p11_raw_session
         key_id = _unique_id()
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
             attrs={CKA_ID: key_id, CKA_LABEL: "id-search"},
+            purpose="object search by CKA_ID",
         )
         try:
             tmpl = template(attr_bytes(CKA_ID, key_id))
@@ -69,7 +68,12 @@ class TestSearchByID:
         """Combined CKA_ID + CKA_CLASS search."""
         rs = p11_raw_session
         key_id = _unique_id()
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_ID: key_id})
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_ID: key_id},
+            purpose="object search by CKA_ID and class",
+        )
         try:
             tmpl = template(
                 attr_bytes(CKA_ID, key_id),
@@ -88,9 +92,8 @@ class TestKeypairIDLinkage:
         """RSA keypair pub and priv have the same CKA_ID when set."""
         rs = p11_raw_session
         key_id = _unique_id()
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ID: key_id},
             private_attrs={CKA_ID: key_id},
@@ -107,9 +110,8 @@ class TestKeypairIDLinkage:
         """Both pub and priv key findable by the shared CKA_ID."""
         rs = p11_raw_session
         key_id = _unique_id()
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ID: key_id},
             private_attrs={CKA_ID: key_id},
@@ -138,9 +140,8 @@ class TestKeypairIDLinkage:
         """Searching by CKA_ID alone returns both pub and priv."""
         rs = p11_raw_session
         key_id = _unique_id()
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ID: key_id},
             private_attrs={CKA_ID: key_id},
@@ -161,8 +162,18 @@ class TestMultiAttributeSearch:
         """Search by label + key type."""
         rs = p11_raw_session
         label = f"multi-{uuid.uuid4().hex[:8]}"
-        k1 = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: label})
-        k2 = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
+        k1 = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_LABEL: label},
+            purpose="multi-attribute object search",
+        )
+        k2 = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_LABEL: label},
+            purpose="multi-attribute object search",
+        )
         try:
             tmpl = template(
                 attr_bytes(CKA_LABEL, label.encode("utf-8")),
@@ -179,7 +190,12 @@ class TestMultiAttributeSearch:
         """Multi-attribute search excludes non-matching objects."""
         rs = p11_raw_session
         label = f"filter-{uuid.uuid4().hex[:8]}"
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: label})
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_LABEL: label},
+            purpose="object search filter setup",
+        )
         try:
             # Search for non-existent combination
             tmpl = template(

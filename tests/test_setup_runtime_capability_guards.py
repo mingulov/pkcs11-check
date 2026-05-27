@@ -50,12 +50,15 @@ from pkcs11_check.testcases import (
     test_mech_lifecycle,
     test_mech_wrap,
     test_mechanism_fuzz,
+    test_object_search_patterns,
     test_object_size,
     test_object_visibility,
     test_ro_session_restrictions,
     test_rsa_oaep,
+    test_search,
     test_sensitivity,
     test_session_state_machine,
+    test_set_attribute,
     test_sign_recover,
     test_stateful,
 )
@@ -1273,6 +1276,82 @@ def test_object_visibility_data_object_setup_reject_is_xfail(
         test_object_visibility.TestTokenPrivateInteraction().test_public_session_obj_visible_same_session(
             rs
         )
+
+
+def test_search_aes_setup_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    if hasattr(test_search, "gen_aes_key"):
+        monkeypatch.setattr(test_search, "gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="object search"):
+        test_search.TestObjectSearch().test_find_by_label(rs)
+
+
+def test_search_rsa_setup_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_function_not_supported)
+    if hasattr(test_search, "gen_rsa_keypair"):
+        monkeypatch.setattr(test_search, "gen_rsa_keypair", _raise_function_not_supported)
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="keypair generation"):
+        test_search.TestKeyPairSearch().test_find_public_key(rs)
+
+
+def test_object_search_patterns_aes_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    if hasattr(test_object_search_patterns, "gen_aes_key"):
+        monkeypatch.setattr(
+            test_object_search_patterns,
+            "gen_aes_key",
+            _raise_function_not_supported,
+        )
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="object search"):
+        test_object_search_patterns.TestSearchByID().test_find_key_by_id(rs)
+
+
+def test_object_search_patterns_rsa_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_function_not_supported)
+    if hasattr(test_object_search_patterns, "gen_rsa_keypair"):
+        monkeypatch.setattr(
+            test_object_search_patterns,
+            "gen_rsa_keypair",
+            _raise_function_not_supported,
+        )
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="keypair generation"):
+        test_object_search_patterns.TestKeypairIDLinkage().test_rsa_keypair_same_id(rs)
+
+
+def test_set_attribute_aes_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
+    if hasattr(test_set_attribute, "gen_aes_key"):
+        monkeypatch.setattr(test_set_attribute, "gen_aes_key", _raise_function_not_supported)
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="set-attribute"):
+        test_set_attribute.TestSetAttributePositive().test_change_label(rs)
+
+
+def test_set_attribute_rsa_setup_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_function_not_supported)
+    if hasattr(test_set_attribute, "gen_rsa_keypair"):
+        monkeypatch.setattr(test_set_attribute, "gen_rsa_keypair", _raise_function_not_supported)
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
+
+    with pytest.raises(pytest.xfail.Exception, match="keypair generation"):
+        test_set_attribute.TestSetAttributePositive().test_change_label_on_keypair(rs)
 
 
 def test_access_levels_user_setattr_trusted_reject_is_accepted(
