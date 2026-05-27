@@ -106,7 +106,7 @@ def verify_attribute_parity(
             _to_hex(expected_subject),
             True,
         )
-    except AssertionError:
+    except (AssertionError, KeyError):
         results["SUBJECT"] = (
             None,
             None,
@@ -125,7 +125,7 @@ def verify_attribute_parity(
             _to_hex(expected_issuer),
             True,
         )
-    except AssertionError:
+    except (AssertionError, KeyError):
         results["ISSUER"] = (
             None,
             None,
@@ -151,7 +151,7 @@ def verify_attribute_parity(
             _to_hex(expected_serial_der),
             True,
         )
-    except AssertionError:
+    except (AssertionError, KeyError):
         results["SERIAL_NUMBER"] = (None, None, None, True)
 
     # CKA_START_DATE (Optional)
@@ -168,7 +168,7 @@ def verify_attribute_parity(
                 str(expected_start),
                 False,
             )
-    except AssertionError:
+    except (AssertionError, KeyError):
         results["START_DATE"] = (None, None, None, False)
 
     # CKA_END_DATE (Optional)
@@ -185,7 +185,7 @@ def verify_attribute_parity(
                 str(expected_end),
                 False,
             )
-    except AssertionError:
+    except (AssertionError, KeyError):
         results["END_DATE"] = (None, None, None, False)
 
     # CKA_PUBLIC_KEY_INFO (v3.0+)
@@ -202,7 +202,7 @@ def verify_attribute_parity(
             _to_hex(expected_pk_info),
             False,
         )
-    except AssertionError:
+    except (AssertionError, KeyError):
         results["PUBLIC_KEY_INFO"] = (None, None, None, False)
 
     return results
