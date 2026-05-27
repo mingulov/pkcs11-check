@@ -217,7 +217,7 @@ elif result == "invalid" and not shared_expected:
 elif result == "invalid":
     pytest.fail(f"ECDH derived a secret for an invalid vector {vec_id} (invalid-point accepted)")
 ```
-- [ ] **Task 2a** — fix `test_wycheproof_ecdh.py:273` per pattern; add `tests/test_wycheproof_ecdh_guards.py` meta-test that a fake-accept on an `invalid` vector raises `Failed`; commit.
+- [x] **Task 2a** — fix `test_wycheproof_ecdh.py:273` per pattern; add `tests/test_wycheproof_ecdh_guards.py` meta-test that a fake-accept on an `invalid` vector raises `Failed`; commit.
 - [ ] **Task 2b** — `acvp/aes/test_gcm.py:172`: add the missing `else: pytest.fail(...)` on the GCM-SIV decrypt-success path for `test_passed is False`; meta-test; commit.
 - [ ] **Task 2c** — `wycheproof/test_wycheproof_x25519.py:260`: drop the `len(public_bytes)!=key_size` gate; fail on any successful derive for an `invalid` vector; meta-test; commit.
 
