@@ -291,6 +291,12 @@ unless noted.
 - **CKA_NEVER_EXTRACTABLE inconsistent**: When `CKA_EXTRACTABLE` is explicitly set to `True` at
   creation, `CKA_NEVER_EXTRACTABLE` must be `False` (Sec.4.9.4). NSS softoken behavior is
   inconsistent with this rule in combination with the default-extractable deviation above.
+  The *derived-attribute invariant* of Sec.4.9.4 — a key created `CKA_EXTRACTABLE=False` and never
+  modified must read back `CKA_NEVER_EXTRACTABLE=True`, and a key created `CKA_SENSITIVE=True` and
+  never modified must read back `CKA_ALWAYS_SENSITIVE=True` — is now enforced as a Type-D
+  self-contradiction in `test_attribute_invariants.py`: violating it on a suite-generated,
+  never-modified key is a `fail` (the module contradicts its own derived value), while an
+  unsupported/absent derived attribute remains an `xfail` (honest non-support).
 
 #### Missing/Unsupported Attributes (Phase 2)
 

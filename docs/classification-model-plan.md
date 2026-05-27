@@ -241,7 +241,7 @@ elif result == "invalid":
 
 ### Type A — crypto-correctness → `fail` (no claim-check)
 Replace the accept-tolerant branch with `pytest.fail`/`classify_negative_rv(rv, expected, label)` (no `allow_ok`).
-- [ ] **Sites:** `security/test_cve_regression.py:681` (invalid EC OID), `security/test_parameter_validation.py:522,475,352` (+4 weak-param: gcm weak-tag/weak-iv/iv-reuse, pss sLen=0, xts identical halves), `ckr/test_ckr_decrypt.py:169` (wrong-len ciphertext; drop `allow_success`), `ckr/test_ckr_verify.py:60,144`, `ckr/test_ckr_sign.py:53`, `test_errors.py:289` (verify wrong-mech; reclassify the `if rv==CKR_OK: pass`), `test_kem.py:755` (CKA_VALUE injection). One task per file; meta-test + commit each.
+- [x] **Sites:** `security/test_cve_regression.py:681` (invalid EC OID), `security/test_parameter_validation.py:522,475,352` (+4 weak-param: gcm weak-tag/weak-iv/iv-reuse, pss sLen=0, xts identical halves), `ckr/test_ckr_decrypt.py:169` (wrong-len ciphertext; drop `allow_success`), `ckr/test_ckr_verify.py:60,144`, `ckr/test_ckr_sign.py:53`, `test_errors.py:289` (verify wrong-mech; reclassify the `if rv==CKR_OK: pass`), `test_kem.py:755` (CKA_VALUE injection). One task per file; meta-test + commit each.
 
 ### Type B — attribute/permission → claim-check (`classify_policy_enforcement`)
 **Pattern (canonical, `test_sensitivity.py:64` — currently inverted):**
@@ -252,14 +252,14 @@ val = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
 violated = CKA_VALUE in val                            # read_attributes OMITS sensitive attrs (no raise)
 classify_policy_enforcement(claimed=claimed, violated=violated, label="read sensitive key value")
 ```
-- [ ] **Sites:** `test_sensitivity.py:64,117` (+ dup `ckr/test_ckr_object.py:122`, `ckr/test_ckr_codes.py:127`, `ckr/test_ckr_spec_compliance.py:197`), `test_api_security.py:241,363`, `test_tookan.py:203,268`, `ckr/test_ckr_raw_attrs.py:119,200`, `test_access_levels.py:962`, `test_attribute_enforcement.py:110`, `test_kem.py:858`. For copy-escalation, `claimed` = original read-back holds the protective value; `violated` = copy exposes it. One task per file; meta-test + commit.
+- [x] **Sites:** `test_sensitivity.py:64,117` (+ dup `ckr/test_ckr_object.py:122`, `ckr/test_ckr_codes.py:127`, `ckr/test_ckr_spec_compliance.py:197`), `test_api_security.py:241,363`, `test_tookan.py:203,268`, `ckr/test_ckr_raw_attrs.py:119,200`, `test_access_levels.py:962`, `test_attribute_enforcement.py:110`, `test_kem.py:858`. For copy-escalation, `claimed` = original read-back holds the protective value; `violated` = copy exposes it. One task per file; meta-test + commit.
 
 ### Type C — lifecycle → effect-check (`classify_lifecycle_effect`), content-tagged
 **Pattern (use-after-destroy):** tag the object with a unique `CKA_LABEL` before destroy; after destroy, the op `claimed_success` = destroy returned `CKR_OK`, `effect_observed` = a subsequent read returns the *tagged* object's content (distinguishes survival from handle reuse).
-- [ ] **Sites:** use-after-destroy `ckr/test_ckr_object.py:143,198,255`, `ckr/test_ckr_decrypt.py:240`, `ckr/test_ckr_verify.py:82`, `ckr/test_ckr_sign.py:92`, `ckr/test_ckr_codes.py:193`, `ckr/test_ckr_priority.py:48`, `security/test_handle_reuse.py:54`; read-only setattr (effect = value mutated, readable attrs only) `test_set_attribute.py:109,128,146,161`, `ckr/test_ckr_object.py:167`. One task per file; meta-test + commit.
+- [x] **Sites:** use-after-destroy `ckr/test_ckr_object.py:143,198,255`, `ckr/test_ckr_decrypt.py:240`, `ckr/test_ckr_verify.py:82`, `ckr/test_ckr_sign.py:92`, `ckr/test_ckr_codes.py:193`, `ckr/test_ckr_priority.py:48`, `security/test_handle_reuse.py:54`; read-only setattr (effect = value mutated, readable attrs only) `test_set_attribute.py:109,128,146,161`, `ckr/test_ckr_object.py:167`. One task per file; meta-test + commit.
 
 ### Type D — derived-attribute invariant NEW tests → `fail` on contradiction
-- [ ] **Task 3z** — Create `src/pkcs11_check/testcases/test_attribute_invariants.py` (suite-generated keys only): `NEVER_EXTRACTABLE` must be `True` when the key was created `EXTRACTABLE=False` and never changed; `ALWAYS_SENSITIVE` vs `SENSITIVE` likewise. Contradiction → `fail`; isolated wrong value elsewhere stays `xfail`. Meta-test + commit. Update `docs/module-issues.md` NSS `NEVER_EXTRACTABLE` entry.
+- [x] **Task 3z** — Create `src/pkcs11_check/testcases/test_attribute_invariants.py` (suite-generated keys only): `NEVER_EXTRACTABLE` must be `True` when the key was created `EXTRACTABLE=False` and never changed; `ALWAYS_SENSITIVE` vs `SENSITIVE` likewise. Contradiction → `fail`; isolated wrong value elsewhere stays `xfail`. Meta-test + commit. Update `docs/module-issues.md` NSS `NEVER_EXTRACTABLE` entry.
 
 ---
 
