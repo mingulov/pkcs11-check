@@ -142,6 +142,14 @@ Completed high-signal observations:
   the small old generic RSA-signature failure bucket is stale pre-fix evidence.
   Evidence directory:
   `artifacts/_focused/kryoptic-generic-wycheproof-current-20260526`.
+- Wycheproof RSA PKCS#1 signature-generation vectors now use the same import
+  boundary as the RSA decrypt/signature-verification rows. Exact RSA private-key
+  import capability rejects remain vector setup skips, but generic provider
+  CKRs from `C_CreateObject` become xfail evidence instead of silent skips, and
+  local Python assertions propagate. A focused pkcs11-mock sentinel run reports
+  80 skipped and 0 failed in
+  `artifacts/_focused/pkcs11-mock-rsa-siggen-current-20260527/`; this is
+  capability evidence only, not a clean RSA siggen provider result.
 - ACVP KeyGen internal-projection vectors contain seeds and expected keys that
   current PKCS#11 key-generation APIs cannot consume. The suite now keeps those
   vectors collected but skips duplicate provider-visible inputs after the first

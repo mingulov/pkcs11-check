@@ -14,7 +14,7 @@ because many modules reject those key sizes.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
@@ -32,7 +32,20 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKM_SHA384_RSA_PKCS,
     CKM_SHA512_RSA_PKCS,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
@@ -54,6 +67,24 @@ _MECH_DISPLAY: dict[int, str] = {
     CKM_SHA384_RSA_PKCS: "SHA384_RSA_PKCS",
     CKM_SHA512_RSA_PKCS: "SHA512_RSA_PKCS",
 }
+
+_RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_KEY_SIZE_RANGE,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_RSA_PRIVATE_IMPORT_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 # Only test key sizes >=2048; 1024 and 1536 are rejected by many modules
 _SIGGEN_FILES = [
@@ -102,6 +133,22 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_SIGGEN_VECTORS = _load_siggen_vectors()
 
 
+def _skip_or_xfail_rsa_private_import_reject(
+    exc: AssertionError,
+    key_size: int,
+    sha: str,
+) -> NoReturn:
+    """Classify RSA private-key import rejects before Wycheproof siggen."""
+    if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
+        pytest.skip(f"Cannot import RSA private key ({key_size}-bit, {sha}): {exc}")
+    xfail_if_known_ckr(
+        exc,
+        _RSA_PRIVATE_IMPORT_RUNTIME_REJECT_CKRS,
+        f"RSA private-key import is not operational ({key_size}-bit, {sha})",
+    )
+    raise exc
+
+
 @pytest.mark.parametrize(
     "vec_id,vec",
     _ALL_SIGGEN_VECTORS,
@@ -146,7 +193,7 @@ def test_rsa_pkcs1_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
                 attrs={CKA_SIGN: True},
             )
         except AssertionError as e:
-            pytest.skip(f"Cannot import RSA private key ({key_size}-bit, {sha}): {e}")
+            _skip_or_xfail_rsa_private_import_reject(e, key_size, sha)
 
         sig = sign_single(rs.raw, rs.sh, key_obj, mechanism, msg)
         assert sig == expected_sig, (
