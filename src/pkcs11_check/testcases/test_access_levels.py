@@ -844,15 +844,11 @@ class TestTrustedAttribute:
         rs = p11_raw_session
         # First generate a key without CKA_TRUSTED to avoid colliding with
         # modules that reject TRUSTED in templates entirely.
-        try:
-            key_h = _gen_access_aes_key(
-                rs,
-                rs.sh,
-                attrs={CKA_TOKEN: False, CKA_WRAP: True},
-            )
-        except AssertionError as e:
-            pytest.skip(f"Could not generate baseline AES key: {e}")
-            return
+        key_h = _gen_access_aes_key(
+            rs,
+            rs.sh,
+            attrs={CKA_TOKEN: False, CKA_WRAP: True},
+        )
 
         try:
             # Pre-check: the key must exist and be readable.

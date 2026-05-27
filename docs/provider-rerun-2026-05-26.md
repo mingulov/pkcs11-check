@@ -569,6 +569,12 @@ official full-matrix release statistics.
   focused run reports 10 skipped, 12 xfailed, and 0 failed; this is mostly
   missing AES keygen plus existing default/malformed attribute xfail evidence,
   not a full clean pass for the mock's default attributes.
+- `pkcs11-mock` trusted-setattr focused artifact:
+  `artifacts/_focused/pkcs11-mock-access-trusted-setattr-current-20260527/`.
+  The USER `CKA_TRUSTED` setattr row no longer catches all baseline AES setup
+  assertions as skips. The shared AES setup helper remains responsible for
+  missing-capability skips and advertised-runtime xfails; unexpected setup bugs
+  now propagate. The mock-focused run reports the selected row skipped.
 
 ## Follow-Up Queue
 

@@ -1298,6 +1298,24 @@ def test_access_levels_user_setattr_trusted_reject_is_accepted(
     test_access_levels.TestTrustedAttribute().test_user_cannot_setattr_trusted(rs)
 
 
+def test_access_levels_user_setattr_trusted_setup_bug_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _broken_setup(*_args: Any, **_kwargs: Any) -> int:
+        raise AssertionError("ctypes packing bug before trusted setattr")
+
+    monkeypatch.setattr(test_access_levels, "_gen_access_aes_key", _broken_setup)
+    monkeypatch.setattr(
+        test_access_levels.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+    rs = _session_with_mechanisms("AES_KEY_GEN")
+
+    with pytest.raises(AssertionError, match="ctypes packing bug"):
+        test_access_levels.TestTrustedAttribute().test_user_cannot_setattr_trusted(rs)
+
+
 def test_access_levels_wrap_with_trusted_uses_cbc_pad_iv_when_key_wrap_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
