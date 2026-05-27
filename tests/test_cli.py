@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
+from pkcs11_check import __version__
 from pkcs11_check.cli import test_cmd
 from pkcs11_check.cli.app import app
 from pkcs11_check.core.collection import CollectedPytestItem
@@ -23,7 +24,7 @@ class TestVersionCommand:
     def test_version_output(self) -> None:
         result = runner.invoke(app, ["version"])
         assert result.exit_code == 0
-        assert "pkcs11-check 0.1.0" in result.output
+        assert f"pkcs11-check {__version__}" in result.output
 
 
 class TestTestCommand:
