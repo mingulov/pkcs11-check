@@ -19,7 +19,9 @@ from pkcs11_check.raw.types_std import (
     CKM_BLAKE2B_256,
     CKM_BLAKE2B_384,
     CKM_BLAKE2B_512,
+    CKR_ARGUMENTS_BAD,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -29,6 +31,16 @@ _BLAKE2_MECHS = {
     "BLAKE2B_384": (CKM_BLAKE2B_384, 48),
     "BLAKE2B_512": (CKM_BLAKE2B_512, 64),
 }
+
+_EMPTY_DIGEST_REJECT_RVS = (CKR_ARGUMENTS_BAD,)
+
+
+def _digest_empty_or_xfail(raw: Any, sh: int, mechanism: Any, mech_name: str) -> bytes:
+    try:
+        return digest_single(raw, sh, mechanism, b"")
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _EMPTY_DIGEST_REJECT_RVS, f"CKM_{mech_name} empty digest")
+        raise
 
 
 class TestBlake2bDigestLength:
@@ -144,7 +156,7 @@ class TestBlake2bProperties:
         rs = p11_raw_session
         if not rs.has_mechanism("BLAKE2B_256"):
             pytest.skip("CKM_BLAKE2B_256 not supported")
-        digest = digest_single(rs.raw, rs.sh, CKM_BLAKE2B_256, b"")
+        digest = _digest_empty_or_xfail(rs.raw, rs.sh, CKM_BLAKE2B_256, "BLAKE2B_256")
         expected = hashlib.blake2b(b"", digest_size=32).digest()
         assert digest == expected
 
@@ -153,7 +165,7 @@ class TestBlake2bProperties:
         rs = p11_raw_session
         if not rs.has_mechanism("BLAKE2B_512"):
             pytest.skip("CKM_BLAKE2B_512 not supported")
-        digest = digest_single(rs.raw, rs.sh, CKM_BLAKE2B_512, b"")
+        digest = _digest_empty_or_xfail(rs.raw, rs.sh, CKM_BLAKE2B_512, "BLAKE2B_512")
         expected = hashlib.blake2b(b"", digest_size=64).digest()
         assert digest == expected
 

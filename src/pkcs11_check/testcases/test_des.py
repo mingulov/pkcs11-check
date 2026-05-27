@@ -65,8 +65,11 @@ from pkcs11_check.raw.types_std import (
     CKM_DES_MAC,
     CKM_DES_MAC_GENERAL,
     CKM_DES_OFB64,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.full
 
@@ -92,7 +95,7 @@ def _encrypt_or_xfail(
     try:
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if "CKR_MECHANISM_INVALID" in str(exc):
+        if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_KEY_TYPE_INCONSISTENT}):
             pytest.xfail(xfail_msg or f"Mechanism advertised but rejected at use: {exc}")
         raise
 
@@ -483,7 +486,7 @@ class TestDESMAC:
             try:
                 mac = sign_single(rs.raw, rs.sh, key, CKM_DES_MAC, data)
             except AssertionError as exc:
-                if "CKR_MECHANISM_INVALID" in str(exc):
+                if is_known_error(exc, {CKR_MECHANISM_INVALID}):
                     pytest.skip(des_skip)
                 raise
             assert len(mac) > 0
@@ -521,7 +524,7 @@ class TestDESMAC:
                     ),
                 )
             except AssertionError as exc:
-                if "CKR_MECHANISM_INVALID" in str(exc):
+                if is_known_error(exc, {CKR_MECHANISM_INVALID}):
                     pytest.skip(des_skip)
                 raise
             assert len(mac) == mac_len
@@ -553,7 +556,7 @@ class TestDESMAC:
             try:
                 mac1 = sign_single(rs.raw, rs.sh, key1, CKM_DES_MAC, data)
             except AssertionError as exc:
-                if "CKR_MECHANISM_INVALID" in str(exc):
+                if is_known_error(exc, {CKR_MECHANISM_INVALID}):
                     pytest.skip(des_skip)
                 raise
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_DES_MAC, data)

@@ -15,7 +15,6 @@ import pytest
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
     gen_rsa_keypair,
     import_secret_key,
     read_attributes,
@@ -40,34 +39,40 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_GEN,
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
     CKR_OK,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import require_bool_attr, require_ulong_attr
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, is_known_error
 
 pytestmark = [pytest.mark.security]
 
-# CKR codes that are valid for template/attribute rejections
-_TEMPLATE_CKR_NAMES = {
-    "CKR_ATTRIBUTE_TYPE_INVALID",
-    "CKR_ATTRIBUTE_VALUE_INVALID",
-    "CKR_TEMPLATE_INCONSISTENT",
+_TEMPLATE_ERROR_RVS = {
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_FUNCTION_FAILED,
 }
 
-_SET_ATTR_CKR_NAMES = {
-    "CKR_ATTRIBUTE_READ_ONLY",
-    "CKR_ATTRIBUTE_TYPE_INVALID",
-    "CKR_ATTRIBUTE_VALUE_INVALID",
-    "CKR_ACTION_PROHIBITED",
+_SET_ATTR_ERROR_RVS = {
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ACTION_PROHIBITED,
 }
 
 
-def _is_template_error(e: AssertionError) -> bool:
-    msg = str(e)
-    return any(n in msg for n in _TEMPLATE_CKR_NAMES) or "CKR_FUNCTION_FAILED" in msg
+def _is_template_error(e: BaseException) -> bool:
+    return is_known_error(e, _TEMPLATE_ERROR_RVS)
 
 
-def _is_set_attr_error(e: AssertionError) -> bool:
-    msg = str(e)
-    return any(n in msg for n in _SET_ATTR_CKR_NAMES)
+def _is_set_attr_error(e: BaseException) -> bool:
+    return is_known_error(e, _SET_ATTR_ERROR_RVS)
 
 
 class TestCopyableOneWay:
@@ -77,14 +82,14 @@ class TestCopyableOneWay:
         """CKA_COPYABLE=False cannot be changed to True via C_SetAttributeValue."""
         rs = p11_raw_session
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={CKA_COPYABLE: False, CKA_TOKEN: False},
+                purpose="CKA_COPYABLE=False setup",
             )
         except AssertionError as e:
-            if _is_template_error(e) or "CKR_FUNCTION_FAILED" in str(e):
+            if _is_template_error(e):
                 pytest.skip("Module does not support setting CKA_COPYABLE=False")
             raise
 
@@ -93,7 +98,7 @@ class TestCopyableOneWay:
             if attrs[CKA_COPYABLE] is not False:
                 pytest.skip("Module did not honour CKA_COPYABLE=False")
         except AssertionError as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not support reading CKA_COPYABLE: {e}")
             raise
 
@@ -116,18 +121,18 @@ class TestCopyableOneWay:
     def test_copyable_true_can_be_set_false(self, p11_raw_session: Any) -> None:
         """CKA_COPYABLE=True can be changed to False (the allowed direction)."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_COPYABLE: True, CKA_TOKEN: False},
+            purpose="CKA_COPYABLE=True setup",
         )
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_COPYABLE])
                 initial = attrs[CKA_COPYABLE]
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not support reading CKA_COPYABLE: {e}")
                 raise
             if initial is not True:
@@ -151,7 +156,12 @@ class TestDestroyable:
     def test_destroyable_readable(self, p11_raw_session: Any) -> None:
         """CKA_DESTROYABLE should be readable on a generated key (default True)."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
+        key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            attrs={CKA_TOKEN: False},
+            purpose="CKA_DESTROYABLE readback setup",
+        )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_DESTROYABLE])
             if CKA_DESTROYABLE not in attrs:
@@ -159,7 +169,7 @@ class TestDestroyable:
             val = attrs[CKA_DESTROYABLE]
             assert val is True, f"Expected default CKA_DESTROYABLE=True, got {val}"
         except AssertionError as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not support CKA_DESTROYABLE: {e}")
             raise
         finally:
@@ -169,11 +179,11 @@ class TestDestroyable:
         """C_DestroyObject must fail when CKA_DESTROYABLE=False."""
         rs = p11_raw_session
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={CKA_DESTROYABLE: False, CKA_TOKEN: False},
+                purpose="CKA_DESTROYABLE=False setup",
             )
         except AssertionError as e:
             if _is_template_error(e):
@@ -186,7 +196,7 @@ class TestDestroyable:
                 pytest.skip("CKA_DESTROYABLE not supported by module")
             val = attrs[CKA_DESTROYABLE]
         except AssertionError as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not support reading CKA_DESTROYABLE: {e}")
             raise
 
@@ -237,11 +247,11 @@ class TestDestroyable:
         """C_DestroyObject should succeed when CKA_DESTROYABLE=True."""
         rs = p11_raw_session
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={CKA_DESTROYABLE: True, CKA_TOKEN: False},
+                purpose="CKA_DESTROYABLE=True setup",
             )
         except AssertionError as e:
             if _is_template_error(e):
@@ -283,11 +293,11 @@ class TestTokenAttributePromotion:
         """
         rs = p11_raw_session
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={CKA_TOKEN: False, CKA_LABEL: "session-key-promote-test"},
+                purpose="CKA_TOKEN promotion setup",
             )
         except AssertionError as e:
             pytest.skip(f"Could not generate baseline session AES key: {e}")
@@ -298,7 +308,7 @@ class TestTokenAttributePromotion:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_TOKEN])
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_TOKEN: {e}")
                 raise
             initial = attrs.get(CKA_TOKEN)
@@ -309,16 +319,29 @@ class TestTokenAttributePromotion:
             try:
                 set_attributes(rs.raw, rs.sh, key, {CKA_TOKEN: True})
             except AssertionError as e:
-                msg = str(e)
-                accepted_rejection = (
-                    "CKR_ATTRIBUTE_READ_ONLY",
-                    "CKR_ACTION_PROHIBITED",
-                    "CKR_USER_NOT_LOGGED_IN",
-                    "CKR_SESSION_READ_ONLY",
-                    "CKR_TEMPLATE_INCONSISTENT",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
+                # Exact rv match (via CkrAssertionError.rv) avoids the
+                # CKR_SESSION_READ_ONLY ⊂ CKR_SESSION_READ_ONLY_EXISTS
+                # substring collision the older `code in msg` pattern hit.
+                from pkcs11_check.raw.types_std import (
+                    CKR_ACTION_PROHIBITED,
+                    CKR_ATTRIBUTE_READ_ONLY,
+                    CKR_ATTRIBUTE_VALUE_INVALID,
+                    CKR_SESSION_READ_ONLY,
+                    CKR_TEMPLATE_INCONSISTENT,
+                    CKR_USER_NOT_LOGGED_IN,
                 )
-                if any(code in msg for code in accepted_rejection):
+
+                if is_known_error(
+                    e,
+                    {
+                        CKR_ATTRIBUTE_READ_ONLY,
+                        CKR_ACTION_PROHIBITED,
+                        CKR_USER_NOT_LOGGED_IN,
+                        CKR_SESSION_READ_ONLY,
+                        CKR_TEMPLATE_INCONSISTENT,
+                        CKR_ATTRIBUTE_VALUE_INVALID,
+                    },
+                ):
                     return
                 raise
 
@@ -358,15 +381,21 @@ class TestKeyGenMechanism:
     def test_generated_aes_key_has_aes_key_gen(self, p11_raw_session: Any) -> None:
         """Generated AES key should have CKA_KEY_GEN_MECHANISM = CKM_AES_KEY_GEN."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
+        key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            attrs={CKA_TOKEN: False},
+            purpose="CKA_KEY_GEN_MECHANISM readback setup",
+        )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_GEN_MECHANISM])
             if CKA_KEY_GEN_MECHANISM not in attrs:
                 pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
             mech = attrs[CKA_KEY_GEN_MECHANISM]
-            assert mech == CKM_AES_KEY_GEN, f"Expected CKM_AES_KEY_GEN, got {mech}"
+            mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
+            assert mech_val == CKM_AES_KEY_GEN, f"Expected CKM_AES_KEY_GEN, got {mech_val}"
         except AssertionError as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
             raise
         finally:
@@ -385,11 +414,12 @@ class TestKeyGenMechanism:
                 if CKA_KEY_GEN_MECHANISM not in attrs:
                     pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
                 mech = attrs[CKA_KEY_GEN_MECHANISM]
-                assert mech == CKM_RSA_PKCS_KEY_PAIR_GEN, (
-                    f"Expected CKM_RSA_PKCS_KEY_PAIR_GEN, got {mech}"
+                mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
+                assert mech_val == CKM_RSA_PKCS_KEY_PAIR_GEN, (
+                    f"Expected CKM_RSA_PKCS_KEY_PAIR_GEN, got {mech_val}"
                 )
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
                 raise
         finally:
@@ -413,12 +443,12 @@ class TestKeyGenMechanism:
                 if CKA_KEY_GEN_MECHANISM not in attrs:
                     pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
                 mech = attrs[CKA_KEY_GEN_MECHANISM]
-            except (AssertionError, Exception) as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+            except AssertionError as e:
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
                 raise
             # CK_UNAVAILABLE_INFORMATION is ~0 (all bits set).
-            mech_val = int(mech) if not isinstance(mech, int) else mech
+            mech_val = require_ulong_attr(mech, "CKA_KEY_GEN_MECHANISM")
             unavailable_32 = 0xFFFFFFFF
             unavailable_64 = 0xFFFFFFFFFFFFFFFF
             assert mech_val in (unavailable_32, unavailable_64), (
@@ -430,14 +460,19 @@ class TestKeyGenMechanism:
     def test_key_gen_mechanism_read_only(self, p11_raw_session: Any) -> None:
         """CKA_KEY_GEN_MECHANISM must be read-only - reject C_SetAttributeValue."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
+        key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            attrs={CKA_TOKEN: False},
+            purpose="CKA_KEY_GEN_MECHANISM read-only setup",
+        )
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_GEN_MECHANISM])
                 if CKA_KEY_GEN_MECHANISM not in attrs:
                     pytest.skip("CKA_KEY_GEN_MECHANISM not supported by module")
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_KEY_GEN_MECHANISM: {e}")
                 raise
 
@@ -461,11 +496,11 @@ class TestCheckValue:
     def test_generated_key_has_check_value(self, p11_raw_session: Any) -> None:
         """Generated AES key should have a 3-byte CKA_CHECK_VALUE."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_TOKEN: False, CKA_ENCRYPT: True},
+            purpose="CKA_CHECK_VALUE setup",
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE])
@@ -475,7 +510,7 @@ class TestCheckValue:
         except KeyError:
             pytest.skip("Module does not expose CKA_CHECK_VALUE")
         except AssertionError as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
             raise
         finally:
@@ -503,7 +538,7 @@ class TestCheckValue:
             except KeyError:
                 pytest.skip("Module does not expose CKA_CHECK_VALUE")
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
                 raise
 
@@ -544,7 +579,7 @@ class TestCheckValue:
             except KeyError:
                 pytest.skip("Module does not expose CKA_CHECK_VALUE")
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_CHECK_VALUE: {e}")
                 raise
 
@@ -575,10 +610,13 @@ class TestAlwaysAuthenticate:
             attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
             if CKA_ALWAYS_AUTHENTICATE not in attrs:
                 pytest.skip("CKA_ALWAYS_AUTHENTICATE not supported by module")
-            val = attrs[CKA_ALWAYS_AUTHENTICATE]
+            val = require_bool_attr(
+                attrs[CKA_ALWAYS_AUTHENTICATE],
+                "CKA_ALWAYS_AUTHENTICATE",
+            )
             assert val is False, f"Default CKA_ALWAYS_AUTHENTICATE should be False, got {val}"
         except AssertionError as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
             raise
         finally:
@@ -606,9 +644,12 @@ class TestAlwaysAuthenticate:
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
-                val = attrs[CKA_ALWAYS_AUTHENTICATE]
+                val = require_bool_attr(
+                    attrs[CKA_ALWAYS_AUTHENTICATE],
+                    "CKA_ALWAYS_AUTHENTICATE",
+                )
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
                 raise
 
@@ -664,17 +705,17 @@ class TestDateAttributes:
         rs = p11_raw_session
 
         try:
-            key = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_START_DATE: "20260101",
                     CKA_END_DATE: "20271231",
                 },
+                purpose="date attribute setup",
             )
-        except (AssertionError, Exception) as e:
+        except AssertionError as e:
             pytest.skip(f"Module does not support CKA_START_DATE / CKA_END_DATE: {e}")
 
         try:
@@ -687,7 +728,7 @@ class TestDateAttributes:
                 )
                 sd = attrs[CKA_START_DATE]
                 ed = attrs[CKA_END_DATE]
-            except (AssertionError, Exception) as e:
+            except AssertionError as e:
                 pytest.skip(f"Module does not expose date attributes: {e}")
 
             assert sd == "20260101", f"Expected 20260101, got {sd}"
@@ -698,12 +739,17 @@ class TestDateAttributes:
     def test_empty_dates_by_default(self, p11_raw_session: Any) -> None:
         """Generated key without explicit dates should have empty/default dates."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False})
+        key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            attrs={CKA_TOKEN: False},
+            purpose="default date attribute setup",
+        )
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_START_DATE])
                 sd = attrs[CKA_START_DATE]
-            except (AssertionError, Exception) as e:
+            except AssertionError as e:
                 pytest.skip(f"Module does not expose CKA_START_DATE: {e}")
 
             # Empty date: raw API returns "" or "00000000" or similar

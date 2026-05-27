@@ -158,3 +158,5 @@ def test_hkdf(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
 
     if result == "valid" and okm is not None:
         assert okm == okm_expected
+    if result == "invalid" and okm is not None:
+        pytest.fail(f"Invalid HKDF vector {vec_id} derived successfully")

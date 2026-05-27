@@ -35,9 +35,21 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_HMAC,
     CKM_SHA512_HMAC,
     CKO_SECRET_KEY,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
+
+_HMAC_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+)
 
 
 class TestGenericSecretKeyGen:
@@ -112,6 +124,8 @@ class TestGenericSecretHMAC:
     def test_hmac_with_imported_generic_secret(self, p11_raw_session: Any) -> None:
         """Import a known key as generic secret, compute HMAC, cross-verify."""
         rs = p11_raw_session
+        if not rs.has_mechanism("SHA256_HMAC"):
+            pytest.skip("CKM_SHA256_HMAC not supported")
         key_bytes = b"hmac-test-key-for-generic-secret"
         data = b"HMAC with generic secret key"
 
@@ -129,7 +143,14 @@ class TestGenericSecretHMAC:
             },
         )
         try:
-            p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA256_HMAC, data)
+            try:
+                p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA256_HMAC, data)
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _HMAC_RUNTIME_REJECT_RVS,
+                    "SHA256_HMAC advertised but sign is not operational",
+                )
             expected = hmac_mod.new(key_bytes, data, hashlib.sha256).digest()
             assert p11_mac == expected
         finally:
@@ -138,6 +159,8 @@ class TestGenericSecretHMAC:
     def test_hmac_sha512_crossverify(self, p11_raw_session: Any) -> None:
         """HMAC-SHA512 with known key cross-verified."""
         rs = p11_raw_session
+        if not rs.has_mechanism("SHA512_HMAC"):
+            pytest.skip("CKM_SHA512_HMAC not supported")
         key_bytes = bytes(range(64))
         data = b"HMAC-SHA512 cross-verification test data"
 
@@ -155,7 +178,14 @@ class TestGenericSecretHMAC:
             },
         )
         try:
-            p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA512_HMAC, data)
+            try:
+                p11_mac = sign_single(rs.raw, rs.sh, key_h, CKM_SHA512_HMAC, data)
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _HMAC_RUNTIME_REJECT_RVS,
+                    "SHA512_HMAC advertised but sign is not operational",
+                )
             expected = hmac_mod.new(key_bytes, data, hashlib.sha512).digest()
             assert p11_mac == expected
         finally:

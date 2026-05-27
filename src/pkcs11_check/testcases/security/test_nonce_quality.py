@@ -16,7 +16,6 @@ import pytest
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_ec_keypair,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -25,6 +24,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_ECDSA,
 )
+from pkcs11_check.testcases.conftest import gen_ec_keypair_or_xfail
 
 pytestmark = pytest.mark.security
 
@@ -41,9 +41,8 @@ class TestECDSANonceReuse:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_ec_keypair_or_xfail(
+            rs,
             curve_oid,
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
@@ -78,9 +77,8 @@ class TestECDSANonceReuse:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_ec_keypair_or_xfail(
+            rs,
             curve_oid,
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
@@ -115,9 +113,8 @@ class TestECDSADeterminism:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_ec_keypair_or_xfail(
+            rs,
             curve_oid,
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
@@ -150,9 +147,8 @@ class TestECDSANonceBias:
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub, priv = gen_ec_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_ec_keypair_or_xfail(
+            rs,
             curve_oid,
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},

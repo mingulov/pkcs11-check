@@ -17,7 +17,6 @@
 #   docker compose -f docker/docker-compose.test.yml run test-tpm2
 #   docker compose -f docker/docker-compose.test.yml run test-bouncyhsm
 #   docker compose -f docker/docker-compose.test.yml run test-pkcs11-mock
-#   docker compose -f docker/docker-compose.test.yml run test-qryptotoken
 
 x-common: &common
   volumes:
@@ -30,12 +29,15 @@ services:
   # Versioned releases — stable, reproducible
   # ==========================================================
 
-  # SoftHSM2 2.7.0 (v2.40, OpenSSL)
+  # SoftHSM2 2.7.0 (v2.40, OpenSSL 3.6.2)
   test-softhsm2:
     <<: *common
     build:
       context: ..
-      dockerfile: docker/softhsm2/Dockerfile
+      dockerfile: docker/softhsm2/Dockerfile.main
+      args:
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-3.6.2}"
+        SOFTHSM2_REF: "2.7.0"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2
       PKCS11_CHECK_PIN: "1234"
@@ -45,22 +47,29 @@ services:
     <<: *common
     build:
       context: ..
-      dockerfile: docker/softhsm2/Dockerfile.generated-iv
+      dockerfile: docker/softhsm2/Dockerfile.main
+      args:
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-3.6.2}"
+        SOFTHSM2_REF: "2.7.0"
+        SOFTHSM2_APPLY_GENERATED_IV_PATCH: "1"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-generated-iv
       PKCS11_CHECK_PIN: "1234"
 
-  # Kryoptic v1.5.0 (v3.2, Rust)
+  # Kryoptic v1.5.0 (v3.2, Rust, OpenSSL 4.0.0)
   test-kryoptic:
     <<: *common
     build:
       context: ..
-      dockerfile: docker/kryoptic/Dockerfile
+      dockerfile: docker/kryoptic/Dockerfile.main
+      args:
+        OPENSSL_TAG: "${OPENSSL_TAG:-openssl-4.0.0}"
+        KRYOPTIC_REF: "v1.5.0"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic
       PKCS11_CHECK_PIN: "1234"
 
-  # NSS stable (Fedora 43, v3.0)
+  # NSS stable (Fedora 44, v3.0)
   test-nss:
     <<: *common
     build:
@@ -69,24 +78,28 @@ services:
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss
 
-  # NSS PQC (Fedora Rawhide, v3.2 PQC)
-  # NSS PQC (source build, configurable tag, default: tip)
+  # NSS PQC/source release (official NSS/NSPR RTM tags)
   test-nss-pqc:
     <<: *common
     build:
       context: ..
       dockerfile: docker/nss-softoken/Dockerfile.rawhide
       args:
-        NSS_TAG: "tip"
+        NSS_TAG: "${NSS_TAG:-NSS_3_124_RTM}"
+        NSPR_TAG: "${NSPR_TAG:-NSPR_4_39_RTM}"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/nss-pqc
 
-  # OpenCryptoki 3.26 (IBM, v3.0)
+  # OpenCryptoki 3.27.0 (IBM, v3.0, OpenSSL 4.0.0)
   test-opencryptoki:
     <<: *common
     build:
       context: ..
-      dockerfile: docker/opencryptoki/Dockerfile
+      dockerfile: docker/opencryptoki/Dockerfile.master
+      args:
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-4.0.0}"
+        OPENCRYPTOKI_REPO: "https://github.com/opencryptoki/opencryptoki.git"
+        OPENCRYPTOKI_BRANCH: "v3.27.0"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki
       PKCS11_CHECK_PIN: "1234"
@@ -102,7 +115,7 @@ services:
       context: ..
       dockerfile: docker/opencryptoki/Dockerfile.master
       args:
-        OPENSSL_VERSION: "${OPENSSL_VERSION:-3.6.1}"
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-4.0.0}"
         OPENCRYPTOKI_REPO: "${OPENCRYPTOKI_REPO:-https://github.com/opencryptoki/opencryptoki.git}"
         OPENCRYPTOKI_BRANCH: "${OPENCRYPTOKI_BRANCH:-master}"
         OPENCRYPTOKI_PR: "${OPENCRYPTOKI_PR:-}"
@@ -110,7 +123,7 @@ services:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/opencryptoki-master
       PKCS11_CHECK_PIN: "1234"
 
-  # NSS main branch (built from source, full PQC)
+  # NSS main branch (source tip, full PQC)
   test-nss-main:
     <<: *common
     build:
@@ -126,20 +139,22 @@ services:
       context: ..
       dockerfile: docker/softhsm2/Dockerfile.main
       args:
-        OPENSSL_VERSION: "3.6.1"
+        OPENSSL_VERSION: "${OPENSSL_VERSION:-4.0.0}"
+        SOFTHSM2_REF: "main"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-main
       PKCS11_CHECK_PIN: "1234"
 
   # Kryoptic main branch (latest dev, default features)
-  # Custom OpenSSL: OPENSSL_TAG=openssl-4.0.0-beta1 bash docker/test.sh kryoptic-main --rebuild
+  # Custom OpenSSL: OPENSSL_TAG=openssl-3.6.2 bash docker/test.sh kryoptic-main --rebuild
   test-kryoptic-main:
     <<: *common
     build:
       context: ..
       dockerfile: docker/kryoptic/Dockerfile.main
       args:
-        OPENSSL_TAG: "${OPENSSL_TAG:-openssl-3.6.1}"
+        OPENSSL_TAG: "${OPENSSL_TAG:-openssl-4.0.0}"
+        KRYOPTIC_REF: "main"
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/kryoptic-main
       PKCS11_CHECK_PIN: "1234"
@@ -187,13 +202,3 @@ services:
       dockerfile: docker/pkcs11-mock/Dockerfile
     environment:
       PKCS11_CHECK_ARTIFACT_DIR: /artifacts/pkcs11-mock
-
-  # qryptotoken — experimental Rust PQC token (QUBIP)
-  test-qryptotoken:
-    <<: *common
-    build:
-      context: ..
-      dockerfile: docker/qryptotoken/Dockerfile
-    environment:
-      PKCS11_CHECK_ARTIFACT_DIR: /artifacts/qryptotoken
-      PKCS11_CHECK_PIN: "1234"

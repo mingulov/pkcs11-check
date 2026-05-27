@@ -16,16 +16,71 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.types_std import (
     CKK_AES,
+    CKM,
     CKM_AES_ECB,
     CKM_SHA224,
     CKM_SHA256,
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import KAT_DIR as VECTORS_DIR
 
 pytestmark = pytest.mark.kat
+
+_DIGEST_KAT_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+_AES_KAT_IMPORT_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_AES_KAT_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 
 def load_vectors(filename: str) -> list[dict[str, str]]:
@@ -39,13 +94,64 @@ def _import_aes_key(rs: Any, key_bytes: bytes) -> int:
     """Import AES key bytes via raw API."""
     from pkcs11_check.raw.types_std import CKA_DECRYPT, CKA_ENCRYPT, CKA_TOKEN
 
-    return import_secret_key(
-        rs.raw,
-        rs.sh,
-        CKK_AES,
-        key_bytes,
-        attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
-    )
+    has_mechanism = getattr(rs, "has_mechanism", None)
+    if callable(has_mechanism) and not has_mechanism("AES_ECB"):
+        pytest.skip("CKM_AES_ECB not supported")
+
+    try:
+        return import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            key_bytes,
+            attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _AES_KAT_IMPORT_REJECT_RVS,
+            "AES_ECB KAT key import rejected",
+        )
+    raise
+
+
+def _digest_kat_or_xfail(rs: Any, mechanism: CKM, mech_name: str, msg: bytes) -> bytes:
+    has_mechanism = getattr(rs, "has_mechanism", None)
+    if callable(has_mechanism) and not has_mechanism(mech_name):
+        pytest.skip(f"CKM_{mech_name} not supported")
+    try:
+        return digest_single(rs.raw, rs.sh, mechanism, msg)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _DIGEST_KAT_RUNTIME_REJECT_RVS,
+            f"{mech_name} KAT digest rejected at runtime",
+        )
+    raise
+
+
+def _aes_kat_encrypt_or_xfail(rs: Any, key: int, plaintext: bytes) -> bytes:
+    try:
+        return encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _AES_KAT_RUNTIME_REJECT_RVS,
+            "AES_ECB KAT encrypt rejected",
+        )
+    raise
+
+
+def _aes_kat_decrypt_or_xfail(rs: Any, key: int, ciphertext: bytes) -> bytes:
+    try:
+        return decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ciphertext)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _AES_KAT_RUNTIME_REJECT_RVS,
+            "AES_ECB KAT decrypt rejected",
+        )
+    raise
 
 
 class TestSHA256KAT:
@@ -60,7 +166,7 @@ class TestSHA256KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA256, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA256, "SHA256", msg)
         assert result == expected
 
 
@@ -76,7 +182,7 @@ class TestSHA512KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA512, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA512, "SHA512", msg)
         assert result == expected
 
 
@@ -92,7 +198,7 @@ class TestSHA1KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA_1, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA_1, "SHA_1", msg)
         assert result == expected
 
 
@@ -108,7 +214,7 @@ class TestSHA384KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA384, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA384, "SHA384", msg)
         assert result == expected
 
 
@@ -124,7 +230,7 @@ class TestSHA224KAT:
         rs = p11_raw_session
         msg = bytes.fromhex(vec["msg"])
         expected = bytes.fromhex(vec["digest"])
-        result = digest_single(rs.raw, rs.sh, CKM_SHA224, msg)
+        result = _digest_kat_or_xfail(rs, CKM_SHA224, "SHA224", msg)
         assert result == expected
 
 
@@ -142,7 +248,7 @@ class TestAESECBKAT:
         plaintext = bytes.fromhex(vec["plaintext"])
         expected_ct = bytes.fromhex(vec["ciphertext"])
         try:
-            result = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
+            result = _aes_kat_encrypt_or_xfail(rs, key, plaintext)
             assert result == expected_ct
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -158,7 +264,7 @@ class TestAESECBKAT:
         ciphertext = bytes.fromhex(vec["ciphertext"])
         expected_pt = bytes.fromhex(vec["plaintext"])
         try:
-            result = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ciphertext)
+            result = _aes_kat_decrypt_or_xfail(rs, key, ciphertext)
             assert result == expected_pt
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

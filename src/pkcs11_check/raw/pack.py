@@ -144,7 +144,6 @@ class PackedMechanism:
         self.length_arg = length_arg or LengthArg.explicit_value(0)
         self.params = params
         self.sub_mechanisms = sub_mechanisms
-        self._key_mat_out_ref: Any = None
         self._keepalive: list[Any] = []
         self._named_buffers: dict[str, tuple[Any, int]] = {}
 
@@ -165,6 +164,38 @@ class PackedMechanism:
         """Return the current bytes from a named mutable output buffer."""
         storage, length = self._named_buffers[name]
         return bytes(storage[:length])
+
+    def buffer_storage(self, name: str) -> tuple[Any, int]:
+        """Return the ``(storage, length)`` pair behind a named buffer.
+
+        Use this to share the underlying ctypes buffer with another mechanism
+        (e.g. so an unwrap-side ``CK_GCM_MESSAGE_PARAMS`` can reuse the wrap
+        side's pTag) or to mutate it in place.  Raises ``KeyError`` if no
+        buffer of that name has been registered.
+        """
+        return self._named_buffers[name]
+
+
+class KeyMatMechanism(PackedMechanism):
+    """PackedMechanism variant that also owns a CK_*_KEY_MAT_OUT struct.
+
+    Used by SSL3/TLS1.2/WTLS key-and-mac-derive packers, where the mechanism
+    parameter struct points at a separate output struct that receives derived
+    key handles (and, for some variants, IV buffers).  Lives as a subclass
+    so the field doesn't bloat every regular PackedMechanism instance.
+    """
+
+    def __init__(
+        self,
+        ck: CK_MECHANISM,
+        storage: Any = None,
+        pointer_arg: PointerArg | None = None,
+        length_arg: LengthArg | None = None,
+        params: Any = None,
+        sub_mechanisms: dict[str, int] | None = None,
+    ) -> None:
+        super().__init__(ck, storage, pointer_arg, length_arg, params, sub_mechanisms)
+        self.key_mat_out: Any = None
 
 
 class TemplateArg:
@@ -461,9 +492,13 @@ def _pack_bytes(
     """
     if data is None:
         return None, 0
-    buf = (ctypes.c_ubyte * len(data))(*data)
+    n = len(data)
+    if n == 0:
+        buf: ctypes.Array[ctypes.c_ubyte] = (ctypes.c_ubyte * 0)()
+    else:
+        buf = (ctypes.c_ubyte * n).from_buffer_copy(data)
     keepalive.append(buf)
-    return ctypes.cast(buf, CK_VOID_PTR), len(data)
+    return ctypes.cast(buf, CK_VOID_PTR), n
 
 
 def _mech_struct(
@@ -472,11 +507,12 @@ def _mech_struct(
     origin: str,
     keepalive: list[Any] | None = None,
     sub_mechanisms: dict[str, int] | None = None,
+    cls: type[PackedMechanism] = PackedMechanism,
 ) -> PackedMechanism:
-    """Build a PackedMechanism from a pre-populated ctypes struct."""
+    """Build a PackedMechanism (or subclass) from a pre-populated ctypes struct."""
     pointer_arg = PointerArg.to_storage(params, origin=origin)
     length_arg = LengthArg.native(ctypes.sizeof(params))
-    result = PackedMechanism(
+    result = cls(
         CK_MECHANISM(mechanism_type, pointer_arg.pointer, length_arg.value),
         storage=params,
         pointer_arg=pointer_arg,
@@ -507,6 +543,7 @@ from .pack_mechanisms import (  # noqa: E402, F401
     mech_gcm_generated_iv,
     mech_gcm_message,
     mech_gcm_message_generated_iv,
+    mech_gcm_message_inherit_tag,
     mech_gcm_wrap,
     mech_gcm_wrap_generated_iv,
     mech_hkdf,
@@ -531,6 +568,7 @@ from .pack_mechanisms import (  # noqa: E402, F401
 )
 
 __all__ = [
+    "KeyMatMechanism",
     "LengthArg",
     "PointerArg",
     "PackedAttribute",
@@ -565,6 +603,7 @@ __all__ = [
     "mech_gcm_generated_iv",
     "mech_gcm_message",
     "mech_gcm_message_generated_iv",
+    "mech_gcm_message_inherit_tag",
     "mech_gcm_wrap",
     "mech_gcm_wrap_generated_iv",
     "mech_hkdf",

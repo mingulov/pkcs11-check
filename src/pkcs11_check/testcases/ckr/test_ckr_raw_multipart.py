@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 
@@ -97,8 +99,7 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptUpdate without init")
 
     def test_encrypt_final_no_init(self, p11_config: Any) -> None:
         """C_EncryptFinal without C_EncryptInit."""
@@ -114,8 +115,7 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptFinal without init")
 
     def test_decrypt_update_no_init(self, p11_config: Any) -> None:
         """C_DecryptUpdate without C_DecryptInit."""
@@ -132,8 +132,7 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptUpdate without init")
 
     def test_sign_update_no_init(self, p11_config: Any) -> None:
         """C_SignUpdate without C_SignInit."""
@@ -148,8 +147,7 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_SignUpdate without init")
 
     def test_digest_update_no_init(self, p11_config: Any) -> None:
         """C_DigestUpdate without C_DigestInit."""
@@ -164,8 +162,7 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_DigestUpdate without init")
 
     def test_digest_final_no_init(self, p11_config: Any) -> None:
         """C_DigestFinal without C_DigestInit."""
@@ -181,8 +178,7 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_DigestFinal without init")
 
     def test_decrypt_final_no_init(self, p11_config: Any) -> None:
         """C_DecryptFinal without C_DecryptInit."""
@@ -198,8 +194,7 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptFinal without init")
 
     def test_sign_final_no_init(self, p11_config: Any) -> None:
         """C_SignFinal without C_SignInit."""
@@ -215,8 +210,7 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_SignFinal without init")
 
     def test_verify_update_no_init(self, p11_config: Any) -> None:
         """C_VerifyUpdate without C_VerifyInit."""
@@ -231,8 +225,7 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_VerifyUpdate without init")
 
     def test_verify_final_no_init(self, p11_config: Any) -> None:
         """C_VerifyFinal without C_VerifyInit."""
@@ -247,5 +240,4 @@ class TestMultipartNotInitialized:
             print("OK")
             """,
         )
-        assert rc == 0, f"Crash or error: {err[-200:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_VerifyFinal without init")

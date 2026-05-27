@@ -10,6 +10,7 @@ import ctypes
 from typing import Any, Literal
 
 from .pack import (
+    KeyMatMechanism,
     PackedMechanism,
     _mech_struct,
     _pack_bytes,
@@ -61,6 +62,23 @@ from .types_std import (
     CKZ_DATA_SPECIFIED,
     CKZ_SALT_SPECIFIED,
 )
+
+
+def _alloc_writable_pointer(
+    params: ctypes.Structure,
+    ptr_field: str,
+    length: int,
+) -> ctypes.Array[Any]:
+    """Allocate a writable ``CK_BYTE * length`` buffer and aim ``params.<ptr_field>`` at it.
+
+    Returns the buffer so the caller can keep it alive (e.g. via
+    ``result.add_buffer(name, buf, length)``).  Centralises the
+    ``buf = (CK_BYTE * n)(); params.X = ctypes.cast(buf, CK_VOID_PTR)``
+    idiom that every generated-output packer repeats.
+    """
+    buf = (CK_BYTE * length)()
+    setattr(params, ptr_field, ctypes.cast(buf, CK_VOID_PTR))
+    return buf
 
 
 def mech_gcm(
@@ -123,9 +141,8 @@ def mech_gcm_generated_iv(
         raise ValueError("generated GCM IV buffer must be non-empty")
 
     ka: list[Any] = []
-    iv_buf = (CK_BYTE * iv_buf_len)()
     params = CK_AES_GCM_PARAMS()
-    params.pIv = ctypes.cast(iv_buf, CK_VOID_PTR)
+    iv_buf = _alloc_writable_pointer(params, "pIv", iv_buf_len)
     if convention == "strict":
         params.ulIvLen = 0
         params.ulIvBits = resolved_iv_bits
@@ -171,11 +188,43 @@ def mech_gcm_message(
     if tag_bits < 0:
         raise ValueError("tag_bits must be non-negative")
     tag_len = (tag_bits + 7) // 8
-    tag_buf = (CK_BYTE * tag_len)()
-    params.pTag = ctypes.cast(tag_buf, CK_VOID_PTR)
+    tag_buf = _alloc_writable_pointer(params, "pTag", tag_len)
     params.ulTagBits = tag_bits
     result = _mech_struct(mechanism_type, params, "mech_gcm_message", ka)
     result.add_buffer("tag", tag_buf, tag_len)
+    return result
+
+
+def mech_gcm_message_inherit_tag(
+    mechanism_type: CKM | int,
+    iv: bytes,
+    *,
+    source: PackedMechanism,
+    iv_fixed_bits: int = 0,
+    iv_generator: int = 0,
+) -> PackedMechanism:
+    """Pack CK_GCM_MESSAGE_PARAMS that shares its pTag with ``source``.
+
+    Used to wire an AEAD unwrap mechanism to the tag buffer the matching
+    wrap call wrote, without callers reaching into ``source.params.pTag``
+    directly (which orphans the unwrap-side buffer from the new mech's
+    ``buffer_bytes("tag")``).
+
+    The shared tag buffer is registered under the name ``"tag"`` on the
+    returned mechanism, so ``mech.buffer_bytes("tag")`` returns the same
+    bytes ``source.buffer_bytes("tag")`` does.  ``source`` is kept alive
+    via the new mechanism's keepalive list.
+    """
+    tag_storage, tag_len = source.buffer_storage("tag")
+    ka: list[Any] = [source]
+    params = CK_GCM_MESSAGE_PARAMS()
+    params.pIv, params.ulIvLen = _pack_bytes(iv, ka)
+    params.ulIvFixedBits = iv_fixed_bits
+    params.ivGenerator = iv_generator
+    params.pTag = source.params.pTag
+    params.ulTagBits = source.params.ulTagBits
+    result = _mech_struct(mechanism_type, params, "mech_gcm_message_inherit_tag", ka)
+    result.add_buffer("tag", tag_storage, tag_len)
     return result
 
 
@@ -194,15 +243,13 @@ def mech_gcm_message_generated_iv(
         raise ValueError("tag_bits must be non-negative")
 
     params = CK_GCM_MESSAGE_PARAMS()
-    iv_buf = (CK_BYTE * iv_len)()
-    params.pIv = ctypes.cast(iv_buf, CK_VOID_PTR)
+    iv_buf = _alloc_writable_pointer(params, "pIv", iv_len)
     params.ulIvLen = iv_len
     params.ulIvFixedBits = iv_fixed_bits
     params.ivGenerator = iv_generator
 
     tag_len = (tag_bits + 7) // 8
-    tag_buf = (CK_BYTE * tag_len)()
-    params.pTag = ctypes.cast(tag_buf, CK_VOID_PTR)
+    tag_buf = _alloc_writable_pointer(params, "pTag", tag_len)
     params.ulTagBits = tag_bits
 
     result = _mech_struct(
@@ -261,8 +308,7 @@ def mech_gcm_wrap_generated_iv(
         raise ValueError("iv_len must be positive")
     ka: list[Any] = []
     params = CK_GCM_WRAP_PARAMS()
-    iv_buf = (CK_BYTE * iv_len)()
-    params.pIv = ctypes.cast(iv_buf, CK_VOID_PTR)
+    iv_buf = _alloc_writable_pointer(params, "pIv", iv_len)
     params.ulIvLen = iv_len
     params.ulIvFixedBits = iv_fixed_bits
     params.ivGenerator = iv_generator
@@ -303,13 +349,11 @@ def mech_ccm_message_generated_nonce(
 
     params = CK_CCM_MESSAGE_PARAMS()
     params.ulDataLen = data_len
-    nonce_buf = (CK_BYTE * nonce_len)()
-    params.pNonce = ctypes.cast(nonce_buf, CK_VOID_PTR)
+    nonce_buf = _alloc_writable_pointer(params, "pNonce", nonce_len)
     params.ulNonceLen = nonce_len
     params.ulNonceFixedBits = nonce_fixed_bits
     params.nonceGenerator = nonce_generator
-    mac_buf = (CK_BYTE * mac_len)()
-    params.pMAC = ctypes.cast(mac_buf, CK_VOID_PTR)
+    mac_buf = _alloc_writable_pointer(params, "pMAC", mac_len)
     params.ulMACLen = mac_len
 
     result = _mech_struct(
@@ -376,8 +420,7 @@ def mech_ccm_wrap_generated_nonce(
     ka: list[Any] = []
     params = CK_CCM_WRAP_PARAMS()
     params.ulDataLen = data_len
-    nonce_buf = (CK_BYTE * nonce_len)()
-    params.pNonce = ctypes.cast(nonce_buf, CK_VOID_PTR)
+    nonce_buf = _alloc_writable_pointer(params, "pNonce", nonce_len)
     params.ulNonceLen = nonce_len
     params.ulNonceFixedBits = nonce_fixed_bits
     params.nonceGenerator = nonce_generator
@@ -782,12 +825,12 @@ def mech_ssl3_key_mat(
     key_size_bits: int = 128,
     iv_size_bits: int = 128,
     is_export: bool = False,
-) -> PackedMechanism:
+) -> KeyMatMechanism:
     """Pack CK_SSL3_KEY_MAT_PARAMS.
 
     Used for CKM_SSL3_KEY_AND_MAC_DERIVE and CKM_TLS_KEY_AND_MAC_DERIVE.
-    Returns a PackedMechanism whose .params.pReturnedKeyMaterial points to a
-    CK_SSL3_KEY_MAT_OUT struct (accessible as pm.params._key_mat_out_ref).
+    Returns a KeyMatMechanism whose .params.pReturnedKeyMaterial points to a
+    CK_SSL3_KEY_MAT_OUT struct (accessible as ``mech.key_mat_out``).
     """
     ka: list[Any] = []
     params = CK_SSL3_KEY_MAT_PARAMS()
@@ -811,12 +854,14 @@ def mech_ssl3_key_mat(
         ctypes.pointer(key_mat_out),
         CK_VOID_PTR,
     )
-    result = _mech_struct(mechanism_type, params, "mech_ssl3_key_mat", ka)
+    result = _mech_struct(
+        mechanism_type, params, "mech_ssl3_key_mat", ka, cls=KeyMatMechanism
+    )
     if iv_bytes:
         result.add_buffer("iv_client", iv_client, iv_bytes)
         result.add_buffer("iv_server", iv_server, iv_bytes)
-    # Stash for callers to read output key handles
-    result._key_mat_out_ref = key_mat_out
+    assert isinstance(result, KeyMatMechanism)
+    result.key_mat_out = key_mat_out
     return result
 
 
@@ -862,7 +907,7 @@ def mech_tls12_key_mat(
     key_size_bits: int = 128,
     iv_size_bits: int = 128,
     is_export: bool = False,
-) -> PackedMechanism:
+) -> KeyMatMechanism:
     """Pack CK_TLS12_KEY_MAT_PARAMS.
 
     Used for CKM_TLS12_KEY_AND_MAC_DERIVE and CKM_TLS12_KEY_SAFE_DERIVE.
@@ -895,11 +940,13 @@ def mech_tls12_key_mat(
         "mech_tls12_key_mat",
         ka,
         sub_mechanisms={"prfHashMechanism": hash_mech},
+        cls=KeyMatMechanism,
     )
     if iv_bytes:
         result.add_buffer("iv_client", iv_client, iv_bytes)
         result.add_buffer("iv_server", iv_server, iv_bytes)
-    result._key_mat_out_ref = key_mat_out
+    assert isinstance(result, KeyMatMechanism)
+    result.key_mat_out = key_mat_out
     return result
 
 
@@ -1054,7 +1101,7 @@ def mech_wtls_key_mat(
     iv_size_bits: int = 0,
     sequence_number: int = 0,
     is_export: bool = False,
-) -> PackedMechanism:
+) -> KeyMatMechanism:
     """Pack CK_WTLS_KEY_MAT_PARAMS.
 
     Used for CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE and
@@ -1087,10 +1134,12 @@ def mech_wtls_key_mat(
         "mech_wtls_key_mat",
         ka,
         sub_mechanisms={"DigestMechanism": digest_mechanism},
+        cls=KeyMatMechanism,
     )
     if iv_bytes:
         result.add_buffer("iv", iv_buf, iv_bytes)
-    result._key_mat_out_ref = key_mat_out
+    assert isinstance(result, KeyMatMechanism)
+    result.key_mat_out = key_mat_out
     return result
 
 
@@ -1192,6 +1241,7 @@ __all__ = [
     "mech_gcm_generated_iv",
     "mech_gcm_message",
     "mech_gcm_message_generated_iv",
+    "mech_gcm_message_inherit_tag",
     "mech_gcm_wrap",
     "mech_gcm_wrap_generated_iv",
     "mech_hash_sign_context",

@@ -15,8 +15,8 @@ PyPI.
 - Crash-aware execution model that can isolate provider crashes and preserve the
   finding instead of taking down the whole run.
 - Broad provider tooling for local and Docker-based validation across SoftHSM2,
-  Kryoptic, NSS, OpenCryptoki, TPM2, BouncyHSM, pkcs11-mock, qryptotoken, and
-  related targets.
+  Kryoptic, NSS, OpenCryptoki, TPM2, BouncyHSM, pkcs11-mock, and related
+  targets.
 - Security regression coverage for key wrapping, access control, Tookan-style
   attribute escalation, RSA/CBC oracle classes, API boundary misuse, and known
   CVE families.
@@ -42,9 +42,9 @@ These are baseline results from a deliberate full provider validation run on
 2026-05-04 to 2026-05-05. They should only be refreshed after another deliberate
 full validation run.
 
-See [Docker Provider Validation Snapshot](docker-provider-results.md) for the
-published provider source URLs, resolved revisions, artifact timestamps, and
-full-matrix result tables.
+The current [Docker Provider Validation Snapshot](docker-provider-results.md)
+is refreshed separately for the next release/article work. The v0.1.0 baseline
+below preserves the May 2026 historical release evidence inline.
 
 ---
 
@@ -69,11 +69,10 @@ Stable builds use the pinned tag or Fedora 44 system packages.
 | `test-softhsm2` | SoftHSM2 | tag `2.7.0` |
 | `test-kryoptic` | Kryoptic | tag `v1.5.0`, `--features pqc` |
 | `test-nss` | NSS | Fedora 44 RPM (nss-softokn) |
-| `test-nss-pqc` | NSS | hg tip (configurable via `NSS_TAG`) |
+| `test-nss-pqc` | NSS | official RTM tags (`NSS_3_124_RTM`, `NSPR_4_39_RTM`; configurable via build args) |
 | `test-opencryptoki` | OpenCryptoki | Fedora 44 RPM (`opencryptoki-3.26`) |
 | `test-kryoptic-fips` | Kryoptic | `main`, `--features "fips,pqc"` |
 | `test-pkcs11-mock` | pkcs11-mock | github.com/Pkcs11Interop/pkcs11-mock, `main` |
-| `test-qryptotoken` | qryptotoken | github.com/QUBIP/qryptotoken, `v0.4.1` (build-unavailable in this baseline) |
 
 ---
 
@@ -85,12 +84,9 @@ The refreshed Docker baseline produced pytest results for 14 targets:
 |-------:|-------:|--------:|--------:|-------:|--------:|------:|
 | 677,557 | 58,334 | 342,697 | 773 | 851 | 17 | 1,080,229 |
 
-`qryptotoken` is tracked separately because upstream `v0.4.1` currently fails
-to build in the Docker image before a PKCS#11 module is produced. The target now
-records `artifacts/qryptotoken/build-status.json`.
+The current [Docker Provider Validation Snapshot](docker-provider-results.md)
+may differ from the historical v0.1.0 table below.
 
-See [Docker Provider Validation Snapshot](docker-provider-results.md) for the
-per-provider result table.
 | **Total** | **322,453** | **37,261** | **148,798** | **329** | **10** | **509,884** |
 
 ---

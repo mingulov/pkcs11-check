@@ -6,6 +6,7 @@ specific condition that was fixed.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 from ctypes import byref
 from typing import Any
@@ -36,6 +37,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CK_ULONG,
     CKA_CLASS,
     CKA_DERIVE,
     CKA_EC_PARAMS,
@@ -62,6 +64,7 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
+    CKR_ACTION_PROHIBITED,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -75,11 +78,20 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_NOT_WRAPPABLE,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    gen_aes_key_or_xfail,
+    get_pin_bytes,
+    is_known_error,
+    skip_unless_mechanism,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.security
 
@@ -114,6 +126,64 @@ _MECHANISM_ERROR_RVS = {
     CKR_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
 }
+
+_SENSITIVE_WRAP_INAPPLICABLE_RVS = {
+    CKR_ACTION_PROHIBITED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_NOT_WRAPPABLE,
+}
+
+_SENSITIVE_WRAP_RUNTIME_REJECT_RVS = {
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+}
+
+
+def _gen_cve_aes_key_or_xfail(
+    rs: Any,
+    bits: int,
+    *,
+    attrs: dict[Any, Any] | None = None,
+    purpose: str,
+) -> int:
+    """Generate AES setup keys for CVE tests without hiding provider findings."""
+    skip_unless_mechanism(rs, "AES_KEY_GEN")
+    try:
+        return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but {purpose} key generation is not operational",
+        )
+    raise
+
+
+def _gen_cve_rsa_keypair_or_xfail(rs: Any, bits: int) -> tuple[int, int]:
+    """Generate RSA setup keys for CVE tests without hiding provider findings."""
+    skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
+    try:
+        return gen_rsa_keypair(rs.raw, rs.sh, bits)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "RSA_PKCS_KEY_PAIR_GEN advertised but CVE setup keypair generation is not operational",
+        )
+    raise
+
+
+def _abort_encrypt_operation(raw: Any, session: int) -> None:
+    """Best-effort cleanup after an expected encrypt error leaves state active."""
+    try:
+        out_buf = (ctypes.c_ubyte * 64)()
+        out_len = CK_ULONG(64)
+        raw.C_EncryptFinal(session, out_buf, byref(out_len))
+    except (AttributeError, OSError, ctypes.ArgumentError):
+        pass
 
 
 class TestCKATrusted:
@@ -295,7 +365,14 @@ class TestTookanUnwrapAttrs:
                     CKM_AES_KEY_WRAP,
                 )
             except AssertionError as exc:
-                pytest.skip(f"Module rejected wrap of SENSITIVE=True key: {exc}")
+                if is_known_error(exc, _SENSITIVE_WRAP_INAPPLICABLE_RVS):
+                    pytest.skip(f"Module cannot wrap SENSITIVE=True key: {exc}")
+                xfail_if_known_ckr(
+                    exc,
+                    _SENSITIVE_WRAP_RUNTIME_REJECT_RVS,
+                    "Tookan sensitive-key wrap rejected before unwrap check",
+                )
+                raise
 
             try:
                 unwrapped = unwrap_key(
@@ -371,11 +448,11 @@ class TestSessionObjectsAfterLogout:
         label = f"logout-test-{id(self)}".encode()
 
         # Generate a key with a unique label
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={CKA_LABEL: label},
+            purpose="session object after logout",
         )
 
         # Verify it exists
@@ -518,7 +595,12 @@ class TestBoundaryLengthCrypto:
     def test_aes_ecb_boundary_lengths(self, p11_raw_session: Any) -> None:
         """AES-ECB with 0, 1, 15, 16, 17, 31, 32 bytes."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        skip_unless_mechanism(rs, "AES_ECB")
+        key = _gen_cve_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-ECB boundary-length regression",
+        )
         try:
             for size in [0, 1, 15, 16, 17, 31, 32]:
                 data = b"\xaa" * size
@@ -532,7 +614,13 @@ class TestBoundaryLengthCrypto:
                     try:
                         encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
                     except AssertionError:
+                        _abort_encrypt_operation(rs.raw, rs.sh)
                         pass  # Correct rejection via expect_rv
+                    else:
+                        if size > 0:
+                            pytest.fail(
+                                f"AES-ECB accepted non-block-aligned plaintext length {size}"
+                            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -731,7 +819,8 @@ class TestTPM2Issue44:
     def test_rapid_sign_no_deadlock(self, p11_raw_session: Any) -> None:
         """100 rapid RSA sign operations - must not deadlock."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+        pub, priv = _gen_cve_rsa_keypair_or_xfail(rs, 2048)
 
         try:
             for i in range(100):

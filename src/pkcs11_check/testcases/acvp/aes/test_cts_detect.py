@@ -11,7 +11,10 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.testcases.acvp.aes.base_cts import get_detected_variant
+from pkcs11_check.testcases.acvp.aes.base_cts import (
+    get_detected_variant,
+    skip_unless_cts_encrypt_decrypt,
+)
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 REQUIRED_MECHANISMS = ["AES_CTS"]
@@ -25,6 +28,7 @@ def test_cts_variant_detected(p11_raw_session: Any) -> None:
     either fix CTS or stop advertising the mechanism.
     """
     rs = p11_raw_session
+    skip_unless_cts_encrypt_decrypt(rs)
     variant = get_detected_variant(rs)
     assert variant is not None, (
         "Module advertises CKM_AES_CTS but CTS variant detection failed. "

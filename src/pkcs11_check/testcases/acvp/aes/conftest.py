@@ -1,24 +1,30 @@
-"""Collection-time CTS variant deselection.
+"""Collection-time CTS variant skip marking.
 
 When AES-CTS tests are collected, this conftest probes the module once
-to detect the CS variant (CS1/CS2/CS3) and deselects non-matching tests
-*before* they execute.  This avoids the overhead of individually skipping
-thousands of parameterized tests at ~50ms each.
+to detect the CS variant (CS1/CS2/CS3) and marks non-matching tests as
+skipped before they execute.  This keeps the full vector universe visible in
+reported totals without paying per-test provider setup costs.
 
 If detection fails (module errors on CTS encrypt), all CS variant tests
-are deselected -- test_cts_detect.py will catch this as a failure.
+are skipped -- test_cts_detect.py will catch this as a failure.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+_DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
+
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Deselect CTS tests for non-matching CS variants at collection time."""
+    """Mark CTS tests for non-matching CS variants as counted skips."""
+    if os.environ.get(_DISABLE_COLLECTION_PROBES_ENV):
+        return
+
     # Classify CTS variant test items
     cts_variant_items: dict[str, list[pytest.Item]] = {}
     for item in items:
@@ -35,22 +41,28 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     variant = _probe_cts_variant(config)
 
-    # Collect items to deselect
-    to_deselect: list[pytest.Item] = []
     if variant is None:
-        # Detection failed: deselect all CS variant tests.
+        # Detection failed: skip all CS variant tests.
         # test_cts_detect.py (no "_cs{N}_" in its nodeid) will still run and FAIL.
         for vitems in cts_variant_items.values():
-            to_deselect.extend(vitems)
-    else:
-        for v, vitems in cts_variant_items.items():
-            if v != variant:
-                to_deselect.extend(vitems)
+            for item in vitems:
+                item.add_marker(
+                    pytest.mark.skip(
+                        reason=(
+                            "CKM_AES_CTS variant detection failed; "
+                            "test_cts_detect reports the provider finding"
+                        )
+                    )
+                )
+        return
 
-    if to_deselect:
-        deselected_ids = {id(item) for item in to_deselect}
-        items[:] = [item for item in items if id(item) not in deselected_ids]
-        config.hook.pytest_deselected(items=to_deselect)
+    for v, vitems in cts_variant_items.items():
+        if v == variant:
+            continue
+        for item in vitems:
+            item.add_marker(
+                pytest.mark.skip(reason=f"Module implements CS{variant}, skipping CS{v} vectors")
+            )
 
 
 def _probe_cts_variant(config: pytest.Config) -> str | None:

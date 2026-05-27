@@ -15,13 +15,21 @@ Key types covered:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_LOCAL,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     gen_keypair_for_mech,
@@ -29,6 +37,41 @@ from pkcs11_check.testcases.mechanism_helpers import (
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.keygen]
+
+_LOCAL_READ_UNSUPPORTED_RVS = (
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_LOCAL_READ_NONCLEAN_RVS = (CKR_ATTRIBUTE_VALUE_INVALID,)
+
+
+def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any | None:
+    """Read CKA_LOCAL; return None when the provider does not expose it."""
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_LOCAL])
+    except AssertionError as exc:
+        if is_known_error(exc, _LOCAL_READ_UNSUPPORTED_RVS):
+            return None
+        if is_known_error(exc, _LOCAL_READ_NONCLEAN_RVS):
+            rv = int(getattr(exc, "rv", CKR_ATTRIBUTE_VALUE_INVALID))
+            pytest.xfail(f"{label} CKA_LOCAL read rejected with non-clean CKR: {ckr_name(rv)}")
+        raise AssertionError(
+            f"Unexpected error reading CKA_LOCAL on handle {handle}: {exc}"
+        ) from exc
+    return attrs.get(CKA_LOCAL)
+
+
+def _xfail_generated_local_false(mech_name: str, label: str) -> None:
+    from pkcs11_check.compliance import ComplianceLevel, note
+
+    note(
+        f"{mech_name} {label} CKA_LOCAL=False for generated key",
+        ComplianceLevel.NOT_RECOMMENDED,
+        reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
+    )
+    pytest.xfail(f"{mech_name} {label}: CKA_LOCAL=False for generated key")
 
 
 class TestMechKeygen:
@@ -73,11 +116,13 @@ class TestMechKeygen:
             pub, priv = gen_keypair_for_mech(rs, entry, config)
             try:
                 for label, handle in (("public", pub), ("private", priv)):
-                    attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_LOCAL])
-                    if CKA_LOCAL in attrs:
-                        assert attrs[CKA_LOCAL] is True, (
+                    local = _read_local_flag(rs, handle, f"{entry.mech_name} {label} key")
+                    if local is not None:
+                        if local is False:
+                            _xfail_generated_local_false(entry.mech_name, f"{label} key")
+                        assert local is True, (
                             f"{entry.mech_name}: CKA_LOCAL should be True on generated "
-                            f"{label} key (got {attrs[CKA_LOCAL]!r})"
+                            f"{label} key (got {local!r})"
                         )
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub)
@@ -85,11 +130,13 @@ class TestMechKeygen:
         else:
             key = gen_symmetric_key(rs, entry, config)
             try:
-                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
-                if CKA_LOCAL in attrs:
-                    assert attrs[CKA_LOCAL] is True, (
+                local = _read_local_flag(rs, key, f"{entry.mech_name} key")
+                if local is not None:
+                    if local is False:
+                        _xfail_generated_local_false(entry.mech_name, "key")
+                    assert local is True, (
                         f"{entry.mech_name}: CKA_LOCAL should be True on generated key "
-                        f"(got {attrs[CKA_LOCAL]!r})"
+                        f"(got {local!r})"
                     )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)

@@ -10,6 +10,7 @@ Hardware" (CRYPTO 2012) and Manger (CRYPTO 2001).
 
 from __future__ import annotations
 
+import ctypes
 import re
 import secrets
 import time
@@ -22,12 +23,11 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
-    gen_rsa_keypair,
     generate_random,
     read_attributes,
 )
 from pkcs11_check.raw.types_std import (
+    CK_ULONG,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_MODULUS,
@@ -38,6 +38,11 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
+)
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    require_operational_aes_keygen,
 )
 
 pytestmark = pytest.mark.security
@@ -52,6 +57,75 @@ def _extract_ckr(exc: AssertionError) -> str:
     return m.group(0) if m else type(exc).__name__
 
 
+def _abort_decrypt_operation(raw: Any, session: int) -> None:
+    """Best-effort cleanup after an expected decrypt error leaves state active."""
+    try:
+        out_buf = (ctypes.c_ubyte * 4096)()
+        out_len = CK_ULONG(4096)
+        raw.C_DecryptFinal(session, out_buf, ctypes.byref(out_len))
+    except (AttributeError, OSError, ctypes.ArgumentError):
+        pass
+
+
+def _decrypt_result_or_error(
+    raw: Any,
+    session: int,
+    key: int,
+    mechanism: int,
+    ciphertext: bytes,
+    *,
+    mech_param: Any | None = None,
+) -> tuple[bytes | None, str | None]:
+    try:
+        result = decrypt_single(
+            raw,
+            session,
+            key,
+            mechanism,
+            ciphertext,
+            mech_param=mech_param,
+        )
+    except AssertionError as exc:
+        error = _extract_ckr(exc)
+        _abort_decrypt_operation(raw, session)
+        return None, error
+    return result, None
+
+
+def _read_rsa_public_numbers_or_xfail(
+    rs: Any,
+    pub: int,
+    *,
+    min_modulus_bytes: int = 11,
+) -> tuple[int, int, int]:
+    """Read usable RSA public numbers for structured-oracle construction.
+
+    A provider that successfully generates an RSA keypair but returns malformed
+    public attributes is an advertised-but-not-operational finding. Report that
+    as xfail evidence instead of allowing unrelated Python arithmetic errors.
+    """
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
+    except AssertionError as exc:
+        pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
+
+    n_bytes = attrs[CKA_MODULUS]
+    e_bytes = attrs[CKA_PUBLIC_EXPONENT]
+    if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
+        pytest.xfail("unusable RSA public modulus/exponent: attributes are not bytes")
+
+    n = int.from_bytes(n_bytes, "big")
+    e = int.from_bytes(e_bytes, "big")
+    k = (n.bit_length() + 7) // 8
+    if n < 3 or e < 3 or k < min_modulus_bytes:
+        pytest.xfail(
+            "unusable RSA public modulus/exponent: generated key attributes "
+            f"cannot support structured padding-oracle probes (n_bits={n.bit_length()}, e={e})"
+        )
+
+    return n, e, k
+
+
 class TestRSAPaddingOracle:
     """Check if RSA decryption leaks padding validity via error codes."""
 
@@ -62,9 +136,8 @@ class TestRSAPaddingOracle:
         'valid padding but wrong content' vs 'invalid padding structure'.
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -76,11 +149,9 @@ class TestRSAPaddingOracle:
             for _ in range(10):
                 # Random garbage ciphertext
                 bad_ct = generate_random(rs.raw, rs.sh, 256)  # 256 bytes = 2048 bits
-                try:
-                    decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, bad_ct)
-                    # Decryption succeeded with random data - very unlikely but possible
-                except AssertionError as exc:
-                    error_types.add(_extract_ckr(exc))
+                _, error = _decrypt_result_or_error(rs.raw, rs.sh, priv, CKM_RSA_PKCS, bad_ct)
+                if error is not None:
+                    error_types.add(error)
 
             # All errors should be the same type - if not, there's a potential oracle
             if len(error_types) > 1:
@@ -95,9 +166,8 @@ class TestRSAPaddingOracle:
     def test_oaep_error_uniformity(self, p11_raw_session: Any) -> None:
         """RSA-OAEP: all invalid ciphertexts must return same error."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -112,17 +182,16 @@ class TestRSAPaddingOracle:
             error_types: set[str] = set()
             for _ in range(10):
                 bad_ct = generate_random(rs.raw, rs.sh, 256)
-                try:
-                    decrypt_single(
-                        rs.raw,
-                        rs.sh,
-                        priv,
-                        CKM_RSA_PKCS_OAEP,
-                        bad_ct,
-                        mech_param=oaep,
-                    )
-                except AssertionError as exc:
-                    error_types.add(_extract_ckr(exc))
+                _, error = _decrypt_result_or_error(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_RSA_PKCS_OAEP,
+                    bad_ct,
+                    mech_param=oaep,
+                )
+                if error is not None:
+                    error_types.add(error)
 
             if len(error_types) > 1:
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -164,29 +233,15 @@ class TestRSAPaddingOracle:
         Closes Phase 4.5 GAP-P2 (HIGH).
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
 
         try:
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            except AssertionError as exc:
-                pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
-                return
-
-            n_bytes = attrs[CKA_MODULUS]
-            e_bytes = attrs[CKA_PUBLIC_EXPONENT]
-            if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
-                pytest.skip("Modulus / exponent not returned as bytes")
-                return
-            n = int.from_bytes(n_bytes, "big")
-            e = int.from_bytes(e_bytes, "big")
-            k = (n.bit_length() + 7) // 8
+            n, e, k = _read_rsa_public_numbers_or_xfail(rs, pub)
 
             cat1_errors: set[str] = set()  # 00 02 prefix, missing PS-separator
             cat2_errors: set[str] = set()  # arbitrary, no 00 02 prefix
@@ -206,10 +261,11 @@ class TestRSAPaddingOracle:
                     m1 = int.from_bytes(m1_bytes, "big")
                 c1 = pow(m1, e, n)
                 c1_bytes = c1.to_bytes(k, "big")
-                try:
-                    decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, c1_bytes)
-                except AssertionError as exc:
-                    cat1_errors.add(_extract_ckr(exc))
+                _, error = _decrypt_result_or_error(
+                    rs.raw, rs.sh, priv, CKM_RSA_PKCS, c1_bytes
+                )
+                if error is not None:
+                    cat1_errors.add(error)
 
                 # Cat-2: m has random non-{00,02} prefix → invalid padding
                 # format. Force the top byte != 0 to ensure cat-2.
@@ -220,10 +276,11 @@ class TestRSAPaddingOracle:
                 m2 = int.from_bytes(m2_bytes, "big") % n
                 c2 = pow(m2, e, n)
                 c2_bytes = c2.to_bytes(k, "big")
-                try:
-                    decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, c2_bytes)
-                except AssertionError as exc:
-                    cat2_errors.add(_extract_ckr(exc))
+                _, error = _decrypt_result_or_error(
+                    rs.raw, rs.sh, priv, CKM_RSA_PKCS, c2_bytes
+                )
+                if error is not None:
+                    cat2_errors.add(error)
 
             if cat1_errors != cat2_errors:
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -268,29 +325,15 @@ class TestRSAPaddingOracle:
         Closes Phase 4.5 GAP-P1 (HIGH).
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
         )
 
         try:
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            except AssertionError as exc:
-                pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
-                return
-
-            n_bytes = attrs[CKA_MODULUS]
-            e_bytes = attrs[CKA_PUBLIC_EXPONENT]
-            if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
-                pytest.skip("Modulus / exponent not returned as bytes")
-                return
-            n = int.from_bytes(n_bytes, "big")
-            e = int.from_bytes(e_bytes, "big")
-            k = (n.bit_length() + 7) // 8
+            n, e, k = _read_rsa_public_numbers_or_xfail(rs, pub)
             boundary = 1 << (8 * (k - 1))
 
             oaep = mech_oaep(
@@ -308,23 +351,31 @@ class TestRSAPaddingOracle:
                 m1 = secrets.randbelow(boundary - 1) + 1
                 c1 = pow(m1, e, n)
                 c1_bytes = c1.to_bytes(k, "big")
-                try:
-                    decrypt_single(
-                        rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, c1_bytes, mech_param=oaep
-                    )
-                except AssertionError as exc:
-                    cat1_errors.add(_extract_ckr(exc))
+                _, error = _decrypt_result_or_error(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_RSA_PKCS_OAEP,
+                    c1_bytes,
+                    mech_param=oaep,
+                )
+                if error is not None:
+                    cat1_errors.add(error)
 
                 # Cat-2: random m in [B, n). Top byte is non-zero.
                 m2 = boundary + secrets.randbelow(n - boundary)
                 c2 = pow(m2, e, n)
                 c2_bytes = c2.to_bytes(k, "big")
-                try:
-                    decrypt_single(
-                        rs.raw, rs.sh, priv, CKM_RSA_PKCS_OAEP, c2_bytes, mech_param=oaep
-                    )
-                except AssertionError as exc:
-                    cat2_errors.add(_extract_ckr(exc))
+                _, error = _decrypt_result_or_error(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_RSA_PKCS_OAEP,
+                    c2_bytes,
+                    mech_param=oaep,
+                )
+                if error is not None:
+                    cat2_errors.add(error)
 
             # Manger leak: the two categories produce DIFFERENT error sets.
             if cat1_errors != cat2_errors:
@@ -364,7 +415,10 @@ class TestAESPaddingOracle:
         a padding oracle.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        if not rs.has_mechanism("AES_CBC_PAD"):
+            pytest.skip("CKM_AES_CBC_PAD not supported")
+        require_operational_aes_keygen(rs)
+        key = gen_aes_key_or_xfail(rs, purpose="AES-CBC-PAD oracle setup")
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"padding oracle!!"  # 16 bytes
 
@@ -384,32 +438,26 @@ class TestAESPaddingOracle:
             # Corrupt last byte (affects padding)
             ct_bad_pad = bytearray(ct)
             ct_bad_pad[-1] ^= 0xFF
-            try:
-                decrypt_single(
-                    rs.raw,
-                    rs.sh,
-                    key,
-                    CKM_AES_CBC_PAD,
-                    bytes(ct_bad_pad),
-                    mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
-                )
-            except AssertionError as exc:
-                error_last_byte = _extract_ckr(exc)
+            _, error_last_byte = _decrypt_result_or_error(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                bytes(ct_bad_pad),
+                mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+            )
 
             # Corrupt middle byte (affects content, not padding)
             ct_bad_mid = bytearray(ct)
             ct_bad_mid[len(ct) // 2] ^= 0xFF
-            try:
-                decrypt_single(
-                    rs.raw,
-                    rs.sh,
-                    key,
-                    CKM_AES_CBC_PAD,
-                    bytes(ct_bad_mid),
-                    mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
-                )
-            except AssertionError as exc:
-                error_middle_byte = _extract_ckr(exc)
+            _, error_middle_byte = _decrypt_result_or_error(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_CBC_PAD,
+                bytes(ct_bad_mid),
+                mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+            )
 
             if error_last_byte and error_middle_byte and error_last_byte != error_middle_byte:
                 pytest.fail(
@@ -448,6 +496,9 @@ class TestAESPaddingOracle:
         Closes Phase 4.5 GAP-P3 (MED).
         """
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_CBC_PAD"):
+            pytest.skip("CKM_AES_CBC_PAD not supported")
+        require_operational_aes_keygen(rs)
         plaintext = b"vaudenay POODLE all 16 positions"  # 32 bytes
         assert len(plaintext) == 32
 
@@ -474,7 +525,7 @@ class TestAESPaddingOracle:
         try:
             trials = 20
             for trial in range(trials):
-                key = gen_aes_key(rs.raw, rs.sh, 256)
+                key = gen_aes_key_or_xfail(rs, purpose="AES-CBC-PAD oracle sweep setup")
                 keys.append(key)
                 iv = generate_random(rs.raw, rs.sh, 16)
                 ct = encrypt_single(
@@ -490,18 +541,18 @@ class TestAESPaddingOracle:
                 for pos in range(16):
                     corrupted = bytearray(ct)
                     corrupted[last_block_start + pos] ^= 0xFF
-                    try:
-                        result = decrypt_single(
-                            rs.raw,
-                            rs.sh,
-                            key,
-                            CKM_AES_CBC_PAD,
-                            bytes(corrupted),
-                            mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
-                        )
-                    except AssertionError as exc:
-                        all_errors[(trial, pos)] = _extract_ckr(exc)
+                    result, error = _decrypt_result_or_error(
+                        rs.raw,
+                        rs.sh,
+                        key,
+                        CKM_AES_CBC_PAD,
+                        bytes(corrupted),
+                        mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+                    )
+                    if error is not None:
+                        all_errors[(trial, pos)] = error
                     else:
+                        assert result is not None
                         # Decrypt succeeded — disambiguate match vs
                         # different plaintext (M1 / M5 mitigation).
                         all_errors[(trial, pos)] = (
@@ -586,9 +637,8 @@ class TestTimingBasic:
         If the difference is >2x, there may be a timing oracle.
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
@@ -605,7 +655,7 @@ class TestTimingBasic:
                 try:
                     decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, valid_ct)
                 except AssertionError:
-                    pass
+                    _abort_decrypt_operation(rs.raw, rs.sh)
                 valid_times.append(time.perf_counter() - start)
 
             # Time invalid decryptions
@@ -616,7 +666,7 @@ class TestTimingBasic:
                 try:
                     decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, bad_ct)
                 except AssertionError:
-                    pass
+                    _abort_decrypt_operation(rs.raw, rs.sh)
                 invalid_times.append(time.perf_counter() - start)
 
             valid_avg = sum(valid_times) / len(valid_times)
@@ -659,8 +709,9 @@ class TestTimingBasic:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC_PAD"):
             pytest.skip("CKM_AES_CBC_PAD not supported")
+        require_operational_aes_keygen(rs)
 
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, purpose="AES-CBC-PAD timing setup")
         try:
             iv = generate_random(rs.raw, rs.sh, 16)
             plaintext = b"lucky13 timing probe " * 5  # 105 bytes (7 blocks of 16)
@@ -690,6 +741,7 @@ class TestTimingBasic:
                         mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
                     )
                 except AssertionError as exc:
+                    _abort_decrypt_operation(rs.raw, rs.sh)
                     pytest.fail(
                         f"Valid CBC-PAD decrypt failed unexpectedly "
                         f"({exc}) — timing comparison invalid"
@@ -726,6 +778,8 @@ class TestTimingBasic:
                         mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
                     )
                 except AssertionError as exc:
+                    elapsed = time.perf_counter() - start
+                    _abort_decrypt_operation(rs.raw, rs.sh)
                     msg = str(exc)
                     if not any(code in msg for code in invalid_path_codes):
                         # Some bit-flips happen to produce valid padding
@@ -739,7 +793,9 @@ class TestTimingBasic:
                                 f"flipped CBC-PAD decrypt: {exc} — timing "
                                 f"comparison invalid"
                             )
-                invalid_times.append(time.perf_counter() - start)
+                    invalid_times.append(elapsed)
+                else:
+                    invalid_times.append(time.perf_counter() - start)
 
             valid_avg = sum(valid_times) / len(valid_times)
             invalid_avg = sum(invalid_times) / len(invalid_times)

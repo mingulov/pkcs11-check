@@ -14,7 +14,6 @@ from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
     gen_aes_key,
-    gen_rsa_keypair,
     get_object_size,
 )
 from pkcs11_check.raw.types_std import (
@@ -24,11 +23,27 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE,
     CKO_DATA,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+)
+from pkcs11_check.testcases.conftest import (
+    gen_rsa_keypair_or_xfail,
+    require_operational_aes_keygen,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.keymgmt
 
 CK_UNAVAILABLE = CK_UNAVAILABLE_INFORMATION
+
+_OBJECT_SIZE_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+)
 
 
 def _safe_get_size(raw: Any, sh: int, handle: int) -> int | None:
@@ -40,11 +55,16 @@ def _safe_get_size(raw: Any, sh: int, handle: int) -> int | None:
     """
     try:
         size = get_object_size(raw, sh, handle)
-        if size == CK_UNAVAILABLE or size == 0:
-            return None
-        return size
-    except Exception:
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _OBJECT_SIZE_RUNTIME_REJECT_RVS,
+            "C_GetObjectSize rejected a valid object handle",
+        )
+        raise  # unreachable
+    if size == CK_UNAVAILABLE or size == 0:
         return None
+    return size
 
 
 class TestObjectSize:
@@ -53,6 +73,7 @@ class TestObjectSize:
     def test_aes_key_has_size(self, p11_raw_session: Any) -> None:
         """AES key reports a size (or CK_UNAVAILABLE_INFORMATION)."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             size = _safe_get_size(rs.raw, rs.sh, key)
@@ -68,6 +89,7 @@ class TestObjectSize:
     def test_rsa_key_larger_than_aes(self, p11_raw_session: Any) -> None:
         """RSA-2048 key should be larger than AES-256 key."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         aes_key = gen_aes_key(rs.raw, rs.sh, 256)
         try:
             aes_size = _safe_get_size(rs.raw, rs.sh, aes_key)
@@ -77,7 +99,7 @@ class TestObjectSize:
         if aes_size is None:
             pytest.skip("C_GetObjectSize not supported (returns 0 or CK_UNAVAILABLE_INFORMATION)")
 
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             rsa_size = _safe_get_size(rs.raw, rs.sh, priv)
         finally:

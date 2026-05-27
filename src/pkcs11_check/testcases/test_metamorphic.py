@@ -22,8 +22,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     encrypt_single,
-    gen_aes_key,
-    gen_rsa_keypair,
     generate_random,
     import_secret_key,
     read_attributes,
@@ -51,6 +49,14 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512,
     CKM_SHA_1,
     CKO_SECRET_KEY,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    is_known_error,
+    skip_unless_mechanism,
 )
 
 pytestmark = pytest.mark.metamorphic
@@ -63,7 +69,7 @@ class TestRoundTripInvariants:
     def test_aes_ecb_roundtrip(self, p11_raw_session: Any, key_size: int) -> None:
         """AES-ECB: decrypt(encrypt(pt)) == pt for all key sizes."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, key_size)
+        key = gen_aes_key_or_xfail(rs, key_size, purpose="AES-ECB metamorphic roundtrip")
         try:
             plaintext = b"roundtrip_verify"  # exactly 16 bytes
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
@@ -75,7 +81,7 @@ class TestRoundTripInvariants:
     def test_aes_cbc_roundtrip(self, p11_raw_session: Any) -> None:
         """AES-CBC: decrypt(encrypt(pt, iv), iv) == pt."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="AES-CBC metamorphic roundtrip")
         try:
             iv = generate_random(rs.raw, rs.sh, 16)
             plaintext = b"cbc roundtrip!!!"  # 16 bytes
@@ -102,7 +108,8 @@ class TestRoundTripInvariants:
     def test_rsa_sign_verify_roundtrip(self, p11_raw_session: Any) -> None:
         """RSA: verify(sign(data)) == True."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             data = b"sign-verify roundtrip"
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
@@ -114,13 +121,23 @@ class TestRoundTripInvariants:
     def test_rsa_wrong_data_verify_fails(self, p11_raw_session: Any) -> None:
         """RSA: verify(sign(data), different_data) must fail."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"original data")
-            result = verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, b"tampered data", sig)
+            try:
+                result = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_SHA256_RSA_PKCS,
+                    b"tampered data",
+                    sig,
+                )
+            except AssertionError as exc:
+                signature_rejected_or_xfail(exc, "RSA wrong-data metamorphic verification")
+                return
             assert result is False
-        except AssertionError:
-            pass  # Expected - signature invalid
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -131,14 +148,14 @@ class TestRoundTripInvariants:
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
 
-        wrapping_key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        wrapping_key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={
                 CKA_WRAP: True,
                 CKA_UNWRAP: True,
             },
+            purpose="AES key-wrap metamorphic invariant",
         )
         key_bytes = bytes(range(16))
         original = import_secret_key(
@@ -183,7 +200,7 @@ class TestDeterminismInvariants:
     def test_ecb_deterministic(self, p11_raw_session: Any) -> None:
         """AES-ECB with same key+plaintext must produce same ciphertext."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="AES-ECB determinism invariant")
         try:
             plaintext = b"determinism test"
             ct1 = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
@@ -195,6 +212,7 @@ class TestDeterminismInvariants:
     def test_digest_deterministic(self, p11_raw_session: Any) -> None:
         """SHA-256 of same data must always be the same."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         data = b"hash determinism test"
         d1 = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
         d2 = digest_single(rs.raw, rs.sh, CKM_SHA256, data)
@@ -203,8 +221,8 @@ class TestDeterminismInvariants:
     def test_different_keys_different_ciphertext(self, p11_raw_session: Any) -> None:
         """AES-ECB with different keys must produce different ciphertext."""
         rs = p11_raw_session
-        k1 = gen_aes_key(rs.raw, rs.sh, 256)
-        k2 = gen_aes_key(rs.raw, rs.sh, 256)
+        k1 = gen_aes_key_or_xfail(rs, 256, purpose="different-key invariant")
+        k2 = gen_aes_key_or_xfail(rs, 256, purpose="different-key invariant")
         try:
             plaintext = b"different keys!!"
             ct1 = encrypt_single(rs.raw, rs.sh, k1, CKM_AES_ECB, plaintext)
@@ -221,7 +239,7 @@ class TestCopyEquivalence:
     def test_copy_produces_same_ciphertext(self, p11_raw_session: Any) -> None:
         """Encrypting with original and copy produces identical output."""
         rs = p11_raw_session
-        original = gen_aes_key(rs.raw, rs.sh, 256)
+        original = gen_aes_key_or_xfail(rs, 256, purpose="copy equivalence invariant")
         try:
             try:
                 copy = copy_object(
@@ -231,7 +249,7 @@ class TestCopyEquivalence:
                     {CKA_LABEL: "copy-equiv"},
                 )
             except AssertionError as exc:
-                if "CKR_FUNCTION_NOT_SUPPORTED" in str(exc):
+                if is_known_error(exc, {CKR_FUNCTION_NOT_SUPPORTED}):
                     pytest.skip("C_CopyObject not supported")
                 raise
 
@@ -248,7 +266,7 @@ class TestCopyEquivalence:
     def test_copy_can_decrypt_original(self, p11_raw_session: Any) -> None:
         """Copy can decrypt what original encrypted."""
         rs = p11_raw_session
-        original = gen_aes_key(rs.raw, rs.sh, 256)
+        original = gen_aes_key_or_xfail(rs, 256, purpose="copy decrypt invariant")
         try:
             try:
                 copy = copy_object(
@@ -258,7 +276,7 @@ class TestCopyEquivalence:
                     {CKA_LABEL: "copy-decrypt"},
                 )
             except AssertionError as exc:
-                if "CKR_FUNCTION_NOT_SUPPORTED" in str(exc):
+                if is_known_error(exc, {CKR_FUNCTION_NOT_SUPPORTED}):
                     pytest.skip("C_CopyObject not supported")
                 raise
 
@@ -279,6 +297,7 @@ class TestDigestProperties:
     def test_different_inputs_different_outputs(self, p11_raw_session: Any) -> None:
         """Different inputs must produce different digests (collision resistance)."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         digests = set()
         for i in range(100):
             d = digest_single(rs.raw, rs.sh, CKM_SHA256, f"input {i}".encode())
@@ -288,6 +307,7 @@ class TestDigestProperties:
     def test_output_length_consistent(self, p11_raw_session: Any) -> None:
         """SHA-256 always produces 32 bytes regardless of input size."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA256")
         for size in [0, 1, 16, 64, 1024, 10000]:
             d = digest_single(rs.raw, rs.sh, CKM_SHA256, b"X" * size)
             assert len(d) == 32
@@ -295,6 +315,9 @@ class TestDigestProperties:
     def test_sha_family_different_outputs(self, p11_raw_session: Any) -> None:
         """Different SHA variants produce different outputs for same input."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "SHA_1")
+        skip_unless_mechanism(rs, "SHA256")
+        skip_unless_mechanism(rs, "SHA512")
         data = b"sha family test"
         sha1 = digest_single(rs.raw, rs.sh, CKM_SHA_1, data)
         sha256 = digest_single(rs.raw, rs.sh, CKM_SHA256, data)

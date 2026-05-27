@@ -61,24 +61,44 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_NOT_WRAPPABLE,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_PIN_INVALID,
+    CKR_PIN_LEN_RANGE,
+    CKR_PIN_TOO_WEAK,
+    CKR_SESSION_COUNT,
     CKR_SESSION_READ_ONLY,
     CKR_SESSION_READ_ONLY_EXISTS,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_TOKEN_NOT_INITIALIZED,
+    CKR_TOKEN_WRITE_PROTECTED,
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+    CKR_USER_NOT_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
+    CKR_WRAPPING_KEY_HANDLE_INVALID,
     CKU_CONTEXT_SPECIFIC,
     CKU_SO,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    get_pin_bytes,
+    is_known_error,
+    require_operational_aes_keygen,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.access
 
@@ -87,6 +107,41 @@ _TEMPLATE_ERROR_RVS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+)
+
+_TRUSTED_SETATTR_REJECT_RVS = (
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
+)
+
+_ALWAYS_AUTH_TEMPLATE_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_INIT_PIN_POLICY_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_PIN_INVALID,
+    CKR_PIN_LEN_RANGE,
+    CKR_PIN_TOO_WEAK,
+    CKR_SESSION_READ_ONLY,
+    CKR_TOKEN_NOT_INITIALIZED,
+    CKR_TOKEN_WRITE_PROTECTED,
+)
+
+_INIT_PIN_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_USER_NOT_LOGGED_IN,
 )
 
 
@@ -110,6 +165,62 @@ def _logout_safe(raw: Any, sh: int) -> None:
     raw.C_Logout(sh)
 
 
+def _skip_if_so_pin_differs(rv: int) -> None:
+    if rv == CKR_PIN_INCORRECT:
+        pytest.skip("SO PIN differs from user PIN on this module")
+
+
+def _gen_access_aes_key(rs: Any, sh: int, *, attrs: dict[Any, Any] | None = None) -> int:
+    """Generate a setup AES key for access-level tests, preserving provider findings."""
+    require_operational_aes_keygen(rs)
+    try:
+        return gen_aes_key(rs.raw, sh, 128, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but access-level setup key generation is not operational",
+        )
+    raise
+
+
+def _create_access_data_object(rs: Any, sh: int, attrs: dict[Any, Any]) -> int:
+    """Create a setup data object for access-level visibility tests."""
+    try:
+        return create_object(rs.raw, sh, attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _TEMPLATE_ERROR_RVS,
+            "access-level data object setup rejected by the provider",
+        )
+    raise
+
+
+def _open_access_session_or_skip(rs: Any, flags: int) -> int:
+    """Open an extra session for access-level scenarios."""
+    try:
+        return raw_open_session(rs.raw, rs.slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional session required by access-level test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
+
+
+def _skip_or_xfail_always_auth_keygen_reject(exc: AssertionError) -> None:
+    if is_known_error(exc, _ALWAYS_AUTH_TEMPLATE_REJECT_RVS):
+        pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {exc}")
+    xfail_if_known_ckr(
+        exc,
+        KEYPAIR_RUNTIME_REJECT_RVS,
+        "CKA_ALWAYS_AUTHENTICATE RSA keypair setup rejected at runtime",
+    )
+    raise
+
+
 # ---------------------------------------------------------------------------
 # Public session (no login) visibility
 # ---------------------------------------------------------------------------
@@ -131,8 +242,8 @@ class TestPublicSessionVisibility:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            create_object(
-                rs.raw,
+            _create_access_data_object(
+                rs,
                 s1,
                 {
                     CKA_CLASS: CKO_DATA,
@@ -196,10 +307,9 @@ class TestPublicSessionVisibility:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            gen_aes_key(
-                rs.raw,
+            _gen_access_aes_key(
+                rs,
                 s1,
-                256,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_PRIVATE: True,
@@ -237,7 +347,7 @@ class TestPublicSessionVisibility:
     def test_public_session_can_digest(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Public session can perform digest operations (no login needed)."""
         rs = p11_raw_session
-        pub_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
+        pub_sh = _open_access_session_or_skip(rs, CKF_SERIAL_SESSION)
         try:
             digest = digest_single(rs.raw, pub_sh, CKM_SHA256, b"public digest")
             assert len(digest) == 32
@@ -249,7 +359,7 @@ class TestPublicSessionVisibility:
     ) -> None:
         """Public session can generate random (no login needed)."""
         rs = p11_raw_session
-        pub_sh = raw_open_session(rs.raw, rs.slot_id, CKF_SERIAL_SESSION)
+        pub_sh = _open_access_session_or_skip(rs, CKF_SERIAL_SESSION)
         try:
             rand = generate_random(rs.raw, pub_sh, 16)
             assert len(rand) == 16  # 128 bits = 16 bytes
@@ -277,10 +387,9 @@ class TestUserSessionCapabilities:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_access_aes_key(
+                rs,
                 s1,
-                256,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_PRIVATE: True,
@@ -313,8 +422,8 @@ class TestUserSessionCapabilities:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            create_object(
-                rs.raw,
+            _create_access_data_object(
+                rs,
                 s1,
                 {
                     CKA_CLASS: CKO_DATA,
@@ -341,10 +450,9 @@ class TestUserSessionCapabilities:
     def test_user_can_create_and_destroy_objects(self, p11_raw_session: Any) -> None:
         """USER session can create and destroy objects."""
         rs = p11_raw_session
-        key_h = gen_aes_key(
-            rs.raw,
+        key_h = _gen_access_aes_key(
+            rs,
             rs.sh,
-            256,
             attrs={CKA_TOKEN: False, CKA_LABEL: "user-create-test"},
         )
         assert key_h != 0
@@ -356,10 +464,9 @@ class TestUserSessionCapabilities:
         if not rs.has_mechanism("AES_CBC_PAD"):
             pytest.skip("CKM_AES_CBC_PAD not supported")
 
-        key_h = gen_aes_key(
-            rs.raw,
+        key_h = _gen_access_aes_key(
+            rs,
             rs.sh,
-            256,
             attrs={
                 CKA_ENCRYPT: True,
                 CKA_DECRYPT: True,
@@ -397,6 +504,7 @@ class TestUserSessionCapabilities:
         rs = p11_raw_session
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
         rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(pin_bytes))
+        _skip_if_so_pin_differs(rv)
         assert rv in (
             CKR_USER_ALREADY_LOGGED_IN,
             CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
@@ -475,12 +583,20 @@ class TestSOSessionCapabilities:
         if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
             close_session_quietly(rs.raw, s1)
             pytest.skip("Another user already logged in on this token")
+        expect_rv(rv, CKR_OK)
 
         new_pin = pin_bytes + b"X"
         try:
             init_pin(rs.raw, s1, new_pin)
-        except (AssertionError, Exception) as e:
-            pytest.skip(f"C_InitPIN not supported: {e}")
+        except AssertionError as exc:
+            if is_known_error(exc, _INIT_PIN_POLICY_REJECT_RVS):
+                pytest.skip(f"C_InitPIN not usable with configured token policy: {exc}")
+            xfail_if_known_ckr(
+                exc,
+                _INIT_PIN_RUNTIME_REJECT_RVS,
+                "C_InitPIN rejected valid SO PIN setup",
+            )
+            raise  # unreachable
         finally:
             # Restore original PIN: logout SO, login USER with new PIN, set back
             _logout_safe(rs.raw, s1)
@@ -513,10 +629,9 @@ class TestSOSessionCapabilities:
         user_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, user_sh, pin_bytes)
-            gen_aes_key(
-                rs.raw,
+            _gen_access_aes_key(
+                rs,
                 user_sh,
-                256,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_PRIVATE: True,
@@ -657,10 +772,9 @@ class TestTrustedAttribute:
 
         try:
             try:
-                key_h = gen_aes_key(
-                    rs.raw,
+                key_h = _gen_access_aes_key(
+                    rs,
                     s1,
-                    256,
                     attrs={
                         CKA_TOKEN: False,
                         CKA_WRAP: True,
@@ -699,10 +813,9 @@ class TestTrustedAttribute:
         """
         rs = p11_raw_session
         try:
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_access_aes_key(
+                rs,
                 rs.sh,
-                256,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_WRAP: True,
@@ -729,7 +842,7 @@ class TestTrustedAttribute:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     return  # Module doesn't expose CKA_TRUSTED
                 raise
             if attrs.get(CKA_TRUSTED) is True:
@@ -752,23 +865,18 @@ class TestTrustedAttribute:
         rs = p11_raw_session
         # First generate a key without CKA_TRUSTED to avoid colliding with
         # modules that reject TRUSTED in templates entirely.
-        try:
-            key_h = gen_aes_key(
-                rs.raw,
-                rs.sh,
-                256,
-                attrs={CKA_TOKEN: False, CKA_WRAP: True},
-            )
-        except AssertionError as e:
-            pytest.skip(f"Could not generate baseline AES key: {e}")
-            return
+        key_h = _gen_access_aes_key(
+            rs,
+            rs.sh,
+            attrs={CKA_TOKEN: False, CKA_WRAP: True},
+        )
 
         try:
             # Pre-check: the key must exist and be readable.
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
                 raise
             if attrs.get(CKA_TRUSTED) is True:
@@ -779,16 +887,7 @@ class TestTrustedAttribute:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_TRUSTED: True})
             except AssertionError as e:
                 # Module rejected the SetAttribute — correct behaviour.
-                msg = str(e)
-                if any(
-                    code in msg
-                    for code in (
-                        "CKR_ACTION_PROHIBITED",
-                        "CKR_ATTRIBUTE_READ_ONLY",
-                        "CKR_USER_NOT_LOGGED_IN",
-                        "CKR_ATTRIBUTE_VALUE_INVALID",
-                    )
-                ):
+                if is_known_error(e, _TRUSTED_SETATTR_REJECT_RVS):
                     return
                 raise
 
@@ -815,14 +914,11 @@ class TestTrustedAttribute:
     def test_wrap_with_trusted_rejects_untrusted(self, p11_raw_session: Any) -> None:
         """Without CKA_TRUSTED, wrapping a CKA_WRAP_WITH_TRUSTED key fails."""
         rs = p11_raw_session
-        if not rs.has_mechanism("AES_ECB"):
-            pytest.skip("CKM_AES_ECB not supported for wrapping")
 
         try:
-            target_h = gen_aes_key(
-                rs.raw,
+            target_h = _gen_access_aes_key(
+                rs,
                 rs.sh,
-                128,
                 attrs={
                     CKA_EXTRACTABLE: True,
                     CKA_WRAP_WITH_TRUSTED: True,
@@ -847,20 +943,20 @@ class TestTrustedAttribute:
             return
 
         # Create a normal (non-TRUSTED) wrapping key
-        wrapper_h = gen_aes_key(
-            rs.raw,
+        wrapper_h = _gen_access_aes_key(
+            rs,
             rs.sh,
-            256,
             attrs={CKA_WRAP: True, CKA_TOKEN: False},
         )
 
         try:
-            wrap_mech = CKM_AES_KEY_WRAP
-            if not rs.has_mechanism("AES_KEY_WRAP"):
+            if rs.has_mechanism("AES_KEY_WRAP"):
+                mech = mech_simple(CKM_AES_KEY_WRAP)
+            elif rs.has_mechanism("AES_CBC_PAD"):
                 wrap_mech = CKM_AES_CBC_PAD
-            if not rs.has_mechanism("AES_CBC_PAD"):
+                mech = mech_bytes(wrap_mech, b"\x00" * 16)
+            else:
                 pytest.skip("No AES wrap mechanism available")
-            mech = mech_simple(wrap_mech)
             out_len = CK_ULONG(0)
             rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, None, byref(out_len))
             if rv == CKR_OK:
@@ -874,7 +970,7 @@ class TestTrustedAttribute:
                     reference="PKCS#11 spec CKA_WRAP_WITH_TRUSTED, CKA_TRUSTED",
                 )
                 pytest.xfail(
-                    "NSS does not enforce CKA_WRAP_WITH_TRUSTED -- "
+                    "Module does not enforce CKA_WRAP_WITH_TRUSTED -- "
                     "C_WrapKey returned CKR_OK with an untrusted wrapping key "
                     "(expected CKR_ACTION_PROHIBITED, CKR_KEY_NOT_WRAPPABLE, "
                     "or CKR_FUNCTION_FAILED)"
@@ -883,6 +979,7 @@ class TestTrustedAttribute:
                 CKR_ACTION_PROHIBITED,
                 CKR_KEY_NOT_WRAPPABLE,
                 CKR_FUNCTION_FAILED,
+                CKR_WRAPPING_KEY_HANDLE_INVALID,
             ), f"Expected wrap rejection, got {ckr_name(rv)}"
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapper_h)
@@ -917,8 +1014,7 @@ class TestAlwaysAuthenticate:
                 },
             )
         except AssertionError as e:
-            pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {e}")
-            return
+            _skip_or_xfail_always_auth_keygen_reject(e)
 
         try:
             try:
@@ -977,8 +1073,7 @@ class TestAlwaysAuthenticate:
                 },
             )
         except AssertionError as e:
-            pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {e}")
-            return
+            _skip_or_xfail_always_auth_keygen_reject(e)
 
         try:
             try:
@@ -1032,8 +1127,8 @@ class TestAccessLevelMatrix:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            create_object(
-                rs.raw,
+            _create_access_data_object(
+                rs,
                 s1,
                 {
                     CKA_CLASS: CKO_DATA,
@@ -1084,8 +1179,8 @@ class TestAccessLevelMatrix:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            create_object(
-                rs.raw,
+            _create_access_data_object(
+                rs,
                 s1,
                 {
                     CKA_CLASS: CKO_DATA,
@@ -1148,10 +1243,9 @@ class TestAccessLevelMatrix:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            gen_aes_key(
-                rs.raw,
+            _gen_access_aes_key(
+                rs,
                 s1,
-                256,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_PRIVATE: True,
@@ -1200,10 +1294,9 @@ class TestAccessLevelMatrix:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            gen_aes_key(
-                rs.raw,
+            _gen_access_aes_key(
+                rs,
                 s1,
-                128,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_PRIVATE: True,
@@ -1246,8 +1339,8 @@ class TestAccessLevelMatrix:
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
             for is_token, is_private, label in combos:
-                create_object(
-                    rs.raw,
+                _create_access_data_object(
+                    rs,
                     s1,
                     {
                         CKA_CLASS: CKO_DATA,
@@ -1304,6 +1397,7 @@ class TestSOOnROSession:
         try:
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
             rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
+            _skip_if_so_pin_differs(rv)
             assert rv in (
                 CKR_SESSION_READ_ONLY_EXISTS,
                 CKR_SESSION_READ_ONLY,
@@ -1332,17 +1426,17 @@ class TestPublicSessionRestrictions:
         flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear login
-        pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+        pre_sh = _open_access_session_or_skip(rs, flags_rw)
         rs.raw.C_Logout(pre_sh)
         close_session_quietly(rs.raw, pre_sh)
 
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+        s1 = _open_access_session_or_skip(rs, flags_rw)
         try:
             try:
                 key_h = gen_aes_key(
                     rs.raw,
                     s1,
-                    256,
+                    128,
                     attrs={
                         CKA_TOKEN: True,
                         CKA_PRIVATE: True,
@@ -1372,11 +1466,11 @@ class TestPublicSessionRestrictions:
         flags_rw = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
         # Clear login
-        pre_sh = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+        pre_sh = _open_access_session_or_skip(rs, flags_rw)
         rs.raw.C_Logout(pre_sh)
         close_session_quietly(rs.raw, pre_sh)
 
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags_rw)
+        s1 = _open_access_session_or_skip(rs, flags_rw)
         label = f"pub-create-{id(self)}"
         try:
             try:

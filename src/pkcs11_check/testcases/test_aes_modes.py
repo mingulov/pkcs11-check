@@ -6,6 +6,7 @@ AES-MAC-GENERAL, AES-XCBC-MAC, and AES-KEY-WRAP-PKCS7.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -15,14 +16,15 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
     generate_random,
     import_secret_key,
     read_attributes,
     sign_single,
-    unwrap_key,
     verify_single,
     wrap_key,
+)
+from pkcs11_check.raw.recipes import (
+    gen_aes_key as _raw_gen_aes_key,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -35,7 +37,6 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
-    CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
@@ -44,6 +45,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CFB128,
     CKM_AES_CTR,
     CKM_AES_CTS,
+    CKM_AES_KEY_GEN,
     CKM_AES_KEY_WRAP_PKCS7,
     CKM_AES_MAC,
     CKM_AES_MAC_GENERAL,
@@ -51,10 +53,51 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_XCBC_MAC,
     CKM_AES_XCBC_MAC_96,
     CKO_SECRET_KEY,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_OK,
+)
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    is_known_error,
+    require_operational_aes_keygen,
+    unwrap_key_for_mechanism_roundtrip,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.encrypt
+
+_AES_MODE_SETUP_KEY_BITS = 128
+
+
+def gen_aes_key(
+    raw: Any,
+    sh: int,
+    bits: int = _AES_MODE_SETUP_KEY_BITS,
+    attrs: Mapping[Any, Any] | None = None,
+    mechanism: int = CKM_AES_KEY_GEN,
+) -> int:
+    """Generate an AES setup key for mode smoke tests.
+
+    These tests exercise mode behavior, not AES-256 key-size support.  Keep
+    legacy 256-bit call sites compatible but use the same 128-bit setup size
+    as the operational keygen probe.
+    """
+    setup_bits = _AES_MODE_SETUP_KEY_BITS if bits == 256 else bits
+    try:
+        return _raw_gen_aes_key(raw, sh, setup_bits, attrs=attrs, mechanism=mechanism)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but AES-{setup_bits} mode setup key generation "
+            "is not operational",
+        )
+        raise
+
+
+@pytest.fixture(autouse=True)
+def _require_operational_aes_keygen(p11_raw_session: Any) -> None:
+    require_operational_aes_keygen(p11_raw_session)
 
 
 class TestAESCTR:
@@ -65,6 +108,7 @@ class TestAESCTR:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CTR"):
             pytest.skip("CKM_AES_CTR not supported")
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256)
         plaintext = b"AES-CTR test data, any length ok"
         try:
@@ -556,8 +600,8 @@ class TestAESMACGeneral:
 
 _XCBC_VERIFY_XFAIL_MSG = (
     "Module returns CKR_KEY_TYPE_INCONSISTENT for CKM_AES_XCBC_MAC C_VerifyInit; "
-    "NSS softoken rejects CKK_AES keys for XCBC-MAC verify even when CKA_VERIFY=True "
-    "(NSS softoken bug -- sign works but verify is broken)"
+    "the advertised XCBC-MAC verify path rejects CKK_AES keys even when CKA_VERIFY=True "
+    "(sign works but verify is broken)"
 )
 
 
@@ -634,7 +678,7 @@ class TestAESXCBCMAC:
             try:
                 assert verify_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC, data, mac)
             except AssertionError as exc:
-                if "CKR_KEY_TYPE_INCONSISTENT" in str(exc):
+                if is_known_error(exc, {CKR_KEY_TYPE_INCONSISTENT}):
                     pytest.xfail(_XCBC_VERIFY_XFAIL_MSG)
                 raise
         finally:
@@ -662,7 +706,7 @@ class TestAESXCBCMAC:
             try:
                 assert verify_single(rs.raw, rs.sh, key, CKM_AES_XCBC_MAC_96, data, mac)
             except AssertionError as exc:
-                if "CKR_KEY_TYPE_INCONSISTENT" in str(exc):
+                if is_known_error(exc, {CKR_KEY_TYPE_INCONSISTENT}):
                     pytest.xfail(_XCBC_VERIFY_XFAIL_MSG)
                 raise
         finally:
@@ -706,7 +750,7 @@ class TestAESXCBCMAC:
 class TestAESKeyWrapPKCS7:
     """AES-KEY-WRAP-PKCS7 wrap/unwrap tests."""
 
-    def test_aes_key_wrap_pkcs7_roundtrip(self, p11_raw_session: Any) -> None:
+    def test_aes_key_wrap_pkcs7_roundtrip(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Wrap and unwrap an AES key with AES-KEY-WRAP-PKCS7, verify material matches."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP_PKCS7"):
@@ -750,19 +794,19 @@ class TestAESKeyWrapPKCS7:
             )
             assert wrapped != key_bytes
 
-            unwrapped = unwrap_key(
-                rs.raw,
-                rs.sh,
-                wrap_key_h,
-                wrapped,
-                CKM_AES_KEY_WRAP_PKCS7,
+            unwrapped = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrap_key_h,
+                wrapped_key=wrapped,
+                mechanism=CKM_AES_KEY_WRAP_PKCS7,
                 attrs={
                     CKA_CLASS: CKO_SECRET_KEY,
                     CKA_KEY_TYPE: CKK_AES,
-                    CKA_VALUE_LEN: 24,
                     CKA_EXTRACTABLE: True,
                     CKA_SENSITIVE: False,
                 },
+                purpose="AES-KEY-WRAP-PKCS7 roundtrip",
             )
             try:
                 okm = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]

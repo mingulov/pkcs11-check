@@ -203,6 +203,107 @@ class TestCLoginUser:
         else:
             pytest.fail(f"Unexpected CKR from C_LoginUser: {ckr_name(rv)}")
 
+    def test_c_login_user_utf8_multibyte_username(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """C_LoginUser with a multi-byte UTF-8 username does not crash.
+
+        Spec §5.5 defines pUsername as CK_UTF8CHAR_PTR — UTF-8 encoded.
+        Multi-byte sequences are valid input.  Modules may not implement
+        named users, but must at least return a defined CKR.
+        """
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
+        if pin is None:
+            pytest.skip("No PIN configured - cannot exercise C_LoginUser")
+        if "C_LoginUser" not in rs.raw.available_function_names():
+            pytest.skip("C_LoginUser not in module function list")
+
+        # "用户" = "user" in Chinese; 6 bytes of UTF-8 from 2 code points
+        username = "用户".encode()
+        rv = _raw_login_user(rs.raw, rs.sh, CKU_USER, pin, username)
+        if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
+            pass  # Module accepted the multi-byte username.
+        elif rv == CKR_FUNCTION_NOT_SUPPORTED:
+            pytest.xfail(
+                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            )
+        elif rv in _LOGIN_REJECT:
+            pass  # Reject is OK; named-users not implemented.
+        else:
+            pytest.fail(
+                f"Unexpected CKR from C_LoginUser with UTF-8 multi-byte username: {ckr_name(rv)}"
+            )
+
+    def test_c_login_user_long_username(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """A long username (1024 bytes) must not crash the module.
+
+        Spec doesn't bound the length; modules that copy into a fixed
+        buffer without bounds-checking would segfault here.
+        """
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
+        if pin is None:
+            pytest.skip("No PIN configured - cannot exercise C_LoginUser")
+        if "C_LoginUser" not in rs.raw.available_function_names():
+            pytest.skip("C_LoginUser not in module function list")
+
+        username = b"u" * 1024
+        rv = _raw_login_user(rs.raw, rs.sh, CKU_USER, pin, username)
+        # Any defined CKR is acceptable.  What we're catching is a segfault
+        # (which manifests as an unhandled signal in the parent process).
+        # Most modules reject with CKR_USER_TYPE_INVALID or similar.
+        if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
+            pass
+        elif rv == CKR_FUNCTION_NOT_SUPPORTED:
+            pytest.xfail(
+                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            )
+        elif rv in _LOGIN_REJECT or rv == CKR_ARGUMENTS_BAD:
+            pass
+        else:
+            pytest.fail(f"Unexpected CKR from C_LoginUser with 1024-byte username: {ckr_name(rv)}")
+
+    def test_c_login_user_username_with_embedded_nul(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """Username containing an embedded NUL byte is handled as length-prefixed.
+
+        Spec §5.5 uses (pUsername, ulUsernameLen) so NUL bytes within
+        the string are valid.  A module that calls strlen() on
+        pUsername would truncate at the NUL — buggy but not security-
+        critical.  A crash here is the real finding.
+        """
+        rs = p11_raw_session
+        pin = _pin_bytes(p11_config)
+        if pin is None:
+            pytest.skip("No PIN configured - cannot exercise C_LoginUser")
+        if "C_LoginUser" not in rs.raw.available_function_names():
+            pytest.skip("C_LoginUser not in module function list")
+
+        username = b"user\x00admin"  # 10 bytes, embedded NUL at index 4
+        rv = _raw_login_user(rs.raw, rs.sh, CKU_USER, pin, username)
+        if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
+            pass
+        elif rv == CKR_FUNCTION_NOT_SUPPORTED:
+            pytest.xfail(
+                "Module exposes v3.0 interface but C_LoginUser returns CKR_FUNCTION_NOT_SUPPORTED"
+            )
+        elif rv in _LOGIN_REJECT or rv == CKR_ARGUMENTS_BAD:
+            pass
+        else:
+            pytest.fail(
+                f"Unexpected CKR from C_LoginUser with embedded-NUL username: {ckr_name(rv)}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # CKU_CONTEXT_SPECIFIC tests (C_Login type 2)
@@ -552,7 +653,7 @@ class TestSessionCancel:
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.types_std import (
                 CK_MECHANISM, CK_NOTIFY, CKR_CRYPTOKI_ALREADY_INITIALIZED,
-                CKR_OK, CKR_FUNCTION_NOT_SUPPORTED,
+                CKR_OK, CKR_FUNCTION_NOT_SUPPORTED, CKR_USER_ALREADY_LOGGED_IN,
                 CKF_SERIAL_SESSION, CKF_RW_SESSION, CKU_USER, CKM_SHA256,
             )
 
@@ -594,7 +695,7 @@ class TestSessionCancel:
             if pin:
                 pin_buf = (c_ubyte * len(pin))(*pin)
                 rv = raw.C_Login(hSession, CKU_USER, pin_buf, len(pin))
-                assert rv in (CKR_OK, 0x00000100), f"C_Login: 0x{{rv:08x}}"
+                assert rv in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN), f"C_Login: 0x{{rv:08x}}"
 
             mech = CK_MECHANISM(CKM_SHA256, None, 0)
             rv = raw.C_DigestInit(hSession, pointer(mech))
@@ -641,9 +742,10 @@ class TestSessionCancel:
         )
 
         if result.returncode < 0:
-            pytest.xfail(
+            pytest.fail(
                 f"Module crashed (signal {-result.returncode}) during "
-                f"C_DigestInit/C_SessionCancel - C_SessionCancel not safely callable"
+                f"C_DigestInit/C_SessionCancel - C_SessionCancel not safely callable. "
+                f"Stderr: {result.stderr.strip()[:200]}"
             )
 
         stdout = result.stdout.strip()
@@ -719,8 +821,8 @@ class TestLoginUserWithNameRecipe:
 
             xfail_if_known_ckr(
                 exc,
-                {CKR_OPERATION_NOT_INITIALIZED},
-                "NSS returns CKR_OPERATION_NOT_INITIALIZED from C_LoginUser "
+                {CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED},
+                "Module exposes C_LoginUser but returns a known unsupported/deviation CKR "
                 "(expected CKR_OK or CKR_USER_ALREADY_LOGGED_IN per PKCS#11 v3.0 spec)",
             )
             raise

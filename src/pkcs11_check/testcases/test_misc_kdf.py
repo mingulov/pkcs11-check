@@ -38,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKM_XOR_BASE_AND_DATA,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
@@ -61,6 +62,7 @@ _DERIVE_ERROR_RVS = {
     CKR_KEY_SIZE_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_ARGUMENTS_BAD,
 }
 
@@ -157,7 +159,7 @@ class TestConcatenateBaseAndKey:
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_KEY derive failed")
         finally:
             if derived:
@@ -188,7 +190,7 @@ class TestConcatenateBaseAndKey:
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(val) == 32
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_KEY derive failed")
         finally:
             if derived:
@@ -229,7 +231,7 @@ class TestConcatenateBaseAndData:
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_DATA derive failed"
             )
@@ -272,7 +274,7 @@ class TestConcatenateBaseAndData:
             val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
             val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
             assert val_a != val_b
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_DATA derive failed"
             )
@@ -315,7 +317,7 @@ class TestConcatenateDataAndBase:
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_DATA_AND_BASE derive failed"
             )
@@ -356,7 +358,7 @@ class TestConcatenateDataAndBase:
             val_bd = read_attributes(rs.raw, rs.sh, derived_bd, [CKA_VALUE])[CKA_VALUE]
             val_db = read_attributes(rs.raw, rs.sh, derived_db, [CKA_VALUE])[CKA_VALUE]
             assert val_bd != val_db
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CONCATENATE ordering test failed")
         finally:
             for h in (derived_bd, derived_db):
@@ -397,7 +399,7 @@ class TestXorBaseAndData:
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_XOR_BASE_AND_DATA derive failed")
         finally:
             if derived:
@@ -425,7 +427,7 @@ class TestXorBaseAndData:
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert val == base_bytes
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_XOR_BASE_AND_DATA derive failed")
         finally:
             if derived:
@@ -454,7 +456,7 @@ class TestXorBaseAndData:
             )
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert val == expected
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_XOR_BASE_AND_DATA derive failed")
         finally:
             if derived:
@@ -493,7 +495,7 @@ class TestExtractKeyFromKey:
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_EXTRACT_KEY_FROM_KEY derive failed")
         finally:
             if derived:
@@ -523,7 +525,7 @@ class TestExtractKeyFromKey:
             assert derived_value == expected, (
                 f"Expected {expected.hex()}, got {derived_value.hex()}"
             )
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_EXTRACT_KEY_FROM_KEY derive failed")
         finally:
             if derived:
@@ -562,7 +564,7 @@ class TestExtractKeyFromKey:
             val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
             val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
             assert val_a != val_b
-        except (AssertionError, Exception) as exc:
+        except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_EXTRACT_KEY_FROM_KEY derive failed")
         finally:
             for h in (derived_a, derived_b):

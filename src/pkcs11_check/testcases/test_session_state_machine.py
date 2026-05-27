@@ -21,17 +21,21 @@ from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
 from pkcs11_check.raw.bootstrap import (
-    open_session as raw_open_session,
+    open_session as _raw_open_session,
 )
 from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.recipes import (
-    create_object,
+    create_object as _raw_create_object,
+)
+from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     find_objects,
-    gen_aes_key,
     generate_random,
     get_session_info,
+)
+from pkcs11_check.raw.recipes import (
+    gen_aes_key as _raw_gen_aes_key,
 )
 from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
@@ -47,12 +51,16 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_OK,
     CKR_PIN_INCORRECT,
     CKR_SESSION_CLOSED,
+    CKR_SESSION_COUNT,
     CKR_SESSION_HANDLE_INVALID,
     CKR_SESSION_READ_ONLY,
     CKR_SESSION_READ_ONLY_EXISTS,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN,
@@ -60,7 +68,13 @@ from pkcs11_check.raw.types_std import (
     CKU_SO,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    get_pin_bytes,
+    is_known_error,
+    require_operational_aes_keygen,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.access
 
@@ -68,6 +82,67 @@ pytestmark = pytest.mark.access
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+_DATA_OBJECT_SETUP_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
+    """Open an extra session for session-state tests."""
+    try:
+        return _raw_open_session(raw, slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional session required by session-state test: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
+
+
+def _gen_state_aes_key(
+    rs: Any,
+    sh: int,
+    bits: int = 128,
+    *,
+    attrs: dict[Any, Any] | None = None,
+) -> int:
+    """Generate a setup AES key for session-state tests."""
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+    require_operational_aes_keygen(rs)
+    try:
+        return _raw_gen_aes_key(rs.raw, sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but session-state setup key generation is not operational",
+        )
+    raise
+
+
+def _create_state_data_object(rs: Any, sh: int, attrs: dict[Any, Any]) -> int:
+    """Create a setup data object for session-state visibility tests."""
+    try:
+        return _raw_create_object(rs.raw, sh, attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _DATA_OBJECT_SETUP_REJECT_RVS,
+            "session-state data object setup rejected by the provider",
+        )
+    raise
+
+
+def _xfail_if_aes_setup_rv(rv: int, context: str) -> None:
+    """Classify key-generation setup rejects returned directly as CK_RV."""
+    if rv in AES_KEYGEN_RUNTIME_REJECT_RVS:
+        pytest.xfail(f"{context}: {ckr_name(rv)}")
 
 
 def _login_user_raw(raw: Any, sh: int, pin_bytes: bytes | None) -> None:
@@ -85,6 +160,11 @@ def _logout_safe(raw: Any, sh: int) -> None:
     rv = raw.C_Logout(sh)
     # Silently accept any error -- just cleaning up
     _ = rv
+
+
+def _skip_if_so_pin_differs(rv: int) -> None:
+    if rv == CKR_PIN_INCORRECT:
+        pytest.skip("SO PIN differs from user PIN on this module")
 
 
 # ---------------------------------------------------------------------------
@@ -122,10 +202,10 @@ class TestLoginStateTransitions:
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
             # Generate a private-key object to confirm access
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_state_aes_key(
+                rs,
                 test_sh,
-                256,
+                128,
                 attrs={CKA_TOKEN: False, CKA_PRIVATE: True},
             )
             assert key_h != 0
@@ -147,10 +227,10 @@ class TestLoginStateTransitions:
 
             # Create a private token object while logged in
             label = "state-machine-logout-test"
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_state_aes_key(
+                rs,
                 test_sh,
-                256,
+                128,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_PRIVATE: True,
@@ -201,10 +281,10 @@ class TestLoginStateTransitions:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
 
             # Verify we are logged in by creating a private object
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_state_aes_key(
+                rs,
                 test_sh,
-                256,
+                128,
                 attrs={CKA_TOKEN: False, CKA_PRIVATE: True},
             )
             assert key_h != 0
@@ -333,6 +413,7 @@ class TestLoginConflicts:
 
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
             rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(pin_bytes))
+            _skip_if_so_pin_differs(rv)
             assert rv in (
                 CKR_USER_ALREADY_LOGGED_IN,
                 CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
@@ -395,10 +476,10 @@ class TestConcurrentSessionLogin:
 
             # Create a private session object in s1
             label = "shared-login-test"
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_state_aes_key(
+                rs,
                 s1,
-                256,
+                128,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_PRIVATE: True,
@@ -433,10 +514,10 @@ class TestConcurrentSessionLogin:
 
             # Create private token object
             label = "logout-shared-test"
-            gen_aes_key(
-                rs.raw,
+            _gen_state_aes_key(
+                rs,
                 s1,
-                256,
+                128,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_PRIVATE: True,
@@ -545,10 +626,10 @@ class TestLogoutEffects:
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
             label = "priv-logout-session"
-            gen_aes_key(
-                rs.raw,
+            _gen_state_aes_key(
+                rs,
                 test_sh,
-                256,
+                128,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_PRIVATE: True,
@@ -582,8 +663,8 @@ class TestLogoutEffects:
         label = "pub-logout-test"
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
-            create_object(
-                rs.raw,
+            _create_state_data_object(
+                rs,
                 test_sh,
                 {
                     CKA_CLASS: CKO_DATA,
@@ -687,8 +768,8 @@ class TestSessionCloseEffects:
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
             label = "close-destroys-test"
-            gen_aes_key(
-                rs.raw,
+            _gen_state_aes_key(
+                rs,
                 s1,
                 128,
                 attrs={CKA_TOKEN: False, CKA_LABEL: label},
@@ -722,8 +803,8 @@ class TestSessionCloseEffects:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             _login_user_raw(rs.raw, s1, pin_bytes)
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_state_aes_key(
+                rs,
                 s1,
                 128,
                 attrs={CKA_TOKEN: True, CKA_LABEL: label},
@@ -801,6 +882,10 @@ class TestROvsRWSessionState:
             mech = mech_simple(CKM_AES_KEY_GEN)
             key_h = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_GenerateKey(test_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
+            _xfail_if_aes_setup_rv(
+                rv,
+                "AES_KEY_GEN advertised but RO token-object setup is not operational",
+            )
             assert rv in (
                 CKR_SESSION_READ_ONLY,
                 CKR_USER_NOT_LOGGED_IN,
@@ -822,7 +907,7 @@ class TestROvsRWSessionState:
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
-            key_h = gen_aes_key(rs.raw, test_sh, 128)
+            key_h = _gen_state_aes_key(rs, test_sh, 128)
             assert key_h != 0
             destroy_quietly(rs.raw, test_sh, key_h)
         finally:
@@ -851,6 +936,7 @@ class TestROvsRWSessionState:
         try:
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
             rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(pin_bytes))
+            _skip_if_so_pin_differs(rv)
             assert rv in (
                 CKR_SESSION_READ_ONLY_EXISTS,
                 CKR_SESSION_READ_ONLY,
@@ -940,7 +1026,7 @@ class TestSessionContextManager:
                 reference="PKCS#11 spec session_mgmt_functions.md",
             )
             pytest.xfail(
-                "NSS returns CKR_OK on C_GenerateRandom with a stale (closed) session handle "
+                "Module returns CKR_OK on C_GenerateRandom with a stale (closed) session handle "
                 "(spec requires CKR_SESSION_HANDLE_INVALID or CKR_SESSION_CLOSED)"
             )
         assert rv2 in (
@@ -958,8 +1044,8 @@ class TestSessionContextManager:
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_state_aes_key(
+                rs,
                 test_sh,
                 128,
                 attrs={CKA_TOKEN: False, CKA_PRIVATE: True},
@@ -991,10 +1077,10 @@ class TestLoginTypeSpecificity:
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
-            key_h = gen_aes_key(
-                rs.raw,
+            key_h = _gen_state_aes_key(
+                rs,
                 test_sh,
-                256,
+                128,
                 attrs={CKA_TOKEN: False, CKA_PRIVATE: True},
             )
             assert key_h != 0

@@ -19,12 +19,16 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 _SCRIPT_PREAMBLE = """\
 import ctypes
+import sys
 from ctypes import byref, cast
 
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -73,7 +77,11 @@ attrs = template(
     attr_bool(CKA_TOKEN, False),
 )
 rv = raw.C_GenerateKey(sh, mech_keygen.byref(), _template_ptr(attrs), attrs.count, byref(key))
-assert rv == CKR_OK, f"GenerateKey failed: 0x{{rv:08x}}"
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:C_GenerateKey failed:{{ckr_name(rv)}}")
+    raw.C_CloseSession(sh)
+    raw.C_Finalize(None)
+    sys.exit(0)
 key_handle = key.value
 """
 
@@ -95,6 +103,10 @@ def _run(module: str, pin: str | None, test_code: str) -> tuple[int, str, str]:
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
+def _assert_probe_completed(rc: int, out: str, err: str) -> None:
+    assert_ckr_subprocess_ok(rc, out, err, context="CKR operation-state raw probe")
+
+
 class TestOperationActive:
     """Double-Init and cross-operation state violations."""
 
@@ -114,8 +126,7 @@ assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK), f"Got 0x{rv2:08x}"
 print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
+        _assert_probe_completed(rc, out, err)
 
     def test_encrypt_then_sign_init(self, p11_config: Any) -> None:
         """C_EncryptInit then C_SignInit -> CKR_OPERATION_ACTIVE (if no dual-crypto)."""
@@ -138,8 +149,7 @@ print("OK")
 print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
+        _assert_probe_completed(rc, out, err)
 
     def test_double_digest_init(self, p11_config: Any) -> None:
         """Double C_DigestInit -> CKR_OPERATION_ACTIVE."""
@@ -157,8 +167,7 @@ assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK), f"Got 0x{rv2:08x}"
 print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
+        _assert_probe_completed(rc, out, err)
 
     def test_double_sign_init(self, p11_config: Any) -> None:
         """Double C_SignInit -> CKR_OPERATION_ACTIVE."""
@@ -179,8 +188,7 @@ else:
 print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
+        _assert_probe_completed(rc, out, err)
 
     def test_double_decrypt_init(self, p11_config: Any) -> None:
         """Double C_DecryptInit -> CKR_OPERATION_ACTIVE."""
@@ -197,5 +205,4 @@ assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK), f"Got 0x{rv2:08x}"
 print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
+        _assert_probe_completed(rc, out, err)

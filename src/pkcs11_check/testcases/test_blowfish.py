@@ -33,8 +33,10 @@ from pkcs11_check.raw.types_std import (
     CKM_BLOWFISH_CBC,
     CKM_BLOWFISH_CBC_PAD,
     CKM_BLOWFISH_KEY_GEN,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.full
 
@@ -58,7 +60,7 @@ def _bf_key(raw: Any, sh: int, bits: int, attrs: Mapping[Any, Any]) -> int:
     return key.value
 
 
-def _encrypt_or_skip(
+def _encrypt_or_xfail(
     raw: Any,
     sh: int,
     key: int,
@@ -67,12 +69,12 @@ def _encrypt_or_skip(
     *,
     mech_param: Any = None,
 ) -> bytes:
-    """Try encrypt_single; skip if module returns CKR_MECHANISM_INVALID."""
+    """Try encrypt_single; xfail if module returns CKR_MECHANISM_INVALID."""
     try:
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if "CKR_MECHANISM_INVALID" in str(exc):
-            pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
+        if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
         raise
 
 
@@ -124,7 +126,7 @@ class TestBlowfishEncryption:
         )
         iv = generate_random(rs.raw, rs.sh, 8)
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -161,7 +163,7 @@ class TestBlowfishEncryption:
         iv1 = generate_random(rs.raw, rs.sh, 8)
         iv2 = generate_random(rs.raw, rs.sh, 8)
         try:
-            ct1 = _encrypt_or_skip(
+            ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -198,7 +200,7 @@ class TestBlowfishEncryption:
         # Non-block-aligned data - PKCS#7 padding handles it
         plaintext = b"Blowfish CBC PAD test!"  # 22 bytes, not a multiple of 8
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -234,7 +236,7 @@ class TestBlowfishEncryption:
         iv = generate_random(rs.raw, rs.sh, 8)
         plaintext = b"Blowfish CBC PAD key independence!!"  # 35 bytes
         try:
-            ct1 = _encrypt_or_skip(
+            ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key1,

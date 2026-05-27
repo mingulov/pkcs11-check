@@ -30,38 +30,22 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKO_DATA,
     CKO_SECRET_KEY,
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_MEMORY,
+    CKR_KEY_SIZE_RANGE,
 )
+from pkcs11_check.testcases._error_tuples import KEY_SIZE_ERRORS, TEMPLATE_ERRORS
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.security
 
-# CKR names that are valid for "bad template" operations
-_TEMPLATE_CKR_NAMES = {
-    "CKR_ATTRIBUTE_TYPE_INVALID",
-    "CKR_ATTRIBUTE_VALUE_INVALID",
-    "CKR_TEMPLATE_INCOMPLETE",
-    "CKR_TEMPLATE_INCONSISTENT",
-    "CKR_ARGUMENTS_BAD",
-    "CKR_FUNCTION_FAILED",
-}
 
-_KEY_SIZE_CKR_NAMES = {
-    "CKR_ATTRIBUTE_VALUE_INVALID",
-    "CKR_KEY_SIZE_RANGE",
-    "CKR_MECHANISM_INVALID",
-    "CKR_ARGUMENTS_BAD",
-    "CKR_TEMPLATE_INCOMPLETE",
-    "CKR_FUNCTION_FAILED",
-}
+def _is_template_error(e: BaseException) -> bool:
+    return is_known_error(e, TEMPLATE_ERRORS)
 
 
-def _is_template_error(e: AssertionError) -> bool:
-    msg = str(e)
-    return any(n in msg for n in _TEMPLATE_CKR_NAMES)
-
-
-def _is_key_size_error(e: AssertionError) -> bool:
-    msg = str(e)
-    return any(n in msg for n in _KEY_SIZE_CKR_NAMES)
+def _is_key_size_error(e: BaseException) -> bool:
+    return is_known_error(e, KEY_SIZE_ERRORS)
 
 
 class TestMalformedAttributes:
@@ -105,7 +89,7 @@ class TestMalformedAttributes:
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
-            if _is_template_error(e) or "CKR_KEY_SIZE_RANGE" in str(e):
+            if _is_template_error(e) or is_known_error(e, {CKR_KEY_SIZE_RANGE}):
                 pass  # Correct to reject empty key value
             else:
                 raise
@@ -127,8 +111,9 @@ class TestMalformedAttributes:
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
-            msg = str(e)
-            if _is_template_error(e) or "CKR_DATA_LEN_RANGE" in msg or "CKR_KEY_SIZE_RANGE" in msg:
+            if _is_template_error(e) or is_known_error(
+                e, {CKR_DATA_LEN_RANGE, CKR_KEY_SIZE_RANGE}
+            ):
                 pass  # Correct to reject wrong key size
             else:
                 raise
@@ -241,7 +226,7 @@ class TestLargeAttributes:
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
-            if _is_template_error(e) or "CKR_DEVICE_MEMORY" in str(e):
+            if _is_template_error(e) or is_known_error(e, {CKR_DEVICE_MEMORY}):
                 pass  # Acceptable: reject large label or out of memory
             else:
                 raise
@@ -263,7 +248,7 @@ class TestLargeAttributes:
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
-            if _is_template_error(e) or "CKR_DEVICE_MEMORY" in str(e):
+            if _is_template_error(e) or is_known_error(e, {CKR_DEVICE_MEMORY}):
                 pass  # Acceptable: reject large value or out of memory
             else:
                 raise

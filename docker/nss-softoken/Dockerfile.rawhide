@@ -5,11 +5,14 @@
 #
 # Override NSS version:
 #   docker compose -f docker/docker-compose.test.yml build \
-#     --build-arg NSS_TAG=NSS_3_122_RTM test-nss-pqc
+#     --build-arg NSS_TAG=NSS_3_124_RTM \
+#     --build-arg NSPR_TAG=NSPR_4_39_RTM \
+#     test-nss-pqc
 
 FROM quay.io/fedora/fedora:44 AS builder
 
-ARG NSS_TAG=tip
+ARG NSS_TAG=NSS_3_124_RTM
+ARG NSPR_TAG=NSPR_4_39_RTM
 
 RUN dnf -y install git gcc gcc-c++ make cmake ninja-build \
     zlib-devel python3.14 python3.14-pip mercurial \
@@ -18,10 +21,13 @@ RUN dnf -y install git gcc gcc-c++ make cmake ninja-build \
 
 # Clone NSS + NSPR (NSS build expects NSPR alongside)
 WORKDIR /build
-RUN hg clone https://hg.mozilla.org/projects/nspr
+RUN hg clone https://hg.mozilla.org/projects/nspr && \
+    cd nspr && \
+    hg update -r "$NSPR_TAG" && \
+    hg log -l1 --template "NSPR: {node|short} {desc|firstline}\n"
 RUN hg clone https://hg.mozilla.org/projects/nss && \
     cd nss && \
-    if [ "$NSS_TAG" != "tip" ]; then hg update -r "$NSS_TAG"; fi && \
+    hg update -r "$NSS_TAG" && \
     hg log -l1 --template "NSS: {node|short} {desc|firstline}\n"
 
 # Build NSS in Release mode with PQC

@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDSA_SHA3_512,
     CKM_ECDSA_SHA224,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 
 pytestmark = pytest.mark.sign
 
@@ -88,7 +89,12 @@ class TestECDSAPrehash:
             tampered = b"tampered message for ECDSA"
 
             sig = sign_single(rs.raw, rs.sh, priv, mech, original)
-            result = verify_single(rs.raw, rs.sh, pub, mech, tampered, sig)
+            try:
+                result = verify_single(rs.raw, rs.sh, pub, mech, tampered, sig)
+            except AssertionError as exc:
+                if signature_rejected_or_xfail(exc, f"CKM_{mech_name}") is False:
+                    return
+                raise
             assert result is False, f"CKM_{mech_name}: verify with tampered data should fail"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

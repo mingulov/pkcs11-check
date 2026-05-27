@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from ctypes import byref
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -42,12 +42,46 @@ from pkcs11_check.raw.types_std import (
     CKP_PKCS5_PBKD2_HMAC_SHA256,
     CKP_PKCS5_PBKD2_HMAC_SHA384,
     CKP_PKCS5_PBKD2_HMAC_SHA512,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]
+
+_PBES2_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 _PRF_MAP: dict[str, int] = {
     "hmacsha1": CKP_PKCS5_PBKD2_HMAC_SHA1,
@@ -96,6 +130,20 @@ def _load_pbes2_vectors() -> list[tuple[str, dict[str, Any]]]:
 
 
 _ALL_PBES2_VECTORS = _load_pbes2_vectors()
+
+
+def _xfail_if_pbes2_runtime_reject(
+    exc: AssertionError,
+    label: str,
+    operation: str,
+) -> NoReturn:
+    """Classify advertised PBES2 setup/use rejects as non-clean findings."""
+    xfail_if_known_ckr(
+        exc,
+        _PBES2_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised PBES2 {operation} is not operational",
+    )
+    raise exc
 
 
 def _generate_key_with_mech(
@@ -151,6 +199,7 @@ def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
         )
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_pbes2_runtime_reject(exc, vec_id, "key derivation")
             pytest.fail(f"PBES2 key derivation failed for valid vector {vec_id}: {exc}")
         return
 
@@ -166,6 +215,7 @@ def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
     except AssertionError as exc:
         destroy_quietly(rs.raw, rs.sh, key)
         if result == "valid":
+            _xfail_if_pbes2_runtime_reject(exc, vec_id, "decrypt")
             pytest.fail(f"PBES2 decrypt failed for valid vector {vec_id}: {exc}")
         return
 

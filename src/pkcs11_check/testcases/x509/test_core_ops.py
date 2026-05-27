@@ -36,7 +36,10 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE,
     CKC_X_509,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     _build_cert_template,
     import_cert_object,
@@ -133,8 +136,8 @@ class TestCertificateImport:
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_CERTIFICATE_TYPE])
             assert attrs[CKA_CERTIFICATE_TYPE] == CKC_X_509
-        except (AssertionError, Exception) as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+        except AssertionError as e:
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not support CKA_CERTIFICATE_TYPE")
             raise
         finally:
@@ -164,7 +167,7 @@ class TestCertificateSearch:
             tmpl = template(attr_bytes(CKA_LABEL, label.encode("utf-8")))
             found = find_objects(rs.raw, rs.sh, tmpl)
             assert len(found) >= 1
-        except (AssertionError, Exception):
+        except AssertionError:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -201,8 +204,8 @@ class TestCertificateExtractFields:
             val = attrs[CKA_VALUE]
             if val != b"Hello world!":  # pkcs11-mock
                 assert val == ca_cert_der
-        except (AssertionError, Exception) as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+        except AssertionError as e:
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not support reading CKA_VALUE")
             raise
         finally:
@@ -231,8 +234,8 @@ class TestCertificateExtractFields:
             subject = attrs[CKA_SUBJECT]
             assert isinstance(subject, bytes)
             assert len(subject) > 0
-        except (AssertionError, Exception) as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+        except AssertionError as e:
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract CKA_SUBJECT")
             raise
         finally:
@@ -261,8 +264,8 @@ class TestCertificateExtractFields:
             issuer = attrs[CKA_ISSUER]
             assert isinstance(issuer, bytes)
             assert len(issuer) > 0
-        except (AssertionError, Exception) as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+        except AssertionError as e:
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract CKA_ISSUER")
             raise
         finally:
@@ -291,8 +294,8 @@ class TestCertificateExtractFields:
             serial = attrs[CKA_SERIAL_NUMBER]
             assert isinstance(serial, bytes)
             assert len(serial) > 0
-        except (AssertionError, Exception) as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+        except AssertionError as e:
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract CKA_SERIAL_NUMBER")
             raise
         finally:
@@ -324,8 +327,8 @@ class TestCertificateExtractFields:
                 [CKA_SUBJECT, CKA_ISSUER],
             )
             assert attrs[CKA_SUBJECT] == attrs[CKA_ISSUER]
-        except (AssertionError, Exception) as e:
-            if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+        except AssertionError as e:
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract Subject/Issuer")
             raise
         finally:
@@ -412,15 +415,13 @@ class TestV30CertAttributes:
             h = create_object(rs.raw, rs.sh, tmpl)
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as exc:
-            msg = str(exc)
-            is_attr_err = (
-                "CKR_ATTRIBUTE_VALUE_INVALID" in msg or "CKR_ATTRIBUTE_TYPE_INVALID" in msg
-            )
-            if not is_attr_err:
+            if not is_known_error(
+                exc, {CKR_ATTRIBUTE_VALUE_INVALID, CKR_ATTRIBUTE_TYPE_INVALID}
+            ):
                 raise
             if p11_interface_version < "3.0":
                 pytest.xfail(
                     f"v2.40 module rejects CKA_{attr_name} - not required by spec (v3.0+ attribute)"
                 )
             else:
-                pytest.fail(f"v3.0+ module MUST accept CKA_{attr_name} but got {msg}")
+                pytest.fail(f"v3.0+ module MUST accept CKA_{attr_name} but got {exc}")

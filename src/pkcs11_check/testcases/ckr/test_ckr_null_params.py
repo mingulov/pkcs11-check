@@ -4,8 +4,7 @@ Tests that C_* functions properly validate NULL pointers and return
 CKR_ARGUMENTS_BAD (0x00000007) instead of segfaulting.
 
 All tests run in subprocess - modules may crash on NULL parameters.
-A segfault (returncode < 0) is recorded as "module doesn't validate
-NULL params" - that's a valid test finding, not a test failure.
+A segfault (returncode < 0) is a provider crash finding and fails the test.
 
 Source: PKCS#11 v3.1 Sec.5.1.6 (CKR_ARGUMENTS_BAD).
 """
@@ -32,18 +31,13 @@ def _check_null_result(
     Expected outcomes:
     - CKR_ARGUMENTS_BAD (0x07): correct per spec
     - Other CKR: module validates but returns different error (acceptable)
-    - Segfault (rc < 0): module doesn't validate NULL (finding, not failure)
+    - Segfault (rc < 0): module doesn't validate NULL and must fail
     """
     if rc < 0:
-        # Segfault - record as compliance finding
-        from pkcs11_check.compliance import ComplianceLevel, note
-
-        note(
-            f"{func_name}(NULL): segfault (signal {-rc})",
-            ComplianceLevel.NOT_RECOMMENDED,
-            reference="PKCS#11 v3.1 Sec.5.1.6: CKR_ARGUMENTS_BAD",
+        pytest.fail(
+            f"{func_name}(NULL): subprocess crashed with signal {-rc}; "
+            "module does not validate NULL parameters"
         )
-        return  # Not a test failure - it's a finding
 
     # Parse CKR from stdout
     assert "CKR:" in out, f"{func_name}: unexpected output: {out} | stderr: {err}"

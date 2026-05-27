@@ -15,9 +15,18 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.types_std import CKA_DERIVE, CKA_ENCRYPT, CKA_SIGN, CKA_TOKEN
 from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
+)
+from pkcs11_check.testcases.conftest import (
+    destroy_returned_handles,
+    gen_aes_key_or_xfail,
+    gen_ec_keypair_or_xfail,
+    gen_edwards_keypair_or_xfail,
+    gen_rsa_keypair_or_xfail,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -45,6 +54,27 @@ def _preamble(p11_config: Any) -> str:
         str(p11_config.module),
         pin=p11_config.pin.get_secret_value() if p11_config.pin else None,
     )
+
+
+_CHILD_SETUP_REJECT_HELPERS = """
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    is_known_error,
+)
+
+
+def setup_xfail_if_known_ckr(exc, known_ckrs, purpose):
+    if is_known_error(exc, known_ckrs):
+        rv = getattr(exc, "rv", None)
+        detail = ckr_name(rv) if rv is not None else str(exc)
+        print(f"SETUP_XFAIL:{purpose}: {detail}")
+        cleanup()
+        raise SystemExit(0)
+    raise exc
+
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -78,9 +108,16 @@ class TestIsizeMaxDataLength:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Encrypt isize-boundary crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -88,14 +125,19 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     mech = CK_MECHANISM()
     mech.mechanism = int(CKM_AES_ECB)
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         buf = (ctypes.c_ubyte * 16)(*range(16))
         out_len = CK_ULONG(256)
         out_buf = (ctypes.c_ubyte * 256)()
@@ -128,9 +170,16 @@ cleanup()
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="C_Decrypt isize-boundary crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -138,14 +187,19 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     mech = CK_MECHANISM()
     mech.mechanism = int(CKM_AES_ECB)
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_DecryptInit(sh, ctypes.byref(mech), key)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         buf = (ctypes.c_ubyte * 16)(*range(16))
         out_len = CK_ULONG(256)
         out_buf = (ctypes.c_ubyte * 256)()
@@ -228,7 +282,7 @@ rv = raw.C_CreateObject(
     sh, ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={{rv}}")
     cleanup()
     raise SystemExit(0)
@@ -239,7 +293,7 @@ try:
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         buf = (ctypes.c_ubyte * 16)(*range(16))
         sig_len = CK_ULONG(64)
         sig_buf = (ctypes.c_ubyte * 64)()
@@ -286,7 +340,7 @@ mech.mechanism = int(CKM_SHA256)
 mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-if rv == int(CKR_OK):
+if rv == CKR_OK:
     buf = (ctypes.c_ubyte * 16)(*range(16))
     digest_len = CK_ULONG(64)
     digest_buf = (ctypes.c_ubyte * 64)()
@@ -410,9 +464,16 @@ class TestMechanismNullInnerParams:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-GCM NULL-IV crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -420,7 +481,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     params = CK_AES_GCM_PARAMS()
     params.pIv = None            # NULL -- should be rejected
@@ -461,9 +527,17 @@ cleanup()
             pytest.skip("CKM_EC_KEY_PAIR_GEN not supported")
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported")
+        curve_oid = encode_named_curve_parameters("secp256r1")
+        pub, priv = gen_ec_keypair_or_xfail(
+            rs,
+            curve_oid,
+            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -476,9 +550,14 @@ from pkcs11_check.raw.recipes import gen_ec_keypair, destroy_quietly
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 
 curve_oid = encode_named_curve_parameters("secp256r1")
-pub, priv = gen_ec_keypair(raw, sh, curve_oid,
-    private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
-)
+try:
+    pub, priv = gen_ec_keypair(raw, sh, curve_oid,
+        private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "EC keypair generation rejected",
+    )
 try:
     params = CK_ECDH1_DERIVE_PARAMS()
     params.kdf = int(CKD_NULL)
@@ -552,9 +631,17 @@ cleanup()
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+            private_attrs={CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -564,10 +651,15 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_rsa_keypair, destroy_quietly
 
-pub, priv = gen_rsa_keypair(raw, sh, 2048,
-    public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
-    private_attrs={CKA_TOKEN: False},
-)
+try:
+    pub, priv = gen_rsa_keypair(raw, sh, 2048,
+        public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
+        private_attrs={CKA_TOKEN: False},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
+    )
 try:
     params = CK_RSA_PKCS_OAEP_PARAMS()
     params.hashAlg = int(CKM_SHA256)
@@ -660,7 +752,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)
@@ -808,7 +900,7 @@ rv = raw.C_CreateObject(
     sh, ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={{rv}}")
     cleanup()
     raise SystemExit(0)
@@ -819,7 +911,7 @@ try:
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_SignInit(sh, ctypes.byref(mech), key.value)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         data = (ctypes.c_ubyte * 16)(*range(16))
         sig_buf = (ctypes.c_ubyte * 64)()
         sig_len = CK_ULONG({out_len})
@@ -867,7 +959,7 @@ mech.mechanism = int(CKM_SHA256)
 mech.pParameter = None
 mech.ulParameterLen = 0
 rv = raw.C_DigestInit(sh, ctypes.byref(mech))
-if rv == int(CKR_OK):
+if rv == CKR_OK:
     data = (ctypes.c_ubyte * 16)(*range(16))
     digest_buf = (ctypes.c_ubyte * 64)()
     digest_len = CK_ULONG({out_len})
@@ -949,7 +1041,7 @@ rv = raw.C_CreateObject(
     sh, ctypes.cast(attrs, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={{rv}}")
     cleanup()
     raise SystemExit(0)
@@ -960,7 +1052,7 @@ try:
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key.value)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         data = (ctypes.c_ubyte * 16)(*range(16))
         sig_buf = (ctypes.c_ubyte * 64)()
         rv2 = raw.C_Verify(
@@ -1057,7 +1149,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)
@@ -1150,22 +1242,43 @@ class TestEddsaNullContext:
         rs = p11_raw_session
         if not rs.has_mechanism("EDDSA"):
             pytest.skip("CKM_EDDSA not supported")
+        curve_oid = encode_named_curve_parameters("ed25519")
+        pub, priv = gen_edwards_keypair_or_xfail(
+            rs,
+            curve_oid,
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
-    CK_EDDSA_PARAMS, CK_MECHANISM, CKM_EDDSA,
-    CKA_SIGN, CKA_TOKEN,
+    CK_EDDSA_PARAMS, CK_MECHANISM, CKM_EDDSA, CKM_EC_EDWARDS_KEY_PAIR_GEN,
+    CKA_EC_PARAMS, CKA_SIGN, CKA_TOKEN, CKA_VERIFY,
 )
-from pkcs11_check.raw.recipes import gen_ec_keypair, destroy_quietly
+from pkcs11_check.raw.pack import attr_bytes
+from pkcs11_check.raw.recipes import gen_keypair, destroy_quietly
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 
 # Ed25519 OID
 curve_oid = encode_named_curve_parameters("ed25519")
-pub, priv = gen_ec_keypair(raw, sh, curve_oid,
-    private_attrs={CKA_SIGN: True, CKA_TOKEN: False})
+try:
+    pub, priv = gen_keypair(
+        raw, sh, int(CKM_EC_EDWARDS_KEY_PAIR_GEN),
+        pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+        priv_base=[],
+        public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+        private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+        pub_skip={CKA_EC_PARAMS},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS,
+        "EC_EDWARDS keypair generation rejected",
+    )
 try:
     params = CK_EDDSA_PARAMS()
     params.phFlag = 0
@@ -1195,6 +1308,92 @@ cleanup()
 
 
 # ---------------------------------------------------------------------------
+# TestMlDsaExplicitEmptyContext
+# ---------------------------------------------------------------------------
+
+
+class TestMlDsaExplicitEmptyContext:
+    """ML-DSA with CK_SIGN_ADDITIONAL_CONTEXT carrying a non-NULL empty context."""
+
+    def test_mldsa_verify_empty_context_nonnull_pointer(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """ML-DSA Verify with pContext non-NULL and ulContextLen=0."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_DSA"):
+            pytest.skip("CKM_ML_DSA not supported")
+        if not rs.has_mechanism("ML_DSA_KEY_PAIR_GEN"):
+            pytest.skip("CKM_ML_DSA_KEY_PAIR_GEN not supported")
+        preamble = _preamble(p11_config)
+        script = (
+            preamble
+            + _CHILD_SETUP_REJECT_HELPERS
+            + """
+import ctypes
+from pkcs11_check.raw.pack import attr_ulong
+from pkcs11_check.raw.types_std import (
+    CKA_PARAMETER_SET, CKA_SIGN, CKA_TOKEN, CKA_VERIFY,
+    CK_MECHANISM, CK_SIGN_ADDITIONAL_CONTEXT,
+    CKH_HEDGE_PREFERRED, CKM_ML_DSA, CKM_ML_DSA_KEY_PAIR_GEN,
+    CKP_ML_DSA_65, CKR_OK,
+)
+from pkcs11_check.raw.recipes import destroy_quietly, gen_keypair, sign_single
+
+message = b"ML-DSA empty context pointer crash probe"
+try:
+    pub, priv = gen_keypair(
+        raw,
+        sh,
+        CKM_ML_DSA_KEY_PAIR_GEN,
+        pub_base=[attr_ulong(CKA_PARAMETER_SET, CKP_ML_DSA_65)],
+        priv_base=[],
+        public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+        private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+        pub_skip={CKA_PARAMETER_SET},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "ML-DSA keypair generation rejected",
+    )
+try:
+    sig = sign_single(raw, sh, priv, CKM_ML_DSA, message)
+
+    context = (ctypes.c_ubyte * 0)()
+    params = CK_SIGN_ADDITIONAL_CONTEXT()
+    params.hedgeVariant = int(CKH_HEDGE_PREFERRED)
+    params.pContext = ctypes.cast(context, ctypes.c_void_p)
+    params.ulContextLen = 0
+
+    mech = CK_MECHANISM()
+    mech.mechanism = int(CKM_ML_DSA)
+    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+    mech.ulParameterLen = ctypes.sizeof(params)
+
+    rv = raw.C_VerifyInit(sh, ctypes.byref(mech), pub)
+    print(f"init_rv={rv}")
+    if rv == CKR_OK:
+        data_buf = (ctypes.c_ubyte * len(message)).from_buffer_copy(message)
+        sig_buf = (ctypes.c_ubyte * len(sig)).from_buffer_copy(sig)
+        rv = raw.C_Verify(sh, data_buf, len(message), sig_buf, len(sig))
+        print(f"verify_rv={rv}")
+finally:
+    destroy_quietly(raw, sh, pub)
+    destroy_quietly(raw, sh, priv)
+cleanup()
+"""
+        )
+        rc, stdout, stderr = run_with_coverage(script, timeout=10)
+        assert_subprocess_no_crash(
+            rc,
+            stdout,
+            stderr,
+            context=("C_Verify(ML-DSA, pContext non-NULL, ulContextLen=0)"),
+        )
+
+
+# ---------------------------------------------------------------------------
 # TestAesCcmNullNonce
 # ---------------------------------------------------------------------------
 
@@ -1215,9 +1414,16 @@ class TestAesCcmNullNonce:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CCM"):
             pytest.skip("CKM_AES_CCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-CCM NULL-nonce crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + """
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -1225,7 +1431,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     params = CK_AES_CCM_PARAMS()
     params.ulDataLen = 32
@@ -1330,7 +1541,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)
@@ -1467,7 +1678,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)
@@ -1621,7 +1832,7 @@ rv = raw.C_CreateObject(
     ctypes.cast(key_tmpl, ctypes.POINTER(CK_ATTRIBUTE)),
     5, ctypes.byref(base_key),
 )
-if rv != int(CKR_OK):
+if rv != CKR_OK:
     print(f"rv={rv}")
     cleanup()
     raise SystemExit(0)

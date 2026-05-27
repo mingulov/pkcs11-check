@@ -77,7 +77,13 @@ def _run(module: str, pin: str | None, code: str) -> tuple[int, str, str]:
 def _check(rc: int, out: str, err: str, func: str) -> None:
     if "SKIP:" in out:
         pytest.skip(out.split("SKIP:")[1])
-    assert rc == 0, f"{func} crashed: {err[-300:]}"
+    if rc < 0:
+        pytest.fail(f"{func}: subprocess crashed with signal {-rc}; stderr: {err[-300:]}")
+    if rc != 0:
+        pytest.fail(
+            f"{func}: subprocess failed with exit code {rc}; "
+            f"stdout: {out[-300:]}; stderr: {err[-300:]}"
+        )
     assert "OK" in out, f"{func}: {out} | {err[-200:]}"
 
 

@@ -17,7 +17,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
     gen_aes_key,
-    gen_rsa_keypair,
     read_attributes,
     unwrap_key,
 )
@@ -43,15 +42,18 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA_1,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases.conftest import (
+    gen_rsa_keypair_or_xfail,
+    require_operational_aes_keygen,
+)
 
 pytestmark = pytest.mark.keymgmt
 
 
 def _make_rsa_pair(rs: Any) -> tuple[int, int]:
     """Generate RSA-2048 keypair with default capabilities (includes WRAP/UNWRAP)."""
-    return gen_rsa_keypair(
-        rs.raw,
-        rs.sh,
+    return gen_rsa_keypair_or_xfail(
+        rs,
         2048,
         public_attrs={
             CKA_WRAP: True,
@@ -68,6 +70,7 @@ def _make_rsa_pair(rs: Any) -> tuple[int, int]:
 
 def _make_extractable_aes(rs: Any, bits: int = 128) -> int:
     """Generate an extractable AES key suitable for wrapping."""
+    require_operational_aes_keygen(rs)
     return gen_aes_key(
         rs.raw,
         rs.sh,
@@ -358,7 +361,8 @@ class TestWrappedKeyUsability:
                     reference="PKCS#11 spec C_WrapKey, CKA_EXTRACTABLE",
                 )
                 pytest.xfail(
-                    "SECURITY: NSS allowed C_WrapKey on a non-extractable (CKA_EXTRACTABLE=False) "
+                    "SECURITY: module allowed C_WrapKey on a non-extractable "
+                    "(CKA_EXTRACTABLE=False) "
                     "key -- key material exfiltration is possible in violation of the PKCS#11 "
                     "security model (expected CKR_KEY_NOT_WRAPPABLE or CKR_ACTION_PROHIBITED)"
                 )

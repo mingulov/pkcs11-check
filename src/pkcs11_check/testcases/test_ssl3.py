@@ -37,7 +37,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     sign_single,
 )
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_VERSION,
@@ -60,6 +60,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SSL3_SHA1_MAC,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_KEY_TYPE_INCONSISTENT,
@@ -70,6 +71,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import destroy_returned_handles, is_known_error
 
 pytestmark = pytest.mark.keymgmt
 
@@ -87,6 +89,7 @@ _DERIVE_ERROR_RVS = {
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_KEY_TYPE_INCONSISTENT,
@@ -101,12 +104,6 @@ _MAC_ERROR_RVS = {
     CKR_GENERAL_ERROR,
     CKR_ARGUMENTS_BAD,
 }
-
-
-def _is_known_error(exc: AssertionError, error_rvs: set[Any] | frozenset[Any]) -> bool:
-    """Check if an AssertionError from expect_rv matches a known CKR."""
-    msg = str(exc)
-    return any(ckr_name(rv) in msg for rv in error_rvs)
 
 
 def _create_generic_secret(rs: Any, value: bytes) -> int:
@@ -125,12 +122,6 @@ def _create_generic_secret(rs: Any, value: bytes) -> int:
             CKA_EXTRACTABLE: True,
         },
     )
-
-
-def _destroy_returned_handles(rs: Any, *handles: int) -> None:
-    for handle in handles:
-        if handle:
-            destroy_quietly(rs.raw, rs.sh, int(handle))
 
 
 class TestSSL3PreMasterKeyGen:
@@ -180,7 +171,7 @@ class TestSSL3PreMasterKeyGen:
             finally:
                 destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
-            if _is_known_error(exc, _DERIVE_ERROR_RVS):
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}")
             raise
 
@@ -228,7 +219,7 @@ class TestSSL3PreMasterKeyGen:
                 destroy_quietly(rs.raw, rs.sh, key2.value)
                 destroy_quietly(rs.raw, rs.sh, key1.value)
         except AssertionError as exc:
-            if _is_known_error(exc, _DERIVE_ERROR_RVS):
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}")
             raise
 
@@ -277,7 +268,7 @@ class TestSSL3MasterKeyDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            if _is_known_error(exc, _DERIVE_ERROR_RVS):
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE not operational: {exc}")
             raise
         finally:
@@ -329,7 +320,7 @@ class TestSSL3MasterKeyDeriveDH:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            if _is_known_error(exc, _DERIVE_ERROR_RVS):
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_MASTER_KEY_DERIVE_DH not operational: {exc}")
             raise
         finally:
@@ -373,17 +364,17 @@ class TestSSL3KeyAndMacDerive:
                 mech_param=mech,
             )
             try:
-                out = mech._key_mat_out_ref
+                out = mech.key_mat_out
                 assert out.hClientKey != 0
                 assert out.hServerKey != 0
-                assert mech.buffer_bytes("iv_client") != b"\x00" * 16
-                assert mech.buffer_bytes("iv_server") != b"\x00" * 16
+                assert any(mech.buffer_bytes("iv_client"))
+                assert any(mech.buffer_bytes("iv_server"))
                 raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
                 assert isinstance(raw_val, bytes)
                 assert len(raw_val) == 16, f"Expected 16 bytes, got {len(raw_val)}"
             finally:
-                out = mech._key_mat_out_ref
-                _destroy_returned_handles(
+                out = mech.key_mat_out
+                destroy_returned_handles(
                     rs,
                     out.hClientMacSecret,
                     out.hServerMacSecret,
@@ -392,7 +383,7 @@ class TestSSL3KeyAndMacDerive:
                 )
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            if _is_known_error(exc, _DERIVE_ERROR_RVS):
+            if is_known_error(exc, _DERIVE_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}")
             raise
         finally:
@@ -437,7 +428,7 @@ class TestSSL3Mac:
             )
             assert len(mac) == 16, f"Expected 16-byte MD5 MAC, got {len(mac)}"
         except AssertionError as exc:
-            if _is_known_error(exc, _MAC_ERROR_RVS):
+            if is_known_error(exc, _MAC_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_MD5_MAC sign not operational: {exc}")
             raise
         finally:
@@ -471,7 +462,7 @@ class TestSSL3Mac:
             )
             assert mac1 == mac2, "CKM_SSL3_MD5_MAC produced different MACs for identical input"
         except AssertionError as exc:
-            if _is_known_error(exc, _MAC_ERROR_RVS):
+            if is_known_error(exc, _MAC_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_MD5_MAC not operational: {exc}")
             raise
         finally:
@@ -504,7 +495,7 @@ class TestSSL3Mac:
             )
             assert mac_a != mac_b, "CKM_SSL3_MD5_MAC produced same MAC for different data"
         except AssertionError as exc:
-            if _is_known_error(exc, _MAC_ERROR_RVS):
+            if is_known_error(exc, _MAC_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_MD5_MAC not operational: {exc}")
             raise
         finally:
@@ -529,7 +520,7 @@ class TestSSL3Mac:
             )
             assert len(mac) == 20, f"Expected 20-byte SHA1 MAC, got {len(mac)}"
         except AssertionError as exc:
-            if _is_known_error(exc, _MAC_ERROR_RVS):
+            if is_known_error(exc, _MAC_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_SHA1_MAC sign not operational: {exc}")
             raise
         finally:
@@ -563,7 +554,7 @@ class TestSSL3Mac:
             )
             assert mac1 == mac2, "CKM_SSL3_SHA1_MAC produced different MACs for identical input"
         except AssertionError as exc:
-            if _is_known_error(exc, _MAC_ERROR_RVS):
+            if is_known_error(exc, _MAC_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_SHA1_MAC not operational: {exc}")
             raise
         finally:
@@ -596,7 +587,7 @@ class TestSSL3Mac:
             )
             assert mac_a != mac_b, "CKM_SSL3_SHA1_MAC produced same MAC for different data"
         except AssertionError as exc:
-            if _is_known_error(exc, _MAC_ERROR_RVS):
+            if is_known_error(exc, _MAC_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_SHA1_MAC not operational: {exc}")
             raise
         finally:
@@ -631,7 +622,7 @@ class TestSSL3Mac:
             )
             assert mac1 != mac2, "CKM_SSL3_MD5_MAC produced same MAC for different keys"
         except AssertionError as exc:
-            if _is_known_error(exc, _MAC_ERROR_RVS):
+            if is_known_error(exc, _MAC_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_MD5_MAC not operational: {exc}")
             raise
         finally:
@@ -667,7 +658,7 @@ class TestSSL3Mac:
             )
             assert mac1 != mac2, "CKM_SSL3_SHA1_MAC produced same MAC for different keys"
         except AssertionError as exc:
-            if _is_known_error(exc, _MAC_ERROR_RVS):
+            if is_known_error(exc, _MAC_ERROR_RVS):
                 pytest.xfail(f"CKM_SSL3_SHA1_MAC not operational: {exc}")
             raise
         finally:

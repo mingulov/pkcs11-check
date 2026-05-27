@@ -28,8 +28,24 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDSA_SHA256,
     CKM_ECDSA_SHA384,
     CKM_ECDSA_SHA512,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_HOST_MEMORY,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.acvp._duplicates import (
+    mark_duplicate_pkcs11_inputs,
+    skip_duplicate_pkcs11_input,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -53,12 +69,25 @@ _CURVE_MAP: dict[str, tuple[str, int]] = {
     "P-521": ("secp521r1", 66),
 }
 
-_UNSUPPORTED_ERRORS = (
-    "CKR_MECHANISM_INVALID",
-    "CKR_ATTRIBUTE_VALUE_INVALID",
-    "CKR_TEMPLATE_INCOMPLETE",
-    "CKR_CURVE_NOT_SUPPORTED",
-    "CKR_KEY_SIZE_RANGE",
+_EC_CAPABILITY_REJECT_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_KEY_SIZE_RANGE,
+)
+
+_EC_RUNTIME_FAILURE_RVS = (
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
+    CKR_HOST_MEMORY,
+)
+
+_DETERMINISTIC_ECDSA_SKIP = (
+    "Deterministic ECDSA ACVP vectors require RFC6979 nonce generation; "
+    "standard PKCS#11 ECDSA mechanisms do not expose deterministic nonce control"
 )
 
 
@@ -92,8 +121,9 @@ def _build_ec_point(qx_hex: str, qy_hex: str, coord_len: int) -> bytes:
 
 def _handle_unsupported_curve(exc: AssertionError, curve: str) -> None:
     """Check if exception indicates unsupported curve and skip if so."""
-    if any(name in str(exc) for name in _UNSUPPORTED_ERRORS):
+    if is_known_error(exc, _EC_CAPABILITY_REJECT_RVS):
         pytest.skip(f"Curve {curve} not supported: {exc}")
+    xfail_if_known_ckr(exc, _EC_RUNTIME_FAILURE_RVS, f"Curve {curve} rejected by runtime failure")
     raise
 
 
@@ -198,8 +228,8 @@ def _load_ecdsa_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
         }
         result.append((f"ECDSA-KeyGen-{curve_name}-tc{tc_id}", merged))
         if len(result) >= 20:
-            break
-    return result
+            return mark_duplicate_pkcs11_inputs(result, lambda item: item["ec_params"])
+    return mark_duplicate_pkcs11_inputs(result, lambda item: item["ec_params"])
 
 
 _ECDSA_SIGVER_VECTORS = _load_ecdsa_sigver_vectors()
@@ -211,7 +241,9 @@ _DET_ECDSA_VECTORS = _load_ecdsa_siggen_vectors(det=True)
 @pytest.mark.parametrize(
     "vec_id,vec", _ECDSA_SIGVER_VECTORS, ids=[v[0] for v in _ECDSA_SIGVER_VECTORS]
 )
-def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_acvp_ecdsa_sigver(
+    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
+) -> None:
     """ECDSA signature verification from NIST ACVP FIPS 186-5 vectors."""
     rs = p11_raw_session
     mech_int: CKM = cast(CKM, vec["mech_int"])
@@ -228,23 +260,14 @@ def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
                 ec_point=vec["ec_point_der"],
                 attrs={CKA_VERIFY: True},
             )
-        except AssertionError as e:
-            pytest.skip(f"Cannot import EC public key for {vec['curve']}: {e}")
+        except AssertionError as exc:
+            if is_known_error(exc, _EC_CAPABILITY_REJECT_RVS):
+                pytest.skip(f"Cannot import EC public key for {vec['curve']}: {exc}")
+            raise
         try:
             verified = verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], vec["sig"])
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_SIGNATURE_INVALID",
-                    "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DEVICE_ERROR",
-                )
-            ):
-                verified = False
-            else:
-                raise
+            verified = signature_rejected_or_xfail(exc, vec_id)
         if not vec["expected_pass"] and verified:
             pytest.fail(f"{vec_id}: Module accepted invalid signature")
         if vec["expected_pass"] and not verified:
@@ -265,6 +288,7 @@ class TestEcdsaKeyGen:
         rs = p11_raw_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC_KEY_PAIR_GEN not supported by module")
+        skip_duplicate_pkcs11_input(vec, "ECDSA KeyGen")
         pub_key = priv_key = 0
         try:
             pub_key, priv_key = gen_ec_keypair(
@@ -328,26 +352,6 @@ class TestDetEcdsa:
         """Test deterministic ECDSA signature generation."""
         rs = p11_raw_session
         mech_name: str = vec["mech_name"]
-        mech_int: CKM = cast(CKM, vec["mech_int"])
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported by module")
-        pub_key = priv_key = 0
-        try:
-            pub_key, priv_key = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid=vec["ec_params"],
-                public_attrs={CKA_VERIFY: True},
-                private_attrs={CKA_SIGN: True},
-            )
-            sig1 = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["msg"])
-            sig2 = sign_single(rs.raw, rs.sh, priv_key, mech_int, vec["msg"])
-            assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], sig1)
-            assert verify_single(rs.raw, rs.sh, pub_key, mech_int, vec["msg"], sig2)
-            if sig1 != sig2:
-                pytest.xfail(f"{vec_id}: Non-deterministic signatures (RFC 6979 not implemented)")
-        except AssertionError as exc:
-            _handle_unsupported_curve(exc, vec["curve"])
-        finally:
-            destroy_quietly(rs.raw, rs.sh, pub_key)
-            destroy_quietly(rs.raw, rs.sh, priv_key)
+        pytest.skip(_DETERMINISTIC_ECDSA_SKIP)

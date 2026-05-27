@@ -1,122 +1,162 @@
 # Docker Provider Validation Snapshot
 
-This document records the Docker provider matrix evidence used for the v0.1.0
-public release notes. It is release evidence, not a live dashboard.
+This document records the Docker provider matrix evidence for the next release
+article/report. It is evidence from the current artifact set, not a live
+dashboard.
+
+For the size of the test suite itself, see [test-universe.md](test-universe.md).
+For focused crash, timeout, and broad failure classification, see
+[provider-crash-failure-findings.md](provider-crash-failure-findings.md).
 
 ## Snapshot Metadata
 
 | Field | Value |
-|-------|-------|
-| Report generated | 2026-05-05 |
-| pkcs11-check source state | dev working tree committed with this release-baseline update |
-| Full-matrix artifact source | `artifacts/` |
-| Full-matrix artifact date | 2026-05-04 to 2026-05-05 |
-| Matrix command | `bash docker/test-all.sh --all --rebuild` |
-| qryptotoken follow-up command | `bash docker/test-all.sh qryptotoken --rebuild` |
-| Runner mode | per-file subprocess isolation |
-| Artifact files used | `results.json`, `quality.json`, `state.json`, `console.log`, `build-status.json` |
+| --- | --- |
+| Report generated | 2026-05-25 |
+| Source manifest | `docker/provider-sources.toml` |
+| Source manifest observed at | `2026-05-25T08:21:09Z` |
+| Provider summary artifact | `artifacts/_matrix/provider-summary.json` |
+| Provider summary generated at | `2026-05-25T06:19:14Z` |
+| Artifact source | `artifacts/` plus focused BouncyHSM shards under `artifacts/_focused/` |
+| Matrix command family | `bash docker/test-all.sh --all --rebuild` plus targeted follow-up slices |
+| Runner mode | isolated Docker target runs with per-file/mixed subprocess isolation |
 
-The old `artifacts2/` directory has been removed. The statistics below come
-from the refreshed `artifacts/` run. Failures, errors, and crashes are provider
-findings unless explicitly identified as framework or harness bugs elsewhere;
-they are not skipped or suppressed in the release evidence.
+Failures, errors, crashes, and timeouts are retained as provider findings unless
+a section explicitly identifies a pkcs11-check issue that was fixed after the
+artifact was produced.
 
-`qryptotoken` currently does not produce pytest results because upstream
-`v0.4.1` fails to compile in the Fedora 44 Docker image with current
-Rust/bindgen/clang. The Docker target now records this as
-`artifacts/qryptotoken/build-status.json` instead of failing before any artifact
-can be created.
+## Resolved Source Inputs
 
-## Source Inputs
+The release-tag refresh checked non-RC/non-test semantic release tags and the
+tracked branch tips. OpenSSL policy is to use OpenSSL 4.0.0 when the provider
+builds and runs against it, and OpenSSL 3.6.2 otherwise.
 
-| Docker target | Provider | Source | Selector | Resolved revision or package |
-|---------------|----------|--------|----------|------------------------------|
-| `softhsm2` | SoftHSM2 | `https://github.com/softhsm/SoftHSMv2.git` | `2.7.0` | `13e6e86b83748fef74046dbf0c91f664b7acc1c3` |
-| `softhsm2-generated-iv` | SoftHSM2 generated-IV simulator | `https://github.com/softhsm/SoftHSMv2.git` plus local simulator patch | `2.7.0` | `13e6e86b83748fef74046dbf0c91f664b7acc1c3` |
-| `softhsm2-main` | SoftHSM2 | `https://github.com/softhsm/SoftHSMv2.git` | `main` | `c274be21c08a0db21023aaa3028bb47985ac2417` |
-| `kryoptic` | Kryoptic | `https://github.com/latchset/kryoptic.git` | `v1.5.0` | `f3a4ead8baa7568cf99d6dcb6e260b16d69cf010` |
-| `kryoptic-main` | Kryoptic | `https://github.com/latchset/kryoptic.git` | default branch (`main`) | `f18e60d92a895cca551798644da544baf929668f` |
-| `kryoptic-fips` | Kryoptic | `https://github.com/latchset/kryoptic.git` | default branch (`main`) | `f18e60d92a895cca551798644da544baf929668f` |
-| `kryoptic-fips` | OpenSSL FIPS source input | `https://github.com/simo5/openssl.git` | `kryoptic_ossl40` | `2d0c89dff0e3a41ad8a83bd6389fedfff8279c7b` |
-| `nss` | NSS softoken | Fedora 44 RPM | package | `nss-3.122.1-1.fc44`, `nss-softokn-3.122.1-1.fc44`, `nspr-4.38.2-9.fc44` |
-| `nss-pqc` | NSS softoken | `https://hg.mozilla.org/projects/nss` | `tip` | `d281b0fc9954e4f711e4e1ec2a97c3dbdb78fe35` |
-| `nss-pqc` | NSPR | `https://hg.mozilla.org/projects/nspr` | `tip` | `a9bf2eed0b558c3d0a9a0354f40d6f83a6730567` |
-| `nss-main` | NSS softoken | `https://hg.mozilla.org/projects/nss` | `tip` | `d281b0fc9954e4f711e4e1ec2a97c3dbdb78fe35` |
-| `nss-main` | NSPR | `https://hg.mozilla.org/projects/nspr` | `tip` | `a9bf2eed0b558c3d0a9a0354f40d6f83a6730567` |
-| `opencryptoki` | OpenCryptoki SWToken | Fedora 44 RPM | package | `opencryptoki-3.26.0-2.fc44`, `opencryptoki-swtok-3.26.0-2.fc44` |
-| `opencryptoki-master` | OpenCryptoki | `https://github.com/opencryptoki/opencryptoki.git` | `master` | `ba2550b01fbfd768b29eee959bd52f936022893e` |
-| `bouncyhsm` | BouncyHSM | `https://github.com/harrison314/BouncyHsm.git` | `v2.0.1` | `9c37b66f70a6e1bba11e48f1e3c8e0ad964cf47e` |
-| `tpm2` | tpm2-pkcs11 | Fedora 44 RPM | package | `tpm2-pkcs11-1.9.1-7.fc44`, `swtpm-0.10.1-3.fc44`, `tpm2-abrmd-3.0.0-9.fc44` |
-| `pkcs11-mock` | pkcs11-mock | `https://github.com/Pkcs11Interop/pkcs11-mock.git` | default branch | `ac5f15adb92e15926825fa93e78a1995db1a32f8` |
-| `qryptotoken` | qryptotoken | `https://github.com/QUBIP/qryptotoken.git` | `v0.4.1` | `24fae88227d6d04331fb599327db83c24d5ae955` |
+| Component | Selector | Commit | Date | Notes |
+| --- | --- | --- | --- | --- |
+| OpenSSL | `openssl-4.0.0` | `11b7b6ea3b65a584e1d31408ed1bdb139465cffd` | 2026-04-14T12:04:16Z | preferred |
+| OpenSSL | `openssl-3.6.2` | `fe686e15d84334b284f883118ed92f64b409b3aa` | 2026-04-07T12:17:57Z | fallback |
+| OpenSSL | `master` | `83ef5622a64d34885a7d6da866accf2281879c7d` | 2026-05-21T09:13:07Z | branch tip |
+| Kryoptic FIPS OpenSSL | `simo5/openssl:kryoptic_ossl40` | `2d0c89dff0e3a41ad8a83bd6389fedfff8279c7b` | 2026-05-04T15:24:41Z | custom branch required for current FIPS target |
+| SoftHSM2 | `2.7.0` | `13e6e86b83748fef74046dbf0c91f664b7acc1c3` | 2026-01-20T06:25:10Z | release |
+| SoftHSM2 | `main` | `679f33d1b325cca8f5eb1a8febcc7630654a34de` | 2026-05-23T10:20:01Z | branch tip |
+| Kryoptic | `v1.5.0` | `f3a4ead8baa7568cf99d6dcb6e260b16d69cf010` | 2026-03-03T17:55:36Z | release |
+| Kryoptic | `main` | `41abd4e3b3d3e77887ad25cc8ecfdb0d3a9664e2` | 2026-05-08T20:55:41Z | branch tip |
+| OpenCryptoki | `v3.27.0` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | release |
+| OpenCryptoki | `master` | `583d0128bb5ebfac263496bc8fe32d4aef440178` | 2026-05-13T11:19:05Z | same as release |
+| NSS | `NSS_3_124_RTM` | `089afe88dd219cf4b1516fd04f3b1c1fda3b7b61` | 2026-05-15T14:57:13Z | official RTM tag |
+| NSPR | `NSPR_4_39_RTM` | `54e7c1b0803d151e142e30dc0d05f12e1ec67a13` | 2026-05-05T12:48:55Z | official RTM tag |
+| NSS | `tip` | `1a02ab2a26b719d5a2ba23aed6e7b06b5d3e9370` | 2026-05-19T16:33:46Z | Mercurial tip for `nss-main` comparison |
+| NSPR | `tip` | `764a204fce9a069633c2eb75890f8194f0c54853` | 2026-05-05T12:49:29Z | Mercurial tip for `nss-main` comparison |
+| BouncyHSM | `v2.1.0` | `3bfedeec38d10f69cf43a98a864ea4d519266d94` | 2026-05-04T15:25:36Z | release and main |
+| tpm2-pkcs11 | `1.10.0` | `a95465ce672c5fda92a2d34bc5cbeda4b0511c80` | 2026-05-19T20:44:58Z | release and master |
+| libtpms | `v0.10.2` | `03ff2481e133540be3b3ffe3daa1483d2a73d967` | 2026-01-02T15:56:41Z | TPM support |
+| swtpm | `v0.10.1` | `53841482b0a9a1dfe63a120b00283acfe588ee72` | 2025-04-30T12:32:33Z | TPM support |
+| pkcs11-mock | `v2.0.0` | `ac5f15adb92e15926825fa93e78a1995db1a32f8` | 2025-01-29T06:48:36Z | release and master |
 
-Supporting source inputs resolved from the current Docker definitions:
+## Docker Target Configuration
 
-| Component | Source | Selector | Resolved revision |
-|-----------|--------|----------|-------------------|
-| OpenSSL | `https://github.com/openssl/openssl.git` | `openssl-3.6.1` | `c9a9e5b10105ad850b6e4d1122c645c67767c341` |
-| OpenSSL | `https://github.com/openssl/openssl.git` | `openssl-4.0.0-beta1` | `470ad1757ee81b9a92ae02c26e6a6076b3027bd6` |
+| Docker target | Provider/source | OpenSSL or build policy |
+| --- | --- | --- |
+| `test-softhsm2` | SoftHSM2 2.7.0 | OpenSSL 3.6.2; OpenSSL 4.0.0 does not build this release |
+| `test-softhsm2-generated-iv` | SoftHSM2 2.7.0 plus local generated-IV patch | OpenSSL 3.6.2 |
+| `test-softhsm2-main` | SoftHSM2 main | OpenSSL 4.0.0 |
+| `test-kryoptic` | Kryoptic v1.5.0 | OpenSSL 4.0.0 |
+| `test-kryoptic-main` | Kryoptic main | OpenSSL 4.0.0 |
+| `test-kryoptic-fips` | Kryoptic FIPS/PQC | custom `simo5/openssl:kryoptic_ossl40`; official OpenSSL 4.0.0 compiled Kryoptic but `hmacify` failed because `.rodata1` was absent |
+| `test-nss` | Fedora 44 NSS softoken package `nss-3.123.1-1.fc44` | not OpenSSL-based; slot 1 |
+| `test-nss-pqc` | NSS/NSPR official RTM tags | not OpenSSL-based; slot 1 |
+| `test-nss-main` | NSS/NSPR source tips, comparison only | not OpenSSL-based; slot 1 |
+| `test-opencryptoki` | OpenCryptoki v3.27.0 SWToken | OpenSSL 4.0.0 |
+| `test-opencryptoki-master` | OpenCryptoki master SWToken | OpenSSL 4.0.0 |
+| `test-bouncyhsm` | BouncyHSM v2.1.0 | .NET/BouncyCastle provider; not OpenSSL-based |
+| `test-tpm2` | source-built tpm2-pkcs11 1.10.0 | Fedora OpenSSL development package; TPM stack uses libtpms/swtpm |
+| `test-pkcs11-mock` | pkcs11-mock v2.0.0 | mock provider; not OpenSSL-based |
 
-## Full Matrix Test Results
+## Matrix Results
 
-| Docker target | Provider | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Total |
-|---------------|----------|-------:|-------:|--------:|--------:|-------:|--------:|------:|
-| `softhsm2` | SoftHSM2 2.7.0 | 59,974 | 2,609 | 18,846 | 41 | 0 | 0 | 81,470 |
-| `softhsm2-generated-iv` | SoftHSM2 generated-IV simulator | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
-| `softhsm2-main` | SoftHSM2 main | 61,329 | 2,701 | 18,163 | 41 | 0 | 0 | 82,234 |
-| `kryoptic` | Kryoptic v1.5.0 | 67,254 | 2,846 | 32,356 | 68 | 0 | 0 | 102,524 |
-| `kryoptic-main` | Kryoptic main | 67,264 | 2,838 | 32,354 | 68 | 0 | 0 | 102,524 |
-| `kryoptic-fips` | Kryoptic FIPS main | 53,199 | 4,732 | 28,553 | 70 | 0 | 12 | 86,566 |
-| `nss` | NSS stable | 48,294 | 2,660 | 33,903 | 101 | 0 | 0 | 84,958 |
-| `nss-pqc` | NSS PQC source | 47,452 | 2,017 | 34,679 | 101 | 0 | 1 | 84,250 |
-| `nss-main` | NSS main | 47,452 | 2,017 | 34,679 | 101 | 0 | 1 | 84,250 |
-| `opencryptoki` | OpenCryptoki 3.26 | 69,287 | 2,403 | 15,726 | 55 | 0 | 0 | 87,471 |
-| `opencryptoki-master` | OpenCryptoki master | 78,355 | 2,594 | 7,638 | 54 | 0 | 0 | 88,641 |
-| `bouncyhsm` | BouncyHSM v2.0.1 | 66,794 | 22,309 | 9,914 | 58 | 0 | 3 | 99,078 |
-| `tpm2` | tpm2-pkcs11 | 8,360 | 5,065 | 49,447 | 6 | 851 | 0 | 63,729 |
-| `pkcs11-mock` | pkcs11-mock | 2,541 | 3,543 | 26,439 | 9 | 0 | 0 | 32,532 |
-| **Result subtotal** | 14 pytest-producing targets | **677,557** | **58,334** | **342,697** | **773** | **851** | **17** | **1,080,229** |
+| Docker target | Source | Status | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `softhsm2` | SoftHSM2 2.7.0, OpenSSL 3.6.2 | full | 82,147 | 60,181 | 2,609 | 19,316 | 41 | 0 | 0 | 0 |
+| `softhsm2-generated-iv` | SoftHSM2 2.7.0 + local generated-IV patch | full | 82,147 | 60,185 | 2,607 | 19,314 | 41 | 0 | 0 | 0 |
+| `softhsm2-main` | SoftHSM2 main, OpenSSL 4.0.0 | full | 82,926 | 61,538 | 2,702 | 18,645 | 41 | 0 | 0 | 0 |
+| `kryoptic` | Kryoptic v1.5.0, OpenSSL 4.0.0 | full | 103,789 | 67,487 | 2,853 | 33,378 | 71 | 0 | 0 | 0 |
+| `kryoptic-main` | Kryoptic main, OpenSSL 4.0.0 | full | 103,789 | 67,503 | 2,839 | 33,376 | 71 | 0 | 0 | 0 |
+| `kryoptic-fips` | Kryoptic FIPS/PQC + custom OpenSSL branch | full diagnostic | 87,712 | 53,404 | 4,733 | 29,490 | 73 | 0 | 12 | 0 |
+| `nss` | Fedora NSS softoken packages | full | 85,515 | 48,928 | 2,111 | 34,372 | 101 | 0 | 3 | 0 |
+| `nss-pqc` | legacy NSS/NSPR source-tip artifact; current target defaults to RTM tags | full | 84,819 | 47,548 | 2,019 | 35,147 | 101 | 0 | 4 | 0 |
+| `nss-main` | NSS/NSPR source tips | full | 84,819 | 47,549 | 2,018 | 35,147 | 101 | 0 | 4 | 0 |
+| `opencryptoki` | OpenCryptoki v3.27.0, OpenSSL 4.0.0 | full | 89,899 | 78,656 | 2,593 | 8,593 | 57 | 0 | 0 | 0 |
+| `opencryptoki-master` | OpenCryptoki master, OpenSSL 4.0.0 | full | 89,899 | 78,657 | 2,589 | 8,595 | 58 | 0 | 0 | 0 |
+| `tpm2-source` | upstream tpm2-pkcs11 1.10.0 | full | 81,400 | 9,847 | 6,825 | 64,696 | 32 | 0 | 0 | 0 |
+| `pkcs11-mock` | pkcs11-mock v2.0.0 | full mock baseline | 32,633 | 2,560 | 3,546 | 26,517 | 10 | 0 | 0 | 0 |
+| `bouncyhsm-segmented` | BouncyHSM v2.1.0 | segmented; not monolithic full-suite statistics | 100,494 | 67,437 | 22,308 | 10,657 | 88 | 0 | 4 | 0 |
 
-`qryptotoken` is part of the Docker matrix but is not included in the subtotal
-because no PKCS#11 module was built and no pytest run occurred.
+Archived comparison row, not the current TPM2 headline result:
 
-| Docker target | Status | Artifact | Detail |
-|---------------|--------|----------|--------|
-| `qryptotoken` | build failed before module creation | `artifacts/qryptotoken/build-status.json` | upstream `v0.4.1` cargo build failed with exit code 101 |
+| Docker target | Source | Status | Total | Passed | Failed | Skipped | Xfailed | Errors | Crashed | Timeout |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `tpm2-fedora-package-20260525` | Fedora tpm2-pkcs11 1.9.1 package | archived full | 64,084 | 8,433 | 5,067 | 49,727 | 6 | 851 | 0 | 0 |
 
-## Coverage And Quality Summary
+## BouncyHSM Segmented Evidence
 
-| Docker target | Units | Test records | Selection scenarios | Mechanisms available | Mechanisms invoked |
-|---------------|------:|-------------:|--------------------:|---------------------:|-------------------:|
-| `softhsm2` | 238 | 81,470 | 5 | 80 | 78 |
-| `softhsm2-generated-iv` | 1 | 2 | 0 | 80 | 1 |
-| `softhsm2-main` | 238 | 82,234 | 5 | 82 | 86 |
-| `kryoptic` | 239 | 102,524 | 5 | 168 | 170 |
-| `kryoptic-main` | 239 | 102,524 | 5 | 168 | 170 |
-| `kryoptic-fips` | 239 | 86,566 | 5 | 151 | 149 |
-| `nss` | 238 | 84,958 | 5 | 136 | 144 |
-| `nss-pqc` | 238 | 84,250 | 5 | 140 | 142 |
-| `nss-main` | 238 | 84,250 | 5 | 140 | 142 |
-| `opencryptoki` | 238 | 87,471 | 5 | 147 | 147 |
-| `opencryptoki-master` | 238 | 88,641 | 5 | 169 | 167 |
-| `bouncyhsm` | 238 | 99,079 | 5 | 213 | 197 |
-| `tpm2` | 238 | 63,729 | 5 | 34 | 37 |
-| `pkcs11-mock` | 238 | 32,532 | 5 | 9 | 30 |
+BouncyHSM is reachable and configured, but one monolithic full-suite run was
+not used as the headline statistic because AES vector execution entered a
+pathological timeout tail. The current evidence is the sum of completed bounded
+segments:
 
-`mechanisms_invoked` can exceed `mechanisms_available` when a provider exposes
-mechanism aliases, extension IDs, or selected tests exercise mechanisms outside
-the provider-advertised baseline.
+| Segment | Total | Passed | Failed | Skipped | Xfailed | Crashed | Timeout |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AES-CCM | 8,398 | 1,028 | 7,370 | 0 | 0 | 0 | 0 |
+| AES-CFB1 | 2,138 | 2,088 | 50 | 0 | 0 | 0 | 0 |
+| AES-CFB128 non-multiblock | 2,138 | 2,138 | 0 | 0 | 0 | 0 | 0 |
+| AES-CFB128 multiblock | 6 | 0 | 6 | 0 | 0 | 0 | 0 |
+| Remaining ACVP AES | 11,718 | 4,357 | 10 | 7,320 | 30 | 1 | 0 |
+| ACVP non-AES | 5,309 | 3,042 | 1,931 | 306 | 30 | 0 | 0 |
+| Core Wycheproof | 20,472 | 19,196 | 748 | 528 | 0 | 0 | 0 |
+| Wycheproof ECDH | 13,128 | 1,183 | 11,945 | 0 | 0 | 0 | 0 |
+| Wycheproof ECDSA brainpool | 6,398 | 6,398 | 0 | 0 | 0 | 0 | 0 |
+| Wycheproof ECDSA secp160/secp192 | 3,390 | 3,390 | 0 | 0 | 0 | 0 | 0 |
+| Wycheproof ECDSA secp224 | 5,810 | 5,810 | 0 | 0 | 0 | 0 | 0 |
+| Wycheproof ECDSA secp256 | 7,569 | 7,569 | 0 | 0 | 0 | 0 | 0 |
+| Wycheproof ECDSA secp384/secp521 | 5,748 | 5,748 | 0 | 0 | 0 | 0 | 0 |
+| Security | 267 | 169 | 35 | 57 | 3 | 3 | 0 |
+| General non-vector/non-security | 5,580 | 2,908 | 208 | 2,440 | 24 | 0 | 0 |
+| CCTV/stress/fuzz/slow | 2,425 | 2,413 | 5 | 6 | 1 | 0 | 0 |
 
-## Execution Notes
+Important BouncyHSM article points:
 
-- `softhsm2-generated-iv` is a focused supplemental target for the locally
-  patched generated-IV simulator. It intentionally ran only
-  `src/pkcs11_check/testcases/test_aead.py` generated-IV coverage.
-- `kryoptic-fips`, `nss-pqc`, `nss-main`, and `bouncyhsm` produced crash
-  findings in isolated subprocesses; the matrix continued and recorded those
-  crashes in `results.json`.
-- `tpm2` produced pytest error records but no unit-level harness errors or
-  timeouts. A Docker wrapper hang caused by `tpm2-abrmd` inheriting the artifact
-  logging pipe was fixed after this run.
-- `qryptotoken` remains a tracked target, but current upstream `v0.4.1` is a
-  build-unavailable provider for this baseline.
+- Wycheproof ECDSA passed cleanly across all split curve shards:
+  28,915/28,915.
+- CCTV Ed25519, CCTV ML-DSA, and X.509 limbo stress were clean in the marker
+  slice.
+- Broad ECDH failure appears in both ACVP and Wycheproof, so it is not an ACVP
+  data artifact.
+- AES-CFB8/CFB128/OFB multiblock behavior includes crash or timeout findings;
+  those are provider findings, not skipped tests.
+- The five fuzz failures were operation-state findings:
+  `CKR_OPERATION_ACTIVE` after repeated digest/HMAC single-part operations.
+
+## Article Notes By Provider
+
+- SoftHSM2 2.7.0 needs OpenSSL 3.6.2 for this release build. SoftHSM2 main
+  builds with OpenSSL 4.0.0. DES/DES3 direct operations required enabling both
+  OpenSSL default and legacy providers.
+- Kryoptic release and main build with official OpenSSL 4.0.0. Kryoptic
+  FIPS/PQC currently needs the custom OpenSSL branch because official OpenSSL
+  4.0.0 produced a Kryoptic shared object without `.rodata1`, causing
+  `hmacify` to fail.
+- NSS stable uses the Fedora 44 `nss-3.123.1-1.fc44` package; the current PQC
+  source target uses official NSS and NSPR RTM tags, while `nss-main` is an
+  opt-in Mercurial tip comparison target. Use `nss-pqc` for the source-built
+  NSS article/release row. The published `nss-pqc` result row above is from the
+  earlier source-tip artifact and must be rerun before using it as RTM-tag
+  result evidence. The existing source-built artifacts remove the stable ML-DSA
+  failure cluster but still show ML-KEM, ECDH, DSA, HMAC/general, NULL pointer,
+  and security-boundary findings.
+- OpenCryptoki release and master currently resolve to the same commit and
+  both build with OpenSSL 4.0.0. Remaining large clusters look provider-side
+  after pkcs11-check validation-order and optional-function fixes.
+- TPM2 headline result is the source-built upstream tpm2-pkcs11 1.10.0 target.
+  The old Fedora package result is retained only as archived comparison data.
+- pkcs11-mock is useful as a mock/diagnostic baseline, not a provider
+  conformance result.

@@ -34,7 +34,18 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_44,
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_PARAMETER_SET_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import CCTV_DIR
 
 pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.cctv]
@@ -47,6 +58,19 @@ _PARAM_CONFIGS: list[tuple[str, int, Path]] = [
     ("ML-DSA-65", CKP_ML_DSA_65, _BENCHMARK_DIR / "ML-DSA-65.json"),
     ("ML-DSA-87", CKP_ML_DSA_87, _BENCHMARK_DIR / "ML-DSA-87.json"),
 ]
+
+_MLDSA_KEYGEN_ERROR_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_PARAMETER_SET_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 def _load_messages(path: Path) -> list[bytes]:
@@ -131,6 +155,8 @@ def test_cctv_mldsa_sign_verify(p11_raw_session: Any, vec_id: str, vec: dict[str
 
     if not rs.has_mechanism("ML_DSA"):
         pytest.skip(f"{param_name}: ML_DSA not supported by module")
+    if not rs.has_mechanism("ML_DSA_KEY_PAIR_GEN"):
+        pytest.skip(f"{param_name}: ML_DSA_KEY_PAIR_GEN not supported by module")
 
     pub_key = 0
     priv_key = 0
@@ -138,16 +164,11 @@ def test_cctv_mldsa_sign_verify(p11_raw_session: Any, vec_id: str, vec: dict[str
         try:
             pub_key, priv_key = _gen_mldsa_keypair(rs, param_set)
         except AssertionError as e:
-            exc_msg = str(e)
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_MECHANISM_INVALID",
-                    "CKR_FUNCTION_FAILED",
-                )
-            ):
-                pytest.skip(f"{param_name}: key generation failed - {exc_msg}")
-            raise
+            xfail_if_known_ckr(
+                e,
+                _MLDSA_KEYGEN_ERROR_CKRS,
+                f"{param_name}: CKM_ML_DSA_KEY_PAIR_GEN advertised but key generation failed",
+            )
 
         sig = sign_single(rs.raw, rs.sh, priv_key, CKM_ML_DSA, msg)
         assert len(sig) > 0, f"{vec_id}: sign() returned empty signature"

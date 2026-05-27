@@ -21,7 +21,14 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_TRUSTED,
     CKA_VALUE,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_USER_NOT_LOGGED_IN,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_raw,
     load_limbo_testcases,
@@ -130,21 +137,22 @@ class TestLimboCertImport:
                 )
 
         except AssertionError as e:
-            msg = str(e)
-            is_reject = (
-                "CKR_TEMPLATE_INCONSISTENT" in msg
-                or "CKR_ATTRIBUTE_VALUE_INVALID" in msg
-                or "CKR_FUNCTION_FAILED" in msg
-            )
-            if is_reject:
+            if is_known_error(
+                e,
+                {
+                    CKR_TEMPLATE_INCONSISTENT,
+                    CKR_ATTRIBUTE_VALUE_INVALID,
+                    CKR_FUNCTION_FAILED,
+                },
+            ):
                 if tc["expected_result"] == "FAILURE":
                     note(
                         f"Module rejected {tc['id']} on import "
-                        f"({msg.split(';')[0]}) - above spec for storage",
+                        f"({str(e).split(';')[0]}) - above spec for storage",
                         ComplianceLevel.VENDOR,
                     )
                 else:
-                    pytest.fail(f"Module rejected valid Limbo cert {tc['id']} on raw import: {msg}")
+                    pytest.fail(f"Module rejected valid Limbo cert {tc['id']} on raw import: {e}")
             else:
                 raise
         finally:
@@ -184,14 +192,13 @@ class TestLimboCertImport:
                         },
                     )
                 except AssertionError as e:
-                    msg = str(e)
-                    if any(
-                        ckr in msg
-                        for ckr in (
-                            "CKR_ATTRIBUTE_TYPE_INVALID",
-                            "CKR_ATTRIBUTE_READ_ONLY",
-                            "CKR_USER_NOT_LOGGED_IN",
-                        )
+                    if is_known_error(
+                        e,
+                        {
+                            CKR_ATTRIBUTE_TYPE_INVALID,
+                            CKR_ATTRIBUTE_READ_ONLY,
+                            CKR_USER_NOT_LOGGED_IN,
+                        },
                     ):
                         h, _ = import_cert_raw(
                             rs.raw,
@@ -206,14 +213,16 @@ class TestLimboCertImport:
                         raise
 
             except AssertionError as e:
-                msg = str(e)
-                if (
-                    "CKR_TEMPLATE_INCONSISTENT" in msg
-                    or "CKR_ATTRIBUTE_VALUE_INVALID" in msg
-                    or "CKR_FUNCTION_FAILED" in msg
+                if is_known_error(
+                    e,
+                    {
+                        CKR_TEMPLATE_INCONSISTENT,
+                        CKR_ATTRIBUTE_VALUE_INVALID,
+                        CKR_FUNCTION_FAILED,
+                    },
                 ):
                     note(
-                        f"Module rejected trusted CA cert {label} ({msg.split(';')[0]})",
+                        f"Module rejected trusted CA cert {label} ({str(e).split(';')[0]})",
                         ComplianceLevel.VENDOR,
                     )
                 else:
@@ -263,14 +272,15 @@ def test_import_limbo_failure_cert_raw(
             )
 
     except AssertionError as e:
-        msg = str(e)
-        if "CKR_TEMPLATE_INCONSISTENT" in msg or "CKR_ATTRIBUTE_VALUE_INVALID" in msg:
+        if is_known_error(
+            e, {CKR_TEMPLATE_INCONSISTENT, CKR_ATTRIBUTE_VALUE_INVALID}
+        ):
             note(
                 f"[FAILURE cert] Module rejected {tc['id']} "
-                f"({msg.split(';')[0]}) - validates on import",
+                f"({str(e).split(';')[0]}) - validates on import",
                 ComplianceLevel.VENDOR,
             )
-        elif "CKR_FUNCTION_FAILED" in msg:
+        elif is_known_error(e, {CKR_FUNCTION_FAILED}):
             note(
                 f"[FAILURE cert] Module returned CKR_FUNCTION_FAILED for {tc['id']}",
                 ComplianceLevel.VENDOR,

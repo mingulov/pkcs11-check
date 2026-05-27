@@ -11,16 +11,28 @@ import pytest
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
-    gen_aes_key,
     gen_rsa_keypair,
+    to_ubyte_buf,
     verify_single,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKM_AES_CBC,
     CKM_SHA256_RSA_PKCS,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases._signature_policy import (
+    NON_CLEAN_SIGNATURE_REJECT_RVS,
+    SIGNATURE_REJECT_RVS,
+)
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
 
 MESSAGE_ENCRYPT_FUNCS = [
     "C_MessageEncryptInit",
@@ -60,6 +72,16 @@ ALL_MESSAGE_FUNCS = (
 
 pytestmark = [pytest.mark.requires_v30]
 
+_MESSAGE_UNSUPPORTED_RVS = (CKR_FUNCTION_NOT_SUPPORTED,)
+
+_MESSAGE_ADVERTISED_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
 
 def _skip_unless_message_functions(rs: Any, funcs: list[str]) -> None:
     for name in funcs:
@@ -67,8 +89,12 @@ def _skip_unless_message_functions(rs: Any, funcs: list[str]) -> None:
             pytest.skip(f"{name} not available")
 
 
-def _to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
-    return (ctypes.c_ubyte * len(data))(*data)
+def _handle_message_rv(rv: int, context: str) -> None:
+    if rv in _MESSAGE_UNSUPPORTED_RVS:
+        pytest.skip(f"{context} not supported: {ckr_name(rv)}")
+    if rv in _MESSAGE_ADVERTISED_REJECT_RVS:
+        pytest.xfail(f"{context} rejected advertised message operation: {ckr_name(rv)}")
+    pytest.fail(f"{context} returned unexpected CKR: {ckr_name(rv)}")
 
 
 def _message_sign(
@@ -87,17 +113,17 @@ def _message_sign(
 
     rv = rs.raw.C_MessageSignInit(rs.sh, packed.byref(), key)
     if rv != CKR_OK:
-        pytest.skip(f"C_MessageSignInit returned 0x{rv:08x}")
+        _handle_message_rv(rv, "C_MessageSignInit")
 
-    in_buf = _to_ubyte_buf(data)
+    in_buf = to_ubyte_buf(data)
     sig_len = CK_ULONG(0)
     rv = rs.raw.C_SignMessage(rs.sh, None, 0, in_buf, len(data), None, byref(sig_len))
     if rv != CKR_OK:
-        pytest.skip(f"C_SignMessage (size) returned 0x{rv:08x}")
+        _handle_message_rv(rv, "C_SignMessage (size)")
     sig_buf = (ctypes.c_ubyte * sig_len.value)()
     rv = rs.raw.C_SignMessage(rs.sh, None, 0, in_buf, len(data), sig_buf, byref(sig_len))
     if rv != CKR_OK:
-        pytest.skip(f"C_SignMessage returned 0x{rv:08x}")
+        _handle_message_rv(rv, "C_SignMessage")
     return bytes(sig_buf[: sig_len.value])
 
 
@@ -107,18 +133,28 @@ def _message_verify(
     mechanism: int,
     data: bytes,
     signature: bytes,
+    *,
+    expect_valid: bool = True,
 ) -> bool:
     from pkcs11_check.raw.pack import mech_simple
 
     packed = mech_simple(mechanism)
     rv = rs.raw.C_MessageVerifyInit(rs.sh, packed.byref(), key)
     if rv != CKR_OK:
-        pytest.skip(f"C_MessageVerifyInit returned 0x{rv:08x}")
+        _handle_message_rv(rv, "C_MessageVerifyInit")
 
-    in_buf = _to_ubyte_buf(data)
-    sig_buf = _to_ubyte_buf(signature)
+    in_buf = to_ubyte_buf(data)
+    sig_buf = to_ubyte_buf(signature)
     rv = rs.raw.C_VerifyMessage(rs.sh, None, 0, in_buf, len(data), sig_buf, len(signature))
-    return bool(rv == CKR_OK)
+    if rv == CKR_OK:
+        return True
+    if not expect_valid:
+        if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
+            pytest.xfail(
+                f"C_VerifyMessage rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
+            )
+        return rv not in SIGNATURE_REJECT_RVS
+    return False
 
 
 def _message_sign_multipart(
@@ -132,26 +168,26 @@ def _message_sign_multipart(
     packed = mech_simple(mechanism)
     rv = rs.raw.C_MessageSignInit(rs.sh, packed.byref(), key)
     if rv != CKR_OK:
-        pytest.skip(f"C_MessageSignInit returned 0x{rv:08x}")
+        _handle_message_rv(rv, "C_MessageSignInit")
 
     for part in parts:
-        in_buf = _to_ubyte_buf(part)
+        in_buf = to_ubyte_buf(part)
         rv = rs.raw.C_SignMessageBegin(rs.sh, None, 0, in_buf, len(part))
         if rv != CKR_OK:
-            pytest.skip(f"C_SignMessageBegin returned 0x{rv:08x}")
+            _handle_message_rv(rv, "C_SignMessageBegin")
 
     sig_len = CK_ULONG(0)
     rv = rs.raw.C_SignMessageNext(rs.sh, None, 0, None, 0, None, byref(sig_len), 1)
     if rv != CKR_OK:
-        pytest.skip(f"C_SignMessageNext (size) returned 0x{rv:08x}")
+        _handle_message_rv(rv, "C_SignMessageNext (size)")
     sig_buf = (ctypes.c_ubyte * sig_len.value)()
     rv = rs.raw.C_SignMessageNext(rs.sh, None, 0, None, 0, sig_buf, byref(sig_len), 1)
     if rv != CKR_OK:
-        pytest.skip(f"C_SignMessageNext returned 0x{rv:08x}")
+        _handle_message_rv(rv, "C_SignMessageNext")
 
     rv = rs.raw.C_MessageSignFinal(rs.sh)
     if rv != CKR_OK:
-        pytest.skip(f"C_MessageSignFinal returned 0x{rv:08x}")
+        _handle_message_rv(rv, "C_MessageSignFinal")
 
     return bytes(sig_buf[: sig_len.value])
 
@@ -165,7 +201,7 @@ class TestMessageEncryptDecrypt:
         _skip_unless_message_functions(rs, MESSAGE_ENCRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="message encrypt setup")
         plaintext = b"A" * 32
         try:
             from pkcs11_check.raw.recipes import message_encrypt
@@ -184,7 +220,7 @@ class TestMessageEncryptDecrypt:
         _skip_unless_message_functions(rs, MESSAGE_DECRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="message decrypt setup")
         plaintext = b"A" * 32
         try:
             from pkcs11_check.raw.recipes import message_decrypt, message_encrypt
@@ -207,7 +243,7 @@ class TestMessageEncryptDecrypt:
         _skip_unless_message_functions(rs, MESSAGE_ENCRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="message multipart encrypt setup")
         plaintext = b"A" * 32
         try:
             from pkcs11_check.raw.pack import mech_simple
@@ -215,25 +251,25 @@ class TestMessageEncryptDecrypt:
             packed = mech_simple(CKM_AES_CBC)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, packed.byref(), key)
             if rv != CKR_OK:
-                pytest.skip(f"C_MessageEncryptInit returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_MessageEncryptInit")
 
-            in_buf = _to_ubyte_buf(plaintext)
+            in_buf = to_ubyte_buf(plaintext)
             rv = rs.raw.C_EncryptMessageBegin(rs.sh, None, 0, in_buf, len(plaintext))
             if rv != CKR_OK:
-                pytest.skip(f"C_EncryptMessageBegin returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_EncryptMessageBegin")
 
             out_len = CK_ULONG(0)
             rv = rs.raw.C_EncryptMessageNext(rs.sh, None, 0, None, 0, None, byref(out_len), 1)
             if rv != CKR_OK:
-                pytest.skip(f"C_EncryptMessageNext (size) returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_EncryptMessageNext (size)")
             out_buf = (ctypes.c_ubyte * out_len.value)()
             rv = rs.raw.C_EncryptMessageNext(rs.sh, None, 0, None, 0, out_buf, byref(out_len), 1)
             if rv != CKR_OK:
-                pytest.skip(f"C_EncryptMessageNext returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_EncryptMessageNext")
 
             rv = rs.raw.C_MessageEncryptFinal(rs.sh)
             if rv != CKR_OK:
-                pytest.skip(f"C_MessageEncryptFinal returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_MessageEncryptFinal")
 
             assert out_len.value > 0
         finally:
@@ -245,7 +281,7 @@ class TestMessageEncryptDecrypt:
         _skip_unless_message_functions(rs, MESSAGE_DECRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="message multipart decrypt setup")
         plaintext = b"A" * 32
         try:
             from pkcs11_check.raw.recipes import message_encrypt
@@ -260,25 +296,25 @@ class TestMessageEncryptDecrypt:
             packed = mech_simple(CKM_AES_CBC)
             rv = rs.raw.C_MessageDecryptInit(rs.sh, packed.byref(), key)
             if rv != CKR_OK:
-                pytest.skip(f"C_MessageDecryptInit returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_MessageDecryptInit")
 
-            in_buf = _to_ubyte_buf(ct)
+            in_buf = to_ubyte_buf(ct)
             rv = rs.raw.C_DecryptMessageBegin(rs.sh, None, 0, in_buf, len(ct))
             if rv != CKR_OK:
-                pytest.skip(f"C_DecryptMessageBegin returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_DecryptMessageBegin")
 
             out_len = CK_ULONG(0)
             rv = rs.raw.C_DecryptMessageNext(rs.sh, None, 0, None, 0, None, byref(out_len), 1)
             if rv != CKR_OK:
-                pytest.skip(f"C_DecryptMessageNext (size) returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_DecryptMessageNext (size)")
             out_buf = (ctypes.c_ubyte * out_len.value)()
             rv = rs.raw.C_DecryptMessageNext(rs.sh, None, 0, None, 0, out_buf, byref(out_len), 1)
             if rv != CKR_OK:
-                pytest.skip(f"C_DecryptMessageNext returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_DecryptMessageNext")
 
             rv = rs.raw.C_MessageDecryptFinal(rs.sh)
             if rv != CKR_OK:
-                pytest.skip(f"C_MessageDecryptFinal returned 0x{rv:08x}")
+                _handle_message_rv(rv, "C_MessageDecryptFinal")
 
             assert bytes(out_buf[: out_len.value]) == plaintext
         finally:
@@ -290,7 +326,7 @@ class TestMessageEncryptDecrypt:
         _skip_unless_message_functions(rs, MESSAGE_ENCRYPT_FUNCS + MESSAGE_DECRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="message cross-verify setup")
         plaintext = b"cross-verify test data padding!!"
         try:
             from pkcs11_check.raw.recipes import message_encrypt
@@ -385,7 +421,9 @@ class TestMessageSignVerify:
         data = b"correct data"
         bad_sig = b"\x00" * 256
         try:
-            result = _message_verify(rs, pub, CKM_SHA256_RSA_PKCS, data, bad_sig)
+            result = _message_verify(
+                rs, pub, CKM_SHA256_RSA_PKCS, data, bad_sig, expect_valid=False
+            )
             assert result is False
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

@@ -41,6 +41,9 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPING_KEY_SIZE_RANGE,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
+from pkcs11_check.testcases._module_quirks import quirk_extras
+from pkcs11_check.testcases.ckr._ckr_spec import CKR_WRAP, assert_ckr
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
 
 pytestmark = pytest.mark.access
 
@@ -116,17 +119,20 @@ class TestWrapKeyErrors:
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using hash mechanism for wrap -> CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
-        wrap_key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("AES_KEY_WRAP not supported")
+
+        wrap_key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_WRAP: True},
+            purpose="CKR wrap mechanism-invalid setup",
         )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        target = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            purpose="CKR wrap mechanism-invalid target setup",
         )
         try:
             mech = mech_simple(CKM_SHA256)  # Wrong: hash mechanism
@@ -142,7 +148,7 @@ class TestWrapKeyErrors:
             )
             if rv == CKR_OK:
                 pytest.fail("Should have rejected SHA256 as wrap mechanism")
-            # CKR_MECHANISM_INVALID or related
+            assert_ckr(CKR_WRAP["wrap_mechanism_invalid"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_key)
             destroy_quietly(rs.raw, rs.sh, target)
@@ -275,7 +281,9 @@ class TestWrapKeyErrors:
             destroy_quietly(rs.raw, rs.sh, wrap_key)
             destroy_quietly(rs.raw, rs.sh, target)
 
-    def test_wrapping_key_size_range(self, p11_raw_session: Any, ckr_strict: bool) -> None:
+    def test_wrapping_key_size_range(
+        self, p11_raw_session: Any, p11_config: Any, ckr_strict: bool
+    ) -> None:
         """Wrap key of out-of-range size -> CKR_WRAPPING_KEY_SIZE_RANGE.
 
         PKCS#11 v3.1 Sec.5.14.3: "the supplied wrapping key's size is
@@ -340,6 +348,7 @@ class TestWrapKeyErrors:
                 # Some modules treat undersized AES as type-inconsistent
                 CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
                 CKR_KEY_TYPE_INCONSISTENT,
+                *(() if ckr_strict else quirk_extras(p11_config, "size_range_on_wrap")),
             )
             assert rv in accepted, (
                 f"Unexpected CK_RV 0x{rv:08x} on undersized wrap key; "

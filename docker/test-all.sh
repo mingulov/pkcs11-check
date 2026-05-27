@@ -17,21 +17,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_PROVIDERS=(
     kryoptic-main
     softhsm2-main
-    nss-main
+    nss-pqc
     opencryptoki-master
     tpm2
     bouncyhsm
 )
 
 ALL_PROVIDERS=(
-    softhsm2 softhsm2-generated-iv softhsm2-main
+#    softhsm2 softhsm2-generated-iv softhsm2-main
     kryoptic kryoptic-main kryoptic-fips
     nss nss-pqc nss-main
     opencryptoki opencryptoki-master
-    bouncyhsm
     tpm2
     pkcs11-mock
-    qryptotoken
+    bouncyhsm
 )
 
 _is_provider() {

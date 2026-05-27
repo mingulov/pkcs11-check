@@ -14,29 +14,47 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import mech_bytes, mech_simple
+from pkcs11_check.raw.pack import mech_bytes, mech_oaep, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
-    gen_aes_key,
-    gen_rsa_keypair,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_DECRYPT,
     CKA_ENCRYPT,
+    CKG_MGF1_SHA1,
     CKM_AES_CBC,
     CKM_AES_CBC_PAD,
     CKM_AES_ECB,
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA256,
+    CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_DECRYPT, assert_ckr
+from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.access
+
+_RSA_OAEP_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 
 class TestDecryptInitErrors:
@@ -45,7 +63,7 @@ class TestDecryptInitErrors:
     def test_mechanism_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Using digest mechanism for decrypt -> CKR_MECHANISM_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR decrypt-init setup")
         try:
             mech = mech_simple(CKM_SHA256)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
@@ -58,7 +76,7 @@ class TestDecryptInitErrors:
     def test_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """AES key with RSA mechanism -> CKR_KEY_TYPE_INCONSISTENT."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR decrypt key-type setup")
         try:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
@@ -73,7 +91,7 @@ class TestDecryptInitErrors:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("AES_CBC not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-CBC decrypt-param setup")
         try:
             # AES-CBC needs 16-byte IV, provide 8 bytes
             mech = mech_bytes(CKM_AES_CBC, b"\x00" * 8)
@@ -94,7 +112,7 @@ class TestDecryptDataErrors:
     ) -> None:
         """AES-ECB with non-block-aligned ciphertext -> CKR_ENCRYPTED_DATA_LEN_RANGE."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-ECB decrypt-length setup")
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
@@ -113,7 +131,7 @@ class TestDecryptDataErrors:
     def test_ecb_garbage_ciphertext(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """AES-ECB decrypt of garbage (block-aligned) - may return data or error."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-ECB garbage setup")
         try:
             exp = CKR_DECRYPT["encrypted_data_invalid"]
             mech = mech_simple(CKM_AES_ECB)
@@ -135,7 +153,7 @@ class TestDecryptDataErrors:
     def test_rsa_ciphertext_wrong_length(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """RSA-PKCS decrypt with wrong ciphertext length -> CKR_ENCRYPTED_DATA_LEN_RANGE."""
         rs = p11_raw_session
-        _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             exp = CKR_DECRYPT["rsa_ciphertext_wrong_length"]
             mech = mech_simple(CKM_RSA_PKCS)
@@ -168,7 +186,7 @@ class TestDecryptDataErrors:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC_PAD"):
             pytest.skip("AES_CBC_PAD not supported")
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-CBC-PAD decrypt setup")
         try:
             mech = mech_bytes(CKM_AES_CBC_PAD, b"\x00" * 16)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
@@ -190,12 +208,17 @@ class TestDecryptDataErrors:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("RSA_PKCS_OAEP not supported")
-        _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        _pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
-            mech = mech_simple(CKM_RSA_PKCS_OAEP)
+            mech = mech_oaep(CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA_1, mgf=CKG_MGF1_SHA1)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), priv)
             if rv != CKR_OK:
-                pytest.skip(f"C_DecryptInit failed: {ckr_name(rv)}")
+                if rv in _RSA_OAEP_RUNTIME_REJECT_RVS:
+                    pytest.xfail(
+                        "RSA_PKCS_OAEP advertised but SHA-1 OAEP params are not "
+                        f"operational: {ckr_name(rv)}"
+                    )
+                pytest.fail(f"C_DecryptInit(RSA_OAEP) failed unexpectedly: {ckr_name(rv)}")
             data = (ctypes.c_ubyte * 256)(*([0xEE] * 256))
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
@@ -210,7 +233,7 @@ class TestDecryptDataErrors:
     def test_key_handle_invalid(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Decrypt with destroyed key handle -> CKR_KEY_HANDLE_INVALID."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(rs, 256, purpose="CKR destroyed-key setup")
         encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, b"\x00" * 16)
         rs.raw.C_DestroyObject(rs.sh, key)
         mech = mech_simple(CKM_AES_ECB)
@@ -221,11 +244,11 @@ class TestDecryptDataErrors:
     def test_key_function_not_permitted(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Key with CKA_DECRYPT=False -> CKR_KEY_FUNCTION_NOT_PERMITTED."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        key = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_DECRYPT: False, CKA_ENCRYPT: True},
+            purpose="CKR decrypt key-usage setup",
         )
         try:
             exp = CKR_DECRYPT["init_key_function_not_permitted"]

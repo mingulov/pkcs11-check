@@ -17,10 +17,8 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     get_mechanism_info,
     read_attributes,
-    unwrap_key,
     wrap_key,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -39,27 +37,13 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CCM,
     CKM_AES_GCM,
     CKO_SECRET_KEY,
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
+)
+from pkcs11_check.testcases.conftest import (
+    skip_if_mech_param_unsupported,
+    unwrap_key_for_mechanism_roundtrip,
 )
 
 pytestmark = [pytest.mark.keymgmt, pytest.mark.wrap, pytest.mark.requires_v32]
-
-_UNSUPPORTED_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-)
-
-
-def _skip_if_unsupported(exc: AssertionError, context: str) -> None:
-    text = str(exc)
-    if any(ckr_name(rv) in text for rv in _UNSUPPORTED_RVS):
-        pytest.skip(f"{context} not supported: {text}")
-    raise exc
 
 
 def _require_wrap_flags(rs: Any, mechanism: CKM | int, name: str) -> None:
@@ -93,7 +77,9 @@ def _make_keys(rs: Any) -> tuple[int, int, bytes]:
     return wrap_h, target, original
 
 
-def test_gcm_wrap_generated_iv_roundtrip(p11_raw_session: Any, p11_interface_version: str) -> None:
+def test_gcm_wrap_generated_iv_roundtrip(
+    p11_raw_session: Any, p11_config: Any, p11_interface_version: str
+) -> None:
     rs = p11_raw_session
     if p11_interface_version != "3.2":
         pytest.skip("CK_GCM_WRAP_PARAMS generated IV requires v3.2")
@@ -109,18 +95,18 @@ def test_gcm_wrap_generated_iv_roundtrip(p11_raw_session: Any, p11_interface_ver
         try:
             wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target, CKM_AES_GCM, mech_param=wrap_mech)
         except AssertionError as exc:
-            _skip_if_unsupported(exc, "CK_GCM_WRAP_PARAMS generated IV C_WrapKey")
+            skip_if_mech_param_unsupported(exc, "CK_GCM_WRAP_PARAMS generated IV C_WrapKey")
 
         iv = wrap_mech.buffer_bytes("iv")
-        assert iv != b"\x00" * 12, "C_WrapKey accepted CKG_GENERATE but did not write pIv"
+        assert any(iv), "C_WrapKey accepted CKG_GENERATE but did not write pIv"
 
         unwrap_mech = mech_gcm_wrap(CKM_AES_GCM, iv, aad=aad, tag_bits=128)
-        unwrapped = unwrap_key(
-            rs.raw,
-            rs.sh,
-            wrap_h,
-            wrapped,
-            CKM_AES_GCM,
+        unwrapped = unwrap_key_for_mechanism_roundtrip(
+            rs,
+            p11_config,
+            unwrapping_key=wrap_h,
+            wrapped_key=wrapped,
+            mechanism=CKM_AES_GCM,
             attrs={
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_AES,
@@ -128,6 +114,7 @@ def test_gcm_wrap_generated_iv_roundtrip(p11_raw_session: Any, p11_interface_ver
                 CKA_SENSITIVE: False,
             },
             mech_param=unwrap_mech,
+            purpose="AES-GCM generated-IV wrap roundtrip",
         )
         value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
         assert value == original
@@ -138,7 +125,7 @@ def test_gcm_wrap_generated_iv_roundtrip(p11_raw_session: Any, p11_interface_ver
 
 
 def test_ccm_wrap_generated_nonce_roundtrip(
-    p11_raw_session: Any, p11_interface_version: str
+    p11_raw_session: Any, p11_config: Any, p11_interface_version: str
 ) -> None:
     rs = p11_raw_session
     if p11_interface_version != "3.2":
@@ -161,10 +148,10 @@ def test_ccm_wrap_generated_nonce_roundtrip(
         try:
             wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target, CKM_AES_CCM, mech_param=wrap_mech)
         except AssertionError as exc:
-            _skip_if_unsupported(exc, "CK_CCM_WRAP_PARAMS generated nonce C_WrapKey")
+            skip_if_mech_param_unsupported(exc, "CK_CCM_WRAP_PARAMS generated nonce C_WrapKey")
 
         nonce = wrap_mech.buffer_bytes("nonce")
-        assert nonce != b"\x00" * 12, "C_WrapKey accepted CKG_GENERATE but did not write pNonce"
+        assert any(nonce), "C_WrapKey accepted CKG_GENERATE but did not write pNonce"
 
         unwrap_mech = mech_ccm_wrap(
             CKM_AES_CCM,
@@ -173,12 +160,12 @@ def test_ccm_wrap_generated_nonce_roundtrip(
             aad=aad,
             mac_len=16,
         )
-        unwrapped = unwrap_key(
-            rs.raw,
-            rs.sh,
-            wrap_h,
-            wrapped,
-            CKM_AES_CCM,
+        unwrapped = unwrap_key_for_mechanism_roundtrip(
+            rs,
+            p11_config,
+            unwrapping_key=wrap_h,
+            wrapped_key=wrapped,
+            mechanism=CKM_AES_CCM,
             attrs={
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_AES,
@@ -186,6 +173,7 @@ def test_ccm_wrap_generated_nonce_roundtrip(
                 CKA_SENSITIVE: False,
             },
             mech_param=unwrap_mech,
+            purpose="AES-CCM generated-nonce wrap roundtrip",
         )
         value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
         assert value == original

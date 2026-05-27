@@ -25,6 +25,20 @@ from pkcs11_check.raw.types_std import (
     CKM,
     CKM_AES_CFB8,
     CKM_AES_OFB,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+from pkcs11_check.testcases.conftest import is_known_error
+
+_AES_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 
@@ -115,9 +129,8 @@ def run_simple_encrypt_test(
                 mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"{mech_name} not supported: {exc_msg}")
+            if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
+                pytest.xfail(f"{mech_name} advertised but encrypt is not operational: {exc}")
             raise
 
         expected = vec["ct_expected"]
@@ -173,9 +186,8 @@ def run_simple_decrypt_test(
                 mech_param=mech,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"{mech_name} not supported: {exc_msg}")
+            if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
+                pytest.xfail(f"{mech_name} advertised but decrypt is not operational: {exc}")
             raise
 
         expected = vec["pt_expected"]
@@ -304,8 +316,10 @@ def run_multiblock_encrypt_test(
                         mech_param=mech,
                     )
                 except AssertionError as exc:
-                    if "CKR_MECHANISM_INVALID" in str(exc):
-                        pytest.skip(f"{mech_name} not supported: {exc}")
+                    if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
+                        pytest.xfail(
+                            f"{mech_name} advertised but MCT encrypt is not operational: {exc}"
+                        )
                     raise
                 ct_history.append(ct)
                 iv = _mct_next_iv(mech_constant, iv, ct, pt)
@@ -378,8 +392,10 @@ def run_multiblock_decrypt_test(
                         mech_param=mech,
                     )
                 except AssertionError as exc:
-                    if "CKR_MECHANISM_INVALID" in str(exc):
-                        pytest.skip(f"{mech_name} not supported: {exc}")
+                    if is_known_error(exc, _AES_RUNTIME_REJECT_RVS):
+                        pytest.xfail(
+                            f"{mech_name} advertised but MCT decrypt is not operational: {exc}"
+                        )
                     raise
                 pt_history.append(pt)
                 # CFB: shift register tracks ct INPUT (not pt output)

@@ -60,16 +60,18 @@ Interop: OpenSSL pkcs11-provider, p11-kit proxy
 Stress: 1000-cycle ops, threading, resource exhaustion, DB concurrent writes
 Fuzz: Hypothesis property tests, attribute template fuzzer
 
-## Docker test matrix (12 targets)
+See [test-universe.md](test-universe.md) for the current collected product-test
+counts by group and the AES-CTS single-provider maximum.
 
-- `test-softhsm2` / `test-softhsm2-main` — SoftHSM2 2.7.0 / main
+## Docker test matrix (14 targets)
+
+- `test-softhsm2` / `test-softhsm2-generated-iv` / `test-softhsm2-main` — SoftHSM2 2.7.0 / generated-IV simulator / main
 - `test-kryoptic` / `test-kryoptic-main` / `test-kryoptic-fips` — Kryoptic v1.5.0 / main / FIPS
-- `test-nss` / `test-nss-pqc` — NSS 3.120.1 / 3.121.0 PQC
-- `test-opencryptoki` — OpenCryptoki 3.26.0
-- `test-tpm2` — tpm2-pkcs11 + swtpm
-- `test-bouncyhsm` — BouncyHSM 2.0.1
-- `test-pkcs11-mock` — pkcs11-mock v3.1 stub
-- `test-qryptotoken` — qryptotoken Rust PQC
+- `test-nss` / `test-nss-pqc` / `test-nss-main` — Fedora NSS packages / NSS official source tags / NSS source tip
+- `test-opencryptoki` / `test-opencryptoki-master` — OpenCryptoki 3.27.0 / master
+- `test-tpm2` — source-built tpm2-pkcs11 1.10.0 + swtpm
+- `test-bouncyhsm` — BouncyHSM 2.1.0
+- `test-pkcs11-mock` — pkcs11-mock v2.0.0 stub
 
 ## Key design decisions
 

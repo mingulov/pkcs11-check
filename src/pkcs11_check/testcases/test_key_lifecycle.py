@@ -23,7 +23,6 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     find_objects,
     gen_aes_key,
-    gen_rsa_keypair,
     read_attributes,
     sign_single,
     unwrap_key,
@@ -69,6 +68,10 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
 )
+from pkcs11_check.testcases.conftest import (
+    gen_rsa_keypair_or_xfail,
+    require_operational_aes_keygen,
+)
 
 _CURVE_UNSUPPORTED_RVS = {
     CKR_CURVE_NOT_SUPPORTED,
@@ -90,9 +93,8 @@ class TestRSAKeyLifecycle:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA not supported")
 
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
             private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
@@ -142,6 +144,7 @@ class TestAESKeyWrapLifecycle:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("CKM_AES_KEY_WRAP not supported")
+        require_operational_aes_keygen(rs)
 
         wrap_h = gen_aes_key(
             rs.raw,
@@ -198,6 +201,7 @@ class TestAESKeyWrapLifecycle:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("CKM_AES_KEY_WRAP not supported")
+        require_operational_aes_keygen(rs)
 
         wrap_h = gen_aes_key(
             rs.raw,
@@ -329,6 +333,7 @@ class TestKeyDestroyVerification:
     def test_destroyed_key_not_findable(self, p11_raw_session: Any) -> None:
         """After destroy, key cannot be found by any search."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: b"destroy-verify"})
         destroy_quietly(rs.raw, rs.sh, key)
 
@@ -339,6 +344,7 @@ class TestKeyDestroyVerification:
     def test_destroy_does_not_affect_other_keys(self, p11_raw_session: Any) -> None:
         """Destroying one key doesn't affect other keys."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         k1 = gen_aes_key(
             rs.raw,
             rs.sh,

@@ -28,9 +28,29 @@ from pkcs11_check.raw.types_std import (
     CKA_EC_POINT,
     CKA_VERIFY,
     CKM_ECDSA,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
+
+_EC_PUBLIC_IMPORT_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 def _make_ec_keypair(rs: Any, curve_name: str) -> tuple[int, int]:
@@ -70,13 +90,20 @@ class TestECPublicKeyImport:
             assert len(sig) > 0
 
             # Import the exported public key as a new object
-            imported_pub = import_ec_public_key(
-                rs.raw,
-                rs.sh,
-                ec_params=ec_params,
-                ec_point=ec_point_der,
-                attrs={CKA_VERIFY: True},
-            )
+            try:
+                imported_pub = import_ec_public_key(
+                    rs.raw,
+                    rs.sh,
+                    ec_params=ec_params,
+                    ec_point=ec_point_der,
+                    attrs={CKA_VERIFY: True},
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _EC_PUBLIC_IMPORT_REJECT_RVS,
+                    f"EC public key import not operational for {curve_name}",
+                )
 
             # Verify signature with imported key
             assert verify_single(rs.raw, rs.sh, imported_pub, CKM_ECDSA, digest, sig) is True

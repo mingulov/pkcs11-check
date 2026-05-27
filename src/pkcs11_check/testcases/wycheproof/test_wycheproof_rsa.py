@@ -27,7 +27,14 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKM_SHA384_RSA_PKCS,
     CKM_SHA512_RSA_PKCS,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
 
@@ -37,6 +44,55 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 # Populated on first failure; subsequent tests with the same key size skip
 # immediately without attempting another C_CreateObject probe.
 _UNSUPPORTED_RSA_KEY_SIZES: set[int] = set()
+
+_RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_KEY_SIZE_RANGE,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_TEMPLATE_INCOMPLETE,
+)
+
+_RsaFingerprint = tuple[int, bytes, bytes, bytes, bytes]
+
+
+def _pkcs11_rsa_fingerprint(test: dict[str, Any]) -> _RsaFingerprint | None:
+    """Return PKCS#11-visible RSA PKCS#1 verify inputs for duplicate detection."""
+    try:
+        public_key = test["_group"].get("publicKey", test["_group"].get("privateKey", {}))
+        return (
+            int(test["_mechanism"]),
+            pkcs11_bigint_from_hex(public_key.get("modulus", "")),
+            pkcs11_bigint_from_hex(public_key.get("publicExponent", "")),
+            bytes.fromhex(test["msg"]),
+            bytes.fromhex(test["sig"]),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _canonical_duplicate_id(entries: list[tuple[str, dict[str, Any]]]) -> str:
+    """Choose the most PKCS#11-meaningful representative for duplicate vectors."""
+    for preferred in ("valid", "acceptable"):
+        for vec_id, test in entries:
+            if test["result"] == preferred:
+                return vec_id
+    return entries[0][0]
+
+
+def _mark_pkcs11_duplicate_vectors(vectors: list[tuple[str, dict[str, Any]]]) -> None:
+    groups: dict[_RsaFingerprint, list[tuple[str, dict[str, Any]]]] = {}
+    for vec_id, test in vectors:
+        fingerprint = _pkcs11_rsa_fingerprint(test)
+        if fingerprint is not None:
+            groups.setdefault(fingerprint, []).append((vec_id, test))
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        duplicate_of = _canonical_duplicate_id(entries)
+        for vec_id, test in entries:
+            if vec_id != duplicate_of:
+                test["_pkcs11_duplicate_of"] = duplicate_of
+
 
 # Mechanism display names for availability checking
 _MECH_DISPLAY: dict[int, str] = {
@@ -118,6 +174,7 @@ def _load_all_rsa_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_mechanism"] = mechanism
                 test["_file"] = filename
                 vectors.append((f"{filename}:tc{test['tcId']}-{test['result']}", test))
+    _mark_pkcs11_duplicate_vectors(vectors)
     return vectors
 
 
@@ -139,14 +196,17 @@ def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) 
     if not rs.has_mechanism(mech_display):
         pytest.skip(f"{mech_display} not supported by module")
 
+    if duplicate_of := vec.get("_pkcs11_duplicate_of"):
+        pytest.skip(f"Duplicate PKCS#11 RSA operation input; covered by {duplicate_of}")
+
     pk = group.get("publicKey", group.get("privateKey", {}))
     modulus_hex = pk.get("modulus", "")
     exp_hex = pk.get("publicExponent", "")
     if not modulus_hex or not exp_hex:
         pytest.skip("No RSA public key in vector group")
 
-    modulus = bytes.fromhex(modulus_hex)
-    exponent = bytes.fromhex(exp_hex)
+    modulus = pkcs11_bigint_from_hex(modulus_hex)
+    exponent = pkcs11_bigint_from_hex(exp_hex)
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
@@ -163,26 +223,22 @@ def test_rsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) 
     except AssertionError as exc:
         exc_msg = str(exc)
         # Only cache permanent key-size rejections, not transient errors.
-        if any(
-            code in exc_msg
-            for code in (
-                "CKR_KEY_SIZE_RANGE",
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_TEMPLATE_INCONSISTENT",
-                "CKR_TEMPLATE_INCOMPLETE",
-            )
-        ):
+        if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
         pytest.skip(f"Cannot import RSA {key_bits}-bit public key: {exc_msg}")
 
     try:
-        verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
+        verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
         if result == "invalid":
-            pass  # Some modules accept edge-case sigs
+            if verified:
+                pytest.fail(f"Invalid RSA sig {vec_id} accepted by module")
+            return
+        if result == "valid" and not verified:
+            pytest.fail(f"Valid RSA sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
             pytest.fail(f"Valid RSA sig {vec_id} rejected: {exc}")
-        # acceptable: module rejected invalid vector
+        signature_rejected_or_xfail(exc, vec_id)
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)

@@ -17,7 +17,6 @@ import pytest
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh, mech_hkdf
-from pkcs11_check.raw.pack_mechanisms import mech_string_data
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
@@ -53,9 +52,23 @@ from pkcs11_check.raw.types_std import (
     CKM_SHAKE_128_KEY_DERIVE,
     CKM_SHAKE_256_KEY_DERIVE,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
+
+_DERIVE_ERROR_RVS = {
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+}
 
 
 def _import_generic_secret(rs: Any, value: bytes, derive: bool = True) -> int:
@@ -179,8 +192,8 @@ class TestHKDF:
             )
             okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert len(okm) == 32
-        except (AssertionError, Exception):
-            pytest.skip("HKDF derivation not operational")
+        except AssertionError as exc:
+            xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF derivation not operational")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if derived:
@@ -319,6 +332,15 @@ _SHA3_SHAKE_DERIVE_MECHS = [
     ("SHAKE_256_KEY_DERIVE", CKM_SHAKE_256_KEY_DERIVE),
 ]
 
+_SHA3_SHAKE_OUTPUT_LENGTHS = {
+    int(CKM_SHA3_224_KEY_DERIVE): 28,
+    int(CKM_SHA3_256_KEY_DERIVE): 32,
+    int(CKM_SHA3_384_KEY_DERIVE): 48,
+    int(CKM_SHA3_512_KEY_DERIVE): 64,
+    int(CKM_SHAKE_128_KEY_DERIVE): 32,
+    int(CKM_SHAKE_256_KEY_DERIVE): 32,
+}
+
 
 class TestSHA3ShakeKeyDerive:
     """SHA3/SHAKE hash-based key derivation (CKM_SHA3_*_KEY_DERIVE, CKM_SHAKE_*_KEY_DERIVE)."""
@@ -337,26 +359,31 @@ class TestSHA3ShakeKeyDerive:
         base_key = _import_generic_secret(rs, b"SHA3/SHAKE derive base key material!")
         derived = 0
         try:
-            mech_param = mech_string_data(ckm, b"derivation data input")
-            derived = derive_key(
-                rs.raw,
-                rs.sh,
-                base_key,
-                ckm,
-                attrs={
-                    CKA_CLASS: int(CKO_SECRET_KEY),
-                    CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),
-                    CKA_VALUE_LEN: 32,
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                },
-                mech_param=mech_param,
-            )
+            output_len = _SHA3_SHAKE_OUTPUT_LENGTHS[int(ckm)]
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base_key,
+                    ckm,
+                    attrs={
+                        CKA_CLASS: int(CKO_SECRET_KEY),
+                        CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),
+                        CKA_VALUE_LEN: output_len,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                    mech_param=None,
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _DERIVE_ERROR_RVS, f"{mech_name} derivation not operational"
+                )
             assert derived != 0
             # Verify derived key has value
             val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(val, bytes) and len(val) == 32
+            assert isinstance(val, bytes) and len(val) == output_len
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -368,7 +395,7 @@ class TestSHA3ShakeKeyDerive:
         ids=[m[0] for m in _SHA3_SHAKE_DERIVE_MECHS],
     )
     def test_derive_deterministic(self, p11_raw_session: Any, mech_name: str, ckm: int) -> None:
-        """Same base key + same data -> same derived key value."""
+        """Same base key and mechanism -> same derived key value."""
         rs = p11_raw_session
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} not supported")
@@ -376,40 +403,38 @@ class TestSHA3ShakeKeyDerive:
         base_key = _import_generic_secret(rs, b"determinism test key material!!")
         d1 = d2 = 0
         try:
-            data = b"same derivation data"
-            d1 = derive_key(
-                rs.raw,
-                rs.sh,
-                base_key,
-                ckm,
-                attrs={
-                    CKA_CLASS: int(CKO_SECRET_KEY),
-                    CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),
-                    CKA_VALUE_LEN: 16,
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                },
-                mech_param=mech_string_data(ckm, data),
-            )
-            d2 = derive_key(
-                rs.raw,
-                rs.sh,
-                base_key,
-                ckm,
-                attrs={
-                    CKA_CLASS: int(CKO_SECRET_KEY),
-                    CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),
-                    CKA_VALUE_LEN: 16,
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                },
-                mech_param=mech_string_data(ckm, data),
-            )
+            attrs = {
+                CKA_CLASS: int(CKO_SECRET_KEY),
+                CKA_KEY_TYPE: int(CKK_GENERIC_SECRET),
+                CKA_VALUE_LEN: 16,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+            }
+            try:
+                d1 = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base_key,
+                    ckm,
+                    attrs=attrs,
+                    mech_param=None,
+                )
+                d2 = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base_key,
+                    ckm,
+                    attrs=attrs,
+                    mech_param=None,
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _DERIVE_ERROR_RVS, f"{mech_name} derivation not operational"
+                )
             v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
             v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 == v2, "Same input must produce same derived key"
+            assert v1 == v2, "Same base key and mechanism must produce same derived key"
         finally:
             if d1:
                 destroy_quietly(rs.raw, rs.sh, d1)

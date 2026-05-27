@@ -17,11 +17,9 @@ import pytest
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    gen_aes_key,
-    gen_rsa_keypair,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_ENCRYPT,
@@ -33,8 +31,37 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKR_OK,
 )
+from pkcs11_check.testcases._error_tuples import HANDLE_ERRORS
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    is_known_error,
+    skip_unless_mechanism,
+)
 
 pytestmark = pytest.mark.security
+
+
+def _aes_handle_reuse_key(rs: Any, *, attrs: dict[Any, Any] | None = None) -> int:
+    return gen_aes_key_or_xfail(rs, 128, attrs=attrs, purpose="handle-reuse setup")
+
+
+def _destroy_object(raw: Any, sh: int, handle: int) -> None:
+    expect_rv(raw.C_DestroyObject(sh, handle), CKR_OK)
+
+
+def _assert_destroyed_handle_error(rv: int, operation: str) -> None:
+    assert rv in HANDLE_ERRORS, f"Expected destroyed-handle CKR for {operation}, got {ckr_name(rv)}"
+
+
+def _assert_read_destroyed_handle_fails(rs: Any, key: int) -> None:
+    try:
+        read_attributes(rs.raw, rs.sh, key, [CKA_LABEL])
+    except AssertionError as exc:
+        if is_known_error(exc, HANDLE_ERRORS):
+            return
+        raise
+    pytest.fail("C_GetAttributeValue succeeded with destroyed handle")
 
 
 class TestHandleReuseAfterDestroy:
@@ -43,56 +70,45 @@ class TestHandleReuseAfterDestroy:
     def test_get_attribute_after_destroy(self, p11_raw_session: Any) -> None:
         """Reading attribute from destroyed key must fail cleanly."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "handle-reuse-1"})
-        rs.raw.C_DestroyObject(rs.sh, key)
-
-        # Attempt to read an attribute from the destroyed object
-        try:
-            read_attributes(rs.raw, rs.sh, key, [CKA_LABEL])
-            # If this succeeds, the module didn't invalidate the handle
-        except (AssertionError, Exception):
-            pass  # Expected - handle is invalid
+        key = _aes_handle_reuse_key(rs, attrs={CKA_LABEL: "handle-reuse-1"})
+        _destroy_object(rs.raw, rs.sh, key)
+        _assert_read_destroyed_handle_fails(rs, key)
 
     def test_encrypt_after_destroy(self, p11_raw_session: Any) -> None:
         """Encrypting with destroyed key must fail cleanly."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_ENCRYPT: True})
-        rs.raw.C_DestroyObject(rs.sh, key)
+        skip_unless_mechanism(rs, "AES_ECB")
+        key = _aes_handle_reuse_key(rs, attrs={CKA_ENCRYPT: True})
+        _destroy_object(rs.raw, rs.sh, key)
 
         # Attempt C_EncryptInit with destroyed handle
         mech = mech_simple(CKM_AES_ECB)
         rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-        assert rv != CKR_OK, f"C_EncryptInit succeeded with destroyed handle (rv={ckr_name(rv)})"
+        _assert_destroyed_handle_error(rv, "C_EncryptInit")
 
     def test_sign_after_destroy(self, p11_raw_session: Any) -> None:
         """Signing with destroyed RSA key must fail cleanly."""
         rs = p11_raw_session
-        _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
-        rs.raw.C_DestroyObject(rs.sh, priv)
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
+        _destroy_object(rs.raw, rs.sh, priv)
 
-        # Attempt C_SignInit with destroyed handle
-        mech = mech_simple(CKM_SHA256_RSA_PKCS)
-        rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
-        assert rv != CKR_OK, f"C_SignInit succeeded with destroyed handle (rv={ckr_name(rv)})"
+        try:
+            # Attempt C_SignInit with destroyed handle
+            mech = mech_simple(CKM_SHA256_RSA_PKCS)
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
+            _assert_destroyed_handle_error(rv, "C_SignInit")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
 
     def test_wrap_after_destroy(self, p11_raw_session: Any) -> None:
         """Wrapping with destroyed key must fail cleanly."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
-        wrap_key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={CKA_WRAP: True},
-        )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True},
-        )
-        rs.raw.C_DestroyObject(rs.sh, wrap_key)
+        wrap_key = _aes_handle_reuse_key(rs, attrs={CKA_WRAP: True})
+        target = _aes_handle_reuse_key(rs, attrs={CKA_EXTRACTABLE: True})
+        _destroy_object(rs.raw, rs.sh, wrap_key)
 
         try:
             # Attempt C_WrapKey with destroyed wrapping key
@@ -100,53 +116,38 @@ class TestHandleReuseAfterDestroy:
             buf = (ctypes.c_ubyte * 256)()
             buf_len = CK_ULONG(256)
             rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrap_key, target, buf, byref(buf_len))
-            assert rv != CKR_OK, (
-                f"C_WrapKey succeeded with destroyed wrapping key (rv={ckr_name(rv)})"
-            )
+            _assert_destroyed_handle_error(rv, "C_WrapKey")
         finally:
             destroy_quietly(rs.raw, rs.sh, target)
 
     def test_double_destroy(self, p11_raw_session: Any) -> None:
         """Destroying an already-destroyed key must fail cleanly."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 128)
-        rs.raw.C_DestroyObject(rs.sh, key)
+        key = _aes_handle_reuse_key(rs)
+        _destroy_object(rs.raw, rs.sh, key)
 
         # Second destroy should return an error, not crash
         rv = rs.raw.C_DestroyObject(rs.sh, key)
-        # rv != CKR_OK is expected; we just verify no crash
-        _ = rv
+        _assert_destroyed_handle_error(rv, "C_DestroyObject")
 
     def test_set_attribute_after_destroy(self, p11_raw_session: Any) -> None:
         """Setting attribute on destroyed object must fail cleanly."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={CKA_LABEL: "modify-after-destroy"},
-        )
-        rs.raw.C_DestroyObject(rs.sh, key)
+        key = _aes_handle_reuse_key(rs, attrs={CKA_LABEL: "modify-after-destroy"})
+        _destroy_object(rs.raw, rs.sh, key)
 
         # Attempt C_SetAttributeValue on destroyed handle
         from pkcs11_check.raw.pack import attr_string, template
 
         tmpl = template(attr_string(CKA_LABEL, "new-label"))
         rv = rs.raw.C_SetAttributeValue(rs.sh, key, tmpl.ptr, tmpl.count)
-        assert rv != CKR_OK, (
-            f"C_SetAttributeValue succeeded on destroyed object (rv={ckr_name(rv)})"
-        )
+        _assert_destroyed_handle_error(rv, "C_SetAttributeValue")
 
     def test_copy_after_destroy(self, p11_raw_session: Any) -> None:
         """Copying a destroyed object must fail cleanly."""
         rs = p11_raw_session
-        key = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={CKA_LABEL: "copy-after-destroy"},
-        )
-        rs.raw.C_DestroyObject(rs.sh, key)
+        key = _aes_handle_reuse_key(rs, attrs={CKA_LABEL: "copy-after-destroy"})
+        _destroy_object(rs.raw, rs.sh, key)
 
         from pkcs11_check.raw.pack import attr_string, template
         from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
@@ -154,4 +155,4 @@ class TestHandleReuseAfterDestroy:
         tmpl = template(attr_string(CKA_LABEL, "copied"))
         new_h = CK_OBJECT_HANDLE(0)
         rv = rs.raw.C_CopyObject(rs.sh, key, tmpl.ptr, tmpl.count, byref(new_h))
-        assert rv != CKR_OK, f"C_CopyObject succeeded on destroyed object (rv={ckr_name(rv)})"
+        _assert_destroyed_handle_error(rv, "C_CopyObject")

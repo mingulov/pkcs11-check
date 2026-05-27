@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import expect_rv
-from pkcs11_check.raw.types_std import CKR_OK
+from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED, CKR_OK
 
 pytestmark = [pytest.mark.requires_v30]
 
@@ -21,5 +21,7 @@ class TestSessionValidationFlags:
             pytest.skip("C_GetSessionValidationFlags not available")
         flags = c_ulong(0)
         rv = rs.raw.C_GetSessionValidationFlags(rs.sh, 0, byref(flags))
+        if rv == CKR_FUNCTION_NOT_SUPPORTED:
+            pytest.skip("C_GetSessionValidationFlags returns CKR_FUNCTION_NOT_SUPPORTED")
         expect_rv(rv, CKR_OK)
         assert flags.value >= 0

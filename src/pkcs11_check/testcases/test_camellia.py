@@ -41,8 +41,10 @@ from pkcs11_check.raw.types_std import (
     CKM_CAMELLIA_KEY_GEN,
     CKM_CAMELLIA_MAC,
     CKM_CAMELLIA_MAC_GENERAL,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.full
 
@@ -67,7 +69,7 @@ def _camellia_key(raw: Any, sh: int, bits: int, attrs: Mapping[Any, Any]) -> int
     return key.value
 
 
-def _encrypt_or_skip(
+def _encrypt_or_xfail(
     raw: Any,
     sh: int,
     key: int,
@@ -76,16 +78,16 @@ def _encrypt_or_skip(
     *,
     mech_param: Any = None,
 ) -> bytes:
-    """Try encrypt_single; skip if module returns CKR_MECHANISM_INVALID."""
+    """Try encrypt_single; xfail if module returns CKR_MECHANISM_INVALID."""
     try:
         return encrypt_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if "CKR_MECHANISM_INVALID" in str(exc):
-            pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
+        if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
         raise
 
 
-def _sign_or_skip(
+def _sign_or_xfail(
     raw: Any,
     sh: int,
     key: int,
@@ -94,12 +96,12 @@ def _sign_or_skip(
     *,
     mech_param: Any = None,
 ) -> bytes:
-    """Try sign_single; skip if module returns CKR_MECHANISM_INVALID."""
+    """Try sign_single; xfail if module returns CKR_MECHANISM_INVALID."""
     try:
         return sign_single(raw, sh, key, mechanism, data, mech_param=mech_param)
     except AssertionError as exc:
-        if "CKR_MECHANISM_INVALID" in str(exc):
-            pytest.skip(f"Mechanism advertised but rejected at use: {exc}")
+        if is_known_error(exc, {CKR_MECHANISM_INVALID}):
+            pytest.xfail(f"Mechanism advertised but rejected at use: {exc}")
         raise
 
 
@@ -146,7 +148,7 @@ class TestCAMELLIAEncryption:
             {CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
         try:
-            ct = _encrypt_or_skip(rs.raw, rs.sh, key, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
+            ct = _encrypt_or_xfail(rs.raw, rs.sh, key, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
             assert ct != _TWO_BLOCKS
             assert len(ct) == len(_TWO_BLOCKS)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_CAMELLIA_ECB, ct)
@@ -165,7 +167,7 @@ class TestCAMELLIAEncryption:
         key1 = _camellia_key(rs.raw, rs.sh, 128, tmpl)
         key2 = _camellia_key(rs.raw, rs.sh, 128, tmpl)
         try:
-            ct1 = _encrypt_or_skip(rs.raw, rs.sh, key1, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
+            ct1 = _encrypt_or_xfail(rs.raw, rs.sh, key1, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
             ct2 = encrypt_single(rs.raw, rs.sh, key2, CKM_CAMELLIA_ECB, _TWO_BLOCKS)
             assert ct1 != ct2
         finally:
@@ -187,7 +189,7 @@ class TestCAMELLIAEncryption:
         )
         iv = generate_random(rs.raw, rs.sh, 16)
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -224,7 +226,7 @@ class TestCAMELLIAEncryption:
         iv1 = generate_random(rs.raw, rs.sh, 16)
         iv2 = generate_random(rs.raw, rs.sh, 16)
         try:
-            ct1 = _encrypt_or_skip(
+            ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -261,7 +263,7 @@ class TestCAMELLIAEncryption:
         # Non-block-aligned data - PKCS#7 padding handles it
         plaintext = b"CAMELLIA CBC PAD test data!!"  # 24 bytes, not a multiple of 16
         try:
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -297,7 +299,7 @@ class TestCAMELLIAEncryption:
         iv = generate_random(rs.raw, rs.sh, 16)
         plaintext = b"CAMELLIA CBC PAD key independence test!!"  # 36 bytes
         try:
-            ct1 = _encrypt_or_skip(
+            ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key1,
@@ -342,7 +344,7 @@ class TestCAMELLIAMAC:
         )
         data = b"CAMELLIA MAC test data for signing"
         try:
-            mac = _sign_or_skip(rs.raw, rs.sh, key, CKM_CAMELLIA_MAC, data)
+            mac = _sign_or_xfail(rs.raw, rs.sh, key, CKM_CAMELLIA_MAC, data)
             assert len(mac) > 0
             assert verify_single(rs.raw, rs.sh, key, CKM_CAMELLIA_MAC, data, mac)
         finally:
@@ -364,7 +366,7 @@ class TestCAMELLIAMAC:
         data = b"CAMELLIA MAC GENERAL test data"
         mac_len = 8  # request 8-byte MAC (half block)
         try:
-            mac = _sign_or_skip(
+            mac = _sign_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -397,7 +399,7 @@ class TestCAMELLIAMAC:
         key2 = _camellia_key(rs.raw, rs.sh, 128, tmpl)
         data = b"MAC key independence test data"
         try:
-            mac1 = _sign_or_skip(rs.raw, rs.sh, key1, CKM_CAMELLIA_MAC, data)
+            mac1 = _sign_or_xfail(rs.raw, rs.sh, key1, CKM_CAMELLIA_MAC, data)
             mac2 = sign_single(rs.raw, rs.sh, key2, CKM_CAMELLIA_MAC, data)
             assert mac1 != mac2
         finally:
@@ -435,7 +437,7 @@ class TestCamelliaCTR:
             from pkcs11_check.raw.pack import mech_ctr
             from pkcs11_check.raw.types_std import CKM_CAMELLIA_CTR
 
-            ct = _encrypt_or_skip(
+            ct = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
@@ -475,7 +477,7 @@ class TestCamelliaCTR:
             from pkcs11_check.raw.pack import mech_ctr
             from pkcs11_check.raw.types_std import CKM_CAMELLIA_CTR
 
-            ct1 = _encrypt_or_skip(
+            ct1 = _encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,

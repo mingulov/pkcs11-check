@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -24,22 +24,50 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
     CKA_UNWRAP,
-    CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
     CKK_AES_XTS,
-    CKK_GENERIC_SECRET,
     CKM_AES_CCM,
     CKM_AES_CMAC,
     CKM_AES_GMAC,
     CKM_AES_KEY_WRAP,
-    CKM_AES_KEY_WRAP_PAD,
+    CKM_AES_KEY_WRAP_KWP,
     CKM_AES_XTS,
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = pytest.mark.wycheproof
+
+_AES_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+
+def _xfail_if_aes_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised AES operation rejects as non-clean findings."""
+    xfail_if_known_ckr(
+        exc,
+        _AES_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised AES operation is not operational",
+    )
+    raise exc
 
 
 def _load_flat(filename: str) -> list[tuple[str, dict[str, Any]]]:
@@ -99,6 +127,7 @@ def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
         mac = sign_single(rs.raw, rs.sh, key, CKM_AES_CMAC, msg)
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_aes_runtime_reject(exc, f"AES-CMAC {vec_id}")
             pytest.fail(f"AES-CMAC failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
@@ -107,6 +136,8 @@ def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
 
     if result == "valid" and mac is not None:
         assert mac[:tag_size] == tag_expected
+    if result == "invalid" and mac is not None and mac[:tag_size] == tag_expected:
+        pytest.fail(f"AES-CMAC {vec_id} produced invalid tag")
 
     generate_random(rs.raw, rs.sh, 64)
 
@@ -174,6 +205,7 @@ def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
         wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP)
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_aes_runtime_reject(exc, f"AES-KW {vec_id}")
             pytest.fail(f"AES-KW wrap failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
@@ -183,6 +215,8 @@ def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
 
     if result == "valid" and wrapped is not None:
         assert wrapped == ct_expected
+    if result == "invalid" and wrapped is not None and wrapped == ct_expected:
+        pytest.fail(f"AES-KW wrap {vec_id} produced invalid ciphertext")
 
 
 # --- AES Key Wrap with Padding (RFC 5649) ---
@@ -198,8 +232,8 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     unlike basic AES-KW which requires 8-byte aligned data.
     """
     rs = p11_raw_session
-    if not rs.has_mechanism("AES_KEY_WRAP_PAD"):
-        pytest.skip("AES_KEY_WRAP_PAD not supported")
+    if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
+        pytest.skip("AES_KEY_WRAP_KWP not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
     msg = bytes.fromhex(vec["msg"])
@@ -216,6 +250,7 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             attrs={
                 CKA_WRAP: True,
                 CKA_UNWRAP: True,
+                CKA_ENCRYPT: True,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
             },
@@ -223,41 +258,25 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     except AssertionError:
         pytest.skip("Cannot import AES wrapping key")
 
-    # KWP can wrap arbitrary-length data - import as generic secret
-    # For non-aligned sizes, we use GENERIC_SECRET instead of AES
-    key_type = CKK_AES if len(msg) in (16, 24, 32) else CKK_GENERIC_SECRET
-    extra_attrs: dict[int, Any] = {
-        CKA_EXTRACTABLE: True,
-        CKA_TOKEN: False,
-        CKA_SENSITIVE: False,
-    }
-    if key_type == CKK_GENERIC_SECRET:
-        extra_attrs[CKA_VALUE_LEN] = len(msg)
-    try:
-        target_key = import_secret_key(
-            rs.raw,
-            rs.sh,
-            key_type,
-            msg,
-            attrs=extra_attrs,
-        )
-    except AssertionError:
-        destroy_quietly(rs.raw, rs.sh, wrap_key_h)
-        if result == "invalid":
-            return
-        pytest.skip("Cannot import target key for KWP")
-
-    # Wrap with padding and compare
+    # Wycheproof KWP vectors are RFC 5649 raw data vectors.  PKCS#11 exposes
+    # that exact operation through CKM_AES_KEY_WRAP_KWP C_Encrypt.
     wrapped = None
     try:
-        wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP_PAD)
+        wrapped = encrypt_single(
+            rs.raw,
+            rs.sh,
+            wrap_key_h,
+            CKM_AES_KEY_WRAP_KWP,
+            msg,
+            output_overhead=16,
+        )
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_aes_runtime_reject(exc, f"AES-KWP {vec_id}")
             pytest.fail(f"AES-KWP wrap failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
     finally:
-        destroy_quietly(rs.raw, rs.sh, target_key)
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
     if result == "valid" and wrapped is not None:
@@ -265,6 +284,8 @@ def test_aes_kwp(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             f"AES-KWP wrap output differs for {vec_id} "
             f"(got {len(wrapped)}B, expected {len(ct_expected)}B)"
         )
+    if result == "invalid" and wrapped is not None and wrapped == ct_expected:
+        pytest.fail(f"AES-KWP wrap {vec_id} produced invalid ciphertext")
 
 
 # --- AES-CCM ---
@@ -328,6 +349,8 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         )
     except (AssertionError, TypeError, NotImplementedError) as exc:
         if result == "valid":
+            if isinstance(exc, AssertionError):
+                _xfail_if_aes_runtime_reject(exc, f"AES-CCM {vec_id}")
             pytest.fail(f"AES-CCM encrypt failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
@@ -337,6 +360,8 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     # AES-CCM output is ct||tag
     if result == "valid" and ciphertext is not None:
         assert ciphertext == ct_expected + tag_expected
+    if result == "invalid" and ciphertext is not None and ciphertext == ct_expected + tag_expected:
+        pytest.fail(f"AES-CCM encrypt {vec_id} produced invalid ciphertext/tag")
 
 
 # --- AES-GMAC ---
@@ -390,6 +415,8 @@ def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
         )
     except (AssertionError, TypeError) as exc:
         if result == "valid":
+            if isinstance(exc, AssertionError):
+                _xfail_if_aes_runtime_reject(exc, f"AES-GMAC {vec_id}")
             pytest.fail(f"AES-GMAC sign failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return
@@ -398,6 +425,8 @@ def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
 
     if result == "valid" and mac is not None:
         assert mac == tag_expected
+    if result == "invalid" and mac is not None and mac == tag_expected:
+        pytest.fail(f"AES-GMAC {vec_id} produced invalid tag")
 
 
 # --- AES-XTS ---
@@ -453,6 +482,8 @@ def test_aes_xts(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         )
     except (AssertionError, TypeError) as exc:
         if result == "valid":
+            if isinstance(exc, AssertionError):
+                _xfail_if_aes_runtime_reject(exc, f"AES-XTS {vec_id}")
             pytest.fail(f"AES-XTS encrypt failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return

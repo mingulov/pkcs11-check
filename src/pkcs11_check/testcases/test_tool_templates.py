@@ -21,7 +21,6 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     find_objects,
     gen_aes_key,
-    gen_rsa_keypair,
     sign_single,
     verify_single,
 )
@@ -41,6 +40,10 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases.conftest import (
+    gen_rsa_keypair_or_xfail,
+    require_operational_aes_keygen,
+)
 
 pytestmark = pytest.mark.security
 
@@ -55,9 +58,8 @@ class TestDefaultToolTemplates:
         Module should accept but ideally warn about security policy.
         """
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
             2048,
             public_attrs={
                 CKA_ENCRYPT: True,
@@ -86,6 +88,7 @@ class TestDefaultToolTemplates:
     def test_pkcs11_tool_aes_defaults(self, p11_raw_session: Any) -> None:
         """pkcs11-tool AES keygen: encrypt+decrypt+wrap+unwrap."""
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         key = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -116,6 +119,7 @@ class TestConcurrentFindObjects:
         This test uses sequential interleaving instead.
         """
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         prefix = f"conc-find-{uuid.uuid4().hex[:6]}"
         for i in range(20):
             key = gen_aes_key(rs.raw, rs.sh, 128, attrs={CKA_LABEL: f"{prefix}-{i}"})
@@ -148,6 +152,7 @@ class TestDBStress:
         Sequential rapid cycles are safer and still catch DB issues.
         """
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         for i in range(500):
             key = gen_aes_key(rs.raw, rs.sh, 128)
             destroy_quietly(rs.raw, rs.sh, key)

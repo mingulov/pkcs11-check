@@ -39,9 +39,11 @@ from pkcs11_check.raw.recipes import (
     sign_recover_single,
     verify_recover_single,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import CKM_RSA_X_509, CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._raw_subprocess import run_raw_script
+from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
 
 pytestmark = pytest.mark.full
 
@@ -179,6 +181,29 @@ def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
     return module_path, slot_index, pin_bytes
 
 
+def _handle_subprocess_failure(returncode: int, stdout: str, stderr: str) -> None:
+    """Fail or xfail a raw subprocess result after checking setup-reject fatals."""
+    if returncode == 0:
+        return
+
+    fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
+    if fatals:
+        detail = fatals[0]
+        _, _, payload = detail.partition(":")
+        label, _, rv_text = payload.partition(":")
+        if label == "GenerateKeyPair":
+            try:
+                rv = int(rv_text, 16)
+            except ValueError:
+                rv = None
+            if rv is not None and rv in KEYPAIR_RUNTIME_REJECT_RVS:
+                pytest.xfail(f"RSA_PKCS_KEY_PAIR_GEN keypair setup rejected: {ckr_name(rv)}")
+    else:
+        detail = f"stdout={stdout!r} stderr={stderr!r}"
+
+    pytest.fail(f"Subprocess failed: {detail}")
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -262,10 +287,7 @@ class TestSignRecover:
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped sign-recover: {lines_map['SKIP']}")
 
-        if returncode != 0:
-            fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
-            detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            pytest.fail(f"Subprocess failed: {detail}")
+        _handle_subprocess_failure(returncode, stdout, stderr)
 
         assert "SIG_LEN" in lines_map, f"Missing SIG_LEN in output: {stdout!r}"
         assert "SIG" in lines_map, f"Missing SIG in output: {stdout!r}"
@@ -366,10 +388,7 @@ class TestSignRecover:
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped sign/verify-recover: {lines_map['SKIP']}")
 
-        if returncode != 0:
-            fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
-            detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            pytest.fail(f"Subprocess failed: {detail}")
+        _handle_subprocess_failure(returncode, stdout, stderr)
 
         assert "ORIGINAL" in lines_map, f"Missing ORIGINAL in output: {stdout!r}"
         assert "RECOVERED" in lines_map, f"Missing RECOVERED in output: {stdout!r}"
@@ -435,10 +454,7 @@ class TestSignRecover:
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped sign-recover error test: {lines_map['SKIP']}")
 
-        if returncode != 0:
-            fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
-            detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
-            pytest.fail(f"Subprocess failed: {detail}")
+        _handle_subprocess_failure(returncode, stdout, stderr)
 
         assert "RESULT" in lines_map, f"Missing RESULT in output: {stdout!r}"
 
@@ -460,12 +476,12 @@ class TestSignRecover:
 
 def _has_rsa_x509(p11_module: Any) -> bool:
     """Return True if the module's first token supports CKM_RSA_X_509."""
-    try:
-        slot = p11_module.get_slots(token_present=True)[0]
-        mechs = {getattr(m, "name", str(m)) for m in slot.get_mechanisms()}
-        return "RSA_X_509" in mechs
-    except Exception:
+    slots = list(p11_module.get_slots(token_present=True))
+    if not slots:
         return False
+
+    mechs = {getattr(m, "name", str(m)) for m in slots[0].get_mechanisms()}
+    return "RSA_X_509" in mechs
 
 
 class TestSignRecoverRecipes:
@@ -517,10 +533,10 @@ class TestSignRecoverRecipes:
             assert valid is True
             if recovered != data:
                 pytest.xfail(
-                    f"NSS C_VerifyRecover returned wrong data: "
+                    f"Module C_VerifyRecover returned wrong data: "
                     f"recovered[0]={recovered[0] if recovered else 'empty'!r}, "
                     f"expected[0]={data[0]!r} -- "
-                    f"NSS bug in CKM_RSA_X_509 C_VerifyRecover implementation"
+                    f"CKM_RSA_X_509 C_VerifyRecover implementation bug"
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -541,9 +557,9 @@ class TestSignRecoverRecipes:
             valid, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, bad_sig)
             if valid is True or recovered != b"":
                 pytest.xfail(
-                    f"NSS C_VerifyRecover accepted invalid all-zero signature: "
+                    f"Module C_VerifyRecover accepted invalid all-zero signature: "
                     f"valid={valid}, recovered={recovered!r} -- "
-                    f"NSS does not validate the signature block in C_VerifyRecover"
+                    f"the signature block is not validated in C_VerifyRecover"
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

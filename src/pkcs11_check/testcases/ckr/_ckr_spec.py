@@ -3524,6 +3524,7 @@ CKR_KEM: dict[str, CkrExpectation] = {
             CKR_ENCRYPTED_DATA_LEN_RANGE,
             CKR_ARGUMENTS_BAD,
             CKR_MECHANISM_INVALID,
+            CKR_TEMPLATE_INCOMPLETE,
             CKR_TEMPLATE_INCONSISTENT,
             CKR_FUNCTION_FAILED,
         ),

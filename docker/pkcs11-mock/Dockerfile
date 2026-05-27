@@ -18,7 +18,7 @@ RUN dnf install -y \
 
 # Build pkcs11-mock from source.
 # The project is a single C file compiled to a shared library.
-RUN git clone --depth 1 https://github.com/Pkcs11Interop/pkcs11-mock.git \
+RUN git clone --depth 1 --branch v2.0.0 https://github.com/Pkcs11Interop/pkcs11-mock.git \
         /build/pkcs11-mock && \
     gcc -shared -fPIC -o /usr/lib64/libpkcs11-mock.so \
         /build/pkcs11-mock/src/pkcs11-mock.c \
@@ -49,4 +49,4 @@ COPY . .
 # No PIN needed — mock ignores it.
 # Tests are expected to skip or fail gracefully where the mock returns
 # CKR_FUNCTION_NOT_SUPPORTED; that is intentional and valuable signal.
-CMD ["bash", "/app/docker/run-with-artifacts.sh", "sh", "-c", "echo 'pkcs11-mock library:' && ls -lh /usr/lib64/libpkcs11-mock.so && bash /app/docker/run-pkcs11-check.sh || true"]
+CMD ["bash", "/app/docker/run-with-artifacts.sh", "sh", "-c", "echo 'pkcs11-mock library:' && ls -lh /usr/lib64/libpkcs11-mock.so && bash /app/docker/run-pkcs11-check.sh"]

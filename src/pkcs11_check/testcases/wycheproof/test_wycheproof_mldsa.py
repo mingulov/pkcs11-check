@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
@@ -29,7 +30,12 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_44,
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.pqc]
 REQUIRED_MECHANISMS = ["ML_DSA"]
@@ -47,6 +53,23 @@ _PARAM_MAP: dict[int, int] = {
     65: CKP_ML_DSA_65,
     87: CKP_ML_DSA_87,
 }
+
+_MLDSA_PUBLIC_IMPORT_REJECT_CKRS = (
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+)
+
+_MLDSA_INVALID_PUBLIC_KEY_FLAGS = frozenset(
+    {
+        "IncorrectPublicKeyLength",
+        "ZeroPublicKey",
+    }
+)
+
+
+def _has_flag(vec: dict[str, Any], flags: frozenset[str]) -> bool:
+    return bool(flags.intersection(vec.get("flags", [])))
 
 
 def _load_mldsa_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -81,6 +104,7 @@ def test_mldsa_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
     group = vec["_group"]
     pk_hex = group.get("publicKey", "")
     msg = bytes.fromhex(vec["msg"])
+    ctx = bytes.fromhex(vec.get("ctx", ""))
     sig = bytes.fromhex(vec["sig"])
     result = vec["result"]
 
@@ -115,29 +139,33 @@ def test_mldsa_verify(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
             )
     except AssertionError as exc:
         exc_msg = str(exc)
-        if any(
-            name in exc_msg
-            for name in (
-                "CKR_TEMPLATE_INCOMPLETE",
-                "CKR_TEMPLATE_INCONSISTENT",
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_FUNCTION_FAILED",
-                "CKR_DEVICE_ERROR",
-            )
-        ):
-            if result == "invalid":
+        if is_known_error(exc, _MLDSA_PUBLIC_IMPORT_REJECT_CKRS):
+            if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PUBLIC_KEY_FLAGS):
                 return  # Module correctly rejected invalid key - pass
-            pytest.skip(f"Cannot import ML-DSA public key: {exc_msg}")
+            pytest.xfail(f"ML_DSA advertised but public-key import is not operational: {exc_msg}")
         raise
 
     try:
-        verify_single(rs.raw, rs.sh, pub_key, CKM_ML_DSA, msg, sig)
+        mech_param = mech_sign_context(CKM_ML_DSA, context=ctx) if ctx else None
+        verified = verify_single(
+            rs.raw,
+            rs.sh,
+            pub_key,
+            CKM_ML_DSA,
+            msg,
+            sig,
+            mech_param=mech_param,
+        )
         if result == "invalid":
-            pass  # Module accepted edge-case sig
+            if verified:
+                pytest.fail(f"Invalid ML-DSA sig {vec_id} accepted by module")
+            return
+        if result == "valid" and not verified:
+            pytest.fail(f"Valid ML-DSA sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
             pytest.fail(f"Valid ML-DSA sig {vec_id} rejected: {exc}")
-        # acceptable: module rejected invalid vector
+        signature_rejected_or_xfail(exc, vec_id)
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)

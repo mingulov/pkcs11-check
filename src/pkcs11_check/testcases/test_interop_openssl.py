@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+
 pytestmark = [pytest.mark.interop, pytest.mark.stress]
 
 
@@ -144,7 +146,7 @@ class TestOpenSSLPkcs11Provider:
         print(f"rc={{r.returncode}}")
         """
         rc, out, err = _run([sys.executable, "-c", textwrap.dedent(script).strip()])
-        assert rc != -11, f"OpenSSL genrsa segfaulted: {err}"
+        assert_subprocess_completed(rc, out, err, context="OpenSSL genpkey subprocess wrapper")
 
 
 class TestP11KitProxy:

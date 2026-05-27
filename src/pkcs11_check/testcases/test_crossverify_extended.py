@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -23,21 +22,13 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_rsa_keypair,
     import_secret_key,
-    read_attributes,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
-    CKA_COEFFICIENT,
+    CKA_ALLOWED_MECHANISMS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
-    CKA_EXPONENT_1,
-    CKA_EXPONENT_2,
     CKA_EXTRACTABLE,
-    CKA_MODULUS,
-    CKA_PRIME_1,
-    CKA_PRIME_2,
-    CKA_PRIVATE_EXPONENT,
-    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKG_MGF1_SHA1,
@@ -50,24 +41,32 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS_PSS,
     CKM_SHA_1,
 )
+from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
+from pkcs11_check.testcases._rsa_export import (
+    read_rsa_private_key_or_xfail,
+    read_rsa_public_key_or_xfail,
+)
 
 pytestmark = pytest.mark.crossverify
 
 
-def _import_aes_key_raw(rs: Any, key_bytes: bytes) -> int:
+def _import_aes_key_raw(rs: Any, key_bytes: bytes, *allowed_mechanisms: int) -> int:
     """Import raw AES key bytes via raw API."""
+    attrs: dict[Any, Any] = {
+        CKA_ENCRYPT: True,
+        CKA_DECRYPT: True,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+    }
+    if allowed_mechanisms:
+        attrs[CKA_ALLOWED_MECHANISMS] = [int(mech) for mech in allowed_mechanisms]
     return import_secret_key(
         rs.raw,
         rs.sh,
         CKK_AES,
         key_bytes,
-        attrs={
-            CKA_ENCRYPT: True,
-            CKA_DECRYPT: True,
-            CKA_TOKEN: False,
-            CKA_SENSITIVE: False,
-            CKA_EXTRACTABLE: True,
-        },
+        attrs=attrs,
     )
 
 
@@ -82,16 +81,19 @@ class TestAESCBCCrossVerify:
         data = b"\xaa" * 64  # 4 blocks
 
         # PKCS#11
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_CBC)
         try:
-            ct_p11 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                p11_key,
-                CKM_AES_CBC,
-                data,
-                mech_param=mech_bytes(CKM_AES_CBC, iv),
-            )
+            try:
+                ct_p11 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    p11_key,
+                    CKM_AES_CBC,
+                    data,
+                    mech_param=mech_bytes(CKM_AES_CBC, iv),
+                )
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_CBC encrypt")
 
             # cryptography
             cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv))
@@ -115,16 +117,19 @@ class TestAESCBCCrossVerify:
         ct = enc.update(data) + enc.finalize()
 
         # Decrypt with PKCS#11
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_CBC)
         try:
-            pt = decrypt_single(
-                rs.raw,
-                rs.sh,
-                p11_key,
-                CKM_AES_CBC,
-                ct,
-                mech_param=mech_bytes(CKM_AES_CBC, iv),
-            )
+            try:
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    p11_key,
+                    CKM_AES_CBC,
+                    ct,
+                    mech_param=mech_bytes(CKM_AES_CBC, iv),
+                )
+            except AssertionError as exc:
+                xfail_if_interop_operation_reject(exc, "AES_CBC decrypt")
             assert pt == data
         finally:
             destroy_quietly(rs.raw, rs.sh, p11_key)
@@ -149,7 +154,7 @@ class TestAESGCMCrossVerify:
         # ct_tag = ciphertext || tag (16 bytes)
 
         # Decrypt with PKCS#11
-        p11_key = _import_aes_key_raw(rs, key_bytes)
+        p11_key = _import_aes_key_raw(rs, key_bytes, CKM_AES_GCM)
         try:
             gcm = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             pt = decrypt_single(
@@ -196,19 +201,8 @@ class TestRSAPSSCrossVerify:
             )
 
             # Export public key components
-            attrs = read_attributes(
-                rs.raw,
-                rs.sh,
-                pub,
-                [CKA_MODULUS, CKA_PUBLIC_EXPONENT],
-            )
-            modulus = attrs[CKA_MODULUS]
-            exponent = attrs[CKA_PUBLIC_EXPONENT]
-
             # Reconstruct public key in cryptography
-            n = int.from_bytes(modulus, "big")
-            e = int.from_bytes(exponent, "big")
-            crypto_pub = rsa.RSAPublicNumbers(e, n).public_key()
+            crypto_pub = read_rsa_public_key_or_xfail(rs, pub)
 
             # Verify with cryptography (PSS with SHA-256)
             try:
@@ -263,40 +257,7 @@ class TestRSAOAEPCrossVerify:
             )
 
             # Export private key components for cryptography
-            priv_attrs = read_attributes(
-                rs.raw,
-                rs.sh,
-                priv,
-                [
-                    CKA_MODULUS,
-                    CKA_PUBLIC_EXPONENT,
-                    CKA_PRIVATE_EXPONENT,
-                    CKA_PRIME_1,
-                    CKA_PRIME_2,
-                    CKA_EXPONENT_1,
-                    CKA_EXPONENT_2,
-                    CKA_COEFFICIENT,
-                ],
-            )
-
-            n = int.from_bytes(priv_attrs[CKA_MODULUS], "big")
-            e = int.from_bytes(priv_attrs[CKA_PUBLIC_EXPONENT], "big")
-            d = int.from_bytes(priv_attrs[CKA_PRIVATE_EXPONENT], "big")
-            p_int = int.from_bytes(priv_attrs[CKA_PRIME_1], "big")
-            q_int = int.from_bytes(priv_attrs[CKA_PRIME_2], "big")
-            dp_int = int.from_bytes(priv_attrs[CKA_EXPONENT_1], "big")
-            dq_int = int.from_bytes(priv_attrs[CKA_EXPONENT_2], "big")
-            qi_int = int.from_bytes(priv_attrs[CKA_COEFFICIENT], "big")
-
-            crypto_priv = rsa.RSAPrivateNumbers(
-                p_int,
-                q_int,
-                d,
-                dp_int,
-                dq_int,
-                qi_int,
-                rsa.RSAPublicNumbers(e, n),
-            ).private_key()
+            crypto_priv = read_rsa_private_key_or_xfail(rs, priv)
 
             # Decrypt with cryptography (OAEP SHA-1, default for PKCS#11)
             pt = crypto_priv.decrypt(

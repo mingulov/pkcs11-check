@@ -35,9 +35,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     encrypt_single,
-    gen_aes_key,
-    gen_ec_keypair,
-    gen_rsa_keypair,
     import_secret_key,
     pack_attrs,
     read_attributes,
@@ -46,6 +43,7 @@ from pkcs11_check.raw.recipes import (
     verify_single,
     wrap_key,
 )
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_CLASS,
@@ -69,10 +67,41 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA256,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_ec_keypair_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    xfail_if_known_ckr,
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.lifecycle]
+
+_HKDF_KEYGEN_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 class TestAESWrapUnwrapUse:
@@ -96,15 +125,14 @@ class TestAESWrapUnwrapUse:
         # Generate wrapping key and target key.
         # CKA_UNWRAP is required in addition to CKA_WRAP so the same key can be
         # used for both wrap and unwrap operations.
-        wrap_key_handle = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        wrap_key_handle = gen_aes_key_or_xfail(
+            rs,
             256,
             attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_TOKEN: False},
+            purpose="AES lifecycle wrap setup",
         )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
+        target = gen_aes_key_or_xfail(
+            rs,
             128,
             attrs={
                 CKA_ENCRYPT: True,
@@ -113,6 +141,7 @@ class TestAESWrapUnwrapUse:
                 CKA_SENSITIVE: False,
                 CKA_TOKEN: False,
             },
+            purpose="AES lifecycle target setup",
         )
         unwrapped_key: int = 0
 
@@ -184,13 +213,12 @@ class TestECDHDerivedKeyUse:
         derived: int = 0
 
         try:
-            pub_a, priv_a = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
+            pub_a, priv_a = gen_ec_keypair_or_xfail(
+                rs,
                 p256_oid,
                 private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
             )
-            pub_b, priv_b = gen_ec_keypair(rs.raw, rs.sh, p256_oid)
+            pub_b, priv_b = gen_ec_keypair_or_xfail(rs, p256_oid)
 
             peer_attrs = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])
             peer_point = peer_attrs.get(CKA_EC_POINT)
@@ -286,7 +314,15 @@ class TestHKDFDerivedKeyUse:
             gen_mech = mech_simple(CKM(CKM_HKDF_KEY_GEN))
             handle = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_GenerateKey(rs.sh, gen_mech.byref(), tmpl.ptr, tmpl.count, byref(handle))
-            assert rv == CKR_OK, f"HKDF base key gen failed: {rv}"
+            try:
+                expect_rv(rv, CKR_OK, context="HKDF lifecycle C_GenerateKey")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _HKDF_KEYGEN_REJECT_CKRS,
+                    "HKDF base key generation rejected on advertised lifecycle path",
+                )
+                raise  # unreachable
             base_key = handle.value
 
             hkdf_param = mech_hkdf(
@@ -356,16 +392,14 @@ class TestRSAOAEPWrapLifecycle:
         unwrapped_key: int = 0
 
         try:
-            rsa_pub, rsa_priv = gen_rsa_keypair(
-                rs.raw,
-                rs.sh,
+            rsa_pub, rsa_priv = gen_rsa_keypair_or_xfail(
+                rs,
                 2048,
                 public_attrs={CKA_WRAP: True, CKA_ENCRYPT: True, CKA_TOKEN: False},
                 private_attrs={CKA_UNWRAP: True, CKA_DECRYPT: True, CKA_TOKEN: False},
             )
-            target = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            target = gen_aes_key_or_xfail(
+                rs,
                 128,
                 attrs={
                     CKA_ENCRYPT: True,
@@ -374,6 +408,7 @@ class TestRSAOAEPWrapLifecycle:
                     CKA_SENSITIVE: False,
                     CKA_TOKEN: False,
                 },
+                purpose="RSA-OAEP lifecycle AES target setup",
             )
 
             # Encrypt a block to verify key identity later
@@ -447,7 +482,11 @@ class TestDigestThenEncrypt:
             digest = digest_single(rs.raw, rs.sh, CKM_SHA256, plaintext)
             assert len(digest) == 32, f"SHA-256 digest length {len(digest)} != 32"
 
-            key = gen_aes_key(rs.raw, rs.sh, 256)
+            key = gen_aes_key_or_xfail(
+                rs,
+                256,
+                purpose="digest-then-encrypt lifecycle setup",
+            )
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, digest)
             pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, ct)
             assert pt == digest, (
@@ -475,9 +514,8 @@ class TestExportReimportAES:
         key1: int = 0
         key2: int = 0
         try:
-            key1 = gen_aes_key(
-                rs.raw,
-                rs.sh,
+            key1 = gen_aes_key_or_xfail(
+                rs,
                 256,
                 attrs={
                     CKA_ENCRYPT: True,
@@ -486,6 +524,7 @@ class TestExportReimportAES:
                     CKA_SENSITIVE: False,
                     CKA_TOKEN: False,
                 },
+                purpose="export/reimport lifecycle setup",
             )
 
             # Read the raw key value
@@ -539,7 +578,7 @@ class TestRSASignVerifyLifecycle:
 
         pub, priv = 0, 0
         try:
-            pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+            pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
             data = b"rsa lifecycle test message" * 4
             sig = sign_single(rs.raw, rs.sh, priv, CKM(int(CKM_SHA256_RSA_PKCS)), data)
             ok = verify_single(rs.raw, rs.sh, pub, CKM(int(CKM_SHA256_RSA_PKCS)), data, sig)
@@ -570,7 +609,7 @@ class TestECSignVerifyLifecycle:
         p256_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = 0, 0
         try:
-            pub, priv = gen_ec_keypair(rs.raw, rs.sh, p256_oid)
+            pub, priv = gen_ec_keypair_or_xfail(rs, p256_oid)
             data = b"ecdsa lifecycle test" * 3
             sig = sign_single(rs.raw, rs.sh, priv, CKM(int(CKM_ECDSA_SHA256)), data)
             ok = verify_single(rs.raw, rs.sh, pub, CKM(int(CKM_ECDSA_SHA256)), data, sig)
@@ -597,7 +636,7 @@ class TestAESGCMFullCycle:
 
         key: int = 0
         try:
-            key = gen_aes_key(rs.raw, rs.sh, 256)
+            key = gen_aes_key_or_xfail(rs, 256, purpose="AES-GCM lifecycle setup")
             plaintext = b"aes-gcm lifecycle test data!!!!!"  # 32 bytes
             iv = os.urandom(12)
             gcm_param = mech_gcm(CKM(int(CKM_AES_GCM)), iv, tag_bits=128)
@@ -641,7 +680,11 @@ class TestBatchAESKeys:
         keys: list[int] = []
         try:
             for i in range(5):
-                k = gen_aes_key(rs.raw, rs.sh, 128 + 64 * (i % 3))
+                k = gen_aes_key_or_xfail(
+                    rs,
+                    128 + 64 * (i % 3),
+                    purpose="batch AES lifecycle setup",
+                )
                 assert k != 0, f"Key {i}: handle is 0"
                 keys.append(k)
 

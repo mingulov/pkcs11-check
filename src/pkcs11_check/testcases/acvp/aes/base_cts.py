@@ -16,15 +16,22 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     encrypt_single,
+    get_mechanism_info,
 )
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_TOKEN,
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
     CKM_AES_CBC,
     CKM_AES_CTS,
+    CKR_DEVICE_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
+from pkcs11_check.testcases.conftest import is_known_error
 
 # ---------------------------------------------------------------------------
 # Vector loading
@@ -74,6 +81,16 @@ def load_cbc_cs_vectors(
 # ---------------------------------------------------------------------------
 # CS variant auto-detection
 # ---------------------------------------------------------------------------
+
+
+def skip_unless_cts_encrypt_decrypt(rs: Any) -> None:
+    """Skip CTS vector probes unless C_GetMechanismInfo advertises enc/dec."""
+    if not rs.has_mechanism("AES_CTS"):
+        pytest.skip("CKM_AES_CTS not supported by module")
+    info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_CTS)
+    required = int(CKF_ENCRYPT) | int(CKF_DECRYPT)
+    if int(info["flags"]) & required != required:
+        pytest.skip("CKM_AES_CTS does not advertise CKF_ENCRYPT|CKF_DECRYPT")
 
 
 def _detect_cts_variant(rs: Any) -> str | None:
@@ -225,11 +242,10 @@ def get_detected_variant(rs: Any) -> str | None:
 
 def skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
     """Skip test if module's CTS variant doesn't match expected_cs."""
-    if not rs.has_mechanism("AES_CTS"):
-        pytest.skip("CKM_AES_CTS not supported by module")
+    skip_unless_cts_encrypt_decrypt(rs)
     detected = get_detected_variant(rs)
     if detected is None:
-        pytest.skip("CTS variant detection failed (module errors on CTS encrypt)")
+        pytest.xfail("CKM_AES_CTS advertised but variant detection encrypt is not operational")
     if detected != expected_cs:
         pytest.skip(f"Module implements CS{detected}, skipping CS{expected_cs} vectors")
 
@@ -241,17 +257,17 @@ def skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
 
 def _handle_cts_error(exc: AssertionError, vec_id: str, direction: str) -> None:
     """Handle CTS encrypt/decrypt errors with appropriate reporting."""
-    exc_msg = str(exc)
-    if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-        pytest.skip(f"CBC-CS {direction} not supported: {exc_msg}")
-    if "CKR_DEVICE_ERROR" in exc_msg:
+    if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+        pytest.xfail(f"CKM_AES_CTS advertised but CBC-CS {direction} is not operational: {exc}")
+    if is_known_error(exc, {CKR_DEVICE_ERROR}):
         note(
             f"CKM_AES_CTS {direction} returned CKR_DEVICE_ERROR for {vec_id}. "
             "Module advertises CTS but fails on valid input.",
             ComplianceLevel.CRITICAL,
             reference="PKCS#11 v3.1 CKM_AES_CTS",
         )
-    raise
+        pytest.xfail(f"CKM_AES_CTS advertised but CBC-CS {direction} failed: {exc}")
+    raise exc
 
 
 def run_cbc_cs_encrypt_test(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:

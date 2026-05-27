@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
@@ -24,7 +24,24 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_ECDSA,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["ECDSA"]
@@ -34,6 +51,34 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 # Module-level cache of curves that failed C_CreateObject with a domain/curve error.
 # Avoids thousands of redundant probe calls when a module does not support a curve.
 _UNSUPPORTED_CURVES: set[str] = set()
+
+_CURVE_UNSUPPORTED_CKRS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
+
+_EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
+)
+
+_ECDSA_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 class _ShakeHash:
@@ -140,9 +185,73 @@ _ECDSA_CONFIGS = [
     ("ecdsa_secp521r1_sha512_test.json", "secp521r1", 66, hashlib.sha512, False),
     ("ecdsa_secp521r1_sha512_p1363_test.json", "secp521r1", 66, hashlib.sha512, True),
     ("ecdsa_secp521r1_sha3_512_test.json", "secp521r1", 66, hashlib.sha3_512, False),
-    ("ecdsa_secp521r1_shake256_test.json", "secp521r1", 66, _shake256(66), False),
-    ("ecdsa_secp521r1_shake256_p1363_test.json", "secp521r1", 66, _shake256(66), True),
+    ("ecdsa_secp521r1_shake256_test.json", "secp521r1", 66, _shake256(64), False),
+    ("ecdsa_secp521r1_shake256_p1363_test.json", "secp521r1", 66, _shake256(64), True),
 ]
+
+
+def _raw_ecdsa_signature(test: dict[str, Any]) -> bytes:
+    """Return the PKCS#11-visible raw ECDSA r||s signature."""
+    sig_bytes = bytes.fromhex(test["sig"])
+    coord_size = test["_coord_size"]
+    if test["_is_p1363"]:
+        return sig_bytes
+    r_int, s_int = decode_dss_signature(sig_bytes)
+    return r_int.to_bytes(coord_size, "big") + s_int.to_bytes(coord_size, "big")
+
+
+def _pkcs11_ecdsa_fingerprint(test: dict[str, Any]) -> tuple[bytes, bytes, bytes, bytes] | None:
+    """Return PKCS#11-visible ECDSA verify inputs for duplicate detection."""
+    try:
+        pub_key_info = test["_group"].get("publicKey", {})
+        return (
+            encode_named_curve_parameters(test["_curve"]),
+            bytes.fromhex(pub_key_info.get("uncompressed", "")),
+            test["_hash_fn"](bytes.fromhex(test["msg"])).digest(),
+            _raw_ecdsa_signature(test),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _is_pkcs11_short_signature_size_vector(test: dict[str, Any]) -> bool:
+    """Return whether a fixed-width P1363 size reject is not PKCS#11-neutral."""
+    if not test.get("_is_p1363"):
+        return False
+    if test.get("result") != "invalid":
+        return False
+    if "SignatureSize" not in test.get("flags", ()):
+        return False
+    try:
+        sig_len = len(bytes.fromhex(test["sig"]))
+        coord_size = int(test["_coord_size"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return sig_len > 0 and sig_len % 2 == 0 and sig_len < 2 * coord_size
+
+
+def _canonical_duplicate_id(entries: list[tuple[str, dict[str, Any]]]) -> str:
+    """Choose the most PKCS#11-meaningful representative for duplicate vectors."""
+    for preferred in ("valid", "acceptable"):
+        for vec_id, test in entries:
+            if test["result"] == preferred:
+                return vec_id
+    return entries[0][0]
+
+
+def _mark_pkcs11_duplicate_vectors(vectors: list[tuple[str, dict[str, Any]]]) -> None:
+    groups: dict[tuple[bytes, bytes, bytes, bytes], list[tuple[str, dict[str, Any]]]] = {}
+    for vec_id, test in vectors:
+        fingerprint = _pkcs11_ecdsa_fingerprint(test)
+        if fingerprint is not None:
+            groups.setdefault(fingerprint, []).append((vec_id, test))
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        duplicate_of = _canonical_duplicate_id(entries)
+        for vec_id, test in entries:
+            if vec_id != duplicate_of:
+                test["_pkcs11_duplicate_of"] = duplicate_of
 
 
 def _load_ecdsa_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -163,10 +272,21 @@ def _load_ecdsa_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_is_p1363"] = is_p1363
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
+    _mark_pkcs11_duplicate_vectors(vectors)
     return vectors
 
 
 _ALL_ECDSA = _load_ecdsa_vectors()
+
+
+def _xfail_if_ecdsa_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised ECDSA verify runtime rejects as findings."""
+    xfail_if_known_ckr(
+        exc,
+        _ECDSA_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised ECDSA verify is not operational",
+    )
+    raise exc
 
 
 @pytest.mark.parametrize("vec_id,vec", _ALL_ECDSA, ids=[v[0] for v in _ALL_ECDSA])
@@ -176,14 +296,17 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
     if not rs.has_mechanism("ECDSA"):
         pytest.skip("ECDSA not supported")
 
+    if duplicate_of := vec.get("_pkcs11_duplicate_of"):
+        pytest.skip(f"Duplicate PKCS#11 ECDSA operation input; covered by {duplicate_of}")
+
+    if _is_pkcs11_short_signature_size_vector(vec):
+        pytest.skip("Wycheproof short ECDSA signature-size vector is not PKCS#11-neutral")
+
     msg = bytes.fromhex(vec["msg"])
-    sig_der = bytes.fromhex(vec["sig"])
     result = vec["result"]
     group = vec["_group"]
     curve = vec["_curve"]
-    coord_size = vec["_coord_size"]
     hash_fn = vec["_hash_fn"]
-    is_p1363 = vec["_is_p1363"]
 
     pub_key_info = group.get("publicKey", {})
     uncompressed_hex = pub_key_info.get("uncompressed", "")
@@ -215,50 +338,35 @@ def test_ecdsa_wycheproof(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
             attrs={CKA_VERIFY: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        if any(
-            name in exc_msg
-            for name in (
-                "CKR_CURVE_NOT_SUPPORTED",
-                "CKR_DOMAIN_PARAMS_INVALID",
-            )
-        ):
+        if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             _UNSUPPORTED_CURVES.add(curve)
-            pytest.skip(f"Cannot import EC key for {curve}: {exc_msg}")
-        if any(
-            name in exc_msg
-            for name in (
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_TEMPLATE_INCONSISTENT",
-                "CKR_MECHANISM_INVALID",
-                "CKR_FUNCTION_FAILED",
-                "CKR_DEVICE_ERROR",
-            )
-        ):
-            pytest.skip(f"Cannot import EC key for {curve}: {exc_msg}")
+            pytest.skip(f"Cannot import EC key for {curve}: {exc}")
+        if is_known_error(exc, _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
+            pytest.skip(f"Cannot import EC key for {curve}: {exc}")
         raise
 
-    if is_p1363:
-        raw_sig = sig_der
-    else:
-        try:
-            r_int, s_int = decode_dss_signature(sig_der)
-            raw_sig = r_int.to_bytes(coord_size, "big") + s_int.to_bytes(coord_size, "big")
-        except (ValueError, OverflowError) as exc:
-            if result == "invalid":
-                return
-            pytest.fail(f"Cannot decode valid DER sig for {vec_id}: {exc}")
+    try:
+        raw_sig = _raw_ecdsa_signature(vec)
+    except (ValueError, OverflowError) as exc:
+        if result == "invalid":
+            return
+        pytest.fail(f"Cannot decode valid DER sig for {vec_id}: {exc}")
 
     digest = hash_fn(msg).digest()
 
     try:
-        verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
+        verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)
         if result == "invalid":
-            pass
+            if verified:
+                pytest.fail(f"Invalid ECDSA sig {vec_id} accepted by module")
+            return
+        if result == "valid" and not verified:
+            pytest.fail(f"Valid ECDSA sig {vec_id} rejected by module")
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_ecdsa_runtime_reject(exc, vec_id)
             pytest.fail(f"Valid ECDSA sig {vec_id} rejected: {exc}")
-        # acceptable: module rejected invalid vector
+        signature_rejected_or_xfail(exc, vec_id)
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_key)

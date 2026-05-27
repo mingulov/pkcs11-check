@@ -16,17 +16,23 @@ from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
-    sign_multipart,
     sign_single,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_BYTE_PTR,
     CKM_RSA_PKCS,
-    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_HANDLE_INVALID,
     CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
     CKR_SIGNATURE_INVALID,
 )
+from pkcs11_check.testcases._signature_policy import (
+    NON_CLEAN_SIGNATURE_REJECT_RVS,
+    SIGNATURE_REJECT_RVS,
+)
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = pytest.mark.full
 
@@ -77,7 +83,7 @@ class TestVerifySignatureRoundtrip:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             chunks = [b"chunk one ", b"chunk two ", b"chunk three"]
-            sig = sign_multipart(rs.raw, rs.sh, priv, CKM_RSA_PKCS, chunks)
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, b"".join(chunks))
             sig_ptr, sig_len = _sig_buf(sig)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_VerifySignatureInit(rs.sh, mech.byref(), pub, sig_ptr, sig_len)
@@ -89,7 +95,7 @@ class TestVerifySignatureRoundtrip:
             rv = rs.raw.C_VerifySignatureFinal(rs.sh)
             assert rv == CKR_OK, f"C_VerifySignatureFinal failed with 0x{rv:08x}"
         except AssertionError as e:
-            if "CKR_OPERATION_NOT_INITIALIZED" in str(e) or "CKR_FUNCTION_NOT_SUPPORTED" in str(e):
+            if is_known_error(e, {CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED}):
                 pytest.skip("Module does not support multipart C_VerifySignatureUpdate")
             raise
         finally:
@@ -113,9 +119,12 @@ class TestVerifySignatureRoundtrip:
                 return
             data_ptr, data_len = _data_buf(data)
             rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
-            assert rv in (CKR_SIGNATURE_INVALID, CKR_DEVICE_ERROR), (
-                f"Expected CKR_SIGNATURE_INVALID, got 0x{rv:08x}"
-            )
+            if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
+                pytest.xfail(
+                    "C_VerifySignature rejected wrong signature with non-clean CKR: "
+                    f"{ckr_name(rv)}"
+                )
+            assert rv in SIGNATURE_REJECT_RVS, f"Expected signature reject CKR, got 0x{rv:08x}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -155,7 +164,7 @@ class TestVerifySignatureRoundtrip:
                     reference="PKCS#11 spec C_VerifySignatureInit",
                 )
                 pytest.xfail(
-                    "SECURITY: NSS C_VerifySignatureInit returned CKR_OK when verifying "
+                    "SECURITY: C_VerifySignatureInit returned CKR_OK when verifying "
                     "with a mismatched public key -- silent acceptance of forged signatures "
                     "(expected CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID)"
                 )

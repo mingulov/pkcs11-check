@@ -1,11 +1,16 @@
 # Kryoptic FIPS — main branch with FIPS+PQC features
-# Uses simo5/openssl kryoptic_ossl40 branch (OpenSSL 4.0 fork)
+# Defaults to the simo5/openssl kryoptic_ossl40 branch used by Kryoptic's
+# reference FIPS/PQC configuration. Override OPENSSL_REPO/OPENSSL_REF to test
+# compatibility with an official OpenSSL tag.
 # Ref: github.com/parallaxsecond/rust-cryptoki/pull/362
 #
 # Fedora-based — matches the reference CI environment. Kryoptic FIPS
 # statically links OpenSSL; its self-test requires Fedora runtime.
 
 FROM quay.io/fedora/fedora:44 AS builder
+
+ARG OPENSSL_REPO=https://github.com/simo5/openssl.git
+ARG OPENSSL_REF=kryoptic_ossl40
 
 # Match the reference CI's package list exactly
 RUN dnf -y install git cargo clang-devel openssl-devel sqlite-devel \
@@ -16,10 +21,11 @@ RUN dnf -y install git cargo clang-devel openssl-devel sqlite-devel \
     'perl(Time::Piece)' zlib-devel sed openssl && \
     dnf clean all
 
-# Build OpenSSL 4.0 (simo5 fork for Kryoptic FIPS)
-RUN git clone --single-branch --branch kryoptic_ossl40 --depth 1 \
-    https://github.com/simo5/openssl.git /build/openssl
+# Build OpenSSL 4.0 source tree for Kryoptic FIPS.
+RUN git clone --single-branch --branch "${OPENSSL_REF}" --depth 1 \
+    "${OPENSSL_REPO}" /build/openssl
 WORKDIR /build/openssl
+RUN git rev-parse HEAD
 RUN ./Configure no-docs no-tests && make -j$(nproc)
 
 # Build Kryoptic from main with FIPS+PQC (per reference CI)

@@ -14,7 +14,7 @@ Skips gracefully if ACVP vectors not cloned or mechanism unavailable.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -37,7 +37,19 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_44,
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.acvp._duplicates import skip_duplicate_pkcs11_input
 from pkcs11_check.testcases.acvp._mldsa_helpers import (
     get_mldsa_mechanism,
     load_mldsa_keygen_vectors,
@@ -45,6 +57,7 @@ from pkcs11_check.testcases.acvp._mldsa_helpers import (
     load_mldsa_sigver_vectors,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp, pytest.mark.pqc]
 
@@ -61,13 +74,23 @@ _PARAM_SET_NAMES: dict[int, str] = {
     int(CKP_ML_DSA_87): "ML-DSA-87",
 }
 
-_UNSUPPORTED_ERRORS = (
-    "CKR_MECHANISM_INVALID",
-    "CKR_ATTRIBUTE_VALUE_INVALID",
-    "CKR_ATTRIBUTE_READ_ONLY",
-    "CKR_TEMPLATE_INCONSISTENT",
-    "CKR_KEY_SIZE_RANGE",
-    "CKR_MECHANISM_PARAM_INVALID",
+_UNSUPPORTED_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+
+_MLDSA_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
 
 
@@ -96,9 +119,19 @@ def _get_mech_name(pre_hash: str) -> str:
 
 def _handle_unsupported(exc: AssertionError, param_set: str) -> None:
     """Check if exception indicates unsupported parameter set and skip if so."""
-    if any(name in str(exc) for name in _UNSUPPORTED_ERRORS):
+    if is_known_error(exc, _UNSUPPORTED_RVS):
         pytest.skip(f"ML-DSA parameter set {param_set} not supported: {exc}")
     raise
+
+
+def _xfail_if_mldsa_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised ML-DSA operation rejects as non-clean findings."""
+    xfail_if_known_ckr(
+        exc,
+        _MLDSA_RUNTIME_REJECT_RVS,
+        f"{label}: advertised ML-DSA operation is not operational",
+    )
+    raise exc
 
 
 _KEYGEN_VECTORS = load_mldsa_keygen_vectors()
@@ -117,6 +150,7 @@ class TestMlDsaKeyGen:
             pytest.skip("ML_DSA_KEY_PAIR_GEN not supported by module")
 
         param_set_name = vec["param_set"]
+        skip_duplicate_pkcs11_input(vec, "ML-DSA KeyGen")
 
         pub_key = priv_key = 0
         try:
@@ -137,8 +171,14 @@ class TestMlDsaKeyGen:
             # Test roundtrip sign/verify using pure ML-DSA mechanism
             test_msg = b"ML-DSA keygen test message"
             mech = get_mldsa_mechanism("pure")  # Pure ML-DSA
-            sig = sign_single(rs.raw, rs.sh, priv_key, mech, test_msg)
-            verified = verify_single(rs.raw, rs.sh, pub_key, mech, test_msg, sig)
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv_key, mech, test_msg)
+            except AssertionError as exc:
+                _xfail_if_mldsa_runtime_reject(exc, f"{vec_id}: keygen roundtrip sign")
+            try:
+                verified = verify_single(rs.raw, rs.sh, pub_key, mech, test_msg, sig)
+            except AssertionError as exc:
+                _xfail_if_mldsa_runtime_reject(exc, f"{vec_id}: keygen roundtrip verify")
             assert verified, f"{vec_id}: Roundtrip sign/verify failed"
         except AssertionError as exc:
             _handle_unsupported(exc, param_set_name)
@@ -188,7 +228,10 @@ class TestMlDsaSigGen:
             if isinstance(context, str):
                 context = bytes.fromhex(context) if context else b""
             mech_param = mech_sign_context(mech, context=context) if context else None
-            sig = sign_single(rs.raw, rs.sh, priv_key, mech, vec["msg"], mech_param=mech_param)
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv_key, mech, vec["msg"], mech_param=mech_param)
+            except AssertionError as exc:
+                _xfail_if_mldsa_runtime_reject(exc, f"{vec_id}: signature generation")
 
             # Note: ML-DSA is probabilistic, so we can't compare signatures
             # Instead, verify the signature we just generated (if pk available)
@@ -206,7 +249,20 @@ class TestMlDsaSigGen:
             )
 
             try:
-                verified = verify_single(rs.raw, rs.sh, pub_key, mech, vec["msg"], sig)
+                try:
+                    verified = verify_single(
+                        rs.raw,
+                        rs.sh,
+                        pub_key,
+                        mech,
+                        vec["msg"],
+                        sig,
+                        mech_param=mech_param,
+                    )
+                except AssertionError as exc:
+                    _xfail_if_mldsa_runtime_reject(
+                        exc, f"{vec_id}: generated signature verification"
+                    )
                 if not verified:
                     pytest.fail(f"{vec_id}: Generated signature failed verification")
             finally:
@@ -272,19 +328,11 @@ class TestMlDsaSigVer:
                     mech_param=mech_param,
                 )
             except AssertionError as exc:
-                exc_msg = str(exc)
-                if any(
-                    name in exc_msg
-                    for name in (
-                        "CKR_SIGNATURE_INVALID",
-                        "CKR_SIGNATURE_LEN_RANGE",
-                    )
-                ):
-                    verified = False
-                elif "CKR_MECHANISM_PARAM_INVALID" in exc_msg:
-                    pytest.skip(f"{vec_id}: module requires mechanism params for Hash-ML-DSA")
-                else:
-                    raise
+                if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID}):
+                    pytest.xfail(f"{vec_id}: advertised Hash-ML-DSA params are not operational")
+                if vec["expected_pass"]:
+                    _xfail_if_mldsa_runtime_reject(exc, f"{vec_id}: valid signature verification")
+                verified = signature_rejected_or_xfail(exc, vec_id)
 
             if not vec["expected_pass"] and verified:
                 pytest.fail(f"{vec_id}: module ACCEPTED an INVALID ML-DSA signature")

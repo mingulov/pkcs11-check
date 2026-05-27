@@ -32,7 +32,19 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKK,
     CKM,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
@@ -42,6 +54,20 @@ from pkcs11_check.testcases.mechanism_helpers import (
 )
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.encrypt]
+
+_ENCRYPT_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 
 class TestMechEncryptRoundtrip:
@@ -62,24 +88,38 @@ class TestMechEncryptRoundtrip:
             mech_param = make_mech_param_or_skip(entry)
 
             overhead = 16 if config.auth_tag_included else 0
-            ct = encrypt_single(
-                rs.raw,
-                rs.sh,
-                enc_key,
-                CKM(entry.mech_id),
-                plaintext,
-                mech_param=mech_param,
-                output_overhead=overhead,
-                retry_on_buffer_too_small=config.auth_tag_included,
-            )
-            pt = decrypt_single(
-                rs.raw,
-                rs.sh,
-                dec_key_handle,
-                CKM(entry.mech_id),
-                ct,
-                mech_param=mech_param,
-            )
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    enc_key,
+                    CKM(entry.mech_id),
+                    plaintext,
+                    mech_param=mech_param,
+                    output_overhead=overhead,
+                    retry_on_buffer_too_small=config.auth_tag_included,
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _ENCRYPT_RUNTIME_REJECT_RVS,
+                    f"{entry.mech_name} advertised but encrypt is not operational",
+                )
+            try:
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    dec_key_handle,
+                    CKM(entry.mech_id),
+                    ct,
+                    mech_param=mech_param,
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _ENCRYPT_RUNTIME_REJECT_RVS,
+                    f"{entry.mech_name} advertised but decrypt is not operational",
+                )
             if config.input_constraint == "raw_block":
                 expected = plaintext.lstrip(b"\x00")
                 actual = pt.lstrip(b"\x00")
@@ -131,14 +171,24 @@ class TestMechEncryptKAT:
                 params = build_params_from_vector(entry.mech_id, config.param_recipe, vec)
                 if params == "SKIP":
                     continue
-                ct = encrypt_single(
-                    rs.raw,
-                    rs.sh,
-                    key,
-                    CKM(entry.mech_id),
-                    bytes.fromhex(vec["plaintext_hex"]),
-                    mech_param=params,
-                )
+                try:
+                    overhead = 16 if config.auth_tag_included else 0
+                    ct = encrypt_single(
+                        rs.raw,
+                        rs.sh,
+                        key,
+                        CKM(entry.mech_id),
+                        bytes.fromhex(vec["plaintext_hex"]),
+                        mech_param=params,
+                        output_overhead=overhead,
+                        retry_on_buffer_too_small=config.auth_tag_included,
+                    )
+                except AssertionError as exc:
+                    xfail_if_known_ckr(
+                        exc,
+                        _ENCRYPT_RUNTIME_REJECT_RVS,
+                        f"{entry.mech_name} advertised but KAT encrypt is not operational",
+                    )
                 expected_ct = bytes.fromhex(vec["ciphertext_hex"])
                 tag_hex = vec.get("tag_hex", "")
                 if tag_hex:

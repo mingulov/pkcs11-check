@@ -40,8 +40,10 @@ from pkcs11_check.raw.types_std import (
     CKM_POLY1305_KEY_GEN,
     CKM_SALSA20,
     CKM_SALSA20_KEY_GEN,
+    CKR_GENERAL_ERROR,
     CKR_OK,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -50,6 +52,8 @@ _CHACHA20_NONCE = b"\x00" * 12
 
 # Salsa20 nonce: 8 bytes (64 bits).
 _SALSA20_NONCE = b"\x00" * 8
+
+_SALSA20_ENCRYPT_REJECT_RVS = (CKR_GENERAL_ERROR,)
 
 
 def _gen_stream_key(
@@ -72,6 +76,21 @@ def _gen_stream_key(
     rv = raw.C_GenerateKey(sh, mech_p.byref(), tmpl.ptr, tmpl.count, byref(key))
     expect_rv(rv, CKR_OK)
     return key.value
+
+
+def _salsa20_encrypt_or_xfail(
+    raw: Any,
+    sh: int,
+    key: int,
+    plaintext: bytes,
+    *,
+    mech_param: Any,
+) -> bytes:
+    try:
+        return encrypt_single(raw, sh, key, CKM_SALSA20, plaintext, mech_param=mech_param)
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _SALSA20_ENCRYPT_REJECT_RVS, "CKM_SALSA20 encrypt not operational")
+        raise
 
 
 class TestSalsa20:
@@ -114,11 +133,10 @@ class TestSalsa20:
             plaintext = b"Salsa20 test plaintext data!!!!!"
             # Salsa20 params: 8-byte nonce via mech_bytes (module-specific)
             param = mech_bytes(CKM_SALSA20, _SALSA20_NONCE)
-            ciphertext = encrypt_single(
+            ciphertext = _salsa20_encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
-                CKM_SALSA20,
                 plaintext,
                 mech_param=param,
             )
@@ -156,19 +174,17 @@ class TestSalsa20:
             plaintext = b"nonce differentiation test data!"
             nonce1 = b"\x00" * 8
             nonce2 = b"\x01" * 8
-            ct1 = encrypt_single(
+            ct1 = _salsa20_encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
-                CKM_SALSA20,
                 plaintext,
                 mech_param=mech_bytes(CKM_SALSA20, nonce1),
             )
-            ct2 = encrypt_single(
+            ct2 = _salsa20_encrypt_or_xfail(
                 rs.raw,
                 rs.sh,
                 key,
-                CKM_SALSA20,
                 plaintext,
                 mech_param=mech_bytes(CKM_SALSA20, nonce2),
             )

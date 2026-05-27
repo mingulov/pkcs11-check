@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import json
 from typing import Any
 
 import pytest
 from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from pkcs11_check.raw.recipes import (
     create_object,
@@ -103,7 +106,7 @@ def verify_attribute_parity(
             _to_hex(expected_subject),
             True,
         )
-    except (AssertionError, Exception):
+    except (AssertionError, KeyError):
         results["SUBJECT"] = (
             None,
             None,
@@ -122,7 +125,7 @@ def verify_attribute_parity(
             _to_hex(expected_issuer),
             True,
         )
-    except (AssertionError, Exception):
+    except (AssertionError, KeyError):
         results["ISSUER"] = (
             None,
             None,
@@ -148,7 +151,7 @@ def verify_attribute_parity(
             _to_hex(expected_serial_der),
             True,
         )
-    except (AssertionError, Exception):
+    except (AssertionError, KeyError):
         results["SERIAL_NUMBER"] = (None, None, None, True)
 
     # CKA_START_DATE (Optional)
@@ -165,7 +168,7 @@ def verify_attribute_parity(
                 str(expected_start),
                 False,
             )
-    except (AssertionError, Exception):
+    except (AssertionError, KeyError):
         results["START_DATE"] = (None, None, None, False)
 
     # CKA_END_DATE (Optional)
@@ -182,7 +185,7 @@ def verify_attribute_parity(
                 str(expected_end),
                 False,
             )
-    except (AssertionError, Exception):
+    except (AssertionError, KeyError):
         results["END_DATE"] = (None, None, None, False)
 
     # CKA_PUBLIC_KEY_INFO (v3.0+)
@@ -199,7 +202,7 @@ def verify_attribute_parity(
             _to_hex(expected_pk_info),
             False,
         )
-    except (AssertionError, Exception):
+    except (AssertionError, KeyError):
         results["PUBLIC_KEY_INFO"] = (None, None, None, False)
 
     return results
@@ -384,30 +387,19 @@ def cert_support(
 ) -> bool:
     """Probe if the PKCS#11 module supports CKO_CERTIFICATE objects."""
     rs = p11_raw_session
-    try:
-        import datetime as _dt
-
-        from cryptography import x509 as _x509
-        from cryptography.hazmat.primitives import hashes as _hashes
-        from cryptography.hazmat.primitives import serialization as _ser
-        from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
-        from cryptography.x509.oid import NameOID as _NameOID
-
-        key = _rsa.generate_private_key(65537, 2048)
-        subject = issuer = _x509.Name([_x509.NameAttribute(_NameOID.COMMON_NAME, "probe")])
-        probe_cert = (
-            _x509.CertificateBuilder()
-            .subject_name(subject)
-            .issuer_name(issuer)
-            .public_key(key.public_key())
-            .serial_number(_x509.random_serial_number())
-            .not_valid_before(_dt.datetime.now(_dt.UTC))
-            .not_valid_after(_dt.datetime.now(_dt.UTC) + _dt.timedelta(days=1))
-            .sign(key, _hashes.SHA256())
-        )
-        probe_der = probe_cert.public_bytes(_ser.Encoding.DER)
-    except Exception:
-        return False
+    key = rsa.generate_private_key(65537, 2048)
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "probe")])
+    probe_cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.UTC))
+        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    probe_der = probe_cert.public_bytes(serialization.Encoding.DER)
 
     try:
         h = import_cert_object(
@@ -422,7 +414,7 @@ def cert_support(
         )
         destroy_quietly(rs.raw, rs.sh, h)
         return True
-    except Exception:
+    except AssertionError:
         return False
 
 

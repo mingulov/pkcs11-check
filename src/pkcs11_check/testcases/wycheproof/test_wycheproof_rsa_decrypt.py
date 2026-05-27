@@ -7,7 +7,7 @@ Imports RSA private key, decrypts ciphertext, compares against expected plaintex
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -19,7 +19,21 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKM_RSA_PKCS,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
 
@@ -29,6 +43,24 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 # Populated on first failure; subsequent tests with the same key size skip
 # immediately without attempting another C_CreateObject probe.
 _UNSUPPORTED_RSA_KEY_SIZES: set[int] = set()
+
+_RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_KEY_SIZE_RANGE,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_TEMPLATE_INCOMPLETE,
+)
+
+_RSA_PKCS1_DECRYPT_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 _DECRYPT_FILES = [
     "rsa_pkcs1_2048_test.json",
@@ -58,6 +90,16 @@ def _load_decrypt_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_DECRYPT_VECTORS = _load_decrypt_vectors()
 
 
+def _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised RSA PKCS#1 decrypt runtime rejects as findings."""
+    xfail_if_known_ckr(
+        exc,
+        _RSA_PKCS1_DECRYPT_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised RSA PKCS#1 decrypt is not operational",
+    )
+    raise exc
+
+
 @pytest.mark.parametrize(
     "vec_id,vec", _ALL_DECRYPT_VECTORS, ids=[v[0] for v in _ALL_DECRYPT_VECTORS]
 )
@@ -75,14 +117,14 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     if not modulus_hex or not priv_exp_hex:
         pytest.skip("No RSA private key in vector group")
 
-    modulus = bytes.fromhex(modulus_hex)
-    pub_exponent = bytes.fromhex(pk.get("publicExponent", ""))
-    priv_exponent = bytes.fromhex(priv_exp_hex)
-    prime1 = bytes.fromhex(pk.get("prime1", ""))
-    prime2 = bytes.fromhex(pk.get("prime2", ""))
-    exp1 = bytes.fromhex(pk.get("exponent1", ""))
-    exp2 = bytes.fromhex(pk.get("exponent2", ""))
-    coefficient = bytes.fromhex(pk.get("coefficient", ""))
+    modulus = pkcs11_bigint_from_hex(modulus_hex)
+    pub_exponent = pkcs11_bigint_from_hex(pk.get("publicExponent", ""))
+    priv_exponent = pkcs11_bigint_from_hex(priv_exp_hex)
+    prime1 = pkcs11_bigint_from_hex(pk.get("prime1", ""))
+    prime2 = pkcs11_bigint_from_hex(pk.get("prime2", ""))
+    exp1 = pkcs11_bigint_from_hex(pk.get("exponent1", ""))
+    exp2 = pkcs11_bigint_from_hex(pk.get("exponent2", ""))
+    coefficient = pkcs11_bigint_from_hex(pk.get("coefficient", ""))
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
@@ -105,15 +147,7 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     except AssertionError as exc:
         exc_msg = str(exc)
         # Only cache permanent key-size rejections, not transient errors.
-        if any(
-            code in exc_msg
-            for code in (
-                "CKR_KEY_SIZE_RANGE",
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_TEMPLATE_INCONSISTENT",
-                "CKR_TEMPLATE_INCOMPLETE",
-            )
-        ):
+        if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
         pytest.skip(f"Cannot import RSA {key_bits}-bit private key: {exc_msg}")
 
@@ -122,6 +156,7 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
         plaintext = decrypt_single(rs.raw, rs.sh, priv_key, CKM_RSA_PKCS, ct)
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc, vec_id)
             pytest.fail(f"Valid RSA PKCS#1 ciphertext {vec_id} failed to decrypt: {exc}")
         # acceptable/invalid: reject is fine (padding oracle resistance)
         return
@@ -130,3 +165,5 @@ def test_rsa_pkcs1_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
     if result == "valid" and plaintext is not None:
         assert plaintext == msg_expected
+    if result == "invalid" and plaintext is not None:
+        pytest.fail(f"RSA PKCS#1 decrypt {vec_id} accepted invalid ciphertext")

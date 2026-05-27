@@ -15,7 +15,11 @@ cleanup() {
 trap cleanup EXIT
 
 echo "tpm2-pkcs11:"
-rpm -q tpm2-pkcs11 swtpm tpm2-abrmd
+if ! rpm -q tpm2-pkcs11; then
+    echo "tpm2-pkcs11 source revision: $(cat /tmp/tpm2_pkcs11_revision 2>/dev/null || true)"
+fi
+rpm -q swtpm tpm2-abrmd tpm2-tools tpm2-tss
+python3.14 -c 'import importlib.metadata as m; print("python-pkcs11", m.version("python-pkcs11"))'
 
 swtpm socket --tpm2 \
     --tpmstate dir=/tmp/swtpm \
@@ -62,6 +66,4 @@ module="$(cat /tmp/module_path)"
 echo "Module: $module"
 export PKCS11_CHECK_MODULE="$module"
 
-if ! bash /app/docker/run-pkcs11-check.sh; then
-    echo "Some tests may fail — TPM2 has limited mechanism support"
-fi
+bash /app/docker/run-pkcs11-check.sh

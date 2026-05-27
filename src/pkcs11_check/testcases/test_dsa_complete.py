@@ -14,7 +14,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 from ctypes import byref
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -53,14 +53,22 @@ from pkcs11_check.raw.types_std import (
     CKM_DSA_SHA384,
     CKM_DSA_SHA512,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.sign
 
@@ -70,6 +78,36 @@ _VERIFY_FAIL_RVS = {
     CKR_SIGNATURE_LEN_RANGE,
     CKR_FUNCTION_FAILED,
 }
+
+_DSA_PARAMETER_SIZE_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+)
+
+_DSA_PARAMETER_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_DSA_KEYPAIR_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 # Prehash DSA variants (excluding DSA_SHA256 which is tested elsewhere)
 _DSA_HASH_MECHS = [
@@ -97,6 +135,27 @@ def _generate_dsa_params(raw: Any, sh: int) -> int:
     rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(dp_handle))
     expect_rv(rv, CKR_OK)
     return dp_handle.value
+
+
+def _skip_or_xfail_dsa_param_gen_reject(exc: AssertionError) -> NoReturn:
+    if is_known_error(exc, _DSA_PARAMETER_SIZE_REJECT_RVS):
+        pytest.skip(f"DSA-2048 parameter generation not supported: {exc}")
+    xfail_if_known_ckr(
+        exc,
+        _DSA_PARAMETER_RUNTIME_REJECT_RVS,
+        "DSA_PARAMETER_GEN advertised but parameter generation is not operational",
+    )
+    raise
+
+
+def _xfail_if_dsa_keypair_reject(exc: AssertionError) -> NoReturn:
+    xfail_if_known_ckr(
+        exc,
+        _DSA_KEYPAIR_RUNTIME_REJECT_RVS,
+        "DSA_KEY_PAIR_GEN advertised but keypair generation from generated params "
+        "is not operational",
+    )
+    raise
 
 
 def _gen_dsa_keypair_from_params(
@@ -159,15 +218,20 @@ def _generate_dsa_keypair(
     Returns (dp_handle, public_key_handle, private_key_handle).
     Skips the test if DSA param/key generation is not supported.
     """
+    if not rs.has_mechanism("DSA_PARAMETER_GEN"):
+        pytest.skip("CKM_DSA_PARAMETER_GEN not supported for DSA setup")
     try:
         dp_handle = _generate_dsa_params(rs.raw, rs.sh)
     except AssertionError as e:
-        pytest.skip(f"DSA parameter generation not supported: {e}")
+        _skip_or_xfail_dsa_param_gen_reject(e)
+    if not rs.has_mechanism("DSA_KEY_PAIR_GEN"):
+        destroy_quietly(rs.raw, rs.sh, dp_handle)
+        pytest.skip("CKM_DSA_KEY_PAIR_GEN not supported for DSA setup")
     try:
         pub, priv = _gen_dsa_keypair_from_params(rs.raw, rs.sh, dp_handle)
     except AssertionError as e:
         destroy_quietly(rs.raw, rs.sh, dp_handle)
-        pytest.skip(f"DSA keypair generation not supported: {e}")
+        _xfail_if_dsa_keypair_reject(e)
     return dp_handle, pub, priv
 
 
@@ -429,7 +493,7 @@ class TestDSAParameterGen:
         try:
             dp = _generate_dsa_params(rs.raw, rs.sh)
         except AssertionError as e:
-            pytest.skip(f"DSA parameter generation failed: {e}")
+            _skip_or_xfail_dsa_param_gen_reject(e)
 
         try:
             assert dp != 0
@@ -445,13 +509,15 @@ class TestDSAParameterGen:
         try:
             dp = _generate_dsa_params(rs.raw, rs.sh)
         except AssertionError as e:
-            pytest.skip(f"DSA parameter generation failed: {e}")
+            _skip_or_xfail_dsa_param_gen_reject(e)
 
         try:
+            if not rs.has_mechanism("DSA_KEY_PAIR_GEN"):
+                pytest.skip("CKM_DSA_KEY_PAIR_GEN not supported")
             try:
                 pub, priv = _gen_dsa_keypair_from_params(rs.raw, rs.sh, dp)
             except AssertionError as e:
-                pytest.skip(f"DSA keypair generation from params failed: {e}")
+                _xfail_if_dsa_keypair_reject(e)
 
             try:
                 assert pub != 0
@@ -477,13 +543,15 @@ class TestDSAParameterGen:
         try:
             dp = _generate_dsa_params(rs.raw, rs.sh)
         except AssertionError as e:
-            pytest.skip(f"DSA parameter generation failed: {e}")
+            _skip_or_xfail_dsa_param_gen_reject(e)
 
         try:
+            if not rs.has_mechanism("DSA_KEY_PAIR_GEN"):
+                pytest.skip("CKM_DSA_KEY_PAIR_GEN not supported")
             try:
                 pub, priv = _gen_dsa_keypair_from_params(rs.raw, rs.sh, dp)
             except AssertionError as e:
-                pytest.skip(f"DSA keypair generation from params failed: {e}")
+                _xfail_if_dsa_keypair_reject(e)
 
             try:
                 if has_raw:

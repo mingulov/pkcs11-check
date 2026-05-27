@@ -1,15 +1,17 @@
-# SoftHSM2 main branch + OpenSSL built from source
+# SoftHSM2 git ref + OpenSSL built from source
 #
 # Usage:
 #   docker compose -f docker/docker-compose.test.yml run --build test-softhsm2-main
 #
 # Override OpenSSL version:
 #   docker compose -f docker/docker-compose.test.yml build \
-#     --build-arg OPENSSL_VERSION=3.5.0 test-softhsm2-main
+#     --build-arg OPENSSL_VERSION=3.6.2 test-softhsm2-main
 
 FROM quay.io/fedora/fedora:44 AS builder
 
-ARG OPENSSL_VERSION=3.6.1
+ARG OPENSSL_VERSION=4.0.0
+ARG SOFTHSM2_REF=main
+ARG SOFTHSM2_APPLY_GENERATED_IV_PATCH=0
 
 RUN dnf -y install git make gcc gcc-c++ sqlite-devel perl-core \
     automake autoconf autoconf-archive libtool pkg-config \
@@ -28,17 +30,24 @@ RUN mkdir -p /build && \
 ENV LD_LIBRARY_PATH=/opt/openssl/lib64
 RUN /opt/openssl/bin/openssl version
 
-# Build SoftHSM2 against custom OpenSSL
-RUN git clone --depth 1 --branch main https://github.com/softhsm/SoftHSMv2.git /build/softhsm2
+COPY docker/softhsm2/patches/ /tmp/softhsm2-patches/
+
+# Build SoftHSM2 against custom OpenSSL.
+RUN git clone --depth 1 --branch ${SOFTHSM2_REF} https://github.com/softhsm/SoftHSMv2.git /build/softhsm2
 WORKDIR /build/softhsm2
-#COPY docker/softhsm2/patches/*.patch /tmp/patches/
-#RUN for p in /tmp/patches/*.patch; do git apply "$p"; done
-RUN sh autogen.sh && \
+RUN if [ "${SOFTHSM2_APPLY_GENERATED_IV_PATCH}" = "1" ]; then \
+        git apply --unidiff-zero /tmp/softhsm2-patches/0001-simulate-aes-gcm-generated-iv.patch; \
+    fi && \
+    sh autogen.sh && \
+    mldsa_arg="" && \
+    if ./configure --help | grep -q -- "--enable-mldsa"; then \
+        mldsa_arg="--enable-mldsa"; \
+    fi && \
     PKG_CONFIG_PATH=/opt/openssl/lib64/pkgconfig \
     CPPFLAGS="-I/opt/openssl/include" \
     LDFLAGS="-L/opt/openssl/lib64 -Wl,-rpath,/opt/openssl/lib64" \
     ./configure --prefix=/usr --sysconfdir=/etc \
-    --with-crypto-backend=openssl --enable-mldsa \
+    --with-crypto-backend=openssl ${mldsa_arg} \
     --disable-dependency-tracking && \
     make -j$(nproc) && \
     make DESTDIR=/install install
@@ -57,8 +66,14 @@ RUN bash /tmp/install-test-tools.sh && rm -f /tmp/install-test-tools.sh
 COPY --from=builder /opt/openssl /opt/openssl
 COPY --from=builder /install/usr /usr
 
+# Enable OpenSSL legacy provider so SoftHSM can exercise legacy mechanisms such
+# as DES/3DES when built against OpenSSL 3.6/4.0.
+RUN printf 'openssl_conf = openssl_init\nconfig_diagnostics = 1\n\n[openssl_init]\nproviders = provider_sect\n\n[provider_sect]\ndefault = default_sect\nlegacy = legacy_sect\n\n[default_sect]\nactivate = 1\n\n[legacy_sect]\nactivate = 1\n' \
+    > /opt/openssl/ssl/openssl.cnf
+
 ENV LD_LIBRARY_PATH=/opt/openssl/lib64
 ENV PATH=/opt/openssl/bin:${PATH}
+ENV OPENSSL_CONF=/opt/openssl/ssl/openssl.cnf
 ENV SOFTHSM2_CONF=/etc/softhsm2.conf
 RUN mkdir -p /var/lib/softhsm/tokens && \
     echo "directories.tokendir = /var/lib/softhsm/tokens" > $SOFTHSM2_CONF && \

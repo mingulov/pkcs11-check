@@ -41,6 +41,7 @@ _DETAIL_COUNT_KEYS = (
 )
 _SPECIAL_DETAIL_OUTCOMES = {"crashed", "timeout", "passed-in-isolation"}
 _MAX_TIMEOUT_RETRIES = 3
+_DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
 _FINGERPRINT_ENV_KEYS = ("BOUNCY_HSM_CFG_STRING", "SOFTHSM2_CONF", "P11TEST_PIN")
 _FINGERPRINT_ENV_PREFIXES = (
@@ -49,7 +50,6 @@ _FINGERPRINT_ENV_PREFIXES = (
     "NSS_",
     "OPENCRYPTOKI_",
     "PKCS11_",
-    "QRYPTOTOKEN_",
     "SOFTHSM2_",
     "TPM2_",
 )
@@ -440,7 +440,34 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
     copied: dict[str, Any] = {"counts": counts, "tests": tests}
     if skip_reasons:
         copied["skip_reasons"] = skip_reasons
+    if isinstance(detail, Mapping) and detail.get("file_skip"):
+        copied["file_skip"] = True
     return copied
+
+
+def _synthetic_file_skip_detail(
+    unit: str,
+    reason: str,
+    pytest_args: list[str],
+    env: Mapping[str, str],
+) -> dict[str, Any]:
+    """Build counted skip detail for a file skipped before pytest execution."""
+    collect_env = dict(env)
+    collect_env[_DISABLE_COLLECTION_PROBES_ENV] = "1"
+    try:
+        nodeids = collect_pytest_nodeids([unit], pytest_args, env=collect_env)
+    except ValueError:
+        nodeids = []
+
+    skipped = len(nodeids) if nodeids else 1
+    counts = {key: 0 for key in _DETAIL_COUNT_KEYS}
+    counts["skipped"] = skipped
+    return {
+        "counts": counts,
+        "tests": [],
+        "skip_reasons": {reason: skipped},
+        "file_skip": True,
+    }
 
 
 def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | None:
@@ -2124,21 +2151,12 @@ def run_isolated_pytest_units(
                             duration_s=0.0,
                         )
                         _record_result(state, result)
-                        per_unit_details[unit] = {
-                            "counts": {
-                                "passed": 0,
-                                "failed": 0,
-                                "skipped": 0,
-                                "xfailed": 0,
-                                "xpassed": 0,
-                                "error": 0,
-                                "crashed": 0,
-                                "timeout": 0,
-                            },
-                            "tests": [],
-                            "skip_reasons": {reason: 1},
-                            "file_skip": True,
-                        }
+                        per_unit_details[unit] = _synthetic_file_skip_detail(
+                            unit,
+                            reason,
+                            pytest_args,
+                            env,
+                        )
                         save_run_state(state_file, state)
                         index += 1
                         continue
@@ -2628,13 +2646,10 @@ def run_isolated_pytest_units(
                                     )
                                     confirm_status = _status_from_returncode(confirm_rc)
                                     # Record culprit as a standalone result
-                                    culprit_outcome = (
-                                        "crashed"
-                                        if confirm_status == "crashed"
-                                        else "timeout"
-                                        if confirm_status == "timeout"
-                                        else "passed-in-isolation"
-                                    )
+                                    if confirm_status in {"crashed", "timeout"}:
+                                        culprit_outcome = confirm_status
+                                    else:
+                                        culprit_outcome = "crashed"
                                     culprit_entry: dict[str, Any] = {
                                         "nodeid": culprit,
                                         "outcome": culprit_outcome,
@@ -2642,6 +2657,20 @@ def run_isolated_pytest_units(
                                     if confirm_status in {"crashed", "timeout"}:
                                         culprit_entry["longrepr"] = (
                                             confirm_err.strip() or confirm_out.strip()
+                                        )
+                                    else:
+                                        crash_detail = (
+                                            captured_stderr.strip()
+                                            or captured_stdout.strip()
+                                            or f"file-level pytest run crashed with rc={returncode}"
+                                        )
+                                        culprit_entry["longrepr"] = (
+                                            "File-level pytest run crashed while this test was "
+                                            "active; the test passed in isolation. "
+                                            f"Original crash detail: {crash_detail}"
+                                        )
+                                        culprit_entry["isolation_outcome"] = (
+                                            "passed-in-isolation"
                                         )
                                     if confirm_out.strip():
                                         culprit_entry["stdout"] = confirm_out
@@ -2761,7 +2790,17 @@ def run_isolated_pytest_units(
                                                 final_detail["tests"]
                                             )
 
-                                    keep = retry_status != "passed" or (
+                                    final_status = retry_status
+                                    final_returncode = retry_rc
+                                    if retry_status == "passed" and accumulated_detail is not None:
+                                        if accumulated_detail["counts"].get("crashed", 0) > 0:
+                                            final_status = "crashed"
+                                            final_returncode = returncode
+                                        elif accumulated_detail["counts"].get("timeout", 0) > 0:
+                                            final_status = "timeout"
+                                            final_returncode = 124
+
+                                    keep = final_status != "passed" or (
                                         accumulated_detail is not None
                                         and any(
                                             accumulated_detail["counts"].get(k, 0) > 0
@@ -2770,13 +2809,15 @@ def run_isolated_pytest_units(
                                                 "xfailed",
                                                 "xpassed",
                                                 "error",
+                                                "crashed",
+                                                "timeout",
                                             )
                                         )
                                     )
                                     result = FileRunResult(
                                         target=unit,
-                                        status=retry_status,
-                                        returncode=retry_rc,
+                                        status=final_status,
+                                        returncode=final_returncode,
                                         duration_s=(duration_s + total_retry_dur),
                                         stdout=(retry_out if keep else ""),
                                         stderr=(retry_err if keep else ""),
@@ -2790,7 +2831,7 @@ def run_isolated_pytest_units(
                                         f"({total_retry_dur:.1f}s, "
                                         f"{len(deselect_set)} deselected)"
                                     )
-                                    if retry_status == "failed":
+                                    if final_status in {"failed", "crashed", "timeout"}:
                                         exit_code = 1
                                     index += 1
                                     break  # exit deselect loop, continue

@@ -12,6 +12,7 @@ from asn1crypto.keys import (  # type: ignore[import-untyped]
     PrivateKeyInfo,
     PublicKeyInfo,
 )
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -54,6 +55,14 @@ def _b64url_decode(data: str) -> bytes:
 def _pem_to_der(value: str) -> bytes:
     _type_name, _headers, der = pem.unarmor(value.encode())
     return bytes(der)
+
+
+def pkcs11_bigint_from_hex(value: str) -> bytes:
+    """Convert third-party integer hex to Cryptoki unsigned big-endian bytes."""
+    if value == "":
+        return b""
+    raw = bytes.fromhex(value)
+    return raw.lstrip(b"\x00") or b"\x00"
 
 
 def normalize_ec_curve(curve_name: str) -> tuple[str, int]:
@@ -181,7 +190,7 @@ def decode_xdh_public_bytes(value: Any, encoding_name: str) -> bytes:
         der = bytes.fromhex(value) if encoding_name == "asn" else _pem_to_der(value)
         try:
             return _decode_xdh_public_der(der)
-        except Exception:  # noqa: BLE001
+        except (UnsupportedAlgorithm, ValueError):
             raw = _extract_spki_bitstring_raw(der)
             if raw is not None:
                 return raw

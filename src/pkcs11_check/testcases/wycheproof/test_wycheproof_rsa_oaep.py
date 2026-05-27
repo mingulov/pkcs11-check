@@ -8,7 +8,7 @@ compares against expected plaintext.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -31,7 +31,21 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
 
@@ -41,6 +55,24 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
 # Populated on first failure; subsequent tests with the same key size skip
 # immediately without attempting another C_CreateObject probe.
 _UNSUPPORTED_RSA_KEY_SIZES: set[int] = set()
+
+_RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
+    CKR_KEY_SIZE_RANGE,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_TEMPLATE_INCOMPLETE,
+)
+
+_RSA_OAEP_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 # Map Wycheproof sha names to PKCS#11 hash mechanisms and MGFs for OAEP params
 _SHA_HASH_MECHS: dict[str, int] = {
@@ -113,6 +145,32 @@ def _load_oaep_vectors() -> list[tuple[str, dict[str, Any]]]:
 _ALL_OAEP_VECTORS = _load_oaep_vectors()
 
 
+def _xfail_if_rsa_oaep_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised RSA-OAEP parameter/runtime rejects as findings."""
+    xfail_if_known_ckr(
+        exc,
+        _RSA_OAEP_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised RSA-OAEP parameters are not operational",
+    )
+    raise exc
+
+
+def _skip_or_xfail_rsa_oaep_private_import_reject(
+    exc: AssertionError,
+    key_bits: int,
+) -> NoReturn:
+    """Classify RSA private-key import rejects before Wycheproof OAEP decrypt."""
+    if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
+        _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
+        pytest.skip(f"Cannot import RSA {key_bits}-bit private key for OAEP: {exc}")
+    xfail_if_known_ckr(
+        exc,
+        _RSA_OAEP_RUNTIME_REJECT_CKRS,
+        f"RSA private-key import is not operational for OAEP ({key_bits}-bit)",
+    )
+    raise exc
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_OAEP_VECTORS, ids=[v[0] for v in _ALL_OAEP_VECTORS])
 def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-OAEP decryption from Wycheproof vectors."""
@@ -148,14 +206,14 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
     if not modulus_hex or not priv_exp_hex:
         pytest.skip("No RSA private key in vector group")
 
-    modulus = bytes.fromhex(modulus_hex)
-    pub_exponent = bytes.fromhex(exp_hex)
-    priv_exponent = bytes.fromhex(priv_exp_hex)
-    prime1 = bytes.fromhex(pk.get("prime1", ""))
-    prime2 = bytes.fromhex(pk.get("prime2", ""))
-    exp1 = bytes.fromhex(pk.get("exponent1", ""))
-    exp2 = bytes.fromhex(pk.get("exponent2", ""))
-    coefficient = bytes.fromhex(pk.get("coefficient", ""))
+    modulus = pkcs11_bigint_from_hex(modulus_hex)
+    pub_exponent = pkcs11_bigint_from_hex(exp_hex)
+    priv_exponent = pkcs11_bigint_from_hex(priv_exp_hex)
+    prime1 = pkcs11_bigint_from_hex(pk.get("prime1", ""))
+    prime2 = pkcs11_bigint_from_hex(pk.get("prime2", ""))
+    exp1 = pkcs11_bigint_from_hex(pk.get("exponent1", ""))
+    exp2 = pkcs11_bigint_from_hex(pk.get("exponent2", ""))
+    coefficient = pkcs11_bigint_from_hex(pk.get("coefficient", ""))
     key_bits = len(modulus) * 8
 
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
@@ -176,19 +234,7 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             attrs={CKA_DECRYPT: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        # Only cache permanent key-size rejections, not transient errors.
-        if any(
-            code in exc_msg
-            for code in (
-                "CKR_KEY_SIZE_RANGE",
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_TEMPLATE_INCONSISTENT",
-                "CKR_TEMPLATE_INCOMPLETE",
-            )
-        ):
-            _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.skip(f"Cannot import RSA {key_bits}-bit private key for OAEP: {exc_msg}")
+        _skip_or_xfail_rsa_oaep_private_import_reject(exc, key_bits)
 
     plaintext = None
     try:
@@ -202,6 +248,7 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
         )
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_rsa_oaep_runtime_reject(exc, vec_id)
             sha = vec.get("_sha", "unknown")
             mgf_sha = vec.get("_mgfSha", "unknown")
             pytest.fail(
@@ -215,3 +262,5 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
 
     if result == "valid" and plaintext is not None:
         assert plaintext == msg_expected
+    if result == "invalid" and plaintext is not None:
+        pytest.fail(f"RSA-OAEP decrypt {vec_id} accepted invalid ciphertext")

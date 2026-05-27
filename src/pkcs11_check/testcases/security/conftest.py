@@ -27,6 +27,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_INVALID,
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
+from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
 # Clean rejection of boundary/invalid inputs (not crash, not OK)
 BOUNDARY_REJECT_CKRS = {
@@ -59,6 +60,7 @@ DATA_REJECT_CKRS = {
 # CKR names for subprocess output parsing
 BOUNDARY_REJECT_NAMES = frozenset(ckr_name(int(c)) for c in BOUNDARY_REJECT_CKRS)
 DATA_REJECT_NAMES = frozenset(ckr_name(int(c)) for c in DATA_REJECT_CKRS)
+SETUP_XFAIL_PREFIX = "SETUP_XFAIL:"
 
 
 def assert_subprocess_no_crash(
@@ -68,16 +70,16 @@ def assert_subprocess_no_crash(
     *,
     context: str,
 ) -> None:
-    """Assert a subprocess didn't crash (signal).
+    """Assert a subprocess completed without crashing or child-script failure.
 
     Args:
-        rc: subprocess returncode. Negative means killed by signal.
+        rc: subprocess returncode. Negative means killed by signal; positive
+            means the child script failed before completing the probe.
         stdout: subprocess stdout.
         stderr: subprocess stderr.
         context: Human-readable test description for failure message.
     """
-    if rc < 0:
-        pytest.fail(
-            f"{context}: module crashed with signal {-rc}\n"
-            f"stdout: {stdout[:500]}\nstderr: {stderr[:500]}"
-        )
+    assert_subprocess_completed(rc, stdout, stderr, context=context)
+    for line in stdout.splitlines():
+        if line.startswith(SETUP_XFAIL_PREFIX):
+            pytest.xfail(line.removeprefix(SETUP_XFAIL_PREFIX).strip())

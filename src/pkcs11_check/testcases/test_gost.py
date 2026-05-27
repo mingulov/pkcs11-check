@@ -46,8 +46,19 @@ from pkcs11_check.raw.types_std import (
     CKM_GOSTR3410_WITH_GOSTR3411,
     CKM_GOSTR3411,
     CKM_GOSTR3411_HMAC,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -56,6 +67,19 @@ _TWO_BLOCKS = b"12345678abcdefgh"
 
 # 32 bytes - typical GOST R 34.11-94 hash output size
 _HASH_SIZE_DATA = bytes(range(32))
+
+_GOST_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 def _gost_key(raw: Any, sh: int, attrs: Mapping[Any, Any]) -> int:
@@ -98,13 +122,11 @@ def _gost_keypair(raw: Any, sh: int) -> tuple[int, int]:
 
 
 def _try_or_xfail(fn: Any, msg: str) -> Any:
-    """Call fn; if AssertionError with MECHANISM_INVALID/FUNCTION_FAILED, xfail."""
+    """Call fn; xfail only specific advertised-but-not-operational CKRs."""
     try:
         return fn()
     except AssertionError as exc:
-        exc_str = str(exc)
-        if "CKR_MECHANISM_INVALID" in exc_str or "CKR_FUNCTION_FAILED" in exc_str:
-            pytest.xfail(f"{msg}: {exc}")
+        xfail_if_known_ckr(exc, _GOST_RUNTIME_REJECT_RVS, msg)
         raise
 
 
@@ -388,19 +410,28 @@ class TestGOSTR3411Digest:
             pytest.skip("CKM_GOSTR3411_HMAC not supported")
 
         # GOSTR3411_HMAC uses the GOSTR3411 key type for HMAC operations
-        key = import_secret_key(
-            rs.raw,
-            rs.sh,
-            CKK_GOSTR3411,
-            bytes(range(32)),
-            attrs={
-                CKA_SIGN: True,
-                CKA_VERIFY: True,
-                CKA_TOKEN: False,
-                CKA_SENSITIVE: False,
-            },
-        )
+        key = 0
         try:
+            try:
+                key = import_secret_key(
+                    rs.raw,
+                    rs.sh,
+                    CKK_GOSTR3411,
+                    bytes(range(32)),
+                    attrs={
+                        CKA_SIGN: True,
+                        CKA_VERIFY: True,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                    },
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _GOST_RUNTIME_REJECT_RVS,
+                    "CKM_GOSTR3411_HMAC key setup is not operational",
+                )
+
             data = b"GOST HMAC test data"
 
             def _do() -> None:

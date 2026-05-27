@@ -43,11 +43,20 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKO_DATA,
     CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    get_pin_bytes,
+    is_known_error,
+    require_operational_aes_keygen,
+    skip_if_token_write_protected,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.security
 
@@ -59,13 +68,31 @@ _COPY_REJECT_RVS = (
 )
 
 
+def _require_aes_keygen(rs: Any) -> None:
+    require_operational_aes_keygen(rs)
+
+
+def _gen_access_control_aes_key(rs: Any, *, attrs: dict[int, Any] | None = None) -> int:
+    """Generate a setup AES key for access-control tests."""
+    _require_aes_keygen(rs)
+    try:
+        return gen_aes_key(rs.raw, rs.sh, 128, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but access-control setup key generation is not operational",
+        )
+    raise
+
+
 class TestPrivateAttribute:
     """Test CKA_PRIVATE visibility semantics."""
 
     def test_private_key_default_is_private(self, p11_raw_session: Any) -> None:
         """Generated secret keys are CKA_PRIVATE=True by default."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256)
+        key_h = _gen_access_control_aes_key(rs)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_PRIVATE])
             try:
@@ -137,7 +164,7 @@ class TestModifiableAttribute:
     def test_default_key_is_modifiable(self, p11_raw_session: Any) -> None:
         """Generated keys have CKA_MODIFIABLE=True by default."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "mod-test"})
+        key_h = _gen_access_control_aes_key(rs, attrs={CKA_LABEL: "mod-test"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
             assert attrs[CKA_MODIFIABLE] is True
@@ -147,7 +174,7 @@ class TestModifiableAttribute:
     def test_modifiable_key_label_changeable(self, p11_raw_session: Any) -> None:
         """Key with MODIFIABLE=True allows label change."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "mod-before"})
+        key_h = _gen_access_control_aes_key(rs, attrs={CKA_LABEL: "mod-before"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
             assert attrs[CKA_MODIFIABLE] is True
@@ -169,22 +196,22 @@ class TestModifiableAttribute:
         Closes Phase 4.5 GAP-T1 (HIGH).
         """
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         try:
             key_h = gen_aes_key(
                 rs.raw,
                 rs.sh,
-                256,
+                128,
                 attrs={CKA_MODIFIABLE: False, CKA_LABEL: "mod-false-src"},
             )
         except AssertionError as e:
-            msg = str(e)
-            if any(
-                code in msg
-                for code in (
-                    "CKR_TEMPLATE_INCONSISTENT",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
-                    "CKR_ATTRIBUTE_TYPE_INVALID",
-                )
+            if is_known_error(
+                e,
+                {
+                    CKR_TEMPLATE_INCONSISTENT,
+                    CKR_ATTRIBUTE_VALUE_INVALID,
+                    CKR_ATTRIBUTE_TYPE_INVALID,
+                },
             ):
                 pytest.skip(f"Module does not allow CKA_MODIFIABLE=False at gen time: {e}")
             raise
@@ -193,7 +220,7 @@ class TestModifiableAttribute:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
             except AssertionError as e:
-                if "CKR_ATTRIBUTE_TYPE_INVALID" in str(e):
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_MODIFIABLE: {e}")
                 raise
             if attrs.get(CKA_MODIFIABLE) is not False:
@@ -225,14 +252,15 @@ class TestModifiableAttribute:
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_LABEL: "mod-false-after"})
             except AssertionError as e:
-                msg = str(e)
-                accepted = (
-                    "CKR_ACTION_PROHIBITED",
-                    "CKR_ATTRIBUTE_READ_ONLY",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
-                    "CKR_TEMPLATE_INCONSISTENT",
-                )
-                if any(code in msg for code in accepted):
+                if is_known_error(
+                    e,
+                    {
+                        CKR_ACTION_PROHIBITED,
+                        CKR_ATTRIBUTE_READ_ONLY,
+                        CKR_ATTRIBUTE_VALUE_INVALID,
+                        CKR_TEMPLATE_INCONSISTENT,
+                    },
+                ):
                     return
                 raise
 
@@ -260,7 +288,7 @@ class TestCopyableAttribute:
     def test_default_key_copyable_flag(self, p11_raw_session: Any) -> None:
         """Check CKA_COPYABLE flag is readable on generated key."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256)
+        key_h = _gen_access_control_aes_key(rs)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
             if CKA_COPYABLE not in attrs:
@@ -273,7 +301,7 @@ class TestCopyableAttribute:
     def test_copyable_key_can_be_copied(self, p11_raw_session: Any) -> None:
         """Key with COPYABLE=True can be copied via C_CopyObject."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "copy-src"})
+        key_h = _gen_access_control_aes_key(rs, attrs={CKA_LABEL: "copy-src"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
             if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
@@ -298,7 +326,7 @@ class TestCopyObject:
     def test_copy_with_modified_label(self, p11_raw_session: Any) -> None:
         """Copy a key with a new label - label changes, other attrs preserved."""
         rs = p11_raw_session
-        key_h = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_LABEL: "orig-label"})
+        key_h = _gen_access_control_aes_key(rs, attrs={CKA_LABEL: "orig-label"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
             if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
@@ -332,10 +360,8 @@ class TestCopyObject:
     def test_copy_changes_extractable(self, p11_raw_session: Any) -> None:
         """Copy a key with CKA_EXTRACTABLE changed from True to False."""
         rs = p11_raw_session
-        key_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
+        key_h = _gen_access_control_aes_key(
+            rs,
             attrs={
                 CKA_EXTRACTABLE: True,
                 CKA_SENSITIVE: False,
@@ -363,11 +389,12 @@ class TestCopyObject:
     def test_non_copyable_key_rejected(self, p11_raw_session: Any) -> None:
         """Key with CKA_COPYABLE=False cannot be copied - CKR_ACTION_PROHIBITED."""
         rs = p11_raw_session
+        _require_aes_keygen(rs)
         try:
             key_h = gen_aes_key(
                 rs.raw,
                 rs.sh,
-                256,
+                128,
                 attrs={CKA_COPYABLE: False, CKA_LABEL: "non-copyable"},
             )
         except AssertionError:
@@ -382,14 +409,15 @@ class TestCopyObject:
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "should-fail"})
             except AssertionError as exc:
-                msg = str(exc)
-                accepted = (
-                    "CKR_ACTION_PROHIBITED",
-                    "CKR_FUNCTION_NOT_SUPPORTED",
-                    "CKR_ATTRIBUTE_READ_ONLY",
-                    "CKR_TEMPLATE_INCONSISTENT",
-                )
-                if any(code in msg for code in accepted):
+                if is_known_error(
+                    exc,
+                    {
+                        CKR_ACTION_PROHIBITED,
+                        CKR_FUNCTION_NOT_SUPPORTED,
+                        CKR_ATTRIBUTE_READ_ONLY,
+                        CKR_TEMPLATE_INCONSISTENT,
+                    },
+                ):
                     return
                 raise
 
@@ -415,10 +443,8 @@ class TestCopyObject:
     def test_copy_session_object_stays_session(self, p11_raw_session: Any) -> None:
         """Copy of a session object is also a session object (CKA_TOKEN=False)."""
         rs = p11_raw_session
-        key_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
+        key_h = _gen_access_control_aes_key(
+            rs,
             attrs={CKA_TOKEN: False, CKA_LABEL: "session-src"},
         )
         try:
@@ -443,10 +469,8 @@ class TestCopyObject:
         """Copy of a token object is also a token object (CKA_TOKEN=True)."""
         rs = p11_raw_session
         skip_if_token_write_protected(rs.raw, rs.slot_id)
-        key_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
+        key_h = _gen_access_control_aes_key(
+            rs,
             attrs={CKA_TOKEN: True, CKA_LABEL: "token-src"},
         )
         try:

@@ -5,8 +5,6 @@ Verifies AES-GCM encrypt/decrypt via PKCS#11 against Python cryptography.
 
 from __future__ import annotations
 
-import ctypes
-from ctypes import byref
 from typing import Any
 
 import pytest
@@ -23,28 +21,15 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
 )
 from pkcs11_check.raw.types_std import (
-    CK_ULONG,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_TOKEN,
     CKK_AES,
     CKM_AES_GCM,
-    CKR_ARGUMENTS_BAD,
-    CKR_BUFFER_TOO_SMALL,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_OK,
 )
+from pkcs11_check.testcases.conftest import skip_if_mech_param_unsupported
 
 pytestmark = pytest.mark.crossverify
-
-_GENERATED_IV_UNSUPPORTED_RVS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-)
 
 
 def _import_aes(rs: Any, key_bytes: bytes) -> int:
@@ -62,18 +47,7 @@ def _import_aes(rs: Any, key_bytes: bytes) -> int:
     )
 
 
-def _to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
-    return (ctypes.c_ubyte * len(data))(*data)
-
-
-def _skip_generated_iv_unsupported(rv: int, convention: str) -> None:
-    pytest.skip(
-        f"CKM_AES_GCM provider-generated IV convention {convention!r} "
-        f"not supported: 0x{int(rv):08x}"
-    )
-
-
-def _encrypt_gcm_generated_iv_two_call(
+def _encrypt_gcm_generated_iv(
     rs: Any,
     key: int,
     mech: Any,
@@ -81,31 +55,29 @@ def _encrypt_gcm_generated_iv_two_call(
     *,
     convention: str,
 ) -> bytes:
-    rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-    if rv in _GENERATED_IV_UNSUPPORTED_RVS:
-        _skip_generated_iv_unsupported(rv, convention)
-    assert rv == CKR_OK, f"C_EncryptInit failed: 0x{int(rv):08x}"
+    """Encrypt via the standard recipe, skipping cleanly on unsupported-CKR rejections.
 
-    pt_buf = _to_ubyte_buf(plaintext)
-    out_len = CK_ULONG(0)
-    rv = rs.raw.C_Encrypt(rs.sh, pt_buf, len(plaintext), None, byref(out_len))
-    if rv in _GENERATED_IV_UNSUPPORTED_RVS:
-        _skip_generated_iv_unsupported(rv, convention)
-    assert rv in (CKR_OK, CKR_BUFFER_TOO_SMALL), f"C_Encrypt size query failed: 0x{int(rv):08x}"
-
-    out_size = max(int(out_len.value), len(plaintext) + 16)
-    out_buf = (ctypes.c_ubyte * out_size)()
-    out_len = CK_ULONG(out_size)
-    rv = rs.raw.C_Encrypt(rs.sh, pt_buf, len(plaintext), out_buf, byref(out_len))
-    if rv == CKR_BUFFER_TOO_SMALL and out_len.value > out_size:
-        out_size = int(out_len.value)
-        out_buf = (ctypes.c_ubyte * out_size)()
-        out_len = CK_ULONG(out_size)
-        rv = rs.raw.C_Encrypt(rs.sh, pt_buf, len(plaintext), out_buf, byref(out_len))
-    if rv in _GENERATED_IV_UNSUPPORTED_RVS:
-        _skip_generated_iv_unsupported(rv, convention)
-    assert rv == CKR_OK, f"C_Encrypt failed: 0x{int(rv):08x}"
-    return bytes(out_buf[: out_len.value])
+    Wraps ``encrypt_single`` so the generated-IV convention probes share their
+    two-call buffer logic (including the CKR_BUFFER_TOO_SMALL retry) with every
+    other AEAD path instead of reimplementing it.
+    """
+    try:
+        return encrypt_single(
+            rs.raw,
+            rs.sh,
+            key,
+            CKM_AES_GCM,
+            plaintext,
+            mech_param=mech,
+            output_overhead=16,
+            retry_on_buffer_too_small=True,
+        )
+    except AssertionError as exc:
+        skip_if_mech_param_unsupported(
+            exc,
+            f"CKM_AES_GCM provider-generated IV convention {convention!r}",
+        )
+        return b""  # unreachable — helper either skips or re-raises
 
 
 class TestAESGCMCrossVerify:
@@ -348,7 +320,7 @@ class TestAESGCMProviderGeneratedIV:
                 tag_bits=128,
                 convention="strict",
             )
-            ciphertext = _encrypt_gcm_generated_iv_two_call(
+            ciphertext = _encrypt_gcm_generated_iv(
                 rs,
                 key,
                 mech,
@@ -356,7 +328,7 @@ class TestAESGCMProviderGeneratedIV:
                 convention="strict",
             )
             iv = mech.buffer_bytes("iv")
-            if iv == b"\x00" * 12:
+            if not any(iv):
                 pytest.skip(
                     "module accepted strict generated-IV-shaped parameters, but no "
                     "provider-generated IV writeback was observed"
@@ -403,7 +375,7 @@ class TestAESGCMProviderGeneratedIV:
                 tag_bits=128,
                 convention="aws",
             )
-            ciphertext = _encrypt_gcm_generated_iv_two_call(
+            ciphertext = _encrypt_gcm_generated_iv(
                 rs,
                 key,
                 mech,
@@ -411,7 +383,7 @@ class TestAESGCMProviderGeneratedIV:
                 convention="aws",
             )
             iv = mech.buffer_bytes("iv")
-            if iv == b"\x00" * 12:
+            if not any(iv):
                 pytest.skip(
                     "module treated AWS-style parameters as caller-supplied zero IV; "
                     "no provider-generated IV writeback observed"

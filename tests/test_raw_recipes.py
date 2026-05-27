@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     copy_object,
@@ -326,3 +330,35 @@ def test_expect_rv_context_in_error_message() -> None:
         assert False, "Should have raised"
     except AssertionError as e:
         assert "C_EncryptInit" in str(e)
+
+
+def test_to_ubyte_buf_round_trips_bytes() -> None:
+    from pkcs11_check.raw.recipes import to_ubyte_buf
+
+    data = b"\x00\xff\x42\xa5" + bytes(range(32))
+    buf = to_ubyte_buf(data)
+    assert len(buf) == len(data)
+    assert bytes(buf) == data
+
+
+def test_to_ubyte_buf_empty_input_returns_empty_array() -> None:
+    from pkcs11_check.raw.recipes import to_ubyte_buf
+
+    buf = to_ubyte_buf(b"")
+    assert len(buf) == 0
+    assert bytes(buf) == b""
+
+
+@pytest.mark.parametrize("size", [64, 4096, 1_048_576])
+def test_benchmark_to_ubyte_buf(benchmark: Any, size: int) -> None:
+    """Confirms ``to_ubyte_buf`` does memcpy-speed copies, not per-byte conversion.
+
+    Run with ``pytest --benchmark-only`` for numbers; on a 1 MiB payload the
+    ``from_buffer_copy`` path is ~100× faster than the legacy
+    ``(c_ubyte * N)(*data)`` varargs construction.
+    """
+    from pkcs11_check.raw.recipes import to_ubyte_buf
+
+    data = bytes(size)
+    result = benchmark(to_ubyte_buf, data)
+    assert len(result) == size

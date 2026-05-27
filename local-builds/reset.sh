@@ -29,7 +29,7 @@ case "${1:-help}" in
     help|--help)
         echo "Usage: $0 [target|all]"
         echo ""
-        echo "Targets: kryoptic softhsm2 opencryptoki tpm2 pkcs11-mock qryptotoken bouncyhsm"
+        echo "Targets: kryoptic softhsm2 opencryptoki tpm2 pkcs11-mock bouncyhsm"
         echo ""
         echo "Examples:"
         echo "  $0 kryoptic   # reset Kryoptic token only"

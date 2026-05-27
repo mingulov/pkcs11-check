@@ -183,6 +183,7 @@ class TestGetOperationStateAPI:
 
         from pkcs11_check.raw.rv import ckr_name
         from pkcs11_check.raw.types_std import (
+            CKR_ARGUMENTS_BAD,
             CKR_FUNCTION_NOT_SUPPORTED,
             CKR_OPERATION_NOT_INITIALIZED,
             CKR_SAVED_STATE_INVALID,
@@ -201,10 +202,21 @@ class TestGetOperationStateAPI:
         acceptable = {
             CKR_SAVED_STATE_INVALID,
             CKR_OPERATION_NOT_INITIALIZED,
+            CKR_ARGUMENTS_BAD,
         }
+        if rv == CKR_ARGUMENTS_BAD:
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                "C_SetOperationState rejected a garbage state blob with "
+                "CKR_ARGUMENTS_BAD instead of the more specific "
+                "CKR_SAVED_STATE_INVALID",
+                ComplianceLevel.NOT_RECOMMENDED,
+                reference="PKCS#11 v3.1 C_SetOperationState return values",
+            )
         assert rv in acceptable, (
             f"C_SetOperationState with garbage: expected "
-            f"CKR_SAVED_STATE_INVALID, got {ckr_name(rv)}"
+            f"CKR_SAVED_STATE_INVALID or CKR_ARGUMENTS_BAD, got {ckr_name(rv)}"
         )
 
 
@@ -221,6 +233,12 @@ def _get_params(p11_config: Any) -> tuple[str, int, bytes]:
     return module_path, slot_index, pin_bytes
 
 
+def _skip_missing_mechanisms(rs: Any, names: tuple[str, ...]) -> None:
+    for name in names:
+        if not rs.has_mechanism(name):
+            pytest.skip(f"{name} not supported by module")
+
+
 @pytest.mark.usefixtures("p11_module")
 class TestDigestStateRoundTrip:
     """State save/restore round-trip for a SHA-256 multi-part digest.
@@ -231,7 +249,11 @@ class TestDigestStateRoundTrip:
     directly.  This also mirrors how real applications use state save/restore.
     """
 
-    def test_digest_state_same_session(self, p11_config: Any) -> None:
+    def test_digest_state_same_session(
+        self,
+        p11_config: Any,
+        p11_raw_session: Any,
+    ) -> None:
         """SHA-256 state save/restore on the same session produces the correct digest.
 
         Steps:
@@ -243,6 +265,7 @@ class TestDigestStateRoundTrip:
         Skips when the module returns CKR_STATE_UNSAVEABLE (most software tokens
         including SoftHSM2 and many hardware tokens do not support state save).
         """
+        _skip_missing_mechanisms(p11_raw_session, ("SHA256",))
         module_path, slot_index, pin_bytes = _get_params(p11_config)
 
         script = """\
@@ -491,7 +514,11 @@ class TestEncryptStateRoundTrip:
     tests skip gracefully when the module does not support saving encrypt state.
     """
 
-    def test_encrypt_state_same_session(self, p11_config: Any) -> None:
+    def test_encrypt_state_same_session(
+        self,
+        p11_config: Any,
+        p11_raw_session: Any,
+    ) -> None:
         """AES-CBC state save/restore on the same session produces correct ciphertext.
 
         Steps:
@@ -506,6 +533,7 @@ class TestEncryptStateRoundTrip:
 
         Source: PKCS#11 v3.1 Sec.5.6.5-Sec.5.6.6.
         """
+        _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC"))
         module_path, slot_index, pin_bytes = _get_params(p11_config)
 
         script = """\

@@ -12,6 +12,7 @@ from pkcs11_check.raw.types_std import (
     CKF_VERIFY,
     CKF_WRAP,
     CKM_EDDSA,
+    CKM_RSA_PKCS_OAEP,
     CKM_XEDDSA,
 )
 from pkcs11_check.testcases import mechanism_selection as selection
@@ -165,6 +166,15 @@ def test_multipart_sign_verify_uses_real_eddsa_and_xeddsa_registry_config() -> N
     assert eddsa.selected
     assert xeddsa.rejected
     assert xeddsa.reasons[0].code == "unsupported_multi_part"
+
+
+def test_rsa_oaep_mechanism_smoke_uses_sha1_compatibility_params() -> None:
+    """The broad OAEP smoke path should not assume SHA-256 OAEP support."""
+    config = MECHANISM_REGISTRY[CKM_RSA_PKCS_OAEP]
+
+    assert config.param_recipe.style == "oaep"
+    assert config.param_recipe.defaults["hash_mech"] == "CKM_SHA_1"
+    assert config.param_recipe.defaults["mgf"] == "CKG_MGF1_SHA1"
 
 
 def test_select_for_scenario_returns_machine_readable_reasons() -> None:

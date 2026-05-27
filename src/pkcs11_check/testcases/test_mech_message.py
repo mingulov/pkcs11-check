@@ -17,16 +17,13 @@ from ctypes import byref
 import pytest
 
 from pkcs11_check.fixtures import RawSession
+from pkcs11_check.raw.recipes import to_ubyte_buf
 
 pytestmark = [
     pytest.mark.mechanism_coverage,
     pytest.mark.message_based,
     pytest.mark.requires_v30,
 ]
-
-
-def _to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
-    return (ctypes.c_ubyte * len(data))(*data)
 
 
 class TestMessageEncrypt:
@@ -79,7 +76,7 @@ class TestMessageEncrypt:
             init_mech = mech_gcm_message(CKM_AES_GCM, init_iv, tag_bits=128)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
             if rv == CKR_MECHANISM_INVALID:
-                pytest.skip("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
+                pytest.xfail("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
 
             # Build per-message CK_GCM_MESSAGE_PARAMS for C_EncryptMessage.
@@ -99,8 +96,8 @@ class TestMessageEncrypt:
 
             plaintext = b"Hello message-based AEAD!"
             aad = b"additional-data"
-            pt_buf = _to_ubyte_buf(plaintext)
-            aad_buf = _to_ubyte_buf(aad)
+            pt_buf = to_ubyte_buf(plaintext)
+            aad_buf = to_ubyte_buf(aad)
 
             # Size query
             ct_len = CK_ULONG(0)
@@ -168,7 +165,7 @@ class TestMessageEncrypt:
             dec_params.pTag = ctypes.cast(dec_tag_buf, ctypes.c_void_p)
             dec_params.ulTagBits = 128
 
-            ct_in_buf = _to_ubyte_buf(ciphertext)
+            ct_in_buf = to_ubyte_buf(ciphertext)
 
             # Size query
             pt_out_len = CK_ULONG(0)
@@ -267,7 +264,7 @@ class TestMessageEncrypt:
             init_mech = mech_gcm_message(CKM_AES_GCM, b"\x00" * 12, tag_bits=128)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
             if rv == CKR_MECHANISM_INVALID:
-                pytest.skip("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
+                pytest.xfail("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_GCM")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
 
             msg_mech = mech_gcm_message_generated_iv(
@@ -280,8 +277,8 @@ class TestMessageEncrypt:
 
             plaintext = b"generated IV through message API"
             aad = b"message-generated-iv-aad"
-            pt_buf = _to_ubyte_buf(plaintext)
-            aad_buf = _to_ubyte_buf(aad)
+            pt_buf = to_ubyte_buf(plaintext)
+            aad_buf = to_ubyte_buf(aad)
             ct_len = CK_ULONG(len(plaintext) + 16)
             ct_buf = (ctypes.c_ubyte * ct_len.value)()
 
@@ -304,8 +301,8 @@ class TestMessageEncrypt:
             iv = msg_mech.buffer_bytes("iv")
             tag = msg_mech.buffer_bytes("tag")
             ciphertext = bytes(ct_buf[: ct_len.value])
-            assert iv != b"\x00" * 12, "C_EncryptMessage did not write generated IV to pIv"
-            assert tag != b"\x00" * 16, "C_EncryptMessage did not write GCM tag to pTag"
+            assert any(iv), "C_EncryptMessage did not write generated IV to pIv"
+            assert any(tag), "C_EncryptMessage did not write GCM tag to pTag"
             assert AESGCM(key_bytes).decrypt(iv, ciphertext + tag, aad) == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -364,7 +361,7 @@ class TestMessageEncrypt:
             init_mech = mech_ccm(CKM_AES_CCM, b"\x00" * 12, data_len=len(plaintext), mac_len=16)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
             if rv == CKR_MECHANISM_INVALID:
-                pytest.skip("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_CCM")
+                pytest.xfail("C_MessageEncryptInit: CKR_MECHANISM_INVALID for CKM_AES_CCM")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
 
             msg_mech = mech_ccm_message_generated_nonce(
@@ -375,8 +372,8 @@ class TestMessageEncrypt:
                 mac_len=16,
             )
             msg_params = msg_mech.params
-            pt_buf = _to_ubyte_buf(plaintext)
-            aad_buf = _to_ubyte_buf(aad)
+            pt_buf = to_ubyte_buf(plaintext)
+            aad_buf = to_ubyte_buf(aad)
             ct_len = CK_ULONG(len(plaintext))
             ct_buf = (ctypes.c_ubyte * ct_len.value)()
 
@@ -399,8 +396,8 @@ class TestMessageEncrypt:
             nonce = msg_mech.buffer_bytes("nonce")
             mac = msg_mech.buffer_bytes("mac")
             ciphertext = bytes(ct_buf[: ct_len.value])
-            assert nonce != b"\x00" * 12, "C_EncryptMessage did not write generated nonce"
-            assert mac != b"\x00" * 16, "C_EncryptMessage did not write CCM MAC"
+            assert any(nonce), "C_EncryptMessage did not write generated nonce"
+            assert any(mac), "C_EncryptMessage did not write CCM MAC"
             assert (
                 AESCCM(key_bytes, tag_length=16).decrypt(nonce, ciphertext + mac, aad) == plaintext
             )
@@ -477,9 +474,9 @@ class TestMessageEncrypt:
                 )
 
             accepted_rejection = (
-                int(CKR_KEY_FUNCTION_NOT_PERMITTED),
-                int(CKR_KEY_HANDLE_INVALID),
-                int(CKR_KEY_TYPE_INCONSISTENT),
+                CKR_KEY_FUNCTION_NOT_PERMITTED,
+                CKR_KEY_HANDLE_INVALID,
+                CKR_KEY_TYPE_INCONSISTENT,
             )
             assert rv in accepted_rejection, (
                 f"C_MessageEncryptInit on CKA_ENCRYPT=False key returned "
@@ -531,7 +528,7 @@ class TestMessageEncrypt:
             mech = mech_gcm_message(CKM_AES_GMAC, iv, tag_bits=128)
             rv = rs.raw.C_MessageSignInit(rs.sh, mech.byref(), key)
             if rv == CKR_MECHANISM_INVALID:
-                pytest.skip("C_MessageSignInit: CKR_MECHANISM_INVALID for CKM_AES_GMAC")
+                pytest.xfail("C_MessageSignInit: CKR_MECHANISM_INVALID for CKM_AES_GMAC")
             assert rv == CKR_OK, f"C_MessageSignInit failed: 0x{rv:08x}"
 
             if hasattr(rs.raw, "C_MessageSignFinal"):

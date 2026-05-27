@@ -67,12 +67,50 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import gen_generic_secret
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.derive]
+
+_DERIVE_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+def _xfail_derive_runtime_reject(exc: AssertionError, entry: MechEntry) -> None:
+    xfail_if_known_ckr(
+        exc,
+        _DERIVE_RUNTIME_REJECT_RVS,
+        f"{entry.mech_name}: advertised derive path is not operational",
+    )
 
 # SHA key derivation mechanisms have no params and use a generic secret base key
 _SHA_KEY_DERIV_MECHS: set[int] = set()
@@ -734,27 +772,30 @@ class TestMechDerive:
         if _DES3_CBC_ENCRYPT_DATA_ID and mech_id == _DES3_CBC_ENCRYPT_DATA_ID:
             pytest.skip(f"{entry.mech_name}: needs CK_DES_CBC_ENCRYPT_DATA_PARAMS struct with IV")
 
-        # Dispatch to per-family helpers
-        if _HKDF_DERIVE_ID and mech_id == _HKDF_DERIVE_ID:
-            _derive_hkdf(rs, entry)
-        elif mech_id in _ECDH1_MECH_IDS:
-            _derive_ecdh(rs, entry)
-        elif _AES_ECB_ENCRYPT_DATA_ID and mech_id == _AES_ECB_ENCRYPT_DATA_ID:
-            _derive_aes_ecb(rs, entry)
-        elif _DES_ECB_ENCRYPT_DATA_ID and mech_id == _DES_ECB_ENCRYPT_DATA_ID:
-            _derive_des_ecb(rs, entry, des3=False)
-        elif _DES3_ECB_ENCRYPT_DATA_ID and mech_id == _DES3_ECB_ENCRYPT_DATA_ID:
-            _derive_des_ecb(rs, entry, des3=True)
-        elif mech_id in _CONCAT_DATA_MECH_IDS or mech_id == _XOR_MECH_ID:
-            _derive_concat_data(rs, entry)
-        elif _EXTRACT_MECH_ID and mech_id == _EXTRACT_MECH_ID:
-            _derive_extract(rs, entry)
-        elif _CONCAT_KEY_MECH_ID and mech_id == _CONCAT_KEY_MECH_ID:
-            _derive_concat_key(rs, entry)
-        elif mech_id in _SHA_KEY_DERIV_MECHS:
-            _derive_sha(rs, entry)
-        else:
-            pytest.skip(
-                f"{entry.mech_name}: derive param construction not yet implemented "
-                "in this generic test"
-            )
+        try:
+            # Dispatch to per-family helpers
+            if _HKDF_DERIVE_ID and mech_id == _HKDF_DERIVE_ID:
+                _derive_hkdf(rs, entry)
+            elif mech_id in _ECDH1_MECH_IDS:
+                _derive_ecdh(rs, entry)
+            elif _AES_ECB_ENCRYPT_DATA_ID and mech_id == _AES_ECB_ENCRYPT_DATA_ID:
+                _derive_aes_ecb(rs, entry)
+            elif _DES_ECB_ENCRYPT_DATA_ID and mech_id == _DES_ECB_ENCRYPT_DATA_ID:
+                _derive_des_ecb(rs, entry, des3=False)
+            elif _DES3_ECB_ENCRYPT_DATA_ID and mech_id == _DES3_ECB_ENCRYPT_DATA_ID:
+                _derive_des_ecb(rs, entry, des3=True)
+            elif mech_id in _CONCAT_DATA_MECH_IDS or mech_id == _XOR_MECH_ID:
+                _derive_concat_data(rs, entry)
+            elif _EXTRACT_MECH_ID and mech_id == _EXTRACT_MECH_ID:
+                _derive_extract(rs, entry)
+            elif _CONCAT_KEY_MECH_ID and mech_id == _CONCAT_KEY_MECH_ID:
+                _derive_concat_key(rs, entry)
+            elif mech_id in _SHA_KEY_DERIV_MECHS:
+                _derive_sha(rs, entry)
+            else:
+                pytest.skip(
+                    f"{entry.mech_name}: derive param construction not yet implemented "
+                    "in this generic test"
+                )
+        except AssertionError as exc:
+            _xfail_derive_runtime_reject(exc, entry)

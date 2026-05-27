@@ -4,10 +4,29 @@ from types import SimpleNamespace
 
 import pytest
 
-from pkcs11_check.raw.types_std import CKA_VALUE_LEN, CKK_SHA256_HMAC, CKM_SHA256_KEY_GEN, CKR_OK
+from pkcs11_check.raw.types_std import (
+    CKA_VALUE_LEN,
+    CKK_AES,
+    CKK_GENERIC_SECRET,
+    CKK_RSA,
+    CKK_SHA256_HMAC,
+    CKM_AES_CBC,
+    CKM_AES_KEY_GEN,
+    CKM_PKCS5_PBKD2,
+    CKM_RSA_PKCS_KEY_PAIR_GEN,
+    CKM_SHA256_KEY_GEN,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 from pkcs11_check.testcases import mechanism_helpers as helpers
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
-from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 
 class _FakeMech:
@@ -16,8 +35,11 @@ class _FakeMech:
 
 
 class _FakeRaw:
-    def __init__(self) -> None:
+    def __init__(self, rv: int = int(CKR_OK), keypair_rv: int = int(CKR_OK)) -> None:
         self.calls: list[tuple[int, object, object, int]] = []
+        self.keypair_calls: list[tuple[object, ...]] = []
+        self.rv = rv
+        self.keypair_rv = keypair_rv
 
     def C_GenerateKey(  # noqa: N802
         self,
@@ -29,7 +51,13 @@ class _FakeRaw:
     ) -> int:
         self.calls.append((sh, mech, tmpl_ptr, tmpl_count))
         handle_ptr._obj.value = 99
-        return int(CKR_OK)
+        return self.rv
+
+    def C_GenerateKeyPair(self, *args: object) -> int:  # noqa: N802
+        self.keypair_calls.append(args)
+        args[-2]._obj.value = 101  # type: ignore[attr-defined]
+        args[-1]._obj.value = 102  # type: ignore[attr-defined]
+        return self.keypair_rv
 
 
 def test_gen_symmetric_key_falls_back_to_mechanism_info_when_registry_sizes_missing(
@@ -75,3 +103,195 @@ def test_gen_symmetric_key_falls_back_to_mechanism_info_when_registry_sizes_miss
     assert handle == 99
     assert captured["value_len"] == 32
     assert len(fake_raw.calls) == 1
+
+
+def test_generate_key_from_recipe_skips_when_keygen_mechanism_absent() -> None:
+    fake_raw = _FakeRaw(rv=int(CKR_FUNCTION_NOT_SUPPORTED))
+    rs = SimpleNamespace(raw=fake_raw, sh=7, has_mechanism=lambda _name: False)
+    entry = MechEntry(
+        mech_id=int(CKM_AES_CBC),
+        mech_name="AES_CBC",
+        flags=0,
+        min_key_size=16,
+        max_key_size=32,
+        config=None,
+    )
+    config = MechConfig(
+        key_type=int(CKK_AES),
+        keygen_mech=int(CKM_AES_KEY_GEN),
+        key_sizes=(128,),
+        keygen_recipe=KeygenRecipe("symmetric"),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
+        helpers.generate_key_from_recipe(rs, entry, config)
+
+    assert fake_raw.calls == []
+
+
+def test_generate_key_from_recipe_xfails_when_advertised_keygen_rejects_runtime() -> None:
+    fake_raw = _FakeRaw(rv=int(CKR_FUNCTION_NOT_SUPPORTED))
+    rs = SimpleNamespace(raw=fake_raw, sh=7, has_mechanism=lambda _name: True)
+    entry = MechEntry(
+        mech_id=int(CKM_AES_CBC),
+        mech_name="AES_CBC",
+        flags=0,
+        min_key_size=16,
+        max_key_size=32,
+        config=None,
+    )
+    config = MechConfig(
+        key_type=int(CKK_AES),
+        keygen_mech=int(CKM_AES_KEY_GEN),
+        key_sizes=(128,),
+        keygen_recipe=KeygenRecipe("symmetric"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_CBC keygen rejected"):
+        helpers.generate_key_from_recipe(rs, entry, config)
+
+    assert len(fake_raw.calls) == 1
+
+
+def test_gen_symmetric_key_xfails_when_advertised_keygen_rejects_runtime() -> None:
+    fake_raw = _FakeRaw(rv=int(CKR_FUNCTION_NOT_SUPPORTED))
+    rs = SimpleNamespace(raw=fake_raw, sh=7, has_mechanism=lambda _name: True)
+    entry = MechEntry(
+        mech_id=int(CKM_AES_KEY_GEN),
+        mech_name="AES_KEY_GEN",
+        flags=0,
+        min_key_size=16,
+        max_key_size=32,
+        config=None,
+    )
+    config = MechConfig(
+        key_type=int(CKK_AES),
+        keygen_mech=int(CKM_AES_KEY_GEN),
+        key_sizes=(128,),
+        keygen_recipe=KeygenRecipe("symmetric"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN keygen rejected"):
+        helpers.gen_symmetric_key(rs, entry, config)
+
+    assert len(fake_raw.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "rv_name,rv",
+    [
+        ("CKR_ATTRIBUTE_VALUE_INVALID", CKR_ATTRIBUTE_VALUE_INVALID),
+        ("CKR_KEY_SIZE_RANGE", CKR_KEY_SIZE_RANGE),
+        ("CKR_MECHANISM_PARAM_INVALID", CKR_MECHANISM_PARAM_INVALID),
+        ("CKR_TEMPLATE_INCOMPLETE", CKR_TEMPLATE_INCOMPLETE),
+        ("CKR_TEMPLATE_INCONSISTENT", CKR_TEMPLATE_INCONSISTENT),
+    ],
+)
+def test_gen_symmetric_key_xfails_when_advertised_keygen_rejects_template(
+    rv_name: str,
+    rv: int,
+) -> None:
+    fake_raw = _FakeRaw(rv=int(rv))
+    rs = SimpleNamespace(raw=fake_raw, sh=7, has_mechanism=lambda _name: True)
+    entry = MechEntry(
+        mech_id=int(CKM_AES_KEY_GEN),
+        mech_name="AES_KEY_GEN",
+        flags=0,
+        min_key_size=16,
+        max_key_size=32,
+        config=None,
+    )
+    config = MechConfig(
+        key_type=int(CKK_AES),
+        keygen_mech=int(CKM_AES_KEY_GEN),
+        key_sizes=(128,),
+        keygen_recipe=KeygenRecipe("symmetric"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match=f"AES_KEY_GEN keygen rejected.*{rv_name}"):
+        helpers.gen_symmetric_key(rs, entry, config)
+
+    assert len(fake_raw.calls) == 1
+
+
+def test_gen_symmetric_key_exercises_pbkdf2_with_runtime_params() -> None:
+    fake_raw = _FakeRaw()
+    rs = SimpleNamespace(raw=fake_raw, sh=7, has_mechanism=lambda _name: True)
+    config = MechConfig(
+        key_type=int(CKK_GENERIC_SECRET),
+        keygen_mech=int(CKM_PKCS5_PBKD2),
+        key_sizes=(),
+        param_required=True,
+        param_recipe=ParamRecipe("pbkdf2"),
+        keygen_recipe=KeygenRecipe("symmetric"),
+    )
+    entry = MechEntry(
+        mech_id=int(CKM_PKCS5_PBKD2),
+        mech_name="PKCS5_PBKD2",
+        flags=0,
+        min_key_size=16,
+        max_key_size=64,
+        config=config,
+    )
+
+    try:
+        handle = helpers.gen_symmetric_key(rs, entry, config)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"unexpected skip: {exc}")
+
+    assert handle == 99
+    assert len(fake_raw.calls) == 1
+
+
+def test_gen_symmetric_key_xfails_when_pbkdf2_returns_arguments_bad() -> None:
+    fake_raw = _FakeRaw(rv=int(CKR_ARGUMENTS_BAD))
+    rs = SimpleNamespace(raw=fake_raw, sh=7, has_mechanism=lambda _name: True)
+    config = MechConfig(
+        key_type=int(CKK_GENERIC_SECRET),
+        keygen_mech=int(CKM_PKCS5_PBKD2),
+        key_sizes=(),
+        param_required=True,
+        param_recipe=ParamRecipe("pbkdf2"),
+        keygen_recipe=KeygenRecipe("symmetric"),
+    )
+    entry = MechEntry(
+        mech_id=int(CKM_PKCS5_PBKD2),
+        mech_name="PKCS5_PBKD2",
+        flags=0,
+        min_key_size=16,
+        max_key_size=64,
+        config=config,
+    )
+
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="PKCS5_PBKD2 keygen rejected.*CKR_ARGUMENTS_BAD",
+    ):
+        helpers.gen_symmetric_key(rs, entry, config)
+
+    assert len(fake_raw.calls) == 1
+
+
+def test_gen_keypair_for_mech_xfails_when_advertised_keypair_rejects_runtime() -> None:
+    fake_raw = _FakeRaw(keypair_rv=int(CKR_ATTRIBUTE_VALUE_INVALID))
+    rs = SimpleNamespace(raw=fake_raw, sh=7, has_mechanism=lambda _name: True)
+    entry = MechEntry(
+        mech_id=int(CKM_RSA_PKCS_KEY_PAIR_GEN),
+        mech_name="RSA_PKCS_KEY_PAIR_GEN",
+        flags=0,
+        min_key_size=256,
+        max_key_size=512,
+        config=None,
+    )
+    config = MechConfig(
+        key_type=int(CKK_RSA),
+        keygen_mech=int(CKM_RSA_PKCS_KEY_PAIR_GEN),
+        key_sizes=(2048,),
+        is_keypair=True,
+        keygen_recipe=KeygenRecipe("rsa"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN keypair rejected"):
+        helpers.gen_keypair_for_mech(rs, entry, config)
+
+    assert len(fake_raw.keypair_calls) == 1

@@ -24,7 +24,15 @@ from pkcs11_check.raw.types_std import (
     CKM,
     CKM_AES_CCM,
     CKM_AES_GCM,
+    CKR_AEAD_DECRYPT_FAILED,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 
 # GCM-SIV is not a standard PKCS#11 mechanism; use vendor extension if available
 CKM_AES_GCM_SIV = CKM(0x80000100, "CKM_AES_GCM_SIV")
@@ -100,9 +108,11 @@ def run_gcm_encrypt_test(
                 output_overhead=tag_bytes,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"GCM iv={len(iv)}B tag={tag_bytes}B not supported: {exc_msg}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+                pytest.xfail(
+                    f"AES_GCM advertised but encrypt iv={len(iv)}B tag={tag_bytes}B "
+                    f"is not operational: {exc}"
+                )
             raise
 
         if len(result) < tag_bytes:
@@ -168,22 +178,18 @@ def run_gcm_decrypt_test(
                 mech_param=gcm_param,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_MECHANISM_PARAM_INVALID",
-                    "CKR_ARGUMENTS_BAD",
+            if is_known_error(exc, {CKR_MECHANISM_PARAM_INVALID, CKR_ARGUMENTS_BAD}):
+                pytest.xfail(
+                    f"AES_GCM advertised but decrypt iv={len(iv)}B tag={tag_bytes}B "
+                    f"is not operational: {exc}"
                 )
-            ):
-                pytest.skip(f"GCM iv={len(iv)}B tag={tag_bytes}B not supported: {exc_msg}")
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_ENCRYPTED_DATA_INVALID",
-                    "CKR_ENCRYPTED_DATA_LEN_RANGE",
-                    "CKR_AEAD_DECRYPT_FAILED",
-                )
+            if is_known_error(
+                exc,
+                {
+                    CKR_ENCRYPTED_DATA_INVALID,
+                    CKR_ENCRYPTED_DATA_LEN_RANGE,
+                    CKR_AEAD_DECRYPT_FAILED,
+                },
             ):
                 if not test_passed:
                     return
@@ -247,9 +253,8 @@ def run_ccm_encrypt_test(
                 mech_param=ccm_param,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"CCM not supported: {exc_msg}")
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+                pytest.xfail(f"AES_CCM advertised but encrypt is not operational: {exc}")
             raise
 
         tag_len = vec["tag_len"]
@@ -326,17 +331,16 @@ def run_ccm_decrypt_test(
                 mech_param=ccm_param,
             )
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(c in exc_msg for c in ("CKR_MECHANISM_INVALID", "CKR_MECHANISM_PARAM_INVALID")):
-                pytest.skip(f"CCM decrypt not supported: {exc_msg}")
-            if not test_passed and any(
-                c in exc_msg
-                for c in (
-                    "CKR_ENCRYPTED_DATA_INVALID",
-                    "CKR_ENCRYPTED_DATA_LEN_RANGE",
-                    "CKR_AEAD_DECRYPT_FAILED",
-                    "CKR_DEVICE_ERROR",
-                )
+            if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID}):
+                pytest.xfail(f"AES_CCM advertised but decrypt is not operational: {exc}")
+            if not test_passed and is_known_error(
+                exc,
+                {
+                    CKR_ENCRYPTED_DATA_INVALID,
+                    CKR_ENCRYPTED_DATA_LEN_RANGE,
+                    CKR_AEAD_DECRYPT_FAILED,
+                    CKR_DEVICE_ERROR,
+                },
             ):
                 return  # Expected: module rejected invalid-tag ciphertext
             raise

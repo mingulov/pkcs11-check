@@ -9,7 +9,8 @@ def test_softhsm_generated_iv_compose_service_is_separate_target() -> None:
     compose = (ROOT / "docker/docker-compose.test.yml").read_text()
 
     assert "test-softhsm2-generated-iv:" in compose
-    assert "dockerfile: docker/softhsm2/Dockerfile.generated-iv" in compose
+    assert "dockerfile: docker/softhsm2/Dockerfile.main" in compose
+    assert 'SOFTHSM2_APPLY_GENERATED_IV_PATCH: "1"' in compose
     assert "PKCS11_CHECK_ARTIFACT_DIR: /artifacts/softhsm2-generated-iv" in compose
     assert 'PKCS11_CHECK_PIN: "1234"' in compose
 
@@ -42,12 +43,67 @@ def test_tpm2_background_daemon_does_not_hold_artifact_pipe() -> None:
     assert 'kill -0 "$tpm2_abrmd_pid"' in script
 
 
-def test_qryptotoken_build_failure_is_recorded_as_artifact() -> None:
-    dockerfile = (ROOT / "docker/qryptotoken/Dockerfile").read_text()
-    script = (ROOT / "docker/qryptotoken/run-qryptotoken.sh").read_text()
+def test_docker_provider_commands_do_not_mask_pkcs11_check_failures() -> None:
+    paths = sorted((ROOT / "docker").glob("**/Dockerfile*"))
+    paths += sorted((ROOT / "docker").glob("**/*.sh"))
 
-    assert 'ARG QRYPTOTOKEN_REF="v0.4.1"' in dockerfile
-    assert "qryptotoken build failed with exit code" in dockerfile
-    assert "/tmp/qryptotoken_build_failed" in dockerfile
-    assert "build-status.json" in script
-    assert '"status": "build_failed"' in script
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in paths
+        if any(
+            pattern in path.read_text()
+            for pattern in (
+                "run-pkcs11-check.sh || true",
+                "if ! bash /app/docker/run-pkcs11-check.sh",
+            )
+        )
+    ]
+
+    assert offenders == []
+
+
+def test_qryptotoken_is_not_an_active_docker_provider() -> None:
+    script = (ROOT / "docker/test-all.sh").read_text()
+    compose = (ROOT / "docker/docker-compose.test.yml").read_text()
+
+    default_block = script.split("DEFAULT_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
+    all_block = script.split("ALL_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
+
+    assert "qryptotoken" not in default_block
+    assert "qryptotoken" not in all_block
+    assert "test-qryptotoken" not in compose
+    assert not (ROOT / "docker/qryptotoken").exists()
+
+
+def test_default_docker_matrix_uses_tagged_nss_source_not_tip() -> None:
+    script = (ROOT / "docker/test-all.sh").read_text()
+
+    default_block = script.split("DEFAULT_PROVIDERS=(")[1].split(")", maxsplit=1)[0]
+
+    assert "nss-pqc" in default_block
+    assert "nss-main" not in default_block
+
+
+def test_nss_source_manifest_distinguishes_packages_tags_and_tip() -> None:
+    manifest = (ROOT / "docker/provider-sources.toml").read_text()
+
+    assert "[sources.nss_tip]" not in manifest
+    assert "[sources.nss_main_tip]" in manifest
+    assert "[sources.nspr_main_tip]" in manifest
+
+    nss_block = manifest.split("[targets.nss]")[1].split("[targets.", maxsplit=1)[0]
+    nss_pqc_block = manifest.split("[targets.nss_pqc]")[1].split("[targets.", maxsplit=1)[0]
+    nss_main_block = manifest.split("[targets.nss_main]")[1].split("[targets.", maxsplit=1)[0]
+
+    assert 'package_source = "nss_fedora_44"' in nss_block
+    assert 'package_tag = "nss-3.123.1-1.fc44.x86_64"' in nss_block
+    assert 'result_tag = "Fedora 44 nss-3.123.1-1.fc44 package"' in nss_block
+    assert "nss_main_tip" not in nss_block
+
+    assert 'release_source = "nss_3_124_rtm"' in nss_pqc_block
+    assert 'supporting_source = "nspr_4_39_rtm"' in nss_pqc_block
+    assert 'result_tag = "NSS_3_124_RTM / NSPR_4_39_RTM"' in nss_pqc_block
+
+    assert 'branch_source = "nss_main_tip"' in nss_main_block
+    assert 'supporting_source = "nspr_main_tip"' in nss_main_block
+    assert 'result_tag = "Mercurial tip comparison only"' in nss_main_block

@@ -99,17 +99,38 @@ class TestForkSafety:
                 get_slot_ids(raw)
                 raw.C_Finalize(None)
                 os._exit(0)
-            except Exception:
+            except Exception as exc:
+                print(f"CHILD_EXC:{{type(exc).__name__}}:{{exc}}", flush=True)
                 os._exit(1)
         else:
             _, status = os.waitpid(pid, 0)
             raw.C_Finalize(None)
-            exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
-            print(f"OK: child exit {{exit_code}}")
+            if os.WIFSIGNALED(status):
+                child_signal = os.WTERMSIG(status)
+                print(f"CHILD_SIGNAL:{{child_signal}}")
+                child_exit = -child_signal
+            else:
+                child_exit = os.WEXITSTATUS(status)
+            print(f"CHILD_EXIT:{{child_exit}}")
         """
         rc, output = _run_script(script, timeout=15)
-        assert rc == 0, f"Fork test crashed (rc={rc}): {output}"
-        assert "OK:" in output
+        if rc != 0:
+            pytest.fail(f"Fork test crashed (rc={rc}): {output}")
+        if "CHILD_SIGNAL:" in output:
+            pytest.fail(f"Fork child was killed by a signal: {output}")
+
+        child_exit: int | None = None
+        for line in output.splitlines():
+            if line.startswith("CHILD_EXIT:"):
+                try:
+                    child_exit = int(line.split(":", 1)[1])
+                except ValueError:
+                    pytest.fail(f"Fork child reported malformed exit status: {output}")
+                break
+        if child_exit is None:
+            pytest.fail(f"Fork child did not report exit status: {output}")
+        if child_exit != 0:
+            pytest.fail(f"Fork child failed (exit={child_exit}): {output}")
 
 
 class TestSessionObjectProcessIsolation:
@@ -147,9 +168,9 @@ class TestSessionObjectProcessIsolation:
         2. Compare results.
 
         Closes Phase 4.5 follow-up CROSS-PROC-001 (LOW-MED). Skips when
-        the module doesn't support fork-after-initialize cleanly (NSS,
-        qryptotoken — these modules need additional setup that the
-        subprocess test framework already documents).
+        the module doesn't support fork-after-initialize cleanly. Those modules
+        need additional setup that the subprocess test framework already
+        documents.
         """
         module = str(p11_config.module)
         pin = p11_config.pin.get_secret_value() if p11_config.pin else None
@@ -291,6 +312,11 @@ class TestSessionObjectProcessIsolation:
         # TPM2_Startup can exceed 30s on busy systems.
         rc, output = _run_script(script, timeout=90)
         if rc != 0:
+            if "FATAL:Parent_CreateObject:" in output:
+                pytest.xfail(
+                    "session-object setup rejected before cross-process isolation "
+                    f"could be tested: {output}"
+                )
             pytest.fail(f"Cross-process session-object isolation test crashed (rc={rc}): {output}")
 
         # Parse output: PARENT_LABEL must be set; child must report
@@ -380,8 +406,8 @@ class TestLibraryReload:
 
         A negative exit code (signal/segfault) is a module bug and kept as failure.
         A positive exit code (rc > 0) means the module raised a Python exception
-        during reinit -- common causes: token label not found after reinit (NSS,
-        qryptotoken), daemon not provisioned (tpm2-pkcs11). These are module
+        during reinit -- common causes: token label not found after reinit (NSS)
+        or daemon not provisioned (tpm2-pkcs11). These are module
         environment limitations, not crashes, so xfail.
         """
         module = str(p11_config.module)

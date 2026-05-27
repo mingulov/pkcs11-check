@@ -1,4 +1,4 @@
-# OpenCryptoki 3.26 with SWToken — IBM's PKCS#11 implementation
+# Legacy Fedora-packaged OpenCryptoki with SWToken — IBM's PKCS#11 implementation
 # v3.0 support, software token backed by OpenSSL
 
 FROM fedora:44
@@ -23,7 +23,8 @@ RUN mkdir -p /var/lib/opencryptoki/swtok/TOK_OBJ \
 
 # Use only the SW token (slot 3 in default config uses libpkcs11_sw.so)
 # Override config to put SW token at slot 0
-RUN printf 'version opencryptoki-3.26\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' \
+RUN OC_VER=$(rpm -q --qf '%{VERSION}' opencryptoki) && \
+    printf 'version opencryptoki-%s\n\nslot 0\n{\n    stdll = libpkcs11_sw.so\n    tokversion = 3.12\n}\n' "$OC_VER" \
     > /etc/opencryptoki/opencryptoki.conf
 
 ENV PKCS11_CHECK_MODULE=/usr/lib64/pkcs11/libopencryptoki.so

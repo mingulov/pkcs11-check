@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # OpenSSL — dependency for Kryoptic, SoftHSM2, OpenCryptoki
-# Latest release: openssl-3.6.1
+# Latest release: openssl-4.0.0
 # Not a PKCS#11 provider itself — just a build dependency.
 
 PROVIDER_NAME="openssl"
-DEFAULT_BRANCH="openssl-3.6.1"
+DEFAULT_BRANCH="openssl-4.0.0"
 REPO="https://github.com/openssl/openssl.git"
 
 build() {

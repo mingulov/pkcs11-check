@@ -380,11 +380,11 @@ def test_tls_key_material_iv_buffers_reflect_provider_writes() -> None:
         iv_size_bits=64,
     )
 
-    _provider_write(ssl3._key_mat_out_ref.pIVClient, bytes(range(16)))
-    _provider_write(ssl3._key_mat_out_ref.pIVServer, bytes(range(16, 32)))
-    _provider_write(tls12._key_mat_out_ref.pIVClient, bytes(range(32, 48)))
-    _provider_write(tls12._key_mat_out_ref.pIVServer, bytes(range(48, 64)))
-    _provider_write(wtls._key_mat_out_ref.pIV, bytes(range(64, 72)))
+    _provider_write(ssl3.key_mat_out.pIVClient, bytes(range(16)))
+    _provider_write(ssl3.key_mat_out.pIVServer, bytes(range(16, 32)))
+    _provider_write(tls12.key_mat_out.pIVClient, bytes(range(32, 48)))
+    _provider_write(tls12.key_mat_out.pIVServer, bytes(range(48, 64)))
+    _provider_write(wtls.key_mat_out.pIV, bytes(range(64, 72)))
 
     assert ssl3.buffer_bytes("iv_client") == bytes(range(16))
     assert ssl3.buffer_bytes("iv_server") == bytes(range(16, 32))
@@ -394,33 +394,22 @@ def test_tls_key_material_iv_buffers_reflect_provider_writes() -> None:
 
 
 def test_sp800_108_additional_key_handles_are_writable() -> None:
-    from pkcs11_check.raw.pack import attr_bool, attr_ulong, template
-    from pkcs11_check.raw.types_std import (
-        CK_DERIVED_KEY,
-        CK_OBJECT_HANDLE,
-        CKA_CLASS,
-        CKA_KEY_TYPE,
-        CKA_TOKEN,
-        CKA_VALUE_LEN,
-        CKK_AES,
-        CKO_SECRET_KEY,
-    )
+    """Provider writes to ``phKey`` inside CK_DERIVED_KEY entries must be observable.
 
-    tmpl = template(
-        attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-        attr_ulong(CKA_KEY_TYPE, CKK_AES),
-        attr_ulong(CKA_VALUE_LEN, 16),
-        attr_bool(CKA_TOKEN, False),
-    )
-    handle = CK_OBJECT_HANDLE(0)
-    derived = CK_DERIVED_KEY()
-    derived.pTemplate = ctypes.cast(tmpl.ptr, ctypes.c_void_p)
-    derived.ulAttributeCount = tmpl.count
-    derived.phKey = ctypes.cast(ctypes.pointer(handle), ctypes.c_void_p)
+    Exercises ``_additional_derived_keys`` (the helper used by the real
+    SP800-108 KDF tests), not bare ctypes mechanics, so any change that
+    breaks the ownership/keepalive chain shows up here.
+    """
+    from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
+    from pkcs11_check.testcases.test_sp800_108_kdf import _additional_derived_keys
 
-    ctypes.cast(derived.phKey, ctypes.POINTER(CK_OBJECT_HANDLE))[0] = CK_OBJECT_HANDLE(1234)
+    derived, handles, _keepalive = _additional_derived_keys(count=3, key_bits=128)
 
-    assert handle.value == 1234
+    for index, handle in enumerate(handles):
+        slot = ctypes.cast(derived[index].phKey, ctypes.POINTER(CK_OBJECT_HANDLE))
+        slot[0] = CK_OBJECT_HANDLE(1000 + index)
+
+    assert [h.value for h in handles] == [1000, 1001, 1002]
 
 
 def test_prf_output_buffers_reflect_provider_writes() -> None:
@@ -1043,3 +1032,90 @@ def test_sdist_and_wheel_include_vendored_standard_headers_and_generated_raw_mod
         module_prefix="src/pkcs11_check",
         header_prefix="third_party/pkcs11-headers/3.2",
     )
+
+
+# ---------------------------------------------------------------------------
+# Writable-pointer ownership invariant + KeyMatMechanism
+# ---------------------------------------------------------------------------
+
+
+def test_mech_gcm_message_tag_buffer_aliases_struct_field() -> None:
+    """Writes through params.pTag are visible via the registered ``tag`` buffer.
+
+    Locks the ownership invariant that the internal allocator helper relies on:
+    the bytes ``buffer_bytes("tag")`` returns must be the same memory the
+    mechanism param struct points at.
+    """
+    from pkcs11_check.raw.pack import mech_gcm_message
+    from pkcs11_check.raw.types_std import CKM_AES_GCM
+
+    mech = mech_gcm_message(CKM_AES_GCM, bytes(12), tag_bits=128)
+    ctypes.cast(mech.params.pTag, ctypes.POINTER(ctypes.c_ubyte * 16))[0][3] = 0x42
+    assert mech.buffer_bytes("tag")[3] == 0x42
+
+
+def test_packed_mechanism_buffer_storage_exposes_underlying_buffer() -> None:
+    """``buffer_storage`` returns the live ctypes array for shared mutation."""
+    from pkcs11_check.raw.pack import mech_gcm_message
+    from pkcs11_check.raw.types_std import CKM_AES_GCM
+
+    mech = mech_gcm_message(CKM_AES_GCM, bytes(12), tag_bits=128)
+    storage, length = mech.buffer_storage("tag")
+    assert length == 16
+    storage[5] = 0x99
+    assert mech.buffer_bytes("tag")[5] == 0x99
+
+
+def test_key_mat_mechanism_owns_key_mat_out_struct() -> None:
+    """mech_*_key_mat packers return KeyMatMechanism with key_mat_out populated."""
+    from pkcs11_check.raw.pack import KeyMatMechanism, mech_ssl3_key_mat
+    from pkcs11_check.raw.types_std import (
+        CK_SSL3_KEY_MAT_OUT,
+        CKM_SSL3_KEY_AND_MAC_DERIVE,
+    )
+
+    mech = mech_ssl3_key_mat(
+        CKM_SSL3_KEY_AND_MAC_DERIVE,
+        client_random=bytes(28),
+        server_random=bytes(28),
+        mac_size_bits=160,
+        key_size_bits=128,
+        iv_size_bits=128,
+    )
+    assert isinstance(mech, KeyMatMechanism)
+    assert isinstance(mech.key_mat_out, CK_SSL3_KEY_MAT_OUT)
+
+
+def test_key_mat_mechanism_iv_buffers_round_trip_provider_writes() -> None:
+    """IV buffers registered by mech_tls12_key_mat reflect provider writes."""
+    from pkcs11_check.raw.pack import mech_tls12_key_mat
+    from pkcs11_check.raw.types_std import CKM_SHA256, CKM_TLS12_KEY_AND_MAC_DERIVE
+
+    mech = mech_tls12_key_mat(
+        CKM_TLS12_KEY_AND_MAC_DERIVE,
+        client_random=bytes(32),
+        server_random=bytes(32),
+        hash_mech=int(CKM_SHA256),
+        mac_size_bits=256,
+        key_size_bits=128,
+        iv_size_bits=128,
+    )
+    iv_client_addr = mech.key_mat_out.pIVClient
+    iv_client_buf = ctypes.cast(iv_client_addr, ctypes.POINTER(ctypes.c_ubyte * 16))
+    iv_client_buf[0][3] = 0xAB
+    assert mech.buffer_bytes("iv_client")[3] == 0xAB
+
+
+def test_mech_gcm_message_inherit_tag_shares_buffer_with_source() -> None:
+    """unwrap-side mech sees the same tag bytes as the wrap-side source."""
+    from pkcs11_check.raw.pack import mech_gcm_message, mech_gcm_message_inherit_tag
+    from pkcs11_check.raw.types_std import CKM_AES_GCM
+
+    iv = bytes(range(12))
+    wrap = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
+    # Simulate provider writing the tag.
+    ctypes.cast(wrap.params.pTag, ctypes.POINTER(ctypes.c_ubyte * 16))[0][0] = 0x7E
+
+    unwrap = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap)
+    assert unwrap.buffer_bytes("tag") == wrap.buffer_bytes("tag")
+    assert unwrap.buffer_bytes("tag")[0] == 0x7E

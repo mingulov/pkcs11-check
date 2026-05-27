@@ -12,16 +12,21 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.bootstrap import close_session_quietly, login_user
-from pkcs11_check.raw.bootstrap import open_session as raw_open_session
+from pkcs11_check.raw.bootstrap import open_session as _raw_open_session
 from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import (
-    create_object,
+    create_object as _raw_create_object,
+)
+from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
-    gen_aes_key,
     read_attributes,
     set_attributes,
 )
+from pkcs11_check.raw.recipes import (
+    gen_aes_key as _raw_gen_aes_key,
+)
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -36,9 +41,20 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKK_AES,
     CKO_DATA,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_SESSION_COUNT,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import get_pin_bytes, skip_if_token_write_protected
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    get_pin_bytes,
+    is_known_error,
+    require_operational_aes_keygen,
+    skip_if_token_write_protected,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.access
 
@@ -46,6 +62,26 @@ pytestmark = pytest.mark.access
 def _ulabel(prefix: str = "vis") -> str:
     """Generate a unique label to avoid collisions between tests."""
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+
+_DATA_OBJECT_SETUP_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+def raw_open_session(raw: Any, slot_id: int, flags: int) -> int:
+    """Open an extra session needed by object-visibility tests."""
+    try:
+        return _raw_open_session(raw, slot_id, flags)
+    except AssertionError as exc:
+        if is_known_error(exc, (CKR_SESSION_COUNT,)):
+            pytest.skip(
+                "Cannot open additional object-visibility session: "
+                f"{ckr_name(int(CKR_SESSION_COUNT))}"
+            )
+        raise
 
 
 def _open_rw_session(raw: Any, slot_id: int, pin_bytes: bytes | None) -> int:
@@ -61,6 +97,28 @@ def _open_ro_session(raw: Any, slot_id: int) -> int:
     """Open a read-only session without login."""
     flags = CKF_SERIAL_SESSION
     return raw_open_session(raw, slot_id, flags)
+
+
+def _gen_visibility_aes_key(
+    rs: Any,
+    sh: int,
+    *,
+    attrs: dict[Any, Any] | None = None,
+) -> int:
+    """Generate an AES setup key for object-visibility tests."""
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+    require_operational_aes_keygen(rs)
+    try:
+        return _raw_gen_aes_key(rs.raw, sh, 128, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but object-visibility setup key generation "
+            "is not operational",
+        )
+    raise
 
 
 def _find_data_by_label(raw: Any, sh: int, label: str) -> list[int]:
@@ -99,7 +157,15 @@ def _create_data_obj(
         attrs[CKA_PRIVATE] = private
     if modifiable is not None:
         attrs[CKA_MODIFIABLE] = modifiable
-    return create_object(raw, sh, attrs)
+    try:
+        return _raw_create_object(raw, sh, attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _DATA_OBJECT_SETUP_REJECT_RVS,
+            "object-visibility data object setup rejected by the provider",
+        )
+    raise
 
 
 class TestSessionObjectLifecycle:
@@ -114,7 +180,7 @@ class TestSessionObjectLifecycle:
         # Create session object in session 1, then close it
         sh1 = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
-            gen_aes_key(rs.raw, sh1, 256, attrs={CKA_TOKEN: False, CKA_LABEL: label})
+            _gen_visibility_aes_key(rs, sh1, attrs={CKA_TOKEN: False, CKA_LABEL: label})
         finally:
             close_session_quietly(rs.raw, sh1)
 
@@ -151,7 +217,7 @@ class TestSessionObjectLifecycle:
         """Session object is findable within the same session."""
         rs = p11_raw_session
         label = _ulabel("sess-alive")
-        key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_TOKEN: False, CKA_LABEL: label})
+        key = _gen_visibility_aes_key(rs, rs.sh, attrs={CKA_TOKEN: False, CKA_LABEL: label})
         try:
             found = _find_by_label(rs.raw, rs.sh, label)
             assert len(found) >= 1
@@ -174,7 +240,7 @@ class TestTokenObjectPersistence:
         # Session 1: create token object
         sh1 = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
-            gen_aes_key(rs.raw, sh1, 256, attrs={CKA_TOKEN: True, CKA_LABEL: label})
+            _gen_visibility_aes_key(rs, sh1, attrs={CKA_TOKEN: True, CKA_LABEL: label})
         finally:
             close_session_quietly(rs.raw, sh1)
 
@@ -536,7 +602,7 @@ class TestTokenPrivateInteraction:
         try:
             h = _create_data_obj(rs.raw, rs.sh, label, b"priv-session", token=False, private=True)
         except AssertionError as exc:
-            if "CKR_ATTRIBUTE_VALUE_INVALID" in str(exc):
+            if is_known_error(exc, {CKR_ATTRIBUTE_VALUE_INVALID}):
                 pytest.skip("Module does not support CKA_PRIVATE=True on CKO_DATA objects")
             raise
         try:
@@ -711,10 +777,9 @@ class TestTokenObjectImmediateVisibility:
 
         sh_a = _open_rw_session(rs.raw, rs.slot_id, pin_bytes)
         try:
-            key = gen_aes_key(
-                rs.raw,
+            key = _gen_visibility_aes_key(
+                rs,
                 sh_a,
-                256,
                 attrs={
                     CKA_TOKEN: True,
                     CKA_LABEL: label,

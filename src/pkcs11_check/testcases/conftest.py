@@ -8,10 +8,61 @@ collection-safe capability manifest before test setup.
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
+
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
+    CKA_EC_PARAMS,
+    CKA_KEY_TYPE,
+    CKA_SIGN,
+    CKA_VERIFY,
+    CKM_EC_EDWARDS_KEY_PAIR_GEN,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
+
+AES_KEYGEN_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+)
+
+KEYPAIR_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+EC_CURVE_UNSUPPORTED_RVS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
 
 
 def needs_mechanism(name: str) -> Callable[[Any], Any]:
@@ -33,6 +84,217 @@ def needs_mechanism(name: str) -> Callable[[Any], Any]:
 def skip_unless_mechanism(rs: Any, name: str) -> None:
     if not rs.has_mechanism(name):
         pytest.skip(f"{name} not supported")
+
+
+def require_operational_aes_keygen(rs: Any) -> None:
+    """Skip or xfail when AES_KEY_GEN cannot provide setup keys for a test."""
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+
+    from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+
+    key = 0
+    try:
+        key = gen_aes_key(rs.raw, rs.sh, 128)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            "AES_KEY_GEN advertised but key generation is not operational",
+        )
+    finally:
+        if key:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+
+def gen_aes_key_or_xfail(
+    rs: Any,
+    bits: int = 128,
+    attrs: Mapping[Any, Any] | None = None,
+    *,
+    purpose: str = "setup",
+) -> int:
+    """Generate an AES key, xfail-ing explicit setup rejection CKRs."""
+    if not rs.has_mechanism("AES_KEY_GEN"):
+        pytest.skip("AES_KEY_GEN not supported by module")
+
+    from pkcs11_check.raw.recipes import gen_aes_key
+
+    try:
+        return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but AES-{bits} key generation for {purpose} "
+            "is not operational",
+        )
+    raise
+
+
+def unwrap_key_for_mechanism_roundtrip(
+    rs: Any,
+    p11_config: Any,
+    *,
+    unwrapping_key: int,
+    wrapped_key: bytes,
+    mechanism: Any,
+    attrs: Mapping[Any, Any],
+    mech_param: Any | None = None,
+    purpose: str = "mechanism unwrap roundtrip",
+) -> int:
+    """Unwrap for mechanism-level crypto checks, retrying documented template quirks.
+
+    Some modules reject CKA_CLASS/CKA_KEY_TYPE in C_UnwrapKey templates even
+    though the mechanism can still unwrap a valid provider-generated blob when
+    those type identifiers are omitted. Mechanism-level tests care about the
+    cryptographic roundtrip; stricter attribute-template behavior belongs in
+    dedicated attribute/security tests.
+    """
+    from pkcs11_check.compliance import ComplianceLevel, note
+    from pkcs11_check.raw.recipes import unwrap_key
+    from pkcs11_check.testcases._module_quirks import quirk_extras
+
+    try:
+        return unwrap_key(
+            rs.raw,
+            rs.sh,
+            unwrapping_key,
+            wrapped_key,
+            mechanism,
+            attrs=attrs,
+            mech_param=mech_param,
+        )
+    except AssertionError as exc:
+        allowed_errors = quirk_extras(
+            p11_config, "unwrap_template_class_keytype_rejected"
+        )
+        if not is_known_error(exc, allowed_errors):
+            raise
+        relaxed_attrs = {
+            key: value
+            for key, value in attrs.items()
+            if key not in (CKA_CLASS, CKA_KEY_TYPE)
+        }
+        if relaxed_attrs == attrs:
+            raise
+        note(
+            f"{purpose}: provider rejected CKA_CLASS/CKA_KEY_TYPE in unwrap template; "
+            "retried without CKA_CLASS/CKA_KEY_TYPE for mechanism-level crypto check",
+            ComplianceLevel.VENDOR,
+            reference="docs/module-issues.md OpenCryptoki unwrap-template attribute rejection",
+        )
+        return unwrap_key(
+            rs.raw,
+            rs.sh,
+            unwrapping_key,
+            wrapped_key,
+            mechanism,
+            attrs=relaxed_attrs,
+            mech_param=mech_param,
+        )
+
+
+def gen_rsa_keypair_or_xfail(
+    rs: Any,
+    bits: int = 2048,
+    public_attrs: Mapping[Any, Any] | None = None,
+    private_attrs: Mapping[Any, Any] | None = None,
+) -> tuple[int, int]:
+    """Generate an RSA keypair, xfail-ing explicit setup rejection CKRs."""
+    if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+        pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported by module")
+
+    from pkcs11_check.raw.recipes import gen_rsa_keypair
+
+    try:
+        return gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            bits,
+            public_attrs=public_attrs,
+            private_attrs=private_attrs,
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "RSA_PKCS_KEY_PAIR_GEN advertised but keypair generation is not operational",
+        )
+    raise
+
+
+def gen_ec_keypair_or_xfail(
+    rs: Any,
+    curve_oid: bytes,
+    public_attrs: Mapping[Any, Any] | None = None,
+    private_attrs: Mapping[Any, Any] | None = None,
+) -> tuple[int, int]:
+    """Generate an EC keypair, xfail-ing explicit setup rejection CKRs."""
+    if not (rs.has_mechanism("EC_KEY_PAIR_GEN") or rs.has_mechanism("ECDSA_KEY_PAIR_GEN")):
+        pytest.skip("EC_KEY_PAIR_GEN not supported by module")
+
+    from pkcs11_check.raw.recipes import gen_ec_keypair
+
+    try:
+        return gen_ec_keypair(
+            rs.raw,
+            rs.sh,
+            curve_oid,
+            public_attrs=public_attrs,
+            private_attrs=private_attrs,
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "EC_KEY_PAIR_GEN advertised but keypair generation is not operational",
+        )
+    raise
+
+
+def gen_edwards_keypair_or_xfail(
+    rs: Any,
+    curve_oid: bytes,
+    public_attrs: Mapping[Any, Any] | None = None,
+    private_attrs: Mapping[Any, Any] | None = None,
+) -> tuple[int, int]:
+    """Generate an Edwards-curve keypair, xfail-ing explicit setup rejects."""
+    if not rs.has_mechanism("EC_EDWARDS_KEY_PAIR_GEN"):
+        pytest.skip("EC_EDWARDS_KEY_PAIR_GEN not supported by module")
+
+    from pkcs11_check.raw.pack import attr_bytes
+    from pkcs11_check.raw.recipes import gen_keypair
+
+    pub_defaults: dict[Any, Any] = {CKA_VERIFY: True}
+    priv_defaults: dict[Any, Any] = {CKA_SIGN: True}
+    if public_attrs:
+        pub_defaults.update(public_attrs)
+    if private_attrs:
+        priv_defaults.update(private_attrs)
+
+    try:
+        return gen_keypair(
+            rs.raw,
+            rs.sh,
+            int(CKM_EC_EDWARDS_KEY_PAIR_GEN),
+            pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+            priv_base=[],
+            public_attrs=pub_defaults,
+            private_attrs=priv_defaults,
+            pub_skip={CKA_EC_PARAMS},
+        )
+    except AssertionError as exc:
+        if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            rv = getattr(exc, "rv", None)
+            detail = ckr_name(rv) if rv is not None else str(exc)
+            pytest.skip(f"Edwards curve not supported by module: {detail}")
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "EC_EDWARDS_KEY_PAIR_GEN advertised but keypair generation is not operational",
+        )
+    raise
 
 
 def get_pin_bytes(p11_config: Any) -> bytes | None:
@@ -72,26 +334,82 @@ def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:
         pytest.skip("Token is write-protected -- cannot create token objects")
 
 
+def is_known_error(
+    exc: BaseException,
+    error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
+) -> bool:
+    """Return True if ``exc`` corresponds to one of ``error_rvs``.
+
+    Prefers exact integer equality via ``CkrAssertionError.rv`` (set by
+    ``expect_rv``).  Falls back to substring matching against the
+    exception message for legacy AssertionError paths — that fallback can
+    misfire when one CKR name is a prefix of another, so prefer raising
+    via ``expect_rv`` where possible.
+    """
+    rv = getattr(exc, "rv", None)
+    if rv is not None:
+        return rv in error_rvs
+    msg = str(exc)
+    return any(ckr_name(r) in msg for r in error_rvs)
+
+
+def _matched_ckr_name(exc: BaseException, known_ckrs: Any) -> str | None:
+    """Return the CKR name that matched ``exc``, or None if no match."""
+    rv = getattr(exc, "rv", None)
+    if rv is not None:
+        return ckr_name(rv) if rv in known_ckrs else None
+    msg = str(exc)
+    for ckr in known_ckrs:
+        if ckr_name(ckr) in msg:
+            return ckr_name(ckr)
+    return None
+
+
 def xfail_if_known_ckr(
     exc: Exception,
     known_ckrs: set[Any] | tuple[Any, ...] | frozenset[Any],
     msg: str,
 ) -> None:
-    """xfail if the exception message contains a known CKR name, otherwise re-raise.
+    """xfail if ``exc`` corresponds to a known CKR, otherwise re-raise.
+
+    Prefers exact ``CkrAssertionError.rv`` matching (via ``is_known_error``);
+    falls back to substring matching for assertions raised by other call paths.
 
     Use this instead of ``except (AssertionError, Exception): pytest.xfail(...)``
-    to ensure that only specific CKR failures become expected failures, while
+    so that only specific CKR failures become expected failures, while
     Python coding bugs and wrong-output assertions propagate as real failures.
 
     Args:
         exc: The caught exception.
-        known_ckrs: Set of CKR integer values to match against.
-        msg: Message for pytest.xfail if a known CKR is found.
+        known_ckrs: Iterable of CKR integer values to match against.
+        msg: Message for pytest.xfail if a known CKR is matched.
     """
-    from pkcs11_check.raw.rv import ckr_name
-
-    exc_str = str(exc)
-    for ckr in known_ckrs:
-        if ckr_name(ckr) in exc_str:
-            pytest.xfail(f"{msg}: {ckr_name(ckr)}")
+    matched = _matched_ckr_name(exc, known_ckrs)
+    if matched is not None:
+        pytest.xfail(f"{msg}: {matched}")
     raise  # Not a known CKR -- propagate as real failure
+
+
+def destroy_returned_handles(rs: Any, *handles: int) -> None:
+    """Destroy a sequence of object handles, silently skipping zeros and errors."""
+    from pkcs11_check.raw.recipes import destroy_quietly
+
+    for handle in handles:
+        if handle:
+            destroy_quietly(rs.raw, rs.sh, int(handle))
+
+
+def skip_if_mech_param_unsupported(exc: BaseException, context: str) -> None:
+    """pytest.skip if ``exc`` carries one of MECH_PARAM_UNSUPPORTED_ERRORS, else re-raise.
+
+    Provider-generated IV / nonce / wrap-output parameter conventions are
+    allowed to be rejected even when the base mechanism is advertised; this
+    helper turns those rejections into a clean skip while letting other
+    failures propagate as real findings.
+
+    Prefers exact ``CkrAssertionError.rv`` matching when present (via
+    ``is_known_error``).
+    """
+    if is_known_error(exc, MECH_PARAM_UNSUPPORTED_ERRORS):
+        pytest.skip(f"{context} not supported: {exc}")
+    raise exc

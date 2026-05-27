@@ -474,7 +474,7 @@ def _constant_class_lines() -> list[str]:
     return [
         "class CK_CONSTANT(int):",
         "    _name: str | None",
-        '    def __new__(cls, value: int, name: str | None = None) -> "CK_CONSTANT":',
+        "    def __new__(cls, value: int, name: str | None = None) -> Self:",
         "        obj = super().__new__(cls, value)",
         "        obj._name = name",
         "        return obj",
@@ -539,6 +539,7 @@ def _render_types_module(
         "from __future__ import annotations",
         "",
         "import ctypes",
+        "from typing import Self",
         "",
         "STANDARD_GENERATED = True",
         "",

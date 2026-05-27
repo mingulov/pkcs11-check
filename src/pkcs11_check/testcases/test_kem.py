@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import byref
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -21,13 +21,14 @@ from pkcs11_check.raw.pack import (
     template_ptr_count,
 )
 from pkcs11_check.raw.recipes import (
-    _to_ubyte_buf,
     decapsulate_key,
     destroy_quietly,
     encapsulate_key,
     gen_keypair,
     read_attributes,
+    to_ubyte_buf,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
@@ -59,13 +60,18 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.pqc, pytest.mark.keymgmt, pytest.mark.requires_v32]
 
@@ -81,6 +87,20 @@ _PARAM_MAP = {
     "ML_KEM_768": CKP_ML_KEM_768,
     "ML_KEM_1024": CKP_ML_KEM_1024,
 }
+
+_KEM_OPERATION_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_KEM_WRONG_KEY_CLEAN_REJECT_RVS = (CKR_ENCRYPTED_DATA_INVALID, CKR_ENCRYPTED_DATA_LEN_RANGE)
 
 
 def _skip_if_no_ml_kem(rs: Any) -> None:
@@ -128,14 +148,56 @@ def _generate_ml_kem_keypair(
     )
 
 
-def _encap_attrs(key_type: int = CKK_AES) -> dict[int, Any]:
+def _encap_attrs(key_type: int = CKK_AES, value_len: int | None = None) -> dict[int, Any]:
     """Standard template for encapsulated key. Kryoptic mandates Class/KeyType."""
-    return {
+    attrs: dict[int, Any] = {
         CKA_CLASS: CKO_SECRET_KEY,
         CKA_KEY_TYPE: key_type,
         CKA_SENSITIVE: False,
         CKA_EXTRACTABLE: True,
     }
+    if value_len is not None:
+        attrs[CKA_VALUE_LEN] = value_len
+    return attrs
+
+
+def _xfail_kem_operation_reject(exc: AssertionError, operation: str) -> NoReturn:
+    xfail_if_known_ckr(exc, _KEM_OPERATION_REJECT_RVS, f"ML-KEM {operation} not operational")
+    raise exc
+
+
+def _encapsulate_ml_kem_or_xfail(
+    rs: Any,
+    public_key: int,
+    attrs: dict[int, Any],
+    operation: str,
+) -> tuple[int, bytes]:
+    try:
+        return encapsulate_key(rs.raw, rs.sh, public_key, CKM_ML_KEM, attrs=attrs)
+    except NotImplementedError:
+        pytest.skip("encapsulate_key not available")
+    except AssertionError as exc:
+        _xfail_kem_operation_reject(exc, operation)
+
+
+def _decapsulate_ml_kem_or_xfail(
+    rs: Any,
+    private_key: int,
+    ciphertext: bytes,
+    attrs: dict[int, Any],
+    operation: str,
+) -> int:
+    try:
+        return decapsulate_key(rs.raw, rs.sh, private_key, CKM_ML_KEM, ciphertext, attrs=attrs)
+    except NotImplementedError:
+        pytest.skip("decapsulate_key not available")
+    except AssertionError as exc:
+        _xfail_kem_operation_reject(exc, operation)
+
+
+def _xfail_if_kem_negative_rv(rv: int, xfail_rvs: tuple[int, ...], label: str) -> None:
+    if rv in xfail_rvs:
+        pytest.xfail(f"{label}: {ckr_name(int(rv))}")
 
 
 class TestMLKEMKeyGeneration:
@@ -217,7 +279,12 @@ class TestMLKEMEncapsulateDecapsulate:
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
         try:
-            shared, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
+            shared, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "encapsulate",
+            )
             assert isinstance(ct, bytes)
             assert len(ct) > 0
             assert shared != 0
@@ -234,10 +301,12 @@ class TestMLKEMEncapsulateDecapsulate:
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
         try:
-            try:
-                shared, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
-            except (AssertionError, NotImplementedError):
-                pytest.skip("encapsulate_key not available")
+            shared, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "encapsulate",
+            )
             assert ct != bytes(len(ct))  # not all zeros
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -253,15 +322,19 @@ class TestMLKEMEncapsulateDecapsulate:
         encap_handle = 0
         decap_handle = 0
         try:
-            try:
-                encap_handle, ct = encapsulate_key(
-                    rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs()
-                )
-                decap_handle = decapsulate_key(
-                    rs.raw, rs.sh, priv, CKM_ML_KEM, ct, attrs=_encap_attrs()
-                )
-            except (AssertionError, NotImplementedError):
-                pytest.skip("KEM operations not available (module not v3.2)")
+            encap_handle, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "encapsulate",
+            )
+            decap_handle = _decapsulate_ml_kem_or_xfail(
+                rs,
+                priv,
+                ct,
+                _encap_attrs(),
+                "decapsulate",
+            )
             # Both sides must produce the same shared secret
             encap_value = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
             decap_value = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])[CKA_VALUE]
@@ -281,11 +354,18 @@ class TestMLKEMEncapsulateDecapsulate:
         pub, priv = _generate_ml_kem_keypair(rs)
         s1 = s2 = 0
         try:
-            try:
-                s1, ct1 = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
-                s2, ct2 = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
-            except (AssertionError, NotImplementedError):
-                pytest.skip("encapsulate_key not available")
+            s1, ct1 = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "encapsulate",
+            )
+            s2, ct2 = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "encapsulate",
+            )
             assert ct1 != ct2, "Two encapsulations produced identical ciphertexts (bad randomness)"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -304,16 +384,21 @@ class TestMLKEMEncapsulateDecapsulate:
         encap_handle = 0
         wrong_handle = 0
         try:
-            try:
-                encap_handle, ct = encapsulate_key(
-                    rs.raw, rs.sh, pub_a, CKM_ML_KEM, attrs=_encap_attrs()
-                )
-            except (AssertionError, NotImplementedError):
-                pytest.skip("encapsulate_key not available")
+            encap_handle, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub_a,
+                _encap_attrs(),
+                "encapsulate",
+            )
 
             try:
                 wrong_handle = decapsulate_key(
-                    rs.raw, rs.sh, priv_b, CKM_ML_KEM, ct, attrs=_encap_attrs()
+                    rs.raw,
+                    rs.sh,
+                    priv_b,
+                    CKM_ML_KEM,
+                    ct,
+                    attrs=_encap_attrs(),
                 )
                 # If it succeeds, the secrets must differ (ML-KEM implicit rejection)
                 encap_val = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
@@ -321,9 +406,15 @@ class TestMLKEMEncapsulateDecapsulate:
                 assert encap_val != wrong_val, (
                     "Decapsulation with wrong key produced same secret as correct decapsulation"
                 )
-            except AssertionError:
-                # An error is also acceptable (explicit rejection)
-                pass
+            except AssertionError as exc:
+                # An explicit rejection is also acceptable for this behavioral check.
+                if is_known_error(exc, _KEM_WRONG_KEY_CLEAN_REJECT_RVS):
+                    return
+                xfail_if_known_ckr(
+                    exc,
+                    _KEM_OPERATION_REJECT_RVS,
+                    "ML-KEM wrong-key decapsulate rejected with non-specific CKR",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_a)
             destroy_quietly(rs.raw, rs.sh, priv_a)
@@ -360,10 +451,12 @@ class TestMLKEMCiphertextSize:
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
         try:
-            try:
-                shared, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
-            except (AssertionError, NotImplementedError):
-                pytest.skip("encapsulate_key not available")
+            shared, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "encapsulate",
+            )
 
             # We can only check size if the module uses the expected parameter set
             if len(ct) not in _ML_KEM_CIPHERTEXT_SIZES.values():
@@ -398,23 +491,12 @@ class TestMLKEMKeyDerivation:
                 CKA_EXTRACTABLE: True,
                 CKA_TOKEN: False,
             }
-            try:
-                aes_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=aes_attrs)
-            except (AssertionError, NotImplementedError):
-                pytest.skip("encapsulate_key not available (module not v3.2)")
-            except (AssertionError, Exception) as exc:
-                from pkcs11_check.raw.types_std import (
-                    CKR_DEVICE_ERROR,
-                    CKR_FUNCTION_NOT_SUPPORTED,
-                    CKR_MECHANISM_INVALID,
-                )
-                from pkcs11_check.testcases.conftest import xfail_if_known_ckr
-
-                xfail_if_known_ckr(
-                    exc,
-                    (CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED, CKR_DEVICE_ERROR),
-                    "KEM operation not supported",
-                )
+            aes_handle, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                aes_attrs,
+                "AES-128 encapsulate",
+            )
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             assert kt == CKK_AES
@@ -425,13 +507,14 @@ class TestMLKEMKeyDerivation:
 
                 note(
                     f"ML-KEM encapsulate with CKA_VALUE_LEN=16 produced {len(value)}-byte key "
-                    "instead of 16-byte AES-128. NSS ignores CKA_VALUE_LEN for KEM-derived keys "
+                    "instead of 16-byte AES-128. Module ignores CKA_VALUE_LEN for "
+                    "KEM-derived keys "
                     "-- the ML-KEM shared secret is always 32 bytes per FIPS 203.",
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 v3.2 Sec.5.14.8; FIPS 203",
                 )
                 pytest.xfail(
-                    f"NSS ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
+                    f"Module ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
                     f"requested 16 bytes, got {len(value)} bytes "
                     f"(ML-KEM shared secret is always 32 bytes per FIPS 203)"
                 )
@@ -456,23 +539,12 @@ class TestMLKEMKeyDerivation:
                 CKA_EXTRACTABLE: True,
                 CKA_TOKEN: False,
             }
-            try:
-                aes_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=aes_attrs)
-            except (AssertionError, NotImplementedError):
-                pytest.skip("encapsulate_key not available (module not v3.2)")
-            except (AssertionError, Exception) as exc:
-                from pkcs11_check.raw.types_std import (
-                    CKR_DEVICE_ERROR,
-                    CKR_FUNCTION_NOT_SUPPORTED,
-                    CKR_MECHANISM_INVALID,
-                )
-                from pkcs11_check.testcases.conftest import xfail_if_known_ckr
-
-                xfail_if_known_ckr(
-                    exc,
-                    (CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED, CKR_DEVICE_ERROR),
-                    "KEM operation not supported",
-                )
+            aes_handle, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                aes_attrs,
+                "AES-256 encapsulate",
+            )
             assert isinstance(ct, bytes) and len(ct) > 0
             kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             assert kt == CKK_AES
@@ -513,10 +585,12 @@ class TestMLKEMKeyDerivation:
             raise  # unreachable
         shared = 0
         try:
-            try:
-                shared, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
-            except (AssertionError, NotImplementedError):
-                pytest.skip("encapsulate_key not available")
+            shared, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "encapsulate",
+            )
             assert len(ct) == expected_ct_len, (
                 f"Expected {expected_ct_len}-byte ciphertext for {param_set_name}, got {len(ct)}"
             )
@@ -541,12 +615,20 @@ class TestMLKEMDecapsulation:
         decap_handle = 0
         try:
             # Encapsulate
-            encap_handle, ct = encapsulate_key(
-                rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs(CKK_AES)
+            attrs = _encap_attrs(CKK_AES, value_len=aes_len)
+            encap_handle, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                attrs,
+                "AES encapsulate",
             )
             # Decapsulate specifying minimal template
-            decap_handle = decapsulate_key(
-                rs.raw, rs.sh, priv, CKM_ML_KEM, ct, attrs=_encap_attrs(CKK_AES)
+            decap_handle = _decapsulate_ml_kem_or_xfail(
+                rs,
+                priv,
+                ct,
+                attrs,
+                "AES decapsulate",
             )
 
             # Verification
@@ -572,11 +654,18 @@ class TestMLKEMDecapsulation:
         encap_handle = 0
         decap_handle = 0
         try:
-            encap_handle, ct = encapsulate_key(
-                rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs(CKK_GENERIC_SECRET)
+            encap_handle, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(CKK_GENERIC_SECRET),
+                "generic-secret encapsulate",
             )
-            decap_handle = decapsulate_key(
-                rs.raw, rs.sh, priv, CKM_ML_KEM, ct, attrs=_encap_attrs(CKK_GENERIC_SECRET)
+            decap_handle = _decapsulate_ml_kem_or_xfail(
+                rs,
+                priv,
+                ct,
+                _encap_attrs(CKK_GENERIC_SECRET),
+                "generic-secret decapsulate",
             )
 
             dec_val = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])[CKA_VALUE]
@@ -597,30 +686,27 @@ class TestMLKEMDecapsulation:
         encap_handle = 0
         decap_handle = 0
         try:
-            encap_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
-            # Some providers reject complex templates here, so we wrap in try-except
-            # but we want to see if we can at least set CKA_EXTRACTABLE: False
-            try:
-                decap_handle = decapsulate_key(
-                    rs.raw,
-                    rs.sh,
-                    priv,
-                    CKM_ML_KEM,
-                    ct,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_AES,
-                        CKA_EXTRACTABLE: False,
-                        CKA_SENSITIVE: True,
-                    },
-                )
-                attrs = read_attributes(
-                    rs.raw, rs.sh, decap_handle, [CKA_EXTRACTABLE, CKA_SENSITIVE]
-                )
-                assert attrs[CKA_EXTRACTABLE] is False
-                assert attrs[CKA_SENSITIVE] is True
-            except (AssertionError, Exception):
-                pytest.skip("Provider rejects security flags in decapsulation template")
+            encap_handle, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "encapsulate",
+            )
+            decap_handle = _decapsulate_ml_kem_or_xfail(
+                rs,
+                priv,
+                ct,
+                {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: False,
+                    CKA_SENSITIVE: True,
+                },
+                "security-flag decapsulate",
+            )
+            attrs = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_EXTRACTABLE, CKA_SENSITIVE])
+            assert attrs[CKA_EXTRACTABLE] is False
+            assert attrs[CKA_SENSITIVE] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -639,7 +725,12 @@ class TestMLKEMNegative:
         rs = p11_raw_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
-        encap_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
+        encap_handle, ct = _encapsulate_ml_kem_or_xfail(
+            rs,
+            pub,
+            _encap_attrs(),
+            "negative-test setup encapsulate",
+        )
         try:
             handle = CK_OBJECT_HANDLE(0)
             mech = mech_simple(CKM_ML_KEM)
@@ -648,7 +739,7 @@ class TestMLKEMNegative:
                 attr_ulong(CKA_KEY_TYPE, CKK_AES),
                 attr_bytes(CKA_VALUE, b"injected"),
             )
-            ct_buf = _to_ubyte_buf(ct)
+            ct_buf = to_ubyte_buf(ct)
             rv = rs.raw.C_DecapsulateKey(
                 rs.sh,
                 mech.byref(),
@@ -658,12 +749,19 @@ class TestMLKEMNegative:
                 len(ct),
                 byref(handle),
             )
+            if rv == CKR_OK:
+                if handle.value:
+                    destroy_quietly(rs.raw, rs.sh, handle.value)
+                pytest.xfail("ML-KEM accepted CKA_VALUE in decapsulation template")
+            _xfail_if_kem_negative_rv(
+                rv,
+                (CKR_ARGUMENTS_BAD,),
+                "ML-KEM invalid-template non-specific reject",
+            )
             assert rv in (
-                CKR_OK,  # Some modules (Kryoptic) may incorrectly allow this
                 CKR_TEMPLATE_INCONSISTENT,
                 CKR_ATTRIBUTE_TYPE_INVALID,
                 CKR_ATTRIBUTE_READ_ONLY,
-                CKR_ARGUMENTS_BAD,
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -674,7 +772,12 @@ class TestMLKEMNegative:
         rs = p11_raw_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
-        encap_handle, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
+        encap_handle, ct = _encapsulate_ml_kem_or_xfail(
+            rs,
+            pub,
+            _encap_attrs(),
+            "negative-test setup encapsulate",
+        )
         try:
             short_ct = ct[:-1]
             handle = CK_OBJECT_HANDLE(0)
@@ -682,7 +785,7 @@ class TestMLKEMNegative:
             tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY), attr_ulong(CKA_KEY_TYPE, CKK_AES)
             )
-            short_ct_buf = _to_ubyte_buf(short_ct)
+            short_ct_buf = to_ubyte_buf(short_ct)
             rv = rs.raw.C_DecapsulateKey(
                 rs.sh,
                 mech.byref(),
@@ -692,12 +795,12 @@ class TestMLKEMNegative:
                 len(short_ct),
                 byref(handle),
             )
-            assert rv in (
-                CKR_ENCRYPTED_DATA_LEN_RANGE,
-                CKR_ENCRYPTED_DATA_INVALID,
-                CKR_ARGUMENTS_BAD,
-                CKR_DEVICE_ERROR,
+            _xfail_if_kem_negative_rv(
+                rv,
+                (CKR_ARGUMENTS_BAD, CKR_DEVICE_ERROR, CKR_GENERAL_ERROR, CKR_FUNCTION_FAILED),
+                "ML-KEM invalid ciphertext length non-specific reject",
             )
+            assert rv in (CKR_ENCRYPTED_DATA_LEN_RANGE, CKR_ENCRYPTED_DATA_INVALID)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -713,7 +816,12 @@ class TestMLKEMNegative:
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs, CKA_DECAPSULATE_OVERRIDE=False)
         try:
-            _, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_encap_attrs())
+            _, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "negative-test setup encapsulate",
+            )
             # Use raw call to assert specific CKR
             handle = ctypes.c_ulong(0)
             mech = mech_simple(CKM_ML_KEM)
@@ -721,7 +829,7 @@ class TestMLKEMNegative:
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
                 attr_ulong(CKA_KEY_TYPE, CKK_AES),
             )
-            ct_buf = _to_ubyte_buf(ct)
+            ct_buf = to_ubyte_buf(ct)
             rv = rs.raw.C_DecapsulateKey(
                 rs.sh,
                 mech.byref(),
@@ -746,7 +854,7 @@ class TestMLKEMNegative:
                     reference="PKCS#11 v3.2 Sec.5.14.8",
                 )
                 pytest.xfail(
-                    "NSS ignores CKA_DECAPSULATE=False permission flag on ML-KEM private key "
+                    "Module ignores CKA_DECAPSULATE=False permission flag on ML-KEM private key "
                     "(returns CKR_OK instead of CKR_KEY_FUNCTION_NOT_PERMITTED -- SECURITY finding)"
                 )
             assert rv in (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL), (
@@ -810,7 +918,18 @@ class TestMLKEMNegative:
                 byref(ct_len),
                 byref(handle),
             )
-            # NSS-PQC returns CKR_TEMPLATE_INCOMPLETE for AES key with ML-KEM mechanism.
-            assert rv in (CKR_KEY_TYPE_INCONSISTENT, CKR_MECHANISM_INVALID, CKR_TEMPLATE_INCOMPLETE)
+            # Providers may validate the key's permitted operations before
+            # reporting that the key type is wrong for ML-KEM.
+            _xfail_if_kem_negative_rv(
+                rv,
+                (CKR_OBJECT_HANDLE_INVALID,),
+                "ML-KEM wrong-key-type reject",
+            )
+            assert rv in (
+                CKR_KEY_TYPE_INCONSISTENT,
+                CKR_KEY_FUNCTION_NOT_PERMITTED,
+                CKR_MECHANISM_INVALID,
+                CKR_TEMPLATE_INCOMPLETE,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

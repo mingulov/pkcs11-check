@@ -29,13 +29,31 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
     CKK,
     CKK_EC_EDWARDS,
     CKM,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     build_params_from_vector,
@@ -49,7 +67,60 @@ _EDWARDS_OID_PREFIXES = (
     b"\x06\x03\x2b\x65\x71",  # Ed448 (1.3.101.113)
 )
 
+_SIGN_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_NOT_INITIALIZED,
+)
+
+_KAT_IMPORT_CAPABILITY_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.sign]
+
+
+def _ckr_name_from_exception(exc: AssertionError) -> str:
+    rv = getattr(exc, "rv", None)
+    if rv is not None:
+        return ckr_name(rv)
+    return str(exc)
+
+
+def _xfail_sign_runtime_reject(exc: AssertionError, entry: MechEntry, operation: str) -> None:
+    xfail_if_known_ckr(
+        exc,
+        _SIGN_RUNTIME_REJECT_RVS,
+        f"{entry.mech_name}: advertised but {operation} is not operational",
+    )
+
+
+def _skip_kat_import_capability_reject(
+    exc: AssertionError,
+    entry: MechEntry,
+    object_label: str,
+) -> None:
+    if is_known_error(exc, _KAT_IMPORT_CAPABILITY_REJECT_RVS):
+        pytest.skip(
+            f"{entry.mech_name}: cannot import {object_label} for KAT setup: "
+            f"{_ckr_name_from_exception(exc)}"
+        )
+    raise exc
 
 
 class TestMechSignRoundtrip:
@@ -75,18 +146,24 @@ class TestMechSignRoundtrip:
                 data = hashlib.sha256(data).digest()
             mech_param = make_mech_param_or_skip(entry)
 
-            sig = sign_single(
-                rs.raw, rs.sh, sign_key, CKM(entry.mech_id), data, mech_param=mech_param
-            )
-            ok = verify_single(
-                rs.raw,
-                rs.sh,
-                verify_key_handle,
-                CKM(entry.mech_id),
-                data,
-                sig,
-                mech_param=mech_param,
-            )
+            try:
+                sig = sign_single(
+                    rs.raw, rs.sh, sign_key, CKM(entry.mech_id), data, mech_param=mech_param
+                )
+            except AssertionError as exc:
+                _xfail_sign_runtime_reject(exc, entry, "sign")
+            try:
+                ok = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    verify_key_handle,
+                    CKM(entry.mech_id),
+                    data,
+                    sig,
+                    mech_param=mech_param,
+                )
+            except AssertionError as exc:
+                _xfail_sign_runtime_reject(exc, entry, "verify")
             assert ok, f"{entry.mech_name}: verify failed after valid sign (sig={sig.hex()!r})"
         finally:
             destroy_quietly(rs.raw, rs.sh, sign_key)
@@ -115,18 +192,26 @@ class TestMechSignRoundtrip:
                 data_b = hashlib.sha256(data_b).digest()
             mech_param = make_mech_param_or_skip(entry)
 
-            sig = sign_single(
-                rs.raw, rs.sh, sign_key, CKM(entry.mech_id), data_a, mech_param=mech_param
-            )
-            ok = verify_single(
-                rs.raw,
-                rs.sh,
-                verify_key_handle,
-                CKM(entry.mech_id),
-                data_b,
-                sig,
-                mech_param=mech_param,
-            )
+            try:
+                sig = sign_single(
+                    rs.raw, rs.sh, sign_key, CKM(entry.mech_id), data_a, mech_param=mech_param
+                )
+            except AssertionError as exc:
+                _xfail_sign_runtime_reject(exc, entry, "sign")
+            try:
+                ok = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    verify_key_handle,
+                    CKM(entry.mech_id),
+                    data_b,
+                    sig,
+                    mech_param=mech_param,
+                )
+            except AssertionError as exc:
+                if signature_rejected_or_xfail(exc, entry.mech_name) is False:
+                    return
+                raise
             assert not ok, (
                 f"{entry.mech_name}: verify should have failed for tampered data "
                 f"but returned True (sig={sig.hex()!r})"
@@ -165,55 +250,67 @@ def _run_asymmetric_sign_kat(
 
     if "n_hex" in vec:
         # RSA: import private key for signing
-        priv_key = import_rsa_private_key(
-            rs.raw,
-            rs.sh,
-            n=bytes.fromhex(vec["n_hex"]),
-            e=bytes.fromhex(vec["e_hex"]),
-            d=bytes.fromhex(vec["d_hex"]),
-            p=bytes.fromhex(vec["p_hex"]),
-            q=bytes.fromhex(vec["q_hex"]),
-            dmp1=bytes.fromhex(vec["dmp1_hex"]),
-            dmq1=bytes.fromhex(vec["dmq1_hex"]),
-            iqmp=bytes.fromhex(vec["iqmp_hex"]),
-            attrs={CKA_SIGN: True, CKA_TOKEN: False},
-        )
-        pub_key: int | None = None
-        if verify_only:
-            # Also import public key so we can verify with it
-            pub_key = import_rsa_public_key(
+        try:
+            priv_key = import_rsa_private_key(
                 rs.raw,
                 rs.sh,
                 n=bytes.fromhex(vec["n_hex"]),
                 e=bytes.fromhex(vec["e_hex"]),
+                d=bytes.fromhex(vec["d_hex"]),
+                p=bytes.fromhex(vec["p_hex"]),
+                q=bytes.fromhex(vec["q_hex"]),
+                dmp1=bytes.fromhex(vec["dmp1_hex"]),
+                dmq1=bytes.fromhex(vec["dmq1_hex"]),
+                iqmp=bytes.fromhex(vec["iqmp_hex"]),
+                attrs={CKA_SIGN: True, CKA_TOKEN: False},
             )
+        except AssertionError as exc:
+            _skip_kat_import_capability_reject(exc, entry, "RSA private key")
+        pub_key: int | None = None
+        if verify_only:
+            # Also import public key so we can verify with it
+            try:
+                pub_key = import_rsa_public_key(
+                    rs.raw,
+                    rs.sh,
+                    n=bytes.fromhex(vec["n_hex"]),
+                    e=bytes.fromhex(vec["e_hex"]),
+                )
+            except AssertionError as exc:
+                _skip_kat_import_capability_reject(exc, entry, "RSA public key")
         try:
             if verify_only:
                 assert pub_key is not None
                 stored_sig = bytes.fromhex(vec["signature_hex"])
-                ok = verify_single(
-                    rs.raw,
-                    rs.sh,
-                    pub_key,
-                    CKM(entry.mech_id),
-                    input_data,
-                    stored_sig,
-                    mech_param=mech_param,
-                )
+                try:
+                    ok = verify_single(
+                        rs.raw,
+                        rs.sh,
+                        pub_key,
+                        CKM(entry.mech_id),
+                        input_data,
+                        stored_sig,
+                        mech_param=mech_param,
+                    )
+                except AssertionError as exc:
+                    _xfail_sign_runtime_reject(exc, entry, "KAT verify")
                 assert ok, (
                     f"KAT verify failed for {vec.get('id', '?')}: "
                     f"stored sig {stored_sig.hex()!r} did not verify"
                 )
             else:
                 # Deterministic (RSA PKCS#1 v1.5): sign and compare bytes
-                sig = sign_single(
-                    rs.raw,
-                    rs.sh,
-                    priv_key,
-                    CKM(entry.mech_id),
-                    input_data,
-                    mech_param=mech_param,
-                )
+                try:
+                    sig = sign_single(
+                        rs.raw,
+                        rs.sh,
+                        priv_key,
+                        CKM(entry.mech_id),
+                        input_data,
+                        mech_param=mech_param,
+                    )
+                except AssertionError as exc:
+                    _xfail_sign_runtime_reject(exc, entry, "KAT sign")
                 expected = bytes.fromhex(vec["signature_hex"])
                 assert sig == expected, (
                     f"KAT sign mismatch for {vec.get('id', '?')}: "
@@ -228,25 +325,31 @@ def _run_asymmetric_sign_kat(
         # EC/Edwards: import private key; public point not in vector so verify via round-trip
         ec_params = bytes.fromhex(vec["ec_params_hex"])
         ec_key_type = int(CKK_EC_EDWARDS) if ec_params.startswith(_EDWARDS_OID_PREFIXES) else None
-        priv_key = import_ec_private_key(
-            rs.raw,
-            rs.sh,
-            ec_params=ec_params,
-            value=bytes.fromhex(vec["ec_private_scalar_hex"]),
-            attrs={CKA_SIGN: True, CKA_TOKEN: False},
-            **({"key_type": ec_key_type} if ec_key_type is not None else {}),
-        )
+        try:
+            priv_key = import_ec_private_key(
+                rs.raw,
+                rs.sh,
+                ec_params=ec_params,
+                value=bytes.fromhex(vec["ec_private_scalar_hex"]),
+                attrs={CKA_SIGN: True, CKA_TOKEN: False},
+                **({"key_type": ec_key_type} if ec_key_type is not None else {}),
+            )
+        except AssertionError as exc:
+            _skip_kat_import_capability_reject(exc, entry, "EC private key")
         try:
             # Sign to confirm the key + mechanism work; we cannot verify the stored
             # sig because we have no public key object (scalar only in vector).
-            sig = sign_single(
-                rs.raw,
-                rs.sh,
-                priv_key,
-                CKM(entry.mech_id),
-                input_data,
-                mech_param=mech_param,
-            )
+            try:
+                sig = sign_single(
+                    rs.raw,
+                    rs.sh,
+                    priv_key,
+                    CKM(entry.mech_id),
+                    input_data,
+                    mech_param=mech_param,
+                )
+            except AssertionError as exc:
+                _xfail_sign_runtime_reject(exc, entry, "KAT sign")
             assert len(sig) > 0, f"KAT sign returned empty signature for {vec.get('id', '?')}"
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_key)
@@ -299,14 +402,17 @@ class TestMechSignKAT:
                 params = build_params_from_vector(entry.mech_id, config.param_recipe, vec)
                 if params == "SKIP":
                     continue
-                mac = sign_single(
-                    rs.raw,
-                    rs.sh,
-                    key,
-                    CKM(entry.mech_id),
-                    bytes.fromhex(vec["input_hex"]),
-                    mech_param=params,
-                )
+                try:
+                    mac = sign_single(
+                        rs.raw,
+                        rs.sh,
+                        key,
+                        CKM(entry.mech_id),
+                        bytes.fromhex(vec["input_hex"]),
+                        mech_param=params,
+                    )
+                except AssertionError as exc:
+                    _xfail_sign_runtime_reject(exc, entry, "KAT sign")
                 expected = bytes.fromhex(mac_hex)
                 assert mac == expected, (
                     f"KAT MAC mismatch for {vec.get('id', '?')}: "

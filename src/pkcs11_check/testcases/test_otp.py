@@ -23,37 +23,61 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.recipes import (
-    create_object,
     destroy_quietly,
     gen_aes_key,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
-    CKA_DERIVE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
-    CKA_VALUE_LEN,
-    CKA_VERIFY,
-    CKA_WRAP,
     CKK_ACTI,
-    CKK_GENERIC_SECRET,
     CKK_HOTP,
     CKK_SECURID,
     CKM_ACTI,
     CKM_ACTI_KEY_GEN,
     CKM_HOTP,
     CKM_HOTP_KEY_GEN,
-    CKM_KIP_DERIVE,
     CKM_SECURID,
     CKM_SECURID_KEY_GEN,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
+
+_OTP_OPERATIONAL_ERROR_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+def _xfail_otp_reject(exc: AssertionError, msg: str) -> None:
+    xfail_if_known_ckr(exc, _OTP_OPERATIONAL_ERROR_CKRS, msg)
+    raise exc
 
 
 def _gen_otp_key(rs: Any, key_type: int, mechanism: int) -> int:
@@ -86,7 +110,7 @@ class TestHOTP:
             key = _gen_otp_key(rs, CKK_HOTP, CKM_HOTP_KEY_GEN)
             assert key != 0
         except AssertionError as exc:
-            pytest.skip(f"CKM_HOTP_KEY_GEN keygen rejected: {exc}")
+            _xfail_otp_reject(exc, "CKM_HOTP_KEY_GEN advertised but keygen rejected")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -103,7 +127,7 @@ class TestHOTP:
             otp = sign_single(rs.raw, rs.sh, key, CKM_HOTP, b"")
             assert len(otp) > 0
         except AssertionError as exc:
-            pytest.skip(f"CKM_HOTP not operational: {exc}")
+            _xfail_otp_reject(exc, "CKM_HOTP advertised but sign is not operational")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -123,7 +147,7 @@ class TestHOTP:
         except AssertionError as exc:
             if "Consecutive" in str(exc):
                 raise
-            pytest.skip(f"CKM_HOTP not operational: {exc}")
+            _xfail_otp_reject(exc, "CKM_HOTP advertised but sign is not operational")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -141,7 +165,7 @@ class TestSecurID:
             key = _gen_otp_key(rs, CKK_SECURID, CKM_SECURID_KEY_GEN)
             assert key != 0
         except AssertionError as exc:
-            pytest.skip(f"CKM_SECURID_KEY_GEN keygen rejected: {exc}")
+            _xfail_otp_reject(exc, "CKM_SECURID_KEY_GEN advertised but keygen rejected")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -158,7 +182,7 @@ class TestSecurID:
             otp = sign_single(rs.raw, rs.sh, key, CKM_SECURID, b"")
             assert len(otp) > 0
         except AssertionError as exc:
-            pytest.skip(f"CKM_SECURID not operational: {exc}")
+            _xfail_otp_reject(exc, "CKM_SECURID advertised but sign is not operational")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -176,7 +200,7 @@ class TestACTI:
             key = _gen_otp_key(rs, CKK_ACTI, CKM_ACTI_KEY_GEN)
             assert key != 0
         except AssertionError as exc:
-            pytest.skip(f"CKM_ACTI_KEY_GEN keygen rejected: {exc}")
+            _xfail_otp_reject(exc, "CKM_ACTI_KEY_GEN advertised but keygen rejected")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -193,7 +217,7 @@ class TestACTI:
             otp = sign_single(rs.raw, rs.sh, key, CKM_ACTI, b"")
             assert len(otp) > 0
         except AssertionError as exc:
-            pytest.skip(f"CKM_ACTI not operational: {exc}")
+            _xfail_otp_reject(exc, "CKM_ACTI advertised but sign is not operational")
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -202,41 +226,6 @@ class TestACTI:
 class TestCTKIP:
     """Tests for CT-KIP mechanisms: CKM_KIP_DERIVE, CKM_KIP_WRAP, CKM_KIP_MAC."""
 
-    def _make_generic_key(self, rs: Any) -> int:
-        return gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={
-                CKA_TOKEN: False,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_DERIVE: True,
-                CKA_SIGN: True,
-                CKA_VERIFY: True,
-            },
-            mechanism=CKA_KEY_TYPE,  # use AES_KEY_GEN default
-        )
-
-    def _make_generic_key_raw(self, rs: Any) -> int:
-        """Create a 16-byte GENERIC_SECRET key."""
-        return create_object(
-            rs.raw,
-            rs.sh,
-            {
-                CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                CKA_VALUE_LEN: 16,
-                CKA_TOKEN: False,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_DERIVE: True,
-                CKA_SIGN: True,
-                CKA_VERIFY: True,
-                CKA_WRAP: True,
-            },
-        )
-
     def test_kip_derive_skips_when_unsupported(
         self,
         p11_raw_session: Any,
@@ -244,23 +233,7 @@ class TestCTKIP:
         rs = p11_raw_session
         if not rs.has_mechanism("KIP_DERIVE"):
             pytest.skip("CKM_KIP_DERIVE not supported")
-        base_key = 0
-        derived = 0
-        try:
-            base_key = _gen_otp_key(
-                rs,
-                CKK_GENERIC_SECRET,
-                CKM_KIP_DERIVE,
-            )
-            # Key gen failed -- KIP_DERIVE not operational
-            pytest.skip("CKM_KIP_DERIVE not operational with generic secret key type")
-        except AssertionError as exc:
-            pytest.skip(f"CKM_KIP_DERIVE rejected: {exc}")
-        finally:
-            if derived:
-                destroy_quietly(rs.raw, rs.sh, derived)
-            if base_key:
-                destroy_quietly(rs.raw, rs.sh, base_key)
+        pytest.skip("CKM_KIP_DERIVE requires CT-KIP parameter setup")
 
     def test_kip_wrap_skips_when_unsupported(
         self,

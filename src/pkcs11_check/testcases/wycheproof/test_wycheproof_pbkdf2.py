@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from ctypes import byref
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -40,13 +40,41 @@ from pkcs11_check.raw.types_std import (
     CKP_PKCS5_PBKD2_HMAC_SHA256,
     CKP_PKCS5_PBKD2_HMAC_SHA384,
     CKP_PKCS5_PBKD2_HMAC_SHA512,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
 REQUIRED_MECHANISMS = ["PKCS5_PBKD2"]
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: E402
+
+_PBKDF2_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 # Map Wycheproof file suffix to CKP_PKCS5_PBKD2_HMAC_* PRF constant
 _PRF_MAP: dict[str, int] = {
@@ -103,6 +131,16 @@ def _generate_key_with_mech(
     return key.value
 
 
+def _xfail_if_pbkdf2_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
+    """Classify advertised PBKDF2 valid-vector rejects as non-clean findings."""
+    xfail_if_known_ckr(
+        exc,
+        _PBKDF2_RUNTIME_REJECT_CKRS,
+        f"{label}: advertised PBKDF2 key derivation is not operational",
+    )
+    raise exc
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_PBKDF2_VECTORS, ids=[v[0] for v in _ALL_PBKDF2_VECTORS])
 def test_pbkdf2(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """PBKDF2 key derivation from Wycheproof vectors.
@@ -151,6 +189,7 @@ def test_pbkdf2(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         destroy_quietly(rs.raw, rs.sh, derived)
     except AssertionError as exc:
         if result == "valid":
+            _xfail_if_pbkdf2_runtime_reject(exc, vec_id)
             pytest.fail(f"PBKDF2 generate_key failed for valid vector {vec_id}: {exc}")
         # acceptable: reject is fine
         return

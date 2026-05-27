@@ -17,6 +17,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
+
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 _FAULT_PROXY_PATHS = [
@@ -50,6 +52,7 @@ class TestFaultInjection:
             from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
             from pkcs11_check.raw.recipes import gen_aes_key
             from pkcs11_check.raw.pack import mech_simple
+            from pkcs11_check.raw.rv import ckr_name
             from pkcs11_check.raw.types_std import (
                 CK_ULONG, CKF_RW_SESSION, CKF_SERIAL_SESSION,
                 CKM_AES_ECB, CKR_DEVICE_REMOVED, CKR_OK, CKU_USER,
@@ -64,22 +67,26 @@ class TestFaultInjection:
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
-            key = gen_aes_key(raw, sh, 256)
-            mech = mech_simple(CKM_AES_ECB)
-            rv = raw.C_EncryptInit(sh, mech.byref(), key)
-            if rv != CKR_OK:
-                print(f"FAIL:init_error:0x{{rv:08x}}")
+            try:
+                key = gen_aes_key(raw, sh, 256)
+            except AssertionError as exc:
+                print(f"SETUP_XFAIL:C_GenerateKey for fault-injected encrypt failed: {{exc}}")
             else:
-                data = (ctypes.c_ubyte * 16)(*([0] * 16))
-                out_len = CK_ULONG(32)
-                out_buf = (ctypes.c_ubyte * 32)()
-                rv = raw.C_Encrypt(sh, data, 16, out_buf, byref(out_len))
-                if rv == CKR_DEVICE_REMOVED:
-                    print("OK:DEVICE_REMOVED")
-                elif rv == CKR_OK:
-                    print("FAIL:no_error")
+                mech = mech_simple(CKM_AES_ECB)
+                rv = raw.C_EncryptInit(sh, mech.byref(), key)
+                if rv != CKR_OK:
+                    print(f"SETUP_XFAIL:C_EncryptInit for fault injection failed: {{ckr_name(rv)}}")
                 else:
-                    print(f"OTHER:0x{{rv:08x}}")
+                    data = (ctypes.c_ubyte * 16)(*([0] * 16))
+                    out_len = CK_ULONG(32)
+                    out_buf = (ctypes.c_ubyte * 32)()
+                    rv = raw.C_Encrypt(sh, data, 16, out_buf, byref(out_len))
+                    if rv == CKR_DEVICE_REMOVED:
+                        print("OK:DEVICE_REMOVED")
+                    elif rv == CKR_OK:
+                        print("FAIL:no_error")
+                    else:
+                        print(f"OTHER:0x{{rv:08x}}")
             raw.C_Finalize(None)
         """)
         result = subprocess.run(
@@ -89,7 +96,12 @@ class TestFaultInjection:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="fault-proxy C_Encrypt CKR_DEVICE_REMOVED injection",
+        )
         assert "OK:DEVICE_REMOVED" in result.stdout
 
     def test_inject_device_error_on_sign(self, p11_config: Any) -> None:
@@ -106,6 +118,7 @@ class TestFaultInjection:
             from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
             from pkcs11_check.raw.recipes import gen_rsa_keypair
             from pkcs11_check.raw.pack import mech_simple
+            from pkcs11_check.raw.rv import ckr_name
             from pkcs11_check.raw.types_std import (
                 CK_ULONG, CKF_RW_SESSION, CKF_SERIAL_SESSION,
                 CKM_SHA256_RSA_PKCS, CKR_DEVICE_ERROR, CKR_OK, CKU_USER,
@@ -120,22 +133,26 @@ class TestFaultInjection:
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
-            _pub, priv = gen_rsa_keypair(raw, sh, 2048)
-            mech = mech_simple(CKM_SHA256_RSA_PKCS)
-            rv = raw.C_SignInit(sh, mech.byref(), priv)
-            if rv != CKR_OK:
-                print(f"FAIL:sign_init_error:0x{{rv:08x}}")
+            try:
+                _pub, priv = gen_rsa_keypair(raw, sh, 2048)
+            except AssertionError as exc:
+                print(f"SETUP_XFAIL:C_GenerateKeyPair for fault-injected sign failed: {{exc}}")
             else:
-                data = (ctypes.c_ubyte * 4)(*b"test")
-                sig_len = CK_ULONG(256)
-                sig_buf = (ctypes.c_ubyte * 256)()
-                rv = raw.C_Sign(sh, data, 4, sig_buf, byref(sig_len))
-                if rv == CKR_DEVICE_ERROR:
-                    print("OK:DEVICE_ERROR")
-                elif rv == CKR_OK:
-                    print("FAIL:no_error")
+                mech = mech_simple(CKM_SHA256_RSA_PKCS)
+                rv = raw.C_SignInit(sh, mech.byref(), priv)
+                if rv != CKR_OK:
+                    print(f"SETUP_XFAIL:C_SignInit for fault injection failed: {{ckr_name(rv)}}")
                 else:
-                    print(f"OTHER:0x{{rv:08x}}")
+                    data = (ctypes.c_ubyte * 4)(*b"test")
+                    sig_len = CK_ULONG(256)
+                    sig_buf = (ctypes.c_ubyte * 256)()
+                    rv = raw.C_Sign(sh, data, 4, sig_buf, byref(sig_len))
+                    if rv == CKR_DEVICE_ERROR:
+                        print("OK:DEVICE_ERROR")
+                    elif rv == CKR_OK:
+                        print("FAIL:no_error")
+                    else:
+                        print(f"OTHER:0x{{rv:08x}}")
             raw.C_Finalize(None)
         """)
         result = subprocess.run(
@@ -145,7 +162,12 @@ class TestFaultInjection:
             timeout=30,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="fault-proxy C_Sign CKR_DEVICE_ERROR injection",
+        )
         assert "OK:DEVICE_ERROR" in result.stdout
 
     def test_inject_device_memory_on_generate_key(self, p11_config: Any) -> None:
@@ -195,7 +217,12 @@ class TestFaultInjection:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="fault-proxy C_GenerateKey CKR_DEVICE_MEMORY injection",
+        )
         assert "OK:DEVICE_MEMORY" in result.stdout
 
 
@@ -225,7 +252,12 @@ class TestFaultProxyBasic:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Proxy failed: {result.stderr}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="fault-proxy slot delegation",
+        )
         assert "OK:" in result.stdout
 
     def test_proxy_encrypt_decrypt(self, p11_config: Any) -> None:
@@ -251,11 +283,15 @@ class TestFaultProxyBasic:
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
-            key = gen_aes_key(raw, sh, 256)
-            ct = encrypt_single(raw, sh, key, CKM_AES_ECB, b"\\x00" * 16)
-            pt = decrypt_single(raw, sh, key, CKM_AES_ECB, ct)
-            assert pt == b"\\x00" * 16
-            print("OK:encrypt_decrypt_roundtrip")
+            try:
+                key = gen_aes_key(raw, sh, 256)
+            except AssertionError as exc:
+                print(f"SETUP_XFAIL:C_GenerateKey for proxy roundtrip failed: {{exc}}")
+            else:
+                ct = encrypt_single(raw, sh, key, CKM_AES_ECB, b"\\x00" * 16)
+                pt = decrypt_single(raw, sh, key, CKM_AES_ECB, ct)
+                assert pt == b"\\x00" * 16
+                print("OK:encrypt_decrypt_roundtrip")
             raw.C_Finalize(None)
         """)
         result = subprocess.run(
@@ -265,5 +301,10 @@ class TestFaultProxyBasic:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Proxy encrypt/decrypt failed: {result.stderr}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="fault-proxy AES roundtrip delegation",
+        )
         assert "OK:" in result.stdout

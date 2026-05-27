@@ -54,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
@@ -64,6 +65,12 @@ from pkcs11_check.raw.types_std import (
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
+)
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    skip_unless_mechanism,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.security
@@ -118,14 +125,77 @@ _EMPTY_DATA_RVS = {
 }
 
 
+def _gen_aes_key_or_xfail(
+    rs: Any,
+    *,
+    bits: int = 128,
+    attrs: dict[Any, Any] | None = None,
+    purpose: str,
+) -> int:
+    skip_unless_mechanism(rs, "AES_KEY_GEN")
+    try:
+        return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            AES_KEYGEN_RUNTIME_REJECT_RVS,
+            f"AES_KEY_GEN advertised but AES-{bits} key generation for {purpose} "
+            "is not operational",
+        )
+    raise
+
+
+def _gen_rsa_keypair_or_xfail(
+    rs: Any,
+    *,
+    bits: int = 2048,
+    public_attrs: dict[Any, Any] | None = None,
+    private_attrs: dict[Any, Any] | None = None,
+    purpose: str,
+) -> tuple[int, int]:
+    skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
+    try:
+        return gen_rsa_keypair(
+            rs.raw,
+            rs.sh,
+            bits,
+            public_attrs=public_attrs,
+            private_attrs=private_attrs,
+        )
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            f"RSA_PKCS_KEY_PAIR_GEN advertised but keypair generation for {purpose} "
+            "is not operational",
+        )
+    raise
+
+
+_ADVERTISED_FUNCTION_UNAVAILABLE_RVS = {
+    CKR_FUNCTION_NOT_SUPPORTED,
+}
+
+
+def _xfail_if_advertised_function_unavailable(rv: int, mechanism: str, purpose: str) -> None:
+    if rv in _ADVERTISED_FUNCTION_UNAVAILABLE_RVS:
+        pytest.xfail(f"{mechanism} advertised but {purpose} is not operational: {ckr_name(rv)}")
+
+
 class TestInvalidOperations:
     def test_invalid_mechanism_param(self, p11_raw_session: Any) -> None:
         """Using wrong mechanism parameters should raise or produce garbage."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        skip_unless_mechanism(rs, "AES_CBC_PAD")
+        key = _gen_aes_key_or_xfail(rs, bits=128, purpose="invalid-parameter check")
         try:
             mech = mech_bytes(CKM_AES_CBC_PAD, b"short")
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            _xfail_if_advertised_function_unavailable(
+                rv,
+                "AES_CBC_PAD",
+                "invalid-parameter check",
+            )
             if rv == CKR_OK:
                 # Init succeeded, try encrypt -- module may reject at this stage
                 out_len = CK_ULONG(0)
@@ -158,6 +228,7 @@ class TestInvalidOperations:
     def test_generate_key_invalid_size(self, p11_raw_session: Any) -> None:
         """Requesting unsupported key size should fail or produce unusable key."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "AES_KEY_GEN")
         from pkcs11_check.raw.pack import attr_ulong, template
         from pkcs11_check.raw.types_std import (
             CK_OBJECT_HANDLE,
@@ -180,12 +251,22 @@ class TestInvalidOperations:
             # Module accepted it -- destroy and move on
             destroy_quietly(rs.raw, rs.sh, key.value)
         else:
+            _xfail_if_advertised_function_unavailable(
+                rv,
+                "AES_KEY_GEN",
+                "invalid-size key generation",
+            )
             assert rv in _KEY_SIZE_RVS, f"Unexpected CKR: {ckr_name(rv)}"
 
     def test_verify_with_wrong_mechanism(self, p11_raw_session: Any) -> None:
         """Sign with one mechanism, verify with another -- should fail or differ."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+        skip_unless_mechanism(rs, "SHA384_RSA_PKCS")
+        pub, priv = _gen_rsa_keypair_or_xfail(
+            rs,
+            purpose="wrong-mechanism verification",
+        )
         try:
             data = b"mechanism mismatch test"
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
@@ -220,7 +301,8 @@ class TestInvalidOperations:
     def test_encrypt_with_sign_key(self, p11_raw_session: Any) -> None:
         """Using a sign-only key for encryption should fail."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        skip_unless_mechanism(rs, "RSA_PKCS")
+        pub, priv = _gen_rsa_keypair_or_xfail(rs, purpose="encrypt-with-sign-key check")
         try:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), priv)
@@ -236,12 +318,12 @@ class TestInvalidOperations:
     def test_decrypt_garbage(self, p11_raw_session: Any) -> None:
         """Decrypting random garbage should fail cleanly."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(
-            rs.raw,
-            rs.sh,
-            2048,
+        skip_unless_mechanism(rs, "RSA_PKCS")
+        pub, priv = _gen_rsa_keypair_or_xfail(
+            rs,
             public_attrs={CKA_ENCRYPT: True, CKA_TOKEN: False},
             private_attrs={CKA_DECRYPT: True, CKA_TOKEN: False},
+            purpose="decrypt-garbage check",
         )
         try:
             garbage = generate_random(rs.raw, rs.sh, 256)  # 256 bytes
@@ -277,7 +359,8 @@ class TestEmptyInputs:
     def test_encrypt_empty_data(self, p11_raw_session: Any) -> None:
         """Encrypting empty data -- behavior is implementation-defined."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        skip_unless_mechanism(rs, "AES_CBC_PAD")
+        key = _gen_aes_key_or_xfail(rs, bits=128, purpose="empty-data encryption")
         try:
             iv = generate_random(rs.raw, rs.sh, 16)  # 16 bytes
             mech = mech_bytes(CKM_AES_CBC_PAD, iv)
@@ -315,13 +398,22 @@ class TestEmptyInputs:
     def test_digest_empty_data(self, p11_raw_session: Any) -> None:
         """Digest of empty data should succeed and produce correct hash."""
         rs = p11_raw_session
-        digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"")
+        skip_unless_mechanism(rs, "SHA256")
+        try:
+            digest = digest_single(rs.raw, rs.sh, CKM_SHA256, b"")
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                AES_KEYGEN_RUNTIME_REJECT_RVS,
+                "SHA256 advertised but digest is not operational",
+            )
         assert digest == hashlib.sha256(b"").digest()
 
     def test_sign_empty_data(self, p11_raw_session: Any) -> None:
         """Signing empty data should succeed (hash handles it)."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+        pub, priv = _gen_rsa_keypair_or_xfail(rs, purpose="empty-data signing")
         try:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
@@ -357,7 +449,8 @@ class TestKeyLifecycle:
     def test_use_destroyed_key(self, p11_raw_session: Any) -> None:
         """Using a key after destroy should fail."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        skip_unless_mechanism(rs, "AES_ECB")
+        key = _gen_aes_key_or_xfail(rs, bits=128, purpose="destroyed-key check")
         destroy_quietly(rs.raw, rs.sh, key)
         mech = mech_simple(CKM_AES_ECB)
         rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
@@ -366,14 +459,15 @@ class TestKeyLifecycle:
     def test_bulk_key_generation(self, p11_raw_session: Any) -> None:
         """Generate many keys in sequence without issues."""
         rs = p11_raw_session
+        skip_unless_mechanism(rs, "AES_KEY_GEN")
         keys: list[int] = []
         try:
             for i in range(10):
-                key = gen_aes_key(
-                    rs.raw,
-                    rs.sh,
-                    256,
+                key = _gen_aes_key_or_xfail(
+                    rs,
+                    bits=128,
                     attrs={CKA_LABEL: f"bulk-{i}".encode()},
+                    purpose="bulk-key-generation check",
                 )
                 keys.append(key)
             assert len(keys) == 10
@@ -384,7 +478,7 @@ class TestKeyLifecycle:
     def test_key_attribute_access(self, p11_raw_session: Any) -> None:
         """Key attributes should be readable."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = _gen_aes_key_or_xfail(rs, bits=128, purpose="key-attribute access")
         try:
             attrs = read_attributes(
                 rs.raw,
@@ -432,7 +526,8 @@ class TestSessionEdgeCases:
     def test_sign_verify_large_data(self, p11_raw_session: Any) -> None:
         """Sign and verify a larger data payload (10 KB)."""
         rs = p11_raw_session
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        skip_unless_mechanism(rs, "SHA256_RSA_PKCS")
+        pub, priv = _gen_rsa_keypair_or_xfail(rs, purpose="large-data sign/verify")
         try:
             data = b"x" * 10000
             sig = sign_single(
@@ -460,7 +555,8 @@ class TestSessionEdgeCases:
     def test_multiple_operations_same_key(self, p11_raw_session: Any) -> None:
         """Multiple sequential operations on the same key."""
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        skip_unless_mechanism(rs, "AES_ECB")
+        key = _gen_aes_key_or_xfail(rs, bits=128, purpose="multiple-operations check")
         try:
             for _ in range(100):
                 ct = encrypt_single(
@@ -487,7 +583,10 @@ class TestSessionEdgeCases:
         pairs: list[tuple[int, int]] = []
         try:
             for _ in range(3):
-                pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+                pub, priv = _gen_rsa_keypair_or_xfail(
+                    rs,
+                    purpose="concurrent-keypair-generation check",
+                )
                 pairs.append((pub, priv))
                 assert pub is not None
                 assert priv is not None

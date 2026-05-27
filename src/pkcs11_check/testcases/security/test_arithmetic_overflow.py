@@ -21,10 +21,15 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.types_std import _CK_ULONG_MAX
+from pkcs11_check.raw.types_std import _CK_ULONG_MAX, CKA_SIGN, CKA_TOKEN, CKA_VERIFY
 from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
+)
+from pkcs11_check.testcases.conftest import (
+    destroy_returned_handles,
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -48,6 +53,27 @@ def _preamble(p11_config: Any) -> str:
         str(p11_config.module),
         pin=p11_config.pin.get_secret_value() if p11_config.pin else None,
     )
+
+
+_CHILD_SETUP_REJECT_HELPERS = """
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    is_known_error,
+)
+
+
+def setup_xfail_if_known_ckr(exc, known_ckrs, purpose):
+    if is_known_error(exc, known_ckrs):
+        rv = getattr(exc, "rv", None)
+        detail = ckr_name(rv) if rv is not None else str(exc)
+        print(f"SETUP_XFAIL:{purpose}: {detail}")
+        cleanup()
+        raise SystemExit(0)
+    raise exc
+
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -88,9 +114,16 @@ class TestDataLengthOverflow:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose=f"{func} data-length overflow crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -98,14 +131,19 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     mech = CK_MECHANISM()
     mech.mechanism = int(CKM_AES_ECB)
     mech.pParameter = None
     mech.ulParameterLen = 0
     rv = raw.{init_func}(sh, ctypes.byref(mech), key)
-    if rv == int(CKR_OK):
+    if rv == CKR_OK:
         # Small real buffer, but claim huge length
         buf = (ctypes.c_ubyte * 16)(*range(16))
         out_len = CK_ULONG(256)
@@ -158,15 +196,27 @@ class TestMechanismParamLengthOverflow:
         rs = p11_raw_session
         if not rs.has_mechanism(mech_check):
             pytest.skip(f"CKM_{mech_check} not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose=f"{mech_name} parameter-length overflow crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import CK_MECHANISM, {mech_name}
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     param_buf = (ctypes.c_ubyte * {real_size})(*range({real_size}))
     mech = CK_MECHANISM()
@@ -221,9 +271,16 @@ class TestGcmTagBitsOverflow:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
+        setup_key = gen_aes_key_or_xfail(
+            rs,
+            256,
+            purpose="AES-GCM tag-bits overflow crash probe setup",
+        )
+        destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -231,7 +288,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-key = gen_aes_key(raw, sh, 256)
+try:
+    key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     iv = (ctypes.c_ubyte * 12)(*range(12))
     params = CK_AES_GCM_PARAMS()
@@ -289,9 +351,17 @@ class TestPssSaltLengthOverflow:
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256_RSA_PKCS_PSS"):
             pytest.skip("CKM_SHA256_RSA_PKCS_PSS not supported")
+        pub, priv = gen_rsa_keypair_or_xfail(
+            rs,
+            2048,
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+        )
+        destroy_returned_handles(rs, pub, priv)
         preamble = _preamble(p11_config)
         script = (
             preamble
+            + _CHILD_SETUP_REJECT_HELPERS
             + f"""
 import ctypes
 from pkcs11_check.raw.types_std import (
@@ -300,10 +370,15 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_rsa_keypair, destroy_quietly
 
-pub, priv = gen_rsa_keypair(raw, sh, 2048,
-    private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
-    public_attrs={{CKA_VERIFY: True, CKA_TOKEN: False}},
-)
+try:
+    pub, priv = gen_rsa_keypair(raw, sh, 2048,
+        private_attrs={{CKA_SIGN: True, CKA_TOKEN: False}},
+        public_attrs={{CKA_VERIFY: True, CKA_TOKEN: False}},
+    )
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, KEYPAIR_RUNTIME_REJECT_RVS, "RSA keypair generation rejected",
+    )
 try:
     params = CK_RSA_PKCS_PSS_PARAMS()
     params.hashAlg = int(CKM_SHA256)
@@ -371,6 +446,13 @@ class TestTemplateCountOverflow:
             pytest.skip("CKM_AES_KEY_GEN not supported")
         if op == "C_UnwrapKey" and not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
+        if op == "C_UnwrapKey":
+            setup_key = gen_aes_key_or_xfail(
+                rs,
+                256,
+                purpose="C_UnwrapKey template-count overflow crash probe setup",
+            )
+            destroy_returned_handles(rs, setup_key)
         preamble = _preamble(p11_config)
 
         if op == "C_CreateObject":
@@ -441,6 +523,7 @@ cleanup()
 """
         elif op == "C_UnwrapKey":
             body = f"""
+{_CHILD_SETUP_REJECT_HELPERS}
 import ctypes
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE, CK_ULONG, CK_MECHANISM, CKM_AES_ECB,
@@ -448,7 +531,12 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
-wrap_key = gen_aes_key(raw, sh, 256)
+try:
+    wrap_key = gen_aes_key(raw, sh, 256)
+except AssertionError as exc:
+    setup_xfail_if_known_ckr(
+        exc, AES_KEYGEN_RUNTIME_REJECT_RVS, "AES key generation rejected",
+    )
 try:
     attr = CK_ATTRIBUTE()
     attr.type = int(CKA_CLASS)

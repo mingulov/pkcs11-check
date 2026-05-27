@@ -1723,8 +1723,11 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
     )
 
     saved = load_run_state(state_file)
-    assert exit_code == 0
+    assert exit_code == 1
     assert saved is not None
+    report = json.loads(results_path.read_text())
+    assert report["summary"]["crashed"] == 1
+    assert report["units"][0]["status"] == "crashed"
     assert calls[0][0] == "test_a.py"
     assert calls[1][0] == "test_a.py::test_culprit"
     assert calls[2][0] == "test_a.py"
@@ -1950,7 +1953,7 @@ def test_run_isolated_pytest_units_merges_baseline_deselects_into_retry_loop(
         granularity="mixed",
     )
 
-    assert exit_code == 0
+    assert exit_code == 1
     assert calls[0] == ("test_a.py", "test_a.py::baseline_disabled\n")
     assert calls[2][0] == "test_a.py"
     assert calls[2][1] == (
@@ -2104,6 +2107,105 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
     assert report["summary"]["failed"] == 1
     assert report["summary"]["crashed"] == 1
     assert report["summary"]["error"] == 0
+
+
+def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+    seen_file_runs = 0
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        target = cmd[3]
+        report_log_path: Path | None = None
+        for i, arg in enumerate(cmd):
+            if arg == "--report-log" and i + 1 < len(cmd):
+                report_log_path = Path(cmd[i + 1])
+                break
+
+        if target == "test_a.py":
+            if report_log_path is None:
+                raise AssertionError("expected report-log path for file run")
+            nonlocal seen_file_runs
+            seen_file_runs += 1
+            if seen_file_runs == 1:
+                report_log_path.write_text(
+                    "\n".join(
+                        [
+                            _jsonl_line(
+                                nodeid="test_a.py::test_done", when="setup", outcome="passed"
+                            ),
+                            _jsonl_line(
+                                nodeid="test_a.py::test_done", when="call", outcome="passed"
+                            ),
+                            _jsonl_line(
+                                nodeid="test_a.py::test_done", when="teardown", outcome="passed"
+                            ),
+                            _jsonl_line(
+                                nodeid="test_a.py::test_culprit", when="setup", outcome="passed"
+                            ),
+                        ]
+                    )
+                    + "\n"
+                )
+                return (-11, "fatal python error", "")
+
+            report_log_path.write_text(
+                "\n".join(
+                    [
+                        _jsonl_line(
+                            nodeid="test_a.py::test_other", when="setup", outcome="passed"
+                        ),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_other", when="call", outcome="passed"
+                        ),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_other", when="teardown", outcome="passed"
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            return (0, "", "")
+
+        if target == "test_a.py::test_culprit":
+            return (0, "", "")
+
+        raise AssertionError(f"unexpected target {target}")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    exit_code = run_isolated_pytest_units(
+        ["test_a.py"],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_jsonl_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+    )
+
+    assert exit_code == 1
+    report = json.loads(results_path.read_text())
+    unit = report["units"][0]
+    assert unit["target"] == "test_a.py"
+    assert unit["status"] == "crashed"
+    assert unit["counts"]["crashed"] == 1
+    assert report["summary"]["crashed"] == 1
+    by_nodeid = {entry["nodeid"]: entry for entry in unit["tests"]}
+    assert by_nodeid["test_a.py::test_culprit"]["outcome"] == "crashed"
+    assert "passed in isolation" in by_nodeid["test_a.py::test_culprit"]["longrepr"]
 
 
 def test_run_isolated_pytest_units_resume_rejects_mismatched_state(
@@ -3664,6 +3766,54 @@ def test_file_skip_for_missing_mechanism(tmp_path: Path) -> None:
     assert mechs is not None
     missing = [m for m in required if m not in mechs]
     assert missing == ["AES_CCM"]
+
+
+def test_file_skip_counts_collected_tests_as_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_example.py"
+    test_file.write_text(
+        'REQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_a(): pass\ndef test_b(): pass\n'
+    )
+    report_path = tmp_path / "results.json"
+
+    monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
+    monkeypatch.setattr(
+        file_runner_mod,
+        "collect_pytest_nodeids",
+        lambda targets, pytest_args, *, env=None: [
+            f"{test_file}::test_a",
+            f"{test_file}::test_b",
+        ],
+    )
+
+    def _unexpected_run(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
+        pytest.fail("file-skipped unit must not invoke pytest")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", _unexpected_run)
+
+    exit_code = run_isolated_pytest_units(
+        [str(test_file)],
+        ["--p11-manifest", str(tmp_path / "manifest.json")],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 0
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["skipped"] == 2
+    assert report["summary"]["total"] == 2
+    unit = report["units"][0]
+    assert unit["file_skip"] is True
+    assert unit["counts"]["skipped"] == 2
+    assert unit["skip_reasons"] == {"AES_CCM not supported by module": 2}
 
 
 def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:

@@ -23,20 +23,21 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.pack import attr_bytes
 from pkcs11_check.raw.recipes import (
     create_object,
     decrypt_single,
     derive_key,
     destroy_quietly,
     encrypt_single,
-    gen_ec_keypair,
+    gen_keypair,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
+    CKA_EC_PARAMS,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -46,18 +47,27 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKK_GENERIC_SECRET,
     CKK_X2RATCHET,
+    CKM_EC_MONTGOMERY_KEY_PAIR_GEN,
     CKM_X2RATCHET_DECRYPT,
     CKM_X2RATCHET_ENCRYPT,
     CKM_X2RATCHET_INITIALIZE,
     CKM_X2RATCHET_RESPOND,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.full
 
@@ -73,36 +83,70 @@ _RATCHET_ERROR_RVS = {
     CKR_TEMPLATE_INCONSISTENT,
 }
 
+_MONTGOMERY_CURVE_REJECT_RVS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+)
+
+_MONTGOMERY_KEYGEN_REJECT_RVS = (
+    *_MONTGOMERY_CURVE_REJECT_RVS,
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_X2RATCHET_CURVES = (
+    ("X25519", encode_named_curve_parameters("x25519")),
+    ("X448", encode_named_curve_parameters("x448")),
+)
+
 
 def _create_ec_keypair(rs: Any) -> tuple[int, int]:
-    """Generate an X25519 / EC keypair for ratchet key material.
+    """Generate a Montgomery keypair for ratchet key material.
 
-    X2RATCHET uses X25519 (curve25519) for all DH operations.  Falls back to
-    P-256 if the module does not advertise X25519 key generation - in that case
-    the ratchet mechanisms will almost certainly MechanismInvalid anyway and the
-    test will xfail as expected.
+    X2RATCHET permits curve 25519 or 448.  A P-curve fallback would make the
+    test less spec-faithful, so only Montgomery setup is accepted here.
     """
-    # Try X25519 first (correct curve for Signal Double Ratchet)
-    try:
-        curve_oid = encode_named_curve_parameters("x25519")
-        return gen_ec_keypair(
-            rs.raw,
-            rs.sh,
-            curve_oid,
-            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
-            public_attrs={CKA_TOKEN: False},
-        )
-    except (AssertionError, Exception):
-        pass
+    if not rs.has_mechanism("EC_MONTGOMERY_KEY_PAIR_GEN"):
+        pytest.skip("CKM_EC_MONTGOMERY_KEY_PAIR_GEN not supported for X2RATCHET setup")
 
-    # Fallback to P-256 for availability probing
-    curve_oid = encode_named_curve_parameters("secp256r1")
-    return gen_ec_keypair(
-        rs.raw,
-        rs.sh,
-        curve_oid,
-        private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
-        public_attrs={CKA_TOKEN: False},
+    curve_rejects: list[BaseException] = []
+    for curve_name, curve_oid in _X2RATCHET_CURVES:
+        try:
+            return gen_keypair(
+                rs.raw,
+                rs.sh,
+                int(CKM_EC_MONTGOMERY_KEY_PAIR_GEN),
+                pub_base=[attr_bytes(CKA_EC_PARAMS, curve_oid)],
+                priv_base=[],
+                public_attrs={CKA_TOKEN: False},
+                private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+                pub_skip={CKA_EC_PARAMS},
+            )
+        except AssertionError as exc:
+            if is_known_error(exc, _MONTGOMERY_CURVE_REJECT_RVS):
+                curve_rejects.append(exc)
+                continue
+            xfail_if_known_ckr(
+                exc,
+                _MONTGOMERY_KEYGEN_REJECT_RVS,
+                f"CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but {curve_name} "
+                "keypair generation for X2RATCHET setup is not operational",
+            )
+            raise  # unreachable
+
+    detail = "; ".join(str(exc) for exc in curve_rejects)
+    pytest.xfail(
+        "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but neither X25519 nor X448 "
+        f"keypair generation is available for X2RATCHET setup: {detail}"
     )
 
 
@@ -177,10 +221,8 @@ class TestX2RatchetDerive:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             # Check if it's a known "not yet operational" CKR
-            msg = str(exc)
-            for ckr_val in _RATCHET_ERROR_RVS:
-                if ckr_name(ckr_val) in msg:
-                    pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
+            if is_known_error(exc, _RATCHET_ERROR_RVS):
+                pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -229,10 +271,8 @@ class TestX2RatchetDerive:
                 destroy_quietly(rs.raw, rs.sh, derived_a)
                 destroy_quietly(rs.raw, rs.sh, derived_b)
         except AssertionError as exc:
-            msg = str(exc)
-            for ckr_val in _RATCHET_ERROR_RVS:
-                if ckr_name(ckr_val) in msg:
-                    pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
+            if is_known_error(exc, _RATCHET_ERROR_RVS):
+                pytest.xfail(f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_a)
@@ -285,10 +325,8 @@ class TestX2RatchetDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            msg = str(exc)
-            for ckr_val in _RATCHET_ERROR_RVS:
-                if ckr_name(ckr_val) in msg:
-                    pytest.xfail(f"CKM_X2RATCHET_RESPOND not yet operational: {exc}")
+            if is_known_error(exc, _RATCHET_ERROR_RVS):
+                pytest.xfail(f"CKM_X2RATCHET_RESPOND not yet operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -328,10 +366,8 @@ class TestX2RatchetDerive:
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            msg = str(exc)
-            for ckr_val in _RATCHET_ERROR_RVS:
-                if ckr_name(ckr_val) in msg:
-                    pytest.xfail(f"CKM_X2RATCHET_RESPOND X2RATCHET key not operational: {exc}")
+            if is_known_error(exc, _RATCHET_ERROR_RVS):
+                pytest.xfail(f"CKM_X2RATCHET_RESPOND X2RATCHET key not operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -375,10 +411,8 @@ class TestX2RatchetEncrypt:
             assert ciphertext != plaintext
             assert len(ciphertext) > 0
         except AssertionError as exc:
-            msg = str(exc)
-            for ckr_val in _RATCHET_ERROR_RVS:
-                if ckr_name(ckr_val) in msg:
-                    pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
+            if is_known_error(exc, _RATCHET_ERROR_RVS):
+                pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -404,10 +438,8 @@ class TestX2RatchetEncrypt:
             )
             assert ciphertext != plaintext, "Ciphertext must not equal plaintext"
         except AssertionError as exc:
-            msg = str(exc)
-            for ckr_val in _RATCHET_ERROR_RVS:
-                if ckr_name(ckr_val) in msg:
-                    pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
+            if is_known_error(exc, _RATCHET_ERROR_RVS):
+                pytest.xfail(f"CKM_X2RATCHET_ENCRYPT not yet operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -448,10 +480,8 @@ class TestX2RatchetEncrypt:
             # accept it - some permissive stubs may succeed.
             assert plaintext is not None
         except AssertionError as exc:
-            msg = str(exc)
-            for ckr_val in _RATCHET_ERROR_RVS:
-                if ckr_name(ckr_val) in msg:
-                    pytest.xfail(f"CKM_X2RATCHET_DECRYPT not yet operational: {exc}")
+            if is_known_error(exc, _RATCHET_ERROR_RVS):
+                pytest.xfail(f"CKM_X2RATCHET_DECRYPT not yet operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -490,10 +520,8 @@ class TestX2RatchetEncrypt:
             )
             assert recovered == plaintext, "Roundtrip plaintext mismatch"
         except AssertionError as exc:
-            msg = str(exc)
-            for ckr_val in _RATCHET_ERROR_RVS:
-                if ckr_name(ckr_val) in msg:
-                    pytest.xfail(f"CKM_X2RATCHET encrypt/decrypt roundtrip not operational: {exc}")
+            if is_known_error(exc, _RATCHET_ERROR_RVS):
+                pytest.xfail(f"CKM_X2RATCHET encrypt/decrypt roundtrip not operational: {exc}")
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, enc_key)

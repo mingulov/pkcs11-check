@@ -20,8 +20,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     digest_single,
     encrypt_single,
-    gen_aes_key,
-    gen_rsa_keypair,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
@@ -29,8 +27,23 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
 )
+from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+from pkcs11_check.testcases.conftest import (
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+)
 
 pytestmark = pytest.mark.access
+
+
+def _assert_operation_subprocess_ok(
+    result: subprocess.CompletedProcess[str], *, context: str
+) -> None:
+    assert_subprocess_completed(result.returncode, result.stdout, result.stderr, context=context)
+    assert "OK:" in result.stdout, (
+        f"{context}: child subprocess did not emit an OK marker; "
+        f"stdout: {result.stdout[-300:]}; stderr: {result.stderr[-300:]}"
+    )
 
 
 class TestOperationStateWrapper:
@@ -43,7 +56,11 @@ class TestOperationStateWrapper:
         call requires a new C_EncryptInit.
         """
         rs = p11_raw_session
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            purpose="operation-state encrypt wrapper setup",
+        )
         try:
             ct1 = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, b"\x00" * 16)
             ct2 = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, b"\x11" * 16)
@@ -65,8 +82,12 @@ class TestOperationStateWrapper:
     def test_sign_then_encrypt(self, p11_raw_session: Any) -> None:
         """Sign then encrypt with same session - no conflict."""
         rs = p11_raw_session
-        _pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
-        key = gen_aes_key(rs.raw, rs.sh, 256)
+        _pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
+        key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            purpose="operation-state sign/encrypt wrapper setup",
+        )
         try:
             sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"data")
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, b"\x00" * 16)
@@ -97,9 +118,11 @@ class TestOperationStateSubprocess:
             from ctypes import byref
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
-            from pkcs11_check.raw.recipes import gen_aes_key, encrypt_single
+            from pkcs11_check.raw.recipes import to_ubyte_buf
+            from pkcs11_check.raw.rv import expect_rv
             from pkcs11_check.raw.types_std import (
-                CKF_RW_SESSION, CKF_SERIAL_SESSION, CKM_AES_ECB, CKR_OK, CKU_USER,
+                CKF_RW_SESSION, CKF_SERIAL_SESSION, CKR_OPERATION_NOT_INITIALIZED, CKU_USER,
+                CK_ULONG,
             )
             raw = RawPKCS11.from_lib("{module}")
             raw.C_Initialize(None)
@@ -108,10 +131,11 @@ class TestOperationStateSubprocess:
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
-            key = gen_aes_key(raw, sh, 256)
-            ct = encrypt_single(raw, sh, key, CKM_AES_ECB, b"\\x00" * 16)
-            print(f"OK:encrypt_works:{{len(ct)}}")
-            print("OK:raw_api_manages_state")
+            data = to_ubyte_buf(b"\\x00" * 16)
+            out_len = CK_ULONG(0)
+            rv = raw.C_Encrypt(sh, data, len(data), None, byref(out_len))
+            expect_rv(rv, CKR_OPERATION_NOT_INITIALIZED)
+            print("OK:encrypt_without_init")
             raw.C_Finalize(None)
         """)
         result = subprocess.run(
@@ -121,8 +145,7 @@ class TestOperationStateSubprocess:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Subprocess crashed: {result.stderr}"
-        assert "OK:" in result.stdout
+        _assert_operation_subprocess_ok(result, context="C_Encrypt without C_EncryptInit")
 
     def test_double_digest_init_via_subprocess(self, p11_config: Any) -> None:
         """Two DigestInit calls without Digest -> second should get OPERATION_ACTIVE.
@@ -138,9 +161,11 @@ class TestOperationStateSubprocess:
         script = textwrap.dedent(f"""\
             from pkcs11_check.raw.api import RawPKCS11
             from pkcs11_check.raw.bootstrap import get_slot_ids, login_user, open_session
-            from pkcs11_check.raw.recipes import digest_single
+            from pkcs11_check.raw.pack import mech_simple
+            from pkcs11_check.raw.rv import expect_rv
             from pkcs11_check.raw.types_std import (
-                CKF_RW_SESSION, CKF_SERIAL_SESSION, CKM_SHA256, CKU_USER,
+                CKF_RW_SESSION, CKF_SERIAL_SESSION, CKM_SHA256, CKR_OK,
+                CKR_OPERATION_ACTIVE, CKU_USER,
             )
             raw = RawPKCS11.from_lib("{module}")
             raw.C_Initialize(None)
@@ -149,9 +174,12 @@ class TestOperationStateSubprocess:
             pin = {pin_arg}
             if pin is not None:
                 login_user(raw, sh, CKU_USER, pin.encode())
-            d1 = digest_single(raw, sh, CKM_SHA256, b"test1")
-            d2 = digest_single(raw, sh, CKM_SHA256, b"test2")
-            print(f"OK:both_digests_work:{{len(d1)}}:{{len(d2)}}")
+            mech = mech_simple(CKM_SHA256)
+            rv = raw.C_DigestInit(sh, mech.byref())
+            expect_rv(rv, CKR_OK)
+            rv = raw.C_DigestInit(sh, mech.byref())
+            expect_rv(rv, CKR_OPERATION_ACTIVE)
+            print("OK:double_digest_init_active")
             raw.C_Finalize(None)
         """)
         result = subprocess.run(
@@ -161,5 +189,4 @@ class TestOperationStateSubprocess:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Subprocess crashed: {result.stderr}"
-        assert "OK:" in result.stdout
+        _assert_operation_subprocess_ok(result, context="double C_DigestInit")

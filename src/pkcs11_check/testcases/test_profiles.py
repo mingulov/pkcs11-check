@@ -89,7 +89,7 @@ class TestProfileObjects:
                 )
                 pid = attrs[CKA_PROFILE_ID]
                 assert pid is not None
-            except (AssertionError, Exception) as exc:
+            except AssertionError as exc:
                 xfail_if_known_ckr(exc, _PROFILE_ATTR_ERROR_CKRS, "Cannot read CKA_PROFILE_ID")
 
     def test_known_profile_ids(self, p11_raw_session: Any) -> None:
@@ -146,4 +146,216 @@ class TestProfileObjects:
             pytest.xfail(
                 "Module does not advertise Baseline or Extended Provider "
                 f"profile - profiles present: {[hex(p) for p in sorted(pids)]}"
+            )
+
+
+def _read_profile_ids(rs: Any) -> set[int]:
+    """Enumerate CKO_PROFILE objects and return the set of their CKA_PROFILE_IDs.
+
+    Returns an empty set on any enumeration / read failure — callers
+    should pytest.skip if the set is empty.
+    """
+    try:
+        handles = find_objects(
+            rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PROFILE})
+        )
+    except AssertionError:
+        return set()
+
+    pids: set[int] = set()
+    for h in handles:
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_PROFILE_ID])
+        except AssertionError:
+            continue
+        if CKA_PROFILE_ID not in attrs:
+            continue
+        raw_val = attrs[CKA_PROFILE_ID]
+        if isinstance(raw_val, bytes):
+            pids.add(int.from_bytes(raw_val, "little"))
+        else:
+            try:
+                pids.add(int(raw_val))
+            except (TypeError, ValueError):
+                continue
+    return pids
+
+
+class TestProfileBehavioralConformance:
+    """For each advertised CKO_PROFILE, verify the module supports the
+    mandatory functions, object classes, and mechanisms the OASIS
+    PKCS#11 Profiles v3.2 spec requires for that profile.
+
+    A module that advertises CKP_BASELINE_PROVIDER but doesn't expose
+    `C_GetSessionInfo` in its function list is non-conformant; this
+    test surfaces such inconsistencies.
+
+    Source: OASIS PKCS#11 Profiles v3.2 §5 (Base Profiles).
+    """
+
+    def test_advertised_profiles_have_required_functions(
+        self, p11_raw_session: Any
+    ) -> None:
+        """Every advertised profile's mandatory functions must be in the
+        module's function list (`C_GetInterface`-resolved)."""
+        from pkcs11_check.compliance_profiles import (
+            PROFILE_TEST_EXCLUDED,
+            lookup_profile,
+        )
+
+        rs = p11_raw_session
+        pids = _read_profile_ids(rs)
+        if not pids:
+            pytest.skip("No CKO_PROFILE objects present")
+
+        available = set(rs.raw.available_function_names())
+        failures: list[str] = []
+        tested_any = False
+
+        for pid in pids:
+            if pid in PROFILE_TEST_EXCLUDED:
+                continue
+            profile = lookup_profile(pid)
+            if profile is None:
+                continue  # unknown / vendor profile — not our table to enforce
+            tested_any = True
+
+            missing = profile.required_functions - available
+            # Authentication Token spec allows either C_Sign or
+            # (C_SignUpdate + C_SignFinal) as the data-signing path; relax.
+            if pid == 0x00000003:  # CKP_AUTHENTICATION_TOKEN
+                if "C_Sign" in available or (
+                    "C_SignUpdate" in available and "C_SignFinal" in available
+                ):
+                    pass  # signing path present in some form
+                else:
+                    missing = missing | {"C_Sign (or C_SignUpdate + C_SignFinal)"}
+
+            if missing:
+                failures.append(
+                    f"{profile.profile_name} (0x{pid:08X}): missing required "
+                    f"functions {sorted(missing)}"
+                )
+
+        if not tested_any:
+            pytest.skip("No tabulated profile IDs advertised by module")
+        if failures:
+            pytest.fail(
+                "Profile conformance failures:\n  " + "\n  ".join(failures)
+            )
+
+    def test_advertised_profiles_have_required_mechanisms(
+        self, p11_raw_session: Any
+    ) -> None:
+        """Profiles that mandate specific mechanisms (HKDF TLS Token) must
+        advertise them in C_GetMechanismList."""
+        from pkcs11_check.compliance_profiles import (
+            PROFILE_TEST_EXCLUDED,
+            lookup_profile,
+        )
+        from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
+
+        rs = p11_raw_session
+        pids = _read_profile_ids(rs)
+        if not pids:
+            pytest.skip("No CKO_PROFILE objects present")
+
+        failures: list[str] = []
+        tested_any = False
+
+        for pid in pids:
+            if pid in PROFILE_TEST_EXCLUDED:
+                continue
+            profile = lookup_profile(pid)
+            if profile is None or not profile.required_mechanisms:
+                continue
+            tested_any = True
+
+            missing_mechs: list[str] = []
+            for mech_id in profile.required_mechanisms:
+                # has_mechanism takes short or full name
+                mech_name = MECHANISM_NAMES.get(mech_id, f"0x{mech_id:08X}")
+                short = mech_name.removeprefix("CKM_")
+                if not (rs.has_mechanism(short) or rs.has_mechanism(mech_name)):
+                    missing_mechs.append(mech_name)
+
+            if missing_mechs:
+                failures.append(
+                    f"{profile.profile_name} (0x{pid:08X}): missing required "
+                    f"mechanisms {missing_mechs}"
+                )
+
+        if not tested_any:
+            pytest.skip(
+                "No advertised profile mandates specific mechanisms "
+                "(Baseline / Extended / Authentication / PublicCert all have "
+                "'None specified' for mechs)"
+            )
+        if failures:
+            pytest.fail(
+                "Profile mechanism-conformance failures:\n  "
+                + "\n  ".join(failures)
+            )
+
+    def test_advertised_profiles_have_required_object_classes(
+        self, p11_raw_session: Any
+    ) -> None:
+        """Profiles that mandate specific object classes must be able to
+        enumerate at least one object of each (where the class is
+        token-resident by nature)."""
+        from pkcs11_check.compliance_profiles import (
+            PROFILE_TEST_EXCLUDED,
+            lookup_profile,
+        )
+        from pkcs11_check.raw.types_std import (
+            CKO_CERTIFICATE,
+        )
+
+        rs = p11_raw_session
+        pids = _read_profile_ids(rs)
+        if not pids:
+            pytest.skip("No CKO_PROFILE objects present")
+
+        tested_any = False
+        # We only check classes that are *required to be present* per the
+        # profile semantics (e.g. Public Certificates Token requires at
+        # least the existence of CKO_CERTIFICATE-class objects).  Object
+        # classes that are "supported" but not "required to be present"
+        # (e.g. CKO_PRIVATE_KEY for Authentication Token) are skipped —
+        # the token might be unprovisioned.
+
+        for pid in pids:
+            if pid in PROFILE_TEST_EXCLUDED:
+                continue
+            profile = lookup_profile(pid)
+            if profile is None:
+                continue
+
+            # Public Certificates Token: spec §5.5 requires certificates
+            # to be present and publicly readable.
+            if pid == 0x00000004:  # CKP_PUBLIC_CERTIFICATES_TOKEN
+                tested_any = True
+                try:
+                    certs = find_objects(
+                        rs.raw,
+                        rs.sh,
+                        template_from_dict({CKA_CLASS: CKO_CERTIFICATE}),
+                    )
+                except AssertionError as exc:
+                    pytest.fail(
+                        f"Public Certificates Token profile advertised, but "
+                        f"C_FindObjects for CKO_CERTIFICATE failed: {exc}"
+                    )
+                if not certs:
+                    pytest.fail(
+                        "Public Certificates Token profile advertised, but "
+                        "no CKO_CERTIFICATE objects are present on token. "
+                        "Spec §5.5 requires certificates be present and "
+                        "publicly readable."
+                    )
+
+        if not tested_any:
+            pytest.skip(
+                "No advertised profile requires class-presence checks (only "
+                "Public Certificates Token does)"
             )

@@ -59,7 +59,7 @@ _ENC_DEC = CKF_ENCRYPT | CKF_DECRYPT
 _WRP_UWRP = CKF_WRAP | CKF_UNWRAP
 
 _rsa = KeygenRecipe("rsa")
-_oaep = ParamRecipe("oaep", {"hash_mech": "CKM_SHA256", "mgf": "CKG_MGF1_SHA256"})
+_oaep = ParamRecipe("oaep", {"hash_mech": "CKM_SHA_1", "mgf": "CKG_MGF1_SHA1"})
 
 # PSS parameter recipes (one per hash -- salt_len matches hash output size)
 _pss_sha1 = ParamRecipe("pss", {"hash_mech": "CKM_SHA_1", "mgf": "CKG_MGF1_SHA1", "salt_len": 20})

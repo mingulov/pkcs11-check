@@ -71,7 +71,7 @@ class TestCertificateSearchExtended:
                     CKA_TOKEN: False,
                 },
             )
-        except (AssertionError, Exception):
+        except AssertionError:
             pytest.skip(f"Module rejected certificate {tc['id']}")
             return
 
@@ -81,17 +81,17 @@ class TestCertificateSearchExtended:
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT])
                 subject = a[CKA_SUBJECT]
-            except (AssertionError, Exception):
+            except AssertionError:
                 pass
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
                 issuer = a[CKA_ISSUER]
-            except (AssertionError, Exception):
+            except AssertionError:
                 pass
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_SERIAL_NUMBER])
                 serial = a[CKA_SERIAL_NUMBER]
-            except (AssertionError, Exception):
+            except AssertionError:
                 pass
 
             # Search by subject

@@ -36,8 +36,22 @@ from pkcs11_check.raw.types_std import (
     CKP_SLH_DSA_SHAKE_192S,
     CKP_SLH_DSA_SHAKE_256F,
     CKP_SLH_DSA_SHAKE_256S,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases._signature_policy import (
+    NON_CLEAN_SIGNATURE_REJECT_RVS,
+    SIGNATURE_REJECT_RVS,
+    signature_rejected_or_xfail,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.acvp]
 
@@ -62,6 +76,59 @@ _PARAM_SET_MAP: dict[str, int] = {
     "SLH-DSA-SHAKE-256s": CKP_SLH_DSA_SHAKE_256S,
     "SLH-DSA-SHAKE-256f": CKP_SLH_DSA_SHAKE_256F,
 }
+
+_PQC_IMPORT_UNSUPPORTED_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_KEY_SIZE_RANGE,
+)
+
+_PQC_IMPORT_RUNTIME_FAILURE_RVS = (CKR_FUNCTION_FAILED,)
+
+_SLHDSA_RUNTIME_REJECT_RVS = (
+    *NON_CLEAN_SIGNATURE_REJECT_RVS,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+
+def _skip_if_import_unsupported(exc: AssertionError, label: str) -> None:
+    if is_known_error(exc, _PQC_IMPORT_UNSUPPORTED_RVS):
+        pytest.skip(f"Cannot import SLH-DSA {label}: {exc}")
+    xfail_if_known_ckr(
+        exc,
+        _PQC_IMPORT_RUNTIME_FAILURE_RVS,
+        f"SLH-DSA {label} import failed with non-specific CKR",
+    )
+    raise exc
+
+
+def _xfail_if_slhdsa_runtime_reject(exc: AssertionError, label: str) -> None:
+    xfail_if_known_ckr(
+        exc,
+        _SLHDSA_RUNTIME_REJECT_RVS,
+        f"{label}: advertised SLH-DSA operation is not operational",
+    )
+    raise exc
+
+
+def _slhdsa_verify_result_or_xfail(
+    exc: AssertionError, label: str, *, expected_pass: bool
+) -> bool:
+    if expected_pass:
+        if is_known_error(exc, SIGNATURE_REJECT_RVS):
+            return False
+        xfail_if_known_ckr(
+            exc,
+            _SLHDSA_RUNTIME_REJECT_RVS,
+            f"{label}: valid SLH-DSA signature verification rejected",
+        )
+        raise exc
+    return signature_rejected_or_xfail(exc, label)
 
 
 def _load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -214,8 +281,8 @@ def test_slhdsa_keygen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
                 parameter_set=param_set,
                 attrs={CKA_SIGN: True},
             )
-        except AssertionError as e:
-            pytest.skip(f"Cannot import SLH-DSA private key ({vec['param_name']}): {e}")
+        except AssertionError as exc:
+            _skip_if_import_unsupported(exc, f"private key ({vec['param_name']})")
 
         try:
             # Import the expected public key
@@ -227,13 +294,16 @@ def test_slhdsa_keygen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
                 parameter_set=param_set,
                 attrs={CKA_VERIFY: True},
             )
-        except AssertionError as e:
-            pytest.skip(f"Cannot import SLH-DSA public key ({vec['param_name']}): {e}")
+        except AssertionError as exc:
+            _skip_if_import_unsupported(exc, f"public key ({vec['param_name']})")
 
-        # Test sign/verify roundtrip to verify keypair consistency
-        test_msg = b"SLH-DSA keygen test message"
-        sig = sign_single(rs.raw, rs.sh, priv_key, CKM_SLH_DSA, test_msg)
-        verified = verify_single(rs.raw, rs.sh, pub_key, CKM_SLH_DSA, test_msg, sig)
+        try:
+            # Test sign/verify roundtrip to verify keypair consistency
+            test_msg = b"SLH-DSA keygen test message"
+            sig = sign_single(rs.raw, rs.sh, priv_key, CKM_SLH_DSA, test_msg)
+            verified = verify_single(rs.raw, rs.sh, pub_key, CKM_SLH_DSA, test_msg, sig)
+        except AssertionError as exc:
+            _xfail_if_slhdsa_runtime_reject(exc, f"{vec_id}: keygen roundtrip")
         assert verified, f"{vec_id}: Sign/verify roundtrip failed for imported keypair"
 
     finally:
@@ -263,24 +333,15 @@ def test_slhdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
                 parameter_set=param_set,
                 attrs={CKA_VERIFY: True},
             )
-        except AssertionError as e:
-            pytest.skip(f"Cannot import SLH-DSA public key ({vec['param_name']}): {e}")
+        except AssertionError as exc:
+            _skip_if_import_unsupported(exc, f"public key ({vec['param_name']})")
 
         try:
             verified = verify_single(rs.raw, rs.sh, pub_key, CKM_SLH_DSA, vec["msg"], vec["sig"])
         except AssertionError as exc:
-            exc_msg = str(exc)
-            if any(
-                name in exc_msg
-                for name in (
-                    "CKR_SIGNATURE_INVALID",
-                    "CKR_SIGNATURE_LEN_RANGE",
-                    "CKR_DATA_INVALID",
-                )
-            ):
-                verified = False
-            else:
-                raise  # Unexpected error -- not a signature verification result
+            verified = _slhdsa_verify_result_or_xfail(
+                exc, vec_id, expected_pass=vec["expected_pass"]
+            )
 
         expected = vec["expected_pass"]
         if not expected and verified:
@@ -320,10 +381,13 @@ def test_slhdsa_siggen(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
                 parameter_set=param_set,
                 attrs={CKA_SIGN: True},
             )
-        except AssertionError as e:
-            pytest.skip(f"Cannot import SLH-DSA private key ({vec['param_name']}): {e}")
+        except AssertionError as exc:
+            _skip_if_import_unsupported(exc, f"private key ({vec['param_name']})")
 
-        sig = sign_single(rs.raw, rs.sh, priv_key, CKM_SLH_DSA, vec["msg"])
+        try:
+            sig = sign_single(rs.raw, rs.sh, priv_key, CKM_SLH_DSA, vec["msg"])
+        except AssertionError as exc:
+            _xfail_if_slhdsa_runtime_reject(exc, vec_id)
         assert len(sig) > 0, f"SLH-DSA sign returned empty signature for {vec_id}"
     finally:
         if priv_key:

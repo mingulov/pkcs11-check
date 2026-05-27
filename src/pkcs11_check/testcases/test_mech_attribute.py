@@ -30,7 +30,13 @@ from pkcs11_check.raw.types_std import (
     CKO_PRIVATE_KEY,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import require_bool_attr, require_ulong_attr
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     gen_keypair_for_mech,
@@ -40,24 +46,39 @@ from pkcs11_check.testcases.mechanism_helpers import (
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.keygen]
 
+_ATTRIBUTE_READ_UNSUPPORTED_RVS = (
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_ATTRIBUTE_READ_NONCLEAN_RVS = (CKR_ATTRIBUTE_VALUE_INVALID,)
+
 
 def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> Any | None:
     """Read a single attribute; return None if the module does not expose it."""
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [attr_id])
         return attrs.get(attr_id)
-    except (AssertionError, Exception) as exc:
-        err = str(exc)
-        if any(
-            tok in err
-            for tok in (
-                "CKR_ATTRIBUTE_TYPE_INVALID",
-                "CKR_ATTRIBUTE_SENSITIVE",
-                "CKR_TEMPLATE_INCONSISTENT",
-            )
-        ):
+    except AssertionError as exc:
+        if is_known_error(exc, _ATTRIBUTE_READ_UNSUPPORTED_RVS):
             return None
+        if is_known_error(exc, _ATTRIBUTE_READ_NONCLEAN_RVS):
+            pytest.xfail(
+                f"{label} attribute read rejected with non-clean CKR: CKR_ATTRIBUTE_VALUE_INVALID"
+            )
         raise AssertionError(f"Unexpected error reading {label} on handle {handle}: {exc}") from exc
+
+
+def _xfail_generated_local_false(mech_name: str, label: str) -> None:
+    from pkcs11_check.compliance import ComplianceLevel, note
+
+    note(
+        f"{mech_name} {label} CKA_LOCAL=False for generated key",
+        ComplianceLevel.NOT_RECOMMENDED,
+        reference="PKCS#11 v3.1 Sec.4.9.2: CKA_LOCAL True if key generated on token",
+    )
+    pytest.xfail(f"{mech_name} {label}: CKA_LOCAL=False for generated key")
 
 
 class TestKeyAttributes:
@@ -88,9 +109,12 @@ class TestKeyAttributes:
                     actual = _read_attr_safe(rs, handle, CKA_KEY_TYPE, f"CKA_KEY_TYPE on {label}")
                     if actual is None:
                         continue  # Module doesn't expose CKA_KEY_TYPE -- skip this object
-                    assert int(actual) == expected_kt, (
+                    actual_kt = require_ulong_attr(
+                        actual, f"{entry.mech_name} {label} CKA_KEY_TYPE"
+                    )
+                    assert actual_kt == expected_kt, (
                         f"{entry.mech_name} {label} key: CKA_KEY_TYPE "
-                        f"0x{int(actual):08x} != expected 0x{expected_kt:08x}"
+                        f"0x{actual_kt:08x} != expected 0x{expected_kt:08x}"
                     )
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub)
@@ -100,9 +124,10 @@ class TestKeyAttributes:
             try:
                 actual = _read_attr_safe(rs, key, CKA_KEY_TYPE, "CKA_KEY_TYPE")
                 if actual is not None:
-                    assert int(actual) == expected_kt, (
+                    actual_kt = require_ulong_attr(actual, f"{entry.mech_name} CKA_KEY_TYPE")
+                    assert actual_kt == expected_kt, (
                         f"{entry.mech_name}: CKA_KEY_TYPE "
-                        f"0x{int(actual):08x} != expected 0x{expected_kt:08x}"
+                        f"0x{actual_kt:08x} != expected 0x{expected_kt:08x}"
                     )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
@@ -132,6 +157,9 @@ class TestKeyAttributes:
                     local = _read_attr_safe(rs, handle, CKA_LOCAL, f"CKA_LOCAL on {label}")
                     if local is None:
                         continue
+                    local = require_bool_attr(local, f"{entry.mech_name} {label} CKA_LOCAL")
+                    if local is False:
+                        _xfail_generated_local_false(entry.mech_name, f"{label} key")
                     assert local is True, (
                         f"{entry.mech_name} {label} key: CKA_LOCAL is {local!r}, expected True"
                     )
@@ -143,6 +171,9 @@ class TestKeyAttributes:
             try:
                 local = _read_attr_safe(rs, key, CKA_LOCAL, "CKA_LOCAL")
                 if local is not None:
+                    local = require_bool_attr(local, f"{entry.mech_name} CKA_LOCAL")
+                    if local is False:
+                        _xfail_generated_local_false(entry.mech_name, "key")
                     assert local is True, (
                         f"{entry.mech_name}: CKA_LOCAL is {local!r}, expected True"
                     )
@@ -174,6 +205,7 @@ class TestKeyAttributes:
                     token = _read_attr_safe(rs, handle, CKA_TOKEN, f"CKA_TOKEN on {label}")
                     if token is None:
                         continue
+                    token = require_bool_attr(token, f"{entry.mech_name} {label} CKA_TOKEN")
                     # Some HSMs may always return True for CKA_TOKEN -- that is allowed;
                     # what is NOT allowed is returning True when we requested False AND the
                     # module confirmed the key was created. We only check if it's False or True.
@@ -189,6 +221,7 @@ class TestKeyAttributes:
             try:
                 token = _read_attr_safe(rs, key, CKA_TOKEN, "CKA_TOKEN")
                 if token is not None:
+                    token = require_bool_attr(token, f"{entry.mech_name} CKA_TOKEN")
                     assert isinstance(token, bool), (
                         f"{entry.mech_name}: CKA_TOKEN is not bool: {token!r}"
                     )
@@ -224,15 +257,21 @@ class TestKeyAttributes:
                 pub_class = _read_attr_safe(rs, pub, CKA_CLASS, "CKA_CLASS on public")
                 priv_class = _read_attr_safe(rs, priv, CKA_CLASS, "CKA_CLASS on private")
                 if pub_class is not None:
-                    assert int(pub_class) == int(CKO_PUBLIC_KEY), (
+                    pub_class_value = require_ulong_attr(
+                        pub_class, f"{entry.mech_name} public CKA_CLASS"
+                    )
+                    assert pub_class_value == int(CKO_PUBLIC_KEY), (
                         f"{entry.mech_name} public key: CKA_CLASS "
-                        f"0x{int(pub_class):08x} != CKO_PUBLIC_KEY "
+                        f"0x{pub_class_value:08x} != CKO_PUBLIC_KEY "
                         f"0x{int(CKO_PUBLIC_KEY):08x}"
                     )
                 if priv_class is not None:
-                    assert int(priv_class) == int(CKO_PRIVATE_KEY), (
+                    priv_class_value = require_ulong_attr(
+                        priv_class, f"{entry.mech_name} private CKA_CLASS"
+                    )
+                    assert priv_class_value == int(CKO_PRIVATE_KEY), (
                         f"{entry.mech_name} private key: CKA_CLASS "
-                        f"0x{int(priv_class):08x} != CKO_PRIVATE_KEY "
+                        f"0x{priv_class_value:08x} != CKO_PRIVATE_KEY "
                         f"0x{int(CKO_PRIVATE_KEY):08x}"
                     )
             finally:
@@ -243,9 +282,10 @@ class TestKeyAttributes:
             try:
                 cls = _read_attr_safe(rs, key, CKA_CLASS, "CKA_CLASS")
                 if cls is not None:
-                    assert int(cls) == int(CKO_SECRET_KEY), (
+                    cls_value = require_ulong_attr(cls, f"{entry.mech_name} CKA_CLASS")
+                    assert cls_value == int(CKO_SECRET_KEY), (
                         f"{entry.mech_name}: CKA_CLASS "
-                        f"0x{int(cls):08x} != CKO_SECRET_KEY "
+                        f"0x{cls_value:08x} != CKO_SECRET_KEY "
                         f"0x{int(CKO_SECRET_KEY):08x}"
                     )
             finally:

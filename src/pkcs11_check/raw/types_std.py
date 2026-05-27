@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from typing import Self
 
 STANDARD_GENERATED = True
 
@@ -10,7 +11,7 @@ STANDARD_GENERATED = True
 class CK_CONSTANT(int):
     _name: str | None
 
-    def __new__(cls, value: int, name: str | None = None) -> "CK_CONSTANT":
+    def __new__(cls, value: int, name: str | None = None) -> Self:
         obj = super().__new__(cls, value)
         obj._name = name
         return obj

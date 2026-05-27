@@ -20,56 +20,96 @@ import pytest
 
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.types_std import CKM, CKR_OK
+from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.types_std import (
+    CKF_DECAPSULATE,
+    CKF_DECRYPT,
+    CKF_DERIVE,
+    CKF_DIGEST,
+    CKF_ENCAPSULATE,
+    CKF_ENCRYPT,
+    CKF_EXTENSION,
+    CKF_GENERATE,
+    CKF_GENERATE_KEY_PAIR,
+    CKF_MESSAGE_DECRYPT,
+    CKF_MESSAGE_ENCRYPT,
+    CKF_MESSAGE_SIGN,
+    CKF_MESSAGE_VERIFY,
+    CKF_SIGN,
+    CKF_SIGN_RECOVER,
+    CKF_UNWRAP,
+    CKF_VERIFY,
+    CKF_VERIFY_RECOVER,
+    CKF_WRAP,
+    CKM,
+    CKR_ARGUMENTS_BAD,
+    CKR_BUFFER_TOO_SMALL,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_NEED_TO_CREATE_THREADS,
+    CKR_NO_EVENT,
+    CKR_OBJECT_HANDLE_INVALID,
+    CKR_OK,
+    CKR_OPERATION_ACTIVE,
+    CKR_SAVED_STATE_INVALID,
+    CKR_SESSION_HANDLE_INVALID,
+    CKR_SLOT_ID_INVALID,
+    CKR_TOKEN_NOT_RECOGNIZED,
+    CKR_USER_NOT_LOGGED_IN,
+)
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.surface_audit]
 
 # Mechanism flags that indicate an operation class
 _OP_FLAGS: int = (
-    0x00000100  # CKF_ENCRYPT
-    | 0x00000200  # CKF_DECRYPT
-    | 0x00000400  # CKF_DIGEST
-    | 0x00000800  # CKF_SIGN
-    | 0x00001000  # CKF_SIGN_RECOVER
-    | 0x00002000  # CKF_VERIFY
-    | 0x00004000  # CKF_VERIFY_RECOVER
-    | 0x00008000  # CKF_GENERATE
-    | 0x00010000  # CKF_GENERATE_KEY_PAIR
-    | 0x00020000  # CKF_WRAP
-    | 0x00040000  # CKF_UNWRAP
-    | 0x00080000  # CKF_DERIVE
-    | 0x10000000  # CKF_ENCAPSULATE
-    | 0x20000000  # CKF_DECAPSULATE
-    | 0x80000000  # CKF_EXTENSION
-    | 0x00000002  # CKF_MESSAGE_ENCRYPT
-    | 0x00000004  # CKF_MESSAGE_DECRYPT
-    | 0x00000008  # CKF_MESSAGE_SIGN
-    | 0x00000010  # CKF_MESSAGE_VERIFY
+    int(CKF_ENCRYPT)
+    | int(CKF_DECRYPT)
+    | int(CKF_DIGEST)
+    | int(CKF_SIGN)
+    | int(CKF_SIGN_RECOVER)
+    | int(CKF_VERIFY)
+    | int(CKF_VERIFY_RECOVER)
+    | int(CKF_GENERATE)
+    | int(CKF_GENERATE_KEY_PAIR)
+    | int(CKF_WRAP)
+    | int(CKF_UNWRAP)
+    | int(CKF_DERIVE)
+    | int(CKF_ENCAPSULATE)
+    | int(CKF_DECAPSULATE)
+    | int(CKF_EXTENSION)
+    | int(CKF_MESSAGE_ENCRYPT)
+    | int(CKF_MESSAGE_DECRYPT)
+    | int(CKF_MESSAGE_SIGN)
+    | int(CKF_MESSAGE_VERIFY)
 )
 
 # CKR values that are valid "no crash" responses for an Init call with no key.
 # CKR_OK is included because some implementations may allow deferred key binding.
 _VALID_INIT_RVCS: frozenset[int] = frozenset(
     [
-        0x00000000,  # CKR_OK
-        0x00000010,  # CKR_SLOT_ID_INVALID (some impls reject unknown mechs early)
-        0x00000020,  # CKR_GENERAL_ERROR
-        0x00000040,  # CKR_FUNCTION_NOT_SUPPORTED
-        0x00000050,  # CKR_ARGUMENTS_BAD
-        0x00000060,  # CKR_NO_EVENT
-        0x00000070,  # CKR_NEED_TO_CREATE_THREADS
-        0x00000090,  # CKR_OPERATION_ACTIVE
-        0x000000B0,  # CKR_KEY_HANDLE_INVALID
-        0x000000B3,  # CKR_KEY_TYPE_INCONSISTENT
-        0x000000C0,  # CKR_MECHANISM_INVALID
-        0x000000C1,  # CKR_MECHANISM_PARAM_INVALID
-        0x000000D0,  # CKR_OBJECT_HANDLE_INVALID
-        0x00000140,  # CKR_SESSION_HANDLE_INVALID
-        0x00000180,  # CKR_TOKEN_NOT_RECOGNIZED
-        0x000001A0,  # CKR_USER_NOT_LOGGED_IN
-        0x00000200,  # CKR_BUFFER_TOO_SMALL
-        0x00000210,  # CKR_SAVED_STATE_INVALID
+        int(CKR_OK),
+        int(CKR_SLOT_ID_INVALID),
+        int(CKR_GENERAL_ERROR),
+        int(CKR_FUNCTION_NOT_SUPPORTED),
+        int(CKR_ARGUMENTS_BAD),
+        int(CKR_NO_EVENT),
+        int(CKR_NEED_TO_CREATE_THREADS),
+        int(CKR_OPERATION_ACTIVE),
+        int(CKR_KEY_HANDLE_INVALID),
+        int(CKR_KEY_TYPE_INCONSISTENT),
+        int(CKR_MECHANISM_INVALID),
+        int(CKR_MECHANISM_PARAM_INVALID),
+        int(CKR_OBJECT_HANDLE_INVALID),
+        int(CKR_SESSION_HANDLE_INVALID),
+        int(CKR_TOKEN_NOT_RECOGNIZED),
+        int(CKR_USER_NOT_LOGGED_IN),
+        int(CKR_BUFFER_TOO_SMALL),
+        int(CKR_SAVED_STATE_INVALID),
     ]
 )
 
@@ -133,9 +173,9 @@ class TestMechProbeNoRegistry:
         rs = p11_raw_session
 
         # Choose the Init function based on advertised flags
-        ckf_encrypt = 0x00000100
-        ckf_sign = 0x00000800
-        ckf_digest = 0x00000400
+        ckf_encrypt = int(CKF_ENCRYPT)
+        ckf_sign = int(CKF_SIGN)
+        ckf_digest = int(CKF_DIGEST)
 
         rv: int
         if flags & ckf_digest:
@@ -150,6 +190,9 @@ class TestMechProbeNoRegistry:
 
         # rv must be a recognisable CKR integer -- not a process crash
         assert isinstance(rv, int), f"{entry.mech_name}: Init returned non-integer {rv!r}"
+        assert rv in _VALID_INIT_RVCS, (
+            f"{entry.mech_name}: Init returned unexpected CKR {ckr_name(rv)} (0x{rv:08x})"
+        )
         # If the call somehow returned CKR_OK (shouldn't happen with handle=0),
         # abort the pending operation to avoid contaminating session state.
         if rv == CKR_OK:

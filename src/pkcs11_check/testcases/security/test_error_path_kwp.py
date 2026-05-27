@@ -7,12 +7,13 @@ Targets heap overflows found in:
 All tests run in subprocess for crash safety. Each test generates a valid
 wrapping key, wraps a target key, applies a specific corruption to the wrapped
 blob, then attempts to unwrap (C_UnwrapKey) or decrypt (C_Decrypt) the
-corrupted data. A crash (negative returncode = signal) confirms the
-vulnerability.
+corrupted data. A crash (negative returncode = signal), child script failure,
+or output-buffer guard overwrite confirms the vulnerability.
 """
 
 from __future__ import annotations
 
+from textwrap import indent
 from typing import Any
 
 import pytest
@@ -153,10 +154,20 @@ if rv != 0:
     print(f"decrypt_init_rv={{rv}}")
 else:
     data_buf = (ctypes.c_ubyte * len(corrupted))(*corrupted)
-    out_buf = (ctypes.c_ubyte * (len(corrupted) + 16))()
-    out_len = CK_ULONG(len(corrupted) + 16)
+    minimal_len = max(0, len(corrupted) - 8)
+    guard_sentinel = b"PKCS11CHK"
+    out_buf = (ctypes.c_ubyte * (minimal_len + len(guard_sentinel)))()
+    for i, byte in enumerate(guard_sentinel):
+        out_buf[minimal_len + i] = byte
+    out_len = CK_ULONG(minimal_len)
     rv = raw.C_Decrypt(sh, data_buf, len(corrupted), out_buf, ctypes.byref(out_len))
     print(f"decrypt_rv={{rv}}")
+    guard = bytes(out_buf[minimal_len:minimal_len + len(guard_sentinel)])
+    if guard != guard_sentinel:
+        raise AssertionError(
+            "C_Decrypt wrote past the minimal output buffer on a corrupted "
+            f"{ckm_name} error path: guard={{guard.hex()}}"
+        )
 """
 
 # Common key generation + wrap preamble for subprocess scripts
@@ -216,7 +227,7 @@ def _build_script(
         action = _UNWRAP_CODE.format(ckm_name=ckm_name)
     else:
         action = _DECRYPT_CODE.format(ckm_name=ckm_name)
-    return preamble + keygen + corruption_code + action + _CLEANUP
+    return preamble + keygen + indent(corruption_code + action, "    ") + _CLEANUP
 
 
 class TestCorruptedUnwrap:

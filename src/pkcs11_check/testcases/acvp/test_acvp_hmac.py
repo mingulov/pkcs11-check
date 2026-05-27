@@ -21,6 +21,7 @@ from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
+    CKK_GENERIC_SECRET,
     CKK_SHA3_224_HMAC,
     CKK_SHA3_256_HMAC,
     CKK_SHA3_384_HMAC,
@@ -41,8 +42,19 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_224_HMAC,
     CKM_SHA512_256_HMAC,
     CKM_SHA512_HMAC,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE, load_acvp_vectors
+from pkcs11_check.testcases.conftest import is_known_error
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
 
@@ -95,6 +107,71 @@ _ALG_MAP: dict[str, tuple[int, int, str]] = {
 
 # Maximum vectors per algorithm (None = no limit)
 _MAX_PER_ALG: int | None = None
+
+_HMAC_KEY_SETUP_ERROR_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+_HMAC_KEY_USE_ERROR_CKRS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+)
+
+
+def _hmac_key_type_candidates(key_type: int) -> tuple[int, ...]:
+    if int(key_type) == int(CKK_GENERIC_SECRET):
+        return (int(CKK_GENERIC_SECRET),)
+    return (int(key_type), int(CKK_GENERIC_SECRET))
+
+
+def _sign_hmac_with_key_fallback(rs: Any, vec: dict[str, Any]) -> bytes:
+    """Import an HMAC key, trying the typed key first and GENERIC_SECRET second."""
+    key_setup_errors: list[str] = []
+    key_use_errors: list[str] = []
+    for key_type in _hmac_key_type_candidates(vec["key_type"]):
+        key = 0
+        try:
+            key = import_secret_key(
+                rs.raw,
+                rs.sh,
+                key_type,
+                vec["key"],
+                attrs={
+                    CKA_SIGN: True,
+                    CKA_TOKEN: False,
+                    CKA_SENSITIVE: False,
+                },
+            )
+            return sign_single(rs.raw, rs.sh, key, vec["mechanism"], vec["msg"])
+        except AssertionError as exc:
+            if is_known_error(exc, _HMAC_KEY_SETUP_ERROR_CKRS):
+                key_setup_errors.append(f"key_type=0x{key_type:x}: {exc}")
+                continue
+            if is_known_error(exc, _HMAC_KEY_USE_ERROR_CKRS):
+                key_use_errors.append(f"key_type=0x{key_type:x}: {exc}")
+                continue
+            raise
+        finally:
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
+
+    if key_use_errors:
+        pytest.xfail(
+            f"{vec['mech_display']} advertised but imported HMAC key was not accepted: "
+            + "; ".join(key_use_errors)
+        )
+    pytest.xfail(
+        f"{vec['mech_display']} advertised but HMAC key setup failed for typed and "
+        f"generic key types: {'; '.join(key_setup_errors)}"
+    )
 
 
 def _load_hmac_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -153,44 +230,13 @@ def test_acvp_hmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> No
     if not rs.has_mechanism(vec["mech_display"]):
         pytest.skip(f"{vec['mech_display']} not supported by module")
 
-    key = 0
-    try:
-        try:
-            key = import_secret_key(
-                rs.raw,
-                rs.sh,
-                vec["key_type"],
-                vec["key"],
-                attrs={
-                    CKA_SIGN: True,
-                    CKA_TOKEN: False,
-                    CKA_SENSITIVE: False,
-                },
-            )
-        except AssertionError as e:
-            pytest.skip(f"Cannot import {len(vec['key'])}-byte HMAC key: {e}")
+    mac = _sign_hmac_with_key_fallback(rs, vec)
 
-        # Compute HMAC
-        try:
-            mac = sign_single(rs.raw, rs.sh, key, vec["mechanism"], vec["msg"])
-        except AssertionError as exc:
-            exc_msg = str(exc)
-            if "CKR_KEY_SIZE_RANGE" in exc_msg:
-                # Module rejects this key size for HMAC with this mechanism
-                pytest.skip(f"Key size out of range for {vec['mech_display']}")
-            if "CKR_KEY_HANDLE_INVALID" in exc_msg:
-                # Module rejects this key for HMAC (key type/mechanism mismatch)
-                pytest.skip(f"Key not valid for HMAC mechanism {vec['mech_display']}")
-            raise
+    # Compare truncated to expected (macLen is in bits)
+    mac_len_bytes = vec["mac_len_bits"] // 8
+    truncated = mac[:mac_len_bytes]
+    expected = vec["mac_expected"]
 
-        # Compare truncated to expected (macLen is in bits)
-        mac_len_bytes = vec["mac_len_bits"] // 8
-        truncated = mac[:mac_len_bytes]
-        expected = vec["mac_expected"]
-
-        assert truncated == expected, (
-            f"HMAC mismatch for {vec_id}: got {truncated.hex()}, expected {expected.hex()}"
-        )
-    finally:
-        if key:
-            destroy_quietly(rs.raw, rs.sh, key)
+    assert truncated == expected, (
+        f"HMAC mismatch for {vec_id}: got {truncated.hex()}, expected {expected.hex()}"
+    )

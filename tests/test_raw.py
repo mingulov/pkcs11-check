@@ -62,3 +62,29 @@ def test_expect_rv_raises_for_unexpected_value() -> None:
 
     with pytest.raises(AssertionError, match="CKR_ARGUMENTS_BAD"):
         expect_rv(0x00000007, 0x00000000)
+
+
+def test_expect_rv_attaches_rv_to_exception() -> None:
+    """CkrAssertionError carries the offending CKR int so callers can match by value."""
+    from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
+
+    with pytest.raises(CkrAssertionError) as exc_info:
+        expect_rv(0x00000007, 0x00000000)
+    assert exc_info.value.rv == 0x00000007
+
+
+def test_is_known_error_uses_exact_rv_match_when_available() -> None:
+    """``CKR_MECHANISM_INVALID`` must not falsely match against
+    ``CKR_MECHANISM_PARAM_INVALID``: with exact-rv matching, the prefix
+    collision is gone.
+    """
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID
+    from pkcs11_check.testcases.conftest import is_known_error
+
+    exc = CkrAssertionError(
+        "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID; expected one of: CKR_OK",
+        int(CKR_MECHANISM_PARAM_INVALID),
+    )
+    assert is_known_error(exc, {int(CKR_MECHANISM_PARAM_INVALID)}) is True
+    assert is_known_error(exc, {int(CKR_MECHANISM_INVALID)}) is False

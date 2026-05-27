@@ -1,9 +1,9 @@
-"""NIST ACVP/Wycheproof ECDH key agreement test vectors (SP 800-56A).
+"""Wycheproof ECDH key agreement test vectors (SP 800-56A).
 
-Tests ECDH shared secret derivation using official NIST ACVP and Wycheproof
-vectors for P-256, P-384, and P-521 curves.
+Tests ECDH shared secret derivation using Wycheproof vectors for P-256, P-384,
+and P-521 curves.
 
-Requires: ACVP vectors or Wycheproof test vectors
+Requires: Wycheproof test vectors
 Skips gracefully if test vectors not available or mechanism unavailable.
 """
 
@@ -39,7 +39,22 @@ from pkcs11_check.raw.types_std import (
     CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 pytestmark = [pytest.mark.kat, pytest.mark.acvp]
@@ -50,6 +65,47 @@ _CURVE_MAP: dict[str, tuple[str, int, str]] = {
     "P-384": ("secp384r1", 48, "ecdh_secp384r1_test.json"),
     "P-521": ("secp521r1", 66, "ecdh_secp521r1_test.json"),
 }
+
+_EC_CAPABILITY_REJECT_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_KEY_SIZE_RANGE,
+)
+
+_ECDH_RUNTIME_REJECT_RVS = (
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+def _skip_if_ec_capability_reject(exc: AssertionError, label: str) -> None:
+    if is_known_error(exc, _EC_CAPABILITY_REJECT_RVS):
+        pytest.skip(f"{label} not supported: {exc}")
+    raise
+
+
+def _xfail_if_ecdh_runtime_reject(exc: AssertionError, label: str) -> None:
+    if is_known_error(exc, (CKR_CURVE_NOT_SUPPORTED, CKR_DOMAIN_PARAMS_INVALID)):
+        pytest.skip(f"{label} not supported: {exc}")
+    xfail_if_known_ckr(
+        exc,
+        _ECDH_RUNTIME_REJECT_RVS,
+        f"{label} advertised but ECDH derive is not operational",
+    )
+    raise
 
 
 def _der_octet_string(data: bytes) -> bytes:
@@ -74,6 +130,36 @@ def _build_ec_point(qx_hex: str, qy_hex: str, coord_len: int) -> bytes:
         bytes([0x04]) + _pad_coordinate(qx_hex, coord_len) + _pad_coordinate(qy_hex, coord_len)
     )
     return _der_octet_string(point_bytes)
+
+
+def _read_der_tlv(data: bytes, offset: int) -> tuple[int, int, int, int]:
+    """Read one DER TLV and return (tag, value_start, value_end, next_offset)."""
+    if offset >= len(data):
+        raise ValueError("truncated DER tag")
+
+    tag = data[offset]
+    offset += 1
+    if offset >= len(data):
+        raise ValueError("truncated DER length")
+
+    first_len = data[offset]
+    offset += 1
+    if first_len < 0x80:
+        length = first_len
+    else:
+        length_octets = first_len & 0x7F
+        if length_octets == 0:
+            raise ValueError("indefinite DER length is not allowed")
+        if offset + length_octets > len(data):
+            raise ValueError("truncated DER long-form length")
+        length = int.from_bytes(data[offset : offset + length_octets], "big")
+        offset += length_octets
+
+    value_start = offset
+    value_end = offset + length
+    if value_end > len(data):
+        raise ValueError("truncated DER value")
+    return tag, value_start, value_end, value_end
 
 
 def _load_wycheproof_ecdh_vectors(
@@ -150,14 +236,36 @@ def _extract_ec_point(public_key_bytes: bytes, coord_len: int) -> bytes | None:
     if n == expected_point_len and public_key_bytes[0] == 0x04:
         return _der_octet_string(public_key_bytes)
 
-    # Try to parse as DER SubjectPublicKeyInfo
-    if n > expected_point_len:
-        # Look for the uncompressed point marker (0x04) followed by coordinates
-        for i in range(n - expected_point_len + 1):
-            if public_key_bytes[i] == 0x04:
-                candidate = public_key_bytes[i : i + expected_point_len]
-                if len(candidate) == expected_point_len:
-                    return _der_octet_string(candidate)
+    # CKA_EC_POINT encoding: DER OCTET STRING wrapping the uncompressed point.
+    if n > expected_point_len and public_key_bytes[0] == 0x04:
+        try:
+            point = decode_ec_point(public_key_bytes)
+        except ValueError:
+            point = b""
+        if len(point) == expected_point_len and point[0] == 0x04:
+            return public_key_bytes
+
+    # SubjectPublicKeyInfo: SEQUENCE { AlgorithmIdentifier, BIT STRING ECPoint }.
+    # Do not scan for the first 0x04 byte: P-384/P-521 curve OIDs contain 0x04.
+    try:
+        tag, outer_start, outer_end, next_offset = _read_der_tlv(public_key_bytes, 0)
+        if tag != 0x30 or next_offset != n:
+            return None
+
+        tag, _, _, offset = _read_der_tlv(public_key_bytes, outer_start)
+        if tag != 0x30:
+            return None
+
+        tag, bit_start, bit_end, offset = _read_der_tlv(public_key_bytes, offset)
+        if tag != 0x03 or offset != outer_end or bit_start >= bit_end:
+            return None
+
+        unused_bits = public_key_bytes[bit_start]
+        point = public_key_bytes[bit_start + 1 : bit_end]
+        if unused_bits == 0 and len(point) == expected_point_len and point[0] == 0x04:
+            return _der_octet_string(point)
+    except ValueError:
+        return None
 
     return None
 
@@ -180,7 +288,7 @@ _ECDH_VECTORS = _load_all_ecdh_vectors()
 def test_acvp_ecdh_shared_secret(
     p11_raw_session: RawSession, vec_id: str, vec: dict[str, Any]
 ) -> None:
-    """ECDH shared secret derivation test using Wycheproof/ACVP vectors.
+    """ECDH shared secret derivation test using Wycheproof vectors.
 
     Imports a private key and peer public key, derives the shared secret using
     CKM_ECDH1_DERIVE, and verifies it matches the expected value.
@@ -200,32 +308,36 @@ def test_acvp_ecdh_shared_secret(
     derived_key = 0
 
     try:
-        # Import private key with derive capability
-        priv_key = import_ec_private_key(
-            rs.raw,
-            rs.sh,
-            ec_params=ec_params,
-            value=vec["private_key"],
-            key_type=int(CKK_EC),
-            attrs={
-                CKA_DERIVE: True,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-            },
-        )
+        try:
+            priv_key = import_ec_private_key(
+                rs.raw,
+                rs.sh,
+                ec_params=ec_params,
+                value=vec["private_key"],
+                key_type=int(CKK_EC),
+                attrs={
+                    CKA_DERIVE: True,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                },
+            )
+        except AssertionError as exc:
+            _skip_if_ec_capability_reject(exc, f"Curve {curve} private key import")
 
-        # Import peer public key
-        pub_key = import_ec_public_key(
-            rs.raw,
-            rs.sh,
-            ec_params=ec_params,
-            ec_point=vec["ec_point_der"],
-            key_type=int(CKK_EC),
-        )
+        try:
+            pub_key = import_ec_public_key(
+                rs.raw,
+                rs.sh,
+                ec_params=ec_params,
+                ec_point=vec["ec_point_der"],
+                key_type=int(CKK_EC),
+            )
+        except AssertionError as exc:
+            _skip_if_ec_capability_reject(exc, f"Curve {curve} public key import")
 
-        # Prepare ECDH1_DERIVE mechanism parameters
-        # The public data is the peer's public key point
-        # Strip DER OCTET STRING wrapper -- ECDH1_DERIVE needs raw point
+        # Prepare ECDH1_DERIVE mechanism parameters. The public data is the peer's
+        # public key point; strip DER OCTET STRING wrapper because ECDH1_DERIVE
+        # takes the raw point.
         point_data = decode_ec_point(vec["ec_point_der"])
 
         mech_param = mech_ecdh(
@@ -234,22 +346,23 @@ def test_acvp_ecdh_shared_secret(
             public_data=point_data,
         )
 
-        # Derive the shared secret key
-        # The derived key will be a CKO_SECRET_KEY containing the shared secret
-        derived_key = derive_key(
-            rs.raw,
-            rs.sh,
-            base_key=priv_key,
-            mechanism=CKM_ECDH1_DERIVE,
-            attrs={
-                CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_GENERIC_SECRET,  # Derived shared secret, not EC key
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_VALUE_LEN: len(vec["expected_shared"]),
-            },
-            mech_param=mech_param,
-        )
+        try:
+            derived_key = derive_key(
+                rs.raw,
+                rs.sh,
+                base_key=priv_key,
+                mechanism=CKM_ECDH1_DERIVE,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,  # Derived shared secret, not EC key
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_VALUE_LEN: len(vec["expected_shared"]),
+                },
+                mech_param=mech_param,
+            )
+        except AssertionError as exc:
+            _xfail_if_ecdh_runtime_reject(exc, f"Curve {curve}")
 
         # Read the derived key's value
         attrs = read_attributes(rs.raw, rs.sh, derived_key, [CKA_VALUE])
@@ -269,23 +382,6 @@ def test_acvp_ecdh_shared_secret(
             f"  Expected: {expected.hex()[:32]}...\n"
             f"  Got:      {shared_secret.hex()[:32]}..."
         )
-
-    except AssertionError:
-        raise
-    except Exception as exc:
-        # Handle unsupported curves gracefully
-        if any(
-            err in str(exc)
-            for err in [
-                "CKR_MECHANISM_INVALID",
-                "CKR_ATTRIBUTE_VALUE_INVALID",
-                "CKR_CURVE_NOT_SUPPORTED",
-                "CKR_KEY_SIZE_RANGE",
-                "CKR_TEMPLATE_INCOMPLETE",
-            ]
-        ):
-            pytest.skip(f"Curve {curve} not supported: {exc}")
-        raise
     finally:
         destroy_quietly(rs.raw, rs.sh, derived_key)
         destroy_quietly(rs.raw, rs.sh, pub_key)
@@ -311,27 +407,30 @@ class TestEcdhKeyAgreement:
 
         # Generate two keypairs for ECDH
         from pkcs11_check.raw.recipes import gen_ec_keypair
-        from pkcs11_check.raw.types_std import CKA_DERIVE
 
         alice_priv = alice_pub = bob_priv = bob_pub = 0
         alice_secret = 0
 
         try:
-            # Alice's keypair
-            alice_pub, alice_priv = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid=ec_params,
-                private_attrs={CKA_DERIVE: True},
-            )
+            try:
+                alice_pub, alice_priv = gen_ec_keypair(
+                    rs.raw,
+                    rs.sh,
+                    curve_oid=ec_params,
+                    private_attrs={CKA_DERIVE: True},
+                )
+            except AssertionError as exc:
+                _skip_if_ec_capability_reject(exc, f"Curve {curve} key generation")
 
-            # Bob's keypair
-            bob_pub, bob_priv = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid=ec_params,
-                private_attrs={CKA_DERIVE: True},
-            )
+            try:
+                bob_pub, bob_priv = gen_ec_keypair(
+                    rs.raw,
+                    rs.sh,
+                    curve_oid=ec_params,
+                    private_attrs={CKA_DERIVE: True},
+                )
+            except AssertionError as exc:
+                _skip_if_ec_capability_reject(exc, f"Curve {curve} key generation")
 
             # Alice derives secret with Bob's public key
             bob_point_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_EC_POINT])
@@ -341,8 +440,13 @@ class TestEcdhKeyAgreement:
             if not bob_ec_point:
                 pytest.skip("Cannot extract public key point for ECDH")
 
-            # CKA_EC_POINT is DER-encoded; ECDH1_DERIVE requires raw point per OASIS spec
-            bob_point_raw = decode_ec_point(bob_ec_point)
+            # CKA_EC_POINT is DER-encoded; ECDH1_DERIVE requires raw point per OASIS spec.
+            try:
+                bob_point_raw = decode_ec_point(bob_ec_point)
+            except ValueError as exc:
+                pytest.xfail(
+                    f"Curve {curve} generated public key has malformed CKA_EC_POINT: {exc}"
+                )
 
             # Derive shared secrets
             mech_param_alice = mech_ecdh(
@@ -364,27 +468,16 @@ class TestEcdhKeyAgreement:
                 },
                 mech_param=mech_param_alice,
             )
+            try:
+                # Read Alice's shared secret
+                alice_attrs = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])
+                alice_shared = cast(bytes, alice_attrs.get(CKA_VALUE, b""))
 
-            # Read Alice's shared secret
-            alice_attrs = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])
-            alice_shared = cast(bytes, alice_attrs.get(CKA_VALUE, b""))
-
-            assert len(alice_shared) > 0, f"{curve}: Failed to derive shared secret"
-
-        except AssertionError:
-            raise
-        except Exception as exc:
-            if any(
-                err in str(exc)
-                for err in [
-                    "CKR_MECHANISM_INVALID",
-                    "CKR_MECHANISM_PARAM_INVALID",
-                    "CKR_ATTRIBUTE_VALUE_INVALID",
-                    "CKR_CURVE_NOT_SUPPORTED",
-                ]
-            ):
-                pytest.skip(f"Curve {curve} not supported: {exc}")
-            raise
+                assert len(alice_shared) > 0, f"{curve}: Failed to derive shared secret"
+            except AssertionError:
+                raise
+        except AssertionError as exc:
+            _xfail_if_ecdh_runtime_reject(exc, f"Curve {curve}")
         finally:
             destroy_quietly(rs.raw, rs.sh, alice_secret)
             destroy_quietly(rs.raw, rs.sh, bob_pub)

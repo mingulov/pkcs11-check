@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.testcases._subprocess_preamble import subprocess_session_preamble
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
@@ -34,13 +35,16 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_AES_KEY_GEN,
     CKM_SHA256_HMAC,
+    CKR_FUNCTION_FAILED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
+    CKR_OK,
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
 )
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
+from pkcs11_check.raw.rv import ckr_name
 
 
 def _template_ptr(attrs):
@@ -90,30 +94,30 @@ attrs = template(
 mech_kg = mech_simple(CKM_AES_KEY_GEN)  # AES_KEY_GEN
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
-
-# Try EncryptInit with CKA_ENCRYPT=False key
-mech = mech_simple(CKM_AES_ECB)  # AES_ECB
-rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
-print(f"CKR:0x{rv:08x}")
-# Report result without asserting -- outer test checks security compliance
-print("OK")
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:C_GenerateKey for CKA_ENCRYPT=False failed: {ckr_name(rv)}")
+else:
+    # Try EncryptInit with CKA_ENCRYPT=False key
+    mech = mech_simple(CKM_AES_ECB)  # AES_ECB
+    rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
+    print(f"CKR:0x{rv:08x}")
+    # Report result without asserting -- outer test checks security compliance
+    print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
-        # CKR_OK means NSS allowed using the key despite CKA_ENCRYPT=False -- security violation
+        assert_ckr_subprocess_ok(rc, out, err, context="C_EncryptInit with CKA_ENCRYPT=False")
+        # CKR_OK means the module allowed using the key despite CKA_ENCRYPT=False.
         if "CKR:0x00000000" in out:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                "NSS allows C_EncryptInit with CKA_ENCRYPT=False key (CKR_OK instead of "
+                "Module allows C_EncryptInit with CKA_ENCRYPT=False key (CKR_OK instead of "
                 "CKR_KEY_FUNCTION_NOT_PERMITTED). Key permission flags are not enforced.",
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.4.4.1",
             )
             pytest.xfail(
-                "SECURITY: NSS returns CKR_OK for C_EncryptInit with CKA_ENCRYPT=False key "
+                "SECURITY: module returns CKR_OK for C_EncryptInit with CKA_ENCRYPT=False key "
                 "(expected CKR_KEY_FUNCTION_NOT_PERMITTED)"
             )
 
@@ -133,24 +137,23 @@ attrs = template(
 mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
-
-mech = mech_simple(CKM_SHA256_HMAC)  # sign mech to test CKA_SIGN=False
-rv = raw.C_SignInit(sh, mech.byref(), key.value)
-print(f"CKR:0x{rv:08x}")
-# KEY_FUNCTION_NOT_PERMITTED or MECHANISM_INVALID (if module doesn't support CMAC)
-# KEY_FUNCTION_NOT_PERMITTED, MECHANISM_INVALID, or KEY_TYPE_INCONSISTENT
-assert rv in (
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_MECHANISM_INVALID,
-    CKR_KEY_TYPE_INCONSISTENT,
-    0x06,
-), f"Got 0x{rv:08x}"
-print("OK")
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:C_GenerateKey for CKA_SIGN=False failed: {ckr_name(rv)}")
+else:
+    mech = mech_simple(CKM_SHA256_HMAC)  # sign mech to test CKA_SIGN=False
+    rv = raw.C_SignInit(sh, mech.byref(), key.value)
+    print(f"CKR:0x{rv:08x}")
+    # KEY_FUNCTION_NOT_PERMITTED, MECHANISM_INVALID, or KEY_TYPE_INCONSISTENT
+    assert rv in (
+        CKR_KEY_FUNCTION_NOT_PERMITTED,
+        CKR_MECHANISM_INVALID,
+        CKR_KEY_TYPE_INCONSISTENT,
+        CKR_FUNCTION_FAILED,
+    ), f"Got 0x{rv:08x}"
+    print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
+        assert_ckr_subprocess_ok(rc, out, err, context="C_SignInit with CKA_SIGN=False")
 
     def test_decrypt_not_permitted(self, p11_config: Any) -> None:
         """Key with CKA_DECRYPT=False -> C_DecryptInit -> CKR_KEY_FUNCTION_NOT_PERMITTED.
@@ -173,28 +176,28 @@ attrs = template(
 mech_kg = mech_simple(CKM_AES_KEY_GEN)
 key = CK_OBJECT_HANDLE(0)
 rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
-assert rv == CKR_OK, f"GenKey: 0x{rv:08x}"
-
-mech = mech_simple(CKM_AES_ECB)  # AES_ECB
-rv = raw.C_DecryptInit(sh, mech.byref(), key.value)
-print(f"CKR:0x{rv:08x}")
-# Report result without asserting -- outer test checks security compliance
-print("OK")
+if rv != CKR_OK:
+    print(f"SETUP_XFAIL:C_GenerateKey for CKA_DECRYPT=False failed: {ckr_name(rv)}")
+else:
+    mech = mech_simple(CKM_AES_ECB)  # AES_ECB
+    rv = raw.C_DecryptInit(sh, mech.byref(), key.value)
+    print(f"CKR:0x{rv:08x}")
+    # Report result without asserting -- outer test checks security compliance
+    print("OK")
 """,
         )
-        assert rc == 0, f"Crash: {err[-300:]}"
-        assert "OK" in out
-        # CKR_OK means NSS allowed using the key despite CKA_DECRYPT=False -- security violation
+        assert_ckr_subprocess_ok(rc, out, err, context="C_DecryptInit with CKA_DECRYPT=False")
+        # CKR_OK means the module allowed using the key despite CKA_DECRYPT=False.
         if "CKR:0x00000000" in out:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                "NSS allows C_DecryptInit with CKA_DECRYPT=False key (CKR_OK instead of "
+                "Module allows C_DecryptInit with CKA_DECRYPT=False key (CKR_OK instead of "
                 "CKR_KEY_FUNCTION_NOT_PERMITTED). Key permission flags are not enforced.",
                 ComplianceLevel.CRITICAL,
                 reference="PKCS#11 v3.1 Sec.4.4.1",
             )
             pytest.xfail(
-                "SECURITY: NSS returns CKR_OK for C_DecryptInit with CKA_DECRYPT=False key "
+                "SECURITY: module returns CKR_OK for C_DecryptInit with CKA_DECRYPT=False key "
                 "(expected CKR_KEY_FUNCTION_NOT_PERMITTED)"
             )

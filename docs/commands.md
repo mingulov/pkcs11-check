@@ -4,6 +4,7 @@
 
 ```bash
 uv run pkcs11-check version              # check CLI works
+uv run python -m pytest tests/test_python_source_syntax.py tests/test_security_subprocess_regressions.py tests/test_subprocess_result_policy.py  # fast syntax/generated-subprocess gate
 uv run python -m pytest tests/           # run meta-tests
 uv run ruff check src/ tests/            # lint
 uv run ruff format src/ tests/           # format
@@ -11,6 +12,11 @@ uv run mypy src/                         # type check
 ```
 
 > **Never** run bare `ruff`, `mypy`, or `pytest` — they are inside the uv venv.
+
+The fast syntax/generated-subprocess gate covers ordinary Python syntax under
+`src/` and `tests/`, plus representative dynamically generated child scripts
+used by crash-survival tests. It does not replace provider runs; it prevents
+broken local test code from being counted as provider evidence.
 
 ## Local builds
 
@@ -33,7 +39,7 @@ bash local-builds/test.sh softhsm2                                        # full
 
 ### Available providers
 
-OpenSSL 3.6.1, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.26, pkcs11-mock 2.0.0, qryptotoken 0.4.1, tpm2-pkcs11 1.9.0, BouncyHSM 2.0.1, swtpm 0.10.1
+OpenSSL 4.0.0 preferred / 3.6.2 fallback, Kryoptic 1.5.0+PQC, SoftHSM2 2.7.0, OpenCryptoki 3.27.0, NSS softoken, pkcs11-mock 2.0.0, tpm2-pkcs11 1.10.0, BouncyHSM 2.1.0, swtpm 0.10.1, libtpms 0.10.2
 
 ### Worktree Kryoptic testing
 

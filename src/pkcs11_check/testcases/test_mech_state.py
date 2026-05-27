@@ -23,18 +23,39 @@ import pytest
 
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import mech_simple
-from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+from pkcs11_check.raw.recipes import (
+    destroy_quietly,
+    gen_aes_key,
+    import_secret_key,
+    to_ubyte_buf,
+)
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
+    CKA_SENSITIVE,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKK_SHA256_HMAC,
     CKM_AES_ECB,
     CKM_SHA256,
+    CKM_SHA256_HMAC,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED,
     CKR_SESSION_HANDLE_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.state_machine]
 
@@ -66,10 +87,22 @@ _CROSS_SESSION_NOT_INIT_RVCS: frozenset[int] = frozenset(
 # Acceptable "already active" return codes.
 _ALREADY_ACTIVE_RVCS: frozenset[int] = frozenset(
     [
-        int(CKR_OPERATION_ACTIVE),
-        0x00000005,  # CKR_FUNCTION_FAILED
-        0x00000020,  # CKR_GENERAL_ERROR
+        CKR_OPERATION_ACTIVE,
+        CKR_FUNCTION_FAILED,
+        CKR_GENERAL_ERROR,
     ]
+)
+
+_HMAC_KEY_IMPORT_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 
@@ -90,7 +123,7 @@ class TestEncryptState:
         rv = rs.raw.C_Encrypt(rs.sh, in_buf, len(plaintext), out_buf, byref(out_len))
         assert rv in _NOT_INIT_RVCS, (
             f"C_Encrypt without init returned 0x{rv:08x}, "
-            f"expected CKR_OPERATION_NOT_INITIALIZED (0x{int(CKR_OPERATION_NOT_INITIALIZED):08x})"
+            f"expected CKR_OPERATION_NOT_INITIALIZED (0x{CKR_OPERATION_NOT_INITIALIZED:08x})"
         )
 
     def test_encrypt_final_without_init(self, p11_raw_session: RawSession) -> None:
@@ -127,7 +160,7 @@ class TestEncryptState:
             rv2 = rs.raw.C_EncryptInit(rs.sh, mech2.byref(), key)
             assert rv2 in _ALREADY_ACTIVE_RVCS, (
                 f"Double C_EncryptInit returned 0x{rv2:08x}, "
-                f"expected CKR_OPERATION_ACTIVE (0x{int(CKR_OPERATION_ACTIVE):08x})"
+                f"expected CKR_OPERATION_ACTIVE (0x{CKR_OPERATION_ACTIVE:08x})"
             )
         finally:
             # Abort any pending operation by calling C_EncryptFinal with a discard buffer
@@ -210,6 +243,60 @@ class TestSignState:
             f"C_SignFinal without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
         )
 
+    def test_sign_single_part_output_call_terminates(self, p11_raw_session: RawSession) -> None:
+        """Successful two-call C_Sign must terminate before a new C_SignInit."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SHA256_HMAC"):
+            pytest.skip("CKM_SHA256_HMAC not supported")
+
+        key = 0
+        try:
+            try:
+                key = import_secret_key(
+                    rs.raw,
+                    rs.sh,
+                    CKK_SHA256_HMAC,
+                    bytes(range(32)),
+                    attrs={
+                        CKA_SIGN: True,
+                        CKA_TOKEN: False,
+                        CKA_SENSITIVE: False,
+                    },
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _HMAC_KEY_IMPORT_REJECT_RVS,
+                    "SHA256_HMAC advertised but setup key import is not operational",
+                )
+
+            mech = mech_simple(CKM_SHA256_HMAC)
+            data = b""
+            data_buf = to_ubyte_buf(data)
+            sig_len = CK_ULONG(0)
+
+            rv = rs.raw.C_SignInit(rs.sh, mech.byref(), key)
+            expect_rv(rv, CKR_OK)
+            rv = rs.raw.C_Sign(rs.sh, data_buf, len(data), None, byref(sig_len))
+            expect_rv(rv, CKR_OK)
+
+            sig_buf = (ctypes.c_ubyte * sig_len.value)()
+            rv = rs.raw.C_Sign(rs.sh, data_buf, len(data), sig_buf, byref(sig_len))
+            expect_rv(rv, CKR_OK)
+
+            mech2 = mech_simple(CKM_SHA256_HMAC)
+            rv2 = rs.raw.C_SignInit(rs.sh, mech2.byref(), key)
+            assert rv2 == CKR_OK, (
+                f"successful C_Sign did not terminate the active sign operation; "
+                f"next C_SignInit returned 0x{rv2:08x}, expected CKR_OK"
+            )
+        finally:
+            sig_buf = (ctypes.c_ubyte * 64)()
+            sig_len = CK_ULONG(64)
+            rs.raw.C_SignFinal(rs.sh, sig_buf, byref(sig_len))
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
+
 
 class TestVerifyState:
     """Verify operation state enforcement."""
@@ -225,8 +312,8 @@ class TestVerifyState:
 
         rv = rs.raw.C_Verify(rs.sh, in_buf, len(data), sig_buf, len(sig))
         assert rv in _NOT_INIT_RVCS | {
-            0x000000C4,  # CKR_SIGNATURE_INVALID
-            0x000000C5,  # CKR_SIGNATURE_LEN_RANGE
+            CKR_SIGNATURE_INVALID,
+            CKR_SIGNATURE_LEN_RANGE,
         }, f"C_Verify without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
 
     def test_verify_update_without_init(self, p11_raw_session: RawSession) -> None:
@@ -249,8 +336,8 @@ class TestVerifyState:
         sig_buf = (ctypes.c_ubyte * len(sig)).from_buffer_copy(sig)
         rv = rs.raw.C_VerifyFinal(rs.sh, sig_buf, len(sig))
         assert rv in _NOT_INIT_RVCS | {
-            0x000000C4,  # CKR_SIGNATURE_INVALID
-            0x000000C5,  # CKR_SIGNATURE_LEN_RANGE
+            CKR_SIGNATURE_INVALID,
+            CKR_SIGNATURE_LEN_RANGE,
         }, f"C_VerifyFinal without init returned 0x{rv:08x}, expected CKR_OPERATION_NOT_INITIALIZED"
 
 
@@ -316,13 +403,45 @@ class TestDigestState:
         rv2 = rs.raw.C_DigestInit(rs.sh, mech2.byref())
         assert rv2 in _ALREADY_ACTIVE_RVCS, (
             f"Double C_DigestInit returned 0x{rv2:08x}, "
-            f"expected CKR_OPERATION_ACTIVE (0x{int(CKR_OPERATION_ACTIVE):08x})"
+            f"expected CKR_OPERATION_ACTIVE (0x{CKR_OPERATION_ACTIVE:08x})"
         )
 
         # Abort the pending digest by completing it
         out_buf = (ctypes.c_ubyte * 64)()
         out_len = CK_ULONG(64)
         rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
+
+    def test_digest_single_part_output_call_terminates(self, p11_raw_session: RawSession) -> None:
+        """Successful two-call C_Digest must terminate before a new C_DigestInit."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SHA256"):
+            pytest.skip("CKM_SHA256 not supported")
+
+        try:
+            mech = mech_simple(CKM_SHA256)
+            data = b""
+            data_buf = to_ubyte_buf(data)
+            out_len = CK_ULONG(0)
+
+            rv = rs.raw.C_DigestInit(rs.sh, mech.byref())
+            expect_rv(rv, CKR_OK)
+            rv = rs.raw.C_Digest(rs.sh, data_buf, len(data), None, byref(out_len))
+            expect_rv(rv, CKR_OK)
+
+            out_buf = (ctypes.c_ubyte * out_len.value)()
+            rv = rs.raw.C_Digest(rs.sh, data_buf, len(data), out_buf, byref(out_len))
+            expect_rv(rv, CKR_OK)
+
+            mech2 = mech_simple(CKM_SHA256)
+            rv2 = rs.raw.C_DigestInit(rs.sh, mech2.byref())
+            assert rv2 == CKR_OK, (
+                f"successful C_Digest did not terminate the active digest operation; "
+                f"next C_DigestInit returned 0x{rv2:08x}, expected CKR_OK"
+            )
+        finally:
+            out_buf = (ctypes.c_ubyte * 64)()
+            out_len = CK_ULONG(64)
+            rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
 
 
 class TestMultiPartCrossSession:
@@ -448,7 +567,7 @@ class TestZeroDataFinal:
             accepted = (
                 CKR_OK,
                 0x00000021,  # CKR_DATA_LEN_RANGE
-                int(CKR_OPERATION_NOT_INITIALIZED),  # some treat 0-byte as no-op
+                CKR_OPERATION_NOT_INITIALIZED,  # some treat 0-byte as no-op
                 0x00000063,  # CKR_BUFFER_TOO_SMALL on length-query
             )
             assert rv in accepted, (

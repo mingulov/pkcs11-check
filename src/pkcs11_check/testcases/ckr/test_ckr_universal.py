@@ -33,6 +33,7 @@ from pkcs11_check.testcases.ckr._ckr_spec import (
     _UNIVERSAL,
     full_compat,
 )
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 
 pytestmark = pytest.mark.access
 
@@ -131,21 +132,26 @@ class TestUniversalRealTriggers:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="C_GetSlotList after C_Finalize",
+        )
         assert "OK" in result.stdout
-        # CKR_OK after C_Finalize means NSS auto-re-initializes -- vendor deviation from spec
+        # CKR_OK after C_Finalize means the module auto-re-initializes.
         if "CKR:0x00000000" in result.stdout:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                "NSS returns CKR_OK for C_GetSlotList after C_Finalize (expected "
-                "CKR_CRYPTOKI_NOT_INITIALIZED). NSS auto-initializes on every call "
-                "as a vendor extension for browser embedding.",
+                "Module returns CKR_OK for C_GetSlotList after C_Finalize (expected "
+                "CKR_CRYPTOKI_NOT_INITIALIZED), which indicates implicit reinitialization "
+                "after finalization.",
                 ComplianceLevel.VENDOR,
                 reference="PKCS#11 v3.1 Sec.11.4",
             )
             pytest.xfail(
-                "NSS vendor extension: auto-initializes after C_Finalize, returns CKR_OK "
+                "Module auto-initializes after C_Finalize, returning CKR_OK "
                 "instead of CKR_CRYPTOKI_NOT_INITIALIZED (PKCS#11 v3.1 Sec.11.4)"
             )
 
@@ -193,5 +199,10 @@ class TestUniversalRealTriggers:
             timeout=15,
             env=os.environ.copy(),
         )
-        assert result.returncode == 0, f"Crash: {result.stderr[-200:]}"
+        assert_ckr_subprocess_ok(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="fault-proxy C_GenerateRandom CKR_DEVICE_REMOVED injection",
+        )
         assert "OK:DEVICE_REMOVED" in result.stdout

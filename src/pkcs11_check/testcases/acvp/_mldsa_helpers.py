@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_DSA_65,
     CKP_ML_DSA_87,
 )
+from pkcs11_check.testcases.acvp._duplicates import mark_duplicate_pkcs11_inputs
 from pkcs11_check.testcases.acvp.acvp_loader import load_acvp_vectors
 from pkcs11_check.testcases.data import ACVP_DIR
 
@@ -213,9 +214,9 @@ def load_mldsa_keygen_vectors(limit: int | None = None) -> list[tuple[str, dict[
             result.append((vec_id, vec_data))
 
             if limit is not None and len(result) >= limit:
-                return result
+                return mark_duplicate_pkcs11_inputs(result, lambda item: item["parameter_set"])
 
-    return result
+    return mark_duplicate_pkcs11_inputs(result, lambda item: item["parameter_set"])
 
 
 def load_mldsa_siggen_vectors(limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
