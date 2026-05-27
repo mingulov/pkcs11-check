@@ -274,9 +274,23 @@ assert rv in _RO_ERROR_RVS, f"expected RO rejection, got {ckr_name(rv)}"
 # AFTER (expected = the spec-preferred code(s); the set's other members become xfail)
 classify_negative_rv(rv, (CKR_SESSION_READ_ONLY,), label="create token object on RO session")
 ```
-- [ ] **Per-file tasks** (replace asserts; meta-test the 3 branches; commit each):
-  `test_mech_state.py` (14, `_NOT_INIT_RVCS`), `test_errors.py` (13), `ckr/test_ckr_spec_compliance.py:64` (`_check_ckr` ×9 — give it an acceptable-set param or route to `classify_negative_rv`), `test_key_usage_policy.py:84,111,202,241`, `test_ro_session_restrictions.py:259,287,443,675,698,728`, `test_session_state_machine.py:417,446,889,940`, `test_so_pin.py:95,109`, `test_access_levels.py:508,978,1401`, `test_operation_state.py`, `test_verify_signature.py`, `test_reinitialize.py`, `test_session_edge_cases.py`, `test_initialize_args.py:293,331`, `test_stateful_sigs.py:603`, and the 6 `ckr/` raw files (`test_ckr_raw_{state,multipart,attrs}`, `test_ckr_{slot_token,random,destructive}`).
-- [ ] **Task 4z — retire local helpers:** migrate/remove the ~7 per-file `*_or_xfail`/`*_negative_rv` reimplementations (`test_kem._xfail_if_kem_negative_rv`, `test_benchmark._xfail_benchmark_operation_reject`, `test_mech_multipart._xfail_multipart_runtime_reject`, `test_multipart_streaming._xfail_streaming_reject`, `security/test_ffi_length_boundary.setup_xfail_if_known_ckr`, `test_fuzz` ×6) onto the shared helpers; commit.
+- [ ] **Per-file tasks** (replace asserts; meta-test the 3 branches; commit each). Status (2026-05-28):
+  - [x] `test_mech_state.py` (`_NOT_INIT_RVCS`, `_ALREADY_ACTIVE_RVCS`; cross-session strict set intentionally left as fail)
+  - [x] `test_errors.py` (per-category reject asserts; tolerant accept paths kept)
+  - [x] `ckr/test_ckr_spec_compliance.py:64` (`_check_ckr` ×9 routed to `classify_negative_rv`)
+  - [x] `test_key_usage_policy.py:84,111,202,241` (+ the SIGN-only AES site)
+  - [x] `test_ro_session_restrictions.py:259,287,443,675,698,728` (7 write guards)
+  - [x] `test_session_state_machine.py:417,446,889,940`
+  - [x] `test_so_pin.py:95,109`
+  - [x] `test_access_levels.py:508,978,1401`
+  - [x] `test_operation_state.py` (`C_SetOperationState` garbage-blob guard; the `C_GetOperationState` query is a tolerant probe where `CKR_OK` is a valid pass — left as-is)
+  - [x] `test_verify_signature.py` (wrong-sig + wrong-key reject guards)
+  - [x] `test_initialize_args.py:293,331` (pReserved + partial-callbacks; partial-callbacks now symmetric xfail-on-OK)
+  - [x] `test_stateful_sigs.py:603` (HSS leaf-budget via `reject_or_classify`)
+  - [ ] `test_reinitialize.py:47,89` — **N/A**: both asserts are `assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)`, i.e. positive-success checks (CKR_OK is a valid pass), not must-reject negatives. No conversion applicable.
+  - [ ] `test_session_edge_cases.py` — **REMAINING** (not yet surveyed)
+  - [ ] the 6 `ckr/` raw files (`test_ckr_raw_{state,multipart,attrs}`, `test_ckr_{slot_token,random,destructive}`) — **REMAINING / mostly N/A**: their negative asserts are embedded inside subprocess-script string literals run in a child process (e.g. `test_ckr_raw_state.py` `assert rv2 in (CKR_OPERATION_ACTIVE, CKR_OK)`), where the in-process `classify_negative_rv` helper is unavailable and `CKR_OK` is an accepted pass. These belong to a separate subprocess-probe tier; the in-process N2 pattern does not apply. Confirm per-file before ticking.
+- [ ] **Task 4z — retire local helpers:** migrate/remove the ~7 per-file `*_or_xfail`/`*_negative_rv` reimplementations (`test_kem._xfail_if_kem_negative_rv`, `test_benchmark._xfail_benchmark_operation_reject`, `test_mech_multipart._xfail_multipart_runtime_reject`, `test_multipart_streaming._xfail_streaming_reject`, `security/test_ffi_length_boundary.setup_xfail_if_known_ckr`, `test_fuzz` ×6) onto the shared helpers; commit. — **REMAINING**
 
 ---
 
