@@ -86,7 +86,6 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
-    CKR_WRAPPING_KEY_HANDLE_INVALID,
     CKU_CONTEXT_SPECIFIC,
     CKU_SO,
     CKU_USER,
@@ -94,6 +93,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    classify_negative_rv,
     get_pin_bytes,
     is_known_error,
     require_operational_aes_keygen,
@@ -505,11 +505,11 @@ class TestUserSessionCapabilities:
         pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
         rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(pin_bytes))
         _skip_if_so_pin_differs(rv)
-        assert rv in (
-            CKR_USER_ALREADY_LOGGED_IN,
-            CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
-            CKR_USER_TYPE_INVALID,
-        ), f"Expected SO login rejected while USER active, got {ckr_name(rv)}"
+        classify_negative_rv(
+            rv,
+            (CKR_USER_ANOTHER_ALREADY_LOGGED_IN,),
+            label="C_Login(SO) while a USER session is logged in",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -975,12 +975,12 @@ class TestTrustedAttribute:
                     "(expected CKR_ACTION_PROHIBITED, CKR_KEY_NOT_WRAPPABLE, "
                     "or CKR_FUNCTION_FAILED)"
                 )
-            assert rv in (
-                CKR_ACTION_PROHIBITED,
-                CKR_KEY_NOT_WRAPPABLE,
-                CKR_FUNCTION_FAILED,
-                CKR_WRAPPING_KEY_HANDLE_INVALID,
-            ), f"Expected wrap rejection, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_ACTION_PROHIBITED, CKR_KEY_NOT_WRAPPABLE),
+                label="C_WrapKey of a CKA_WRAP_WITH_TRUSTED key with an untrusted "
+                "wrapping key (CKR_OK is handled above as a noted non-enforcement)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapper_h)
             destroy_quietly(rs.raw, rs.sh, target_h)
@@ -1398,13 +1398,11 @@ class TestSOOnROSession:
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
             rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(pin_bytes))
             _skip_if_so_pin_differs(rv)
-            assert rv in (
-                CKR_SESSION_READ_ONLY_EXISTS,
-                CKR_SESSION_READ_ONLY,
-                CKR_USER_ALREADY_LOGGED_IN,
-                CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
-                CKR_USER_TYPE_INVALID,
-            ), f"Expected SO login rejected on RO session, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_SESSION_READ_ONLY_EXISTS,),
+                label="C_Login(SO) on a read-only session (SO requires a R/W session)",
+            )
         finally:
             _logout_safe(rs.raw, s1)
             close_session_quietly(rs.raw, s1)
