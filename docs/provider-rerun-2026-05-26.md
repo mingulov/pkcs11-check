@@ -170,6 +170,11 @@ Completed high-signal observations:
   instead of RFC6979 deterministic `k`. A focused pkcs11-mock sentinel reports
   2 skipped and 0 failed in
   `artifacts/_focused/pkcs11-mock-cctv-rfc6979-current-20260527/`.
+- CCTV Ed25519 edge-case vectors now classify rejection quality instead of
+  treating every `AssertionError` as a clean edge-case reject. Clean invalid-key
+  import or signature-reject CKRs remain acceptable; generic provider CKRs are
+  xfail evidence. A focused pkcs11-mock sentinel reports 914 skipped and 0
+  failed in `artifacts/_focused/pkcs11-mock-cctv-ed25519-current-20260527/`.
 - Focused EdDSA public-key encoding checks after the batch found provider
   profile differences that should not be collapsed into generic vector
   failures. PKCS#11 `CKK_EC_EDWARDS` uses raw RFC 8032 `CKA_EC_POINT`, but
