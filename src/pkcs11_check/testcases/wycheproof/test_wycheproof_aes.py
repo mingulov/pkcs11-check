@@ -14,6 +14,7 @@ from pkcs11_check.raw.recipes import (
     generate_random,
     import_secret_key,
     sign_single,
+    verify_single,
     wrap_key,
 )
 from pkcs11_check.raw.types_std import (
@@ -93,7 +94,14 @@ _AES_CMAC_VECTORS = _load_flat("aes_cmac_test.json")
 
 @pytest.mark.parametrize("vec_id,vec", _AES_CMAC_VECTORS, ids=[v[0] for v in _AES_CMAC_VECTORS])
 def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """AES-CMAC verification from Wycheproof vectors."""
+    """AES-CMAC tag verification from Wycheproof vectors.
+
+    Verifies the *supplied* tag with C_Verify so that invalid vectors actually
+    exercise rejection. A module that verifies an invalid tag as valid is a
+    crypto-correctness break (Type A -> fail). The previous produce-direction
+    (C_Sign + compare) could never reject an invalid vector because a fresh
+    correct tag never matched the modified expected tag.
+    """
     rs = p11_raw_session
     if not rs.has_mechanism("AES_CMAC"):
         pytest.skip("AES_CMAC not supported")
@@ -102,7 +110,6 @@ def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
     msg = bytes.fromhex(vec["msg"])
     tag_expected = bytes.fromhex(vec["tag"])
     result = vec["result"]
-    tag_size = vec["_group"].get("tagSize", 128) // 8
 
     try:
         key = import_secret_key(
@@ -122,22 +129,21 @@ def test_aes_cmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             return
         raise
 
-    mac = None
     try:
-        mac = sign_single(rs.raw, rs.sh, key, CKM_AES_CMAC, msg)
+        verified = verify_single(rs.raw, rs.sh, key, CKM_AES_CMAC, msg, tag_expected)
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-CMAC {vec_id}")
             pytest.fail(f"AES-CMAC failed for valid vector {vec_id}: {exc}")
-        # acceptable: reject is fine
+        # acceptable: reject of an invalid vector is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
-    if result == "valid" and mac is not None:
-        assert mac[:tag_size] == tag_expected
-    if result == "invalid" and mac is not None and mac[:tag_size] == tag_expected:
-        pytest.fail(f"AES-CMAC {vec_id} produced invalid tag")
+    if result == "valid" and not verified:
+        pytest.fail(f"AES-CMAC rejected a valid CMAC vector {vec_id}")
+    if result == "invalid" and verified:
+        pytest.fail(f"AES-CMAC {vec_id}: accepted invalid tag (forged tag verified)")
 
     generate_random(rs.raw, rs.sh, 64)
 
