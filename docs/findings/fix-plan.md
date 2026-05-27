@@ -24,6 +24,21 @@ classification plan.
 4. **Doc-sync:** any flip of a finding documented in `docs/module-issues.md` updates that entry
    in the same change; NEW provider findings get added there.
 
+## The fix phase EXECUTES the classification plan (backbone)
+
+**Decision (2026-05-27):** the CKR-common-storage / table-centric classification plan
+([`../classification-model-plan.md`](../classification-model-plan.md)) is **part of this goal**
+and must be **executed**, not just referenced. Status: **0 / 46 tasks done** — only the *ad-hoc*
+per-test classification shipped in v0.1.1; the table-centric refactor (the `kind` field, 3-way
+`assert_ckr`, mock-`raw` meta-tests) is unimplemented.
+
+The classification plan is the **backbone** of the fix phase; the per-finding fixes (PC-*) are
+implemented as rows/migrations on top of it, never ad-hoc. Run it with
+`superpowers:executing-plans` (or `superpowers:subagent-driven-development`), incrementally —
+each phase is one revertible change gated on its meta-tests. **Phase 1** (foundation) enables
+the PC-4/PC-6 CKR work; **Phase 2** (invalid-vector A/B classification) is Phase-1-independent
+and may land first and directly covers PV-1/PV-2/PV-3/PV-9 accept-invalid findings.
+
 ## CKR changes go through the common storage (do NOT widen ad-hoc)
 
 The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
