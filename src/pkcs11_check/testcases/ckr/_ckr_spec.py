@@ -59,6 +59,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_NO_EVENT,
     CKR_OBJECT_HANDLE_INVALID,
+    CKR_OK,
     CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED,
     CKR_OPERATION_NOT_VALIDATED,
@@ -210,14 +211,20 @@ def assert_ckr(
     actual: int,
     strict: bool,
 ) -> None:
-    """Validate CKR matches spec (strict) or is in acceptable set (compat).
+    """Validate a negative-op CKR three ways (compat) or exactly (strict).
 
     actual is a raw CK_RV integer (e.g. from raw.C_EncryptInit()).
 
     - Strict mode: rv must match spec_ckr exactly. Deviation = test failure.
-    - Compat mode: rv must be in full_compat(compat_tuple). Deviation from
-      spec_ckr is logged as compliance note, not failure.
-    - Both modes: rv outside the acceptable set = test failure.
+    - Compat mode (the provider-general classifier):
+        * rv == CKR_OK            -> fail (accepted invalid; must reject),
+                                     unless allow_success is set -> pass.
+        * rv not in full_compat   -> fail (rejected with a code outside the
+                                     acceptable set).
+        * rv in spec_codes        -> pass (spec-preferred rejection).
+        * rv in full_compat but
+          not in spec_codes       -> xfail (clean but non-spec rejection;
+                                     a noted deviation to investigate later).
     """
     spec_codes = (
         expectation.spec_ckr if isinstance(expectation.spec_ckr, tuple) else (expectation.spec_ckr,)
@@ -231,22 +238,25 @@ def assert_ckr(
                 f"got {ckr_name(actual)} [{expectation.spec_ref}]"
             )
     else:
+        if actual == CKR_OK:
+            if expectation.allow_success:
+                return
+            pytest.fail(
+                f"{expectation.function}({expectation.condition}): accepted (CKR_OK) "
+                f"but must reject [{expectation.spec_ref}]"
+            )
         full = full_compat(expectation.compat_tuple)
         if actual not in full:
             pytest.fail(
-                f"{expectation.function}({expectation.condition}): "
-                f"got {ckr_name(actual)}, not in acceptable set "
-                f"{[ckr_name(c) for c in expectation.compat_tuple]}"
+                f"{expectation.function}({expectation.condition}): got {ckr_name(actual)}, "
+                f"not in acceptable set {[ckr_name(c) for c in expectation.compat_tuple]} "
+                f"[{expectation.spec_ref}]"
             )
         if actual not in spec_codes:
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                f"{expectation.function}({expectation.condition}): "
-                f"spec says {[ckr_name(c) for c in spec_codes]}, "
-                f"got {ckr_name(actual)}",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference=expectation.spec_ref,
+            pytest.xfail(
+                f"{expectation.function}({expectation.condition}): rejected with "
+                f"{ckr_name(actual)}, spec prefers {[ckr_name(c) for c in spec_codes]} "
+                f"[{expectation.spec_ref}]"
             )
 
 

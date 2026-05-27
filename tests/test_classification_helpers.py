@@ -7,7 +7,16 @@ docs/classification-model-design.md.
 
 from __future__ import annotations
 
-from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation
+import pytest
+from _pytest.outcomes import Failed
+
+from pkcs11_check.raw.types_std import (
+    CKR_FUNCTION_FAILED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_OK,
+    CKR_PIN_INCORRECT,
+)
+from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation, assert_ckr
 
 
 def test_ckr_expectation_kind_default_policy() -> None:
@@ -19,3 +28,56 @@ def test_ckr_expectation_kind_default_policy() -> None:
         spec_ref="r",
     )
     assert e.kind == "policy"
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — 3-way assert_ckr (other-reject -> xfail, CKR_OK -> fail)
+# ---------------------------------------------------------------------------
+
+_E = CkrExpectation(
+    function="C_EncryptInit",
+    condition="key_func_not_permitted",
+    spec_ckr=CKR_KEY_FUNCTION_NOT_PERMITTED,
+    compat_tuple=(CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_FUNCTION_FAILED),
+    spec_ref="PKCS#11 v3.1 Sec.5.8.1",
+)
+
+
+def test_expected_passes() -> None:
+    assert_ckr(_E, CKR_KEY_FUNCTION_NOT_PERMITTED, strict=False)
+
+
+def test_other_clean_reject_xfails() -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        assert_ckr(_E, CKR_FUNCTION_FAILED, strict=False)
+
+
+def test_accepted_invalid_fails() -> None:
+    with pytest.raises(Failed):
+        assert_ckr(_E, CKR_OK, strict=False)
+
+
+def test_outside_set_fails() -> None:
+    # NOTE: plan snippet used CKR_DEVICE_ERROR, but that is a token-universal code
+    # injected by full_compat(), so it lands in the xfail band rather than failing.
+    # CKR_PIN_INCORRECT is genuinely outside the acceptable set, exercising the
+    # "not in acceptable set -> fail" branch the test intends.
+    with pytest.raises(Failed):
+        assert_ckr(_E, CKR_PIN_INCORRECT, strict=False)
+
+
+def test_allow_success_ok() -> None:
+    e = CkrExpectation(
+        function="C_Decrypt",
+        condition="cbc_pad",
+        spec_ckr=0x21,
+        compat_tuple=(0x21,),
+        spec_ref="r",
+        allow_success=True,
+    )
+    assert_ckr(e, CKR_OK, strict=False)
+
+
+def test_strict_wrong_code_fails() -> None:
+    with pytest.raises(Failed):
+        assert_ckr(_E, CKR_FUNCTION_FAILED, strict=True)
