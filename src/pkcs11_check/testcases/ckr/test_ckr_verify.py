@@ -23,8 +23,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKR_DEVICE_ERROR,
     CKR_OK,
-    CKR_SIGNATURE_INVALID,
-    CKR_SIGNATURE_LEN_RANGE,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_VERIFY, assert_ckr
 
@@ -56,18 +54,10 @@ class TestVerifyInitErrors:
             exp = CKR_VERIFY["init_key_type_inconsistent"]
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), key)
-            if rv == CKR_OK:
-                if not exp.allow_success:
-                    pytest.fail("Should have rejected AES key with RSA verify mechanism")
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_VerifyInit accepted AES key with RSA mechanism",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference=exp.spec_ref,
-                )
-            else:
-                assert_ckr(exp, rv, ckr_strict)
+            # Type-A crypto-correctness: accepting an AES key under an RSA verify
+            # mechanism (CKR_OK) is key-type confusion -> fail; an expected
+            # reject -> pass; another clean reject -> xfail (3-way assert_ckr).
+            assert_ckr(exp, rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -140,20 +130,10 @@ class TestVerifyErrors:
             rv = rs.raw.C_Verify(rs.sh, data_buf, len(data), sig_buf, 128)
             if rv == CKR_DEVICE_ERROR:
                 pytest.xfail("Kryoptic bug: returns CKR_DEVICE_ERROR for verify failure")
-            if rv == CKR_OK:
-                if not exp.allow_success:
-                    pytest.fail("Should have rejected 128-byte signature for RSA-2048")
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_Verify accepted wrong-length RSA signature without length check",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference=exp.spec_ref,
-                )
-            elif rv in (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE):
-                assert_ckr(exp, rv, ckr_strict)
-            else:
-                assert_ckr(exp, rv, ckr_strict)
+            # Type-A crypto-correctness: a wrong-length RSA signature that
+            # verifies (CKR_OK) is a break -> fail; an expected reject -> pass;
+            # another clean reject -> xfail (3-way assert_ckr).
+            assert_ckr(exp, rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, _priv)

@@ -1816,7 +1816,10 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.1 Sec.5.11.1",
-        allow_success=True,  # SoftHSM2 accepts AES key with RSA verify mechanism
+        kind="crypto",
+        # Type-A crypto-correctness: initializing verify with an AES key under
+        # an RSA mechanism is key-type confusion; acceptance must fail for any
+        # provider (no allow_success exemption).
     ),
     "init_key_handle_invalid": CkrExpectation(
         function="C_VerifyInit",
@@ -1853,7 +1856,10 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
         compat_tuple=(CKR_SIGNATURE_LEN_RANGE, CKR_SIGNATURE_INVALID, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.1 Sec.5.11.2",
         priority_note="Higher priority than CKR_SIGNATURE_INVALID",
-        allow_success=True,  # SoftHSM2 + Kryoptic accept wrong-length, then fail at verify
+        kind="crypto",
+        # Type-A crypto-correctness: a wrong-length RSA signature that verifies
+        # (CKR_OK) is a break for any provider; acceptance must fail (no
+        # allow_success exemption).
     ),
     "data_len_range": CkrExpectation(
         function="C_Verify",
