@@ -555,6 +555,13 @@ official full-matrix release statistics.
   xfail evidence, while Python-side assertion bugs during the tampered-tag or
   ciphertext-bitflip unwrap checks propagate. The mock-focused run reports
   all four selected rows skipped, so it only confirms capability gating.
+- `pkcs11-mock` ECDH-AES-KW focused artifact:
+  `artifacts/_focused/pkcs11-mock-ecdh-aes-kw-current-20260527/`. The
+  ECDH-AES-KW roundtrip and bit-flip rows now use the shared EC keypair setup
+  classifier for the recipient P-256 keypair. Missing EC keygen remains a
+  skip; advertised EC keygen CKR rejects are xfail evidence. The mock-focused
+  run reports both selected rows skipped because the mock does not expose this
+  mechanism surface.
 
 ## Follow-Up Queue
 

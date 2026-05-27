@@ -465,6 +465,40 @@ def test_authenticated_wrap_tampered_tag_unknown_unwrap_error_propagates(
         )
 
 
+def test_authenticated_wrap_ecdh_roundtrip_ec_keygen_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("ECDH_AES_KEY_WRAP", "EC_KEY_PAIR_GEN")
+    p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
+    monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_attribute_value_invalid)
+    monkeypatch.setattr(
+        test_authenticated_wrap.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
+        test_authenticated_wrap.TestEcdhAesKeyWrap().test_ecdh_aes_kw_roundtrip(rs, p11_config)
+
+
+def test_authenticated_wrap_ecdh_integrity_ec_keygen_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("ECDH_AES_KEY_WRAP", "EC_KEY_PAIR_GEN")
+    p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
+    monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_attribute_value_invalid)
+    monkeypatch.setattr(
+        test_authenticated_wrap.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
+        test_authenticated_wrap.TestEcdhAesKeyWrap().test_ecdh_aes_kw_bit_flip_integrity(
+            rs, p11_config
+        )
+
+
 def test_buffer_encrypt_xfails_when_advertised_aes_keygen_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

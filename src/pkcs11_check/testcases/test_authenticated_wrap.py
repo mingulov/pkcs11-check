@@ -52,6 +52,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
 from pkcs11_check.testcases.conftest import (
+    gen_ec_keypair_or_xfail,
     is_known_error,
     require_operational_aes_keygen,
     xfail_if_known_ckr,
@@ -728,7 +729,6 @@ class TestEcdhAesKeyWrap:
         from pkcs11_check.raw.ec import encode_named_curve_parameters
         from pkcs11_check.raw.pack import mech_ecdh_aes_kw
         from pkcs11_check.raw.recipes import (
-            gen_ec_keypair,
             unwrap_key,
             wrap_key,
         )
@@ -747,17 +747,12 @@ class TestEcdhAesKeyWrap:
 
         # Recipient EC P-256 keypair: pub used for wrap, priv for unwrap.
         curve_oid = encode_named_curve_parameters("secp256r1")
-        try:
-            pub, priv = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid,
-                public_attrs={CKA_DERIVE: True, CKA_WRAP: True},
-                private_attrs={CKA_DERIVE: True, CKA_UNWRAP: True},
-            )
-        except AssertionError as exc:
-            pytest.skip(f"Could not generate P-256 keypair: {exc}")
-            return
+        pub, priv = gen_ec_keypair_or_xfail(
+            rs,
+            curve_oid,
+            public_attrs={CKA_DERIVE: True, CKA_WRAP: True},
+            private_attrs={CKA_DERIVE: True, CKA_UNWRAP: True},
+        )
 
         target = gen_aes_key(
             rs.raw,
@@ -853,7 +848,6 @@ class TestEcdhAesKeyWrap:
         from pkcs11_check.raw.ec import encode_named_curve_parameters
         from pkcs11_check.raw.pack import mech_ecdh_aes_kw
         from pkcs11_check.raw.recipes import (
-            gen_ec_keypair,
             unwrap_key,
             wrap_key,
         )
@@ -871,17 +865,12 @@ class TestEcdhAesKeyWrap:
             pytest.skip("CKM_ECDH_AES_KEY_WRAP not supported")
 
         curve_oid = encode_named_curve_parameters("secp256r1")
-        try:
-            pub, priv = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid,
-                public_attrs={CKA_DERIVE: True, CKA_WRAP: True},
-                private_attrs={CKA_DERIVE: True, CKA_UNWRAP: True},
-            )
-        except AssertionError as exc:
-            pytest.skip(f"Could not generate P-256 keypair: {exc}")
-            return
+        pub, priv = gen_ec_keypair_or_xfail(
+            rs,
+            curve_oid,
+            public_attrs={CKA_DERIVE: True, CKA_WRAP: True},
+            private_attrs={CKA_DERIVE: True, CKA_UNWRAP: True},
+        )
 
         target = gen_aes_key(
             rs.raw,
