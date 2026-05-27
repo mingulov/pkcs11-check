@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from _pytest.outcomes import Failed, XFailed
 
 from pkcs11_check.raw import recipes
