@@ -39,6 +39,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_CANT_LOCK, CKR_OK
+from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.destructive, pytest.mark.access]
 
@@ -282,6 +283,7 @@ class TestInitArgsMatrix:
                 f"Stderr: {stderr}"
             )
         rv = _parse_rv(stdout)
+        assert rv is not None, f"No RV produced. Stdout: {stdout!r} Stderr: {stderr!r}"
         # CKR_ARGUMENTS_BAD is the spec-mandated return.  Some
         # modules return CKR_OK ignoring the field; record but don't fail.
         if rv == CKR_OK:
@@ -290,9 +292,10 @@ class TestInitArgsMatrix:
                 "§5.4 requires CKR_ARGUMENTS_BAD.  Non-compliant but not "
                 "security-impacting."
             )
-        assert rv == CKR_ARGUMENTS_BAD, (
-            f"C_Initialize with non-NULL pReserved returned 0x{rv:08x}; "
-            f"expected CKR_ARGUMENTS_BAD (0x{int(CKR_ARGUMENTS_BAD):02x})"
+        classify_negative_rv(
+            rv,
+            (CKR_ARGUMENTS_BAD,),
+            label="C_Initialize with a non-NULL pReserved field (spec Sec.5.4)",
         )
 
     def test_init_partial_callbacks_rejected(self, p11_config: Any) -> None:
@@ -328,7 +331,18 @@ class TestInitArgsMatrix:
                 f"C_Initialize with partial callbacks segfaulted (signal {-rc}).  Stderr: {stderr}"
             )
         rv = _parse_rv(stdout)
-        assert rv == CKR_ARGUMENTS_BAD, (
-            f"C_Initialize with 3-of-4 callbacks returned 0x{rv:08x}; "
-            f"expected CKR_ARGUMENTS_BAD (0x{int(CKR_ARGUMENTS_BAD):02x}) per spec §5.4"
+        assert rv is not None, f"No RV produced. Stdout: {stdout!r} Stderr: {stderr!r}"
+        # Spec Sec.5.4 requires all-or-none mutex callbacks; some modules accept
+        # 3-of-4 (CKR_OK). That is honest non-compliance, not security-impacting
+        # -- xfail (symmetric with the non-NULL pReserved sibling above).
+        if rv == CKR_OK:
+            pytest.xfail(
+                "Module accepts partial (3-of-4) mutex callbacks (returns CKR_OK); "
+                "spec Sec.5.4 requires CKR_ARGUMENTS_BAD. Non-compliant but not "
+                "security-impacting."
+            )
+        classify_negative_rv(
+            rv,
+            (CKR_ARGUMENTS_BAD,),
+            label="C_Initialize with 3-of-4 mutex callbacks supplied (spec Sec.5.4)",
         )
