@@ -154,9 +154,10 @@ provider package versions where the finding was first recorded.
   (1) key-type validation in `NSC_SignInit`/`NSC_VerifyInit` before MAC dispatch;
   (2) `PORT_ZNew(sftk_MACCtx)` instead of `PORT_New` in `sftkhmac.c:228`. An ~80-line
   ctypes reproducer (heap-warm + `C_SignInit(0x251, RSA)`) reproduces reliably.
-  **Status: reported upstream and DECLINED (2026-05-27)** as outside the NSS softoken
-  threat model — the wrong-key-type MAC path is not reachable through Firefox, so it is
-  retained here as a documented robustness finding only, not pursued further.
+  **Status:** reported upstream and acknowledged, but assessed as **not
+  security-important** — outside the NSS softoken threat model, since the wrong-key-type
+  MAC path is not reachable through Firefox (a malicious local PKCS#11 caller is out of
+  scope). Not prioritized upstream; retained here as a documented robustness finding.
   pkcs11-check keeps the existing `C_SignInit(CKM_SHA256_HMAC, RSA)` probe as the
   representative case; `C_VerifyInit` and `CKM_AES_CMAC` are the same `sftk_doMACInit`
   dispatch family and are not separately tested (low value for a declined finding).
