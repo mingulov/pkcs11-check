@@ -32,7 +32,7 @@ from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
     SIGNATURE_REJECT_RVS,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import classify_negative_rv, is_known_error
 
 pytestmark = pytest.mark.full
 
@@ -123,7 +123,11 @@ class TestVerifySignatureRoundtrip:
                 pytest.xfail(
                     f"C_VerifySignature rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
                 )
-            assert rv in SIGNATURE_REJECT_RVS, f"Expected signature reject CKR, got 0x{rv:08x}"
+            classify_negative_rv(
+                rv,
+                SIGNATURE_REJECT_RVS,
+                label="C_VerifySignature of a wrong signature (CKR_OK accepts a forgery)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -167,10 +171,12 @@ class TestVerifySignatureRoundtrip:
                     "with a mismatched public key -- silent acceptance of forged signatures "
                     "(expected CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID)"
                 )
-            assert rv in (
-                CKR_KEY_HANDLE_INVALID,
-                CKR_SIGNATURE_INVALID,
-            ), f"Expected CKR_KEY_HANDLE_INVALID or CKR_SIGNATURE_INVALID, got 0x{rv:08x}"
+            classify_negative_rv(
+                rv,
+                (CKR_KEY_HANDLE_INVALID, CKR_SIGNATURE_INVALID),
+                label="C_VerifySignatureInit with a signature created under a different key "
+                "(CKR_OK accepts a forged signature; handled above as a CRITICAL deviation)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub1)
             destroy_quietly(rs.raw, rs.sh, priv1)
