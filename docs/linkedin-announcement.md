@@ -34,6 +34,22 @@ CKR return codes, unsupported mechanisms, timeouts, and build/configuration
 problems visible instead of hiding them. That makes the results useful for
 maintainers and for users comparing provider behavior.
 
+A full run against a capable provider is on the order of ~80k-110k executed
+tests. Roughly ~40k-65k pass, genuine failures are usually in the low hundreds
+(kept as findings, not hidden), ~30k-55k are skipped, and a few thousand up to
+~12k are marked expected-fail for documented spec deviations. A large part of
+the skipped count is not-applicable rather than untested. Much of it is
+duplicate vectors in the upstream data sets (Wycheproof ECDH, NIST ACVP
+key-generation) whose provider-visible parameters are already covered by another
+vector - on the order of ~18k skips per provider. The rest is mostly mechanisms
+a module does not implement, plus non-selected AES-CTS CS1/CS2/CS3 variants. So
+the skip number looks much bigger than the real coverage gap.
+
+Run time is practical: a full pass on a typical capable provider is roughly
+~10-25 minutes of test execution. Heavier targets run longer (OpenCryptoki
+~1.5-2 hours; BouncyHSM ~4 hours due to an AES timeout tail), and the complete
+13-target multi-provider matrix was about ~10 hours of test execution in total.
+
 If you maintain a PKCS#11 provider, including one that is not open source, you
 can run pkcs11-check locally against your own module and keep the results
 private. If you publish results, they become useful interoperability evidence.
