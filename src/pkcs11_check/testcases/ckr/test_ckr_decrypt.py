@@ -42,7 +42,11 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_DECRYPT, assert_ckr
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
+from pkcs11_check.testcases.conftest import (
+    classify_lifecycle_effect,
+    gen_aes_key_or_xfail,
+    gen_rsa_keypair_or_xfail,
+)
 
 pytestmark = pytest.mark.access
 
@@ -227,10 +231,18 @@ class TestDecryptDataErrors:
         rs = p11_raw_session
         key = gen_aes_key_or_xfail(rs, 256, purpose="CKR destroyed-key setup")
         encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, b"\x00" * 16)
-        rs.raw.C_DestroyObject(rs.sh, key)
+        destroy_rv = rs.raw.C_DestroyObject(rs.sh, key)
         mech = mech_simple(CKM_AES_ECB)
         rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
-        if rv != CKR_OK:
+        if rv == CKR_OK:
+            # Type-C use-after-destroy: the destroy claimed success yet
+            # C_DecryptInit on the same handle still succeeded -> contradiction.
+            classify_lifecycle_effect(
+                claimed_success=destroy_rv == CKR_OK,
+                effect_observed=True,
+                label="C_DecryptInit on a destroyed key handle (use-after-destroy)",
+            )
+        else:
             assert_ckr(CKR_DECRYPT["init_key_handle_invalid"], rv, ckr_strict)
 
     def test_key_function_not_permitted(self, p11_raw_session: Any, ckr_strict: bool) -> None:
