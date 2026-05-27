@@ -9,6 +9,7 @@ import pytest
 
 from pkcs11_check.raw.pack import mech_bytes, mech_ccm
 from pkcs11_check.raw.recipes import (
+    decrypt_single,
     destroy_quietly,
     encrypt_single,
     generate_random,
@@ -300,9 +301,13 @@ _AES_CCM_VECTORS = _load_flat("aes_ccm_test.json")
 
 @pytest.mark.parametrize("vec_id,vec", _AES_CCM_VECTORS, ids=[v[0] for v in _AES_CCM_VECTORS])
 def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """AES-CCM AEAD encryption/decryption from Wycheproof vectors.
+    """AES-CCM AEAD decryption from Wycheproof vectors.
 
-    For valid vectors: encrypt(msg, aad, iv) should produce ct||tag.
+    Decrypts the supplied ct||tag so invalid vectors actually exercise tag
+    rejection. A module that decrypts an invalid (forged/modified) ciphertext
+    or tag is a crypto-correctness break (Type A -> fail). The previous
+    produce-direction (encrypt + compare) could never reject an invalid vector
+    because a fresh correct ciphertext never matched the modified expected one.
     """
     rs = p11_raw_session
     if not rs.has_mechanism("AES_CCM"):
@@ -311,9 +316,9 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
     key_bytes = bytes.fromhex(vec["key"])
     iv = bytes.fromhex(vec["iv"])
     aad = bytes.fromhex(vec["aad"])
-    msg = bytes.fromhex(vec["msg"])
-    ct_expected = bytes.fromhex(vec["ct"])
-    tag_expected = bytes.fromhex(vec["tag"])
+    msg_expected = bytes.fromhex(vec["msg"])
+    ct = bytes.fromhex(vec["ct"])
+    tag = bytes.fromhex(vec["tag"])
     result = vec["result"]
 
     try:
@@ -334,39 +339,38 @@ def test_aes_ccm(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             return
         raise
 
-    # Encrypt and compare
-    ciphertext = None
+    # Decrypt ct||tag and verify
+    plaintext = None
     try:
         ccm_param = mech_ccm(
             CKM_AES_CCM,
             iv,
-            data_len=len(msg),
+            data_len=len(ct),
             aad=aad if aad else None,
-            mac_len=len(tag_expected),
+            mac_len=len(tag),
         )
-        ciphertext = encrypt_single(
+        plaintext = decrypt_single(
             rs.raw,
             rs.sh,
             key,
             CKM_AES_CCM,
-            msg,
+            ct + tag,
             mech_param=ccm_param,
         )
     except (AssertionError, TypeError, NotImplementedError) as exc:
         if result == "valid":
             if isinstance(exc, AssertionError):
                 _xfail_if_aes_runtime_reject(exc, f"AES-CCM {vec_id}")
-            pytest.fail(f"AES-CCM encrypt failed for valid vector {vec_id}: {exc}")
-        # acceptable: reject is fine
+            pytest.fail(f"AES-CCM decrypt failed for valid vector {vec_id}: {exc}")
+        # acceptable: reject of an invalid vector is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
-    # AES-CCM output is ct||tag
-    if result == "valid" and ciphertext is not None:
-        assert ciphertext == ct_expected + tag_expected
-    if result == "invalid" and ciphertext is not None and ciphertext == ct_expected + tag_expected:
-        pytest.fail(f"AES-CCM encrypt {vec_id} produced invalid ciphertext/tag")
+    if result == "valid" and plaintext is not None:
+        assert plaintext == msg_expected, f"AES-CCM {vec_id}: plaintext mismatch"
+    if result == "invalid" and plaintext is not None:
+        pytest.fail(f"AES-CCM decrypt {vec_id}: accepted invalid ciphertext/tag")
 
 
 # --- AES-GMAC ---

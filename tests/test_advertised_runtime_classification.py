@@ -731,9 +731,9 @@ def test_wycheproof_symmetric_invalid_outputs_are_reported() -> None:
             "AES-CMAC",
             "AES-KW wrap",
             "AES-KWP wrap",
-            "AES-CCM encrypt",
+            "AES-CCM decrypt",
             "AES-GMAC",
-            "produced invalid",
+            "accepted invalid",
         ),
         Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_chacha.py"): (
             "ChaCha20-Poly1305",

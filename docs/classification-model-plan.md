@@ -226,7 +226,7 @@ elif result == "invalid":
 **Pattern:** these run invalid MAC/AEAD/keywrap vectors as *produce* ops (`sign_single`/`encrypt_single`/`wrap`), so a fresh correct output never matches the modified expected output and rejection is never tested. Re-frame to the **verify/decrypt/unwrap** direction with `fail`-on-accept (the ACVP side already does this). Land each family as a separate revertible commit with a count delta.
 - [x] **Task 2d** — `test_wycheproof_aes.py` AES-CMAC (`:139`): verify the supplied tag (`C_Verify`), `invalid` accepted → `fail`; meta-test; commit.
 - [x] **Task 2e** — AES-GMAC (`:428`, ~324 vectors): same; commit.
-- [ ] **Task 2f** — AES-CCM (`:363`, ~147): decrypt-and-reject; commit.
+- [x] **Task 2f** — AES-CCM (`:363`, ~147): decrypt-and-reject; commit.
 - [ ] **Task 2g** — AES-KW (`:218`, ~126): unwrap-and-reject; commit.
 - [ ] **Task 2h** — `test_wycheproof_chacha.py:115` (~69): decrypt-and-reject; commit.
 - [ ] **Task 2i** — `test_wycheproof_hmac.py:234/239`: verify-and-reject; commit.

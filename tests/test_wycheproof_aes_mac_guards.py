@@ -110,3 +110,39 @@ def test_gmac_valid_vector_rejected_fails(monkeypatch: pytest.MonkeyPatch) -> No
 
     with pytest.raises(pytest.fail.Exception, match="valid GMAC vector"):
         aes.test_aes_gmac(_AesSession("AES_GMAC"), vec_id, vec)
+
+
+# --- AES-CCM (Task 2f) ---
+
+
+def test_ccm_invalid_vector_decrypt_success_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An invalid CCM vector that decrypts must fail (forged ciphertext/tag accepted)."""
+    vec_id, vec = _first(aes._AES_CCM_VECTORS, "invalid")
+    monkeypatch.setattr(aes, "import_secret_key", _handle)
+    monkeypatch.setattr(aes, "decrypt_single", lambda *_a, **_k: bytes.fromhex(vec["msg"]))
+    monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(pytest.fail.Exception, match="accepted invalid ciphertext"):
+        aes.test_aes_ccm(_AesSession("AES_CCM"), vec_id, vec)
+
+
+def test_ccm_valid_vector_decrypts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A valid CCM vector that decrypts to the expected plaintext passes."""
+    vec_id, vec = _first(aes._AES_CCM_VECTORS, "valid")
+    monkeypatch.setattr(aes, "import_secret_key", _handle)
+    monkeypatch.setattr(aes, "decrypt_single", lambda *_a, **_k: bytes.fromhex(vec["msg"]))
+    monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
+
+    aes.test_aes_ccm(_AesSession("AES_CCM"), vec_id, vec)
+
+
+def test_ccm_valid_vector_wrong_plaintext_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A valid CCM vector that decrypts to the wrong plaintext is a finding (fail)."""
+    vec_id = "tc2-valid"
+    vec = _vec(aes._AES_CCM_VECTORS, vec_id)
+    monkeypatch.setattr(aes, "import_secret_key", _handle)
+    monkeypatch.setattr(aes, "decrypt_single", lambda *_a, **_k: b"\xde\xad\xbe\xef")
+    monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(AssertionError, match="plaintext mismatch"):
+        aes.test_aes_ccm(_AesSession("AES_CCM"), vec_id, vec)
