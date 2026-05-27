@@ -15,8 +15,8 @@ import pytest
 
 from pkcs11_check.raw.recipes import (
     copy_object,
+    decrypt_single,
     destroy_quietly,
-    encrypt_single,
     gen_aes_key,
     read_attributes,
     unwrap_key,
@@ -48,7 +48,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    classify_policy_enforcement,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.security
 
@@ -167,8 +171,6 @@ class TestSensitivePreservation:
         from CK_TRUE to CK_FALSE on copy, but NOT the other way around.
         This is a MUST NOT -- escalation is a security violation.
         """
-        from pkcs11_check.compliance import ComplianceLevel, note
-
         rs = p11_raw_session
         key = gen_aes_key(
             rs.raw,
@@ -177,8 +179,10 @@ class TestSensitivePreservation:
             attrs={CKA_EXTRACTABLE: False},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
-            assert attrs[CKA_EXTRACTABLE] is False
+            # Type-B claim/effect-check. claimed = the original key reads back
+            # CKA_EXTRACTABLE=False; violated = the copy reads back True.
+            orig = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
+            claimed = orig.get(CKA_EXTRACTABLE) is False
 
             try:
                 copied = copy_object(
@@ -192,20 +196,12 @@ class TestSensitivePreservation:
 
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied, [CKA_EXTRACTABLE])
-                if copy_attrs[CKA_EXTRACTABLE] is True:
-                    note(
-                        "Module allows CKA_EXTRACTABLE escalation FALSE->TRUE via "
-                        "C_CopyObject (OASIS PKCS#11 spec MUST NOT: may only change "
-                        "TRUE->FALSE on copy)",
-                        ComplianceLevel.CRITICAL,
-                        reference="OASIS PKCS#11 spec C_CopyObject section",
-                    )
-                    pytest.xfail(
-                        "SECURITY: module allows CKA_EXTRACTABLE escalation FALSE->TRUE via "
-                        "C_CopyObject -- OASIS PKCS#11 MUST NOT violation (Tookan vulnerability)"
-                    )
-                assert copy_attrs[CKA_EXTRACTABLE] is False, (
-                    "EXTRACTABLE escalated on copy - Tookan vulnerability"
+                violated = copy_attrs.get(CKA_EXTRACTABLE) is True
+                classify_policy_enforcement(
+                    claimed=claimed,
+                    violated=violated,
+                    label="C_CopyObject escalates CKA_EXTRACTABLE False->True "
+                    "(OASIS PKCS#11 C_CopyObject: may only change True->False on copy)",
                 )
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied)
@@ -236,45 +232,41 @@ class TestWrapExtraction:
             },
         )
 
+        # The target is created PROTECTED (non-extractable + sensitive) so that
+        # any plaintext recovered from the wrapped blob is material the module
+        # promised never to release -- a Type-B self-contradiction.
         target_h = gen_aes_key(
             rs.raw,
             rs.sh,
             128,
             attrs={
-                CKA_EXTRACTABLE: True,
-                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: False,
+                CKA_SENSITIVE: True,
             },
         )
         try:
-            target_attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_VALUE])
-            target_value = target_attrs[CKA_VALUE]
-
             wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_h, CKM_AES_KEY_WRAP)
 
+            # Claim-check: did the target actually hold its protection?
+            tgt = read_attributes(rs.raw, rs.sh, target_h, [CKA_EXTRACTABLE])
+            claimed = tgt.get(CKA_EXTRACTABLE) is False
+
+            # Attacker decrypts the wrapped blob with the dual-purpose key.
             try:
-                decrypted = encrypt_single(rs.raw, rs.sh, wrap_key_h, CKM_AES_ECB, wrapped)
-                # Note: we're using encrypt here because we want to test the raw bytes
-                # In the Tookan attack, the attacker decrypts the wrapped blob
-                # Actually, the test needs decrypt:
+                recovered = decrypt_single(rs.raw, rs.sh, wrap_key_h, CKM_AES_ECB, wrapped)
             except AssertionError:
-                pass  # Module correctly prevents decrypt of wrapped data
-                return
+                recovered = b""  # Module declined to decrypt the wrapped blob.
 
-            # If decrypt succeeded, check whether key material leaked
-            from pkcs11_check.raw.recipes import decrypt_single
-
-            try:
-                decrypted = decrypt_single(rs.raw, rs.sh, wrap_key_h, CKM_AES_ECB, wrapped)
-                if decrypted == target_value:
-                    from pkcs11_check.compliance import ComplianceLevel, note
-
-                    note(
-                        "Tookan extraction succeeded: wrap+decrypt leaks key material",
-                        ComplianceLevel.NOT_RECOMMENDED,
-                        reference="Tookan paper: full key extraction",
-                    )
-            except AssertionError:
-                pass  # Module correctly prevents decrypt of wrapped data
+            # AES-KEY-WRAP adds an 8-byte integrity prefix, so a 16-byte key
+            # wraps to 24 bytes; recovering >= the key length of plaintext means
+            # the protected key material leaked.
+            extracted = bool(recovered) and len(recovered) >= 16
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=extracted,
+                label="wrap-decrypt oracle extracts a non-extractable/sensitive key "
+                "(Tookan paper: full key extraction via wrap+decrypt)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_key_h)
             destroy_quietly(rs.raw, rs.sh, target_h)
