@@ -29,6 +29,7 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_aes_key,
     gen_rsa_keypair,
+    read_attributes,
     sign_single,
 )
 from pkcs11_check.raw.rv import ckr_name
@@ -47,7 +48,6 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
     CKM_SHA256_RSA_PKCS,
-    CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
@@ -57,6 +57,7 @@ from pkcs11_check.raw.types_std import (
     CKR_SIGNATURE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
 )
+from pkcs11_check.testcases.conftest import classify_policy_enforcement
 
 pytestmark = pytest.mark.access
 
@@ -180,28 +181,18 @@ class TestCKRAttributeCompliance:
         rs = p11_raw_session
         key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_SENSITIVE: True})
         try:
-            tmpl = (CK_ATTRIBUTE * 1)()
-            tmpl[0].type = CKA_VALUE
-            tmpl[0].pValue = None
-            tmpl[0].ulValueLen = 0
-            rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
-            if rv == CKR_OK:
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_GetAttributeValue(CKA_VALUE) returned CKR_OK on CKA_SENSITIVE=True key "
-                    "(expected CKR_ATTRIBUTE_SENSITIVE). Sensitive key material is readable.",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.9.2",
-                )
-                pytest.xfail(
-                    "SECURITY: module returns CKR_OK for CKA_VALUE read on "
-                    "CKA_SENSITIVE=True key (expected CKR_ATTRIBUTE_SENSITIVE)"
-                )
-            _check_ckr(
-                "C_GetAttributeValue(SENSITIVE, VALUE)",
-                CKR_ATTRIBUTE_SENSITIVE,
-                rv,
+            # Type-B claim/effect-check: claimed = the key reports
+            # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
+            # actually readable (read_attributes omits unavailable attributes).
+            sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            claimed = sens_attrs.get(CKA_SENSITIVE) is True
+            val_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            violated = CKA_VALUE in val_attrs
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=violated,
+                label="read CKA_VALUE on a CKA_SENSITIVE=True key "
+                "(PKCS#11 v3.1 Sec.4.9.2 requires CKR_ATTRIBUTE_SENSITIVE)",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
