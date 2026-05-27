@@ -171,6 +171,10 @@ def test_acvp_aes_gcm_siv_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[s
         )
         if vec["test_passed"]:
             assert pt == vec["pt_expected"], f"{vec_id}: plaintext mismatch"
+        else:
+            pytest.fail(
+                f"{vec_id}: decrypted an invalid GCM-SIV vector (forged ciphertext/tag accepted)"
+            )
     except AssertionError:
         if not vec["test_passed"]:
             return
