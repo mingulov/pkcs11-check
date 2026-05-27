@@ -242,6 +242,26 @@ These are genuine, smaller-count PROVIDER findings (security-marked or behaviora
   — CV-based timing-leak heuristic; environment-sensitive, likely flaky → PKCS11-CHECK
   (make non-gating / informational) unless reproducible.
 
+## Gap analysis 2026-05-27 (harness-masking pattern, using FP-1/FP-2 evidence)
+
+Scanned all ABORT_exit failures for a **Python traceback** in the child stderr (= harness
+bug masking real behavior, the PC-1/PC-5 signature). 9 classes; conclusions:
+- `test_corrupted_unwrap` (48, nss) + `test_bit_flip_unwrap` (15, nss): share `_KEYGEN_AND_WRAP`
+  → **already fixed by FP-2** (wrap-setup now classified).
+- `test_gcm_null_aad_pointer_nonzero_length` (10): **fixed by FP-1**.
+- `test_corrupted_unwrap` (16, opencryptoki): the `raise AssertionError("C_Decrypt wrote past
+  the minimal output buffer …")` site — a **real PROVIDER finding** (heap overflow, matches
+  OpenCryptoki PR #932), surfaced (messily) as exit-1. Visible, not hidden; improve reporting later.
+- NULL-pointer hard-asserts (`test_encapsulate/decapsulate_null_pointers` kryoptic;
+  `TestArgsBadNullPointers::test_*_null_mechanism` tpm2; ~5): `assert rv == CKR_ARGUMENTS_BAD`
+  masks the actual rv when the module returns a different *non-crash* code → these are the
+  plan's **N2 "binary assert lacking the xfail tier"** sites; fixed systematically via
+  `classify_negative_rv` in the N2 phase.
+- pkcs11-mock `test_double_digest_init_via_subprocess` (1): EXPECTED mock.
+
+Net: FP-1/FP-2 covered the high-volume masking; the rest are real findings (already visible)
+or N2-phase classification work. No new standalone harness-bug class found.
+
 ## Long-tail category totals (classes ≤3 occurrences)
 OTHER 673 (dominated by pkcs11-mock EXPECTED), WRONG_CKR 221 (mostly PKCS11-CHECK CKR-widening /
 tpm2 capability), CRASH_signal 40 (PROVIDER), ABORT_exit 31 (mix incl. PC-1/PC-5 test bugs),
