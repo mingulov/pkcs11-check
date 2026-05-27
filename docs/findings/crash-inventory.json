@@ -1,0 +1,52 @@
+[
+  {
+    "provider": "kryoptic-fips",
+    "file": "src/pkcs11_check/testcases/acvp/aes/test_ccm.py",
+    "returncode": 6
+  },
+  {
+    "provider": "kryoptic-fips",
+    "file": "src/pkcs11_check/testcases/test_mech_derive.py",
+    "returncode": 6
+  },
+  {
+    "provider": "kryoptic-fips",
+    "file": "src/pkcs11_check/testcases/test_mech_encrypt.py",
+    "returncode": 6
+  },
+  {
+    "provider": "kryoptic-fips",
+    "file": "src/pkcs11_check/testcases/test_misc_kdf.py",
+    "returncode": 6
+  },
+  {
+    "provider": "kryoptic-fips",
+    "file": "src/pkcs11_check/testcases/wycheproof/test_wycheproof_aes.py",
+    "returncode": 6
+  },
+  {
+    "provider": "nss",
+    "file": "src/pkcs11_check/testcases/test_mech_flags.py",
+    "returncode": 11
+  },
+  {
+    "provider": "nss-main",
+    "file": "src/pkcs11_check/testcases/test_mech_flags.py",
+    "returncode": 11
+  },
+  {
+    "provider": "nss-main",
+    "file": "src/pkcs11_check/testcases/test_mech_negative.py",
+    "returncode": 11
+  },
+  {
+    "provider": "nss-pqc",
+    "file": "src/pkcs11_check/testcases/test_mech_flags.py",
+    "returncode": 11
+  },
+  {
+    "provider": "nss-pqc",
+    "file": "src/pkcs11_check/testcases/test_mech_negative.py",
+    "returncode": 11
+  }
+]
