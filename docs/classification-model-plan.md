@@ -163,7 +163,7 @@ def reject_or_classify(exc, expected_rvs, *, label):
 
 ### Task 4 — Type-B / Type-C self-contradiction classifiers
 
-- [ ] **Step 1 — Failing tests:**
+- [x] **Step 1 — Failing tests:**
 ```python
 from pkcs11_check.testcases.conftest import classify_policy_enforcement, classify_lifecycle_effect
 def test_policy_claimed_violated_fails():
@@ -174,8 +174,8 @@ def test_policy_claimed_ok_passes(): classify_policy_enforcement(claimed=True, v
 def test_lifecycle_claimed_effect_fails():
     with pytest.raises(Failed): classify_lifecycle_effect(claimed_success=True, effect_observed=True, label="x")
 ```
-- [ ] **Step 2 — Run, verify fail.**
-- [ ] **Step 3 — Implement:**
+- [x] **Step 2 — Run, verify fail.**
+- [x] **Step 3 — Implement:**
 ```python
 def classify_policy_enforcement(*, claimed, violated, label):
     """Type-B: claimed=module reported the protective attribute back; violated=protection breached."""
@@ -191,9 +191,9 @@ def classify_lifecycle_effect(*, claimed_success, effect_observed, label):
     if effect_observed:
         pytest.fail(f"{label}: success claimed then contradicted (self-contradiction)")
 ```
-- [ ] **Step 4 — Run, verify pass.** → PASS.
-- [ ] **Step 5 — Provider-neutral check.** `uv run pytest tests/test_provider_neutral_findings.py -q` → PASS.
-- [ ] **Step 6 — Commit.** `git commit -am "Add Type-B/Type-C self-contradiction classifiers"`
+- [x] **Step 4 — Run, verify pass.** → PASS.
+- [x] **Step 5 — Provider-neutral check.** `uv run pytest tests/test_provider_neutral_findings.py -q` → PASS.
+- [x] **Step 6 — Commit.** `git commit -am "Add Type-B/Type-C self-contradiction classifiers"`
 
 ### Task 5 — Document the model in CLAUDE.md
 

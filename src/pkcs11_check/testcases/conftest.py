@@ -450,6 +450,50 @@ def reject_or_classify(
     pytest.xfail(f"{label}: rejected with {name}, expected {[ckr_name(c) for c in expected_rvs]}")
 
 
+def classify_policy_enforcement(*, claimed: bool, violated: bool, label: str) -> None:
+    """Type-B attribute/permission self-contradiction classifier.
+
+    Args:
+        claimed: the module reported the protective attribute back (e.g. a
+            ``CKA_SENSITIVE=True`` key reads back ``CKA_SENSITIVE=True``).
+        violated: the protection was breached (e.g. the sensitive value was
+            readable, or an escalation was reflected).
+
+    - not ``claimed`` -> ``xfail`` (honest non-support of an optional protection;
+      provider-dependent, noted for later).
+    - ``claimed`` and ``violated`` -> ``fail`` (the module claimed the protection
+      then violated it -- a self-contradiction, broken for any provider).
+    - ``claimed`` and not ``violated`` -> ``pass``.
+    """
+    if not claimed:
+        pytest.xfail(f"{label}: module does not claim the protection (honest non-support)")
+    if violated:
+        pytest.fail(f"{label}: claimed the protection then violated it (self-contradiction)")
+
+
+def classify_lifecycle_effect(*, claimed_success: bool, effect_observed: bool, label: str) -> None:
+    """Type-C lifecycle/state self-contradiction classifier.
+
+    Args:
+        claimed_success: the prior operation returned ``CKR_OK`` (e.g. a
+            ``C_DestroyObject`` claimed the object destroyed, or a read-only
+            ``C_SetAttributeValue`` claimed the write succeeded).
+        effect_observed: the contradicting effect was seen (e.g. the destroyed
+            object's tagged content survived, or the read-only value actually
+            changed).
+
+    - not ``claimed_success`` -> ``xfail`` (prior op did not claim success; the
+      module honestly declined, so no contradiction).
+    - ``claimed_success`` and ``effect_observed`` -> ``fail`` (success claimed then
+      contradicted -- a self-contradiction).
+    - ``claimed_success`` and not ``effect_observed`` -> ``pass``.
+    """
+    if not claimed_success:
+        pytest.xfail(f"{label}: prior operation did not claim success")
+    if effect_observed:
+        pytest.fail(f"{label}: success claimed then contradicted (self-contradiction)")
+
+
 def destroy_returned_handles(rs: Any, *handles: int) -> None:
     """Destroy a sequence of object handles, silently skipping zeros and errors."""
     from pkcs11_check.raw.recipes import destroy_quietly

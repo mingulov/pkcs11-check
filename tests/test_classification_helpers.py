@@ -19,7 +19,9 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation, assert_ckr
 from pkcs11_check.testcases.conftest import (
+    classify_lifecycle_effect,
     classify_negative_rv,
+    classify_policy_enforcement,
     reject_or_classify,
 )
 
@@ -129,3 +131,27 @@ def test_exc_expected_passes() -> None:
 def test_exc_other_xfails() -> None:
     with pytest.raises(pytest.xfail.Exception):
         reject_or_classify(_exc(CKR_FUNCTION_FAILED), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — Type-B / Type-C self-contradiction classifiers
+# ---------------------------------------------------------------------------
+
+
+def test_policy_claimed_violated_fails() -> None:
+    with pytest.raises(Failed):
+        classify_policy_enforcement(claimed=True, violated=True, label="x")
+
+
+def test_policy_not_claimed_xfails() -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        classify_policy_enforcement(claimed=False, violated=True, label="x")
+
+
+def test_policy_claimed_ok_passes() -> None:
+    classify_policy_enforcement(claimed=True, violated=False, label="x")
+
+
+def test_lifecycle_claimed_effect_fails() -> None:
+    with pytest.raises(Failed):
+        classify_lifecycle_effect(claimed_success=True, effect_observed=True, label="x")
