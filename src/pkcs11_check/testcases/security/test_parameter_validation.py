@@ -236,6 +236,24 @@ class TestGcmIvReuse:
 # ---------------------------------------------------------------------------
 
 
+# Subprocess snippet that builds CK_AES_GCM_PARAMS with a NULL AAD pointer but a
+# non-zero ulAADLen (the deliberate mismatch this probe exercises). Kept as a
+# module-level constant so the meta-test can exec it without a provider and assert
+# it builds cleanly -- the probe previously assigned a raw ctypes array to the
+# pIv pointer field, which raised in the subprocess and stopped the probe from ever
+# reaching C_EncryptInit (PC-1). Requires `ctypes` and `CK_AES_GCM_PARAMS` in scope.
+_GCM_NULL_AAD_PARAMS_SNIPPET = """\
+params = CK_AES_GCM_PARAMS()
+_iv_buf = (ctypes.c_ubyte * 12)(*range(12))
+params.pIv = ctypes.cast(_iv_buf, ctypes.c_void_p)
+params.ulIvLen = 12
+params.ulIvBits = 96
+params.pAAD = None  # NULL pointer
+params.ulAADLen = 16  # Non-zero length -- mismatch!
+params.ulTagBits = 128
+"""
+
+
 class TestGcmAadNullWithLength:
     """Test GCM with NULL AAD pointer but non-zero AAD length.
 
@@ -261,18 +279,13 @@ from pkcs11_check.raw.types_std import CK_AES_GCM_PARAMS, CKM_AES_GCM, CK_MECHAN
 from pkcs11_check.raw.recipes import gen_aes_key, destroy_quietly
 
 key = gen_aes_key(raw, sh, 256)
+"""
+            + _GCM_NULL_AAD_PARAMS_SNIPPET
+            + """mech = CK_MECHANISM()
+mech.mechanism = int(CKM_AES_GCM)
+mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
+mech.ulParameterLen = ctypes.sizeof(params)
 try:
-    params = CK_AES_GCM_PARAMS()
-    params.pIv = (ctypes.c_ubyte * 12)(*range(12))
-    params.ulIvLen = 12
-    params.ulIvBits = 96
-    params.pAAD = None  # NULL pointer
-    params.ulAADLen = 16  # Non-zero length -- mismatch!
-    params.ulTagBits = 128
-    mech = CK_MECHANISM()
-    mech.mechanism = int(CKM_AES_GCM)
-    mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
-    mech.ulParameterLen = ctypes.sizeof(params)
     rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
     print(f"rv={rv}")
 finally:

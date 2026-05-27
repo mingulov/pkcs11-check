@@ -32,6 +32,14 @@ Counts are failures in this artifact set (per `failure-inventory.json`).
   NULL+nonzero-len = PROVIDER finding. **Add a dedicated regression test** (mock-`raw`
   meta-test in `tests/`) that asserts the probe constructs `CK_AES_GCM_PARAMS` correctly and
   that a NULL-deref/crash is reported — so this can never silently regress to a setup no-op.
+- **RESOLVED 2026-05-27 (FP-1):** fixed the `pIv` assignment (`ctypes.cast(_iv_buf, c_void_p)`,
+  IV buffer kept alive); param snippet extracted to a module constant; regression test
+  `tests/test_parameter_validation_gcm_probe.py` (verified RED with the old line:
+  `TypeError: ... c_ubyte_Array_12 instead of c_void_p`, GREEN after fix). **The now-live probe
+  UNMASKED a real PROVIDER crash**: stock SoftHSM2 2.7.0 **SIGSEGV (signal 11)** on
+  `C_EncryptInit(AES_GCM, pAAD=NULL, ulAADLen=16)` — documented in `module-issues.md`
+  (GCM null-AAD finding). Full cross-provider rerun pending. Lesson confirmed: the harness
+  bug was hiding a genuine finding.
 
 ### PC-2 — ML-DSA sigVer rejects VALID signatures across 3 unrelated providers  ·  NEEDS-CONFIRM
 - **Count/scope:** 36 — softhsm2-main 9, nss 9, opencryptoki 9, opencryptoki-master 9.

@@ -58,6 +58,19 @@ provider package versions where the finding was first recorded.
   the process. The local `softhsm2-generated-iv` Docker target avoids this path
   with a simulator patch that returns `CKR_MECHANISM_PARAM_INVALID` when
   `pIv == NULL_PTR`; that patch is not stock SoftHSM2 evidence.
+- **GCM null-AAD-pointer-with-nonzero-length SIGSEGV (NEW 2026-05-27)**:
+  `test_parameter_validation.py::TestGcmAadNullWithLength::test_gcm_null_aad_pointer_nonzero_length`
+  calls `C_EncryptInit(CKM_AES_GCM, pAAD=NULL, ulAADLen=16)` (NULL pointer with a
+  non-zero AAD length) in a crash-isolated child. Stock SoftHSM2 2.7.0 (local
+  `/usr/lib/softhsm/libsofthsm2.so`, 2026-05-27) terminates with **signal 11**;
+  a NULL AAD pointer with non-zero length must yield a CKR (e.g.
+  `CKR_ARGUMENTS_BAD`/`CKR_MECHANISM_PARAM_INVALID`), not segfault. **This finding
+  was previously masked:** the probe assigned a raw ctypes array to the
+  `CK_AES_GCM_PARAMS.pIv` pointer field, raising in the subprocess before
+  `C_EncryptInit`, so it reported a uniform setup failure on every provider
+  instead of the real crash. Fixed 2026-05-27 (cast `pIv` correctly; regression
+  test `tests/test_parameter_validation_gcm_probe.py`). A full provider rerun is
+  pending to record which other modules crash here.
 - **Malformed huge data-length child exits (NEW 2026-05-26)**: the same focused
   `test_ffi_length_boundary.py` run reports positive child exit code 5, with no
   stdout/stderr, for `C_Sign(HMAC_SHA256)` and `C_Digest(SHA256)` when
