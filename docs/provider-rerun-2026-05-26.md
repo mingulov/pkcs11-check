@@ -373,6 +373,10 @@ Completed high-signal observations:
   wrap runtime CKRs become xfail evidence, not skipped attack-inapplicable
   cases. Focused pkcs11-mock evidence:
   `artifacts/_focused/pkcs11-mock-tookan-sensitive-wrap-current-20260527/`.
+- Tookan §3.2 key-type-confusion coverage now uses the same wrap-side split:
+  explicit protective wrap refusals skip, while generic advertised wrap rejects
+  are xfail evidence. Focused pkcs11-mock evidence:
+  `artifacts/_focused/pkcs11-mock-tookan-type-confusion-current-20260527/`.
 
 ## Remaining Raw-Looking Buckets
 

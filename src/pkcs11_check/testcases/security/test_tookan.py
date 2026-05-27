@@ -37,9 +37,36 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP,
     CKO_SECRET_KEY,
+    CKR_ACTION_PROHIBITED,
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_NOT_WRAPPABLE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.security
+
+_TYPE_CONFUSION_WRAP_INAPPLICABLE_RVS = {
+    CKR_ACTION_PROHIBITED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_NOT_WRAPPABLE,
+}
+
+_TYPE_CONFUSION_WRAP_RUNTIME_REJECT_RVS = {
+    CKR_DATA_LEN_RANGE,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+}
 
 
 class TestConflictingUsageAttrs:
@@ -296,7 +323,14 @@ class TestKeyTypeConfusionOnUnwrap:
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target_h, CKM_AES_KEY_WRAP)
             except AssertionError as exc:
-                pytest.skip(f"Module rejected wrap of AES-128 → AES-256: {exc}")
+                if is_known_error(exc, _TYPE_CONFUSION_WRAP_INAPPLICABLE_RVS):
+                    pytest.skip(f"Module cannot wrap AES-128 key for Tookan §3.2: {exc}")
+                xfail_if_known_ckr(
+                    exc,
+                    _TYPE_CONFUSION_WRAP_RUNTIME_REJECT_RVS,
+                    "Tookan key-type-confusion wrap rejected before unwrap check",
+                )
+                raise
 
             try:
                 fake_des3 = unwrap_key(
