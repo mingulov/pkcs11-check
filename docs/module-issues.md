@@ -133,12 +133,33 @@ provider package versions where the finding was first recorded.
   pkcs11-check calls `C_SignInit(CKM_AES_MAC_GENERAL, key=0)` because NSS
   advertises `CKF_SIGN`. The expected outcome is any suitable CKR rejecting the
   dummy key or mechanism parameters, not a segfault.
-- **HMAC-SHA256 with RSA private key segfault**: focused current-source runs for
-  `nss-pqc` and `nss-main` crash in
+- **MAC mechanism with RSA key segfault (root cause confirmed 2026-05-27)**: focused
+  current-source runs for `nss-pqc` and `nss-main` crash in
   `test_mech_negative.py::TestWrongKeyType::test_hmac_sha256_with_rsa_key_rejected`.
-  The test calls `C_SignInit(CKM_SHA256_HMAC, RSA private key)`. This is a valid
-  negative wrong-key-type probe; the provider should return a CKR such as a key
-  type/handle/mechanism error instead of crashing.
+  The test calls `C_SignInit(CKM_SHA256_HMAC, RSA private key)`; the provider should
+  return `CKR_KEY_TYPE_INCONSISTENT` (as `C_SignInit(CKM_ECDSA, RSA)` already does),
+  not crash.
+  **Upstream root cause (NSS softoken):** `NSC_SignInit`/`NSC_VerifyInit` do not
+  validate key type before dispatching to the MAC path (RSA/ECDSA sign paths do, at
+  `pkcs11c.c:3023,4059`, but the HMAC/AES-CMAC branches dispatch straight into
+  `sftk_doMACInit`). `sftk_MAC_Create` allocates `sftk_MACCtx` with `PORT_New`
+  (uninitialized) in `sftkhmac.c:228`; MAC init fails for an RSA key (no `CKA_VALUE`),
+  and the error path `sftk_MAC_DestroyContext` dereferences the uninitialized
+  `destroy_func` → jumps to a garbage address. **Heap-state dependent:** if the
+  allocation lands on zero-filled memory, `destroy_func` is NULL and it returns
+  `CKR_KEY_SIZE_RANGE` (0x62, still wrong) instead of crashing — which is why the
+  Fedora `nss` package variant does not always crash on this file.
+  **Also affects:** `C_VerifyInit(CKM_SHA256_HMAC, RSA pub)` and
+  `C_SignInit(CKM_AES_CMAC, RSA priv)` (same MAC dispatch). Suggested upstream fix:
+  (1) key-type validation in `NSC_SignInit`/`NSC_VerifyInit` before MAC dispatch;
+  (2) `PORT_ZNew(sftk_MACCtx)` instead of `PORT_New` in `sftkhmac.c:228`. An ~80-line
+  ctypes reproducer (heap-warm + `C_SignInit(0x251, RSA)`) reproduces reliably.
+  **Status: reported upstream and DECLINED (2026-05-27)** as outside the NSS softoken
+  threat model — the wrong-key-type MAC path is not reachable through Firefox, so it is
+  retained here as a documented robustness finding only, not pursued further.
+  pkcs11-check keeps the existing `C_SignInit(CKM_SHA256_HMAC, RSA)` probe as the
+  representative case; `C_VerifyInit` and `CKM_AES_CMAC` are the same `sftk_doMACInit`
+  dispatch family and are not separately tested (low value for a declined finding).
 
 ### Known quirks
 - **Read-only crypto services token**: NSS's default slot ("NSS Generic Crypto Services") is read-only. Cannot create objects, generate keys, or store tokens. Tests requiring RW access should skip.
