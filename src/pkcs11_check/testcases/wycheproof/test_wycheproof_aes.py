@@ -13,7 +13,6 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     generate_random,
     import_secret_key,
-    sign_single,
     verify_single,
     wrap_key,
 )
@@ -377,9 +376,13 @@ _AES_GMAC_VECTORS = _load_flat("aes_gmac_test.json")
 
 @pytest.mark.parametrize("vec_id,vec", _AES_GMAC_VECTORS, ids=[v[0] for v in _AES_GMAC_VECTORS])
 def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """AES-GMAC (authentication-only GCM) from Wycheproof vectors.
+    """AES-GMAC (authentication-only GCM) tag verification from Wycheproof vectors.
 
-    GMAC is GCM with empty plaintext - produces only a tag over AAD.
+    GMAC is GCM with empty plaintext - authenticates AAD only. Verifies the
+    *supplied* tag with C_Verify so invalid vectors actually exercise
+    rejection; an accepted invalid tag is a crypto-correctness break (Type A
+    -> fail). The previous produce-direction (C_Sign + compare) could never
+    reject an invalid vector.
     """
     rs = p11_raw_session
     if not rs.has_mechanism("AES_GMAC"):
@@ -409,30 +412,30 @@ def test_aes_gmac(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             return
         raise
 
-    mac = None
     try:
-        mac = sign_single(
+        verified = verify_single(
             rs.raw,
             rs.sh,
             key,
             CKM_AES_GMAC,
             msg,
+            tag_expected,
             mech_param=mech_bytes(CKM_AES_GMAC, iv),
         )
     except (AssertionError, TypeError) as exc:
         if result == "valid":
             if isinstance(exc, AssertionError):
                 _xfail_if_aes_runtime_reject(exc, f"AES-GMAC {vec_id}")
-            pytest.fail(f"AES-GMAC sign failed for valid vector {vec_id}: {exc}")
-        # acceptable: reject is fine
+            pytest.fail(f"AES-GMAC verify failed for valid vector {vec_id}: {exc}")
+        # acceptable: reject of an invalid vector is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
-    if result == "valid" and mac is not None:
-        assert mac == tag_expected
-    if result == "invalid" and mac is not None and mac == tag_expected:
-        pytest.fail(f"AES-GMAC {vec_id} produced invalid tag")
+    if result == "valid" and not verified:
+        pytest.fail(f"AES-GMAC rejected a valid GMAC vector {vec_id}")
+    if result == "invalid" and verified:
+        pytest.fail(f"AES-GMAC {vec_id}: accepted invalid tag (forged tag verified)")
 
 
 # --- AES-XTS ---

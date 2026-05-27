@@ -75,3 +75,38 @@ def test_cmac_valid_vector_rejected_fails(monkeypatch: pytest.MonkeyPatch) -> No
 
     with pytest.raises(pytest.fail.Exception, match="valid CMAC vector"):
         aes.test_aes_cmac(_AesSession("AES_CMAC"), vec_id, vec)
+
+
+# --- AES-GMAC (Task 2e) ---
+
+
+def test_gmac_invalid_vector_accepted_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An invalid GMAC tag that verifies must fail (forged-tag accepted)."""
+    vec_id, vec = _first(aes._AES_GMAC_VECTORS, "invalid")
+    monkeypatch.setattr(aes, "import_secret_key", _handle)
+    monkeypatch.setattr(aes, "verify_single", lambda *_a, **_k: True)
+    monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(pytest.fail.Exception, match="accepted invalid tag"):
+        aes.test_aes_gmac(_AesSession("AES_GMAC"), vec_id, vec)
+
+
+def test_gmac_valid_vector_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A valid GMAC vector that verifies passes (no exception)."""
+    vec_id, vec = _first(aes._AES_GMAC_VECTORS, "valid")
+    monkeypatch.setattr(aes, "import_secret_key", _handle)
+    monkeypatch.setattr(aes, "verify_single", lambda *_a, **_k: True)
+    monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
+
+    aes.test_aes_gmac(_AesSession("AES_GMAC"), vec_id, vec)
+
+
+def test_gmac_valid_vector_rejected_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A valid GMAC vector that does not verify is a finding (fail)."""
+    vec_id, vec = _first(aes._AES_GMAC_VECTORS, "valid")
+    monkeypatch.setattr(aes, "import_secret_key", _handle)
+    monkeypatch.setattr(aes, "verify_single", lambda *_a, **_k: False)
+    monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(pytest.fail.Exception, match="valid GMAC vector"):
+        aes.test_aes_gmac(_AesSession("AES_GMAC"), vec_id, vec)
