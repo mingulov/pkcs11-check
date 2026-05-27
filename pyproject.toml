@@ -1,6 +1,6 @@
 [project]
 name = "pkcs11-check"
-version = "0.1.0"
+version = "0.1.1"
 description = "CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pytest plugin"
 readme = "README.md"
 authors = [

@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.1.1] - 2026-05-27
+
+Maintenance and coverage release on top of 0.1.0. Focuses on a consistent
+test-outcome classification model, broader cryptographic test vectors, and
+raw-binding cleanups. No CLI or public API changes.
+
+### Changed
+
+- **Test-outcome classification** - applied a consistent model across the suite
+  that separates provider deviations (`xfail`) from genuine failures (`fail`):
+  crypto breaks, self-contradictions, and crashes. Setup and runtime rejects are
+  classified against specific CKR codes instead of broad catches.
+- **Provider-neutral findings** - failure and skip messages no longer hard-code
+  provider names; capability probes drive xfail/skip decisions.
+- **Raw binding** - refactored `pkcs11_check.raw` helpers and deduplicated test
+  error-set definitions and byte-copy paths.
+
+### Added
+
+- Expanded Wycheproof, ACVP, and negative-vector coverage with structured CKR
+  matching and tightened acceptance boundaries.
+- SoftHSM2 EdDSA EC-point encoding investigation notes and reproduction files
+  under `docs/`.
+
+### Fixed
+
+- Corrected Wycheproof signature and point adaptation: DSA DER signatures, ECDH
+  SPKI point extraction, P-521 SHAKE256 digest length, and RSA integer imports.
+
 ## [0.1.0] - 2026-05-04
 
 First public release.
