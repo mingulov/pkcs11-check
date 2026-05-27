@@ -78,9 +78,7 @@ def test_x509_metadata_paths_do_not_catch_generic_exception() -> None:
             if not isinstance(node, ast.ExceptHandler) or node.type is None:
                 continue
             caught_names = {
-                child.id
-                for child in ast.walk(node.type)
-                if isinstance(child, ast.Name)
+                child.id for child in ast.walk(node.type) if isinstance(child, ast.Name)
             }
             catches_generic = "Exception" in caught_names
             current: ast.AST | None = node

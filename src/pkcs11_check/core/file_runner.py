@@ -2669,9 +2669,7 @@ def run_isolated_pytest_units(
                                             "active; the test passed in isolation. "
                                             f"Original crash detail: {crash_detail}"
                                         )
-                                        culprit_entry["isolation_outcome"] = (
-                                            "passed-in-isolation"
-                                        )
+                                        culprit_entry["isolation_outcome"] = "passed-in-isolation"
                                     if confirm_out.strip():
                                         culprit_entry["stdout"] = confirm_out
                                     if confirm_err.strip():

@@ -156,9 +156,7 @@ def _read_profile_ids(rs: Any) -> set[int]:
     should pytest.skip if the set is empty.
     """
     try:
-        handles = find_objects(
-            rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PROFILE})
-        )
+        handles = find_objects(rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PROFILE}))
     except AssertionError:
         return set()
 
@@ -193,9 +191,7 @@ class TestProfileBehavioralConformance:
     Source: OASIS PKCS#11 Profiles v3.2 §5 (Base Profiles).
     """
 
-    def test_advertised_profiles_have_required_functions(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_advertised_profiles_have_required_functions(self, p11_raw_session: Any) -> None:
         """Every advertised profile's mandatory functions must be in the
         module's function list (`C_GetInterface`-resolved)."""
         from pkcs11_check.compliance_profiles import (
@@ -240,13 +236,9 @@ class TestProfileBehavioralConformance:
         if not tested_any:
             pytest.skip("No tabulated profile IDs advertised by module")
         if failures:
-            pytest.fail(
-                "Profile conformance failures:\n  " + "\n  ".join(failures)
-            )
+            pytest.fail("Profile conformance failures:\n  " + "\n  ".join(failures))
 
-    def test_advertised_profiles_have_required_mechanisms(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_advertised_profiles_have_required_mechanisms(self, p11_raw_session: Any) -> None:
         """Profiles that mandate specific mechanisms (HKDF TLS Token) must
         advertise them in C_GetMechanismList."""
         from pkcs11_check.compliance_profiles import (
@@ -292,14 +284,9 @@ class TestProfileBehavioralConformance:
                 "'None specified' for mechs)"
             )
         if failures:
-            pytest.fail(
-                "Profile mechanism-conformance failures:\n  "
-                + "\n  ".join(failures)
-            )
+            pytest.fail("Profile mechanism-conformance failures:\n  " + "\n  ".join(failures))
 
-    def test_advertised_profiles_have_required_object_classes(
-        self, p11_raw_session: Any
-    ) -> None:
+    def test_advertised_profiles_have_required_object_classes(self, p11_raw_session: Any) -> None:
         """Profiles that mandate specific object classes must be able to
         enumerate at least one object of each (where the class is
         token-resident by nature)."""

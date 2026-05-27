@@ -121,8 +121,7 @@ class TestVerifySignatureRoundtrip:
             rv = rs.raw.C_VerifySignature(rs.sh, data_ptr, data_len)
             if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
                 pytest.xfail(
-                    "C_VerifySignature rejected wrong signature with non-clean CKR: "
-                    f"{ckr_name(rv)}"
+                    f"C_VerifySignature rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
                 )
             assert rv in SIGNATURE_REJECT_RVS, f"Expected signature reject CKR, got 0x{rv:08x}"
         finally:

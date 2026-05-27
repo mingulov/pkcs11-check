@@ -166,15 +166,11 @@ def unwrap_key_for_mechanism_roundtrip(
             mech_param=mech_param,
         )
     except AssertionError as exc:
-        allowed_errors = quirk_extras(
-            p11_config, "unwrap_template_class_keytype_rejected"
-        )
+        allowed_errors = quirk_extras(p11_config, "unwrap_template_class_keytype_rejected")
         if not is_known_error(exc, allowed_errors):
             raise
         relaxed_attrs = {
-            key: value
-            for key, value in attrs.items()
-            if key not in (CKA_CLASS, CKA_KEY_TYPE)
+            key: value for key, value in attrs.items() if key not in (CKA_CLASS, CKA_KEY_TYPE)
         }
         if relaxed_attrs == attrs:
             raise

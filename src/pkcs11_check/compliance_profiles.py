@@ -154,9 +154,7 @@ HKDF_TLS_TOKEN = ProfileRequirements(
     profile_id=CKP_HKDF_TLS_TOKEN_VALUE,
     profile_name="HKDF TLS Token",
     required_functions=_BASELINE_FUNCTIONS | frozenset({"C_DeriveKey"}),
-    required_object_classes=frozenset(
-        {int(CKO_PROFILE), int(CKO_DATA), int(CKO_SECRET_KEY)}
-    ),
+    required_object_classes=frozenset({int(CKO_PROFILE), int(CKO_DATA), int(CKO_SECRET_KEY)}),
     required_mechanisms=frozenset({int(CKM_HKDF_DATA)}),
     inherits_from=int(CKP_BASELINE_PROVIDER),
 )

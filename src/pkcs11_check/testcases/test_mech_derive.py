@@ -112,6 +112,7 @@ def _xfail_derive_runtime_reject(exc: AssertionError, entry: MechEntry) -> None:
         f"{entry.mech_name}: advertised derive path is not operational",
     )
 
+
 # SHA key derivation mechanisms have no params and use a generic secret base key
 _SHA_KEY_DERIV_MECHS: set[int] = set()
 try:

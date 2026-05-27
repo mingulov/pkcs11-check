@@ -116,9 +116,7 @@ def _xfail_if_slhdsa_runtime_reject(exc: AssertionError, label: str) -> None:
     raise exc
 
 
-def _slhdsa_verify_result_or_xfail(
-    exc: AssertionError, label: str, *, expected_pass: bool
-) -> bool:
+def _slhdsa_verify_result_or_xfail(exc: AssertionError, label: str, *, expected_pass: bool) -> bool:
     if expected_pass:
         if is_known_error(exc, SIGNATURE_REJECT_RVS):
             return False

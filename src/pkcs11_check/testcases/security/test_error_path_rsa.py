@@ -159,12 +159,7 @@ def _build_decrypt_script(
     body: str,
 ) -> str:
     """Assemble RSA decrypt error-path child script."""
-    return (
-        _preamble(p11_config)
-        + _RSA_KEYGEN
-        + indent(bad_ct_code + body, "    ")
-        + _RSA_CLEANUP
-    )
+    return _preamble(p11_config) + _RSA_KEYGEN + indent(bad_ct_code + body, "    ") + _RSA_CLEANUP
 
 
 # ---------------------------------------------------------------------------
@@ -195,9 +190,7 @@ class TestRsaPkcsDecryptErrorPaths:
         _require_rsa_decrypt_setup(rs)
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len)\n"
-        script = _build_decrypt_script(
-            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
-        )
+        script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: random ciphertext"
@@ -215,9 +208,7 @@ class TestRsaPkcsDecryptErrorPaths:
         _require_rsa_decrypt_setup(rs)
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len // 2)\n"
-        script = _build_decrypt_script(
-            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
-        )
+        script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: truncated ciphertext (half modulus)"
@@ -235,9 +226,7 @@ class TestRsaPkcsDecryptErrorPaths:
         _require_rsa_decrypt_setup(rs)
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len + 16)\n"
-        script = _build_decrypt_script(
-            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
-        )
+        script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: extended ciphertext (modulus + 16)"
@@ -255,9 +244,7 @@ class TestRsaPkcsDecryptErrorPaths:
         _require_rsa_decrypt_setup(rs)
 
         bad_ct_code = "bad_ct = bytes(mod_len)\n"
-        script = _build_decrypt_script(
-            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
-        )
+        script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: all-zero ciphertext"
@@ -275,9 +262,7 @@ class TestRsaPkcsDecryptErrorPaths:
         _require_rsa_decrypt_setup(rs)
 
         bad_ct_code = "bad_ct = b'\\xff' * mod_len\n"
-        script = _build_decrypt_script(
-            p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY
-        )
+        script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_PKCS_DECRYPT_BODY)
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS decrypt: all-0xFF ciphertext"
@@ -311,9 +296,7 @@ class TestRsaOaepDecryptErrorPaths:
         _require_rsa_decrypt_setup(rs)
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len)\n"
-        script = _build_decrypt_script(
-            p11_config, bad_ct_code=bad_ct_code, body=_OAEP_DECRYPT_BODY
-        )
+        script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_OAEP_DECRYPT_BODY)
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS_OAEP decrypt: random ciphertext"
@@ -331,9 +314,7 @@ class TestRsaOaepDecryptErrorPaths:
         _require_rsa_decrypt_setup(rs)
 
         bad_ct_code = "import os\nbad_ct = os.urandom(mod_len // 2)\n"
-        script = _build_decrypt_script(
-            p11_config, bad_ct_code=bad_ct_code, body=_OAEP_DECRYPT_BODY
-        )
+        script = _build_decrypt_script(p11_config, bad_ct_code=bad_ct_code, body=_OAEP_DECRYPT_BODY)
         rc, stdout, stderr = run_with_coverage(script, timeout=15)
         assert_subprocess_no_crash(
             rc, stdout, stderr, context="RSA_PKCS_OAEP decrypt: truncated ciphertext (half modulus)"

@@ -111,9 +111,7 @@ class TestMalformedAttributes:
             assert h != 0
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as e:
-            if _is_template_error(e) or is_known_error(
-                e, {CKR_DATA_LEN_RANGE, CKR_KEY_SIZE_RANGE}
-            ):
+            if _is_template_error(e) or is_known_error(e, {CKR_DATA_LEN_RANGE, CKR_KEY_SIZE_RANGE}):
                 pass  # Correct to reject wrong key size
             else:
                 raise

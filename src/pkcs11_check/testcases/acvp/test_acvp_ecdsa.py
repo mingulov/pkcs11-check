@@ -241,9 +241,7 @@ _DET_ECDSA_VECTORS = _load_ecdsa_siggen_vectors(det=True)
 @pytest.mark.parametrize(
     "vec_id,vec", _ECDSA_SIGVER_VECTORS, ids=[v[0] for v in _ECDSA_SIGVER_VECTORS]
 )
-def test_acvp_ecdsa_sigver(
-    p11_raw_session: Any, vec_id: str, vec: dict[str, Any]
-) -> None:
+def test_acvp_ecdsa_sigver(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """ECDSA signature verification from NIST ACVP FIPS 186-5 vectors."""
     rs = p11_raw_session
     mech_int: CKM = cast(CKM, vec["mech_int"])

@@ -272,9 +272,7 @@ def test_import_limbo_failure_cert_raw(
             )
 
     except AssertionError as e:
-        if is_known_error(
-            e, {CKR_TEMPLATE_INCONSISTENT, CKR_ATTRIBUTE_VALUE_INVALID}
-        ):
+        if is_known_error(e, {CKR_TEMPLATE_INCONSISTENT, CKR_ATTRIBUTE_VALUE_INVALID}):
             note(
                 f"[FAILURE cert] Module rejected {tc['id']} "
                 f"({str(e).split(';')[0]}) - validates on import",

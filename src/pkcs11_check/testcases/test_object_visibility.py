@@ -115,8 +115,7 @@ def _gen_visibility_aes_key(
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
-            "AES_KEY_GEN advertised but object-visibility setup key generation "
-            "is not operational",
+            "AES_KEY_GEN advertised but object-visibility setup key generation is not operational",
         )
     raise
 

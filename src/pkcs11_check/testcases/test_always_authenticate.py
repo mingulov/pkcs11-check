@@ -149,11 +149,7 @@ class TestAlwaysAuthenticateEnforcement:
             msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
             sig_buf = (ctypes.c_ubyte * 256)()
             sig_len = CK_ULONG(256)
-            rv_sign = int(
-                rs.raw.C_Sign(
-                    rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)
-                )
-            )
+            rv_sign = int(rs.raw.C_Sign(rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)))
 
             if rv_sign == CKR_OK:
                 pytest.fail(
@@ -196,35 +192,24 @@ class TestAlwaysAuthenticateEnforcement:
             # Context-specific re-auth
             rv_ctx = _context_specific_login(rs.raw, rs.sh, pin)
             if rv_ctx == int(CKR_FUNCTION_NOT_SUPPORTED):
-                pytest.skip(
-                    "Module does not implement CKU_CONTEXT_SPECIFIC login"
-                )
-            assert rv_ctx == CKR_OK, (
-                f"CKU_CONTEXT_SPECIFIC login failed: {ckr_name(rv_ctx)}"
-            )
+                pytest.skip("Module does not implement CKU_CONTEXT_SPECIFIC login")
+            assert rv_ctx == CKR_OK, f"CKU_CONTEXT_SPECIFIC login failed: {ckr_name(rv_ctx)}"
 
             # Sign should now succeed
             msg = b"always-auth-with-reauth"
             msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
             sig_buf = (ctypes.c_ubyte * 256)()
             sig_len = CK_ULONG(256)
-            rv_sign = int(
-                rs.raw.C_Sign(
-                    rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)
-                )
-            )
+            rv_sign = int(rs.raw.C_Sign(rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)))
             assert rv_sign == CKR_OK, (
-                f"C_Sign after CKU_CONTEXT_SPECIFIC login failed: "
-                f"{ckr_name(rv_sign)}"
+                f"C_Sign after CKU_CONTEXT_SPECIFIC login failed: {ckr_name(rv_sign)}"
             )
             assert sig_len.value == 256, f"Unexpected sig length: {sig_len.value}"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_second_sign_requires_fresh_reauth(
-        self, p11_raw_session: Any, p11_config: Any
-    ) -> None:
+    def test_second_sign_requires_fresh_reauth(self, p11_raw_session: Any, p11_config: Any) -> None:
         """Re-auth is single-use: a second operation needs a second CKU_CONTEXT_SPECIFIC.
 
         This is the property that makes CKA_ALWAYS_AUTHENTICATE meaningful.
@@ -254,11 +239,7 @@ class TestAlwaysAuthenticateEnforcement:
             msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
             sig_buf = (ctypes.c_ubyte * 256)()
             sig_len = CK_ULONG(256)
-            return int(
-                rs.raw.C_Sign(
-                    rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)
-                )
-            )
+            return int(rs.raw.C_Sign(rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)))
 
         try:
             # First sign: re-auth + sign should succeed.
@@ -267,20 +248,14 @@ class TestAlwaysAuthenticateEnforcement:
             assert rv_init == CKR_OK
             rv_ctx = _context_specific_login(rs.raw, rs.sh, pin)
             if rv_ctx == int(CKR_FUNCTION_NOT_SUPPORTED):
-                pytest.skip(
-                    "Module does not implement CKU_CONTEXT_SPECIFIC login"
-                )
+                pytest.skip("Module does not implement CKU_CONTEXT_SPECIFIC login")
             assert rv_ctx == CKR_OK
 
             msg = b"first-sign"
             msg_buf = (ctypes.c_ubyte * len(msg))(*msg)
             sig_buf = (ctypes.c_ubyte * 256)()
             sig_len = CK_ULONG(256)
-            rv1 = int(
-                rs.raw.C_Sign(
-                    rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)
-                )
-            )
+            rv1 = int(rs.raw.C_Sign(rs.sh, msg_buf, len(msg), sig_buf, byref(sig_len)))
             assert rv1 == CKR_OK, f"First C_Sign failed: {ckr_name(rv1)}"
 
             # Second sign without a fresh re-auth: must fail.

@@ -216,8 +216,7 @@ def _gen_ro_setup_rsa_keypair(
         xfail_if_known_ckr(
             exc,
             KEYPAIR_RUNTIME_REJECT_RVS,
-            f"RSA_PKCS_KEY_PAIR_GEN advertised but {purpose} keypair generation "
-            "is not operational",
+            f"RSA_PKCS_KEY_PAIR_GEN advertised but {purpose} keypair generation is not operational",
         )
     raise
 
@@ -281,8 +280,7 @@ class TestROTokenObjectCreation:
             rv = rs.raw.C_GenerateKey(ro_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
             _xfail_if_aes_keygen_rv(
                 rv,
-                "AES_KEY_GEN advertised but RO restriction AES key generation "
-                "is not operational",
+                "AES_KEY_GEN advertised but RO restriction AES key generation is not operational",
             )
             assert rv in _RO_ERROR_RVS, f"Expected RO error, got {ckr_name(rv)}"
         finally:

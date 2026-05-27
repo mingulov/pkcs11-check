@@ -2161,12 +2161,8 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
             report_log_path.write_text(
                 "\n".join(
                     [
-                        _jsonl_line(
-                            nodeid="test_a.py::test_other", when="setup", outcome="passed"
-                        ),
-                        _jsonl_line(
-                            nodeid="test_a.py::test_other", when="call", outcome="passed"
-                        ),
+                        _jsonl_line(nodeid="test_a.py::test_other", when="setup", outcome="passed"),
+                        _jsonl_line(nodeid="test_a.py::test_other", when="call", outcome="passed"),
                         _jsonl_line(
                             nodeid="test_a.py::test_other", when="teardown", outcome="passed"
                         ),

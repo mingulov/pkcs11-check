@@ -62,9 +62,7 @@ def test_mechanism_unwrap_retries_without_type_identifiers(
         {CKA_CLASS: 4, CKA_KEY_TYPE: 31, CKA_SENSITIVE: False},
         {CKA_SENSITIVE: False},
     ]
-    assert any(
-        "retried without CKA_CLASS/CKA_KEY_TYPE" in note.description for note in get_notes()
-    )
+    assert any("retried without CKA_CLASS/CKA_KEY_TYPE" in note.description for note in get_notes())
 
 
 def test_mechanism_unwrap_does_not_retry_unknown_module(

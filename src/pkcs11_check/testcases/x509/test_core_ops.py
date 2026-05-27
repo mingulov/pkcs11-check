@@ -415,9 +415,7 @@ class TestV30CertAttributes:
             h = create_object(rs.raw, rs.sh, tmpl)
             destroy_quietly(rs.raw, rs.sh, h)
         except AssertionError as exc:
-            if not is_known_error(
-                exc, {CKR_ATTRIBUTE_VALUE_INVALID, CKR_ATTRIBUTE_TYPE_INVALID}
-            ):
+            if not is_known_error(exc, {CKR_ATTRIBUTE_VALUE_INVALID, CKR_ATTRIBUTE_TYPE_INVALID}):
                 raise
             if p11_interface_version < "3.0":
                 pytest.xfail(

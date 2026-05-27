@@ -660,8 +660,7 @@ print(f"SEU:0x{rv:08x}")
             pytest.skip(stdout.strip())
         if returncode < 0:
             pytest.fail(
-                f"C_SignEncryptUpdate crashed (signal {-returncode}). "
-                f"Stderr: {stderr[:200]}"
+                f"C_SignEncryptUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
             )
         if returncode != 0:
             pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
@@ -687,8 +686,7 @@ print(f"DVU:0x{rv:08x}")
             pytest.skip(stdout.strip())
         if returncode < 0:
             pytest.fail(
-                f"C_DecryptVerifyUpdate crashed (signal {-returncode}). "
-                f"Stderr: {stderr[:200]}"
+                f"C_DecryptVerifyUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
             )
         if returncode != 0:
             pytest.fail(f"No output: {stdout!r} {stderr[:200]}")
