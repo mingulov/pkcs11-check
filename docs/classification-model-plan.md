@@ -230,7 +230,7 @@ elif result == "invalid":
 - [x] **Task 2g** — AES-KW (`:218`, ~126): unwrap-and-reject; commit.
 - [x] **Task 2h** — `test_wycheproof_chacha.py:115` (~69): decrypt-and-reject; commit.
 - [x] **Task 2i** — `test_wycheproof_hmac.py:234/239`: verify-and-reject; commit.
-- [ ] **Task 2j** — `test_wycheproof_pbes2.py:223`: add the `invalid` accept→fail branch (structural; 0 live vectors today); commit.
+- [x] **Task 2j** — `test_wycheproof_pbes2.py:223`: add the `invalid` accept→fail branch (structural; 0 live vectors today); commit.
 - [ ] **Task 2k** — (investigate) `test_wycheproof_rsa_decrypt.py` / `rsa_oaep`: confirm invalid-padding vectors are rejected (Bleichenbacher surface); add fail-on-accept if missing; commit.
 
 ---

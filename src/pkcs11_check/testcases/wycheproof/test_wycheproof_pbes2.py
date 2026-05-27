@@ -220,4 +220,6 @@ def test_pbes2_decrypt(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -
         return
 
     destroy_quietly(rs.raw, rs.sh, key)
+    if result == "invalid":
+        pytest.fail(f"PBES2 decrypt {vec_id}: accepted invalid ciphertext")
     assert plaintext == expected, f"PBES2 plaintext mismatch for {vec_id}"
