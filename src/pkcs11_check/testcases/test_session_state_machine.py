@@ -70,6 +70,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
+    classify_negative_rv,
     get_pin_bytes,
     is_known_error,
     require_operational_aes_keygen,
@@ -414,11 +415,11 @@ class TestLoginConflicts:
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
             rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(pin_bytes))
             _skip_if_so_pin_differs(rv)
-            assert rv in (
-                CKR_USER_ALREADY_LOGGED_IN,
-                CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
-                CKR_USER_TYPE_INVALID,
-            ), f"Expected login rejected, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_USER_ANOTHER_ALREADY_LOGGED_IN,),
+                label="C_Login(SO) while a USER session is logged in",
+            )
         finally:
             _logout_safe(rs.raw, test_sh)
             close_session_quietly(rs.raw, test_sh)
@@ -443,10 +444,11 @@ class TestLoginConflicts:
                 return
 
             rv2 = rs.raw.C_Login(s2, CKU_USER, pin_buf, len(pin_bytes))
-            assert rv2 in (
-                CKR_USER_ALREADY_LOGGED_IN,
-                CKR_USER_TYPE_INVALID,
-            ), f"Expected CKR_USER_ALREADY_LOGGED_IN, got {ckr_name(rv2)}"
+            classify_negative_rv(
+                rv2,
+                (CKR_USER_ALREADY_LOGGED_IN,),
+                label="second C_Login(USER) via a different session (login is token-wide)",
+            )
         finally:
             _logout_safe(rs.raw, s1)
             close_session_quietly(rs.raw, s2)
@@ -886,11 +888,11 @@ class TestROvsRWSessionState:
                 rv,
                 "AES_KEY_GEN advertised but RO token-object setup is not operational",
             )
-            assert rv in (
-                CKR_SESSION_READ_ONLY,
-                CKR_USER_NOT_LOGGED_IN,
-                CKR_SESSION_READ_ONLY_EXISTS,
-            ), f"Expected CKR_SESSION_READ_ONLY, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_SESSION_READ_ONLY,),
+                label="C_GenerateKey with CKA_TOKEN=True on a read-only session",
+            )
         finally:
             _logout_safe(rs.raw, test_sh)
             close_session_quietly(rs.raw, test_sh)
@@ -937,13 +939,11 @@ class TestROvsRWSessionState:
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
             rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(pin_bytes))
             _skip_if_so_pin_differs(rv)
-            assert rv in (
-                CKR_SESSION_READ_ONLY_EXISTS,
-                CKR_SESSION_READ_ONLY,
-                CKR_USER_ALREADY_LOGGED_IN,
-                CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
-                CKR_USER_TYPE_INVALID,
-            ), f"Expected SO login rejected on RO session, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_SESSION_READ_ONLY_EXISTS,),
+                label="C_Login(SO) on a read-only session (SO requires a R/W session)",
+            )
         finally:
             _logout_safe(rs.raw, test_sh)
             close_session_quietly(rs.raw, test_sh)
