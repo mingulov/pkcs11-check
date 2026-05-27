@@ -6,7 +6,7 @@ AES-GCM AEAD. Requires PKCS#11 v3.2 interface (C_WrapKeyAuthenticated).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -38,18 +38,54 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_DATA_INVALID,
+    CKR_DEVICE_ERROR,
     CKR_ENCRYPTED_DATA_INVALID,
+    CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_NOT_WRAPPABLE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_SIGNATURE_INVALID,
     CKR_WRAPPED_KEY_INVALID,
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
-from pkcs11_check.testcases.conftest import is_known_error, require_operational_aes_keygen
+from pkcs11_check.testcases.conftest import (
+    is_known_error,
+    require_operational_aes_keygen,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
+
+_WRAP_RUNTIME_REJECT_RVS = (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_NOT_WRAPPABLE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+
+def _xfail_if_wrap_runtime_reject(exc: AssertionError, msg: str) -> NoReturn:
+    xfail_if_known_ckr(exc, _WRAP_RUNTIME_REJECT_RVS, msg)
+    raise
+
+
+def _aead_integrity_reject_rvs(p11_config: Any) -> set[Any]:
+    from pkcs11_check.testcases._module_quirks import quirk_extras
+
+    return {
+        CKR_ENCRYPTED_DATA_INVALID,
+        CKR_WRAPPED_KEY_INVALID,
+        CKR_SIGNATURE_INVALID,
+        CKR_DATA_INVALID,
+        *quirk_extras(p11_config, "verify_or_integrity_failure"),
+    }
 
 
 class TestAuthenticatedWrap:
@@ -101,9 +137,8 @@ class TestAuthenticatedWrap:
             except (NotImplementedError, AttributeError, TypeError):
                 pytest.skip("wrap_key_authenticated not available or GCM params unsupported")
                 return
-            except AssertionError as e:
-                pytest.skip(f"Authenticated wrapping failed: {e}")
-                return
+            except AssertionError as exc:
+                _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
             assert wrapped != original_value
             assert any(wrap_mech.buffer_bytes("tag")), (
@@ -214,7 +249,12 @@ class TestAuthenticatedWrap:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
 
-    def test_tampered_tag_rejected(self, p11_raw_session: Any, p11_interface_version: str) -> None:
+    def test_tampered_tag_rejected(
+        self,
+        p11_raw_session: Any,
+        p11_interface_version: str,
+        p11_config: Any,
+    ) -> None:
         """Unwrap with tampered authentication tag must fail."""
         rs = p11_raw_session
         if p11_interface_version not in ("3.2",):
@@ -246,9 +286,11 @@ class TestAuthenticatedWrap:
                     CKM_AES_GCM,
                     mech_param=wrap_mech,
                 )
-            except (NotImplementedError, AttributeError, TypeError, AssertionError):
+            except (NotImplementedError, AttributeError, TypeError):
                 pytest.skip("wrap_key_authenticated not available")
                 return
+            except AssertionError as exc:
+                _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
             tag = wrap_mech.buffer_bytes("tag")
             if not any(tag):
@@ -275,9 +317,9 @@ class TestAuthenticatedWrap:
                     "this is a security vulnerability"
                 )
             except AssertionError as exc:
-                assert "CKR_OK" not in str(exc) or "tampered" in str(exc).lower(), (
-                    f"Unexpected error during tampered unwrap: {exc}"
-                )
+                if is_known_error(exc, _aead_integrity_reject_rvs(p11_config)):
+                    return
+                raise
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
@@ -426,16 +468,7 @@ class TestAuthenticatedWrapAAD:
                 # "AAD detected".  Plus per-module documented quirks
                 # (e.g. Kryoptic returns CKR_DEVICE_ERROR for any
                 # verification failure).
-                from pkcs11_check.testcases._module_quirks import quirk_extras
-
-                aead_reject_rvs = {
-                    CKR_ENCRYPTED_DATA_INVALID,
-                    CKR_WRAPPED_KEY_INVALID,
-                    CKR_SIGNATURE_INVALID,
-                    CKR_DATA_INVALID,
-                    *quirk_extras(p11_config, "verify_or_integrity_failure"),
-                }
-                if is_known_error(exc, aead_reject_rvs):
+                if is_known_error(exc, _aead_integrity_reject_rvs(p11_config)):
                     return
                 raise
 
@@ -502,7 +535,10 @@ class TestWrapIntegrity:
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP)
             except AssertionError as exc:
-                pytest.skip(f"Wrap failed: {exc}")
+                _xfail_if_wrap_runtime_reject(
+                    exc,
+                    "AES_KEY_WRAP advertised but wrap operation is not operational",
+                )
 
             assert len(wrapped) >= 16, "Unexpectedly short wrap output"
 
@@ -573,7 +609,10 @@ class TestWrapIntegrity:
             destroy_quietly(rs.raw, rs.sh, target)
 
     def test_aes_gcm_wrap_bit_flip_detected(
-        self, p11_raw_session: Any, p11_interface_version: str
+        self,
+        p11_raw_session: Any,
+        p11_interface_version: str,
+        p11_config: Any,
     ) -> None:
         """AES-GCM authenticated-wrap ciphertext bit-flip MUST be rejected.
 
@@ -617,9 +656,11 @@ class TestWrapIntegrity:
                     CKM_AES_GCM,
                     mech_param=wrap_mech,
                 )
-            except (NotImplementedError, AttributeError, TypeError, AssertionError) as e:
+            except (NotImplementedError, AttributeError, TypeError) as e:
                 pytest.skip(f"AES-GCM authenticated wrap unavailable: {e}")
                 return
+            except AssertionError as exc:
+                _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
             assert len(wrapped) >= 1, "Unexpectedly empty wrap ciphertext"
 
@@ -639,9 +680,11 @@ class TestWrapIntegrity:
                     attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
                     mech_param=unwrap_mech,
                 )
-            except AssertionError:
+            except AssertionError as exc:
                 # Expected: AEAD detected the ciphertext tampering.
-                return
+                if is_known_error(exc, _aead_integrity_reject_rvs(p11_config)):
+                    return
+                raise
 
             # Unwrap returned CKR_OK on tampered AEAD ciphertext —
             # AEAD authentication broken.

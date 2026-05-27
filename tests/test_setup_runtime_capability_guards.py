@@ -336,6 +336,135 @@ def test_authenticated_wrap_generated_iv_runtime_reject_is_xfail(
         )
 
 
+def test_authenticated_wrap_roundtrip_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_GCM")
+    monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
+    monkeypatch.setattr(test_authenticated_wrap, "generate_random", lambda *_args: b"\x01" * 12)
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_authenticated_wrap.CKA_VALUE: b"\x5a" * 16},
+    )
+    monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_authenticated_wrap.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "wrap_key_authenticated",
+        _raise_function_not_supported,
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="AES-GCM authenticated wrap rejected"):
+        test_authenticated_wrap.TestAuthenticatedWrap().test_aes_gcm_wrap_unwrap(rs, "3.2")
+
+
+def test_authenticated_wrap_aes_kw_baseline_wrap_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_KEY_WRAP")
+    p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
+    monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
+    monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_authenticated_wrap.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+
+    def _wrap_reject(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
+
+    monkeypatch.setattr(test_authenticated_wrap, "wrap_key", _wrap_reject)
+
+    with pytest.raises(pytest.xfail.Exception, match="AES_KEY_WRAP advertised"):
+        test_authenticated_wrap.TestWrapIntegrity().test_aes_key_wrap_bit_flip_detected(
+            rs, p11_config
+        )
+
+
+def test_authenticated_wrap_gcm_bitflip_baseline_wrap_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_GCM")
+    p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
+    monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
+    monkeypatch.setattr(test_authenticated_wrap, "generate_random", lambda *_args: b"\x01" * 12)
+    monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_authenticated_wrap.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "wrap_key_authenticated",
+        _raise_function_not_supported,
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="AES-GCM authenticated wrap rejected"):
+        test_authenticated_wrap.TestWrapIntegrity().test_aes_gcm_wrap_bit_flip_detected(
+            rs, "3.2", p11_config
+        )
+
+
+def test_authenticated_wrap_gcm_bitflip_unknown_unwrap_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_GCM")
+    p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
+    monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
+    monkeypatch.setattr(test_authenticated_wrap, "generate_random", lambda *_args: b"\x01" * 12)
+    monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "wrap_key_authenticated",
+        lambda *_args, **_kwargs: b"\x22" * 16,
+    )
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "unwrap_key_authenticated",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("ctypes packing bug")),
+    )
+
+    with pytest.raises(AssertionError, match="ctypes packing bug"):
+        test_authenticated_wrap.TestWrapIntegrity().test_aes_gcm_wrap_bit_flip_detected(
+            rs, "3.2", p11_config
+        )
+
+
+def test_authenticated_wrap_tampered_tag_unknown_unwrap_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rs = _session_with_mechanisms("AES_GCM")
+    p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
+    monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
+    monkeypatch.setattr(test_authenticated_wrap, "generate_random", lambda *_args: b"\x01" * 12)
+    monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
+
+    def _wrap_success(*_args: Any, **kwargs: Any) -> bytes:
+        mech_param = kwargs["mech_param"]
+        tag_storage, _ = mech_param.buffer_storage("tag")
+        tag_storage[0] = 1
+        return b"\x22" * 16
+
+    monkeypatch.setattr(test_authenticated_wrap, "wrap_key_authenticated", _wrap_success)
+    monkeypatch.setattr(
+        test_authenticated_wrap,
+        "unwrap_key_authenticated",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("ctypes packing bug")),
+    )
+
+    with pytest.raises(AssertionError, match="ctypes packing bug"):
+        test_authenticated_wrap.TestAuthenticatedWrap().test_tampered_tag_rejected(
+            rs, "3.2", p11_config
+        )
+
+
 def test_buffer_encrypt_xfails_when_advertised_aes_keygen_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

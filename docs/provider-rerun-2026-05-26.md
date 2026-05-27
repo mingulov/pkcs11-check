@@ -547,6 +547,14 @@ official full-matrix release statistics.
   failures are accepted-invalid-ciphertext findings, not sign-padding import
   artifacts. Exact interim counts stay in the artifact JSON rather than this
   working note.
+- `pkcs11-mock` authenticated-wrap focused artifact:
+  `artifacts/_focused/pkcs11-mock-authenticated-wrap-current-20260527/`.
+  Current source no longer skips explicit baseline wrap-side CKR rejects in
+  the AES-GCM authenticated-wrap and AES-KEY-WRAP integrity tests after the
+  advertised capability preconditions have passed. Those CKRs are visible
+  xfail evidence, while Python-side assertion bugs during the tampered-tag or
+  ciphertext-bitflip unwrap checks propagate. The mock-focused run reports
+  all four selected rows skipped, so it only confirms capability gating.
 
 ## Follow-Up Queue
 
