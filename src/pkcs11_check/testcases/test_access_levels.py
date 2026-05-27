@@ -93,6 +93,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
     get_pin_bytes,
     is_known_error,
     require_operational_aes_keygen,
@@ -114,6 +115,15 @@ _TRUSTED_SETATTR_REJECT_RVS = (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_USER_NOT_LOGGED_IN,
+)
+
+_ALWAYS_AUTH_TEMPLATE_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 _INIT_PIN_POLICY_REJECT_RVS = (
@@ -198,6 +208,17 @@ def _open_access_session_or_skip(rs: Any, flags: int) -> int:
                 f"{ckr_name(int(CKR_SESSION_COUNT))}"
             )
         raise
+
+
+def _skip_or_xfail_always_auth_keygen_reject(exc: AssertionError) -> None:
+    if is_known_error(exc, _ALWAYS_AUTH_TEMPLATE_REJECT_RVS):
+        pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {exc}")
+    xfail_if_known_ckr(
+        exc,
+        KEYPAIR_RUNTIME_REJECT_RVS,
+        "CKA_ALWAYS_AUTHENTICATE RSA keypair setup rejected at runtime",
+    )
+    raise
 
 
 # ---------------------------------------------------------------------------
@@ -993,8 +1014,7 @@ class TestAlwaysAuthenticate:
                 },
             )
         except AssertionError as e:
-            pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {e}")
-            return
+            _skip_or_xfail_always_auth_keygen_reject(e)
 
         try:
             try:
@@ -1053,8 +1073,7 @@ class TestAlwaysAuthenticate:
                 },
             )
         except AssertionError as e:
-            pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {e}")
-            return
+            _skip_or_xfail_always_auth_keygen_reject(e)
 
         try:
             try:

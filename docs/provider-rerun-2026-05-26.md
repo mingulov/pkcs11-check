@@ -575,6 +575,11 @@ official full-matrix release statistics.
   assertions as skips. The shared AES setup helper remains responsible for
   missing-capability skips and advertised-runtime xfails; unexpected setup bugs
   now propagate. The mock-focused run reports the selected row skipped.
+- `pkcs11-mock` always-auth focused artifact:
+  `artifacts/_focused/pkcs11-mock-always-auth-current-20260527/`. The
+  `CKA_ALWAYS_AUTHENTICATE` rows now split template/attribute unsupported
+  CKRs from generic RSA keygen runtime rejects. The focused run reports both
+  selected rows skipped, so it confirms gating/classification only.
 
 ## Follow-Up Queue
 

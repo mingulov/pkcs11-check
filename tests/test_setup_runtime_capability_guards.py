@@ -1366,6 +1366,47 @@ def test_access_levels_wrap_with_trusted_uses_cbc_pad_iv_when_key_wrap_absent(
     assert mech_calls == [(int(CKM_AES_CBC_PAD), b"\x00" * 16)]
 
 
+def test_access_levels_always_auth_keygen_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _keygen_general_error(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
+        raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
+
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS")
+    monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _keygen_general_error)
+    monkeypatch.setattr(test_access_levels, "gen_rsa_keypair", _keygen_general_error)
+    monkeypatch.setattr(
+        test_access_levels.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="CKA_ALWAYS_AUTHENTICATE"):
+        test_access_levels.TestAlwaysAuthenticate().test_always_authenticate_key_requires_reauth(rs)
+
+
+def test_access_levels_always_auth_context_keygen_runtime_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _keygen_general_error(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
+        raise CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
+
+    rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN", "SHA256_RSA_PKCS")
+    p11_config = SimpleNamespace(pin="1234")
+    monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _keygen_general_error)
+    monkeypatch.setattr(test_access_levels, "gen_rsa_keypair", _keygen_general_error)
+    monkeypatch.setattr(
+        test_access_levels.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="CKA_ALWAYS_AUTHENTICATE"):
+        test_access_levels.TestAlwaysAuthenticate().test_always_authenticate_with_context_login(
+            rs, p11_config
+        )
+
+
 def test_mech_lifecycle_digest_aes_keygen_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
