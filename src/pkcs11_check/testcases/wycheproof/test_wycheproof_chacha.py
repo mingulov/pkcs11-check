@@ -16,8 +16,8 @@ import pytest
 from pkcs11_check.raw.pack import mech_chacha20_poly1305
 from pkcs11_check.raw.recipes import (
     create_object,
+    decrypt_single,
     destroy_quietly,
-    encrypt_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -59,7 +59,14 @@ _CHACHA_VECTORS = _load_chacha_vectors()
 
 @pytest.mark.parametrize("vec_id,vec", _CHACHA_VECTORS, ids=[v[0] for v in _CHACHA_VECTORS])
 def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """ChaCha20-Poly1305 AEAD from Wycheproof vectors."""
+    """ChaCha20-Poly1305 AEAD decryption from Wycheproof vectors.
+
+    Decrypts the supplied ct||tag so invalid vectors actually exercise tag
+    rejection. A module that decrypts a forged/modified ciphertext or tag is a
+    crypto-correctness break (Type A -> fail). The previous produce-direction
+    (encrypt + compare) could never reject an invalid vector because a fresh
+    correct ciphertext never matched the modified expected output.
+    """
     rs = p11_raw_session
     if not rs.has_mechanism("CHACHA20_POLY1305"):
         pytest.skip("CHACHA20_POLY1305 not supported")
@@ -67,9 +74,9 @@ def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
     key_bytes = bytes.fromhex(vec["key"])
     iv = bytes.fromhex(vec["iv"])
     aad = bytes.fromhex(vec["aad"])
-    msg = bytes.fromhex(vec["msg"])
-    ct_expected = bytes.fromhex(vec["ct"])
-    tag_expected = bytes.fromhex(vec["tag"])
+    msg_expected = bytes.fromhex(vec["msg"])
+    ct = bytes.fromhex(vec["ct"])
+    tag = bytes.fromhex(vec["tag"])
     result = vec["result"]
 
     try:
@@ -91,26 +98,26 @@ def test_chacha20_poly1305(p11_raw_session: Any, vec_id: str, vec: dict[str, Any
 
     # CK_SALSA20_CHACHA20_POLY1305_PARAMS: (nonce, aad)
     chacha_param = mech_chacha20_poly1305(CKM_CHACHA20_POLY1305, iv, aad=aad if aad else None)
-    ciphertext = None
+    plaintext = None
     try:
-        ciphertext = encrypt_single(
+        plaintext = decrypt_single(
             rs.raw,
             rs.sh,
             key,
             CKM_CHACHA20_POLY1305,
-            msg,
+            ct + tag,
             mech_param=chacha_param,
-            output_overhead=16,
+            output_size_hint=len(ct),
         )
     except (AssertionError, AttributeError, TypeError) as exc:
         if result == "valid":
-            pytest.fail(f"ChaCha20-Poly1305 encrypt failed for valid vector {vec_id}: {exc}")
-        # acceptable: reject is fine
+            pytest.fail(f"ChaCha20-Poly1305 decrypt failed for valid vector {vec_id}: {exc}")
+        # acceptable: reject of an invalid vector is fine
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
-    if result == "valid" and ciphertext is not None:
-        assert ciphertext == ct_expected + tag_expected
-    if result == "invalid" and ciphertext is not None and ciphertext == ct_expected + tag_expected:
-        pytest.fail(f"ChaCha20-Poly1305 {vec_id} produced invalid ciphertext/tag")
+    if result == "valid" and plaintext is not None:
+        assert plaintext == msg_expected, f"ChaCha20-Poly1305 {vec_id}: plaintext mismatch"
+    if result == "invalid" and plaintext is not None:
+        pytest.fail(f"ChaCha20-Poly1305 decrypt {vec_id}: accepted invalid ciphertext/tag")

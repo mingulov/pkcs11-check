@@ -737,7 +737,7 @@ def test_wycheproof_symmetric_invalid_outputs_are_reported() -> None:
         ),
         Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_chacha.py"): (
             "ChaCha20-Poly1305",
-            "produced invalid",
+            "accepted invalid",
         ),
     }
 
