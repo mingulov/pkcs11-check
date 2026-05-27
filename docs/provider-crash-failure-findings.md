@@ -5,6 +5,11 @@ current Docker provider artifact set. It complements
 [docker-provider-results.md](docker-provider-results.md), which is the compact
 source and result snapshot.
 
+> **Status (2026-05-28): based on the 2026-05-27 pre-fix artifacts; post-fix rerun (FP-8)
+> refresh pending.** New since this snapshot: the GCM NULL-AAD `C_EncryptInit` SIGSEGV (was
+> masked by a harness bug, now surfaced) and the confirmed NSS MAC-with-RSA-key crash root
+> cause — see [module-issues.md](module-issues.md). Large counts (>1000) are rounded to ~Xk.
+
 Source artifacts:
 
 - `artifacts/_matrix/provider-summary.json`

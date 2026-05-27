@@ -66,6 +66,18 @@ The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
    (capability/identity guard), leaving smoke/diagnostic only. Not a bug.
 6. **CR-6 / timing** — make timeouts/timing-variance non-gating or confirm as provider hangs.
 
+## Goal additions (2026-05-28)
+
+- **Refresh the result/size docs after FP-8 reruns** (they are stale vs the classification
+  fixes; numbers only become accurate post-rerun): `docs/docker-provider-results.md`
+  (per-provider pass/fail/skip/xfail matrix), `docs/provider-crash-failure-findings.md`
+  (crash/timeout/failure classification + new findings: GCM NULL-AAD SIGSEGV, NSS MAC-RSA),
+  `docs/test-universe.md` (suite size/group breakdown — collection is ~stable at ~109k).
+- **Source audit/review of pkcs11-check while Docker runs** (idle compute): review the raw
+  ctypes binding, `recipes.py`, `core/file_runner.py`, the conftest classifiers, and testcase
+  patterns for *other* possible issues (bugs, masking, unsafe ctypes, error-handling gaps) —
+  use the code-review agents. Separate from provider findings; store in `docs/findings/`.
+
 ## Re-measurement (Docker reruns)
 
 - Allowed, but **write to NEW folder names** under `artifacts/` (e.g. `artifacts/<target>-recheck-YYYYMMDD/`)

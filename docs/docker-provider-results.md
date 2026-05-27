@@ -8,6 +8,11 @@ For the size of the test suite itself, see [test-universe.md](test-universe.md).
 For focused crash, timeout, and broad failure classification, see
 [provider-crash-failure-findings.md](provider-crash-failure-findings.md).
 
+> **Status (2026-05-28): the matrix below is the 2026-05-27 PRE-FIX baseline.** The
+> in-progress test-outcome classification fixes shift pass/fail/xfail materially (more
+> findings surface as `fail`/`xfail`); a **post-fix Docker rerun (FP-8) refresh is pending**.
+> Large counts (>1000) are rounded to ~Xk to avoid churn.
+
 ## Snapshot Metadata
 
 | Field | Value |
