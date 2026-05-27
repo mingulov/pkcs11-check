@@ -543,11 +543,19 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.destructive
 class TestNullPinBuffer:
     """NULL PIN pointer with non-zero length in PIN management ops.
 
     These tests don't auto-login so we can test the raw PIN functions
     without interference from the session login state.
+
+    Destructive: ``test_set_pin_null_new_pin`` calls ``C_SetPIN`` with the
+    real current user PIN as the old PIN, so a module that accepts it can
+    change/corrupt the live token PIN. On modules that enforce a PIN retry
+    lockout (e.g. Kryoptic) this then locks the shared token and every later
+    login fails with ``CKR_PIN_LOCKED``. Must run only under
+    ``--p11-destructive`` against a throwaway/reprovisioned token.
     """
 
     def test_init_pin_null_with_length(
@@ -1257,12 +1265,17 @@ cleanup()
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.destructive
 class TestNullInitToken:
     """NULL PIN or NULL label in C_InitToken.
 
     C_InitToken(slot_id, pPin, ulPinLen, pLabel) is a sensitive
     operation. Passing NULL pPin with non-zero length or NULL pLabel
     can crash modules that dereference without validation.
+
+    Destructive: C_InitToken reinitializes the token (wiping objects and
+    PIN), so it must run only under ``--p11-destructive`` against a
+    throwaway/reprovisioned token, never the shared session token.
 
     Since our preamble opens a session, C_InitToken will likely fail
     with CKR_SESSION_EXISTS or similar -- but the module must check
