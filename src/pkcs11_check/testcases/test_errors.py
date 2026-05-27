@@ -69,6 +69,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    classify_negative_rv,
     skip_unless_mechanism,
     xfail_if_known_ckr,
 )
@@ -284,11 +285,16 @@ class TestInvalidOperations:
                     sig_buf,
                     len(sig),
                 )
-                # Module should reject -- signature or general error
-                if rv == CKR_OK:
-                    pass  # Some modules don't check DigestInfo OID
-                else:
-                    assert rv in _VERIFY_MISMATCH_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                # Type-A crypto-correctness: a signature produced under one hash
+                # mechanism that verifies under a different hash mechanism
+                # (CKR_OK) accepts a signature over the wrong message digest --
+                # a break for any provider -> fail; an expected reject -> pass;
+                # another clean reject -> xfail.
+                classify_negative_rv(
+                    rv,
+                    tuple(_VERIFY_MISMATCH_RVS),
+                    label="verify a SHA256-RSA signature under a SHA384-RSA mechanism",
+                )
             else:
                 # VerifyInit itself rejected -- acceptable
                 assert rv in _VERIFY_MISMATCH_RVS | _KEY_FUNCTION_RVS, (
