@@ -695,16 +695,23 @@ def test_wycheproof_dsa_valid_runtime_rejects_are_xfail(rv: int) -> None:
 
 
 def test_wycheproof_hmac_invalid_tags_are_reported() -> None:
-    """Invalid HMAC vectors must fail if the module produces the supplied tag."""
-    paths = (
-        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof.py"),
-        Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_hmac.py"),
-    )
+    """Invalid HMAC vectors must fail if the module accepts the supplied tag.
 
-    for path in paths:
-        source = path.read_text()
-        assert "Invalid HMAC tag" in source
-        assert "truncated == tag_expected" in source
+    test_wycheproof.py (SHA-256 HMAC) still uses the produce-direction compare;
+    test_wycheproof_hmac.py was re-framed (Phase 2 Task 2i) to verify-and-reject
+    the supplied tag, so an accepted invalid tag is a finding.
+    """
+    produce_source = Path(
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof.py"
+    ).read_text()
+    assert "Invalid HMAC tag" in produce_source
+    assert "truncated == tag_expected" in produce_source
+
+    verify_source = Path(
+        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_hmac.py"
+    ).read_text()
+    assert "accepted invalid tag" in verify_source
+    assert 'result == "invalid"' in verify_source
 
 
 def test_wycheproof_rsa_decrypt_invalid_ciphertexts_are_reported() -> None:
