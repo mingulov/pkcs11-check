@@ -57,14 +57,15 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
-    CKR_TEMPLATE_INCOMPLETE,
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -79,22 +80,6 @@ pytestmark = pytest.mark.security
 # ---------------------------------------------------------------------------
 # Acceptable CKR sets per error category
 # ---------------------------------------------------------------------------
-
-_INVALID_PARAM_RVS = {
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_MECHANISM_INVALID,
-    CKR_ARGUMENTS_BAD,
-    CKR_DATA_LEN_RANGE,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-}
-
-_KEY_SIZE_RVS = {
-    CKR_KEY_SIZE_RANGE,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_MECHANISM_INVALID,
-    CKR_ARGUMENTS_BAD,
-    CKR_TEMPLATE_INCOMPLETE,
-}
 
 _VERIFY_MISMATCH_RVS = {
     CKR_SIGNATURE_INVALID,
@@ -220,9 +205,17 @@ class TestInvalidOperations:
                     # If we got OK both times, the module accepted a short IV
                     assert isinstance(bytes(out_buf[: out_len.value]), bytes)
                 else:
-                    assert rv in _INVALID_PARAM_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                    classify_negative_rv(
+                        rv,
+                        (CKR_MECHANISM_PARAM_INVALID,),
+                        label="C_Encrypt with an undersized AES-CBC-PAD IV",
+                    )
             else:
-                assert rv in _INVALID_PARAM_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                classify_negative_rv(
+                    rv,
+                    (CKR_MECHANISM_PARAM_INVALID,),
+                    label="C_EncryptInit with an undersized AES-CBC-PAD IV",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -257,7 +250,11 @@ class TestInvalidOperations:
                 "AES_KEY_GEN",
                 "invalid-size key generation",
             )
-            assert rv in _KEY_SIZE_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_KEY_SIZE_RANGE, CKR_ATTRIBUTE_VALUE_INVALID),
+                label="C_GenerateKey for an invalid AES key size",
+            )
 
     def test_verify_with_wrong_mechanism(self, p11_raw_session: Any) -> None:
         """Sign with one mechanism, verify with another -- should fail or differ."""
@@ -296,9 +293,13 @@ class TestInvalidOperations:
                     label="verify a SHA256-RSA signature under a SHA384-RSA mechanism",
                 )
             else:
-                # VerifyInit itself rejected -- acceptable
-                assert rv in _VERIFY_MISMATCH_RVS | _KEY_FUNCTION_RVS, (
-                    f"Unexpected CKR on VerifyInit: {ckr_name(rv)}"
+                # VerifyInit itself rejected the cross-mechanism use -- a clean,
+                # acceptable rejection. Spec-preferred: the signature/key-function
+                # codes; any other clean reject -> xfail.
+                classify_negative_rv(
+                    rv,
+                    tuple(_VERIFY_MISMATCH_RVS | _KEY_FUNCTION_RVS),
+                    label="C_VerifyInit under a different hash mechanism than signing",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -316,7 +317,11 @@ class TestInvalidOperations:
                 # Module allowed init on a private key -- some do
                 pass
             else:
-                assert rv in _KEY_FUNCTION_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                classify_negative_rv(
+                    rv,
+                    (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT),
+                    label="C_EncryptInit with a sign-only private key",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -336,9 +341,12 @@ class TestInvalidOperations:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), priv)
             if rv != CKR_OK:
-                # Some modules reject decrypt on default-generated keys
-                assert rv in _KEY_FUNCTION_RVS | _DECRYPT_GARBAGE_RVS, (
-                    f"Unexpected CKR on DecryptInit: {ckr_name(rv)}"
+                # Some modules reject decrypt on default-generated keys -- a
+                # clean rejection at init is acceptable; other clean codes xfail.
+                classify_negative_rv(
+                    rv,
+                    tuple(_KEY_FUNCTION_RVS | _DECRYPT_GARBAGE_RVS),
+                    label="C_DecryptInit on a default-generated RSA private key",
                 )
                 return
             in_buf = (ctypes.c_ubyte * len(garbage))(*garbage)
@@ -355,7 +363,11 @@ class TestInvalidOperations:
                 # Decryption "succeeded" -- result is garbage, that is OK
                 pass
             else:
-                assert rv in _DECRYPT_GARBAGE_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                classify_negative_rv(
+                    rv,
+                    (CKR_ENCRYPTED_DATA_INVALID, CKR_ENCRYPTED_DATA_LEN_RANGE),
+                    label="C_Decrypt of random garbage under RSA-PKCS",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -372,7 +384,11 @@ class TestEmptyInputs:
             mech = mech_bytes(CKM_AES_CBC_PAD, iv)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv != CKR_OK:
-                assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR on EncryptInit: {ckr_name(rv)}"
+                classify_negative_rv(
+                    rv,
+                    (CKR_DATA_LEN_RANGE,),
+                    label="C_EncryptInit before empty-data encryption",
+                )
                 return
             # Try encrypting empty buffer
             out_len = CK_ULONG(0)
@@ -395,9 +411,17 @@ class TestEmptyInputs:
                 if rv == CKR_OK:
                     assert isinstance(bytes(out_buf[: out_len.value]), bytes)
                 else:
-                    assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                    classify_negative_rv(
+                        rv,
+                        (CKR_DATA_LEN_RANGE,),
+                        label="C_Encrypt of empty data under AES-CBC-PAD",
+                    )
             elif rv != CKR_OK:
-                assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                classify_negative_rv(
+                    rv,
+                    (CKR_DATA_LEN_RANGE,),
+                    label="C_Encrypt (length query) of empty data under AES-CBC-PAD",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -424,8 +448,10 @@ class TestEmptyInputs:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
             if rv != CKR_OK:
-                assert rv in _EMPTY_DATA_RVS | _KEY_FUNCTION_RVS, (
-                    f"Unexpected CKR on SignInit: {ckr_name(rv)}"
+                classify_negative_rv(
+                    rv,
+                    tuple(_EMPTY_DATA_RVS | _KEY_FUNCTION_RVS),
+                    label="C_SignInit before empty-data signing",
                 )
                 return
             # Two-call pattern: query length, then sign
@@ -443,9 +469,17 @@ class TestEmptyInputs:
                 if rv == CKR_OK:
                     assert out_len.value == 256  # RSA-2048 signature
                 else:
-                    assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                    classify_negative_rv(
+                        rv,
+                        (CKR_DATA_LEN_RANGE,),
+                        label="C_Sign of empty data under SHA256-RSA-PKCS",
+                    )
             elif rv != CKR_OK:
-                assert rv in _EMPTY_DATA_RVS, f"Unexpected CKR: {ckr_name(rv)}"
+                classify_negative_rv(
+                    rv,
+                    (CKR_DATA_LEN_RANGE,),
+                    label="C_Sign (length query) of empty data under SHA256-RSA-PKCS",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -460,7 +494,11 @@ class TestKeyLifecycle:
         destroy_quietly(rs.raw, rs.sh, key)
         mech = mech_simple(CKM_AES_ECB)
         rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-        assert rv != CKR_OK, "Should not be able to use destroyed key"
+        classify_negative_rv(
+            rv,
+            (CKR_KEY_HANDLE_INVALID, CKR_OBJECT_HANDLE_INVALID),
+            label="C_EncryptInit with a destroyed key handle",
+        )
 
     def test_bulk_key_generation(self, p11_raw_session: Any) -> None:
         """Generate many keys in sequence without issues."""
