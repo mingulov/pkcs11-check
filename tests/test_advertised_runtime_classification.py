@@ -701,9 +701,7 @@ def test_wycheproof_hmac_invalid_tags_are_reported() -> None:
     test_wycheproof_hmac.py was re-framed (Phase 2 Task 2i) to verify-and-reject
     the supplied tag, so an accepted invalid tag is a finding.
     """
-    produce_source = Path(
-        "src/pkcs11_check/testcases/wycheproof/test_wycheproof.py"
-    ).read_text()
+    produce_source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof.py").read_text()
     assert "Invalid HMAC tag" in produce_source
     assert "truncated == tag_expected" in produce_source
 
