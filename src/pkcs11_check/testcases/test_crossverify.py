@@ -51,13 +51,18 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS,
     CKM_SHA_1,
     CKM_SHA_1_HMAC,
+    CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
-from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail, is_known_error
+from pkcs11_check.testcases.conftest import (
+    gen_rsa_keypair_or_xfail,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.crossverify
 
@@ -439,9 +444,25 @@ class TestHMACCrossVerify:
                     CKA_ALLOWED_MECHANISMS: [CKM_SHA_1_HMAC],
                 },
             )
-        except (AssertionError, AttributeError):
+        except AttributeError:
             pytest.skip("SHA-1 HMAC key type not supported")
             return
+        except AssertionError as exc:
+            if is_known_error(
+                exc,
+                {
+                    CKR_MECHANISM_INVALID,
+                    CKR_KEY_SIZE_RANGE,
+                    CKR_TEMPLATE_INCONSISTENT,
+                },
+            ):
+                pytest.skip("SHA-1 HMAC key type not supported")
+            xfail_if_known_ckr(
+                exc,
+                {CKR_GENERAL_ERROR},
+                "SHA_1_HMAC key import is not operational",
+            )
+            raise
 
         try:
             data = b"HMAC-SHA1 cross-verify"

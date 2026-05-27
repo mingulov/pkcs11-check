@@ -561,6 +561,12 @@ official full-matrix release statistics.
   ciphertext, plaintext, digest, MAC, or signature outputs remain hard failures.
   RSA-4096 crossverify remains xfail setup evidence because the provider rejects
   that key size with `CKR_ATTRIBUTE_VALUE_INVALID`.
+- `pkcs11-mock` crossverify SHA-1 HMAC focused artifact:
+  `artifacts/_focused/pkcs11-mock-crossverify-hmac-sha1-current-20260527/`.
+  Current source no longer turns every SHA-1 HMAC key-import assertion into an
+  unsupported-key skip; exact key-type/template rejects still skip, while
+  generic `CKR_GENERAL_ERROR` becomes xfail evidence. The focused mock row
+  reports one skipped item because the mock lacks `SHA_1_HMAC`.
 - `softhsm2` focused DSA artifacts:
   `artifacts/_focused/softhsm2-dsa-current-after-bigint`. The same
   `test_wycheproof_dsa.py` focus moved from 296 valid-signature failures to 0
