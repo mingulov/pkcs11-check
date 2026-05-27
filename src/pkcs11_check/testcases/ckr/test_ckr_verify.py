@@ -25,6 +25,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_VERIFY, assert_ckr
+from pkcs11_check.testcases.conftest import classify_lifecycle_effect
 
 pytestmark = pytest.mark.access
 
@@ -66,10 +67,18 @@ class TestVerifyInitErrors:
         rs = p11_raw_session
         pub, _priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         destroy_quietly(rs.raw, rs.sh, _priv)
-        rs.raw.C_DestroyObject(rs.sh, pub)
+        destroy_rv = rs.raw.C_DestroyObject(rs.sh, pub)
         mech = mech_simple(CKM_SHA256_RSA_PKCS)
         rv = rs.raw.C_VerifyInit(rs.sh, mech.byref(), pub)
-        if rv != CKR_OK:
+        if rv == CKR_OK:
+            # Type-C use-after-destroy: destroy claimed CKR_OK yet C_VerifyInit
+            # on the same handle still succeeded -> contradiction.
+            classify_lifecycle_effect(
+                claimed_success=destroy_rv == CKR_OK,
+                effect_observed=True,
+                label="C_VerifyInit on a destroyed key handle (use-after-destroy)",
+            )
+        else:
             assert_ckr(CKR_VERIFY["init_key_handle_invalid"], rv, ckr_strict)
 
 
