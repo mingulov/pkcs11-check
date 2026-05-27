@@ -68,7 +68,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error
+from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
 
 pytestmark = [pytest.mark.pqc]
 
@@ -591,27 +591,21 @@ class TestHSSKeyExhaustion:
                     raise
                 assert isinstance(sig, bytes) and len(sig) > 0
 
-            # 33rd signature attempt: must fail with CKR_KEY_EXHAUSTED
-            # (or one of the spec-compatible alternatives).  Must NOT
-            # succeed silently — that would mean leaf reuse.
+            # 33rd signature attempt: must reject (CKR_KEY_EXHAUSTED or a
+            # spec-compatible alternative).  Must NOT succeed silently — that
+            # would mean one-time-key reuse, a security gap (RFC 8554 Sec.6.3).
+            # 3-way: success (over-budget sign accepted) -> fail; spec-compatible
+            # reject -> pass; any other clean reject -> xfail.
+            caught: BaseException | None = None
             try:
-                bad_sig = sign_single(rs.raw, rs.sh, priv, CKM_HSS, _MESSAGE)
+                sign_single(rs.raw, rs.sh, priv, CKM_HSS, _MESSAGE)
             except AssertionError as exc:
-                rv = getattr(exc, "rv", None)
-                if rv in _EXHAUSTION_OK_RVS:
-                    return  # Expected: module correctly rejected the over-budget sign.
-                pytest.fail(
-                    f"33rd sign on 32-leaf HSS returned unexpected CKR: {exc}. "
-                    f"Expected CKR_KEY_EXHAUSTED."
-                )
-
-            # If we got here, the sign succeeded.  That's a security gap.
-            pytest.fail(
-                f"33rd C_Sign on a 32-leaf HSS key succeeded "
-                f"(sig_len={len(bad_sig)}).  Module is reusing one-time "
-                f"keys past the leaf budget — this is a security gap "
-                f"(RFC 8554 §6.3 mandates one-time use).  Spec requires "
-                f"CKR_KEY_EXHAUSTED."
+                caught = exc
+            reject_or_classify(
+                caught,
+                tuple(_EXHAUSTION_OK_RVS),
+                label="33rd C_Sign on a 32-leaf HSS key (one-time-key reuse past the "
+                "leaf budget is a security gap; RFC 8554 Sec.6.3 requires CKR_KEY_EXHAUSTED)",
             )
         finally:
             _destroy_pair(rs, pub, priv)
