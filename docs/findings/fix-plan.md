@@ -1,0 +1,67 @@
+# Fix-phase plan & guard-rails
+
+How to act on [`catalog.md`](catalog.md) in the **later** fix phase. Nothing here is
+implemented yet. Driven by the user's constraints (2026-05-27) + the existing
+classification plan.
+
+## Non-negotiable guard-rails
+
+1. **A pkcs11-check change must NEVER hide a real crash or bug.** Several "PKCS11-CHECK"
+   findings (PC-1 GCM NULL-AAD, PC-5 KWP) are *intended probes blocked by a harness bug*.
+   Fixing the harness must make the probe **actually run** and surface the real provider
+   behavior (crash → `fail`/finding; clean reject → pass; wrong accept → finding). It must
+   not convert the probe into a no-op or a blanket pass.
+2. **Every harness fix gets a dedicated regression test that re-triggers the original issue**
+   so it is *always* exercised and cannot silently regress. Use
+   `superpowers:test-driven-development` (write the failing test first) and, for multi-step
+   work, `superpowers:subagent-driven-development` / `superpowers:executing-plans`.
+   - Prefer an offline **mock-`raw` meta-test** in `tests/*_runtime_classification.py` (drive a
+     fake `raw` returning a chosen `CK_RV`/crash; assert the classification) — runs with no
+     provider, matching the classification plan's per-flip acceptance gate.
+3. **Verify the effect, not the return code** (classification model). Crash = `fail`;
+   accept-invalid-crypto / self-contradiction = `fail`; honest single deviation = `xfail`;
+   missing capability = `skip`. No per-provider config.
+4. **Doc-sync:** any flip of a finding documented in `docs/module-issues.md` updates that entry
+   in the same change; NEW provider findings get added there.
+
+## CKR changes go through the common storage (do NOT widen ad-hoc)
+
+The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
+`CkrExpectation` (the table) + the single `assert_ckr()`. Per
+[`../classification-model-plan.md`](../classification-model-plan.md) (table-centric, 6 phases):
+- **Tests declare intent; `assert_ckr` decides pass/xfail/fail.** Add the planned `kind` field
+  to `CkrExpectation` and make `assert_ckr` 3-way (expected→pass, other clean reject→`xfail`,
+  `CKR_OK`/crash→`fail`).
+- The **PC-4 / PC-6 CKR-widenings** (e.g. accepting `CKR_FUNCTION_NOT_SUPPORTED` for tpm2's
+  limited surface, the RO-wrap `CKR_TEMPLATE_INCOMPLETE`, etc.) must be expressed as
+  `CkrExpectation` rows / spec-vs-compat sets — **not** scattered per-test `in {...}` edits
+  (that ad-hoc style is exactly what the plan rejects, and how today's asymmetries arose).
+- Only ever widen to **specific** additional CKRs (never a catch-all), per `CLAUDE.md`.
+
+## Suggested fix order (each = one revertible change + its regression test)
+
+1. **PC-1** (GCM NULL-AAD `pIv` cast) — unblock probe; rerun GCM targets into a new artifact
+   folder; record real behavior; regression meta-test. *Highest value: clarifies a real probe.*
+2. **PC-5** (KWP wrap setup classification) — capture real wrap `rv`; skip/xfail honestly.
+3. **Phase 1 of the classification plan** (add `kind`, 3-way `assert_ckr` + meta-tests), then
+   **PC-4 / PC-6** CKR rows on top of it.
+4. **PC-2** (ML-DSA sigVer encoding) and **PC-3 / PV-8** (tpm2 RSA-PSS hash-guard vs invalid-
+   accepted split) — confirm by decoding one vector + Docker rerun; fix guard or confirm finding.
+5. **EX-2** (pkcs11-mock) — gate the functional/security/KAT suites off the mock provider
+   (capability/identity guard), leaving smoke/diagnostic only. Not a bug.
+6. **CR-6 / timing** — make timeouts/timing-variance non-gating or confirm as provider hangs.
+
+## Re-measurement (Docker reruns)
+
+- Allowed, but **write to NEW folder names** under `artifacts/` (e.g. `artifacts/<target>-recheck-YYYYMMDD/`)
+  — never overwrite the 2026-05-27 baseline result dirs (backup: `/home/user/src/m/artifacts.tar.xz`).
+- After fixes, re-run only the **affected** targets and compare `passed/failed/xfailed/skipped`
+  deltas vs `artifacts/_matrix/provider-summary.json`. "Better" = no new signal/crash `fail`,
+  no finding demoted to silent pass/skip; every `fail→xfail` offset by an `xfail` gain.
+
+## PROVIDER findings — no pkcs11-check change
+
+PV-1 (RSA PKCS#1 lenient decrypt), PV-2 (opencryptoki AES-CBC), PV-3 (EdDSA invalid keys),
+PV-7/10..15, and all crashes (CR-1..4) are **real module behavior**. The only action is to
+confirm KNOWN vs NEW against `module-issues.md` and document NEW ones. Do **not** soften the
+tests to make these pass.

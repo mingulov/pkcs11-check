@@ -20,10 +20,18 @@ Counts are failures in this artifact set (per `failure-inventory.json`).
 - **Root cause:** `src/pkcs11_check/testcases/security/test_parameter_validation.py:266`
   `params.pIv = (ctypes.c_ubyte * 12)(*range(12))` — assigning a ctypes array to the
   `CK_AES_GCM_PARAMS.pIv` pointer field raises in the generated subprocess script, so the
-  probe dies during setup and never exercises the module. Identical failure on all
-  providers ⇒ test bug, not a provider finding.
-- **Classification:** PKCS11-CHECK. Fix: build `pIv` via `ctypes.cast(...)`/buffer like the
-  other GCM tests; then re-evaluate whether modules actually mishandle NULL pAAD.
+  probe dies during setup and **never reaches `C_EncryptInit`**.
+- **The probe itself is INTENDED and valid** (NULL `pAAD` + nonzero `ulAADLen` is a real
+  robustness scenario; a robust module must return `CKR_ARGUMENTS_BAD`, a buggy one may
+  deref NULL and crash). The harness bug only *blocks* it on all providers; it is **not**
+  evidence the providers are fine.
+- **Classification:** PKCS11-CHECK (setup bug) — but **fixing it must SURFACE, not hide,
+  real behavior.** Fix = build `pIv` via `ctypes.cast(...)` like the other GCM tests, then
+  **re-run the affected Docker targets (new artifact folder)** and record whatever the now-live
+  probe finds: a crash = PROVIDER finding (`fail`), a clean reject = pass, accepting
+  NULL+nonzero-len = PROVIDER finding. **Add a dedicated regression test** (mock-`raw`
+  meta-test in `tests/`) that asserts the probe constructs `CK_AES_GCM_PARAMS` correctly and
+  that a NULL-deref/crash is reported — so this can never silently regress to a setup no-op.
 
 ### PC-2 — ML-DSA sigVer rejects VALID signatures across 3 unrelated providers  ·  NEEDS-CONFIRM
 - **Count/scope:** 36 — softhsm2-main 9, nss 9, opencryptoki 9, opencryptoki-master 9.
@@ -58,7 +66,7 @@ Small classes where the module returns a *plausibly correct* CKR the test didn't
 - **Count/scope:** 15 — nss, nss-main, nss-pqc (5 each).
 - **Class:** `TestBitFlipUnwrap::test_bit_flip_unwrap :: ... subprocess failed with exit code 1`.
 - **Evidence:** Python traceback in **setup**: `wrapped_blob = wrap_key_recipe(raw, sh, wrap_key, target_key, CKM_AES_KEY_WRAP_KWP)` → `recipes.py:1031 _two_call_output`. The KWP *wrap* step (test setup) raises and is not classified.
-- **Classification:** PKCS11-CHECK (guard/xfail the KWP-wrap setup reject like other capability setups). Underlying NSS KWP-wrap reject may itself be a provider-capability gap — split during fix.
+- **Classification:** PKCS11-CHECK (guard/xfail the KWP-wrap setup reject like other capability setups). **Must not hide a real defect:** capture the actual CKR from the failing KWP *wrap* — if NSS genuinely cannot KWP-wrap, that is a PROVIDER capability gap to record (skip/xfail with the real `rv`), not silently pass. The *unwrap* bit-flip integrity check (the test's real purpose) must still run wherever wrap succeeds. Add a regression test pinning the setup-reject classification.
 
 ### PC-6 — tpm2 negative-path CKR expectations too narrow  ·  NEEDS-CONFIRM
 - **Scope:** tpm2, many count-1 classes: `C_GenerateKey(invalid_*)` → `CKR_FUNCTION_NOT_SUPPORTED`

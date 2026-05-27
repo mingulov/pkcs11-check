@@ -55,7 +55,7 @@ on kryoptic/nss/opencryptoki/tpm2.
 - [x] Failure + crash inventory built and persisted.
 - [x] Per-class root-cause investigation + classification → [`catalog.md`](catalog.md) (findings PC-1..6, PV-1..15, CR-1..6, EX-1..2).
 - [x] Per-provider findings docs → `provider-<target>.md` (one per in-scope target).
-- [ ] Fix phase (separate): resolve PKCS11-CHECK bugs, widen CKR sets, gate pkcs11-mock, confirm NEEDS-CONFIRM via Docker reruns into NEW artifact folders, re-measure.
+- [ ] Fix phase (separate) → see [`fix-plan.md`](fix-plan.md): resolve PKCS11-CHECK bugs **without hiding findings** (+ regression tests), route CKR changes through `_ckr_spec.py` per the classification plan, gate pkcs11-mock, confirm NEEDS-CONFIRM via Docker reruns into NEW artifact folders, re-measure.
 
 ## Headline classifications (see catalog.md for detail)
 
