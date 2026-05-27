@@ -64,14 +64,34 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS_PSS,
     CKM_SHA_1,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DATA_LEN_RANGE,
+    CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._subprocess_preamble import (
     run_with_coverage,
     subprocess_session_preamble,
 )
+from pkcs11_check.testcases.conftest import reject_or_classify
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess_per_test]
+
+# Expected spec-correct rejection codes for insecure/invalid mechanism
+# parameters. A module that rejects with one of these is spec-correct (pass);
+# any other clean reject code is a noted non-spec deviation (xfail); accepting
+# the insecure/invalid parameter is a crypto-correctness break (fail).
+_WEAK_PARAM_REJECT_RVS = (
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_DATA_LEN_RANGE,
+    CKR_ARGUMENTS_BAD,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 # ---------------------------------------------------------------------------
 # GCM tag size validation
@@ -103,6 +123,10 @@ class TestGcmTagSize:
             pt = b"A" * 32
             mech = mech_gcm(CKM_AES_GCM, iv, tag_bits=tag_bits)
             overhead = tag_bits // 8 if tag_bits > 0 else 0
+            # Type-A crypto-correctness: a sub-96-bit tag forges authentication;
+            # accepting it is a break (fail), an expected reject is pass, another
+            # clean reject is xfail.
+            reject_exc: AssertionError | None = None
             try:
                 encrypt_single(
                     rs.raw,
@@ -113,15 +137,13 @@ class TestGcmTagSize:
                     mech_param=mech,
                     output_overhead=overhead,
                 )
-                # Module accepted a weak tag -- report finding
-                note(
-                    f"AES-GCM accepts {tag_bits}-bit tag -- below NIST minimum of 96 bits",
-                    ComplianceLevel.VENDOR,
-                    reference="NIST SP 800-38D Section 5.2.1.2: tag lengths < 96 bits "
-                    "are not recommended",
-                )
-            except (AssertionError, OSError):
-                pass  # Module rejected weak tag -- correct behavior
+            except AssertionError as exc:
+                reject_exc = exc
+            reject_or_classify(
+                reject_exc,
+                _WEAK_PARAM_REJECT_RVS,
+                label=f"AES-GCM with {tag_bits}-bit tag (below NIST 96-bit minimum)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -153,6 +175,9 @@ class TestGcmIvWeakness:
         try:
             pt = b"B" * 32
             mech = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
+            # Type-A crypto-correctness: an empty/short GCM IV undermines the
+            # uniqueness guarantee; accepting it is a break (fail).
+            reject_exc: AssertionError | None = None
             try:
                 encrypt_single(
                     rs.raw,
@@ -163,14 +188,13 @@ class TestGcmIvWeakness:
                     mech_param=mech,
                     output_overhead=16,
                 )
-                note(
-                    f"AES-GCM accepts {len(iv)}-byte IV -- NIST recommends 96-bit (12-byte)",
-                    ComplianceLevel.VENDOR,
-                    reference="NIST SP 800-38D Section 8.2.1: "
-                    "IVs should be 96 bits for interoperability and security",
-                )
-            except (AssertionError, OSError):
-                pass  # Module rejected weak IV -- correct behavior
+            except AssertionError as exc:
+                reject_exc = exc
+            reject_or_classify(
+                reject_exc,
+                _WEAK_PARAM_REJECT_RVS,
+                label=f"AES-GCM with {len(iv)}-byte IV (below NIST 96-bit recommendation)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -206,8 +230,11 @@ class TestGcmIvReuse:
                 mech_param=mech1,
                 output_overhead=16,
             )
-            # Second encrypt with SAME key + SAME IV
+            # Second encrypt with SAME key + SAME IV. Type-A crypto-correctness:
+            # IV reuse with the same GCM key breaks confidentiality and
+            # authenticity; accepting the second encrypt is a break (fail).
             mech2 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
+            reject_exc: AssertionError | None = None
             try:
                 ct2 = encrypt_single(
                     rs.raw,
@@ -218,15 +245,14 @@ class TestGcmIvReuse:
                     mech_param=mech2,
                     output_overhead=16,
                 )
-                # Both succeeded -- IV reuse not prevented
                 _ = ct1, ct2  # suppress unused warnings
-                note(
-                    "AES-GCM allows IV reuse with same key -- NIST SP 800-38D violation",
-                    ComplianceLevel.CRITICAL,
-                    reference="NIST SP 800-38D: IVs must be unique per key",
-                )
-            except (AssertionError, OSError):
-                pass  # Module rejected reuse -- good
+            except AssertionError as exc:
+                reject_exc = exc
+            reject_or_classify(
+                reject_exc,
+                _WEAK_PARAM_REJECT_RVS,
+                label="AES-GCM IV reuse with the same key (NIST SP 800-38D requires unique IVs)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -340,8 +366,11 @@ class TestPssSaltLength:
                 salt_len=salt_len,
             )
             data = b"PSS salt length test"
+            # Type-A crypto-correctness: sLen=0 collapses PSS to a deterministic
+            # scheme, removing its security margin; accepting it is a break (fail).
+            reject_exc: AssertionError | None = None
             try:
-                sig = sign_single(
+                sign_single(
                     rs.raw,
                     rs.sh,
                     priv,
@@ -349,15 +378,13 @@ class TestPssSaltLength:
                     data,
                     mech_param=pss,
                 )
-                note(
-                    f"RSA-PSS accepts sLen={salt_len} -- deterministic signatures "
-                    f"(produced {len(sig)}-byte signature)",
-                    ComplianceLevel.VENDOR,
-                    reference="RFC 8017 Section 9.1: sLen=0 makes PSS deterministic, "
-                    "reducing security margin",
-                )
-            except (AssertionError, OSError):
-                pass  # Module rejected zero salt -- acceptable
+            except AssertionError as exc:
+                reject_exc = exc
+            reject_or_classify(
+                reject_exc,
+                _WEAK_PARAM_REJECT_RVS,
+                label=f"RSA-PSS with sLen={salt_len} (deterministic signatures)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -432,6 +459,10 @@ class TestXtsKeyValidation:
         # 256-bit key = 128-bit data key + 128-bit tweak key (identical)
         half = b"\xaa" * 16
         key_material = half + half  # Both halves identical
+        # Type-A crypto-correctness: identical XTS key halves degenerate the
+        # construction to ECB-like behavior (NIST SP 800-38E forbids it).
+        # Rejecting at import is a spec-correct rejection (pass). If import is
+        # accepted, the encrypt must reject -- accepting the encrypt is a break.
         try:
             key = import_secret_key(
                 rs.raw,
@@ -444,21 +475,27 @@ class TestXtsKeyValidation:
                     CKA_TOKEN: False,
                 },
             )
-        except (AssertionError, OSError):
-            return  # Module rejected identical halves at import -- good
+        except AssertionError as import_exc:
+            reject_or_classify(
+                import_exc,
+                _WEAK_PARAM_REJECT_RVS,
+                label="AES-XTS import of a key with identical halves",
+            )
+            return
         # Key was imported; try to use it
         try:
             mech = mech_simple(CKM_AES_XTS)
             pt = b"C" * 32  # At least two blocks
+            reject_exc: AssertionError | None = None
             try:
                 encrypt_single(rs.raw, rs.sh, key, CKM_AES_XTS, pt, mech_param=mech)
-                note(
-                    "AES-XTS accepts key with identical halves -- NIST SP 800-38E violation",
-                    ComplianceLevel.VENDOR,
-                    reference="NIST SP 800-38E: the two AES keys in XTS must differ",
-                )
-            except (AssertionError, OSError):
-                pass  # Module rejected at encrypt time -- acceptable
+            except AssertionError as exc:
+                reject_exc = exc
+            reject_or_classify(
+                reject_exc,
+                _WEAK_PARAM_REJECT_RVS,
+                label="AES-XTS encrypt with identical key halves (NIST SP 800-38E violation)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -475,13 +512,21 @@ _WEAK_RSA_EXPONENTS = [
     pytest.param(4, id="e=4"),
 ]
 
+# Cryptographically invalid public exponents (no usable RSA key exists): e=0
+# (no inverse), e=1 (identity -- no encryption), and even exponents e=2/e=4
+# (no inverse modulo phi(n)). Accepting one of these is a Type-A
+# crypto-correctness break (fail). e=3 is a valid (if low) odd exponent that a
+# conformant module may legitimately accept, so it stays a posture note.
+_CRYPTO_INVALID_RSA_EXPONENTS = {0, 1, 2, 4}
+
 
 class TestRsaExponent:
     """Probe whether the module rejects weak RSA public exponents.
 
     e=0 is invalid, e=1 produces identity encryption (m^1 mod n = m), e=2/e=4
     are even, and e=3 is a historically common but weak low public exponent.
-    All should be rejected.
+    The cryptographically invalid exponents (e in {0, 1, 2, 4}) must be
+    rejected; e=3 is weak-but-valid posture.
     """
 
     @pytest.mark.parametrize("exponent", _WEAK_RSA_EXPONENTS)
@@ -492,6 +537,8 @@ class TestRsaExponent:
         # Encode exponent as big-endian bytes
         byte_len = max(1, (exponent.bit_length() + 7) // 8)
         exp_bytes = exponent.to_bytes(byte_len, "big")
+        reject_exc: AssertionError | None = None
+        pub = priv = 0
         try:
             pub, priv = gen_rsa_keypair(
                 rs.raw,
@@ -499,8 +546,26 @@ class TestRsaExponent:
                 2048,
                 public_attrs={CKA_PUBLIC_EXPONENT: exp_bytes},
             )
-        except (AssertionError, OSError):
-            return  # Module rejected weak exponent -- correct behavior
+        except AssertionError as exc:
+            reject_exc = exc
+
+        if exponent in _CRYPTO_INVALID_RSA_EXPONENTS:
+            # Type-A crypto-correctness: no usable RSA key exists for this
+            # exponent; acceptance is a break (fail).
+            try:
+                reject_or_classify(
+                    reject_exc,
+                    _WEAK_PARAM_REJECT_RVS,
+                    label=f"RSA keygen with cryptographically invalid exponent e={exponent}",
+                )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, pub)
+                destroy_quietly(rs.raw, rs.sh, priv)
+            return
+
+        # e=3: valid-but-weak low exponent -- posture choice, not a break.
+        if reject_exc is not None:
+            return  # Module rejected the low exponent -- acceptable
         try:
             note(
                 f"Module accepts RSA keygen with public exponent e={exponent}",
@@ -555,6 +620,14 @@ class TestEcPointValidation:
 
             invalid_point = self._craft_invalid_point(raw_point, point_type)
 
+            # Type-A crypto-correctness: deriving a shared secret from an
+            # off-curve / infinity / truncated public point enables an
+            # invalid-curve attack that can leak the private key (NIST SP
+            # 800-56A requires full public-key validation). Accepting the
+            # derive is a break (fail); an expected reject is pass; another
+            # clean reject is xfail.
+            derived = 0
+            reject_exc: AssertionError | None = None
             try:
                 derived = derive_key(
                     rs.raw,
@@ -575,18 +648,18 @@ class TestEcPointValidation:
                         public_data=invalid_point,
                     ),
                 )
-            except (AssertionError, OSError):
-                return  # Module rejected invalid point -- correct behavior
+            except AssertionError as exc:
+                reject_exc = exc
 
             try:
-                note(
-                    f"ECDH derive accepts {point_type} point -- invalid curve attack risk",
-                    ComplianceLevel.CRITICAL,
-                    reference="NIST SP 800-56A Section 5.6.2.3.3: "
-                    "full public key validation required",
+                reject_or_classify(
+                    reject_exc,
+                    _WEAK_PARAM_REJECT_RVS,
+                    label=f"ECDH derive with {point_type} EC public point (invalid-curve attack)",
                 )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
