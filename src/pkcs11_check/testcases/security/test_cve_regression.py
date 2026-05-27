@@ -64,6 +64,7 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
+    CKR_ACTION_PROHIBITED,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -77,6 +78,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_NOT_WRAPPABLE,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -86,6 +88,7 @@ from pkcs11_check.testcases.conftest import (
     KEYPAIR_RUNTIME_REJECT_RVS,
     gen_aes_key_or_xfail,
     get_pin_bytes,
+    is_known_error,
     skip_unless_mechanism,
     xfail_if_known_ckr,
 )
@@ -124,6 +127,20 @@ _MECHANISM_ERROR_RVS = {
     CKR_FUNCTION_FAILED,
 }
 
+_SENSITIVE_WRAP_INAPPLICABLE_RVS = {
+    CKR_ACTION_PROHIBITED,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_NOT_WRAPPABLE,
+}
+
+_SENSITIVE_WRAP_RUNTIME_REJECT_RVS = {
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+}
+
 
 def _gen_cve_aes_key_or_xfail(
     rs: Any,
@@ -154,8 +171,7 @@ def _gen_cve_rsa_keypair_or_xfail(rs: Any, bits: int) -> tuple[int, int]:
         xfail_if_known_ckr(
             exc,
             KEYPAIR_RUNTIME_REJECT_RVS,
-            "RSA_PKCS_KEY_PAIR_GEN advertised but CVE setup keypair generation "
-            "is not operational",
+            "RSA_PKCS_KEY_PAIR_GEN advertised but CVE setup keypair generation is not operational",
         )
     raise
 
@@ -349,7 +365,14 @@ class TestTookanUnwrapAttrs:
                     CKM_AES_KEY_WRAP,
                 )
             except AssertionError as exc:
-                pytest.skip(f"Module rejected wrap of SENSITIVE=True key: {exc}")
+                if is_known_error(exc, _SENSITIVE_WRAP_INAPPLICABLE_RVS):
+                    pytest.skip(f"Module cannot wrap SENSITIVE=True key: {exc}")
+                xfail_if_known_ckr(
+                    exc,
+                    _SENSITIVE_WRAP_RUNTIME_REJECT_RVS,
+                    "Tookan sensitive-key wrap rejected before unwrap check",
+                )
+                raise
 
             try:
                 unwrapped = unwrap_key(

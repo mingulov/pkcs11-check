@@ -8,7 +8,11 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
+from pkcs11_check.raw.types_std import (
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_NOT_WRAPPABLE,
+)
 from pkcs11_check.testcases.security import test_cve_regression
 
 
@@ -45,6 +49,23 @@ def _raise_function_not_supported(*_args: Any, **_kwargs: Any) -> int:
     )
 
 
+def _run_tookan_sensitive_unwrap_until_wrap(
+    monkeypatch: pytest.MonkeyPatch,
+    wrap_exc: CkrAssertionError,
+) -> None:
+    monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_cve_regression,
+        "wrap_key_recipe",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(wrap_exc),
+    )
+
+    test_cve_regression.TestTookanUnwrapAttrs().test_unwrapped_key_cannot_unset_sensitive(
+        _session(_EncryptStateRaw(), "AES_KEY_WRAP", "AES_KEY_GEN")
+    )
+
+
 def test_aes_ecb_boundary_lengths_aborts_after_rejected_invalid_length(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -63,9 +84,7 @@ def test_aes_ecb_boundary_lengths_aborts_after_rejected_invalid_length(
     monkeypatch.setattr(test_cve_regression, "decrypt_single", lambda *_args: _args[4])
     monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_args: None)
 
-    test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(
-        _session(raw)
-    )
+    test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(_session(raw))
 
     assert raw.abort_count >= 4
 
@@ -88,9 +107,7 @@ def test_aes_ecb_boundary_lengths_fails_when_nonaligned_input_is_accepted(
     monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.fail.Exception, match="accepted non-block-aligned"):
-        test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(
-            _session(raw)
-        )
+        test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(_session(raw))
 
 
 def test_aes_ecb_boundary_lengths_skips_without_aes_ecb(
@@ -117,6 +134,35 @@ def test_aes_ecb_boundary_lengths_xfails_when_advertised_keygen_rejects(
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
         test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(
             _session(_EncryptStateRaw(), "AES_ECB", "AES_KEY_GEN")
+        )
+
+
+def test_tookan_sensitive_unwrap_skips_explicit_key_not_wrappable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(pytest.skip.Exception, match="cannot wrap SENSITIVE=True"):
+        _run_tookan_sensitive_unwrap_until_wrap(
+            monkeypatch,
+            CkrAssertionError(
+                "Unexpected CK_RV CKR_KEY_NOT_WRAPPABLE",
+                int(CKR_KEY_NOT_WRAPPABLE),
+            ),
+        )
+
+
+def test_tookan_sensitive_unwrap_xfails_generic_wrap_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_cve_regression.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="sensitive-key wrap rejected"):
+        _run_tookan_sensitive_unwrap_until_wrap(
+            monkeypatch,
+            CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR)),
         )
 
 
