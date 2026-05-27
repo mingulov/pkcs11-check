@@ -44,12 +44,12 @@ def test_wycheproof_aes_kwp_vectors_use_rfc5649_encrypt_path(
         calls["data"] = data
         return expected_ct
 
-    def wrap_key(*_args: Any, **_kwargs: Any) -> bytes:
-        raise AssertionError("Wycheproof KWP vectors must not use C_WrapKey")
-
     monkeypatch.setattr(aes, "import_secret_key", import_secret_key)
     monkeypatch.setattr(aes, "encrypt_single", encrypt_single, raising=False)
-    monkeypatch.setattr(aes, "wrap_key", wrap_key)
+    # The KWP path uses C_Encrypt (RFC 5649), never C_WrapKey: the module no
+    # longer imports wrap_key at all (the AES-KW family unwraps instead), so the
+    # absence of a wrap_key symbol is itself the guarantee here.
+    assert not hasattr(aes, "wrap_key")
     monkeypatch.setattr(aes, "destroy_quietly", lambda *_args, **_kwargs: None)
 
     try:

@@ -146,3 +146,31 @@ def test_ccm_valid_vector_wrong_plaintext_fails(monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(AssertionError, match="plaintext mismatch"):
         aes.test_aes_ccm(_AesSession("AES_CCM"), vec_id, vec)
+
+
+# --- AES-KW (Task 2g) ---
+
+
+def test_aes_kw_invalid_vector_unwrap_success_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An invalid AES-KW blob that unwraps must fail (forged wrap accepted)."""
+    vec_id, vec = _first(aes._AES_WRAP_VECTORS, "invalid")
+    msg = bytes.fromhex(vec["msg"])
+    monkeypatch.setattr(aes, "import_secret_key", _handle)
+    monkeypatch.setattr(aes, "unwrap_key", _handle)
+    monkeypatch.setattr(aes, "read_attributes", lambda *_a, **_k: {aes.CKA_VALUE: msg})
+    monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(pytest.fail.Exception, match="accepted invalid wrapped key"):
+        aes.test_aes_key_wrap(_AesSession("AES_KEY_WRAP"), vec_id, vec)
+
+
+def test_aes_kw_valid_vector_unwraps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A valid AES-KW blob that unwraps to the expected key material passes."""
+    vec_id, vec = _first(aes._AES_WRAP_VECTORS, "valid")
+    msg = bytes.fromhex(vec["msg"])
+    monkeypatch.setattr(aes, "import_secret_key", _handle)
+    monkeypatch.setattr(aes, "unwrap_key", _handle)
+    monkeypatch.setattr(aes, "read_attributes", lambda *_a, **_k: {aes.CKA_VALUE: msg})
+    monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
+
+    aes.test_aes_key_wrap(_AesSession("AES_KEY_WRAP"), vec_id, vec)

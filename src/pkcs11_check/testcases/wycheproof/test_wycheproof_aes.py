@@ -14,27 +14,33 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     generate_random,
     import_secret_key,
+    read_attributes,
+    unwrap_key,
     verify_single,
-    wrap_key,
 )
 from pkcs11_check.raw.types_std import (
+    CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
     CKA_UNWRAP,
+    CKA_VALUE,
     CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
     CKK_AES_XTS,
+    CKK_GENERIC_SECRET,
     CKM_AES_CCM,
     CKM_AES_CMAC,
     CKM_AES_GMAC,
     CKM_AES_KEY_WRAP,
     CKM_AES_KEY_WRAP_KWP,
     CKM_AES_XTS,
+    CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
@@ -155,21 +161,24 @@ _AES_WRAP_VECTORS = _load_flat("aes_wrap_test.json")
 
 @pytest.mark.parametrize("vec_id,vec", _AES_WRAP_VECTORS, ids=[v[0] for v in _AES_WRAP_VECTORS])
 def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
-    """AES Key Wrap (RFC 3394) from Wycheproof vectors.
+    """AES Key Wrap (RFC 3394) unwrap from Wycheproof vectors.
 
-    For valid vectors: wrap(msg) with key should produce ct.
-    We test by importing wrapping key, wrapping a target key, comparing output.
+    Unwraps the supplied wrapped blob (``ct``) so invalid vectors actually
+    exercise rejection. A module that unwraps an invalid (malformed/forged)
+    wrapped blob is a crypto-correctness break (Type A -> fail). The previous
+    produce-direction (wrap + compare) could never reject an invalid vector
+    because a fresh correct wrap never matched the modified expected blob.
     """
     rs = p11_raw_session
     if not rs.has_mechanism("AES_KEY_WRAP"):
         pytest.skip("AES_KEY_WRAP not supported")
 
     key_bytes = bytes.fromhex(vec["key"])
-    msg = bytes.fromhex(vec["msg"])
-    ct_expected = bytes.fromhex(vec["ct"])
+    msg_expected = bytes.fromhex(vec["msg"])
+    ct = bytes.fromhex(vec["ct"])
     result = vec["result"]
 
-    # Import wrapping key
+    # Import unwrapping key
     try:
         wrap_key_h = import_secret_key(
             rs.raw,
@@ -184,45 +193,46 @@ def test_aes_key_wrap(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) ->
             },
         )
     except AssertionError:
-        pytest.skip("Cannot import AES wrapping key")
+        pytest.skip("Cannot import AES unwrapping key")
 
-    # Import target key (the material being wrapped)
+    # Unwrap the supplied blob and verify the recovered key material
+    unwrapped = None
     try:
-        target_key = import_secret_key(
+        unwrapped = unwrap_key(
             rs.raw,
             rs.sh,
-            CKK_AES,
-            msg,
+            wrap_key_h,
+            ct,
+            CKM_AES_KEY_WRAP,
             attrs={
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_EXTRACTABLE: True,
-                CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
+                CKA_TOKEN: False,
             },
         )
-    except AssertionError:
-        destroy_quietly(rs.raw, rs.sh, wrap_key_h)
-        if result == "invalid":
-            return
-        pytest.skip("Cannot import target key")
-
-    # Wrap and compare
-    wrapped = None
-    try:
-        wrapped = wrap_key(rs.raw, rs.sh, wrap_key_h, target_key, CKM_AES_KEY_WRAP)
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-KW {vec_id}")
-            pytest.fail(f"AES-KW wrap failed for valid vector {vec_id}: {exc}")
-        # acceptable: reject is fine
+            pytest.fail(f"AES-KW unwrap failed for valid vector {vec_id}: {exc}")
+        # acceptable: reject of an invalid wrapped blob is fine
         return
     finally:
-        destroy_quietly(rs.raw, rs.sh, target_key)
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
-    if result == "valid" and wrapped is not None:
-        assert wrapped == ct_expected
-    if result == "invalid" and wrapped is not None and wrapped == ct_expected:
-        pytest.fail(f"AES-KW wrap {vec_id} produced invalid ciphertext")
+    if result == "invalid":
+        destroy_quietly(rs.raw, rs.sh, unwrapped)
+        pytest.fail(f"AES-KW unwrap {vec_id}: accepted invalid wrapped key (forged blob unwrapped)")
+
+    # valid: recovered key material must match the original
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
+    finally:
+        destroy_quietly(rs.raw, rs.sh, unwrapped)
+    recovered = attrs.get(CKA_VALUE)
+    if recovered is not None:
+        assert recovered == msg_expected, f"AES-KW {vec_id}: unwrapped key material mismatch"
 
 
 # --- AES Key Wrap with Padding (RFC 5649) ---

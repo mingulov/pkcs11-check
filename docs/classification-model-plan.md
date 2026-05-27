@@ -227,7 +227,7 @@ elif result == "invalid":
 - [x] **Task 2d** — `test_wycheproof_aes.py` AES-CMAC (`:139`): verify the supplied tag (`C_Verify`), `invalid` accepted → `fail`; meta-test; commit.
 - [x] **Task 2e** — AES-GMAC (`:428`, ~324 vectors): same; commit.
 - [x] **Task 2f** — AES-CCM (`:363`, ~147): decrypt-and-reject; commit.
-- [ ] **Task 2g** — AES-KW (`:218`, ~126): unwrap-and-reject; commit.
+- [x] **Task 2g** — AES-KW (`:218`, ~126): unwrap-and-reject; commit.
 - [ ] **Task 2h** — `test_wycheproof_chacha.py:115` (~69): decrypt-and-reject; commit.
 - [ ] **Task 2i** — `test_wycheproof_hmac.py:234/239`: verify-and-reject; commit.
 - [ ] **Task 2j** — `test_wycheproof_pbes2.py:223`: add the `invalid` accept→fail branch (structural; 0 live vectors today); commit.
