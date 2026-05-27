@@ -177,6 +177,10 @@ class CkrExpectation:
     allow_success: bool = False
     """True if permissive modules may accept the operation."""
 
+    kind: str = "policy"
+    """'crypto' (correctness) | 'policy' (attribute/permission) | 'lifecycle' (state) |
+    'metadata'."""
+
     testable: bool = True
     """False for conditions requiring NULL pointers or C-memory semantics."""
 
