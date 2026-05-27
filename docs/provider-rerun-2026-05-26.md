@@ -522,6 +522,12 @@ official full-matrix release statistics.
   CKRs as unsupported size reporting. The focused run reports 2 skipped and
   1 failed; the hard row is a wrong-result finding where both 100-byte and
   10KB data objects report size 256.
+- `pkcs11-mock` EC domain-parameter focused artifact:
+  `artifacts/_focused/pkcs11-mock-domain-params-current-20260527/`. Current
+  source no longer turns generic `C_CreateObject` CKRs into unsupported
+  domain-parameter skips; exact unsupported template/class rejects still skip,
+  while generic runtime rejects become xfail evidence. The focused run reports
+  1 passed, 8 skipped, and 0 failed.
 - `pkcs11-mock` RSA PKCS#1 decrypt current-source artifact:
   `artifacts/_focused/pkcs11-mock-rsa-decrypt-runtime-classification-current-20260526`.
   The focused `test_wycheproof_rsa_decrypt.py` run now has 77 passed, 124
