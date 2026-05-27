@@ -25,6 +25,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
 )
 from pkcs11_check.testcases.conftest import (
+    classify_policy_enforcement,
     gen_rsa_keypair_or_xfail,
     is_known_error,
     require_operational_aes_keygen,
@@ -47,29 +48,20 @@ class TestSensitiveKeyValue:
             attrs={CKA_SENSITIVE: True},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
-            assert attrs[CKA_SENSITIVE] is True
-
-            try:
-                read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "SECURITY: module allows reading CKA_VALUE on CKA_SENSITIVE=True AES key "
-                    "(returns CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE)",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.9.2: sensitive attributes cannot be "
-                    "revealed in plaintext",
-                )
-                pytest.xfail(
-                    "SECURITY: module allows reading sensitive AES key material "
-                    "(CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE)"
-                )
-            except AssertionError as e:
-                msg = str(e)
-                assert "CKR_ATTRIBUTE_SENSITIVE" in msg, (
-                    f"Expected CKR_ATTRIBUTE_SENSITIVE, got: {e}"
-                )
+            # Type-B claim/effect-check. read_attributes omits unavailable
+            # (sensitive) attributes rather than raising, so verify the effect:
+            #   claimed  = the key reports CKA_SENSITIVE=True back,
+            #   violated = the protected CKA_VALUE is actually readable.
+            sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
+            claimed = sens_attrs.get(CKA_SENSITIVE) is True
+            val_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            violated = CKA_VALUE in val_attrs
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=violated,
+                label="read CKA_VALUE on a CKA_SENSITIVE=True AES key "
+                "(PKCS#11 v3.1 Sec.4.9.2: sensitive attributes cannot be revealed)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -100,29 +92,17 @@ class TestSensitiveKeyValue:
             private_attrs={CKA_SENSITIVE: True},
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE])
-            assert attrs[CKA_SENSITIVE] is True
-
-            try:
-                read_attributes(rs.raw, rs.sh, priv, [CKA_PRIVATE_EXPONENT])
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "SECURITY: module allows reading CKA_PRIVATE_EXPONENT on CKA_SENSITIVE=True "
-                    "RSA private key (returns CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE)",
-                    ComplianceLevel.CRITICAL,
-                    reference="PKCS#11 v3.1 Sec.4.9.2: sensitive attributes cannot be "
-                    "revealed in plaintext",
-                )
-                pytest.xfail(
-                    "SECURITY: module allows reading sensitive RSA private key material "
-                    "(CKR_OK instead of CKR_ATTRIBUTE_SENSITIVE)"
-                )
-            except AssertionError as e:
-                msg = str(e)
-                assert "CKR_ATTRIBUTE_SENSITIVE" in msg, (
-                    f"Expected CKR_ATTRIBUTE_SENSITIVE, got: {e}"
-                )
+            # Type-B claim/effect-check (see test_sensitive_aes_value_not_readable).
+            sens_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SENSITIVE])
+            claimed = sens_attrs.get(CKA_SENSITIVE) is True
+            exp_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_PRIVATE_EXPONENT])
+            violated = CKA_PRIVATE_EXPONENT in exp_attrs
+            classify_policy_enforcement(
+                claimed=claimed,
+                violated=violated,
+                label="read CKA_PRIVATE_EXPONENT on a CKA_SENSITIVE=True RSA private key "
+                "(PKCS#11 v3.1 Sec.4.9.2: sensitive attributes cannot be revealed)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
