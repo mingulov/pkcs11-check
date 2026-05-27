@@ -580,6 +580,12 @@ official full-matrix release statistics.
   `CKA_ALWAYS_AUTHENTICATE` rows now split template/attribute unsupported
   CKRs from generic RSA keygen runtime rejects. The focused run reports both
   selected rows skipped, so it confirms gating/classification only.
+- `pkcs11-mock` complete-DSA focused artifact:
+  `artifacts/_focused/pkcs11-mock-dsa-complete-current-20260527/`. Complete
+  DSA tests now split missing DSA setup mechanisms, unsupported DSA-2048
+  parameter size, and advertised-but-not-operational parameter/keypair
+  generation. The mock-focused run reports 42 skipped and 0 failed because the
+  mock has no DSA mechanism surface.
 
 ## Follow-Up Queue
 
