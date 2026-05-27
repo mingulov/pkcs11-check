@@ -155,6 +155,22 @@ def _xfail_if_rsa_oaep_runtime_reject(exc: AssertionError, label: str) -> NoRetu
     raise exc
 
 
+def _skip_or_xfail_rsa_oaep_private_import_reject(
+    exc: AssertionError,
+    key_bits: int,
+) -> NoReturn:
+    """Classify RSA private-key import rejects before Wycheproof OAEP decrypt."""
+    if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
+        _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
+        pytest.skip(f"Cannot import RSA {key_bits}-bit private key for OAEP: {exc}")
+    xfail_if_known_ckr(
+        exc,
+        _RSA_OAEP_RUNTIME_REJECT_CKRS,
+        f"RSA private-key import is not operational for OAEP ({key_bits}-bit)",
+    )
+    raise exc
+
+
 @pytest.mark.parametrize("vec_id,vec", _ALL_OAEP_VECTORS, ids=[v[0] for v in _ALL_OAEP_VECTORS])
 def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """RSA-OAEP decryption from Wycheproof vectors."""
@@ -218,11 +234,7 @@ def test_rsa_oaep(p11_raw_session: Any, vec_id: str, vec: dict[str, Any]) -> Non
             attrs={CKA_DECRYPT: True},
         )
     except AssertionError as exc:
-        exc_msg = str(exc)
-        # Only cache permanent key-size rejections, not transient errors.
-        if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
-            _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        pytest.skip(f"Cannot import RSA {key_bits}-bit private key for OAEP: {exc_msg}")
+        _skip_or_xfail_rsa_oaep_private_import_reject(exc, key_bits)
 
     plaintext = None
     try:

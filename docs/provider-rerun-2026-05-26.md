@@ -128,6 +128,12 @@ Completed high-signal observations:
   remain provider/security findings. These changes landed after the current
   Docker batch had already started, so the affected artifacts still need a
   refresh before the table reflects them.
+  A later Wycheproof RSA-OAEP import-boundary check also tightened private-key
+  import classification: exact unsupported key-size/template rejects remain
+  setup skips, while generic provider CKRs from `C_CreateObject` become xfail
+  evidence. The current pkcs11-mock sentinel remains 373 passed, 700 xfailed,
+  and 0 failed in
+  `artifacts/_focused/pkcs11-mock-rsa-oaep-import-current-20260527/`.
   A later focused Kryoptic rerun on current source also removed the old hard
   RSA signature buckets: RSA-PSS produced 1,146 passed, 913 duplicate skips,
   and 443 xfailed invalid-vector rejects, with 0 failed; RSA PKCS#1 signature
