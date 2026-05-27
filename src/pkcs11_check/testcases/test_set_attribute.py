@@ -32,6 +32,34 @@ from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypai
 pytestmark = pytest.mark.keymgmt
 
 
+def _classify_readonly_write(
+    rs: Any, handle: int, attr: int, new_value: Any, *, label: str
+) -> None:
+    """Type-C effect-check for a write to a read-only attribute.
+
+    C_SetAttributeValue on a read-only attribute must reject. Verify the effect,
+    not the return code:
+
+    - rejected (set_attributes raised) -> pass (spec-correct),
+    - accepted (no raise) AND the value actually changed to ``new_value``
+      -> fail (the module claimed success then mutated a read-only attribute --
+      a self-contradiction),
+    - accepted but the value is unchanged (no-op) -> xfail (wrong return code,
+      but no harm; spec prefers CKR_ATTRIBUTE_READ_ONLY).
+    """
+    try:
+        set_attributes(rs.raw, rs.sh, handle, {attr: new_value})
+    except AssertionError:
+        return  # Rejected the read-only write -- correct.
+    after = read_attributes(rs.raw, rs.sh, handle, [attr])
+    if after.get(attr) == new_value:
+        pytest.fail(f"{label}: claimed success and the read-only value actually changed")
+    pytest.xfail(
+        f"{label}: returned CKR_OK but the value was unchanged (no-op; "
+        "spec prefers CKR_ATTRIBUTE_READ_ONLY)"
+    )
+
+
 class TestSetAttributePositive:
     """Verify that mutable attributes can be changed."""
 
@@ -99,41 +127,32 @@ class TestSetAttributeNegative:
     """Verify that read-only / immutable attributes are rejected."""
 
     def test_cannot_change_class(self, p11_raw_session: Any) -> None:
-        """CKA_CLASS is read-only - should reject or silently ignore."""
-        from pkcs11_check.compliance import ComplianceLevel, note
-
+        """CKA_CLASS is read-only - must reject; mutating it is a contradiction."""
         rs = p11_raw_session
         key = gen_aes_key_or_xfail(rs, 128, purpose="set-attribute class rejection")
         try:
-            try:
-                set_attributes(rs.raw, rs.sh, key, {CKA_CLASS: CKO_PUBLIC_KEY})
-                # If no error, the module silently ignored it - flag it
-                note(
-                    "Module accepted C_SetAttributeValue on CKA_CLASS without error",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 Base v3.0, Table 15 - CKA_CLASS is read-only",
-                )
-            except AssertionError:
-                pass  # Correct behavior
+            _classify_readonly_write(
+                rs,
+                key,
+                CKA_CLASS,
+                CKO_PUBLIC_KEY,
+                label="write read-only CKA_CLASS (PKCS#11 Base v3.0 Table 15)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_cannot_change_key_type(self, p11_raw_session: Any) -> None:
-        """CKA_KEY_TYPE is read-only - should reject or silently ignore."""
-        from pkcs11_check.compliance import ComplianceLevel, note
-
+        """CKA_KEY_TYPE is read-only - must reject; mutating it is a contradiction."""
         rs = p11_raw_session
         key = gen_aes_key_or_xfail(rs, 128, purpose="set-attribute key-type rejection")
         try:
-            try:
-                set_attributes(rs.raw, rs.sh, key, {CKA_KEY_TYPE: CKK_RSA})
-                note(
-                    "Module accepted C_SetAttributeValue on CKA_KEY_TYPE without error",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 Base v3.0, Table 15 - CKA_KEY_TYPE is read-only",
-                )
-            except AssertionError:
-                pass  # Correct behavior
+            _classify_readonly_write(
+                rs,
+                key,
+                CKA_KEY_TYPE,
+                CKK_RSA,
+                label="write read-only CKA_KEY_TYPE (PKCS#11 Base v3.0 Table 15)",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -142,29 +161,28 @@ class TestSetAttributeNegative:
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
-            try:
-                set_attributes(rs.raw, rs.sh, pub, {CKA_MODULUS: b"\x00" * 256})
-            except AssertionError:
-                pass  # Correct behavior
+            _classify_readonly_write(
+                rs,
+                pub,
+                CKA_MODULUS,
+                b"\x00" * 256,
+                label="write read-only CKA_MODULUS on an RSA public key",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_cannot_set_value_on_sensitive_key(self, p11_raw_session: Any) -> None:
-        """CKA_VALUE on a sensitive key - should reject."""
-        from pkcs11_check.compliance import ComplianceLevel, note
-
+        """CKA_VALUE on a key - must reject; mutating the key bytes is a contradiction."""
         rs = p11_raw_session
         key = gen_aes_key_or_xfail(rs, 128, purpose="set-attribute sensitive value rejection")
         try:
-            try:
-                set_attributes(rs.raw, rs.sh, key, {CKA_VALUE: b"\x00" * 32})
-                note(
-                    "Module accepted C_SetAttributeValue on CKA_VALUE of sensitive key",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 Base v3.0 - CKA_VALUE not settable on sensitive keys",
-                )
-            except AssertionError:
-                pass  # Correct behavior
+            _classify_readonly_write(
+                rs,
+                key,
+                CKA_VALUE,
+                b"\x00" * 32,
+                label="write read-only CKA_VALUE on a secret key",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
