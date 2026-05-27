@@ -68,9 +68,11 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
     CKR_DATA_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
+    CKR_DOMAIN_PARAMS_INVALID,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
@@ -89,11 +91,23 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
+    reject_or_classify,
     skip_unless_mechanism,
     xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.security
+
+# Expected rejection codes for importing an EC public key with an invalid /
+# unknown curve OID (CVE-2021-3798). A spec-correct module rejects the bogus
+# curve; another clean reject code is a non-spec deviation (xfail); acceptance
+# is a crypto-correctness break (fail).
+_INVALID_EC_CURVE_REJECT_RVS = (
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DOMAIN_PARAMS_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 # CKR codes that indicate template/attribute rejection (not crash)
 _TEMPLATE_REJECT_RVS = {
@@ -664,6 +678,11 @@ class TestInvalidECCurve:
         bad_oid = bytes([0x06, 0x05, 0xDE, 0xAD, 0xBE, 0xEF, 0x00])
         fake_point = b"\x04" + b"\x01" * 64  # Fake uncompressed point
 
+        # Type-A crypto-correctness: importing an EC public key with an invalid /
+        # unknown curve OID and a bogus point is a cryptographic correctness break
+        # (CVE-2021-3798 pattern). Acceptance -> fail; expected curve/param reject ->
+        # pass; another clean reject code -> xfail. No claim-check (Type A).
+        reject_exc: AssertionError | None = None
         try:
             obj = create_object(
                 rs.raw,
@@ -677,17 +696,15 @@ class TestInvalidECCurve:
                     CKA_TOKEN: False,
                 },
             )
-            # If accepted - this is the CVE-2021-3798 vulnerability
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "Module accepted EC key with invalid curve OID (CVE-2021-3798 pattern)",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="CVE-2021-3798: OpenCryptoki missing EC curve validation",
-            )
             destroy_quietly(rs.raw, rs.sh, obj)
-        except AssertionError:
-            pass  # Correct: reject invalid curve
+        except AssertionError as exc:
+            reject_exc = exc
+
+        reject_or_classify(
+            reject_exc,
+            _INVALID_EC_CURVE_REJECT_RVS,
+            label="import EC public key with invalid curve OID",
+        )
 
 
 class TestSoftHSM2Issue596:
