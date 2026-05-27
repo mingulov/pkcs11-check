@@ -163,6 +163,13 @@ Completed high-signal observations:
   72/75 duplicate-to-skip. Future PKCS#11 revisions could standardize
   deterministic validation inputs for exact ACVP KeyGen checks, but there is no
   portable API for that today.
+- The CCTV RFC6979 P-256 row no longer uses a blanket xfail mark around the
+  whole deterministic-signature test. Current source classifies EC key import
+  rejects and advertised `ECDSA_SHA256` runtime CKRs explicitly, then xfails
+  only the expected signature mismatch from modules that use random nonces
+  instead of RFC6979 deterministic `k`. A focused pkcs11-mock sentinel reports
+  2 skipped and 0 failed in
+  `artifacts/_focused/pkcs11-mock-cctv-rfc6979-current-20260527/`.
 - Focused EdDSA public-key encoding checks after the batch found provider
   profile differences that should not be collapsed into generic vector
   failures. PKCS#11 `CKK_EC_EDWARDS` uses raw RFC 8032 `CKA_EC_POINT`, but
