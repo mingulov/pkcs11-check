@@ -429,12 +429,19 @@ mechanism was advertised is now an xfail provider finding instead of a skip.
 
 ### Follow-Up: Message API And HKDF Runtime Rejections
 
-The v3 message-based API tests now treat `CKR_MECHANISM_INVALID` from
-`C_MessageEncryptInit` or `C_MessageSignInit` as an xfail when the provider has
-already advertised the mechanism and the relevant message-operation flag. The
-basic HKDF derive test also no longer uses a catch-all skip for operational
-failure: only specific CKR values become xfail evidence, while unexpected Python
-errors or wrong derived outputs remain real failures.
+The v3 message-based API tests now treat `CKR_MECHANISM_INVALID`,
+`CKR_MECHANISM_PARAM_INVALID`, and generic runtime CKRs from direct message
+operations as xfail evidence when the provider has already advertised the base
+mechanism and exposes the message functions. `CKR_FUNCTION_NOT_SUPPORTED`
+remains an unsupported-function skip. AES message tests also use the shared AES
+setup classifier, so setup keygen rejects do not masquerade as message-operation
+failures. Focused pkcs11-mock evidence in
+`artifacts/_focused/pkcs11-mock-message-api-r2-20260527/` reports 1 passed,
+10 skipped, and 0 failed for `test_message_crypto.py`; the previous focused run
+had 5 AES setup failures. The basic HKDF derive test also no longer uses a
+catch-all skip for operational failure: only specific CKR values become xfail
+evidence, while unexpected Python errors or wrong derived outputs remain real
+failures.
 
 ### Follow-Up: SHAKE XOF Advertised-But-Rejected Paths
 

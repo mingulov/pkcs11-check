@@ -362,6 +362,12 @@ Completed high-signal observations:
   remains a counted skip, while slot/mechanism enumeration errors propagate as
   failures. Focused pkcs11-mock evidence:
   `artifacts/_focused/pkcs11-mock-sign-recover-probe-current-20260527/`.
+- Message API direct CKR handling now distinguishes unsupported function stubs
+  from advertised-but-rejected operations, and AES message rows use the shared
+  AES setup classifier. Focused pkcs11-mock evidence:
+  `artifacts/_focused/pkcs11-mock-message-api-r2-20260527/` reports 1 passed,
+  10 skipped, and 0 failed for `test_message_crypto.py`; the previous focused
+  run had 5 AES setup failures.
 
 ## Remaining Raw-Looking Buckets
 
