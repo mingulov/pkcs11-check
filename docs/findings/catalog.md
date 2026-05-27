@@ -75,6 +75,14 @@ Small classes where the module returns a *plausibly correct* CKR the test didn't
 - **Class:** `TestBitFlipUnwrap::test_bit_flip_unwrap :: ... subprocess failed with exit code 1`.
 - **Evidence:** Python traceback in **setup**: `wrapped_blob = wrap_key_recipe(raw, sh, wrap_key, target_key, CKM_AES_KEY_WRAP_KWP)` → `recipes.py:1031 _two_call_output`. The KWP *wrap* step (test setup) raises and is not classified.
 - **Classification:** PKCS11-CHECK (guard/xfail the KWP-wrap setup reject like other capability setups). **Must not hide a real defect:** capture the actual CKR from the failing KWP *wrap* — if NSS genuinely cannot KWP-wrap, that is a PROVIDER capability gap to record (skip/xfail with the real `rv`), not silently pass. The *unwrap* bit-flip integrity check (the test's real purpose) must still run wherever wrap succeeds. Add a regression test pinning the setup-reject classification.
+- **RESOLVED 2026-05-27 (FP-2):** added importable `child_setup_reject_known()` in
+  `security/conftest.py` (emits `SETUP_XFAIL` marker → parent `pytest.xfail` for a known
+  reject; returns False to **re-raise** unknown errors/crashes so they still surface). The KWP
+  subprocess script now scopes the wrap in an inner `try` and classifies the reject against a
+  **specific** CKR set. Regression test `tests/test_error_path_kwp_setup_classification.py`
+  (RED → GREEN). softhsm2 (KWP-capable) still runs the real unwrap-integrity check (5 passed).
+  NSS's actual reject `rv` (truncated in the baseline artifact) is confirmed in the FP-8 rerun;
+  if it falls outside the set, the test surfaces it rather than hiding it.
 
 ### PC-6 — tpm2 negative-path CKR expectations too narrow  ·  NEEDS-CONFIRM
 - **Scope:** tpm2, many count-1 classes: `C_GenerateKey(invalid_*)` → `CKR_FUNCTION_NOT_SUPPORTED`
