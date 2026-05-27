@@ -486,6 +486,12 @@ official full-matrix release statistics.
   `test_rng.py` run reports 4 passed and 5 failed. This is not setup noise:
   `C_GenerateRandom` succeeds, but every byte is `0x01`, causing duplicate,
   bit-frequency, byte-distribution, entropy, and runs-test failures.
+- `pkcs11-mock` benchmark focused artifact:
+  `artifacts/_focused/pkcs11-mock-benchmark-current-20260527-r3/`. Current
+  source uses shared RSA/EC setup classifiers and explicit RSA/AES/digest
+  benchmark runtime classifiers. The first focused run exposed three
+  unclassified `CKR_MECHANISM_INVALID` hard rows; the corrected rerun reports
+  1 passed, 7 skipped, and 0 failed.
 - `pkcs11-mock` Double Ratchet focused artifact:
   `artifacts/_focused/pkcs11-mock-double-ratchet-current-20260527/`. Current
   source no longer uses a classic EC/P-256 fallback for X2RATCHET setup; it

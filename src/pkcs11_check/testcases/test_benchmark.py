@@ -7,7 +7,7 @@ Run with: pytest test_benchmark.py --benchmark-enable --benchmark-only
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -18,8 +18,6 @@ from pkcs11_check.raw.recipes import (
     digest_single,
     encrypt_single,
     gen_aes_key,
-    gen_ec_keypair,
-    gen_rsa_keypair,
     generate_random,
     sign_single,
     verify_single,
@@ -40,7 +38,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    gen_ec_keypair_or_xfail,
+    gen_rsa_keypair_or_xfail,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.benchmark
 
@@ -56,9 +58,22 @@ _AES_KEYGEN_RUNTIME_ERROR_CKRS = (
     CKR_TEMPLATE_INCONSISTENT,
 )
 
+_BENCHMARK_OPERATION_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_INVALID,
+)
 
-def _xfail_aes_keygen_reject(exc: AssertionError, msg: str) -> None:
+
+def _xfail_aes_keygen_reject(exc: AssertionError, msg: str) -> NoReturn:
     xfail_if_known_ckr(exc, _AES_KEYGEN_RUNTIME_ERROR_CKRS, msg)
+    raise exc
+
+
+def _xfail_benchmark_operation_reject(exc: AssertionError, msg: str) -> NoReturn:
+    xfail_if_known_ckr(exc, _BENCHMARK_OPERATION_REJECT_CKRS, msg)
     raise exc
 
 
@@ -77,10 +92,7 @@ def rsa2048_keypair(p11_raw_session: Any) -> Any:
     rs = p11_raw_session
     if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
         pytest.skip("RSA key pair generation not supported")
-    try:
-        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
-    except AssertionError as e:
-        pytest.skip(f"Cannot generate RSA-2048 keypair: {e}")
+    pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
     yield pub, priv, rs
     destroy_quietly(rs.raw, rs.sh, pub)
     destroy_quietly(rs.raw, rs.sh, priv)
@@ -92,10 +104,7 @@ def ec_p256_keypair(p11_raw_session: Any) -> Any:
     rs = p11_raw_session
     if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
         pytest.skip("EC key pair generation not supported")
-    try:
-        pub, priv = gen_ec_keypair(rs.raw, rs.sh, encode_named_curve_parameters("secp256r1"))
-    except AssertionError as e:
-        pytest.skip(f"Cannot generate EC P-256 keypair: {e}")
+    pub, priv = gen_ec_keypair_or_xfail(rs, encode_named_curve_parameters("secp256r1"))
     yield pub, priv, rs
     destroy_quietly(rs.raw, rs.sh, pub)
     destroy_quietly(rs.raw, rs.sh, priv)
@@ -123,9 +132,9 @@ def test_bench_aes256_cbc_encrypt(benchmark: Any, p11_raw_session: Any) -> None:
             data,
             mech_param=mech_bytes(CKM_AES_CBC, iv),
         )
-    except AssertionError:
+    except AssertionError as exc:
         destroy_quietly(rs.raw, rs.sh, key)
-        pytest.skip("AES_CBC not available for benchmarking")
+        _xfail_benchmark_operation_reject(exc, "AES_CBC benchmark probe rejected")
 
     def encrypt() -> bytes:
         return encrypt_single(
@@ -162,10 +171,15 @@ def test_bench_aes256_ecb_encrypt(benchmark: Any, p11_raw_session: Any) -> None:
 def test_bench_rsa2048_sign(benchmark: Any, rsa2048_keypair: Any) -> None:
     """Benchmark RSA-2048 SHA-256 signing."""
     pub, priv, rs = rsa2048_keypair
+    if not rs.has_mechanism("SHA256_RSA_PKCS"):
+        pytest.skip("SHA256_RSA_PKCS not supported")
     data = b"benchmark test data for RSA signing"
 
     def sign() -> bytes:
-        return sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
+        try:
+            return sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
+        except AssertionError as exc:
+            _xfail_benchmark_operation_reject(exc, "RSA SHA256 benchmark sign rejected")
 
     benchmark(sign)
 
@@ -173,11 +187,19 @@ def test_bench_rsa2048_sign(benchmark: Any, rsa2048_keypair: Any) -> None:
 def test_bench_rsa2048_verify(benchmark: Any, rsa2048_keypair: Any) -> None:
     """Benchmark RSA-2048 SHA-256 verification."""
     pub, priv, rs = rsa2048_keypair
+    if not rs.has_mechanism("SHA256_RSA_PKCS"):
+        pytest.skip("SHA256_RSA_PKCS not supported")
     data = b"benchmark test data for RSA signing"
-    sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
+    try:
+        sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
+    except AssertionError as exc:
+        _xfail_benchmark_operation_reject(exc, "RSA SHA256 benchmark verify setup sign rejected")
 
     def verify() -> None:
-        verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig)
+        try:
+            verify_single(rs.raw, rs.sh, pub, CKM_SHA256_RSA_PKCS, data, sig)
+        except AssertionError as exc:
+            _xfail_benchmark_operation_reject(exc, "RSA SHA256 benchmark verify rejected")
 
     benchmark(verify)
 
@@ -196,10 +218,15 @@ def test_bench_ecdsa_p256_sign(benchmark: Any, ec_p256_keypair: Any) -> None:
 def test_bench_sha256_digest(benchmark: Any, p11_raw_session: Any) -> None:
     """Benchmark SHA-256 digest (1 KiB)."""
     rs = p11_raw_session
+    if not rs.has_mechanism("SHA256"):
+        pytest.skip("SHA256 not supported")
     data = b"\x00" * 1024
 
     def digest() -> bytes:
-        return digest_single(rs.raw, rs.sh, CKM_SHA256, data)
+        try:
+            return digest_single(rs.raw, rs.sh, CKM_SHA256, data)
+        except AssertionError as exc:
+            _xfail_benchmark_operation_reject(exc, "SHA256 benchmark digest rejected")
 
     benchmark(digest)
 
