@@ -197,8 +197,8 @@ def classify_lifecycle_effect(*, claimed_success, effect_observed, label):
 
 ### Task 5 — Document the model in CLAUDE.md
 
-- [ ] **Step 1 — Add** the model table + core principle to `CLAUDE.md` (Coding Rules), with a one-line note that it **supersedes** "use `pytest.xfail()` for known module bugs" for Type-A / self-contradiction classes; link `docs/classification-model-design.md`.
-- [ ] **Step 2 — Commit.** `git commit -am "Document test-outcome classification model"`
+- [x] **Step 1 — Add** the model table + core principle to `CLAUDE.md` (Coding Rules), with a one-line note that it **supersedes** "use `pytest.xfail()` for known module bugs" for Type-A / self-contradiction classes; link `docs/classification-model-design.md`.
+- [x] **Step 2 — Commit.** `git commit -am "Document test-outcome classification model"`
 
 ---
 

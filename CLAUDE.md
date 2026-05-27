@@ -41,6 +41,39 @@ See [docs/architecture.md](docs/architecture.md) for codebase structure, modules
 - Acceptable skips: `rs.has_mechanism()` returns False, `@pytest.mark.requires_v30` on v2.40 module, optional test data not present.
 - Unacceptable skips: module segfaults, module returns wrong error code, module hangs.
 
+### Test-outcome classification model — ONE RULE
+
+Every test classifies `pass`/`xfail`/`fail`/`skip` by one provider-general rule.
+Classify by **what the module did versus what is correct** — the pivot is *direction*:
+the right thing done imperfectly is `xfail`; the wrong thing done (or a crash) is `fail`.
+
+| Verdict | Positive op (valid input, advertised mechanism) | Negative op (must reject invalid input / policy) |
+|---|---|---|
+| **pass** | `CKR_OK` + correct output/value | rejects with the **expected** spec CKR |
+| **xfail** | clean error — advertised but not operational | rejects with **some other** (clean) code |
+| **fail** | `CKR_OK` but **wrong** output/value | `CKR_OK`/accepted **and** it is a crypto-correctness break (Type A) or self-contradiction (Type B/C/D) |
+| **fail** | crash / hang | crash / hang |
+| **skip** | capability genuinely absent | capability genuinely absent |
+
+**Core principle:** Self-contradiction = `fail`. A single honest deviation = `xfail`.
+**Verify the *effect*, not the return code.** `xfail` is the universal provider-general
+"noted deviation, investigate later" bucket — it is recorded, not hidden, and is **never
+gated on provider identity**. No per-provider config, baselines, or allowlists.
+
+- The four self-contradiction classes that `fail` on acceptance: **A** crypto-correctness
+  (wrong/forgeable result), **B** attribute/permission (claimed a protection then violated
+  it), **C** lifecycle/state (claimed success then didn't honor it), **D** derived-attribute
+  invariant (two linked attributes that cannot both be true).
+- Helpers (in `testcases/conftest.py`): `classify_negative_rv(rv, expected_rvs, *, label,
+  allow_ok=False)` and `reject_or_classify(exc, expected_rvs, *, label)` for negative ops
+  outside the table; `classify_policy_enforcement(*, claimed, violated, label)` for Type B;
+  `classify_lifecycle_effect(*, claimed_success, effect_observed, label)` for Type C.
+  Table-driven negative sites use `assert_ckr()` (3-way) over `CkrExpectation` in
+  `testcases/ckr/_ckr_spec.py`.
+- **This supersedes** the "use `pytest.xfail()` for known module bugs" guidance below for
+  Type-A and self-contradiction (Type B/C/D) classes: those `fail`, they are not `xfail`ed.
+- Full model + A/B/C/D rules: [docs/classification-model-design.md](docs/classification-model-design.md).
+
 ### Error handling — CRITICAL
 - **NEVER use a bare `except Exception: pass` or catch-all CKR check** — this hides real bugs. Every CKR check must list SPECIFIC acceptable return codes.
 - Use predefined CKR tuples for common patterns:
@@ -69,7 +102,9 @@ See [docs/architecture.md](docs/architecture.md) for codebase structure, modules
 ### Module-specific behavior
 - Document module quirks in `docs/module-issues.md`, not as silent `pass` in code
 - Use `compliance.note()` for spec deviations that aren't bugs
-- Use `pytest.xfail()` for known module bugs with an explanatory message
+- Use `pytest.xfail()` for known module bugs with an explanatory message — but see the
+  Test-outcome classification model above: Type-A and self-contradiction (B/C/D) classes
+  `fail`, they are NOT `xfail`ed
 - NSS uses slot 1 (Certificate DB), not slot 0. Pass `--p11-slot=1`
 
 ### Conventions
