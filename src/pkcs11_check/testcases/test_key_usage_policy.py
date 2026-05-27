@@ -22,7 +22,6 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -31,25 +30,19 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKA_WRAP,
     CKM_AES_ECB,
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_TYPE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
 )
 
-# Acceptable CKR codes for key usage policy violations.
-# Spec mandates CKR_KEY_FUNCTION_NOT_PERMITTED, but some modules return
-# CKR_FUNCTION_NOT_SUPPORTED or CKR_ARGUMENTS_BAD instead.
-_KEY_POLICY_CKRS = (
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_ARGUMENTS_BAD,
-    CKR_KEY_TYPE_INCONSISTENT,
-)
+# Key-usage-policy guards classify 3-way via classify_negative_rv: running the
+# forbidden function (CKR_OK) -> fail, the spec code
+# CKR_KEY_FUNCTION_NOT_PERMITTED -> pass, any other clean reject (e.g.
+# CKR_FUNCTION_NOT_SUPPORTED, CKR_ARGUMENTS_BAD, CKR_KEY_TYPE_INCONSISTENT) ->
+# xfail.
 
 pytestmark = pytest.mark.security
 
@@ -81,8 +74,10 @@ class TestAESKeyUsagePolicy:
             # DecryptInit should fail with KEY_FUNCTION_NOT_PERMITTED
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
-            assert rv in _KEY_POLICY_CKRS, (
-                f"Expected key policy error for DECRYPT=False key, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                label="C_DecryptInit on an AES key created CKA_DECRYPT=False",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -108,8 +103,10 @@ class TestAESKeyUsagePolicy:
 
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-            assert rv in _KEY_POLICY_CKRS, (
-                f"Expected key policy error for ENCRYPT=False key, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                label="C_EncryptInit on an AES key created CKA_ENCRYPT=False",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -132,8 +129,10 @@ class TestAESKeyUsagePolicy:
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-            assert rv in _KEY_POLICY_CKRS, (
-                f"Expected key policy error for ENCRYPT=False key, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                label="C_EncryptInit on a SIGN-only AES key created CKA_ENCRYPT=False",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -199,8 +198,10 @@ class TestRSAKeyUsagePolicy:
 
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
-            assert rv in _KEY_POLICY_CKRS, (
-                f"Expected key policy error for ENCRYPT=False RSA key, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                label="C_EncryptInit on an RSA public key created CKA_ENCRYPT=False",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -238,8 +239,10 @@ class TestRSAKeyUsagePolicy:
 
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
-            assert rv in _KEY_POLICY_CKRS, (
-                f"Expected key policy error for SIGN=False RSA key, got {ckr_name(rv)}"
+            classify_negative_rv(
+                rv,
+                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                label="C_SignInit on an RSA private key created CKA_SIGN=False",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
