@@ -87,16 +87,24 @@ def test_operation_state_encrypt_skips_before_child_when_aes_keygen_missing(
         )
 
 
-def test_operation_state_garbage_accepts_arguments_bad() -> None:
+def test_operation_state_garbage_arguments_bad_xfails_with_note() -> None:
+    """CKR_ARGUMENTS_BAD is a non-spec reject for a garbage state blob.
+
+    Under the 3-way classification it is an xfail (not the spec
+    CKR_SAVED_STATE_INVALID), while the more-specific-code compliance note is
+    still emitted before the classification.
+    """
+
     class _Raw:
         def C_SetOperationState(self, *_args: object) -> int:  # noqa: N802
             return int(CKR_ARGUMENTS_BAD)
 
     clear_notes()
     try:
-        test_operation_state.TestGetOperationStateAPI().test_garbage_state_raises_saved_state_invalid(
-            _raw_session(raw=_Raw()),
-        )
+        with pytest.raises(pytest.xfail.Exception):
+            test_operation_state.TestGetOperationStateAPI().test_garbage_state_raises_saved_state_invalid(
+                _raw_session(raw=_Raw()),
+            )
         assert any("CKR_ARGUMENTS_BAD" in note.description for note in get_notes())
     finally:
         clear_notes()
