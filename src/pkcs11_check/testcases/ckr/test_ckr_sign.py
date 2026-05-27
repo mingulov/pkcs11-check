@@ -50,17 +50,10 @@ class TestSignInitErrors:
         try:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), key)
-            if rv == CKR_OK:
-                # SoftHSM2 accepts mismatched key type at Init - compliance deviation
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_SignInit accepted AES key with RSA mechanism",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="PKCS#11 v3.1 Sec.5.10.1",
-                )
-            else:
-                assert_ckr(CKR_SIGN["init_key_type_inconsistent"], rv, ckr_strict)
+            # Type-A crypto-correctness: accepting an AES key under an RSA signing
+            # mechanism (CKR_OK) is key-type confusion -> fail; an expected reject
+            # -> pass; another clean reject -> xfail (3-way assert_ckr).
+            assert_ckr(CKR_SIGN["init_key_type_inconsistent"], rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

@@ -1177,6 +1177,9 @@ CKR_SIGN: dict[str, CkrExpectation] = {
             CKR_FUNCTION_FAILED,
         ),
         spec_ref="PKCS#11 v3.1 Sec.5.10.1",
+        kind="crypto",
+        # Type-A crypto-correctness: an AES key under an RSA signing mechanism is
+        # key-type confusion; acceptance must fail for any provider.
     ),
     "init_mechanism_param_invalid": CkrExpectation(
         function="C_SignInit",
