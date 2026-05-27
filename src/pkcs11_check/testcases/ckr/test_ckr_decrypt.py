@@ -165,18 +165,10 @@ class TestDecryptDataErrors:
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
             rv = rs.raw.C_Decrypt(rs.sh, data, 128, out_buf, byref(out_len))
-            if rv == CKR_OK:
-                if not exp.allow_success:
-                    pytest.fail("Should have rejected 128-byte ciphertext for RSA-2048")
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "C_Decrypt accepted wrong-length RSA ciphertext (128 bytes for RSA-2048)",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference=exp.spec_ref,
-                )
-            else:
-                assert_ckr(exp, rv, ckr_strict)
+            # Type-A crypto-correctness: accepting a wrong-length RSA ciphertext
+            # (CKR_OK) is a break for any provider -> fail; an expected reject ->
+            # pass; another clean reject code -> xfail (3-way assert_ckr).
+            assert_ckr(exp, rv, ckr_strict)
         finally:
             destroy_quietly(rs.raw, rs.sh, _pub)
             destroy_quietly(rs.raw, rs.sh, priv)

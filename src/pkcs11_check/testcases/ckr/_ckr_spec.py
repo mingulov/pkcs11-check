@@ -710,7 +710,10 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
         compat_tuple=_DECRYPT_DATA_ERRORS,
         spec_ref="PKCS#11 v3.1 Sec.5.9.2",
         mechanisms=["RSA_PKCS"],
-        allow_success=True,  # Kryoptic accepts wrong-length ciphertext (spec deviation)
+        kind="crypto",
+        # Type-A crypto-correctness: a wrong-length RSA ciphertext that decrypts
+        # is a break for any provider, so acceptance (CKR_OK) must fail -- no
+        # allow_success exemption (no per-provider demotion).
     ),
     # --- C_DecryptUpdate/Final errors ---
     "update_encrypted_data_len_range": CkrExpectation(
