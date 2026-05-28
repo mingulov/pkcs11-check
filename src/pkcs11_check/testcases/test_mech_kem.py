@@ -33,8 +33,14 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKP_ML_KEM_768,
 )
+from pkcs11_check.testcases.conftest import CIPHER_OP_RUNTIME_REJECT_RVS, xfail_if_known_ckr
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.kem]
+
+# Phase 5 P1b: ML-KEM produce-leg (encapsulate/decapsulate) reject set. A clean
+# "advertised but not operational" reject -> xfail; the dependent encrypt/decrypt
+# roundtrip that follows stays a hard failure (self-contradiction).
+_KEM_OP_REJECT_RVS = CIPHER_OP_RUNTIME_REJECT_RVS
 
 
 def _ml_kem_keypair(rs: RawSession) -> tuple[int, int]:
@@ -71,7 +77,15 @@ class TestMechKEM:
             pytest.skip("ML_KEM not supported")
         pub, priv = _ml_kem_keypair(rs)
         try:
-            enc_key, ct = encapsulate_key(rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_AES_DERIVED_ATTRS)
+            try:
+                enc_key, ct = encapsulate_key(
+                    rs.raw, rs.sh, pub, CKM_ML_KEM, attrs=_AES_DERIVED_ATTRS
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _KEM_OP_REJECT_RVS, "CKM_ML_KEM encapsulate not operational"
+                )
+                raise
             try:
                 dec_key = decapsulate_key(
                     rs.raw, rs.sh, priv, CKM_ML_KEM, ct, attrs=_AES_DERIVED_ATTRS
