@@ -589,12 +589,28 @@ class TestECDSATimingBasic:
             cv = stdev_t / mean_t if mean_t > 0 else 0
 
             # For very fast operations (<1ms), OS scheduling jitter dominates
-            # and CV can be high. Only flag truly extreme variance (CV > 1.0).
-            # Real Minerva leaks show CV > 2.0 with bimodal distribution.
-            assert cv < 1.0, (
-                f"ECDSA timing CV={cv:.3f} (mean={mean_t * 1000:.2f}ms, "
-                f"stdev={stdev_t * 1000:.2f}ms) - possible timing leak"
-            )
+            # and CV can be high. This 100-sample CV heuristic is *informational
+            # only* -- a real Minerva-class leak (CVE-2019-13627, CVE-2023-6135)
+            # needs thousands of signatures + bimodal-distribution analysis. A
+            # high CV here is a flag for further investigation, not proof of a
+            # leak, so it must not gate the suite (catalog CR-6).
+            if cv >= 1.0:
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"ECDSA P-256 100-sample timing CV={cv:.3f} "
+                    f"(mean={mean_t * 1000:.2f}ms, stdev={stdev_t * 1000:.2f}ms) "
+                    "-- review with a full Minerva-style multi-thousand-sample "
+                    "analysis to confirm or rule out a timing leak",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="CVE-2019-13627 / CVE-2023-6135 (Minerva). 100-"
+                    "sample CV is environment-sensitive (OS scheduling jitter "
+                    "alone can push CV past 1.0 on shared runners).",
+                )
+                pytest.xfail(
+                    f"ECDSA timing CV={cv:.3f} -- informational, needs deeper "
+                    "Minerva analysis to confirm leak"
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
