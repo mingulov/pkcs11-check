@@ -249,6 +249,16 @@ def load_mldsa_sigver_vectors(limit: int | None = None) -> list[tuple[str, dict[
         if param_set not in _ML_DSA_PARAM_MAP:
             continue
 
+        # PKCS#11 v3.2 only exposes the *external* ML-DSA Verify (CKM_ML_DSA /
+        # CKM_HASH_ML_DSA_*), which constructs M' from (M, ctx) internally per
+        # FIPS 204 Algorithm 3. ACVP's signatureInterface="internal" groups
+        # (Sign_internal/Verify_internal, FIPS 204 Algorithm 8) deliver a
+        # pre-formatted message or a precomputed mu — neither is representable
+        # through PKCS#11, so feeding them to CKM_ML_DSA would wrap them again
+        # and (correctly) fail to verify a mathematically-valid signature.
+        if group.get("signatureInterface") == "internal":
+            continue
+
         # Skip unsupported hash algorithms (e.g. SHA2-512/224, SHA2-512/256)
         # not defined by PKCS#11 v3.2 or FIPS 204 for Hash-ML-DSA
         hash_alg = inp.get("hashAlg", "")
