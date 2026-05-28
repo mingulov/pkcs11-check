@@ -66,6 +66,22 @@ The "CKR common storage" is **`src/pkcs11_check/testcases/ckr/_ckr_spec.py`**:
    (capability/identity guard), leaving smoke/diagnostic only. Not a bug.
 6. **CR-6 / timing** — make timeouts/timing-variance non-gating or confirm as provider hangs.
 
+## Rerun review — softhsm2 (2026-05-28, `artifacts/softhsm2-recheck-20260528/`)
+
+First valid post-fix rerun (full suite, ~82k). Net vs baseline: passed −259, **failed +57**,
+xfailed +147 — findings stopped hiding (former passes → real fails + documented xfails). Total
+~stable (82,014). **GCM NULL-AAD SIGSEGV surfaced as `fail`** (FP-1 confirmed end-to-end);
+KWP no longer exit-1 crashes (FP-2). The +58 new failures reviewed:
+- **~55 legitimate surfaced findings**: ECDH invalid-point accepted (×42), GCM weak tag/IV +
+  IV-reuse, PSS sLen=0, bad EC-curve OID, wrong-key-type sign/verify accepted, CBC-PAD oracle.
+- **3 false-fails — RESOLVED:** the module's correct refusal had been flagged "unexpected".
+  Fixed by 718a429 (destroyed-handle reads now classified by raw rv → `test_destroyed_handle`
+  and `test_ckr_object_handle_invalid_after_destroy` accept `CKR_OBJECT_HANDLE_INVALID`) and
+  33b5f0e (refused wrap of protected key now counts as the attack being blocked →
+  `test_wrap_decrypt_extraction_attempt` accepts `CKR_KEY_UNEXTRACTABLE`). Both fixes are
+  narrow / per-test; the broader Phase-4 N2 follow-up (push these into the
+  table/`classify_negative_rv`) still stands as part of the classification rework.
+
 ## Goal additions (2026-05-28)
 
 - **Refresh the result/size docs after FP-8 reruns** (they are stale vs the classification
