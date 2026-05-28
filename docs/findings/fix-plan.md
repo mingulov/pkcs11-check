@@ -123,31 +123,26 @@ KWP no longer exit-1 crashes (FP-2). The +58 new failures reviewed:
 
 ## Re-measurement (Docker reruns)
 
-- Allowed, but **write to NEW folder names** under `artifacts/` (e.g. `artifacts/<target>-recheck-YYYYMMDD/`)
-  — never overwrite the 2026-05-27 baseline result dirs (backup: `/home/user/src/m/artifacts.tar.xz`).
-- **Safe rerun command** (override the per-service `PKCS11_CHECK_ARTIFACT_DIR` env so output
-  lands in a new folder, baseline untouched):
-  ```
-  docker compose -f docker/docker-compose.test.yml run --rm \
-    -v /home/user/.local/share/pkcs11-check/data:/app/data:ro \
-    -e PKCS11_CHECK_ARTIFACT_DIR=/artifacts/<target>-recheck-20260528 \
-    --build test-<target>
-  ```
-  **CRITICAL:** the repo `data/` has NO vectors (they live in XDG `~/.local/share/pkcs11-check/data`,
-  847M); the compose default mount `../data:/app/data:ro` therefore gives the container an EMPTY
-  vector dir → only ~3.3k non-vector tests run instead of the full ~82k. The `-v` override above
-  mounts the XDG vectors over `/app/data` so the full suite runs. (First softhsm2 recheck without
-  it ran only 3,317 tests — do not compare those numbers.)
-  In-scope targets (excl. bouncyhsm) + approx test-exec time: softhsm2 ~10m, softhsm2-main ~10m,
-  kryoptic ~15m, kryoptic-main ~16m, kryoptic-fips ~18m, nss ~9m, nss-main ~10m, nss-pqc ~9m,
-  opencryptoki ~2h, opencryptoki-master ~1.5h, tpm2 ~25m, pkcs11-mock ~3m. Run fast ones first;
-  opencryptoki are the long tail. After each: parse `quality.json` summary, compare deltas vs
-  baseline `artifacts/_matrix/provider-summary.json`, regenerate the matrix summary, refresh the
-  three docs (rounded ~Xk), update `module-issues.md` for NEW findings (e.g. cross-provider GCM
-  NULL-AAD SIGSEGV).
-- After fixes, re-run only the **affected** targets and compare `passed/failed/xfailed/skipped`
-  deltas vs `artifacts/_matrix/provider-summary.json`. "Better" = no new signal/crash `fail`,
-  no finding demoted to silent pass/skip; every `fail→xfail` offset by an `xfail` gain.
+- New artifact dirs go under `artifacts/<target>-recheck-YYYYMMDD/` —
+  never overwrite the 2026-05-27 baseline result dirs (backup at
+  `/home/user/src/m/artifacts.tar.xz`).
+- **Wrapper script:** `scripts/docker-rerun.sh <target>` handles the safe
+  rerun + post-run comparison. It mounts XDG vectors (so the full ~82k
+  suite runs, not the 3.3k subset), routes output to a NEW dated dir,
+  refuses to overwrite, runs `scripts/recheck-summary.py` for a one-line
+  summary delta, then runs `scripts/compare-results.py` for per-file
+  regression detection.
+- **Target order** (run fast first, opencryptoki last; approx exec time):
+  softhsm2 ~10m, softhsm2-main ~10m, kryoptic ~15m, kryoptic-main ~16m,
+  kryoptic-fips ~18m, nss ~9m, nss-main ~10m, nss-pqc ~9m,
+  opencryptoki ~2h, opencryptoki-master ~1.5h, tpm2 ~25m, pkcs11-mock ~3m.
+- After each rerun: parse summary deltas vs baseline (the wrapper does
+  this automatically), update `docs/module-issues.md` for any NEW
+  findings flagged by `compare-results.py`, and refresh
+  `docs/findings/catalog.md` finding statuses.
+
+**"Better"** = no new signal/crash `fail`, no finding demoted to silent
+pass/skip; every `fail`→`xfail` offset by an `xfail` gain.
 
 ## PROVIDER findings — no pkcs11-check change
 
