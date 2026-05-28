@@ -150,3 +150,111 @@ Real wins for bouncyhsm performance would require upstream changes:
 These are all upstream changes to the BouncyHSM project. From our side
 the best remaining lever is the `p11_module_session` fixture — already
 shipped — which amortizes session+login overhead across a test file.
+
+## Update: deeper look at C_Login slowness and the connection model
+
+After the InMemory/Server-GC measurements above came in negative, two
+follow-up questions: (a) is the slow `C_Login` actually the connection
+overhead, or intentional PIN-hardening? (b) since BouncyHSM's server is
+C#, is there a cheap C#-side fix for connection pooling?
+
+### C_Login is PBKDF2-SHA256 × 350 000 iterations — intentional
+
+`src/Src/BouncyHsm.Infrastructure/Storage/LiteDbFile/LiteDbPersistentRepository.cs:118`:
+
+```csharp
+private Pbkdf2PasswordModel HashPassword(string password)
+{
+    const int iterations = 350_000;
+    ...
+    model.Hash = Rfc2898DeriveBytes.Pbkdf2(
+        Encoding.UTF8.GetBytes(password),
+        model.Salt,
+        iterations,             // 350 000
+        HashAlgorithmName.SHA256,
+        64);
+}
+```
+
+Measured locally:
+
+```
+$ python3 -c "import hashlib, time; ..."
+PBKDF2-SHA256 × 350K iterations: 114.33 ms
+```
+
+That matches the 80.6 ms `C_Login` measurement on bouncyhsm (host CPU is
+slightly faster than the container's effective core). It's exactly what a
+KDF-protected PIN verifier is supposed to do — brute-force resistance.
+
+`p11_module_session` already amortizes this: login fires once per file,
+so ~268 files × 80 ms ≈ 21 s instead of ~100 k tests × 80 ms ≈ 130 min.
+The 4.4× bouncyhsm speedup is driven by that, not by anything transport.
+
+### Connection-per-call is in the C client, not C#
+
+Every `C_*` entry point in `src/Src/BouncyHsm.Pkcs11Lib/bouncy-pkcs11.c`
+follows the same pattern:
+
+```c
+CK_DEFINE_FUNCTION(CK_RV, C_EncryptInit)(...) {
+    EncryptInitRequest request;
+    EncryptInitEnvelope envelope;
+
+    nmrpc_global_context_t ctx;
+    SockContext_t tcp;                          // ← fresh stack-local socket context
+
+    if (P11SocketInit(&tcp) != NMRPC_OK) ...    // ← connect to :8765
+    nmrpc_global_context_tcp_init(&ctx, &tcp);
+
+    ... // call nmrpc_call_EncryptInit
+    // socket gets closed when function returns → goes into TIME_WAIT
+}
+```
+
+So every PKCS#11 entry point declares its own `SockContext_t tcp;` on
+the stack, connects, sends one RPC, gets the response, and lets the
+socket close on function return. There is no C#-side fix because the
+C# server isn't the one opening the per-call connection — the C client
+is.
+
+The minimal upstream patch would be in the C library:
+
+1. Add a static `SockContext_t g_sock` (and a `static pid_t g_owner_pid`
+   for fork-safety) in `globalContext.c`.
+2. Replace `P11SocketInit(&tcp)` with a getter that lazy-inits the
+   global socket and returns a borrowed reference.
+3. Have `C_Finalize` close `g_sock`.
+4. Detect EPIPE / fork-inherited stale fd and reconnect on next use.
+
+That's ~50-80 lines of C, all upstream in `harrison314/BouncyHsm`. From
+our side (pkcs11-check), the only handle we have on the runtime is the
+loaded `.so`, so we can't change this without modifying the upstream
+build.
+
+### How much would connection pooling actually save?
+
+After login PBKDF2 is amortized:
+
+- ~108 k tests × ~3-5 PKCS#11 calls each = **~400 k TCP connections / run**
+- Loopback handshake + close: ~50-100 µs
+- 400 k × 75 µs = **~30 s of pure connection overhead** across 54 min
+
+So connection pooling buys ~30 s on a 54-min run — roughly 1 %. The
+remaining ~53 minutes is the actual .NET request handler + MessagePack
+ser/deser + crypto work, which connection pooling doesn't touch.
+
+### Updated lever summary
+
+| Lever | Status | Why |
+|---|---|---|
+| Login PBKDF2 × 350K iterations | **Already amortized** | `p11_module_session` cut it from ~130 min to ~21 s |
+| TCP connection-per-call | **~30 s / ~1 %** | Real but small after login is amortized; upstream-only fix |
+| `InMemory` persistence | **−71 %** (slower) | LiteDb's page cache + indexed reads beat InMemory's per-call lock |
+| `DOTNET_gcServer=1` | **−79 %** combined (slower) | Wrong GC mode for single-threaded test session |
+| MessagePack handler + crypto | **The remaining ~53 min** | Not addressable from our side; needs upstream batched RPC or Unix-domain-socket transport |
+
+The dominant remaining cost on bouncyhsm after `p11_module_session` is
+BouncyHSM doing the actual cryptographic work on the .NET side, one RPC
+per PKCS#11 call. Future wins would need upstream batched RPCs
+(Init+Update+Final → one call) or a transport that skips loopback TCP.
