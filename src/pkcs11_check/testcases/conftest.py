@@ -351,6 +351,20 @@ def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:
         pytest.skip("Token is write-protected -- cannot create token objects")
 
 
+def _actual_rv_portion(msg: str) -> str:
+    """Return only the ACTUAL-rv portion of an ``expect_rv`` message.
+
+    ``expect_rv`` raises ``CkrAssertionError`` with a message shaped like
+    ``"Unexpected CK_RV <ACTUAL>; expected one of: <EXPECTED...>"``.  The tail
+    after ``"; expected one of:"`` lists the EXPECTED CKR names — substring
+    matching against it would wrongly classify a genuine failure as "known"
+    (the prefix/substring hazard documented on ``CkrAssertionError``).  This
+    drops that tail so only the actual-return portion is matched.
+    """
+    head, sep, _tail = msg.partition("; expected one of:")
+    return head if sep else msg
+
+
 def is_known_error(
     exc: BaseException,
     error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
@@ -358,24 +372,30 @@ def is_known_error(
     """Return True if ``exc`` corresponds to one of ``error_rvs``.
 
     Prefers exact integer equality via ``CkrAssertionError.rv`` (set by
-    ``expect_rv``).  Falls back to substring matching against the
-    exception message for legacy AssertionError paths — that fallback can
-    misfire when one CKR name is a prefix of another, so prefer raising
-    via ``expect_rv`` where possible.
+    ``expect_rv``).  When ``.rv`` is absent, falls back to substring matching
+    against ONLY the actual-return portion of the message (the text before
+    ``"; expected one of:"``), so an EXPECTED CKR name listed in the message
+    cannot be mistaken for the actual return — which would otherwise mis-route
+    a real failure to skip/xfail.
     """
     rv = getattr(exc, "rv", None)
     if rv is not None:
         return rv in error_rvs
-    msg = str(exc)
+    msg = _actual_rv_portion(str(exc))
     return any(ckr_name(r) in msg for r in error_rvs)
 
 
 def _matched_ckr_name(exc: BaseException, known_ckrs: Any) -> str | None:
-    """Return the CKR name that matched ``exc``, or None if no match."""
+    """Return the CKR name that matched ``exc``, or None if no match.
+
+    Mirrors :func:`is_known_error`: exact ``.rv`` when present, otherwise a
+    substring match constrained to the actual-return portion of the message so
+    an EXPECTED name in the message cannot produce a false match.
+    """
     rv = getattr(exc, "rv", None)
     if rv is not None:
         return ckr_name(rv) if rv in known_ckrs else None
-    msg = str(exc)
+    msg = _actual_rv_portion(str(exc))
     for ckr in known_ckrs:
         if ckr_name(ckr) in msg:
             return ckr_name(ckr)

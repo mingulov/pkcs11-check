@@ -22,7 +22,9 @@ from pkcs11_check.testcases.conftest import (
     classify_lifecycle_effect,
     classify_negative_rv,
     classify_policy_enforcement,
+    is_known_error,
     reject_or_classify,
+    xfail_if_known_ckr,
 )
 
 
@@ -155,3 +157,65 @@ def test_policy_claimed_ok_passes() -> None:
 def test_lifecycle_claimed_effect_fails() -> None:
     with pytest.raises(Failed):
         classify_lifecycle_effect(claimed_success=True, effect_observed=True, label="x")
+
+
+# ---------------------------------------------------------------------------
+# M3 — substring CKR matching must not match an EXPECTED name in the message
+# ---------------------------------------------------------------------------
+
+# A CkrAssertionError carries the offending rv as .rv; expect_rv builds a
+# message of the form:
+#   "Unexpected CK_RV <ACTUAL>; expected one of: <EXPECTED...>"
+# A naive substring scan of the whole message can match one of the EXPECTED
+# names even though the ACTUAL return differs -- wrongly classifying a genuine
+# failure as a "known" CKR and routing it to xfail/skip.
+_KNOWN = (CKR_KEY_FUNCTION_NOT_PERMITTED,)
+
+
+def test_is_known_error_prefers_exact_rv_when_present() -> None:
+    """With .rv set, matching uses the actual rv, ignoring expected names in msg."""
+    # Actual rv (CKR_FUNCTION_FAILED) is NOT in the known set; the expected name
+    # IS in the message text. Must return False (real fail surfaces).
+    exc = CkrAssertionError(
+        "Unexpected CK_RV CKR_FUNCTION_FAILED; expected one of: CKR_KEY_FUNCTION_NOT_PERMITTED",
+        CKR_FUNCTION_FAILED,
+    )
+    assert is_known_error(exc, set(_KNOWN)) is False
+    # Conversely, when the actual rv IS in the known set -> True.
+    exc2 = CkrAssertionError(
+        "Unexpected CK_RV CKR_KEY_FUNCTION_NOT_PERMITTED", CKR_KEY_FUNCTION_NOT_PERMITTED
+    )
+    assert is_known_error(exc2, set(_KNOWN)) is True
+
+
+def test_is_known_error_substring_fallback_ignores_expected_portion() -> None:
+    """Without .rv, the fallback must only consider the ACTUAL-rv portion.
+
+    The expected-names tail ("; expected one of: ...") must not be matched, so a
+    plain AssertionError whose actual code differs is NOT treated as known.
+    """
+    exc = AssertionError(
+        "Unexpected CK_RV CKR_FUNCTION_FAILED; expected one of: CKR_KEY_FUNCTION_NOT_PERMITTED"
+    )
+    assert is_known_error(exc, set(_KNOWN)) is False
+
+
+def test_is_known_error_substring_fallback_matches_actual() -> None:
+    """Without .rv, a genuine match on the ACTUAL-rv portion is still honored."""
+    exc = AssertionError(
+        "Unexpected CK_RV CKR_KEY_FUNCTION_NOT_PERMITTED; expected one of: CKR_FUNCTION_FAILED"
+    )
+    assert is_known_error(exc, set(_KNOWN)) is True
+
+
+def test_xfail_if_known_ckr_reraises_on_prefix_collision() -> None:
+    """A real failure (actual not in known set) must propagate, not become xfail."""
+    exc = CkrAssertionError(
+        "Unexpected CK_RV CKR_FUNCTION_FAILED; expected one of: CKR_KEY_FUNCTION_NOT_PERMITTED",
+        CKR_FUNCTION_FAILED,
+    )
+    with pytest.raises(CkrAssertionError):
+        try:
+            raise exc
+        except CkrAssertionError as e:
+            xfail_if_known_ckr(e, set(_KNOWN), "ckr probe")
